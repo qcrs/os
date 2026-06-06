@@ -13,6 +13,11 @@ tasks:
       - latency
       - database
       - release-17
+      - anchor
+    reuse_tags:
+      - latency
+      - database
+    expected_reuse: false
     summary_hint: >
       Latency regression traced to DB pool saturation and a slow orders query
       after release-17; rollback plus index creation is the recommended playbook.
@@ -21,7 +26,7 @@ tasks:
     task_group: latency_chain
     task_order: 2
     task_theme: repo_local_latency_triage
-    goal: Reuse previous latency memory for the follow-up incident.
+    goal: Reuse previous latency memory for the first follow-up incident.
     query: follow-up latency regression slow query database pool
     evidence_text: >
       Sample incident B: a follow-up latency spike matches the earlier pattern.
@@ -31,10 +36,77 @@ tasks:
       - latency
       - database
       - followup
+    reuse_tags:
+      - latency
+      - database
+    expected_reuse: true
     summary_hint: >
       Follow-up latency incident matches the earlier database saturation playbook
-      and should reuse the prior remediation steps before re-running deeper
-      diagnostics.
+      and should reuse the prior remediation steps before deeper diagnostics.
+
+  - task_id: sample-latency-003
+    task_group: latency_chain
+    task_order: 3
+    task_theme: repo_local_latency_triage
+    goal: Validate that the latency playbook reuses again on a third similar incident.
+    query: service c latency slow query pool contention replay
+    evidence_text: >
+      Sample incident C: service-c shows the same database pool contention during
+      a burst window. The repo-local trace again points to the slow orders query
+      pattern and release-era saturation symptoms.
+    tags:
+      - latency
+      - database
+      - service-c
+    reuse_tags:
+      - latency
+      - database
+    expected_reuse: true
+    summary_hint: >
+      Third latency incident should continue to reuse the database saturation
+      playbook and only escalate if the known rollback and indexing actions fail.
+
+  - task_id: sample-latency-004
+    task_group: latency_chain
+    task_order: 4
+    task_theme: repo_local_latency_triage
+    goal: Replay the first latency incident to verify repeated execution stability.
+    query: replay anchor latency regression orders query pool saturation
+    evidence_text: >
+      Sample incident D: replay the first latency report with the same DB pool
+      saturation and slow orders query note to validate repeated reuse stability.
+    tags:
+      - latency
+      - database
+      - replay
+    reuse_tags:
+      - latency
+      - database
+    expected_reuse: true
+    summary_hint: >
+      Replay of the anchor latency incident should still map to the known
+      rollback and indexing playbook without requiring fresh retrieval work.
+
+  - task_id: sample-latency-005
+    task_group: latency_chain
+    task_order: 5
+    task_theme: repo_local_latency_triage
+    goal: Replay the follow-up latency incident to verify pruning consistency.
+    query: replay follow-up latency regression database pool contention
+    evidence_text: >
+      Sample incident E: replay the follow-up latency case where database pool
+      contention and the slow query signature remain the dominant clues.
+    tags:
+      - latency
+      - database
+      - replay-followup
+    reuse_tags:
+      - latency
+      - database
+    expected_reuse: true
+    summary_hint: >
+      Replay of the follow-up latency incident should prune retrieval and execute
+      steps by reusing the established saturation playbook.
 
   - task_id: sample-cache-001
     task_group: cache_chain
@@ -43,13 +115,18 @@ tasks:
     goal: Diagnose the first cache staleness incident from repo-local evidence.
     query: cache staleness stale inventory invalidation lag
     evidence_text: >
-      Sample incident C: inventory pages showed stale counts after a batch sync.
+      Sample incident F: inventory pages showed stale counts after a batch sync.
       The repo-local note points to delayed cache invalidation on the inventory
       aggregate key and recommends forcing the invalidation hook after the sync.
     tags:
       - cache
       - invalidation
       - inventory
+      - anchor
+    reuse_tags:
+      - cache
+      - invalidation
+    expected_reuse: false
     summary_hint: >
       Cache staleness came from delayed invalidation on the inventory aggregate
       key after batch sync; forcing the invalidation hook is the preferred fix.
@@ -58,16 +135,84 @@ tasks:
     task_group: cache_chain
     task_order: 2
     task_theme: repo_local_cache_staleness
-    goal: Reuse previous cache memory for the follow-up stale inventory incident.
+    goal: Reuse previous cache memory for the first follow-up stale inventory incident.
     query: follow-up stale inventory cache invalidation lag
     evidence_text: >
-      Sample incident D: a second stale inventory alert follows the same sync
+      Sample incident G: a second stale inventory alert follows the same sync
       window pattern. The repo-local note again mentions cache invalidation lag
       on the shared aggregate key.
     tags:
       - cache
       - invalidation
       - followup
+    reuse_tags:
+      - cache
+      - invalidation
+    expected_reuse: true
     summary_hint: >
       Follow-up cache staleness matches the earlier invalidation lag playbook and
       should reuse the prior remediation before deeper investigation.
+
+  - task_id: sample-cache-003
+    task_group: cache_chain
+    task_order: 3
+    task_theme: repo_local_cache_staleness
+    goal: Validate repeated cache reuse on a third similar stale inventory incident.
+    query: inventory stale counts sync window cache invalidation
+    evidence_text: >
+      Sample incident H: the stale inventory alert recurs in another sync window.
+      The repo-local note still points to delayed invalidation on the shared
+      inventory aggregate key.
+    tags:
+      - cache
+      - invalidation
+      - sync-window
+    reuse_tags:
+      - cache
+      - invalidation
+    expected_reuse: true
+    summary_hint: >
+      Third cache staleness incident should continue to reuse the invalidation
+      playbook and only escalate if the stale-count symptom persists.
+
+  - task_id: sample-cache-004
+    task_group: cache_chain
+    task_order: 4
+    task_theme: repo_local_cache_staleness
+    goal: Replay the first cache incident to verify repeated execution stability.
+    query: replay anchor stale inventory invalidation lag
+    evidence_text: >
+      Sample incident I: replay the original stale inventory report with the same
+      delayed invalidation note after batch sync to validate repeated reuse stability.
+    tags:
+      - cache
+      - invalidation
+      - replay
+    reuse_tags:
+      - cache
+      - invalidation
+    expected_reuse: true
+    summary_hint: >
+      Replay of the anchor cache incident should still map to the invalidation
+      hook playbook without requiring new retrieval work.
+
+  - task_id: sample-cache-005
+    task_group: cache_chain
+    task_order: 5
+    task_theme: repo_local_cache_staleness
+    goal: Replay the follow-up cache incident to verify pruning consistency.
+    query: replay follow-up inventory stale counts invalidation lag
+    evidence_text: >
+      Sample incident J: replay the follow-up stale inventory case where delayed
+      invalidation on the aggregate key remains the strongest clue.
+    tags:
+      - cache
+      - invalidation
+      - replay-followup
+    reuse_tags:
+      - cache
+      - invalidation
+    expected_reuse: true
+    summary_hint: >
+      Replay of the follow-up cache incident should prune retrieval and execute
+      steps by reusing the established invalidation playbook.

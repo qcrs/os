@@ -38,6 +38,16 @@ METRIC_FIELDS = (
     "task_ms",
 )
 
+STABILITY_FIELDS = (
+    "message_count",
+    "control_bytes",
+    "llm_total_tokens",
+    "memory_hit_rate",
+    "skipped_step_count",
+    "reuse_gain",
+    "task_ms",
+)
+
 
 def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
@@ -53,6 +63,16 @@ def _sanitize_payload(value: Any) -> Any:
 
 def _task_sort_key(task: SampleTask) -> tuple[str, int, str]:
     return (task.task_group, task.task_order, task.task_id)
+
+
+def _control_metric_key(mode: str) -> str:
+    return "text_bytes" if mode == "text" else "protocol_bytes"
+
+
+def _relative_reduction(current: float, baseline: float) -> float:
+    if baseline <= 0.0:
+        return 0.0
+    return 1.0 - (current / baseline)
 
 
 def _sum_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, float]:
@@ -114,6 +134,7 @@ async def _run_mode_once(
         ctx = Orchestrator.create_context(
             mode=mode,
             task_id=task.task_id,
+            task_group=task.task_group,
             task_theme=task.task_theme,
             state_root=root / task.task_group / task.task_id,
             memory_db_path=group_db_paths[task.task_group],
@@ -129,6 +150,7 @@ async def _run_mode_once(
                     "task_theme": task.task_theme,
                     "goal": task.goal,
                     "memory_db_path": str(group_db_paths[task.task_group]),
+                    "expected_reuse": task.expected_reuse,
                     "metrics": ctx.metrics.to_dict(),
                     "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                     "reuse": {
@@ -136,6 +158,10 @@ async def _run_mode_once(
                         "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
                         "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
                         "skipped_step_ids": list(ctx.pruned_step_ids),
+                    },
+                    "reuse_validation": {
+                        "expected_reuse": task.expected_reuse,
+                        "matched_expectation": (ctx.reuse_hit is not None) == task.expected_reuse,
                     },
                     "state_refs": {
                         state_id: {
@@ -162,10 +188,12 @@ async def _run_mode_once(
                         for step_id, result in ctx.results.items()
                     },
                 }
-            )
+                )
         finally:
             ctx.memory_store.close()
+    _annotate_reuse_effects(task_runs, mode)
     aggregate = _sum_metric_rows([task_run["metrics"] for task_run in task_runs])
+    aggregate.update(_summarize_reuse_rows(task_runs, mode))
     return {
         "mode": mode,
         "run_index": run_index,
@@ -175,6 +203,77 @@ async def _run_mode_once(
         "aggregate": aggregate,
         "task_groups": _aggregate_task_groups(task_runs),
         "tasks": task_runs,
+    }
+
+
+def _annotate_reuse_effects(task_runs: list[dict[str, object]], mode: str) -> None:
+    control_key = _control_metric_key(mode)
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for task_run in task_runs:
+        grouped.setdefault(str(task_run["task_group"]), []).append(task_run)
+    for task_group in sorted(grouped):
+        rows = sorted(grouped[task_group], key=lambda item: (int(item["task_order"]), str(item["task_id"])))
+        baseline = rows[0]
+        baseline_metrics = baseline["metrics"]
+        baseline_control = float(baseline_metrics[control_key])
+        baseline_tokens = float(baseline_metrics["llm_total_tokens"])
+        baseline_task_ms = float(baseline_metrics["task_ms"])
+        for row in rows:
+            metrics = row["metrics"]
+            applied = bool(row["reuse"]["applied"])
+            row["reuse_effect"] = {
+                "baseline_task_id": str(baseline["task_id"]),
+                "applied": applied,
+                "control_bytes_reduction_vs_cold": _relative_reduction(
+                    float(metrics[control_key]),
+                    baseline_control,
+                )
+                if applied
+                else 0.0,
+                "llm_total_tokens_reduction_vs_cold": _relative_reduction(
+                    float(metrics["llm_total_tokens"]),
+                    baseline_tokens,
+                )
+                if applied
+                else 0.0,
+                "task_ms_reduction_vs_cold": _relative_reduction(
+                    float(metrics["task_ms"]),
+                    baseline_task_ms,
+                )
+                if applied
+                else 0.0,
+            }
+
+
+def _summarize_reuse_rows(
+    rows: list[dict[str, object]],
+    mode: str,
+) -> dict[str, float]:
+    del mode
+    if not rows:
+        return {
+            "reuse_apply_rate": 0.0,
+            "expectation_match_rate": 0.0,
+            "control_bytes_reduction_vs_cold": 0.0,
+            "llm_total_tokens_reduction_vs_cold": 0.0,
+            "task_ms_reduction_vs_cold": 0.0,
+        }
+    return {
+        "reuse_apply_rate": float(
+            mean(1.0 if bool(row["reuse"]["applied"]) else 0.0 for row in rows)
+        ),
+        "expectation_match_rate": float(
+            mean(1.0 if bool(row["reuse_validation"]["matched_expectation"]) else 0.0 for row in rows)
+        ),
+        "control_bytes_reduction_vs_cold": float(
+            mean(float(row["reuse_effect"]["control_bytes_reduction_vs_cold"]) for row in rows)
+        ),
+        "llm_total_tokens_reduction_vs_cold": float(
+            mean(float(row["reuse_effect"]["llm_total_tokens_reduction_vs_cold"]) for row in rows)
+        ),
+        "task_ms_reduction_vs_cold": float(
+            mean(float(row["reuse_effect"]["task_ms_reduction_vs_cold"]) for row in rows)
+        ),
     }
 
 
@@ -215,6 +314,8 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
                 "task_group": task_group,
                 "task_order": task_order,
                 **_average_metric_rows([item["metrics"] for item in matching]),
+                **_summarize_reuse_rows(matching, str(runs[0]["mode"])),
+                "baseline_task_id": str(matching[0]["reuse_effect"]["baseline_task_id"]),
             }
         )
     group_summaries = []
@@ -230,14 +331,57 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
                 "task_group": task_group,
                 "task_ids": list(matching[0]["task_ids"]),
                 **_average_metric_rows([item["aggregate"] for item in matching]),
+                **_summarize_reuse_rows(
+                    [
+                        task_run
+                        for run in runs
+                        for task_run in run["tasks"]
+                        if task_run["task_group"] == task_group
+                    ],
+                    str(runs[0]["mode"]),
+                ),
+                "baseline_task_id": str(matching[0]["task_ids"][0]),
             }
         )
+    aggregate = _average_metric_rows([run["aggregate"] for run in runs])
+    aggregate.update(
+        _summarize_reuse_rows(
+            [task_run for run in runs for task_run in run["tasks"]],
+            str(runs[0]["mode"]),
+        )
+    )
     return {
         "run_count": len(runs),
-        "aggregate": _average_metric_rows([run["aggregate"] for run in runs]),
+        "aggregate": aggregate,
         "task_groups": group_summaries,
         "tasks": task_summaries,
+        "stability": _build_stability_summary(runs),
     }
+
+
+def _build_stability_summary(runs: list[dict[str, object]]) -> dict[str, dict[str, float]]:
+    mode = str(runs[0]["mode"])
+    control_key = _control_metric_key(mode)
+    summary: dict[str, dict[str, float]] = {}
+    series_map = {
+        "message_count": [float(run["aggregate"]["message_count"]) for run in runs],
+        "control_bytes": [float(run["aggregate"][control_key]) for run in runs],
+        "llm_total_tokens": [float(run["aggregate"]["llm_total_tokens"]) for run in runs],
+        "memory_hit_rate": [float(run["aggregate"]["memory_hit_rate"]) for run in runs],
+        "skipped_step_count": [float(run["aggregate"]["skipped_step_count"]) for run in runs],
+        "reuse_gain": [float(run["aggregate"]["reuse_gain"]) for run in runs],
+        "task_ms": [float(run["aggregate"]["task_ms"]) for run in runs],
+    }
+    for field, values in series_map.items():
+        field_mean = mean(values)
+        variance = mean((value - field_mean) ** 2 for value in values) if values else 0.0
+        summary[field] = {
+            "mean": float(field_mean),
+            "min": float(min(values)) if values else 0.0,
+            "max": float(max(values)) if values else 0.0,
+            "stddev": float(variance ** 0.5),
+        }
+    return summary
 
 
 async def run_benchmark(
@@ -280,6 +424,8 @@ async def run_benchmark(
         "manifest": {
             "task_set_path": str(Path(task_set_path)),
             "task_count": len(tasks),
+            "continuous_task_count": len(tasks),
+            "expected_reuse_task_count": sum(1 for task in tasks if task.expected_reuse),
             "task_groups": sorted({task.task_group for task in tasks}),
             "modes": list(modes),
             "text_baseline": "natural_language_briefs_and_narrative_frames",
@@ -316,6 +462,10 @@ def _write_results(out_dir: Path, result: dict[str, object]) -> None:
 
 def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
     summary = result["summary"]
+    available_modes = [mode for mode in ("text", "protocol") if mode in summary]
+    if len(available_modes) < 2:
+        _write_single_mode_csv(path, summary[available_modes[0]], available_modes[0])
+        return
     text_tasks = {item["task_id"]: item for item in summary["text"]["tasks"]}
     protocol_tasks = {item["task_id"]: item for item in summary["protocol"]["tasks"]}
     text_groups = {item["task_group"]: item for item in summary["text"]["task_groups"]}
@@ -350,6 +500,21 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         "text_reuse_gain",
         "protocol_reuse_gain",
         "reuse_gain_delta",
+        "text_reuse_apply_rate",
+        "protocol_reuse_apply_rate",
+        "reuse_apply_rate_delta",
+        "text_expectation_match_rate",
+        "protocol_expectation_match_rate",
+        "expectation_match_rate_delta",
+        "text_control_bytes_reduction_vs_cold",
+        "protocol_control_bytes_reduction_vs_cold",
+        "control_bytes_reduction_vs_cold_delta",
+        "text_llm_total_tokens_reduction_vs_cold",
+        "protocol_llm_total_tokens_reduction_vs_cold",
+        "llm_total_tokens_reduction_vs_cold_delta",
+        "text_task_ms_reduction_vs_cold",
+        "protocol_task_ms_reduction_vs_cold",
+        "task_ms_reduction_vs_cold_delta",
         "text_task_ms",
         "protocol_task_ms",
         "task_ms_delta",
@@ -374,6 +539,120 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
                 summary["text"]["aggregate"],
                 summary["protocol"]["aggregate"],
             )
+        )
+
+
+def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: str) -> None:
+    fieldnames = [
+        "row_kind",
+        "row_id",
+        "mode",
+        "message_count",
+        "control_bytes",
+        "state_bytes",
+        "llm_total_tokens",
+        "memory_query_count",
+        "memory_hit_rate",
+        "planned_step_count",
+        "skipped_step_count",
+        "reuse_gain",
+        "reuse_apply_rate",
+        "expectation_match_rate",
+        "control_bytes_reduction_vs_cold",
+        "llm_total_tokens_reduction_vs_cold",
+        "task_ms_reduction_vs_cold",
+        "task_ms",
+    ]
+    control_key = _control_metric_key(mode)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for task in mode_summary["tasks"]:
+            writer.writerow(
+                {
+                    "row_kind": "task",
+                    "row_id": task["task_id"],
+                    "mode": mode,
+                    "message_count": round(float(task["message_count"]), 4),
+                    "control_bytes": round(float(task[control_key]), 4),
+                    "state_bytes": round(float(task["state_bytes"]), 4),
+                    "llm_total_tokens": round(float(task["llm_total_tokens"]), 4),
+                    "memory_query_count": round(float(task["memory_query_count"]), 4),
+                    "memory_hit_rate": round(float(task["memory_hit_rate"]), 4),
+                    "planned_step_count": round(float(task["planned_step_count"]), 4),
+                    "skipped_step_count": round(float(task["skipped_step_count"]), 4),
+                    "reuse_gain": round(float(task["reuse_gain"]), 4),
+                    "reuse_apply_rate": round(float(task["reuse_apply_rate"]), 4),
+                    "expectation_match_rate": round(float(task["expectation_match_rate"]), 4),
+                    "control_bytes_reduction_vs_cold": round(
+                        float(task["control_bytes_reduction_vs_cold"]),
+                        4,
+                    ),
+                    "llm_total_tokens_reduction_vs_cold": round(
+                        float(task["llm_total_tokens_reduction_vs_cold"]),
+                        4,
+                    ),
+                    "task_ms_reduction_vs_cold": round(float(task["task_ms_reduction_vs_cold"]), 4),
+                    "task_ms": round(float(task["task_ms"]), 4),
+                }
+            )
+        for group in mode_summary["task_groups"]:
+            writer.writerow(
+                {
+                    "row_kind": "group",
+                    "row_id": group["task_group"],
+                    "mode": mode,
+                    "message_count": round(float(group["message_count"]), 4),
+                    "control_bytes": round(float(group[control_key]), 4),
+                    "state_bytes": round(float(group["state_bytes"]), 4),
+                    "llm_total_tokens": round(float(group["llm_total_tokens"]), 4),
+                    "memory_query_count": round(float(group["memory_query_count"]), 4),
+                    "memory_hit_rate": round(float(group["memory_hit_rate"]), 4),
+                    "planned_step_count": round(float(group["planned_step_count"]), 4),
+                    "skipped_step_count": round(float(group["skipped_step_count"]), 4),
+                    "reuse_gain": round(float(group["reuse_gain"]), 4),
+                    "reuse_apply_rate": round(float(group["reuse_apply_rate"]), 4),
+                    "expectation_match_rate": round(float(group["expectation_match_rate"]), 4),
+                    "control_bytes_reduction_vs_cold": round(
+                        float(group["control_bytes_reduction_vs_cold"]),
+                        4,
+                    ),
+                    "llm_total_tokens_reduction_vs_cold": round(
+                        float(group["llm_total_tokens_reduction_vs_cold"]),
+                        4,
+                    ),
+                    "task_ms_reduction_vs_cold": round(float(group["task_ms_reduction_vs_cold"]), 4),
+                    "task_ms": round(float(group["task_ms"]), 4),
+                }
+            )
+        aggregate = mode_summary["aggregate"]
+        writer.writerow(
+            {
+                "row_kind": "aggregate",
+                "row_id": "__aggregate__",
+                "mode": mode,
+                "message_count": round(float(aggregate["message_count"]), 4),
+                "control_bytes": round(float(aggregate[control_key]), 4),
+                "state_bytes": round(float(aggregate["state_bytes"]), 4),
+                "llm_total_tokens": round(float(aggregate["llm_total_tokens"]), 4),
+                "memory_query_count": round(float(aggregate["memory_query_count"]), 4),
+                "memory_hit_rate": round(float(aggregate["memory_hit_rate"]), 4),
+                "planned_step_count": round(float(aggregate["planned_step_count"]), 4),
+                "skipped_step_count": round(float(aggregate["skipped_step_count"]), 4),
+                "reuse_gain": round(float(aggregate["reuse_gain"]), 4),
+                "reuse_apply_rate": round(float(aggregate["reuse_apply_rate"]), 4),
+                "expectation_match_rate": round(float(aggregate["expectation_match_rate"]), 4),
+                "control_bytes_reduction_vs_cold": round(
+                    float(aggregate["control_bytes_reduction_vs_cold"]),
+                    4,
+                ),
+                "llm_total_tokens_reduction_vs_cold": round(
+                    float(aggregate["llm_total_tokens_reduction_vs_cold"]),
+                    4,
+                ),
+                "task_ms_reduction_vs_cold": round(float(aggregate["task_ms_reduction_vs_cold"]), 4),
+                "task_ms": round(float(aggregate["task_ms"]), 4),
+            }
         )
 
 
@@ -430,6 +709,51 @@ def _compare_row(
         "text_reuse_gain": round(float(text_row["reuse_gain"]), 4),
         "protocol_reuse_gain": round(float(protocol_row["reuse_gain"]), 4),
         "reuse_gain_delta": round(float(protocol_row["reuse_gain"]) - float(text_row["reuse_gain"]), 4),
+        "text_reuse_apply_rate": round(float(text_row["reuse_apply_rate"]), 4),
+        "protocol_reuse_apply_rate": round(float(protocol_row["reuse_apply_rate"]), 4),
+        "reuse_apply_rate_delta": round(
+            float(protocol_row["reuse_apply_rate"]) - float(text_row["reuse_apply_rate"]),
+            4,
+        ),
+        "text_expectation_match_rate": round(float(text_row["expectation_match_rate"]), 4),
+        "protocol_expectation_match_rate": round(float(protocol_row["expectation_match_rate"]), 4),
+        "expectation_match_rate_delta": round(
+            float(protocol_row["expectation_match_rate"]) - float(text_row["expectation_match_rate"]),
+            4,
+        ),
+        "text_control_bytes_reduction_vs_cold": round(
+            float(text_row["control_bytes_reduction_vs_cold"]),
+            4,
+        ),
+        "protocol_control_bytes_reduction_vs_cold": round(
+            float(protocol_row["control_bytes_reduction_vs_cold"]),
+            4,
+        ),
+        "control_bytes_reduction_vs_cold_delta": round(
+            float(protocol_row["control_bytes_reduction_vs_cold"])
+            - float(text_row["control_bytes_reduction_vs_cold"]),
+            4,
+        ),
+        "text_llm_total_tokens_reduction_vs_cold": round(
+            float(text_row["llm_total_tokens_reduction_vs_cold"]),
+            4,
+        ),
+        "protocol_llm_total_tokens_reduction_vs_cold": round(
+            float(protocol_row["llm_total_tokens_reduction_vs_cold"]),
+            4,
+        ),
+        "llm_total_tokens_reduction_vs_cold_delta": round(
+            float(protocol_row["llm_total_tokens_reduction_vs_cold"])
+            - float(text_row["llm_total_tokens_reduction_vs_cold"]),
+            4,
+        ),
+        "text_task_ms_reduction_vs_cold": round(float(text_row["task_ms_reduction_vs_cold"]), 4),
+        "protocol_task_ms_reduction_vs_cold": round(float(protocol_row["task_ms_reduction_vs_cold"]), 4),
+        "task_ms_reduction_vs_cold_delta": round(
+            float(protocol_row["task_ms_reduction_vs_cold"])
+            - float(text_row["task_ms_reduction_vs_cold"]),
+            4,
+        ),
         "text_task_ms": round(float(text_row["task_ms"]), 4),
         "protocol_task_ms": round(float(protocol_row["task_ms"]), 4),
         "task_ms_delta": round(float(protocol_row["task_ms"]) - float(text_row["task_ms"]), 4),
@@ -438,6 +762,7 @@ def _compare_row(
 
 def _build_report(result: dict[str, object]) -> str:
     summary = result["summary"]
+    available_modes = [mode for mode in ("text", "protocol") if mode in summary]
     lines = [
         "# StateBus Benchmark Report",
         "",
@@ -447,6 +772,8 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Text baseline: `{result['manifest']['text_baseline']}`",
         f"- Protocol baseline: `{result['manifest']['protocol_baseline']}`",
         f"- Repeat: `{result['manifest']['repeat']}`",
+        f"- Continuous tasks per run: `{result['manifest']['continuous_task_count']}`",
+        f"- Expected reuse tasks per run: `{result['manifest']['expected_reuse_task_count']}`",
         f"- Encoder: `{result['manifest']['encoder_id']}`",
         f"- LLM backend: `{result['manifest']['llm_backend']}`",
         f"- LLM config: `{result['manifest']['llm_config_source']}`",
@@ -460,7 +787,7 @@ def _build_report(result: dict[str, object]) -> str:
         "| mode | message_count | control_bytes | state_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for mode in ("text", "protocol"):
+    for mode in available_modes:
         aggregate = summary[mode]["aggregate"]
         control_bytes = aggregate["text_bytes"] if mode == "text" else aggregate["protocol_bytes"]
         lines.append(
@@ -472,45 +799,103 @@ def _build_report(result: dict[str, object]) -> str:
     lines.extend(
         [
             "",
-            "## Task Group Reuse Summary",
+            "## Stability Summary",
             "",
-            "| task_group | mode | control_bytes | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+            "| mode | runs | control_bytes_mean | control_bytes_stddev | llm_total_tokens_mean | llm_total_tokens_stddev | task_ms_mean | task_ms_stddev | expectation_match_rate |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
-    for mode in ("text", "protocol"):
+    for mode in available_modes:
+        stability = summary[mode]["stability"]
+        aggregate = summary[mode]["aggregate"]
+        lines.append(
+            f"| {mode} | {summary[mode]['run_count']} | {stability['control_bytes']['mean']:.2f} | "
+            f"{stability['control_bytes']['stddev']:.2f} | {stability['llm_total_tokens']['mean']:.2f} | "
+            f"{stability['llm_total_tokens']['stddev']:.2f} | {stability['task_ms']['mean']:.2f} | "
+            f"{stability['task_ms']['stddev']:.2f} | {aggregate['expectation_match_rate']:.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Task Group Reuse Summary",
+            "",
+            "| task_group | mode | control_bytes | memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | expectation_match_rate | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
         for group in summary[mode]["task_groups"]:
             control_bytes = group["text_bytes"] if mode == "text" else group["protocol_bytes"]
             lines.append(
                 f"| {group['task_group']} | {mode} | {control_bytes:.2f} | "
                 f"{group['memory_hit_rate']:.2f} | {group['skipped_step_count']:.2f} | "
-                f"{group['reuse_gain']:.2f} | {group['task_ms']:.2f} |"
+                f"{group['reuse_gain']:.2f} | {group['reuse_apply_rate']:.2f} | "
+                f"{group['expectation_match_rate']:.2f} | {group['task_ms']:.2f} |"
+            )
+    if len(available_modes) == 2:
+        lines.extend(
+            [
+                "",
+                "## Task Compare",
+                "",
+                "| task_id | group | text_control_bytes | protocol_control_bytes | text_memory_hit_rate | protocol_memory_hit_rate | text_skipped_step_count | protocol_skipped_step_count | text_reuse_gain | protocol_reuse_gain | text_reuse_apply_rate | protocol_reuse_apply_rate | text_task_ms | protocol_task_ms |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        text_tasks = {item["task_id"]: item for item in summary["text"]["tasks"]}
+        protocol_tasks = {item["task_id"]: item for item in summary["protocol"]["tasks"]}
+        for task in summary["text"]["tasks"]:
+            task_id = task["task_id"]
+            text_row = text_tasks[task_id]
+            protocol_row = protocol_tasks[task_id]
+            lines.append(
+                f"| {task_id} | {task['task_group']} | {text_row['text_bytes']:.2f} | "
+                f"{protocol_row['protocol_bytes']:.2f} | {text_row['memory_hit_rate']:.2f} | "
+                f"{protocol_row['memory_hit_rate']:.2f} | {text_row['skipped_step_count']:.2f} | "
+                f"{protocol_row['skipped_step_count']:.2f} | {text_row['reuse_gain']:.2f} | "
+                f"{protocol_row['reuse_gain']:.2f} | {text_row['reuse_apply_rate']:.2f} | "
+                f"{protocol_row['reuse_apply_rate']:.2f} | {text_row['task_ms']:.2f} | "
+                f"{protocol_row['task_ms']:.2f} |"
             )
     lines.extend(
         [
             "",
-            "## Task Compare",
+            "## Reuse Vs Cold Baseline",
             "",
-            "| task_id | group | text_control_bytes | protocol_control_bytes | text_memory_hit_rate | protocol_memory_hit_rate | text_skipped_step_count | protocol_skipped_step_count | text_reuse_gain | protocol_reuse_gain | text_task_ms | protocol_task_ms |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| task_id | group | baseline_task_id | mode | apply_rate | control_bytes_reduction | llm_total_tokens_reduction | task_ms_reduction |",
+            "| --- | --- | --- | --- | ---: | ---: | ---: | ---: |",
         ]
     )
-    text_tasks = {item["task_id"]: item for item in summary["text"]["tasks"]}
-    protocol_tasks = {item["task_id"]: item for item in summary["protocol"]["tasks"]}
-    for task in summary["text"]["tasks"]:
-        task_id = task["task_id"]
-        text_row = text_tasks[task_id]
-        protocol_row = protocol_tasks[task_id]
-        lines.append(
-            f"| {task_id} | {task['task_group']} | {text_row['text_bytes']:.2f} | "
-            f"{protocol_row['protocol_bytes']:.2f} | {text_row['memory_hit_rate']:.2f} | "
-            f"{protocol_row['memory_hit_rate']:.2f} | {text_row['skipped_step_count']:.2f} | "
-            f"{protocol_row['skipped_step_count']:.2f} | {text_row['reuse_gain']:.2f} | "
-            f"{protocol_row['reuse_gain']:.2f} | {text_row['task_ms']:.2f} | "
-            f"{protocol_row['task_ms']:.2f} |"
-        )
+    for mode in available_modes:
+        for task in summary[mode]["tasks"]:
+            if task["task_id"] == task["baseline_task_id"]:
+                continue
+            lines.append(
+                f"| {task['task_id']} | {task['task_group']} | {task['baseline_task_id']} | {mode} | "
+                f"{task['reuse_apply_rate']:.2f} | {task['control_bytes_reduction_vs_cold']:.2f} | "
+                f"{task['llm_total_tokens_reduction_vs_cold']:.2f} | {task['task_ms_reduction_vs_cold']:.2f} |"
+            )
+    lines.extend(["", "## Reuse Validation", ""])
+    mismatch_rows: list[str] = []
+    for mode in available_modes:
+        lines.append(f"### {mode}")
+        mode_mismatches = []
+        for run in result["mode_runs"][mode]:
+            for task_run in run["tasks"]:
+                if not task_run["reuse_validation"]["matched_expectation"]:
+                    mode_mismatches.append(
+                        f"run={run['run_index']:02d} task={task_run['task_id']} "
+                        f"expected_reuse={task_run['reuse_validation']['expected_reuse']} "
+                        f"applied={task_run['reuse']['applied']}"
+                    )
+        if mode_mismatches:
+            mismatch_rows.extend(mode_mismatches)
+            lines.extend(f"- {row}" for row in mode_mismatches)
+        else:
+            lines.append("- all reuse outcomes matched expectations")
+        lines.append("")
     lines.extend(["", "## Pruned Steps By Mode", ""])
-    for mode in ("text", "protocol"):
+    for mode in available_modes:
         lines.append(f"### {mode}")
         pruned_rows = []
         for run in result["mode_runs"][mode]:
@@ -526,7 +911,11 @@ def _build_report(result: dict[str, object]) -> str:
         else:
             lines.append("- none")
         lines.append("")
-    lines.extend(["## Failures", "", "- none"])
+    lines.extend(["## Failures", ""])
+    if mismatch_rows:
+        lines.extend(f"- reuse mismatch: {row}" for row in mismatch_rows)
+    else:
+        lines.append("- none")
     return "\n".join(lines) + "\n"
 
 

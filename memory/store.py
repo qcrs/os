@@ -523,6 +523,8 @@ class MemoryStore:
             metadata = json.loads(row["metadata_json"])
             if query.source_agent_id and row["source_agent_id"] != query.source_agent_id:
                 continue
+            if not _metadata_matches(metadata, query.required_metadata):
+                continue
             ordered_hits.append(
                 MemoryHit(
                     memory_id=row["memory_id"],
@@ -613,6 +615,8 @@ class MemoryStore:
             metadata = json.loads(row["metadata_json"])
             if query.source_agent_id and row["source_agent_id"] != query.source_agent_id:
                 continue
+            if not _metadata_matches(metadata, query.required_metadata):
+                continue
             hits.append(
                 MemoryHit(
                     memory_id=row["memory_id"],
@@ -692,3 +696,15 @@ def _state_refs_from_json(payload: str | None) -> list[StateRef]:
         return []
     rows = json.loads(payload)
     return [StateRef(**item) for item in rows]
+
+
+def _metadata_matches(
+    metadata: dict[str, object],
+    required_metadata: dict[str, object],
+) -> bool:
+    for key, expected in required_metadata.items():
+        if expected in (None, ""):
+            continue
+        if metadata.get(key) != expected:
+            return False
+    return True

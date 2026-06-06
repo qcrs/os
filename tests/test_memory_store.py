@@ -82,6 +82,18 @@ def test_memory_store_schema_and_filters() -> None:
             )
         )
         assert not no_hits
+
+        signature_miss = store.search(
+            MemoryQuery(
+                task_theme="repo_local_latency_triage",
+                query_text="latency database saturation",
+                top_k=3,
+                min_confidence=0.8,
+                encoder_id=store.embedder.encoder_id,
+                required_metadata={"reuse_signature": "repo_local_latency_triage:cache|invalidation"},
+            )
+        )
+        assert not signature_miss
         store.close()
 
 

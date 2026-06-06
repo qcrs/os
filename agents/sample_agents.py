@@ -62,6 +62,8 @@ class PlannerAgent(BaseAgent):
             "query": task.query,
             "evidence_text": task.evidence_text,
             "tags": list(task.tags),
+            "reuse_tags": list(task.reuse_tags or task.tags),
+            "expected_reuse": task.expected_reuse,
             "summary_hint": task.summary_hint,
         }
         messages = _planner_messages(planner_input, mode=str(getattr(ctx, "mode", "protocol")))
@@ -81,8 +83,12 @@ class RetrieverAgent(BaseAgent):
                 top_k=1,
                 tags=list(step.params.get("tags", [])),
                 tags_any=list(step.params.get("tags", [])),
+                tags_all=list(step.params.get("reuse_tags", step.params.get("tags", []))),
                 min_confidence=0.6,
                 encoder_id=ctx.memory_store.embedder.encoder_id,
+                required_metadata={
+                    "reuse_signature": str(step.params.get("reuse_signature", "")),
+                },
             )
 
         reused = bool(hits)
@@ -100,6 +106,7 @@ class RetrieverAgent(BaseAgent):
             metadata={
                 "query": step.params["query"],
                 "reused_memory": reused,
+                "reuse_signature": step.params.get("reuse_signature"),
             },
         )
         embedding_ref = ctx.put_embedding_state(
@@ -220,6 +227,9 @@ class SummarizerAgent(BaseAgent):
             metadata={
                 "source_agent_id": self.agent_id,
                 "goal": getattr(ctx, "task_id", ""),
+                "task_group": getattr(ctx, "task_group", ""),
+                "reuse_signature": step.params.get("reuse_signature"),
+                "expected_reuse": bool(step.params.get("expected_reuse", False)),
                 "trace_id": ctx.trace_id,
                 "llm_model": result.model,
             },
@@ -348,6 +358,9 @@ def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
                 "query": task.query,
                 "evidence_text": task.evidence_text,
                 "tags": list(task.tags),
+                "reuse_tags": list(task.reuse_tags or task.tags),
+                "reuse_signature": task.reuse_signature,
+                "expected_reuse": task.expected_reuse,
                 "allow_memory_reuse": True,
             },
             "depends_on": [],
@@ -368,6 +381,9 @@ def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
             "params": {
                 "summary_hint": task.summary_hint,
                 "tags": list(task.tags),
+                "reuse_tags": list(task.reuse_tags or task.tags),
+                "reuse_signature": task.reuse_signature,
+                "expected_reuse": task.expected_reuse,
             },
             "depends_on": ["retrieve", "execute"],
         },

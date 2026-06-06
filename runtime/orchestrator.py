@@ -29,6 +29,7 @@ class RunContext:
     mode: str
     trace_id: str
     task_id: str
+    task_group: str
     task_theme: str
     statepool: FileBackedStatePool
     memory_store: MemoryStore
@@ -139,6 +140,7 @@ class RunContext:
         tags_all: list[str] | None = None,
         min_confidence: float = 0.0,
         encoder_id: str | None = None,
+        required_metadata: dict[str, object] | None = None,
     ) -> list[MemoryHit]:
         from protocol.messages import MemoryQuery
 
@@ -151,6 +153,7 @@ class RunContext:
             tuple(tags_all or []),
             min_confidence,
             encoder_id,
+            tuple(sorted((required_metadata or {}).items())),
         )
         if cache_key in self.memory_search_cache:
             return list(self.memory_search_cache[cache_key])
@@ -163,6 +166,7 @@ class RunContext:
             tags_all=list(tags_all or []),
             min_confidence=min_confidence,
             encoder_id=encoder_id,
+            required_metadata=dict(required_metadata or {}),
         )
         self.metrics.memory_query_count += 1
         self.emit(query)
@@ -204,6 +208,7 @@ class Orchestrator:
         *,
         mode: str,
         task_id: str,
+        task_group: str,
         task_theme: str,
         state_root: str | Path,
         memory_db_path: str | Path,
@@ -217,6 +222,7 @@ class Orchestrator:
             mode=mode,
             trace_id=trace_id or f"{task_id}-{uuid4().hex[:8]}",
             task_id=task_id,
+            task_group=task_group,
             task_theme=task_theme,
             statepool=statepool,
             memory_store=memory_store,
@@ -298,8 +304,12 @@ class Orchestrator:
             top_k=1,
             tags=list(retrieve_step.params.get("tags", [])),
             tags_any=list(retrieve_step.params.get("tags", [])),
+            tags_all=list(retrieve_step.params.get("reuse_tags", retrieve_step.params.get("tags", []))),
             min_confidence=0.6,
             encoder_id=ctx.memory_store.embedder.encoder_id,
+            required_metadata={
+                "reuse_signature": str(retrieve_step.params.get("reuse_signature", "")),
+            },
         )
         if not hits:
             return plan

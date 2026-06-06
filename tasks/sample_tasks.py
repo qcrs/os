@@ -21,7 +21,15 @@ class SampleTask:
     query: str
     evidence_text: str
     tags: tuple[str, ...]
+    reuse_tags: tuple[str, ...]
+    expected_reuse: bool
     summary_hint: str
+
+    @property
+    def reuse_signature(self) -> str:
+        tags = self.reuse_tags or self.tags
+        normalized = "|".join(sorted(set(tags)))
+        return f"{self.task_theme}:{normalized}"
 
 
 def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
@@ -38,6 +46,8 @@ def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
             query=str(item["query"]).strip(),
             evidence_text=str(item["evidence_text"]).strip(),
             tags=tuple(str(tag) for tag in item.get("tags", [])),
+            reuse_tags=tuple(str(tag) for tag in item.get("reuse_tags", item.get("tags", []))),
+            expected_reuse=bool(item.get("expected_reuse", False)),
             summary_hint=str(item["summary_hint"]).strip(),
         )
         for item in tasks
@@ -62,6 +72,9 @@ def build_plan(task: SampleTask) -> Plan:
                     "query": task.query,
                     "evidence_text": task.evidence_text,
                     "tags": list(task.tags),
+                    "reuse_tags": list(task.reuse_tags or task.tags),
+                    "reuse_signature": task.reuse_signature,
+                    "expected_reuse": task.expected_reuse,
                     "allow_memory_reuse": True,
                 },
                 depends_on=[],
@@ -82,6 +95,9 @@ def build_plan(task: SampleTask) -> Plan:
                 params={
                     "summary_hint": task.summary_hint,
                     "tags": list(task.tags),
+                    "reuse_tags": list(task.reuse_tags or task.tags),
+                    "reuse_signature": task.reuse_signature,
+                    "expected_reuse": task.expected_reuse,
                 },
                 depends_on=["retrieve", "execute"],
             ),

@@ -100,6 +100,7 @@ class MemoryQuery:
     created_after_ns: int | None = None
     encoder_id: str | None = None
     limit_active_only: bool = True
+    required_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
