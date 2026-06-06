@@ -304,69 +304,104 @@ class DeterministicLLMClient:
             raise ValueError("deterministic llm requires at least one message")
         user_content = messages[-1].content
         if purpose == "planner":
-            payload = (
-                parse_tagged_json(user_content, "statebus-planner-input")
-                if "<statebus-planner-input>" in user_content
-                else parse_text_planner_brief(user_content)
-            )
-            plan = {
-                "steps": [
-                    {
-                        "step_id": "retrieve",
-                        "owner_agent": "retriever",
-                        "action": "RETRIEVE_EVIDENCE",
-                        "input_state_refs": [],
-                        "params": {
-                            "query": payload["query"],
-                            "evidence_text": payload["evidence_text"],
-                            "tags": payload.get("tags", []),
-                            "allow_memory_reuse": True,
+            if "<sb-plan-v1>" in user_content:
+                payload = parse_compact_protocol_planner_brief(user_content)
+                plan = {
+                    "r": {
+                        "q": payload["query"],
+                        "e": payload["evidence_text"],
+                        "t": payload.get("tags", []),
+                        "rt": payload.get("reuse_tags", payload.get("tags", [])),
+                        "sig": payload.get("reuse_signature", ""),
+                        "er": payload.get("expected_reuse", False),
+                        "reuse": True,
+                    },
+                    "x": {},
+                    "s": {
+                        "h": payload["summary_hint"],
+                        "t": payload.get("tags", []),
+                        "rt": payload.get("reuse_tags", payload.get("tags", [])),
+                        "sig": payload.get("reuse_signature", ""),
+                        "er": payload.get("expected_reuse", False),
+                    },
+                }
+            else:
+                payload = (
+                    parse_tagged_json(user_content, "statebus-planner-input")
+                    if "<statebus-planner-input>" in user_content
+                    else parse_text_planner_brief(user_content)
+                )
+                plan = {
+                    "steps": [
+                        {
+                            "step_id": "retrieve",
+                            "owner_agent": "retriever",
+                            "action": "RETRIEVE_EVIDENCE",
+                            "input_state_refs": [],
+                            "params": {
+                                "query": payload["query"],
+                                "evidence_text": payload["evidence_text"],
+                                "tags": payload.get("tags", []),
+                                "allow_memory_reuse": True,
+                            },
+                            "depends_on": [],
                         },
-                        "depends_on": [],
-                    },
-                    {
-                        "step_id": "execute",
-                        "owner_agent": "executor",
-                        "action": "EXECUTE_PLAYBOOK",
-                        "input_state_refs": [],
-                        "params": {},
-                        "depends_on": ["retrieve"],
-                    },
-                    {
-                        "step_id": "summarize",
-                        "owner_agent": "summarizer",
-                        "action": "SUMMARIZE_AND_COMMIT",
-                        "input_state_refs": [],
-                        "params": {
-                            "summary_hint": payload["summary_hint"],
-                            "tags": payload.get("tags", []),
+                        {
+                            "step_id": "execute",
+                            "owner_agent": "executor",
+                            "action": "EXECUTE_PLAYBOOK",
+                            "input_state_refs": [],
+                            "params": {},
+                            "depends_on": ["retrieve"],
                         },
-                        "depends_on": ["retrieve", "execute"],
-                    },
-                ]
-            }
+                        {
+                            "step_id": "summarize",
+                            "owner_agent": "summarizer",
+                            "action": "SUMMARIZE_AND_COMMIT",
+                            "input_state_refs": [],
+                            "params": {
+                                "summary_hint": payload["summary_hint"],
+                                "tags": payload.get("tags", []),
+                            },
+                            "depends_on": ["retrieve", "execute"],
+                        },
+                    ]
+                }
             return LLMResult(
                 text=json.dumps(plan, ensure_ascii=False, sort_keys=True),
                 model=self.config.role_config("planner").model,
             )
         if purpose == "summarizer":
-            payload = (
-                parse_tagged_json(user_content, "statebus-summary-input")
-                if "<statebus-summary-input>" in user_content
-                else parse_text_summarizer_handoff(user_content)
-            )
+            compact_protocol = "<sb-summary-v1>" in user_content
+            if compact_protocol:
+                payload = parse_compact_protocol_summarizer_handoff(user_content)
+            else:
+                payload = (
+                    parse_tagged_json(user_content, "statebus-summary-input")
+                    if "<statebus-summary-input>" in user_content
+                    else parse_text_summarizer_handoff(user_content)
+                )
             reusable_steps = list(payload.get("reusable_steps") or ["retrieve", "execute"])
             summary = (
                 f"{payload['summary_hint']}\n"
                 f"Evidence: {payload['evidence_text']}\n"
                 f"Playbook:\n{payload['actions_text']}"
             )
-            summary_payload = {
-                "summary": summary,
-                "confidence": 0.95,
-                "tags": payload.get("tags", []),
-                "reusable_steps": reusable_steps,
-            }
+            summary_payload = (
+                {
+                    "s": summary,
+                    "c": 0.95,
+                    "t": payload.get("tags", []),
+                    "r": reusable_steps,
+                }
+                if compact_protocol
+                else {
+                    "summary": summary,
+                    "confidence": 0.95,
+                    "tags": payload.get("tags", []),
+                    "reusable_steps": reusable_steps,
+                }
+            )
             return LLMResult(
                 text=json.dumps(summary_payload, ensure_ascii=False, sort_keys=True),
                 model=self.config.role_config("summarizer").model,
@@ -440,6 +475,20 @@ def parse_text_planner_brief(text: str) -> dict[str, Any]:
     }
 
 
+def parse_compact_protocol_planner_brief(text: str) -> dict[str, Any]:
+    payload = parse_tagged_json(text, "sb-plan-v1")
+    return {
+        "goal": str(payload.get("g", "")),
+        "query": str(payload.get("q", "")),
+        "evidence_text": str(payload.get("e", "")),
+        "summary_hint": str(payload.get("h", "")),
+        "tags": [str(tag) for tag in payload.get("t", [])],
+        "reuse_tags": [str(tag) for tag in payload.get("rt", payload.get("t", []))],
+        "reuse_signature": str(payload.get("sig", "")),
+        "expected_reuse": bool(payload.get("er", False)),
+    }
+
+
 def parse_text_summarizer_handoff(text: str) -> dict[str, Any]:
     return {
         "task_id": _extract_line_value(text, "Task ID:"),
@@ -449,6 +498,17 @@ def parse_text_summarizer_handoff(text: str) -> dict[str, Any]:
         "actions_text": _extract_after(text, "Playbook actions:\n"),
         "tags": _split_csv(_extract_line_value(text, "Tags:")),
         "reusable_steps": _split_csv(_extract_line_value(text, "Reusable steps:")),
+    }
+
+
+def parse_compact_protocol_summarizer_handoff(text: str) -> dict[str, Any]:
+    payload = parse_tagged_json(text, "sb-summary-v1")
+    return {
+        "summary_hint": str(payload.get("h", "")),
+        "evidence_text": str(payload.get("e", "")),
+        "actions_text": str(payload.get("a", "")),
+        "tags": [str(tag) for tag in payload.get("t", [])],
+        "reusable_steps": [str(step_id) for step_id in payload.get("r", [])],
     }
 
 

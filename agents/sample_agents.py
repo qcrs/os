@@ -21,6 +21,9 @@ from runtime.llm import (
 )
 from tasks.sample_tasks import SampleTask
 
+PROTOCOL_PLANNER_TAG = "sb-plan-v1"
+PROTOCOL_SUMMARIZER_TAG = "sb-summary-v1"
+
 
 def _build_capability(
     agent_id: str,
@@ -298,6 +301,8 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
 def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
     payload = extract_json_object(output_text)
     steps = payload.get("steps")
+    if not isinstance(steps, list) and any(key in payload for key in ("r", "x", "s")):
+        steps = _compact_planner_output_to_steps(payload)
     if not isinstance(steps, list) or not steps:
         raise ValueError(f"planner output missing steps: {output_text!r}")
     expected_contract = _expected_plan_contract(task)
@@ -335,6 +340,13 @@ def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
 
 def _summary_from_llm_output(output_text: str) -> dict[str, Any]:
     payload = extract_json_object(output_text)
+    if "summary" not in payload and "s" in payload:
+        payload = {
+            "summary": payload.get("s", ""),
+            "confidence": payload.get("c", payload.get("confidence", 0.95)),
+            "tags": payload.get("t", payload.get("tags", [])),
+            "reusable_steps": payload.get("r", payload.get("reusable_steps", ["retrieve", "execute"])),
+        }
     summary = str(payload.get("summary", "")).strip()
     if not summary:
         raise ValueError(f"summarizer output missing summary: {output_text!r}")
@@ -392,20 +404,20 @@ def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
 
 
 def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
-    system_prompt = (
-        "You are the StateBus Planner. Output strict JSON only. "
-        "Return an object with a single key named steps. "
-        "Use exactly three steps with these fixed contracts and exact field names: "
-        "step_id, owner_agent, action, input_state_refs, params, depends_on. "
-        "Step 1 must be retrieve -> owner_agent retriever action RETRIEVE_EVIDENCE. "
-        "Step 2 must be execute -> owner_agent executor action EXECUTE_PLAYBOOK. "
-        "Step 3 must be summarize -> owner_agent summarizer action SUMMARIZE_AND_COMMIT. "
-        "retrieve.params must include query, evidence_text, tags, and allow_memory_reuse=true. "
-        "execute.params must be {}. summarize.params must include summary_hint and tags. "
-        "Do not wrap each step inside a retrieve/execute/summarize key. "
-        "Do not add prose or markdown."
-    )
     if mode == "text":
+        system_prompt = (
+            "You are the StateBus Planner. Output strict JSON only. "
+            "Return an object with a single key named steps. "
+            "Use exactly three steps with these fixed contracts and exact field names: "
+            "step_id, owner_agent, action, input_state_refs, params, depends_on. "
+            "Step 1 must be retrieve -> owner_agent retriever action RETRIEVE_EVIDENCE. "
+            "Step 2 must be execute -> owner_agent executor action EXECUTE_PLAYBOOK. "
+            "Step 3 must be summarize -> owner_agent summarizer action SUMMARIZE_AND_COMMIT. "
+            "retrieve.params must include query, evidence_text, tags, and allow_memory_reuse=true. "
+            "execute.params must be {}. summarize.params must include summary_hint and tags. "
+            "Do not wrap each step inside a retrieve/execute/summarize key. "
+            "Do not add prose or markdown."
+        )
         system_prompt = (
             "You are the StateBus Planner in a text-only collaboration baseline. "
             "Another agent is handing you a natural language task brief instead of a structured control packet. "
@@ -427,7 +439,26 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             f"{payload['evidence_text']}\n"
         )
     else:
-        user_prompt = tagged_json_block("statebus-planner-input", payload)
+        system_prompt = (
+            "You are the StateBus Planner. Output JSON only. "
+            "Return {\"r\":{...},\"x\":{},\"s\":{...}}. "
+            "r must contain q,e,t,rt,sig,er,reuse. "
+            "s must contain h,t,rt,sig,er. "
+            "Copy values from the input packet. Keep keys short. No markdown."
+        )
+        user_prompt = tagged_json_block(
+            PROTOCOL_PLANNER_TAG,
+            {
+                "g": payload["goal"],
+                "q": payload["query"],
+                "e": payload["evidence_text"],
+                "h": payload["summary_hint"],
+                "t": list(payload["tags"]),
+                "rt": list(payload.get("reuse_tags", payload["tags"])),
+                "sig": payload.get("reuse_signature", ""),
+                "er": bool(payload.get("expected_reuse", False)),
+            },
+        )
     return [
         ChatMessage(role="system", content=system_prompt),
         ChatMessage(role="user", content=user_prompt),
@@ -435,13 +466,13 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
 
 
 def _summarizer_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
-    system_prompt = (
-        "You are the StateBus Summarizer. Output strict JSON only. "
-        "Return an object with summary, confidence, tags, and reusable_steps. "
-        "Base the summary on the evidence and playbook. Keep it concise but concrete. "
-        "Do not add markdown fences or extra prose."
-    )
     if mode == "text":
+        system_prompt = (
+            "You are the StateBus Summarizer. Output strict JSON only. "
+            "Return an object with summary, confidence, tags, and reusable_steps. "
+            "Base the summary on the evidence and playbook. Keep it concise but concrete. "
+            "Do not add markdown fences or extra prose."
+        )
         system_prompt = (
             "You are the StateBus Summarizer in a text-only collaboration baseline. "
             "You are receiving a natural language handoff from prior agents instead of a structured packet. "
@@ -461,10 +492,60 @@ def _summarizer_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMess
             f"{payload['actions_text']}\n"
         )
     else:
-        user_prompt = tagged_json_block("statebus-summary-input", payload)
+        system_prompt = (
+            "You are the StateBus Summarizer. Output JSON only. "
+            "Return {\"s\":\"summary\",\"c\":0.95,\"t\":[...],\"r\":[...]} . "
+            "Use concise concrete summary text. No markdown."
+        )
+        user_prompt = tagged_json_block(
+            PROTOCOL_SUMMARIZER_TAG,
+            {
+                "h": payload["summary_hint"],
+                "e": payload["evidence_text"],
+                "a": payload["actions_text"],
+                "t": list(payload["tags"]),
+                "r": list(payload["reusable_steps"]),
+            },
+        )
     return [
         ChatMessage(role="system", content=system_prompt),
         ChatMessage(role="user", content=user_prompt),
+    ]
+
+
+def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    retrieve = dict(payload.get("r") or {})
+    execute = dict(payload.get("x") or {})
+    summarize = dict(payload.get("s") or {})
+    if not retrieve and not summarize and "steps" not in payload:
+        raise ValueError(f"planner output missing steps: {payload!r}")
+    return [
+        {
+            "step_id": "retrieve",
+            "params": {
+                "query": retrieve.get("q", ""),
+                "evidence_text": retrieve.get("e", ""),
+                "tags": list(retrieve.get("t", [])),
+                "reuse_tags": list(retrieve.get("rt", retrieve.get("t", []))),
+                "reuse_signature": str(retrieve.get("sig", "")),
+                "expected_reuse": bool(retrieve.get("er", False)),
+                "allow_memory_reuse": bool(retrieve.get("reuse", True)),
+            },
+        },
+        {
+            "step_id": "execute",
+            "params": execute,
+        },
+        {
+            "step_id": "summarize",
+            "params": {
+                "summary_hint": summarize.get("h", ""),
+                "tags": list(summarize.get("t", [])),
+                "reuse_tags": list(summarize.get("rt", summarize.get("t", []))),
+                "reuse_signature": str(summarize.get("sig", "")),
+                "expected_reuse": bool(summarize.get("er", False)),
+            },
+        },
     ]
 
 

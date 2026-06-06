@@ -199,3 +199,35 @@
   - the latency win is currently modest, so later work should still target planner/summarizer prompt simplification if a larger gap is needed
   - `grpcio-tools` remains absent from the host env, so proto regeneration is still not self-contained
 - Commit: pending latency-fix result commit
+
+## 2026-06-07 13: Compact protocol LLM prompts and official repeat-10 validation
+- Goal: deepen the protocol advantage by shrinking planner/summarizer LLM I/O instead of only shrinking wire accounting.
+- Changes:
+  - introduced compact protocol prompt tags `sb-plan-v1` and `sb-summary-v1`
+  - switched protocol planner input to short-key structured packets and protocol planner output to compact `{r,x,s}` JSON
+  - switched protocol summarizer input to short-key packets and protocol summarizer output to compact `{s,c,t,r}` JSON
+  - kept text mode on natural-language briefs/handoffs so the baseline stayed text-centric
+  - preserved backward compatibility by letting plan/summary parsers accept both legacy and compact JSON shapes
+  - forced runner progress prints to flush immediately so live long runs are observable in real time
+  - reran live API preflight and official `repeat=10` under the compact protocol prompt path
+- Verification:
+  - `python -m py_compile agents/sample_agents.py runtime/llm.py eval/runner.py tests/test_llm_runtime.py`
+  - `python -m pytest -q`
+  - live preflight: `/home/qcrs/statebus/project/runs/benchmark_20260607_compact_prompt_preflight`
+  - live official `repeat=10`: `/home/qcrs/statebus/project/runs/benchmark_20260607_compact_prompt_repeat10`
+- Result:
+  - live preflight flipped the gap from modest to large:
+    - `text`: `control_bytes=30399`, `llm_total_tokens=10385`, `task_ms=45605.99`
+    - `protocol`: `control_bytes=21431`, `llm_total_tokens=6924`, `task_ms=34459.37`
+  - official live `repeat=10` confirmed the gain without failures:
+    - `text`: `control_bytes=30229.20`, `llm_total_tokens=10362.00`, `task_ms=44201.38`
+    - `protocol`: `control_bytes=21467.80`, `llm_total_tokens=6931.10`, `task_ms=33621.55`
+  - the compact protocol path now improves all three headline metrics at once:
+    - control bytes lower by about `29%`
+    - total tokens lower by about `33%`
+    - end-to-end task time lower by about `24%`
+  - live `repeat=10` completed with `failure_count=0` and `expectation_match_rate=1.00`
+- Risks / follow-up:
+  - protocol reuse currently hits more often than text in live runs because the more canonical summaries are easier to match; keep that distinction explicit in reporting
+  - proto regeneration is still checked-in-source driven until `grpcio-tools` is added to the host env
+- Commit: pending compact-prompt result commit

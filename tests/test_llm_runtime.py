@@ -175,7 +175,8 @@ def test_text_mode_uses_natural_language_prompts() -> None:
     )
     assert "Planner brief for a text-only multi-agent workflow." in planner_messages[-1].content
     assert "<statebus-planner-input>" not in planner_messages[-1].content
-    assert "<statebus-planner-input>" in protocol_messages[-1].content
+    assert "<sb-plan-v1>" in protocol_messages[-1].content
+    assert '"task_id"' not in protocol_messages[-1].content
 
     summary_messages = _summarizer_messages(
         {
@@ -191,6 +192,20 @@ def test_text_mode_uses_natural_language_prompts() -> None:
     )
     assert "Summarizer handoff for a text-only multi-agent workflow." in summary_messages[-1].content
     assert "<statebus-summary-input>" not in summary_messages[-1].content
+    protocol_summary_messages = _summarizer_messages(
+        {
+            "task_id": task.task_id,
+            "task_theme": task.task_theme,
+            "summary_hint": task.summary_hint,
+            "evidence_text": task.evidence_text,
+            "actions_text": "rollback release-17",
+            "tags": list(task.tags),
+            "reusable_steps": ["retrieve", "execute"],
+        },
+        mode="protocol",
+    )
+    assert "<sb-summary-v1>" in protocol_summary_messages[-1].content
+    assert '"task_theme"' not in protocol_summary_messages[-1].content
 
 
 def test_deterministic_llm_parses_text_mode_prompts() -> None:
@@ -228,3 +243,47 @@ def test_deterministic_llm_parses_text_mode_prompts() -> None:
     payload = _summary_from_llm_output(summary_result.text)
     assert payload["summary"]
     assert payload["reusable_steps"] == ["retrieve", "execute"]
+
+
+def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
+    task = default_task_chain()[0]
+    client = DeterministicLLMClient()
+    planner_messages = _planner_messages(
+        {
+            "task_id": task.task_id,
+            "task_group": task.task_group,
+            "task_theme": task.task_theme,
+            "goal": task.goal,
+            "query": task.query,
+            "evidence_text": task.evidence_text,
+            "tags": list(task.tags),
+            "reuse_tags": list(task.reuse_tags),
+            "reuse_signature": task.reuse_signature,
+            "expected_reuse": task.expected_reuse,
+            "summary_hint": task.summary_hint,
+        },
+        mode="protocol",
+    )
+    planner_result = asyncio.run(client.complete(planner_messages, purpose="planner"))
+    planner_payload = json.loads(planner_result.text)
+    assert set(planner_payload) == {"r", "s", "x"}
+    assert _plan_from_llm_output(task, planner_result.text) == build_plan(task)
+
+    summary_messages = _summarizer_messages(
+        {
+            "task_id": task.task_id,
+            "task_theme": task.task_theme,
+            "summary_hint": task.summary_hint,
+            "evidence_text": task.evidence_text,
+            "actions_text": "rollback release-17\ncreate orders_created_at index",
+            "tags": list(task.tags),
+            "reusable_steps": ["retrieve", "execute"],
+        },
+        mode="protocol",
+    )
+    summary_result = asyncio.run(client.complete(summary_messages, purpose="summarizer"))
+    summary_payload = json.loads(summary_result.text)
+    assert set(summary_payload) == {"c", "r", "s", "t"}
+    normalized = _summary_from_llm_output(summary_result.text)
+    assert normalized["summary"]
+    assert normalized["reusable_steps"] == ["retrieve", "execute"]

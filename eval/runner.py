@@ -642,14 +642,16 @@ def _progress_line(event: dict[str, object]) -> None:
             f"mode={event['mode']} run={int(event['run_index']):02d} "
             f"task={int(event['task_index'])}/{int(event['task_count'])} "
             f"id={event['task_id']} llm_tokens={int(event['llm_total_tokens'])} "
-            f"task_ms={float(event['task_ms']):.2f}"
+            f"task_ms={float(event['task_ms']):.2f}",
+            flush=True,
         )
         return
     print(
         "[statebus] "
         f"mode={event['mode']} run={int(event['run_index']):02d} "
         f"task={int(event['task_index'])}/{int(event['task_count'])} "
-        f"id={event['task_id']} failed={event.get('error', 'unknown')}"
+        f"id={event['task_id']} failed={event.get('error', 'unknown')}",
+        flush=True,
     )
 
 
