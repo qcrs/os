@@ -177,7 +177,7 @@
 - Risks / follow-up:
   - `protocol` still lags `text` slightly on end-to-end wall time in the current live `repeat=10` run, so latency advantage is not yet established
   - proto regeneration still depends on adding `grpcio-tools` if we want reproducible local codegen instead of checked-in generated output
-- Commit: pending live-results record commit
+- Commit: `595aa2c`
 
 ## 2026-06-07 12: Live latency fairness fix via alternating mode schedule
 - Goal: resolve the remaining anomaly where `protocol` had lower bytes/tokens but worse live wall time.
@@ -198,7 +198,7 @@
 - Risks / follow-up:
   - the latency win is currently modest, so later work should still target planner/summarizer prompt simplification if a larger gap is needed
   - `grpcio-tools` remains absent from the host env, so proto regeneration is still not self-contained
-- Commit: pending latency-fix result commit
+- Commit: `4f3f5df`
 
 ## 2026-06-07 13: Compact protocol LLM prompts and official repeat-10 validation
 - Goal: deepen the protocol advantage by shrinking planner/summarizer LLM I/O instead of only shrinking wire accounting.
@@ -230,4 +230,4 @@
 - Risks / follow-up:
   - protocol reuse currently hits more often than text in live runs because the more canonical summaries are easier to match; keep that distinction explicit in reporting
   - proto regeneration is still checked-in-source driven until `grpcio-tools` is added to the host env
-- Commit: pending compact-prompt result commit
+- Commit: `6cf6271`
