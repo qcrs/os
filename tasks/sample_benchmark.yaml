@@ -1,0 +1,73 @@
+tasks:
+  - task_id: sample-latency-001
+    task_group: latency_chain
+    task_order: 1
+    task_theme: repo_local_latency_triage
+    goal: Diagnose the first latency regression from repo-local sample evidence.
+    query: api latency regression slow query pool saturation
+    evidence_text: >
+      Sample incident A: api p95 climbed to 820ms after release-17. The
+      repo-local trace notes DB pool saturation and a slow orders query.
+      Rollback release-17 and add the missing orders_created_at index.
+    tags:
+      - latency
+      - database
+      - release-17
+    summary_hint: >
+      Latency regression traced to DB pool saturation and a slow orders query
+      after release-17; rollback plus index creation is the recommended playbook.
+
+  - task_id: sample-latency-002
+    task_group: latency_chain
+    task_order: 2
+    task_theme: repo_local_latency_triage
+    goal: Reuse previous latency memory for the follow-up incident.
+    query: follow-up latency regression slow query database pool
+    evidence_text: >
+      Sample incident B: a follow-up latency spike matches the earlier pattern.
+      The repo-local note again mentions slow query pressure and database pool
+      contention.
+    tags:
+      - latency
+      - database
+      - followup
+    summary_hint: >
+      Follow-up latency incident matches the earlier database saturation playbook
+      and should reuse the prior remediation steps before re-running deeper
+      diagnostics.
+
+  - task_id: sample-cache-001
+    task_group: cache_chain
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    goal: Diagnose the first cache staleness incident from repo-local evidence.
+    query: cache staleness stale inventory invalidation lag
+    evidence_text: >
+      Sample incident C: inventory pages showed stale counts after a batch sync.
+      The repo-local note points to delayed cache invalidation on the inventory
+      aggregate key and recommends forcing the invalidation hook after the sync.
+    tags:
+      - cache
+      - invalidation
+      - inventory
+    summary_hint: >
+      Cache staleness came from delayed invalidation on the inventory aggregate
+      key after batch sync; forcing the invalidation hook is the preferred fix.
+
+  - task_id: sample-cache-002
+    task_group: cache_chain
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    goal: Reuse previous cache memory for the follow-up stale inventory incident.
+    query: follow-up stale inventory cache invalidation lag
+    evidence_text: >
+      Sample incident D: a second stale inventory alert follows the same sync
+      window pattern. The repo-local note again mentions cache invalidation lag
+      on the shared aggregate key.
+    tags:
+      - cache
+      - invalidation
+      - followup
+    summary_hint: >
+      Follow-up cache staleness matches the earlier invalidation lag playbook and
+      should reuse the prior remediation before deeper investigation.

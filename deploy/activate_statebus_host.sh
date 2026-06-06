@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+export STATEBUS_HOME="${STATEBUS_HOME:-$HOME/statebus}"
+export STATEBUS_ENV_PREFIX="${STATEBUS_ENV_PREFIX:-$STATEBUS_HOME/conda-envs/statebus_host}"
+
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$STATEBUS_HOME/caches/pip}"
+export HF_HOME="${HF_HOME:-$STATEBUS_HOME/caches/hf}"
+export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
+export SENTENCE_TRANSFORMERS_HOME="${SENTENCE_TRANSFORMERS_HOME:-$HF_HOME/sentence_transformers}"
+export STATEBUS_WORKDIR="${STATEBUS_WORKDIR:-$STATEBUS_HOME/work}"
+export STATEBUS_STATEPOOL_DIR="${STATEBUS_STATEPOOL_DIR:-$STATEBUS_WORKDIR/statepool}"
+export STATEBUS_RUNS_DIR="${STATEBUS_RUNS_DIR:-$STATEBUS_HOME/runs}"
+export STATEBUS_LOGS_DIR="${STATEBUS_LOGS_DIR:-$STATEBUS_HOME/logs}"
+export STATEBUS_MODELS_DIR="${STATEBUS_MODELS_DIR:-$STATEBUS_HOME/models}"
+export STATEBUS_LLM_CONFIG_FILE="${STATEBUS_LLM_CONFIG_FILE:-$SCRIPT_DIR/statebus_llm.yaml.local}"
+export STATEBUS_EMBED_DEVICE="${STATEBUS_EMBED_DEVICE:-auto}"
+
+STATEBUS_LLM_ENV_FILE="${STATEBUS_LLM_ENV_FILE:-$SCRIPT_DIR/statebus_llm.env.local}"
+if [ -f "$STATEBUS_LLM_ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$STATEBUS_LLM_ENV_FILE"
+fi
+
+CONDA_BASE="$("/opt/miniconda/bin/conda" info --base)"
+source "$CONDA_BASE/etc/profile.d/conda.sh"
+conda activate "$STATEBUS_ENV_PREFIX"
+
+echo "[statebus] active env: $CONDA_PREFIX"
+echo "[statebus] model dir: $STATEBUS_MODELS_DIR"
+echo "[statebus] statepool dir: $STATEBUS_STATEPOOL_DIR"
+echo "[statebus] llm config: $STATEBUS_LLM_CONFIG_FILE"
+echo "[statebus] embed device: $STATEBUS_EMBED_DEVICE"
