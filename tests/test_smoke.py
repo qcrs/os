@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from eval.runner import run_benchmark
+from eval.runner import _mode_order_for_run, run_benchmark
 from memory.store import DeterministicEmbeddingProvider
 from protocol.messages import PlanStep, StateRef, text_frame
 from runtime.llm import DeterministicLLMClient
@@ -199,3 +199,8 @@ def test_benchmark_repeat_ten_records_stability() -> None:
     assert result["summary"]["text"]["run_count"] == 10
     assert result["summary"]["text"]["aggregate"]["expectation_match_rate"] == 1.0
     assert result["summary"]["text"]["stability"]["control_bytes"]["mean"] > 0.0
+
+
+def test_mode_order_alternates_by_run() -> None:
+    assert _mode_order_for_run(("text", "protocol"), 0) == ("text", "protocol")
+    assert _mode_order_for_run(("text", "protocol"), 1) == ("protocol", "text")

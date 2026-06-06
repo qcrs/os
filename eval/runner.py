@@ -179,6 +179,12 @@ def _build_run_session(mode: str) -> RunSession:
     return RunSession(mode=mode)
 
 
+def _mode_order_for_run(modes: tuple[str, ...], run_index: int) -> tuple[str, ...]:
+    if run_index % 2 == 0:
+        return modes
+    return tuple(reversed(modes))
+
+
 async def _run_mode_once(
     *,
     mode: str,
@@ -669,6 +675,7 @@ def _build_result(
             "expected_reuse_task_count": sum(1 for task in tasks if task.expected_reuse),
             "task_groups": sorted({task.task_group for task in tasks}),
             "modes": list(modes),
+            "mode_schedule": "paired_round_robin_alternating",
             "text_baseline": "natural_language_briefs_and_narrative_frames",
             "protocol_baseline": "protobuf_control_frames",
             "repeat": repeat,
@@ -713,8 +720,8 @@ async def run_benchmark(
     llm_description = active_llm.describe()
     active_statepool_config = statepool_config or StatePoolConfig.from_env()
     mode_runs: dict[str, list[dict[str, object]]] = {mode: [] for mode in modes}
-    for mode in modes:
-        for run_index in range(repeat):
+    for run_index in range(repeat):
+        for mode in _mode_order_for_run(modes, run_index):
             run_root = out_path / "artifacts" / mode / f"run_{run_index:02d}"
             if run_root.exists():
                 shutil.rmtree(run_root)
@@ -1016,6 +1023,7 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Task set: `{result['manifest']['task_set_path']}`",
         f"- Task groups: `{', '.join(result['manifest']['task_groups'])}`",
         f"- Modes: `{', '.join(result['manifest']['modes'])}`",
+        f"- Mode schedule: `{result['manifest'].get('mode_schedule', 'legacy_blocked')}`",
         f"- Text baseline: `{result['manifest']['text_baseline']}`",
         f"- Protocol baseline: `{result['manifest']['protocol_baseline']}`",
         f"- Repeat: `{result['manifest']['repeat']}`",

@@ -178,3 +178,24 @@
   - `protocol` still lags `text` slightly on end-to-end wall time in the current live `repeat=10` run, so latency advantage is not yet established
   - proto regeneration still depends on adding `grpcio-tools` if we want reproducible local codegen instead of checked-in generated output
 - Commit: pending live-results record commit
+
+## 2026-06-07 12: Live latency fairness fix via alternating mode schedule
+- Goal: resolve the remaining anomaly where `protocol` had lower bytes/tokens but worse live wall time.
+- Changes:
+  - diagnosed that the runner executed all `text` runs first and all `protocol` runs second, which biased live API latency by time-of-day/service-load drift
+  - changed benchmark scheduling to `paired_round_robin_alternating`
+  - added `mode_schedule` to the benchmark manifest/report and a regression test for alternating run order
+- Verification:
+  - `python -m pytest -q`
+  - short live validation at `/home/qcrs/statebus/runs/benchmark_20260607_001002`
+  - corrected official live `repeat=10` at `/home/qcrs/statebus/runs/benchmark_20260607_001355`
+- Result:
+  - the short live validation already flipped end-to-end time in favor of `protocol`
+  - corrected official live `repeat=10` now reports:
+    - `text`: `control_bytes=30173.20`, `llm_total_tokens=10356.60`, `task_ms=46881.31`
+    - `protocol`: `control_bytes=23847.60`, `llm_total_tokens=10230.30`, `task_ms=46658.49`
+  - after removing the blocked-by-mode ordering bias, `protocol` is now better than `text` on control bytes, total tokens, and mean end-to-end task time
+- Risks / follow-up:
+  - the latency win is currently modest, so later work should still target planner/summarizer prompt simplification if a larger gap is needed
+  - `grpcio-tools` remains absent from the host env, so proto regeneration is still not self-contained
+- Commit: pending latency-fix result commit
