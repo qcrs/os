@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from eval.metrics import TaskMetrics
 from memory.store import EmbeddingProvider, MemoryStore
+from runtime.contracts import CapabilityTable, SchemaInterceptor
 from runtime.llm import LLMResult
 from protocol.messages import (
     Ack,
@@ -18,10 +19,84 @@ from protocol.messages import (
     PlanStep,
     StateRef,
     StepResult,
+    message_type,
     protocol_bytes,
     text_frame,
 )
-from statepool.store import FileBackedStatePool
+from statepool.store import (
+    MMAP_FILE_STORAGE,
+    PY_SHARED_MEMORY_STORAGE,
+    StatePool,
+    StatePoolConfig,
+    cleanup_shared_memory_handles,
+)
+
+
+@dataclass
+class RunSession:
+    mode: str
+    handshake_complete: bool = False
+    capability_table: CapabilityTable = field(default_factory=CapabilityTable)
+    setup_message_count: int = 0
+    setup_text_chars: int = 0
+    setup_text_bytes: int = 0
+    setup_protocol_bytes: int = 0
+    message_breakdown: dict[str, dict[str, int]] = field(default_factory=dict)
+    owned_shared_handles: set[str] = field(default_factory=set)
+
+    def record_message(self, message: object, *, phase: str) -> tuple[int, int, int]:
+        protocol_size = len(protocol_bytes(message))
+        rendered = text_frame(message)
+        text_chars = len(rendered)
+        text_size = len(rendered.encode("utf-8"))
+        name = message_type(message)
+        row = self.message_breakdown.setdefault(
+            name,
+            {
+                "message_count": 0,
+                "protocol_bytes": 0,
+                "text_bytes": 0,
+                "setup_message_count": 0,
+                "setup_protocol_bytes": 0,
+                "setup_text_bytes": 0,
+                "steady_message_count": 0,
+                "steady_protocol_bytes": 0,
+                "steady_text_bytes": 0,
+            },
+        )
+        row["message_count"] += 1
+        row["protocol_bytes"] += protocol_size
+        row["text_bytes"] += text_size
+        phase_prefix = "setup" if phase == "setup" else "steady"
+        row[f"{phase_prefix}_message_count"] += 1
+        row[f"{phase_prefix}_protocol_bytes"] += protocol_size
+        row[f"{phase_prefix}_text_bytes"] += text_size
+        if phase == "setup":
+            self.setup_message_count += 1
+            self.setup_text_chars += text_chars
+            self.setup_text_bytes += text_size
+            self.setup_protocol_bytes += protocol_size
+        return protocol_size, text_chars, text_size
+
+    def setup_metrics(self) -> dict[str, int]:
+        return {
+            "message_count": self.setup_message_count,
+            "text_chars": self.setup_text_chars,
+            "text_bytes": self.setup_text_bytes,
+            "protocol_bytes": self.setup_protocol_bytes,
+        }
+
+    def message_breakdown_rows(self) -> list[dict[str, int | str]]:
+        rows: list[dict[str, int | str]] = []
+        for name in sorted(self.message_breakdown):
+            row = dict(self.message_breakdown[name])
+            row["message_type"] = name
+            rows.append(row)
+        return rows
+
+    def cleanup(self) -> None:
+        cleanup_shared_memory_handles(self.owned_shared_handles)
+        self.owned_shared_handles.clear()
 
 
 @dataclass
@@ -31,7 +106,8 @@ class RunContext:
     task_id: str
     task_group: str
     task_theme: str
-    statepool: FileBackedStatePool
+    session: RunSession
+    statepool: StatePool
     memory_store: MemoryStore
     metrics: TaskMetrics = field(default_factory=TaskMetrics)
     results: dict[str, StepResult] = field(default_factory=dict)
@@ -40,16 +116,13 @@ class RunContext:
     memory_search_cache: dict[tuple[object, ...], list[MemoryHit]] = field(default_factory=dict)
     pruned_step_ids: list[str] = field(default_factory=list)
     reuse_hit: MemoryHit | None = None
-    handshake_complete: bool = False
 
     def emit(self, message: object) -> None:
+        protocol_size, text_chars, text_size = self.session.record_message(message, phase="steady")
         self.metrics.message_count += 1
-        if self.mode == "protocol":
-            self.metrics.protocol_bytes += len(protocol_bytes(message))
-            return
-        rendered = text_frame(message)
-        self.metrics.text_chars += len(rendered)
-        self.metrics.text_bytes += len(rendered.encode("utf-8"))
+        self.metrics.protocol_bytes += protocol_size
+        self.metrics.text_chars += text_chars
+        self.metrics.text_bytes += text_size
 
     def register_state(self, ref: StateRef) -> None:
         if ref.state_id in self.state_refs:
@@ -58,6 +131,12 @@ class RunContext:
         self.state_refs[ref.state_id] = ref
         self.metrics.state_ref_count += 1
         self.metrics.state_bytes += ref.length
+        if ref.storage == PY_SHARED_MEMORY_STORAGE:
+            self.metrics.shared_memory_state_ref_count += 1
+            self.metrics.shared_memory_state_bytes += ref.length
+        else:
+            self.metrics.mmap_state_ref_count += 1
+            self.metrics.mmap_state_bytes += ref.length
 
     def resolve_ref(self, state_id: str) -> StateRef:
         ref = self.state_refs.get(state_id)
@@ -76,9 +155,9 @@ class RunContext:
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
         ref = self.statepool.put_text(
-            state_id=state_id,
-            kind=kind,
-            text=text,
+            state_id,
+            kind,
+            text,
             metadata=metadata,
         )
         self.register_state(ref)
@@ -93,9 +172,9 @@ class RunContext:
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
         ref = self.statepool.put_bytes(
-            state_id=state_id,
-            kind=kind,
-            payload=payload,
+            state_id,
+            kind,
+            payload,
             metadata=metadata,
         )
         self.register_state(ref)
@@ -112,9 +191,8 @@ class RunContext:
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
         vector = self.memory_store.embedder.embed_text(text)
-        ref = self.statepool.put_bytes(
+        ref = self.statepool.put_embedding(
             state_id=state_id,
-            kind="EMBEDDING",
             payload=vector.astype("float32").tobytes(),
             metadata={
                 "encoder_id": self.memory_store.embedder.encoder_id,
@@ -214,8 +292,15 @@ class Orchestrator:
         memory_db_path: str | Path,
         trace_id: str | None = None,
         embedder: EmbeddingProvider | None = None,
+        session: RunSession | None = None,
+        statepool_config: StatePoolConfig | None = None,
     ) -> RunContext:
-        statepool = FileBackedStatePool(state_root)
+        active_session = session or RunSession(mode=mode)
+        statepool = StatePool(
+            state_root,
+            config=statepool_config or StatePoolConfig.from_env(),
+            owned_shared_handles=active_session.owned_shared_handles,
+        )
         memory_store = MemoryStore(memory_db_path, embedder=embedder)
         memory_store.init_schema()
         return RunContext(
@@ -224,6 +309,7 @@ class Orchestrator:
             task_id=task_id,
             task_group=task_group,
             task_theme=task_theme,
+            session=active_session,
             statepool=statepool,
             memory_store=memory_store,
         )
@@ -232,6 +318,7 @@ class Orchestrator:
         started = time.perf_counter()
         self._ensure_handshake(ctx)
         plan = await self._plan_task(task, ctx)
+        SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
         ctx.metrics.planned_step_count = len(plan.steps)
         plan = self._apply_memory_reuse(plan, ctx)
         results = await self._execute_plan(plan, ctx)
@@ -241,6 +328,7 @@ class Orchestrator:
     async def run_plan(self, plan: Plan, ctx: RunContext) -> dict[str, StepResult]:
         started = time.perf_counter()
         self._ensure_handshake(ctx)
+        SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
         ctx.metrics.planned_step_count = len(plan.steps)
         plan = self._apply_memory_reuse(plan, ctx)
         results = await self._execute_plan(plan, ctx)
@@ -262,9 +350,15 @@ class Orchestrator:
             ctx.emit(step)
             agent = self.agents[step.owner_agent]
             result = await agent.execute_step(step, ctx)
+            SchemaInterceptor.validate_result(
+                step=step,
+                result=result,
+                capability_table=ctx.session.capability_table,
+            )
             self._register_step_outputs(result, ctx)
-            maybe_commit = result.payload.get("memory_commit")
+            maybe_commit = result.memory_commit
             if isinstance(maybe_commit, MemoryCommit):
+                SchemaInterceptor.validate_memory_commit(maybe_commit)
                 ctx.commit_memory(maybe_commit)
                 ctx.emit(Ack(related_id=maybe_commit.memory_id, detail="memory committed"))
             ctx.emit(result)
@@ -332,7 +426,7 @@ class Orchestrator:
         )
 
     def _ensure_handshake(self, ctx: RunContext) -> None:
-        if ctx.handshake_complete:
+        if ctx.session.handshake_complete:
             return
         seen: set[str] = set()
         for step_agent in self.agents.values():
@@ -340,10 +434,14 @@ class Orchestrator:
             if agent_id in seen:
                 continue
             seen.add(agent_id)
-            ctx.emit(Hello(agent_id=agent_id, mode=ctx.mode))
-            ctx.emit(getattr(step_agent, "capability"))
-            ctx.emit(Ack(related_id=agent_id, detail="capability registered"))
-        ctx.handshake_complete = True
+            hello = Hello(agent_id=agent_id, mode=ctx.mode)
+            capability = getattr(step_agent, "capability")
+            ack = Ack(related_id=agent_id, detail="capability registered")
+            ctx.session.record_message(hello, phase="setup")
+            ctx.session.record_message(capability, phase="setup")
+            ctx.session.capability_table.register(capability)
+            ctx.session.record_message(ack, phase="setup")
+        ctx.session.handshake_complete = True
 
     @staticmethod
     def _ensure_dependencies(step: PlanStep, ctx: RunContext) -> None:

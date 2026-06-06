@@ -244,7 +244,8 @@ class SummarizerAgent(BaseAgent):
             step_id=step.step_id,
             success=True,
             output_state_refs=[summary_ref],
-            payload={"memory_commit": commit, "summary": summary_text, "llm_model": result.model},
+            payload={"summary": summary_text, "llm_model": result.model},
+            memory_commit=commit,
         )
 
 

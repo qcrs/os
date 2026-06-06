@@ -9,6 +9,10 @@ class TaskMetrics:
     text_chars: int = 0
     text_bytes: int = 0
     protocol_bytes: int = 0
+    mmap_state_ref_count: int = 0
+    mmap_state_bytes: int = 0
+    shared_memory_state_ref_count: int = 0
+    shared_memory_state_bytes: int = 0
     state_ref_count: int = 0
     state_bytes: int = 0
     memory_hits: int = 0
