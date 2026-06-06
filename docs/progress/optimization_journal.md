@@ -143,3 +143,38 @@
   - still need live API `repeat=1` preflight and official `repeat=10` artifact capture
   - `grpcio-tools` is not installed in the host env yet, so proto regeneration remains a checked-in-source workflow unless the env is extended
 - Commit: pending current accounting-fix commit
+
+## 2026-06-06 10: Commit anchor for communication-accounting correction
+- Goal: resolve the placeholder for the accounting-fix wave.
+- Changes:
+  - recorded the commit anchor for the accounting-fix implementation as `3dc4a38`
+- Verification:
+  - `git log --oneline --decorate -n 4`
+- Result:
+  - the deterministic control-byte flip is now tied to a concrete implementation commit
+- Risks / follow-up:
+  - live API still needed formal preflight and official `repeat=10`
+- Commit: pending live-results record commit
+
+## 2026-06-06 11: Live API preflight and official repeat-10 capture
+- Goal: turn the deterministic benchmark improvements into formal DeepSeek-backed evidence with persistent run artifacts.
+- Changes:
+  - ran live API preflight at `/home/qcrs/statebus/runs/benchmark_20260606_234503`
+  - ran official live `repeat=10` at `/home/qcrs/statebus/runs/benchmark_20260606_234731`
+  - used the new partial-flush runner path so long runs produced observable intermediate results
+- Verification:
+  - `/home/qcrs/statebus/runs/benchmark_20260606_234503/benchmark_report.md`
+  - `/home/qcrs/statebus/runs/benchmark_20260606_234731/benchmark_report.md`
+  - `/home/qcrs/statebus/runs/benchmark_20260606_234731/benchmark_compare.csv`
+  - `/home/qcrs/statebus/runs/benchmark_20260606_234731/benchmark_message_sizes.md`
+- Result:
+  - preflight completed with both modes, no failures, and already showed `protocol` below `text` on control bytes and total tokens
+  - official live `repeat=10` completed with `failure_count=0` and `expectation_match_rate=1.00` for both modes
+  - live mean metrics now read:
+    - `text`: `control_bytes=30233.30`, `llm_total_tokens=10365.00`, `task_ms=42445.21`
+    - `protocol`: `control_bytes=23892.40`, `llm_total_tokens=10237.50`, `task_ms=43965.53`
+  - `protocol` now beats `text` on both control bytes and total token usage under live API conditions
+- Risks / follow-up:
+  - `protocol` still lags `text` slightly on end-to-end wall time in the current live `repeat=10` run, so latency advantage is not yet established
+  - proto regeneration still depends on adding `grpcio-tools` if we want reproducible local codegen instead of checked-in generated output
+- Commit: pending live-results record commit
