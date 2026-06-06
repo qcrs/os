@@ -113,3 +113,33 @@
   - need explicit wire-size regression tests for `MemoryCommit` and `StepResult`
   - still need formal live API `repeat=1` preflight and `repeat=10` artifact capture under `$STATEBUS_RUNS_DIR`
 - Commit: pending current local baseline commit
+
+## 2026-06-06 08: Commit anchor for protobuf/session/shared-memory groundwork
+- Goal: resolve the placeholder for the protobuf/session/shared-memory hardening wave.
+- Changes:
+  - recorded the commit anchor for the groundwork implementation as `9ca43f6`
+- Verification:
+  - `git log --oneline --decorate -n 3`
+- Result:
+  - the protocol/session/shared-memory groundwork now has a stable rollback and discussion anchor
+- Risks / follow-up:
+  - communication-efficiency still needed one more accounting correction pass before live API formalization
+- Commit: pending current accounting-fix commit
+
+## 2026-06-06 09: Communication-accounting correction pass
+- Goal: make deterministic control-byte comparison match the intended experiment semantics instead of undercounting the text baseline.
+- Changes:
+  - enriched `text_frame()` for `MemoryQuery` and `MemoryCommit` so the text path carries the same core semantics the protobuf wire is replacing
+  - trimmed protobuf wire metadata for `MemoryQuery` and `MemoryCommit` down to `reuse_signature`-level fields that actually participate in reuse decisions
+  - updated the proto regeneration script to refuse legacy `protoc` and point users at `grpcio-tools`
+  - added wire regression tests and a benchmark assertion that protocol steady-state control bytes stay below text
+- Verification:
+  - `python -m pytest -q`
+  - `python -m eval.runner --out /tmp/statebus_proto_accounting_check_v2 --repeat 10 --llm-mode deterministic --quiet-progress`
+- Result:
+  - deterministic `repeat=10` now reports `protocol steady_state_control_bytes = 30133` vs `text = 34579`
+  - `MemoryCommit` and `MemoryQuery` are no longer protocol-bloat offenders; both are now smaller on protobuf wire than on the text baseline
+- Risks / follow-up:
+  - still need live API `repeat=1` preflight and official `repeat=10` artifact capture
+  - `grpcio-tools` is not installed in the host env yet, so proto regeneration remains a checked-in-source workflow unless the env is extended
+- Commit: pending current accounting-fix commit

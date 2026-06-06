@@ -65,6 +65,10 @@ def test_benchmark_runner_writes_outputs() -> None:
         )
         assert "latency_chain" in (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
         assert "Stability Summary" in (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert (
+            result["summary"]["protocol"]["steady_state"]["protocol_bytes"]
+            < result["summary"]["text"]["steady_state"]["text_bytes"]
+        )
 
 def test_follow_up_tasks_reuse_memory_and_skip_steps() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:

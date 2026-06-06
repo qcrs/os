@@ -231,18 +231,25 @@ def text_frame(message: Any) -> str:
             f"Payload: {payload}."
         )
     if isinstance(message, MemoryQuery):
-        tags = ", ".join(message.tags_any or message.tags or []) or "none"
+        tags_any = ", ".join(message.tags_any or []) or "none"
+        tags_all = ", ".join(message.tags_all or []) or "none"
+        required_metadata = _compact_json(_wire_required_metadata(message.required_metadata))
         return (
             f"Memory lookup for theme {message.task_theme} using query '{message.query_text}'. "
-            f"Top-k {message.top_k}, minimum confidence {message.min_confidence:.2f}, tags {tags}."
+            f"Top-k {message.top_k}, minimum confidence {message.min_confidence:.2f}, "
+            f"tags-any {tags_any}, tags-all {tags_all}, encoder {message.encoder_id or 'default'}, "
+            f"required metadata {required_metadata}."
         )
     if isinstance(message, MemoryCommit):
         tags = ", ".join(message.tags) or "none"
         reusable = ", ".join(message.reusable_steps) or "none"
+        evidence = ", ".join(message.evidence_state_ids) or "none"
+        metadata = _compact_json(_wire_commit_metadata(message.metadata))
         return (
             f"Commit memory {message.memory_id} for theme {message.task_theme} from "
-            f"{message.source_agent_id}. Tags: {tags}. Reusable steps: {reusable}. "
-            f"Summary: {message.summary}"
+            f"{message.source_agent_id}. Tags: {tags}. Confidence: {message.confidence:.2f}. "
+            f"Embedding state: {message.embedding_state_id or 'none'}. Evidence ids: {evidence}. "
+            f"Reusable steps: {reusable}. Required metadata: {metadata}. Summary: {message.summary}"
         )
     payload = json.dumps(to_wire(message), ensure_ascii=False, sort_keys=True)
     return f"{message_type(message)} {payload}"
@@ -327,9 +334,9 @@ def to_protocol_envelope(message: Any) -> statebus_pb2.WireEnvelope | None:
                 min_confidence=message.min_confidence,
                 source_agent_id=message.source_agent_id or "",
                 created_after_ns=message.created_after_ns or 0,
-                encoder_id=message.encoder_id or "",
+                encoder_id="",
                 limit_active_only=message.limit_active_only,
-                required_metadata_json=_compact_json(message.required_metadata),
+                required_metadata_json=_compact_json(_wire_required_metadata(message.required_metadata)),
             )
         )
     if isinstance(message, MemoryCommit):
@@ -345,8 +352,8 @@ def to_protocol_envelope(message: Any) -> statebus_pb2.WireEnvelope | None:
                 reusable_steps=message.reusable_steps,
                 confidence=message.confidence,
                 embedding_state_id=message.embedding_state_id or "",
-                encoder_id=message.encoder_id or "",
-                metadata_json=_compact_json(message.metadata),
+                encoder_id="",
+                metadata_json=_compact_json(_wire_commit_metadata(message.metadata)),
                 created_at_ns=message.created_at_ns or 0,
             )
         )
@@ -379,3 +386,17 @@ def _compact_json(value: Any) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _wire_required_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    reuse_signature = metadata.get("reuse_signature")
+    if reuse_signature is None:
+        return {}
+    return {"reuse_signature": reuse_signature}
+
+
+def _wire_commit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    reuse_signature = metadata.get("reuse_signature")
+    if reuse_signature is None:
+        return {}
+    return {"reuse_signature": reuse_signature}
