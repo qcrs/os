@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,8 +11,11 @@ from protocol.messages import (
     MemoryCommit,
     Plan,
     PlanStep,
+    RemoteStepRequest,
+    RemoteStepResponse,
     StepResult,
 )
+from runtime.executor_runtime import build_feature_bundle, execute_playbook_step
 from runtime.llm import (
     ChatMessage,
     DeterministicLLMClient,
@@ -19,6 +23,7 @@ from runtime.llm import (
     extract_json_object,
     tagged_json_block,
 )
+from runtime.uds_transport import request_response
 from tasks.sample_tasks import SampleTask
 
 PROTOCOL_PLANNER_TAG = "sb-plan-v1"
@@ -112,6 +117,22 @@ class RetrieverAgent(BaseAgent):
                 "reuse_signature": step.params.get("reuse_signature"),
             },
         )
+        feature_bundle = build_feature_bundle(
+            query=str(step.params["query"]),
+            evidence_text=evidence_text,
+            tags=list(step.params.get("tags", [])),
+            reuse_signature=str(step.params.get("reuse_signature", "")),
+            reused_memory=reused,
+        )
+        feature_ref = ctx.put_feature_state(
+            state_id=f"{ctx.task_id}-{step.step_id}-features",
+            feature_bundle=feature_bundle,
+            metadata={
+                "query": step.params["query"],
+                "reused_memory": reused,
+                "reuse_signature": step.params.get("reuse_signature"),
+            },
+        )
         embedding_ref = ctx.put_embedding_state(
             state_id=f"{ctx.task_id}-{step.step_id}-embedding",
             text=str(step.params["query"]),
@@ -123,52 +144,58 @@ class RetrieverAgent(BaseAgent):
         return StepResult(
             step_id=step.step_id,
             success=True,
-            output_state_refs=[evidence_ref, embedding_ref],
+            output_state_refs=[evidence_ref, feature_ref, embedding_ref],
             payload={
                 "query": step.params["query"],
                 "memory_hits": [hit.memory_id for hit in hits],
                 "reused_memory": reused,
+                "feature_route": feature_bundle["route"],
             },
         )
 
 
 @dataclass
 class ExecutorAgent(BaseAgent):
+    transport: str = "local"
+    socket_path: str | None = None
+
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
         retrieve_result = ctx.results[step.depends_on[0]]
-        evidence_ref = next(
-            ref for ref in retrieve_result.output_state_refs if ref.kind == "DENSE_EVIDENCE"
+        input_refs = [
+            ref
+            for ref in retrieve_result.output_state_refs
+            if ref.kind in {"DENSE_EVIDENCE", "FEATURE_BUNDLE"}
+        ]
+        if self._should_use_uds(step):
+            return self._execute_via_uds(step, ctx, input_refs)
+        return execute_playbook_step(
+            task_id=ctx.task_id,
+            task_theme=ctx.task_theme,
+            step=step,
+            statepool=ctx.statepool,
+            input_state_refs=input_refs,
         )
-        evidence_text = ctx.get_text_state(evidence_ref)
-        reusable_steps = ["retrieve", "execute"]
-        if "DB pool saturation" in evidence_text or "database pool contention" in evidence_text:
-            actions = [
-                "rollback release-17",
-                "create orders_created_at index",
-                "check database pool sizing",
-            ]
-        elif "cache invalidation" in evidence_text or "stale inventory" in evidence_text:
-            actions = [
-                "force inventory aggregate invalidation",
-                "rerun post-sync invalidation hook",
-                "verify cache freshness after batch sync",
-            ]
-        else:
-            actions = ["collect more evidence"]
-            reusable_steps = ["retrieve"]
-        artifact_text = "\n".join(actions)
-        artifact_ref = ctx.put_text_state(
-            state_id=f"{ctx.task_id}-{step.step_id}-artifact",
-            kind="TOOL_ARTIFACT",
-            text=artifact_text,
-            metadata={"source_evidence": evidence_ref.state_id},
+
+    def _should_use_uds(self, step: PlanStep) -> bool:
+        transport = str(step.params.get("transport", self.transport or "local")).strip().lower()
+        return transport == "uds"
+
+    def _execute_via_uds(self, step: PlanStep, ctx: object, input_refs: list[object]) -> StepResult:
+        socket_path = step.params.get("socket_path") or self.socket_path
+        if not socket_path:
+            raise ValueError("executor uds transport selected without socket_path")
+        message = RemoteStepRequest(
+            mode=str(getattr(ctx, "mode", "protocol")),
+            task_id=str(ctx.task_id),
+            task_theme=str(ctx.task_theme),
+            state_root=str(ctx.statepool.root),
+            step=step,
+            input_state_refs=list(input_refs),
         )
-        return StepResult(
-            step_id=step.step_id,
-            success=True,
-            output_state_refs=[artifact_ref],
-            payload={"actions": actions, "reusable_steps": reusable_steps},
-        )
+        response = request_response(socket_path, message)
+        if not isinstance(response, RemoteStepResponse):
+            raise TypeError(f"unexpected uds executor response: {type(response).__name__}")
+        return response.result
 
 
 @dataclass
@@ -180,6 +207,10 @@ class SummarizerAgent(BaseAgent):
         execute_result = ctx.results["execute"]
         evidence_ref = next(
             ref for ref in retrieve_result.output_state_refs if ref.kind == "DENSE_EVIDENCE"
+        )
+        feature_ref = next(
+            (ref for ref in retrieve_result.output_state_refs if ref.kind == "FEATURE_BUNDLE"),
+            None,
         )
         embedding_ref = next(
             (ref for ref in retrieve_result.output_state_refs if ref.kind == "EMBEDDING"),
@@ -218,6 +249,7 @@ class SummarizerAgent(BaseAgent):
             tags=list(summary_payload.get("tags") or step.params.get("tags", [])),
             evidence_state_ids=[
                 evidence_ref.state_id,
+                *([feature_ref.state_id] if feature_ref is not None else []),
                 *([embedding_ref.state_id] if embedding_ref is not None else []),
                 artifact_ref.state_id,
                 summary_ref.state_id,
@@ -238,6 +270,7 @@ class SummarizerAgent(BaseAgent):
             },
             evidence_state_refs=[
                 evidence_ref,
+                *([feature_ref] if feature_ref is not None else []),
                 *([embedding_ref] if embedding_ref is not None else []),
                 artifact_ref,
                 summary_ref,
@@ -254,6 +287,8 @@ class SummarizerAgent(BaseAgent):
 
 def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAgent]:
     active_llm = llm_client or DeterministicLLMClient()
+    executor_transport = os.getenv("STATEBUS_EXECUTOR_TRANSPORT", "local").strip().lower()
+    executor_socket_path = os.getenv("STATEBUS_EXECUTOR_SOCKET_PATH")
     return {
         "planner": PlannerAgent(
             agent_id="planner",
@@ -273,7 +308,7 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                 "retriever",
                 action="RETRIEVE_EVIDENCE",
                 accepted_state_kinds=[],
-                produced_state_kinds=["DENSE_EVIDENCE", "EMBEDDING"],
+                produced_state_kinds=["DENSE_EVIDENCE", "FEATURE_BUNDLE", "EMBEDDING"],
             ),
         ),
         "executor": ExecutorAgent(
@@ -281,9 +316,11 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
             capability=_build_capability(
                 "executor",
                 action="EXECUTE_PLAYBOOK",
-                accepted_state_kinds=["DENSE_EVIDENCE"],
+                accepted_state_kinds=["DENSE_EVIDENCE", "FEATURE_BUNDLE"],
                 produced_state_kinds=["TOOL_ARTIFACT"],
             ),
+            transport=executor_transport,
+            socket_path=executor_socket_path,
         ),
         "summarizer": SummarizerAgent(
             agent_id="summarizer",
@@ -296,6 +333,35 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
             llm_client=active_llm,
         ),
     }
+
+
+def build_sample_agents_with_executor(
+    *,
+    llm_client: LLMClient | None = None,
+    executor_transport: str | None = None,
+    executor_socket_path: str | None = None,
+) -> dict[str, BaseAgent]:
+    previous_transport = os.environ.get("STATEBUS_EXECUTOR_TRANSPORT")
+    previous_socket_path = os.environ.get("STATEBUS_EXECUTOR_SOCKET_PATH")
+    try:
+        if executor_transport is None:
+            os.environ.pop("STATEBUS_EXECUTOR_TRANSPORT", None)
+        else:
+            os.environ["STATEBUS_EXECUTOR_TRANSPORT"] = executor_transport
+        if executor_socket_path is None:
+            os.environ.pop("STATEBUS_EXECUTOR_SOCKET_PATH", None)
+        else:
+            os.environ["STATEBUS_EXECUTOR_SOCKET_PATH"] = executor_socket_path
+        return build_sample_agents(llm_client=llm_client)
+    finally:
+        if previous_transport is None:
+            os.environ.pop("STATEBUS_EXECUTOR_TRANSPORT", None)
+        else:
+            os.environ["STATEBUS_EXECUTOR_TRANSPORT"] = previous_transport
+        if previous_socket_path is None:
+            os.environ.pop("STATEBUS_EXECUTOR_SOCKET_PATH", None)
+        else:
+            os.environ["STATEBUS_EXECUTOR_SOCKET_PATH"] = previous_socket_path
 
 
 def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:

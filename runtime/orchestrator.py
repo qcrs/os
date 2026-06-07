@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
+import msgpack
+
 from eval.metrics import TaskMetrics
 from memory.store import EmbeddingProvider, MemoryStore
 from runtime.contracts import CapabilityTable, SchemaInterceptor
@@ -206,6 +208,31 @@ class RunContext:
 
     def get_embedding_state(self, ref: StateRef) -> object:
         return self.statepool.get_embedding(ref)
+
+    def put_feature_state(
+        self,
+        *,
+        state_id: str,
+        feature_bundle: dict[str, object],
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        payload = msgpack.packb(feature_bundle, use_bin_type=True)
+        ref = self.statepool.put_bytes(
+            state_id=state_id,
+            kind="FEATURE_BUNDLE",
+            payload=payload,
+            metadata={
+                "encoding": "msgpack",
+                "schema": "statebus.feature_bundle.v1",
+                **dict(metadata or {}),
+            },
+        )
+        self.register_state(ref)
+        return ref
+
+    def get_feature_state(self, ref: StateRef) -> dict[str, object]:
+        payload = self.statepool.get_bytes(ref)
+        return dict(msgpack.unpackb(payload, raw=False, strict_map_key=False))
 
     def search_memory(
         self,
@@ -471,10 +498,11 @@ class Orchestrator:
     ) -> None:
         refs_by_kind = self._group_refs_by_kind(hit.evidence_state_refs)
         evidence_refs = list(refs_by_kind.get("DENSE_EVIDENCE", []))
+        feature_refs = list(refs_by_kind.get("FEATURE_BUNDLE", []))
         embedding_refs = list(refs_by_kind.get("EMBEDDING", []))
         artifact_refs = list(refs_by_kind.get("TOOL_ARTIFACT", []))
         if "retrieve" in skipped_step_ids:
-            retrieve_refs = evidence_refs + embedding_refs
+            retrieve_refs = evidence_refs + feature_refs + embedding_refs
             result = StepResult(
                 step_id="retrieve",
                 success=True,

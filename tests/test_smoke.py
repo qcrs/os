@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import socket
+import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 
+import msgpack
 import numpy as np
+import pytest
 
 from eval.runner import _mode_order_for_run, run_benchmark
 from memory.store import DeterministicEmbeddingProvider
-from protocol.messages import PlanStep, StateRef, text_frame
+from protocol.messages import PlanStep, RemoteStepRequest, RemoteStepResponse, StateRef, text_frame
 from runtime.llm import DeterministicLLMClient
+from runtime.uds_transport import request_response
 from runtime.smoke import main
-from statepool.store import FileBackedStatePool
+from runtime.executor_runtime import build_feature_bundle
+from statepool.store import FileBackedStatePool, StatePool, StatePoolConfig
 from tasks.sample_tasks import default_task_chain
 
 
@@ -157,6 +166,186 @@ def test_embedding_state_is_real_float32_vector() -> None:
         assert vector.shape == (embedder.vector_dim,)
         expected = embedder.embed_text("cache staleness stale inventory invalidation lag")
         assert np.allclose(vector, expected)
+
+
+def test_feature_bundle_state_is_real_msgpack_payload() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("text",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        first_task = result["mode_runs"]["text"][0]["tasks"][0]
+        feature_state_id, feature_payload = next(
+            (state_id, ref)
+            for state_id, ref in first_task["state_refs"].items()
+            if ref["kind"] == "FEATURE_BUNDLE"
+        )
+        payload = msgpack.unpackb(
+            Path(feature_payload["handle"]).read_bytes(),
+            raw=False,
+            strict_map_key=False,
+        )
+        assert feature_state_id.endswith("-retrieve-features")
+        assert payload["schema"] == "statebus.feature_bundle.v1"
+        assert payload["route"] == "cache_invalidation"
+        assert "cache invalidation" in payload["matched_signals"]
+
+
+def test_benchmark_supports_shared_memory_statepool_backend() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-shm-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("text",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+                statepool_config=StatePoolConfig.from_env(
+                    default_backend="shared_memory",
+                    embedding_backend="shared_memory",
+                ),
+            )
+        )
+    aggregate = result["summary"]["text"]["aggregate"]
+    assert result["manifest"]["statepool_backend"] == "PY_SHARED_MEMORY"
+    assert result["manifest"]["embed_state_backend"] == "PY_SHARED_MEMORY"
+    assert aggregate["shared_memory_state_ref_count"] > 0
+    first_task = result["mode_runs"]["text"][0]["tasks"][0]
+    assert any(
+        ref["storage"] == "PY_SHARED_MEMORY"
+        for ref in first_task["state_refs"].values()
+    )
+
+
+def test_remote_executor_serves_over_uds() -> None:
+    if not _unix_sockets_available():
+        pytest.skip("AF_UNIX sockets are unavailable in the current sandbox; verify on host")
+    with tempfile.TemporaryDirectory(prefix="statebus-uds-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        socket_path = tmp_path / "executor.sock"
+        state_root = tmp_path / "state"
+        statepool = StatePool(state_root, config=StatePoolConfig.from_env())
+        evidence_text = (
+            "Sample incident: stale inventory persisted after batch sync. "
+            "cache invalidation missed the inventory aggregate refresh."
+        )
+        evidence_ref = statepool.put_text(
+            state_id="case-1-evidence",
+            kind="DENSE_EVIDENCE",
+            text=evidence_text,
+        )
+        bundle = build_feature_bundle(
+            query="cache staleness stale inventory invalidation lag",
+            evidence_text=evidence_text,
+            tags=["cache", "inventory"],
+            reuse_signature="repo_local_cache_triage:cache|inventory",
+            reused_memory=False,
+        )
+        feature_ref = statepool.put_bytes(
+            state_id="case-1-features",
+            kind="FEATURE_BUNDLE",
+            payload=msgpack.packb(bundle, use_bin_type=True),
+            metadata={"schema": "statebus.feature_bundle.v1", "encoding": "msgpack"},
+        )
+        server = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "runtime.remote_executor",
+                "--socket-path",
+                str(socket_path),
+                "--max-requests",
+                "1",
+            ],
+            cwd="/home/qcrs/statebus/project",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            deadline = time.time() + 5.0
+            while time.time() < deadline and not socket_path.exists():
+                if server.poll() is not None:
+                    stderr = server.stderr.read() if server.stderr is not None else ""
+                    stdout = server.stdout.read() if server.stdout is not None else ""
+                    raise AssertionError(
+                        "remote executor exited before binding socket: "
+                        f"stdout={stdout!r} stderr={stderr!r}"
+                    )
+                time.sleep(0.05)
+            assert socket_path.exists()
+            response = request_response(
+                socket_path,
+                RemoteStepRequest(
+                    mode="protocol",
+                    task_id="case-1",
+                    task_theme="repo_local_cache_triage",
+                    state_root=str(state_root),
+                    step=PlanStep(
+                        step_id="execute",
+                        owner_agent="executor",
+                        action="EXECUTE_PLAYBOOK",
+                        input_state_refs=[evidence_ref.state_id, feature_ref.state_id],
+                        params={"transport": "uds"},
+                        depends_on=["retrieve"],
+                    ),
+                    input_state_refs=[evidence_ref, feature_ref],
+                ),
+            )
+            assert isinstance(response, RemoteStepResponse)
+            assert response.result.success is True
+            assert response.result.payload["tool_name"] == "tool.cache_invalidation_playbook"
+            artifact_ref = response.result.output_state_refs[0]
+            assert artifact_ref.kind == "TOOL_ARTIFACT"
+            assert artifact_ref.storage == "MMAP_FILE"
+        finally:
+            if server.poll() is None:
+                server.wait(timeout=5)
+
+
+def test_benchmark_supports_uds_executor_transport() -> None:
+    if not _unix_sockets_available():
+        pytest.skip("AF_UNIX sockets are unavailable in the current sandbox; verify on host")
+    with tempfile.TemporaryDirectory(prefix="statebus-benchmark-uds-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+                executor_transport="uds",
+            )
+        )
+    assert result["manifest"]["executor_transport"] == "uds"
+    assert result["manifest"]["executor_socket_path"]
+    first_task = result["mode_runs"]["protocol"][0]["tasks"][0]
+    assert first_task["results"]["execute"]["payload"]["sandbox_mode"] == "subprocess"
+
+
+def _unix_sockets_available() -> bool:
+    with tempfile.TemporaryDirectory(prefix="statebus-uds-probe-") as tmpdir:
+        socket_path = Path(tmpdir) / "probe.sock"
+        try:
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.bind(str(socket_path))
+        except (PermissionError, OSError):
+            return False
+        finally:
+            try:
+                probe.close()
+            except Exception:
+                pass
+        try:
+            socket_path.unlink()
+        except FileNotFoundError:
+            pass
+        return True
 
 
 def test_benchmark_rerun_clears_old_group_memory() -> None:

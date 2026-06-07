@@ -5,13 +5,19 @@ import asyncio
 import csv
 import json
 import os
+import socket
+import subprocess
 import shutil
+import sys
+import tempfile
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
-from agents.sample_agents import build_sample_agents
+from agents.sample_agents import build_sample_agents_with_executor
 from memory.store import (
     DEFAULT_EMBEDDING_MODEL_PATH,
     EmbeddingProvider,
@@ -194,10 +200,18 @@ async def _run_mode_once(
     embedder: EmbeddingProvider,
     llm_client: LLMClient,
     statepool_config: StatePoolConfig,
+    executor_transport: str,
+    executor_socket_path: str | None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     session = _build_run_session(mode)
-    orchestrator = Orchestrator(build_sample_agents(llm_client=llm_client))
+    orchestrator = Orchestrator(
+        build_sample_agents_with_executor(
+            llm_client=llm_client,
+            executor_transport=executor_transport,
+            executor_socket_path=executor_socket_path,
+        )
+    )
     ordered_tasks = sorted(tasks, key=_task_sort_key)
     task_runs: list[dict[str, object]] = []
     group_db_paths = {
@@ -655,6 +669,93 @@ def _progress_line(event: dict[str, object]) -> None:
     )
 
 
+@contextmanager
+def _executor_transport_context(
+    *,
+    out_dir: Path,
+    transport: str,
+    socket_path: str | None,
+    statepool_config: StatePoolConfig,
+) -> Iterator[str | None]:
+    normalized = (transport or "local").strip().lower()
+    if normalized == "local":
+        yield None
+        return
+    if normalized != "uds":
+        raise ValueError(f"unsupported executor transport: {transport}")
+    if not _unix_sockets_available():
+        raise RuntimeError(
+            "executor transport 'uds' requires AF_UNIX socket support on the current host"
+        )
+    active_socket_path = socket_path or str(out_dir / "runtime" / "executor.sock")
+    socket_file = Path(active_socket_path)
+    socket_file.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        "-m",
+        "runtime.remote_executor",
+        "--socket-path",
+        active_socket_path,
+        "--statepool-backend",
+        statepool_config.default_backend,
+        "--embed-state-backend",
+        statepool_config.embedding_backend,
+    ]
+    server = subprocess.Popen(
+        command,
+        cwd=Path(__file__).resolve().parent.parent,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not socket_file.exists():
+            if server.poll() is not None:
+                stdout = "" if server.stdout is None else server.stdout.read()
+                stderr = "" if server.stderr is None else server.stderr.read()
+                raise RuntimeError(
+                    "remote executor exited before binding UDS socket: "
+                    f"stdout={stdout!r} stderr={stderr!r}"
+                )
+            time.sleep(0.05)
+        if not socket_file.exists():
+            raise RuntimeError(f"remote executor did not create socket: {active_socket_path}")
+        yield active_socket_path
+    finally:
+        if server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=5)
+        try:
+            socket_file.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _unix_sockets_available() -> bool:
+    with tempfile.TemporaryDirectory(prefix="statebus-uds-probe-") as tmpdir:
+        socket_path = Path(tmpdir) / "probe.sock"
+        try:
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.bind(str(socket_path))
+        except (PermissionError, OSError):
+            return False
+        finally:
+            try:
+                probe.close()
+            except Exception:
+                pass
+        try:
+            socket_path.unlink()
+        except FileNotFoundError:
+            pass
+        return True
+
+
 def _build_result(
     *,
     task_set_path: str | Path,
@@ -666,6 +767,8 @@ def _build_result(
     active_llm: LLMClient,
     llm_description: dict[str, object],
     statepool_config: StatePoolConfig,
+    executor_transport: str,
+    executor_socket_path: str | None,
     mode_runs: dict[str, list[dict[str, object]]],
 ) -> dict[str, object]:
     summary = {mode: _aggregate_mode_runs(runs) for mode, runs in mode_runs.items()}
@@ -694,6 +797,8 @@ def _build_result(
             "summarizer_model": str(llm_description["summarizer_model"]),
             "statepool_backend": statepool_config.default_backend,
             "embed_state_backend": statepool_config.embedding_backend,
+            "executor_transport": executor_transport,
+            "executor_socket_path": executor_socket_path or "",
         },
         "mode_runs": mode_runs,
         "summary": summary,
@@ -712,6 +817,8 @@ async def run_benchmark(
     llm_client: LLMClient | None = None,
     llm_config: LLMConfig | None = None,
     statepool_config: StatePoolConfig | None = None,
+    executor_transport: str = "local",
+    executor_socket_path: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     out_path = Path(out_dir)
@@ -722,51 +829,63 @@ async def run_benchmark(
     llm_description = active_llm.describe()
     active_statepool_config = statepool_config or StatePoolConfig.from_env()
     mode_runs: dict[str, list[dict[str, object]]] = {mode: [] for mode in modes}
-    for run_index in range(repeat):
-        for mode in _mode_order_for_run(modes, run_index):
-            run_root = out_path / "artifacts" / mode / f"run_{run_index:02d}"
-            if run_root.exists():
-                shutil.rmtree(run_root)
-            run_root.mkdir(parents=True, exist_ok=True)
-            mode_runs[mode].append(
-                await _run_mode_once(
-                    mode=mode,
-                    run_index=run_index,
-                    root=run_root,
-                    tasks=tasks,
-                    embedder=active_embedder,
-                    llm_client=active_llm,
-                    statepool_config=active_statepool_config,
-                    progress_callback=progress_callback,
-                )
-            )
-            partial = _build_result(
-                task_set_path=task_set_path,
-                tasks=tasks,
-                modes=modes,
-                repeat=repeat,
-                seed=seed,
-                active_embedder=active_embedder,
-                active_llm=active_llm,
-                llm_description=llm_description,
-                statepool_config=active_statepool_config,
-                mode_runs=mode_runs,
-            )
-            _write_results(out_path, partial)
-    result = _build_result(
-        task_set_path=task_set_path,
-        tasks=tasks,
-        modes=modes,
-        repeat=repeat,
-        seed=seed,
-        active_embedder=active_embedder,
-        active_llm=active_llm,
-        llm_description=llm_description,
+    with _executor_transport_context(
+        out_dir=out_path,
+        transport=executor_transport,
+        socket_path=executor_socket_path,
         statepool_config=active_statepool_config,
-        mode_runs=mode_runs,
-    )
-    _write_results(out_path, result)
-    return result
+    ) as active_socket_path:
+        for run_index in range(repeat):
+            for mode in _mode_order_for_run(modes, run_index):
+                run_root = out_path / "artifacts" / mode / f"run_{run_index:02d}"
+                if run_root.exists():
+                    shutil.rmtree(run_root)
+                run_root.mkdir(parents=True, exist_ok=True)
+                mode_runs[mode].append(
+                    await _run_mode_once(
+                        mode=mode,
+                        run_index=run_index,
+                        root=run_root,
+                        tasks=tasks,
+                        embedder=active_embedder,
+                        llm_client=active_llm,
+                        statepool_config=active_statepool_config,
+                        executor_transport=executor_transport,
+                        executor_socket_path=active_socket_path,
+                        progress_callback=progress_callback,
+                    )
+                )
+                partial = _build_result(
+                    task_set_path=task_set_path,
+                    tasks=tasks,
+                    modes=modes,
+                    repeat=repeat,
+                    seed=seed,
+                    active_embedder=active_embedder,
+                    active_llm=active_llm,
+                    llm_description=llm_description,
+                    statepool_config=active_statepool_config,
+                    executor_transport=executor_transport,
+                    executor_socket_path=active_socket_path,
+                    mode_runs=mode_runs,
+                )
+                _write_results(out_path, partial)
+        result = _build_result(
+            task_set_path=task_set_path,
+            tasks=tasks,
+            modes=modes,
+            repeat=repeat,
+            seed=seed,
+            active_embedder=active_embedder,
+            active_llm=active_llm,
+            llm_description=llm_description,
+            statepool_config=active_statepool_config,
+            executor_transport=executor_transport,
+            executor_socket_path=active_socket_path,
+            mode_runs=mode_runs,
+        )
+        _write_results(out_path, result)
+        return result
 
 
 def _write_results(out_dir: Path, result: dict[str, object]) -> None:
@@ -1034,6 +1153,7 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Encoder: `{result['manifest']['encoder_id']}`",
         f"- StatePool backend: `{result['manifest']['statepool_backend']}`",
         f"- Embedding state backend: `{result['manifest']['embed_state_backend']}`",
+        f"- Executor transport: `{result['manifest'].get('executor_transport', 'local')}`",
         f"- LLM backend: `{result['manifest']['llm_backend']}`",
         f"- LLM config: `{result['manifest']['llm_config_source']}`",
         f"- Planner provider: `{result['manifest']['planner_provider']}`",
@@ -1306,6 +1426,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summarizer-model", default=None)
     parser.add_argument("--statepool-backend", default=None)
     parser.add_argument("--embed-state-backend", default=None)
+    parser.add_argument("--executor-transport", choices=("local", "uds"), default="local")
+    parser.add_argument("--executor-socket-path", default=None)
     parser.add_argument("--quiet-progress", action="store_true")
     return parser
 
@@ -1341,6 +1463,8 @@ def main() -> None:
             embedder_model_path=args.embedding_model,
             llm_config=llm_config,
             statepool_config=statepool_config,
+            executor_transport=args.executor_transport,
+            executor_socket_path=args.executor_socket_path,
             progress_callback=None if args.quiet_progress else _progress_line,
         )
     )

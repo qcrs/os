@@ -62,3 +62,61 @@ Deferred until later:
 - privileged container workflows
 - openEuler-only validation
 - final sandbox isolation path
+
+## Current Engineering Scope
+
+Current host-feasible implementation status:
+
+- `protocol` mode uses checked-in `.proto + pb2` control frames
+- `StateRef` supports `mmap` and Python `shared_memory`
+- shared memory is a real benchmark option, not just a dormant backend
+- `Executor` is now tool-registry-based with a lightweight subprocess fallback
+- `Executor` can also run as an external multi-process UDS sample transport
+- non-text state now includes `FEATURE_BUNDLE` in addition to `EMBEDDING`
+
+Scope notes:
+
+- the current subprocess executor is a host-side fallback, not `nsjail`
+- the current UDS executor path is a real sample transport, not the final distributed runtime
+- hidden-state / KV-style intermediate representations are still deferred
+- Docker / openEuler / stronger sandboxing stay in the later validation phase
+
+See [docs/constraints/current_feature_scope.md](docs/constraints/current_feature_scope.md) for the precise boundary between what is already host-feasible and what must be deferred.
+
+## Benchmark Examples
+
+Default `mmap` mainline:
+
+```bash
+source deploy/activate_statebus_host.sh
+python -m eval.runner --repeat 1 --llm-mode deterministic --out /tmp/statebus_mmap_demo
+```
+
+Shared-memory benchmark route:
+
+```bash
+source deploy/activate_statebus_host.sh
+python -m eval.runner \
+  --repeat 1 \
+  --llm-mode deterministic \
+  --statepool-backend shared_memory \
+  --embed-state-backend shared_memory \
+  --out /tmp/statebus_shm_demo
+```
+
+External `UDS` executor sample transport:
+
+```bash
+source deploy/activate_statebus_host.sh
+python -m eval.runner \
+  --repeat 1 \
+  --modes protocol \
+  --llm-mode deterministic \
+  --executor-transport uds \
+  --out /tmp/statebus_uds_demo
+```
+
+Notes:
+
+- `UDS` transport requires a real host environment that allows `AF_UNIX` sockets.
+- some managed sandboxes may block Unix sockets; in that case this path should be verified directly on the host.

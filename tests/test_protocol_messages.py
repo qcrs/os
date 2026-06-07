@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from protocol.messages import MemoryCommit, MemoryQuery, StateRef, protocol_bytes
+from protocol.messages import (
+    MemoryCommit,
+    MemoryQuery,
+    PlanStep,
+    RemoteStepRequest,
+    RemoteStepResponse,
+    StateRef,
+    StepResult,
+    parse_protocol_bytes,
+    protocol_bytes,
+)
 
 
 def test_memory_commit_wire_ignores_rich_state_ref_payloads() -> None:
@@ -98,3 +108,96 @@ def test_memory_query_wire_keeps_only_reuse_signature_metadata() -> None:
         }
     )
     assert protocol_bytes(rich) == protocol_bytes(minimal)
+
+
+def test_step_result_protobuf_round_trip_preserves_core_fields() -> None:
+    message = StepResult(
+        step_id="execute",
+        success=True,
+        output_state_refs=[
+            StateRef(
+                state_id="artifact-1",
+                kind="TOOL_ARTIFACT",
+                storage="MMAP_FILE",
+                handle="/tmp/artifact-1.bin",
+                length=128,
+                checksum="c" * 64,
+                metadata={"tool_name": "tool.db_pool_triage"},
+            )
+        ],
+        payload={"tool_name": "tool.db_pool_triage", "route": "db_pool_saturation"},
+        skipped=False,
+    )
+    parsed = parse_protocol_bytes(protocol_bytes(message))
+    assert isinstance(parsed, StepResult)
+    assert parsed.step_id == "execute"
+    assert parsed.output_state_refs[0].state_id == "artifact-1"
+    assert parsed.output_state_refs[0].kind == "TOOL_ARTIFACT"
+    assert parsed.output_state_refs[0].length == 128
+    assert parsed.payload["route"] == "db_pool_saturation"
+
+
+def test_remote_step_request_json_round_trip_preserves_full_state_refs() -> None:
+    request = RemoteStepRequest(
+        mode="protocol",
+        task_id="sample-cache-001",
+        task_theme="repo_local_cache_triage",
+        state_root="/tmp/statebus-artifacts",
+        step=PlanStep(
+            step_id="execute",
+            owner_agent="executor",
+            action="EXECUTE_PLAYBOOK",
+            input_state_refs=["state-evidence-1", "state-features-1"],
+            params={"transport": "uds"},
+            depends_on=["retrieve"],
+        ),
+        input_state_refs=[
+            StateRef(
+                state_id="state-evidence-1",
+                kind="DENSE_EVIDENCE",
+                storage="MMAP_FILE",
+                handle="/tmp/evidence.bin",
+                length=256,
+                checksum="d" * 64,
+                metadata={"query": "inventory invalidation"},
+            ),
+            StateRef(
+                state_id="state-features-1",
+                kind="FEATURE_BUNDLE",
+                storage="MMAP_FILE",
+                handle="/tmp/features.bin",
+                length=128,
+                checksum="e" * 64,
+                metadata={"schema": "statebus.feature_bundle.v1"},
+            ),
+        ],
+    )
+    parsed = parse_protocol_bytes(protocol_bytes(request))
+    assert isinstance(parsed, RemoteStepRequest)
+    assert parsed.step.params["transport"] == "uds"
+    assert parsed.input_state_refs[0].handle == "/tmp/evidence.bin"
+    assert parsed.input_state_refs[1].kind == "FEATURE_BUNDLE"
+
+
+def test_remote_step_response_json_round_trip_preserves_result_payload() -> None:
+    response = RemoteStepResponse(
+        result=StepResult(
+            step_id="execute",
+            success=True,
+            output_state_refs=[
+                StateRef(
+                    state_id="artifact-1",
+                    kind="TOOL_ARTIFACT",
+                    storage="PY_SHARED_MEMORY",
+                    handle="psm_artifact_1",
+                    length=96,
+                    metadata={"sandbox_mode": "subprocess"},
+                )
+            ],
+            payload={"tool_name": "tool.cache_invalidation_playbook", "sandbox_mode": "subprocess"},
+        )
+    )
+    parsed = parse_protocol_bytes(protocol_bytes(response))
+    assert isinstance(parsed, RemoteStepResponse)
+    assert parsed.result.output_state_refs[0].handle == "psm_artifact_1"
+    assert parsed.result.payload["tool_name"] == "tool.cache_invalidation_playbook"

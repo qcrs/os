@@ -145,6 +145,21 @@ class MemoryCommit:
     created_at_ns: int | None = None
 
 
+@dataclass
+class RemoteStepRequest:
+    mode: str
+    task_id: str
+    task_theme: str
+    state_root: str
+    step: PlanStep
+    input_state_refs: list[StateRef] = field(default_factory=list)
+
+
+@dataclass
+class RemoteStepResponse:
+    result: StepResult
+
+
 def to_wire(value: Any) -> Any:
     if is_dataclass(value):
         return {key: to_wire(item) for key, item in asdict(value).items()}
@@ -176,6 +191,109 @@ def protocol_bytes(message: Any) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def parse_protocol_bytes(payload: bytes) -> Any:
+    if not payload:
+        raise ValueError("protocol payload is empty")
+    envelope = statebus_pb2.WireEnvelope()
+    try:
+        envelope.ParseFromString(payload)
+    except Exception:
+        return _parse_json_protocol_frame(payload)
+    body = envelope.WhichOneof("body")
+    if body is None:
+        return _parse_json_protocol_frame(payload)
+    if body == "hello":
+        message = envelope.hello
+        return Hello(
+            agent_id=message.agent_id,
+            mode=message.mode,
+            protocol_version=message.protocol_version,
+        )
+    if body == "capability":
+        message = envelope.capability
+        return Capability(
+            agent_id=message.agent_id,
+            items=[
+                CapabilityItem(
+                    name=item.name,
+                    kind=item.kind,
+                    input_schema=item.input_schema,
+                    output_schema=item.output_schema,
+                    accepted_state_kinds=list(item.accepted_state_kinds),
+                    produced_state_kinds=list(item.produced_state_kinds),
+                )
+                for item in message.items
+            ],
+        )
+    if body == "ack":
+        message = envelope.ack
+        return Ack(related_id=message.related_id, detail=message.detail)
+    if body == "error":
+        message = envelope.error
+        return Error(
+            code=message.code,
+            detail=message.detail,
+            related_id=message.related_id or None,
+        )
+    if body == "heartbeat":
+        message = envelope.heartbeat
+        return Heartbeat(agent_id=message.agent_id, sent_at_ns=message.sent_at_ns)
+    if body == "plan":
+        message = envelope.plan
+        return Plan(
+            task_id=message.task_id,
+            goal=message.goal,
+            steps=[_from_proto_plan_step(item) for item in message.steps],
+        )
+    if body == "plan_step":
+        return _from_proto_plan_step(envelope.plan_step)
+    if body == "step_result":
+        message = envelope.step_result
+        return StepResult(
+            step_id=message.step_id,
+            success=message.success,
+            output_state_refs=[_from_proto_state_ref(item) for item in message.output_state_refs],
+            payload=_parse_json_object(message.payload_json),
+            error=message.error or None,
+            skipped=message.skipped,
+            reused_from_memory_id=message.reused_from_memory_id or None,
+        )
+    if body == "memory_query":
+        message = envelope.memory_query
+        return MemoryQuery(
+            task_theme=message.task_theme,
+            query_text=message.query_text,
+            top_k=message.top_k,
+            tags=list(message.tags),
+            tags_any=list(message.tags_any),
+            tags_all=list(message.tags_all),
+            min_confidence=message.min_confidence,
+            source_agent_id=message.source_agent_id or None,
+            created_after_ns=message.created_after_ns or None,
+            encoder_id=message.encoder_id or None,
+            limit_active_only=message.limit_active_only,
+            required_metadata=_parse_json_object(message.required_metadata_json),
+        )
+    if body == "memory_commit":
+        message = envelope.memory_commit
+        return MemoryCommit(
+            memory_id=message.memory_id,
+            source_agent_id=message.source_agent_id,
+            source_task_id=message.source_task_id,
+            task_theme=message.task_theme,
+            summary=message.summary,
+            tags=list(message.tags),
+            evidence_state_ids=list(message.evidence_state_ids),
+            reusable_steps=list(message.reusable_steps),
+            confidence=message.confidence,
+            embedding_state_id=message.embedding_state_id or None,
+            encoder_id=message.encoder_id or None,
+            metadata=_parse_json_object(message.metadata_json),
+            created_at_ns=message.created_at_ns or None,
+        )
+    raise ValueError(f"unsupported protocol body: {body}")
 
 
 def text_frame(message: Any) -> str:
@@ -400,3 +518,219 @@ def _wire_commit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     if reuse_signature is None:
         return {}
     return {"reuse_signature": reuse_signature}
+
+
+def _from_proto_state_ref(ref: statebus_pb2.StateRefLite) -> StateRef:
+    return StateRef(
+        state_id=ref.state_id,
+        kind=ref.kind,
+        storage="",
+        handle="",
+        length=int(ref.length),
+    )
+
+
+def _from_proto_plan_step(step: statebus_pb2.PlanStep) -> PlanStep:
+    return PlanStep(
+        step_id=step.step_id,
+        owner_agent=step.owner_agent,
+        action=step.action,
+        input_state_refs=list(step.input_state_refs),
+        params=_parse_json_object(step.params_json),
+        depends_on=list(step.depends_on),
+    )
+
+
+def _parse_json_protocol_frame(payload: bytes) -> Any:
+    frame = json.loads(payload.decode("utf-8"))
+    if not isinstance(frame, dict):
+        raise ValueError("protocol frame must be a JSON object")
+    message_name = str(frame.get("type", "")).strip()
+    message_payload = frame.get("payload", {})
+    if not isinstance(message_payload, dict):
+        raise ValueError("protocol frame payload must be an object")
+    return _message_from_wire_frame(message_name, message_payload)
+
+
+def _message_from_wire_frame(message_name: str, payload: dict[str, Any]) -> Any:
+    if message_name == "Hello":
+        return Hello(
+            agent_id=str(payload.get("agent_id", "")),
+            mode=str(payload.get("mode", "")),
+            protocol_version=str(payload.get("protocol_version", "statebus.v0")),
+        )
+    if message_name == "Capability":
+        return Capability(
+            agent_id=str(payload.get("agent_id", "")),
+            items=[
+                CapabilityItem(
+                    name=str(item.get("name", "")),
+                    kind=str(item.get("kind", "")),
+                    input_schema=str(item.get("input_schema", "")),
+                    output_schema=str(item.get("output_schema", "")),
+                    accepted_state_kinds=[str(value) for value in item.get("accepted_state_kinds", [])],
+                    produced_state_kinds=[str(value) for value in item.get("produced_state_kinds", [])],
+                )
+                for item in payload.get("items", [])
+                if isinstance(item, dict)
+            ],
+        )
+    if message_name == "Ack":
+        return Ack(
+            related_id=str(payload.get("related_id", "")),
+            detail=str(payload.get("detail", "ok")),
+        )
+    if message_name == "Error":
+        related_id = payload.get("related_id")
+        return Error(
+            code=str(payload.get("code", "")),
+            detail=str(payload.get("detail", "")),
+            related_id=None if related_id in (None, "") else str(related_id),
+        )
+    if message_name == "Heartbeat":
+        return Heartbeat(
+            agent_id=str(payload.get("agent_id", "")),
+            sent_at_ns=int(payload.get("sent_at_ns", 0)),
+        )
+    if message_name == "PlanStep":
+        return PlanStep(
+            step_id=str(payload.get("step_id", "")),
+            owner_agent=str(payload.get("owner_agent", "")),
+            action=str(payload.get("action", "")),
+            input_state_refs=[str(value) for value in payload.get("input_state_refs", [])],
+            params=dict(payload.get("params", {}) or {}),
+            depends_on=[str(value) for value in payload.get("depends_on", [])],
+        )
+    if message_name == "Plan":
+        return Plan(
+            task_id=str(payload.get("task_id", "")),
+            goal=str(payload.get("goal", "")),
+            steps=[
+                _message_from_wire_frame("PlanStep", item)
+                for item in payload.get("steps", [])
+                if isinstance(item, dict)
+            ],
+        )
+    if message_name == "StateRef":
+        return _state_ref_from_payload(payload)
+    if message_name == "StepResult":
+        memory_commit = payload.get("memory_commit")
+        return StepResult(
+            step_id=str(payload.get("step_id", "")),
+            success=bool(payload.get("success", False)),
+            output_state_refs=[
+                _state_ref_from_payload(item)
+                for item in payload.get("output_state_refs", [])
+                if isinstance(item, dict)
+            ],
+            payload=dict(payload.get("payload", {}) or {}),
+            memory_commit=(
+                None
+                if not isinstance(memory_commit, dict)
+                else _message_from_wire_frame("MemoryCommit", memory_commit)
+            ),
+            error=None if payload.get("error") in (None, "") else str(payload.get("error")),
+            skipped=bool(payload.get("skipped", False)),
+            reused_from_memory_id=(
+                None
+                if payload.get("reused_from_memory_id") in (None, "")
+                else str(payload.get("reused_from_memory_id"))
+            ),
+        )
+    if message_name == "MemoryQuery":
+        return MemoryQuery(
+            task_theme=str(payload.get("task_theme", "")),
+            query_text=str(payload.get("query_text", "")),
+            top_k=int(payload.get("top_k", 0)),
+            tags=[str(value) for value in payload.get("tags", [])],
+            tags_any=[str(value) for value in payload.get("tags_any", [])],
+            tags_all=[str(value) for value in payload.get("tags_all", [])],
+            min_confidence=float(payload.get("min_confidence", 0.0)),
+            source_agent_id=(
+                None
+                if payload.get("source_agent_id") in (None, "")
+                else str(payload.get("source_agent_id"))
+            ),
+            created_after_ns=(
+                None
+                if payload.get("created_after_ns") in (None, 0)
+                else int(payload.get("created_after_ns"))
+            ),
+            encoder_id=None if payload.get("encoder_id") in (None, "") else str(payload.get("encoder_id")),
+            limit_active_only=bool(payload.get("limit_active_only", True)),
+            required_metadata=dict(payload.get("required_metadata", {}) or {}),
+        )
+    if message_name == "MemoryCommit":
+        return MemoryCommit(
+            memory_id=str(payload.get("memory_id", "")),
+            source_agent_id=str(payload.get("source_agent_id", "")),
+            source_task_id=str(payload.get("source_task_id", "")),
+            task_theme=str(payload.get("task_theme", "")),
+            summary=str(payload.get("summary", "")),
+            tags=[str(value) for value in payload.get("tags", [])],
+            evidence_state_ids=[str(value) for value in payload.get("evidence_state_ids", [])],
+            reusable_steps=[str(value) for value in payload.get("reusable_steps", [])],
+            confidence=float(payload.get("confidence", 1.0)),
+            embedding_text=(
+                None if payload.get("embedding_text") in (None, "") else str(payload.get("embedding_text"))
+            ),
+            embedding_state_id=(
+                None
+                if payload.get("embedding_state_id") in (None, "")
+                else str(payload.get("embedding_state_id"))
+            ),
+            encoder_id=None if payload.get("encoder_id") in (None, "") else str(payload.get("encoder_id")),
+            metadata=dict(payload.get("metadata", {}) or {}),
+            evidence_state_refs=[
+                _state_ref_from_payload(item)
+                for item in payload.get("evidence_state_refs", [])
+                if isinstance(item, dict)
+            ],
+            created_at_ns=(
+                None
+                if payload.get("created_at_ns") in (None, 0)
+                else int(payload.get("created_at_ns"))
+            ),
+        )
+    if message_name == "RemoteStepRequest":
+        return RemoteStepRequest(
+            mode=str(payload.get("mode", "protocol")),
+            task_id=str(payload.get("task_id", "")),
+            task_theme=str(payload.get("task_theme", "")),
+            state_root=str(payload.get("state_root", "")),
+            step=_message_from_wire_frame("PlanStep", dict(payload.get("step", {}) or {})),
+            input_state_refs=[
+                _state_ref_from_payload(item)
+                for item in payload.get("input_state_refs", [])
+                if isinstance(item, dict)
+            ],
+        )
+    if message_name == "RemoteStepResponse":
+        result_payload = payload.get("result", {})
+        if not isinstance(result_payload, dict):
+            raise ValueError("remote step response missing result payload")
+        return RemoteStepResponse(
+            result=_message_from_wire_frame("StepResult", result_payload),
+        )
+    raise ValueError(f"unsupported JSON protocol message: {message_name}")
+
+
+def _state_ref_from_payload(payload: dict[str, Any]) -> StateRef:
+    return StateRef(
+        state_id=str(payload.get("state_id", "")),
+        kind=str(payload.get("kind", "")),
+        storage=str(payload.get("storage", "")),
+        handle=str(payload.get("handle", "")),
+        length=int(payload.get("length", 0)),
+        checksum=None if payload.get("checksum") in (None, "") else str(payload.get("checksum")),
+        metadata=dict(payload.get("metadata", {}) or {}),
+    )
+
+
+def _parse_json_object(payload: str) -> dict[str, Any]:
+    if not payload:
+        return {}
+    value = json.loads(payload)
+    if not isinstance(value, dict):
+        raise ValueError("expected JSON object payload")
+    return value
