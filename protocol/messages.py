@@ -260,6 +260,21 @@ def parse_protocol_bytes(payload: bytes) -> Any:
             skipped=message.skipped,
             reused_from_memory_id=message.reused_from_memory_id or None,
         )
+    if body == "remote_step_request":
+        message = envelope.remote_step_request
+        return RemoteStepRequest(
+            mode=message.mode,
+            task_id=message.task_id,
+            task_theme=message.task_theme,
+            state_root=message.state_root,
+            step=_from_proto_plan_step(message.step),
+            input_state_refs=[
+                _from_proto_state_ref_full(item) for item in message.input_state_refs
+            ],
+        )
+    if body == "remote_step_response":
+        message = envelope.remote_step_response
+        return RemoteStepResponse(result=_from_proto_remote_step_result(message.result))
     if body == "memory_query":
         message = envelope.memory_query
         return MemoryQuery(
@@ -278,21 +293,7 @@ def parse_protocol_bytes(payload: bytes) -> Any:
         )
     if body == "memory_commit":
         message = envelope.memory_commit
-        return MemoryCommit(
-            memory_id=message.memory_id,
-            source_agent_id=message.source_agent_id,
-            source_task_id=message.source_task_id,
-            task_theme=message.task_theme,
-            summary=message.summary,
-            tags=list(message.tags),
-            evidence_state_ids=list(message.evidence_state_ids),
-            reusable_steps=list(message.reusable_steps),
-            confidence=message.confidence,
-            embedding_state_id=message.embedding_state_id or None,
-            encoder_id=message.encoder_id or None,
-            metadata=_parse_json_object(message.metadata_json),
-            created_at_ns=message.created_at_ns or None,
-        )
+        return _from_proto_memory_commit(message)
     raise ValueError(f"unsupported protocol body: {body}")
 
 
@@ -440,6 +441,25 @@ def to_protocol_envelope(message: Any) -> statebus_pb2.WireEnvelope | None:
                 reused_from_memory_id=message.reused_from_memory_id or "",
             )
         )
+    if isinstance(message, RemoteStepRequest):
+        return statebus_pb2.WireEnvelope(
+            remote_step_request=statebus_pb2.RemoteStepRequest(
+                mode=message.mode,
+                task_id=message.task_id,
+                task_theme=message.task_theme,
+                state_root=message.state_root,
+                step=_to_proto_plan_step(message.step),
+                input_state_refs=[
+                    _to_proto_state_ref_full(ref) for ref in message.input_state_refs
+                ],
+            )
+        )
+    if isinstance(message, RemoteStepResponse):
+        return statebus_pb2.WireEnvelope(
+            remote_step_response=statebus_pb2.RemoteStepResponse(
+                result=_to_proto_remote_step_result(message.result),
+            )
+        )
     if isinstance(message, MemoryQuery):
         return statebus_pb2.WireEnvelope(
             memory_query=statebus_pb2.MemoryQuery(
@@ -459,21 +479,7 @@ def to_protocol_envelope(message: Any) -> statebus_pb2.WireEnvelope | None:
         )
     if isinstance(message, MemoryCommit):
         return statebus_pb2.WireEnvelope(
-            memory_commit=statebus_pb2.MemoryCommit(
-                memory_id=message.memory_id,
-                source_agent_id=message.source_agent_id,
-                source_task_id=message.source_task_id,
-                task_theme=message.task_theme,
-                summary=message.summary,
-                tags=message.tags,
-                evidence_state_ids=message.evidence_state_ids,
-                reusable_steps=message.reusable_steps,
-                confidence=message.confidence,
-                embedding_state_id=message.embedding_state_id or "",
-                encoder_id="",
-                metadata_json=_compact_json(_wire_commit_metadata(message.metadata)),
-                created_at_ns=message.created_at_ns or 0,
-            )
+            memory_commit=_to_proto_memory_commit(message)
         )
     return None
 
@@ -483,6 +489,18 @@ def _to_proto_state_ref(ref: StateRef) -> statebus_pb2.StateRefLite:
         state_id=ref.state_id,
         kind=ref.kind,
         length=ref.length,
+    )
+
+
+def _to_proto_state_ref_full(ref: StateRef) -> statebus_pb2.StateRefFull:
+    return statebus_pb2.StateRefFull(
+        state_id=ref.state_id,
+        kind=ref.kind,
+        storage=ref.storage,
+        handle=ref.handle,
+        length=ref.length,
+        checksum=ref.checksum or "",
+        metadata_json=_compact_json(ref.metadata),
     )
 
 
@@ -520,6 +538,24 @@ def _wire_commit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {"reuse_signature": reuse_signature}
 
 
+def _to_proto_memory_commit(message: MemoryCommit) -> statebus_pb2.MemoryCommit:
+    return statebus_pb2.MemoryCommit(
+        memory_id=message.memory_id,
+        source_agent_id=message.source_agent_id,
+        source_task_id=message.source_task_id,
+        task_theme=message.task_theme,
+        summary=message.summary,
+        tags=message.tags,
+        evidence_state_ids=message.evidence_state_ids,
+        reusable_steps=message.reusable_steps,
+        confidence=message.confidence,
+        embedding_state_id=message.embedding_state_id or "",
+        encoder_id="",
+        metadata_json=_compact_json(_wire_commit_metadata(message.metadata)),
+        created_at_ns=message.created_at_ns or 0,
+    )
+
+
 def _from_proto_state_ref(ref: statebus_pb2.StateRefLite) -> StateRef:
     return StateRef(
         state_id=ref.state_id,
@@ -527,6 +563,18 @@ def _from_proto_state_ref(ref: statebus_pb2.StateRefLite) -> StateRef:
         storage="",
         handle="",
         length=int(ref.length),
+    )
+
+
+def _from_proto_state_ref_full(ref: statebus_pb2.StateRefFull) -> StateRef:
+    return StateRef(
+        state_id=ref.state_id,
+        kind=ref.kind,
+        storage=ref.storage,
+        handle=ref.handle,
+        length=int(ref.length),
+        checksum=ref.checksum or None,
+        metadata=_parse_json_object(ref.metadata_json),
     )
 
 
@@ -538,6 +586,55 @@ def _from_proto_plan_step(step: statebus_pb2.PlanStep) -> PlanStep:
         input_state_refs=list(step.input_state_refs),
         params=_parse_json_object(step.params_json),
         depends_on=list(step.depends_on),
+    )
+
+
+def _from_proto_memory_commit(message: statebus_pb2.MemoryCommit) -> MemoryCommit:
+    return MemoryCommit(
+        memory_id=message.memory_id,
+        source_agent_id=message.source_agent_id,
+        source_task_id=message.source_task_id,
+        task_theme=message.task_theme,
+        summary=message.summary,
+        tags=list(message.tags),
+        evidence_state_ids=list(message.evidence_state_ids),
+        reusable_steps=list(message.reusable_steps),
+        confidence=message.confidence,
+        embedding_state_id=message.embedding_state_id or None,
+        encoder_id=message.encoder_id or None,
+        metadata=_parse_json_object(message.metadata_json),
+        created_at_ns=message.created_at_ns or None,
+    )
+
+
+def _to_proto_remote_step_result(result: StepResult) -> statebus_pb2.RemoteStepResult:
+    proto = statebus_pb2.RemoteStepResult(
+        step_id=result.step_id,
+        success=result.success,
+        output_state_refs=[_to_proto_state_ref_full(ref) for ref in result.output_state_refs],
+        payload_json=_compact_json(result.payload),
+        error=result.error or "",
+        skipped=result.skipped,
+        reused_from_memory_id=result.reused_from_memory_id or "",
+    )
+    if result.memory_commit is not None:
+        proto.memory_commit.CopyFrom(_to_proto_memory_commit(result.memory_commit))
+    return proto
+
+
+def _from_proto_remote_step_result(message: statebus_pb2.RemoteStepResult) -> StepResult:
+    has_memory_commit = message.HasField("memory_commit")
+    return StepResult(
+        step_id=message.step_id,
+        success=message.success,
+        output_state_refs=[_from_proto_state_ref_full(item) for item in message.output_state_refs],
+        payload=_parse_json_object(message.payload_json),
+        memory_commit=(
+            _from_proto_memory_commit(message.memory_commit) if has_memory_commit else None
+        ),
+        error=message.error or None,
+        skipped=message.skipped,
+        reused_from_memory_id=message.reused_from_memory_id or None,
     )
 
 

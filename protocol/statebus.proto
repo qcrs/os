@@ -8,6 +8,16 @@ message StateRefLite {
   uint64 length = 3;
 }
 
+message StateRefFull {
+  string state_id = 1;
+  string kind = 2;
+  string storage = 3;
+  string handle = 4;
+  uint64 length = 5;
+  string checksum = 6;
+  string metadata_json = 7;
+}
+
 message Hello {
   string agent_id = 1;
   string mode = 2;
@@ -100,6 +110,30 @@ message MemoryCommit {
   int64 created_at_ns = 13;
 }
 
+message RemoteStepResult {
+  string step_id = 1;
+  bool success = 2;
+  repeated StateRefFull output_state_refs = 3;
+  string payload_json = 4;
+  string error = 5;
+  bool skipped = 6;
+  string reused_from_memory_id = 7;
+  MemoryCommit memory_commit = 8;
+}
+
+message RemoteStepRequest {
+  string mode = 1;
+  string task_id = 2;
+  string task_theme = 3;
+  string state_root = 4;
+  PlanStep step = 5;
+  repeated StateRefFull input_state_refs = 6;
+}
+
+message RemoteStepResponse {
+  RemoteStepResult result = 1;
+}
+
 message WireEnvelope {
   oneof body {
     Hello hello = 1;
@@ -112,5 +146,7 @@ message WireEnvelope {
     StepResult step_result = 8;
     MemoryQuery memory_query = 9;
     MemoryCommit memory_commit = 10;
+    RemoteStepRequest remote_step_request = 11;
+    RemoteStepResponse remote_step_response = 12;
   }
 }

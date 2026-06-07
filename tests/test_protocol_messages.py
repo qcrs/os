@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from protocol import statebus_pb2
 from protocol.messages import (
     MemoryCommit,
     MemoryQuery,
@@ -137,7 +138,7 @@ def test_step_result_protobuf_round_trip_preserves_core_fields() -> None:
     assert parsed.payload["route"] == "db_pool_saturation"
 
 
-def test_remote_step_request_json_round_trip_preserves_full_state_refs() -> None:
+def test_remote_step_request_protobuf_round_trip_preserves_full_state_refs() -> None:
     request = RemoteStepRequest(
         mode="protocol",
         task_id="sample-cache-001",
@@ -172,14 +173,18 @@ def test_remote_step_request_json_round_trip_preserves_full_state_refs() -> None
             ),
         ],
     )
-    parsed = parse_protocol_bytes(protocol_bytes(request))
+    payload = protocol_bytes(request)
+    envelope = statebus_pb2.WireEnvelope()
+    envelope.ParseFromString(payload)
+    assert envelope.WhichOneof("body") == "remote_step_request"
+    parsed = parse_protocol_bytes(payload)
     assert isinstance(parsed, RemoteStepRequest)
     assert parsed.step.params["transport"] == "uds"
     assert parsed.input_state_refs[0].handle == "/tmp/evidence.bin"
     assert parsed.input_state_refs[1].kind == "FEATURE_BUNDLE"
 
 
-def test_remote_step_response_json_round_trip_preserves_result_payload() -> None:
+def test_remote_step_response_protobuf_round_trip_preserves_result_payload() -> None:
     response = RemoteStepResponse(
         result=StepResult(
             step_id="execute",
@@ -197,7 +202,11 @@ def test_remote_step_response_json_round_trip_preserves_result_payload() -> None
             payload={"tool_name": "tool.cache_invalidation_playbook", "sandbox_mode": "subprocess"},
         )
     )
-    parsed = parse_protocol_bytes(protocol_bytes(response))
+    payload = protocol_bytes(response)
+    envelope = statebus_pb2.WireEnvelope()
+    envelope.ParseFromString(payload)
+    assert envelope.WhichOneof("body") == "remote_step_response"
+    parsed = parse_protocol_bytes(payload)
     assert isinstance(parsed, RemoteStepResponse)
     assert parsed.result.output_state_refs[0].handle == "psm_artifact_1"
     assert parsed.result.payload["tool_name"] == "tool.cache_invalidation_playbook"
