@@ -258,4 +258,4 @@
 - Risks / follow-up:
   - retrieval reuse source still differs in exact selected memory IDs between modes because the generated summaries are not text-identical; keep reports focused on fairness of query policy, not identical memory lineage
   - if needed for defense, add a short methodology note in docs that “reuse eligibility is a runtime policy, not a planner choice”
-- Commit: pending reuse-query-accounting fix commit
+- Commit: `80d595d`
