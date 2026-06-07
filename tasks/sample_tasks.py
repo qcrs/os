@@ -19,11 +19,16 @@ class SampleTask:
     task_theme: str
     goal: str
     query: str
-    evidence_text: str
     tags: tuple[str, ...]
     reuse_tags: tuple[str, ...]
-    expected_reuse: bool
     summary_hint: str
+    corpus_doc_ids: tuple[str, ...] = ()
+    expected_reuse_mode: str = "none"
+    evidence_text: str = ""
+
+    @property
+    def expected_reuse(self) -> bool:
+        return self.expected_reuse_mode == "assist"
 
     @property
     def reuse_signature(self) -> str:
@@ -37,21 +42,27 @@ def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
     payload = yaml.safe_load(task_path.read_text(encoding="utf-8"))
     tasks = payload["tasks"] if isinstance(payload, dict) else payload
     return [
-        SampleTask(
-            task_id=str(item["task_id"]).strip(),
-            task_group=str(item.get("task_group", "default")).strip(),
-            task_order=int(item.get("task_order", 0)),
-            task_theme=str(item["task_theme"]).strip(),
-            goal=str(item["goal"]).strip(),
-            query=str(item["query"]).strip(),
-            evidence_text=str(item["evidence_text"]).strip(),
-            tags=tuple(str(tag) for tag in item.get("tags", [])),
-            reuse_tags=tuple(str(tag) for tag in item.get("reuse_tags", item.get("tags", []))),
-            expected_reuse=bool(item.get("expected_reuse", False)),
-            summary_hint=str(item["summary_hint"]).strip(),
-        )
-        for item in tasks
-    ]
+            SampleTask(
+                task_id=str(item["task_id"]).strip(),
+                task_group=str(item.get("task_group", "default")).strip(),
+                task_order=int(item.get("task_order", 0)),
+                task_theme=str(item["task_theme"]).strip(),
+                goal=str(item["goal"]).strip(),
+                query=str(item["query"]).strip(),
+                tags=tuple(str(tag) for tag in item.get("tags", [])),
+                reuse_tags=tuple(str(tag) for tag in item.get("reuse_tags", item.get("tags", []))),
+                corpus_doc_ids=tuple(str(doc_id) for doc_id in item.get("corpus_doc_ids", [])),
+                expected_reuse_mode=str(
+                    item.get(
+                        "expected_reuse_mode",
+                        "assist" if bool(item.get("expected_reuse", False)) else "none",
+                    )
+                ).strip(),
+                evidence_text=str(item.get("evidence_text", "")).strip(),
+                summary_hint=str(item["summary_hint"]).strip(),
+            )
+            for item in tasks
+        ]
 
 
 def default_task_chain() -> list[SampleTask]:
@@ -70,11 +81,12 @@ def build_plan(task: SampleTask) -> Plan:
                 input_state_refs=[],
                 params={
                     "query": task.query,
+                    "corpus_doc_ids": list(task.corpus_doc_ids),
                     "evidence_text": task.evidence_text,
                     "tags": list(task.tags),
                     "reuse_tags": list(task.reuse_tags or task.tags),
                     "reuse_signature": task.reuse_signature,
-                    "expected_reuse": task.expected_reuse,
+                    "expected_reuse_mode": task.expected_reuse_mode,
                     "allow_memory_reuse": True,
                 },
                 depends_on=[],
@@ -97,7 +109,7 @@ def build_plan(task: SampleTask) -> Plan:
                     "tags": list(task.tags),
                     "reuse_tags": list(task.reuse_tags or task.tags),
                     "reuse_signature": task.reuse_signature,
-                    "expected_reuse": task.expected_reuse,
+                    "expected_reuse_mode": task.expected_reuse_mode,
                 },
                 depends_on=["retrieve", "execute"],
             ),

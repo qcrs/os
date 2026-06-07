@@ -42,6 +42,9 @@ METRIC_FIELDS = (
     "memory_hits",
     "memory_query_count",
     "memory_hit_task_count",
+    "memory_assist_task_count",
+    "validated_reuse_task_count",
+    "memory_rejected_task_count",
     "planned_step_count",
     "skipped_step_count",
     "llm_request_count",
@@ -89,6 +92,8 @@ def _zero_metric_row() -> dict[str, float]:
     payload = {field: 0.0 for field in METRIC_FIELDS}
     payload["memory_hit_rate"] = 0.0
     payload["reuse_gain"] = 0.0
+    payload["memory_assist_rate"] = 0.0
+    payload["memory_reject_rate"] = 0.0
     return payload
 
 
@@ -113,6 +118,16 @@ def _sum_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, float]:
         if totals["planned_step_count"] > 0.0
         else 0.0
     )
+    totals["memory_assist_rate"] = (
+        totals["memory_assist_task_count"] / totals["memory_query_count"]
+        if totals["memory_query_count"] > 0.0
+        else 0.0
+    )
+    totals["memory_reject_rate"] = (
+        totals["memory_rejected_task_count"] / totals["memory_query_count"]
+        if totals["memory_query_count"] > 0.0
+        else 0.0
+    )
     return totals
 
 
@@ -131,6 +146,16 @@ def _average_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, floa
     averaged["reuse_gain"] = (
         averaged["skipped_step_count"] / averaged["planned_step_count"]
         if averaged["planned_step_count"] > 0.0
+        else 0.0
+    )
+    averaged["memory_assist_rate"] = (
+        averaged["memory_assist_task_count"] / averaged["memory_query_count"]
+        if averaged["memory_query_count"] > 0.0
+        else 0.0
+    )
+    averaged["memory_reject_rate"] = (
+        averaged["memory_rejected_task_count"] / averaged["memory_query_count"]
+        if averaged["memory_query_count"] > 0.0
         else 0.0
     )
     return averaged
@@ -191,6 +216,15 @@ def _mode_order_for_run(modes: tuple[str, ...], run_index: int) -> tuple[str, ..
     return tuple(reversed(modes))
 
 
+def _matches_reuse_expectation(*, expected_mode: str, applied: bool) -> bool:
+    normalized = (expected_mode or "none").strip().lower()
+    if normalized == "assist":
+        return applied
+    if normalized == "none":
+        return not applied
+    raise ValueError(f"unsupported expected_reuse_mode: {expected_mode}")
+
+
 async def _run_mode_once(
     *,
     mode: str,
@@ -241,20 +275,27 @@ async def _run_mode_once(
                 "task_theme": task.task_theme,
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
-                "expected_reuse": task.expected_reuse,
+                "expected_reuse_mode": task.expected_reuse_mode,
                 "status": "completed",
                 "error": None,
                 "metrics": ctx.metrics.to_dict(),
                 "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                 "reuse": {
                     "applied": ctx.reuse_hit is not None,
+                    "mode": "assist" if ctx.reuse_hit is not None else "none",
                     "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
                     "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
                     "skipped_step_ids": list(ctx.pruned_step_ids),
+                    "rejected_memory_id": None
+                    if ctx.rejected_memory_hit is None
+                    else ctx.rejected_memory_hit.memory_id,
                 },
                 "reuse_validation": {
-                    "expected_reuse": task.expected_reuse,
-                    "matched_expectation": (ctx.reuse_hit is not None) == task.expected_reuse,
+                    "expected_reuse_mode": task.expected_reuse_mode,
+                    "matched_expectation": _matches_reuse_expectation(
+                        expected_mode=task.expected_reuse_mode,
+                        applied=ctx.reuse_hit is not None,
+                    ),
                 },
                 "state_refs": {
                     state_id: {
@@ -300,19 +341,23 @@ async def _run_mode_once(
                 "task_theme": task.task_theme,
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
-                "expected_reuse": task.expected_reuse,
+                "expected_reuse_mode": task.expected_reuse_mode,
                 "status": "failed",
                 "error": run_error,
                 "metrics": ctx.metrics.to_dict(),
                 "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                 "reuse": {
                     "applied": ctx.reuse_hit is not None,
+                    "mode": "assist" if ctx.reuse_hit is not None else "none",
                     "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
                     "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
                     "skipped_step_ids": list(ctx.pruned_step_ids),
+                    "rejected_memory_id": None
+                    if ctx.rejected_memory_hit is None
+                    else ctx.rejected_memory_hit.memory_id,
                 },
                 "reuse_validation": {
-                    "expected_reuse": task.expected_reuse,
+                    "expected_reuse_mode": task.expected_reuse_mode,
                     "matched_expectation": False,
                 },
                 "state_refs": {
@@ -1281,7 +1326,7 @@ def _build_report(result: dict[str, object]) -> str:
                 if not task_run["reuse_validation"]["matched_expectation"]:
                     mode_mismatches.append(
                         f"run={run['run_index']:02d} task={task_run['task_id']} "
-                        f"expected_reuse={task_run['reuse_validation']['expected_reuse']} "
+                        f"expected_reuse_mode={task_run['reuse_validation']['expected_reuse_mode']} "
                         f"applied={task_run['reuse']['applied']}"
                     )
         if mode_mismatches:
@@ -1290,20 +1335,25 @@ def _build_report(result: dict[str, object]) -> str:
         else:
             lines.append("- all reuse outcomes matched expectations")
         lines.append("")
-    lines.extend(["", "## Pruned Steps By Mode", ""])
+    lines.extend(["", "## Memory Assist Decisions By Mode", ""])
     for mode in available_modes:
         lines.append(f"### {mode}")
-        pruned_rows = []
+        reuse_rows = []
         for run in result["mode_runs"][mode]:
             for task_run in run["tasks"]:
                 if task_run["reuse"]["applied"]:
-                    pruned_rows.append(
+                    reuse_rows.append(
                         f"run={run['run_index']:02d} task={task_run['task_id']} "
                         f"memory={task_run['reuse']['memory_id']} "
-                        f"skipped={','.join(task_run['reuse']['skipped_step_ids'])}"
+                        f"mode={task_run['reuse']['mode']}"
                     )
-        if pruned_rows:
-            lines.extend(f"- {row}" for row in pruned_rows)
+                elif task_run["reuse"].get("rejected_memory_id"):
+                    reuse_rows.append(
+                        f"run={run['run_index']:02d} task={task_run['task_id']} "
+                        f"rejected_memory={task_run['reuse']['rejected_memory_id']}"
+                    )
+        if reuse_rows:
+            lines.extend(f"- {row}" for row in reuse_rows)
         else:
             lines.append("- none")
         lines.append("")

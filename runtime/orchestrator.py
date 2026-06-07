@@ -118,6 +118,7 @@ class RunContext:
     memory_search_cache: dict[tuple[object, ...], list[MemoryHit]] = field(default_factory=dict)
     pruned_step_ids: list[str] = field(default_factory=list)
     reuse_hit: MemoryHit | None = None
+    rejected_memory_hit: MemoryHit | None = None
 
     def emit(self, message: object) -> None:
         protocol_size, text_chars, text_size = self.session.record_message(message, phase="steady")
@@ -293,12 +294,20 @@ class RunContext:
         self.metrics.llm_completion_tokens += result.usage.completion_tokens
         self.metrics.llm_total_tokens += result.usage.total_tokens
 
-    def note_reuse(self, hit: MemoryHit, skipped_step_ids: list[str]) -> None:
-        hit.reused_as_plan_patch = True
-        hit.skipped_step_ids = list(skipped_step_ids)
+    def note_reuse(self, hit: MemoryHit, *, reuse_mode: str) -> None:
+        hit.reused_as_plan_patch = False
+        hit.skipped_step_ids = []
         self.reuse_hit = hit
-        self.pruned_step_ids = list(skipped_step_ids)
-        self.metrics.skipped_step_count += len(skipped_step_ids)
+        self.pruned_step_ids = []
+        if reuse_mode == "assist":
+            self.metrics.memory_assist_task_count += 1
+            self.metrics.validated_reuse_task_count += 1
+
+    def note_rejected_memory(self, hit: MemoryHit) -> None:
+        if self.rejected_memory_hit is not None:
+            return
+        self.rejected_memory_hit = hit
+        self.metrics.memory_rejected_task_count += 1
 
 
 class Orchestrator:
@@ -347,7 +356,6 @@ class Orchestrator:
         plan = await self._plan_task(task, ctx)
         SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
         ctx.metrics.planned_step_count = len(plan.steps)
-        plan = self._apply_memory_reuse(plan, ctx)
         results = await self._execute_plan(plan, ctx)
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
         return results
@@ -357,7 +365,6 @@ class Orchestrator:
         self._ensure_handshake(ctx)
         SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
         ctx.metrics.planned_step_count = len(plan.steps)
-        plan = self._apply_memory_reuse(plan, ctx)
         results = await self._execute_plan(plan, ctx)
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
         return results
@@ -408,50 +415,6 @@ class Orchestrator:
 
         return build_plan(task)
 
-    def _apply_memory_reuse(self, plan: Plan, ctx: RunContext) -> Plan:
-        retrieve_step = next(
-            (
-                step
-                for step in plan.steps
-                if step.step_id == "retrieve" and step.params.get("allow_memory_reuse")
-            ),
-            None,
-        )
-        if retrieve_step is None:
-            return plan
-        hits = ctx.search_memory(
-            task_theme=ctx.task_theme,
-            query_text=str(retrieve_step.params["query"]),
-            top_k=1,
-            tags=list(retrieve_step.params.get("tags", [])),
-            tags_any=list(retrieve_step.params.get("tags", [])),
-            tags_all=list(retrieve_step.params.get("reuse_tags", retrieve_step.params.get("tags", []))),
-            min_confidence=0.6,
-            encoder_id=ctx.memory_store.embedder.encoder_id,
-            required_metadata={
-                "reuse_signature": str(retrieve_step.params.get("reuse_signature", "")),
-            },
-        )
-        if not hits:
-            return plan
-        hit = hits[0]
-        refs_by_kind = self._group_refs_by_kind(hit.evidence_state_refs)
-        skipped_step_ids: list[str] = []
-        if "retrieve" in hit.reusable_steps and refs_by_kind.get("DENSE_EVIDENCE"):
-            skipped_step_ids.append("retrieve")
-        if "execute" in hit.reusable_steps and refs_by_kind.get("TOOL_ARTIFACT"):
-            skipped_step_ids.append("execute")
-        if not skipped_step_ids:
-            return plan
-        self._seed_reused_results(ctx, hit, skipped_step_ids)
-        ctx.note_reuse(hit, skipped_step_ids)
-        ctx.emit(Ack(related_id=hit.memory_id, detail=f"memory reuse applied: {','.join(skipped_step_ids)}"))
-        return Plan(
-            task_id=plan.task_id,
-            goal=plan.goal,
-            steps=[step for step in plan.steps if step.step_id not in skipped_step_ids],
-        )
-
     def _ensure_handshake(self, ctx: RunContext) -> None:
         if ctx.session.handshake_complete:
             return
@@ -482,58 +445,3 @@ class Orchestrator:
     def _register_step_outputs(result: StepResult, ctx: RunContext) -> None:
         for ref in result.output_state_refs:
             ctx.register_state(ref)
-
-    @staticmethod
-    def _group_refs_by_kind(refs: list[StateRef]) -> dict[str, list[StateRef]]:
-        grouped: dict[str, list[StateRef]] = {}
-        for ref in refs:
-            grouped.setdefault(ref.kind, []).append(ref)
-        return grouped
-
-    def _seed_reused_results(
-        self,
-        ctx: RunContext,
-        hit: MemoryHit,
-        skipped_step_ids: list[str],
-    ) -> None:
-        refs_by_kind = self._group_refs_by_kind(hit.evidence_state_refs)
-        evidence_refs = list(refs_by_kind.get("DENSE_EVIDENCE", []))
-        feature_refs = list(refs_by_kind.get("FEATURE_BUNDLE", []))
-        embedding_refs = list(refs_by_kind.get("EMBEDDING", []))
-        artifact_refs = list(refs_by_kind.get("TOOL_ARTIFACT", []))
-        if "retrieve" in skipped_step_ids:
-            retrieve_refs = evidence_refs + feature_refs + embedding_refs
-            result = StepResult(
-                step_id="retrieve",
-                success=True,
-                output_state_refs=retrieve_refs,
-                payload={
-                    "memory_hits": [hit.memory_id],
-                    "reused_memory": True,
-                    "reuse_source": hit.reuse_source,
-                },
-                skipped=True,
-                reused_from_memory_id=hit.memory_id,
-            )
-            self._register_step_outputs(result, ctx)
-            ctx.results["retrieve"] = result
-        if "execute" in skipped_step_ids and artifact_refs:
-            actions = []
-            artifact_text = ctx.get_text_state(artifact_refs[0]).strip()
-            if artifact_text:
-                actions = [line for line in artifact_text.splitlines() if line.strip()]
-            result = StepResult(
-                step_id="execute",
-                success=True,
-                output_state_refs=[artifact_refs[0]],
-                payload={
-                    "actions": actions,
-                    "reusable_steps": list(hit.reusable_steps),
-                    "reused_memory": True,
-                    "reuse_source": hit.reuse_source,
-                },
-                skipped=True,
-                reused_from_memory_id=hit.memory_id,
-            )
-            self._register_step_outputs(result, ctx)
-            ctx.results["execute"] = result

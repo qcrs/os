@@ -8,8 +8,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Protocol
 
-import faiss  # type: ignore
 import numpy as np
+try:
+    import faiss  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - exercised in host envs without faiss
+    faiss = None
 
 from protocol.messages import MemoryCommit, MemoryHit, MemoryQuery, StateRef
 
@@ -107,6 +110,59 @@ class DeterministicEmbeddingProvider:
         return buckets / norm
 
 
+class _NumpyVectorIndex:
+    def __init__(self, vector_dim: int) -> None:
+        self.vector_dim = vector_dim
+        self._vectors: dict[int, np.ndarray] = {}
+
+    @property
+    def ntotal(self) -> int:
+        return len(self._vectors)
+
+    def add_with_ids(self, vectors: np.ndarray, ids: np.ndarray) -> None:
+        normalized_vectors = np.asarray(vectors, dtype="float32")
+        normalized_ids = np.asarray(ids, dtype="int64")
+        for vector, embedding_id in zip(normalized_vectors, normalized_ids, strict=False):
+            if vector.shape != (self.vector_dim,):
+                raise ValueError(
+                    f"embedding dim mismatch for {int(embedding_id)}:"
+                    f" {vector.shape} != {(self.vector_dim,)}"
+                )
+            self._vectors[int(embedding_id)] = np.asarray(vector, dtype="float32")
+
+    def remove_ids(self, ids: np.ndarray) -> None:
+        normalized_ids = np.asarray(ids, dtype="int64")
+        for embedding_id in normalized_ids:
+            self._vectors.pop(int(embedding_id), None)
+
+    def search(self, vectors: np.ndarray, top_k: int) -> tuple[np.ndarray, np.ndarray]:
+        queries = np.asarray(vectors, dtype="float32")
+        if not self._vectors:
+            return (
+                np.zeros((queries.shape[0], top_k), dtype="float32"),
+                -np.ones((queries.shape[0], top_k), dtype="int64"),
+            )
+        ids = np.asarray(sorted(self._vectors), dtype="int64")
+        matrix = np.asarray([self._vectors[int(embedding_id)] for embedding_id in ids], dtype="float32")
+        scores = queries @ matrix.T
+        top_scores = np.zeros((queries.shape[0], top_k), dtype="float32")
+        top_ids = -np.ones((queries.shape[0], top_k), dtype="int64")
+        for row_index in range(queries.shape[0]):
+            ordering = np.argsort(scores[row_index])[::-1][:top_k]
+            limit = len(ordering)
+            if limit == 0:
+                continue
+            top_scores[row_index, :limit] = scores[row_index, ordering]
+            top_ids[row_index, :limit] = ids[ordering]
+        return top_scores, top_ids
+
+
+def _build_vector_index(vector_dim: int) -> object:
+    if faiss is not None:
+        return faiss.IndexIDMap2(faiss.IndexFlatIP(vector_dim))
+    return _NumpyVectorIndex(vector_dim)
+
+
 class MemoryStore:
     """SQLite metadata + FAISS retrieval store for host-side StateBus memory."""
 
@@ -122,7 +178,7 @@ class MemoryStore:
         self.conn.row_factory = sqlite3.Row
         self._fts_enabled = False
         self.embedder = embedder or SentenceTransformerEmbeddingProvider()
-        self._index = faiss.IndexIDMap2(faiss.IndexFlatIP(self.embedder.vector_dim))
+        self._index = _build_vector_index(self.embedder.vector_dim)
         self._index_vectors: dict[int, np.ndarray] = {}
 
     def init_schema(self) -> None:
@@ -385,7 +441,7 @@ class MemoryStore:
         ]
 
     def rebuild_index(self) -> None:
-        self._index = faiss.IndexIDMap2(faiss.IndexFlatIP(self.embedder.vector_dim))
+        self._index = _build_vector_index(self.embedder.vector_dim)
         self._index_vectors = {}
         rows = self.conn.execute(
             """

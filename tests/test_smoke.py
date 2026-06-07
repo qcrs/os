@@ -63,16 +63,21 @@ def test_benchmark_runner_writes_outputs() -> None:
         payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
         assert payload["manifest"]["repeat"] == 1
         assert payload["manifest"]["llm_backend"] == "deterministic"
-        assert payload["manifest"]["continuous_task_count"] == 10
-        assert payload["manifest"]["expected_reuse_task_count"] == 8
-        assert payload["manifest"]["task_groups"] == ["cache_chain", "latency_chain"]
+        assert payload["manifest"]["continuous_task_count"] == 12
+        assert payload["manifest"]["expected_reuse_task_count"] == 6
+        assert payload["manifest"]["task_groups"] == [
+            "cache_chain",
+            "latency_chain",
+            "session_chain",
+        ]
         assert result["summary"]["text"]["run_count"] == 1
-        assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 2
+        assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 3
         assert "__aggregate__" in (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
         assert "StateBus Benchmark Report" in (out_dir / "benchmark_report.md").read_text(
             encoding="utf-8"
         )
         assert "latency_chain" in (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
+        assert "session_chain" in (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
         assert "Stability Summary" in (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "Reuse Query Accounting" in (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert (
@@ -80,7 +85,7 @@ def test_benchmark_runner_writes_outputs() -> None:
             < result["summary"]["text"]["steady_state"]["text_bytes"]
         )
 
-def test_follow_up_tasks_reuse_memory_and_skip_steps() -> None:
+def test_follow_up_tasks_use_memory_assist_or_reject_when_needed() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
@@ -91,25 +96,49 @@ def test_follow_up_tasks_reuse_memory_and_skip_steps() -> None:
             )
         )
     task_specs = {task.task_id: task for task in default_task_chain()}
-    expected_followups = {task_id for task_id, task in task_specs.items() if task.expected_reuse}
-    expected_cold_starts = set(task_specs) - expected_followups
+    expected_followups = {
+        task_id for task_id, task in task_specs.items() if task.expected_reuse_mode == "assist"
+    }
+    expected_anchors = {
+        task_id
+        for task_id, task in task_specs.items()
+        if task.expected_reuse_mode == "none" and task.task_order == 1
+    }
+    expected_reject_controls = {
+        task_id
+        for task_id, task in task_specs.items()
+        if task.expected_reuse_mode == "none" and task.task_order > 1
+    }
     for mode in ("text", "protocol"):
         run = result["mode_runs"][mode][0]
         tasks = {task["task_id"]: task for task in run["tasks"]}
         for task_id in expected_followups:
             task = tasks[task_id]
             assert task["metrics"]["memory_hits"] >= 1
-            assert task["metrics"]["skipped_step_count"] >= 1
+            assert task["metrics"]["memory_assist_task_count"] == 1
+            assert task["metrics"]["skipped_step_count"] == 0
             assert task["reuse"]["applied"] is True
-            assert set(task["reuse"]["skipped_step_ids"]) == {"retrieve", "execute"}
+            assert task["reuse"]["mode"] == "assist"
+            assert task["reuse"]["rejected_memory_id"] is None
             assert task["reuse_validation"]["matched_expectation"] is True
-            assert task["results"]["retrieve"]["skipped"] is True
-            assert task["results"]["execute"]["skipped"] is True
-        for task_id in expected_cold_starts:
+            assert task["results"]["retrieve"]["skipped"] is False
+            assert task["results"]["execute"]["skipped"] is False
+        for task_id in expected_anchors:
             task = tasks[task_id]
             assert task["metrics"]["memory_hits"] == 0
             assert task["metrics"]["skipped_step_count"] == 0
+            assert task["metrics"]["memory_assist_task_count"] == 0
             assert task["reuse"]["applied"] is False
+            assert task["reuse"]["rejected_memory_id"] is None
+            assert task["reuse_validation"]["matched_expectation"] is True
+        for task_id in expected_reject_controls:
+            task = tasks[task_id]
+            assert task["metrics"]["memory_hits"] >= 1
+            assert task["metrics"]["memory_assist_task_count"] == 0
+            assert task["metrics"]["memory_rejected_task_count"] == 1
+            assert task["metrics"]["skipped_step_count"] == 0
+            assert task["reuse"]["applied"] is False
+            assert task["reuse"]["rejected_memory_id"] is not None
             assert task["reuse_validation"]["matched_expectation"] is True
 
 
@@ -164,7 +193,7 @@ def test_embedding_state_is_real_float32_vector() -> None:
         vector = pool.get_embedding(ref)
         assert vector.dtype == np.float32
         assert vector.shape == (embedder.vector_dim,)
-        expected = embedder.embed_text("cache staleness stale inventory invalidation lag")
+        expected = embedder.embed_text(default_task_chain()[0].query)
         assert np.allclose(vector, expected)
 
 

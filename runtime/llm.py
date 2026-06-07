@@ -311,9 +311,10 @@ class DeterministicLLMClient:
                         "q": payload["query"],
                         "e": payload["evidence_text"],
                         "t": payload.get("tags", []),
+                        "cd": payload.get("corpus_doc_ids", []),
                         "rt": payload.get("reuse_tags", payload.get("tags", [])),
                         "sig": payload.get("reuse_signature", ""),
-                        "er": payload.get("expected_reuse", False),
+                        "erm": payload.get("expected_reuse_mode", "none"),
                     },
                     "x": {},
                     "s": {
@@ -321,7 +322,7 @@ class DeterministicLLMClient:
                         "t": payload.get("tags", []),
                         "rt": payload.get("reuse_tags", payload.get("tags", [])),
                         "sig": payload.get("reuse_signature", ""),
-                        "er": payload.get("expected_reuse", False),
+                        "erm": payload.get("expected_reuse_mode", "none"),
                     },
                 }
             else:
@@ -339,8 +340,10 @@ class DeterministicLLMClient:
                             "input_state_refs": [],
                             "params": {
                                 "query": payload["query"],
+                                "corpus_doc_ids": payload.get("corpus_doc_ids", []),
                                 "evidence_text": payload["evidence_text"],
                                 "tags": payload.get("tags", []),
+                                "expected_reuse_mode": payload.get("expected_reuse_mode", "none"),
                                 "allow_memory_reuse": True,
                             },
                             "depends_on": [],
@@ -361,6 +364,7 @@ class DeterministicLLMClient:
                             "params": {
                                 "summary_hint": payload["summary_hint"],
                                 "tags": payload.get("tags", []),
+                                "expected_reuse_mode": payload.get("expected_reuse_mode", "none"),
                             },
                             "depends_on": ["retrieve", "execute"],
                         },
@@ -466,6 +470,8 @@ def parse_text_planner_brief(text: str) -> dict[str, Any]:
         "task_id": _extract_line_value(text, "Task ID:"),
         "task_group": _extract_line_value(text, "Task group:"),
         "task_theme": _extract_line_value(text, "Task theme:"),
+        "expected_reuse_mode": _extract_line_value(text, "Expected reuse mode:"),
+        "corpus_doc_ids": _split_csv(_extract_line_value(text, "Corpus docs:")),
         "goal": _extract_block(text, "Goal:\n", "\n\nSearch query:\n"),
         "query": _extract_block(text, "Search query:\n", "\n\nSummary hint:\n"),
         "summary_hint": _extract_block(text, "Summary hint:\n", "\n\nEvidence note:\n"),
@@ -482,9 +488,10 @@ def parse_compact_protocol_planner_brief(text: str) -> dict[str, Any]:
         "evidence_text": str(payload.get("e", "")),
         "summary_hint": str(payload.get("h", "")),
         "tags": [str(tag) for tag in payload.get("t", [])],
+        "corpus_doc_ids": [str(doc_id) for doc_id in payload.get("cd", [])],
         "reuse_tags": [str(tag) for tag in payload.get("rt", payload.get("t", []))],
         "reuse_signature": str(payload.get("sig", "")),
-        "expected_reuse": bool(payload.get("er", False)),
+        "expected_reuse_mode": str(payload.get("erm", "none")),
     }
 
 

@@ -20,3 +20,7 @@ If dependencies are missing:
 ```bash
 bash scripts/setup_host_dev_env.sh
 ```
+
+Current branch audit and verification closure:
+
+- `docs/progress/feat_realism_protocol_hardening_audit_20260607.md`

@@ -18,6 +18,9 @@ class TaskMetrics:
     memory_hits: int = 0
     memory_query_count: int = 0
     memory_hit_task_count: int = 0
+    memory_assist_task_count: int = 0
+    validated_reuse_task_count: int = 0
+    memory_rejected_task_count: int = 0
     planned_step_count: int = 0
     skipped_step_count: int = 0
     llm_request_count: int = 0

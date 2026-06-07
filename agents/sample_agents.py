@@ -24,6 +24,7 @@ from runtime.llm import (
     tagged_json_block,
 )
 from runtime.uds_transport import request_response
+from tasks.local_corpus import render_corpus_evidence, retrieve_corpus_docs
 from tasks.sample_tasks import SampleTask
 
 PROTOCOL_PLANNER_TAG = "sb-plan-v1"
@@ -68,10 +69,12 @@ class PlannerAgent(BaseAgent):
             "task_theme": task.task_theme,
             "goal": task.goal,
             "query": task.query,
+            "corpus_doc_ids": list(task.corpus_doc_ids),
             "evidence_text": task.evidence_text,
             "tags": list(task.tags),
             "reuse_tags": list(task.reuse_tags or task.tags),
-            "expected_reuse": task.expected_reuse,
+            "reuse_signature": task.reuse_signature,
+            "expected_reuse_mode": task.expected_reuse_mode,
             "summary_hint": task.summary_hint,
         }
         messages = _planner_messages(planner_input, mode=str(getattr(ctx, "mode", "protocol")))
@@ -83,29 +86,61 @@ class PlannerAgent(BaseAgent):
 @dataclass
 class RetrieverAgent(BaseAgent):
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
+        corpus_docs = retrieve_corpus_docs(
+            query=str(step.params["query"]),
+            tags=list(step.params.get("tags", [])),
+            task_group=str(getattr(ctx, "task_group", "")),
+            task_theme=str(getattr(ctx, "task_theme", "")),
+            corpus_doc_ids=list(step.params.get("corpus_doc_ids", [])),
+            embedder=ctx.memory_store.embedder,
+        )
+        fresh_evidence_text = render_corpus_evidence(corpus_docs)
+        fresh_bundle = build_feature_bundle(
+            query=str(step.params["query"]),
+            evidence_text=fresh_evidence_text,
+            tags=list(step.params.get("tags", [])),
+            reuse_signature=str(step.params.get("reuse_signature", "")),
+            reused_memory=False,
+        )
+
         hits = []
+        accepted_hit = None
+        memory_hint_route = ""
         if step.params.get("allow_memory_reuse"):
             hits = ctx.search_memory(
                 task_theme=ctx.task_theme,
                 query_text=str(step.params["query"]),
-                top_k=1,
-                tags=list(step.params.get("tags", [])),
+                top_k=3,
+                tags=[],
                 tags_any=list(step.params.get("tags", [])),
-                tags_all=list(step.params.get("reuse_tags", step.params.get("tags", []))),
+                tags_all=[],
                 min_confidence=0.6,
                 encoder_id=ctx.memory_store.embedder.encoder_id,
-                required_metadata={
-                    "reuse_signature": str(step.params.get("reuse_signature", "")),
-                },
             )
+            if hits:
+                for candidate in hits:
+                    candidate_route = str(candidate.metadata.get("feature_route", "")).strip()
+                    if (
+                        candidate_route
+                        and candidate_route == fresh_bundle["route"]
+                        and candidate_route != "generic_triage"
+                    ):
+                        accepted_hit = candidate
+                        memory_hint_route = candidate_route
+                        ctx.note_reuse(candidate, reuse_mode="assist")
+                        break
+                if accepted_hit is None:
+                    ctx.note_rejected_memory(hits[0])
 
-        reused = bool(hits)
-        evidence_text = str(step.params["evidence_text"])
-        if reused:
-            evidence_text = (
-                f"REUSED_MEMORY {hits[0].memory_id}: {hits[0].summary}\n"
-                f"FRESH_EVIDENCE {evidence_text}"
-            )
+        reused = accepted_hit is not None
+        memory_assist_ids = [] if accepted_hit is None else [accepted_hit.memory_id]
+        evidence_sections = [fresh_evidence_text]
+        if accepted_hit is not None:
+            evidence_sections.append(f"MEMORY_ASSIST {accepted_hit.memory_id}: {accepted_hit.summary}")
+        benchmark_note = str(step.params.get("evidence_text", "")).strip()
+        if benchmark_note:
+            evidence_sections.append(f"BENCHMARK_NOTE {benchmark_note}")
+        evidence_text = "\n\n".join(section for section in evidence_sections if section.strip())
 
         evidence_ref = ctx.put_text_state(
             state_id=f"{ctx.task_id}-{step.step_id}-evidence",
@@ -115,6 +150,8 @@ class RetrieverAgent(BaseAgent):
                 "query": step.params["query"],
                 "reused_memory": reused,
                 "reuse_signature": step.params.get("reuse_signature"),
+                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                "memory_assist_ids": memory_assist_ids,
             },
         )
         feature_bundle = build_feature_bundle(
@@ -124,6 +161,10 @@ class RetrieverAgent(BaseAgent):
             reuse_signature=str(step.params.get("reuse_signature", "")),
             reused_memory=reused,
         )
+        feature_bundle["corpus_doc_ids"] = [doc.doc_id for doc in corpus_docs]
+        feature_bundle["memory_assist_ids"] = memory_assist_ids
+        feature_bundle["memory_hint_route"] = memory_hint_route
+        feature_bundle["expected_reuse_mode"] = str(step.params.get("expected_reuse_mode", "none"))
         feature_ref = ctx.put_feature_state(
             state_id=f"{ctx.task_id}-{step.step_id}-features",
             feature_bundle=feature_bundle,
@@ -131,6 +172,8 @@ class RetrieverAgent(BaseAgent):
                 "query": step.params["query"],
                 "reused_memory": reused,
                 "reuse_signature": step.params.get("reuse_signature"),
+                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                "memory_assist_ids": memory_assist_ids,
             },
         )
         embedding_ref = ctx.put_embedding_state(
@@ -148,8 +191,13 @@ class RetrieverAgent(BaseAgent):
             payload={
                 "query": step.params["query"],
                 "memory_hits": [hit.memory_id for hit in hits],
+                "memory_assist_ids": memory_assist_ids,
                 "reused_memory": reused,
+                "reuse_mode": "assist" if reused else "none",
                 "feature_route": feature_bundle["route"],
+                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                "corpus_doc_count": len(corpus_docs),
+                "memory_hint_route": memory_hint_route,
             },
         )
 
@@ -264,7 +312,8 @@ class SummarizerAgent(BaseAgent):
                 "goal": getattr(ctx, "task_id", ""),
                 "task_group": getattr(ctx, "task_group", ""),
                 "reuse_signature": step.params.get("reuse_signature"),
-                "expected_reuse": bool(step.params.get("expected_reuse", False)),
+                "expected_reuse_mode": str(step.params.get("expected_reuse_mode", "none")),
+                "feature_route": execute_result.payload.get("route", ""),
                 "trace_id": ctx.trace_id,
                 "llm_model": result.model,
             },
@@ -435,11 +484,12 @@ def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
             "input_state_refs": [],
             "params": {
                 "query": task.query,
+                "corpus_doc_ids": list(task.corpus_doc_ids),
                 "evidence_text": task.evidence_text,
                 "tags": list(task.tags),
                 "reuse_tags": list(task.reuse_tags or task.tags),
                 "reuse_signature": task.reuse_signature,
-                "expected_reuse": task.expected_reuse,
+                "expected_reuse_mode": task.expected_reuse_mode,
                 "allow_memory_reuse": True,
             },
             "depends_on": [],
@@ -462,7 +512,7 @@ def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
                 "tags": list(task.tags),
                 "reuse_tags": list(task.reuse_tags or task.tags),
                 "reuse_signature": task.reuse_signature,
-                "expected_reuse": task.expected_reuse,
+                "expected_reuse_mode": task.expected_reuse_mode,
             },
             "depends_on": ["retrieve", "execute"],
         },
@@ -470,6 +520,12 @@ def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
 
 
 def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
+    expected_reuse_mode = str(
+        payload.get(
+            "expected_reuse_mode",
+            "assist" if bool(payload.get("expected_reuse", False)) else "none",
+        )
+    )
     if mode == "text":
         system_prompt = (
             "You are the StateBus Planner. Output strict JSON only. "
@@ -479,8 +535,9 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "Step 1 must be retrieve -> owner_agent retriever action RETRIEVE_EVIDENCE. "
             "Step 2 must be execute -> owner_agent executor action EXECUTE_PLAYBOOK. "
             "Step 3 must be summarize -> owner_agent summarizer action SUMMARIZE_AND_COMMIT. "
-            "retrieve.params must include query, evidence_text, tags, and allow_memory_reuse=true. "
-            "execute.params must be {}. summarize.params must include summary_hint and tags. "
+            "retrieve.params must include query, corpus_doc_ids, evidence_text, tags, "
+            "expected_reuse_mode, and allow_memory_reuse=true. execute.params must be {}. "
+            "summarize.params must include summary_hint, tags, and expected_reuse_mode. "
             "Do not wrap each step inside a retrieve/execute/summarize key. "
             "Do not add prose or markdown."
         )
@@ -494,7 +551,9 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             f"Task ID: {payload['task_id']}\n"
             f"Task group: {payload['task_group']}\n"
             f"Task theme: {payload['task_theme']}\n"
-            f"Tags: {', '.join(payload['tags'])}\n\n"
+            f"Tags: {', '.join(payload.get('tags', []))}\n"
+            f"Expected reuse mode: {expected_reuse_mode}\n"
+            f"Corpus docs: {', '.join(payload.get('corpus_doc_ids', []))}\n\n"
             "Goal:\n"
             f"{payload['goal']}\n\n"
             "Search query:\n"
@@ -508,8 +567,8 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
         system_prompt = (
             "You are the StateBus Planner. Output JSON only. "
             "Return {\"r\":{...},\"x\":{},\"s\":{...}}. "
-            "r must contain q,e,t,rt,sig,er. "
-            "s must contain h,t,rt,sig,er. "
+            "r must contain q,e,t,cd,rt,sig,erm. "
+            "s must contain h,t,rt,sig,erm. "
             "Copy values from the input packet. Keep keys short. No markdown."
         )
         user_prompt = tagged_json_block(
@@ -520,9 +579,10 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
                 "e": payload["evidence_text"],
                 "h": payload["summary_hint"],
                 "t": list(payload["tags"]),
+                "cd": list(payload.get("corpus_doc_ids", [])),
                 "rt": list(payload.get("reuse_tags", payload["tags"])),
                 "sig": payload.get("reuse_signature", ""),
-                "er": bool(payload.get("expected_reuse", False)),
+                "erm": expected_reuse_mode,
             },
         )
     return [
@@ -590,11 +650,12 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
             "step_id": "retrieve",
             "params": {
                 "query": retrieve.get("q", ""),
+                "corpus_doc_ids": list(retrieve.get("cd", [])),
                 "evidence_text": retrieve.get("e", ""),
                 "tags": list(retrieve.get("t", [])),
                 "reuse_tags": list(retrieve.get("rt", retrieve.get("t", []))),
                 "reuse_signature": str(retrieve.get("sig", "")),
-                "expected_reuse": bool(retrieve.get("er", False)),
+                "expected_reuse_mode": str(retrieve.get("erm", "none")),
                 "allow_memory_reuse": True,
             },
         },
@@ -609,7 +670,7 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
                 "tags": list(summarize.get("t", [])),
                 "reuse_tags": list(summarize.get("rt", summarize.get("t", []))),
                 "reuse_signature": str(summarize.get("sig", "")),
-                "expected_reuse": bool(summarize.get("er", False)),
+                "expected_reuse_mode": str(summarize.get("erm", "none")),
             },
         },
     ]

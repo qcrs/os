@@ -1,218 +1,180 @@
 tasks:
-  - task_id: sample-latency-001
-    task_group: latency_chain
-    task_order: 1
-    task_theme: repo_local_latency_triage
-    goal: Diagnose the first latency regression from repo-local sample evidence.
-    query: api latency regression slow query pool saturation
-    evidence_text: >
-      Sample incident A: api p95 climbed to 820ms after release-17. The
-      repo-local trace notes DB pool saturation and a slow orders query.
-      Rollback release-17 and add the missing orders_created_at index.
-    tags:
-      - latency
-      - database
-      - release-17
-      - anchor
-    reuse_tags:
-      - latency
-      - database
-    expected_reuse: false
-    summary_hint: >
-      Latency regression traced to DB pool saturation and a slow orders query
-      after release-17; rollback plus index creation is the recommended playbook.
-
-  - task_id: sample-latency-002
-    task_group: latency_chain
-    task_order: 2
-    task_theme: repo_local_latency_triage
-    goal: Reuse previous latency memory for the first follow-up incident.
-    query: follow-up latency regression slow query database pool
-    evidence_text: >
-      Sample incident B: a follow-up latency spike matches the earlier pattern.
-      The repo-local note again mentions slow query pressure and database pool
-      contention.
-    tags:
-      - latency
-      - database
-      - followup
-    reuse_tags:
-      - latency
-      - database
-    expected_reuse: true
-    summary_hint: >
-      Follow-up latency incident matches the earlier database saturation playbook
-      and should reuse the prior remediation steps before deeper diagnostics.
-
-  - task_id: sample-latency-003
-    task_group: latency_chain
-    task_order: 3
-    task_theme: repo_local_latency_triage
-    goal: Validate that the latency playbook reuses again on a third similar incident.
-    query: service c latency slow query pool contention replay
-    evidence_text: >
-      Sample incident C: service-c shows the same database pool contention during
-      a burst window. The repo-local trace again points to the slow orders query
-      pattern and release-era saturation symptoms.
-    tags:
-      - latency
-      - database
-      - service-c
-    reuse_tags:
-      - latency
-      - database
-    expected_reuse: true
-    summary_hint: >
-      Third latency incident should continue to reuse the database saturation
-      playbook and only escalate if the known rollback and indexing actions fail.
-
-  - task_id: sample-latency-004
-    task_group: latency_chain
-    task_order: 4
-    task_theme: repo_local_latency_triage
-    goal: Replay the first latency incident to verify repeated execution stability.
-    query: replay anchor latency regression orders query pool saturation
-    evidence_text: >
-      Sample incident D: replay the first latency report with the same DB pool
-      saturation and slow orders query note to validate repeated reuse stability.
-    tags:
-      - latency
-      - database
-      - replay
-    reuse_tags:
-      - latency
-      - database
-    expected_reuse: true
-    summary_hint: >
-      Replay of the anchor latency incident should still map to the known
-      rollback and indexing playbook without requiring fresh retrieval work.
-
-  - task_id: sample-latency-005
-    task_group: latency_chain
-    task_order: 5
-    task_theme: repo_local_latency_triage
-    goal: Replay the follow-up latency incident to verify pruning consistency.
-    query: replay follow-up latency regression database pool contention
-    evidence_text: >
-      Sample incident E: replay the follow-up latency case where database pool
-      contention and the slow query signature remain the dominant clues.
-    tags:
-      - latency
-      - database
-      - replay-followup
-    reuse_tags:
-      - latency
-      - database
-    expected_reuse: true
-    summary_hint: >
-      Replay of the follow-up latency incident should prune retrieval and execute
-      steps by reusing the established saturation playbook.
-
   - task_id: sample-cache-001
     task_group: cache_chain
     task_order: 1
     task_theme: repo_local_cache_staleness
-    goal: Diagnose the first cache staleness incident from repo-local evidence.
-    query: cache staleness stale inventory invalidation lag
-    evidence_text: >
-      Sample incident F: inventory pages showed stale counts after a batch sync.
-      The repo-local note points to delayed cache invalidation on the inventory
-      aggregate key and recommends forcing the invalidation hook after the sync.
-    tags:
-      - cache
-      - invalidation
-      - inventory
-      - anchor
-    reuse_tags:
-      - cache
-      - invalidation
-    expected_reuse: false
+    goal: Diagnose the first stale inventory report from corpus-backed local evidence.
+    query: inventory stale counts batch sync aggregate invalidation
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; treat any prior memory as a hypothesis.
+    tags: [cache, inventory, invalidation, anchor]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
     summary_hint: >
-      Cache staleness came from delayed invalidation on the inventory aggregate
-      key after batch sync; forcing the invalidation hook is the preferred fix.
+      Fresh evidence should identify delayed aggregate invalidation after batch sync
+      and recommend forcing the post-sync invalidation hook.
 
   - task_id: sample-cache-002
     task_group: cache_chain
     task_order: 2
     task_theme: repo_local_cache_staleness
-    goal: Reuse previous cache memory for the first follow-up stale inventory incident.
-    query: follow-up stale inventory cache invalidation lag
-    evidence_text: >
-      Sample incident G: a second stale inventory alert follows the same sync
-      window pattern. The repo-local note again mentions cache invalidation lag
-      on the shared aggregate key.
-    tags:
-      - cache
-      - invalidation
-      - followup
-    reuse_tags:
-      - cache
-      - invalidation
-    expected_reuse: true
+    goal: Use the current task evidence and prior memory to speed up a follow-up stale inventory triage.
+    query: follow-up inventory stale counts shared aggregate invalidation hook
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; validate any recalled playbook against fresh evidence.
+    tags: [cache, inventory, invalidation, followup]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: assist
     summary_hint: >
-      Follow-up cache staleness matches the earlier invalidation lag playbook and
-      should reuse the prior remediation before deeper investigation.
+      This follow-up should validate the earlier invalidation playbook against fresh
+      corpus evidence before recommending the same fix.
 
   - task_id: sample-cache-003
     task_group: cache_chain
     task_order: 3
     task_theme: repo_local_cache_staleness
-    goal: Validate repeated cache reuse on a third similar stale inventory incident.
-    query: inventory stale counts sync window cache invalidation
-    evidence_text: >
-      Sample incident H: the stale inventory alert recurs in another sync window.
-      The repo-local note still points to delayed invalidation on the shared
-      inventory aggregate key.
-    tags:
-      - cache
-      - invalidation
-      - sync-window
-    reuse_tags:
-      - cache
-      - invalidation
-    expected_reuse: true
+    goal: Distinguish a misleading stale inventory alert from the known invalidation playbook.
+    query: stale inventory after failover replica lag looks like invalidation issue
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; reject reused memory if fresh evidence points elsewhere.
+    tags: [cache, inventory, sync-window, failover]
+    reuse_tags: [cache, inventory]
+    expected_reuse_mode: none
     summary_hint: >
-      Third cache staleness incident should continue to reuse the invalidation
-      playbook and only escalate if the stale-count symptom persists.
+      Fresh evidence should reject the invalidation shortcut and instead isolate the
+      stale-read path on the reporting replica.
 
   - task_id: sample-cache-004
     task_group: cache_chain
     task_order: 4
     task_theme: repo_local_cache_staleness
-    goal: Replay the first cache incident to verify repeated execution stability.
-    query: replay anchor stale inventory invalidation lag
-    evidence_text: >
-      Sample incident I: replay the original stale inventory report with the same
-      delayed invalidation note after batch sync to validate repeated reuse stability.
-    tags:
-      - cache
-      - invalidation
-      - replay
-    reuse_tags:
-      - cache
-      - invalidation
-    expected_reuse: true
+    goal: Verify the invalidation path again on a control replay without skipping fresh retrieval.
+    query: replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; replay should still fetch fresh evidence.
+    tags: [cache, inventory, invalidation, replay]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: assist
     summary_hint: >
-      Replay of the anchor cache incident should still map to the invalidation
-      hook playbook without requiring new retrieval work.
+      The control replay should validate the same invalidation playbook against fresh
+      corpus evidence and keep the reuse path conservative.
 
-  - task_id: sample-cache-005
-    task_group: cache_chain
-    task_order: 5
-    task_theme: repo_local_cache_staleness
-    goal: Replay the follow-up cache incident to verify pruning consistency.
-    query: replay follow-up inventory stale counts invalidation lag
-    evidence_text: >
-      Sample incident J: replay the follow-up stale inventory case where delayed
-      invalidation on the aggregate key remains the strongest clue.
-    tags:
-      - cache
-      - invalidation
-      - replay-followup
-    reuse_tags:
-      - cache
-      - invalidation
-    expected_reuse: true
+  - task_id: sample-latency-001
+    task_group: latency_chain
+    task_order: 1
+    task_theme: repo_local_latency_triage
+    goal: Diagnose the first orders latency regression from corpus-backed local evidence.
+    query: release-17 orders latency db pool saturation slow query
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; do not assume a replayed fix.
+    tags: [latency, database, release-17, anchor]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: none
     summary_hint: >
-      Replay of the follow-up cache incident should prune retrieval and execute
-      steps by reusing the established invalidation playbook.
+      Fresh evidence should point to DB pool saturation and the slow orders query,
+      then recommend rollback plus index creation.
+
+  - task_id: sample-latency-002
+    task_group: latency_chain
+    task_order: 2
+    task_theme: repo_local_latency_triage
+    goal: Triage a follow-up orders latency burst with fresh retrieval plus memory assist.
+    query: service-c orders latency connection pool contention slow query
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; memory may suggest a playbook but cannot skip retrieval.
+    tags: [latency, database, service-c, followup]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: assist
+    summary_hint: >
+      This follow-up should validate the earlier database playbook against fresh
+      evidence before recommending the same mitigation steps.
+
+  - task_id: sample-latency-003
+    task_group: latency_chain
+    task_order: 3
+    task_theme: repo_local_latency_triage
+    goal: Separate a misleading release-window latency alert from the known DB playbook.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; reject recalled DB fixes if the fresh route differs.
+    tags: [latency, release-17, orders, worker]
+    reuse_tags: [latency, orders]
+    expected_reuse_mode: none
+    summary_hint: >
+      Fresh evidence should reject the database shortcut and instead escalate the
+      worker queue starvation path.
+
+  - task_id: sample-latency-004
+    task_group: latency_chain
+    task_order: 4
+    task_theme: repo_local_latency_triage
+    goal: Re-verify the known orders-query latency path with fresh retrieval in a control replay.
+    query: replay orders latency db wait profile release-era saturation
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; replay should still fetch and validate current evidence.
+    tags: [latency, database, replay, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: assist
+    summary_hint: >
+      The control replay should reuse the prior database playbook only after fresh
+      corpus evidence re-confirms the same route.
+
+  - task_id: sample-session-001
+    task_group: session_chain
+    task_order: 1
+    task_theme: repo_local_auth_session_drift
+    goal: Diagnose the first SSO callback failure from corpus-backed local evidence.
+    query: sso callback issuer mismatch stale jwks session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
+    evidence_text: Use the referenced corpus docs only; do not assume an existing auth fix.
+    tags: [auth, session, sso, anchor]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: none
+    summary_hint: >
+      Fresh evidence should identify session drift from stale JWKS and cookies, then
+      recommend JWKS refresh plus callback verification.
+
+  - task_id: sample-session-002
+    task_group: session_chain
+    task_order: 2
+    task_theme: repo_local_auth_session_drift
+    goal: Triage a follow-up SSO callback failure with conservative memory assist.
+    query: follow-up auth session issuer mismatch stale jwks callback
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
+    evidence_text: Use the referenced corpus docs only; validate any prior auth playbook against fresh evidence.
+    tags: [auth, session, sso, followup]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: assist
+    summary_hint: >
+      This follow-up should validate the earlier session-drift playbook against fresh
+      evidence before recommending the same remediation.
+
+  - task_id: sample-session-003
+    task_group: session_chain
+    task_order: 3
+    task_theme: repo_local_auth_session_drift
+    goal: Distinguish a misleading auth failure from the stale-JWKS session path.
+    query: auth login failures backoff window looks like session issue
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
+    evidence_text: Use the referenced corpus docs only; reject stale-JWKS memory if the fresh route is different.
+    tags: [auth, session, sso, rate-limit]
+    reuse_tags: [auth, session, sso]
+    expected_reuse_mode: none
+    summary_hint: >
+      Fresh evidence should reject the session-drift shortcut and instead isolate the
+      auth rate-limiter path.
+
+  - task_id: sample-session-004
+    task_group: session_chain
+    task_order: 4
+    task_theme: repo_local_auth_session_drift
+    goal: Re-verify the stale-JWKS session path in a control replay without skipping retrieval.
+    query: replay callback issuer mismatch jwks refresh stale session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
+    evidence_text: Use the referenced corpus docs only; replay should still validate the route from current evidence.
+    tags: [auth, session, replay, jwks]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: assist
+    summary_hint: >
+      The control replay should keep the same session-drift remediation only after
+      fresh evidence re-confirms the stale-JWKS path.

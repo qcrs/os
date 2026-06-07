@@ -66,6 +66,30 @@ def default_tool_registry() -> ToolRegistry:
     )
     registry.register(
         ToolSpec(
+            name="tool.auth_session_repair",
+            description="Repo-local playbook for stale JWKS and callback session drift incidents.",
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="tool.replica_stale_read_triage",
+            description="Repo-local playbook for stale reads caused by lagging replicas after failover.",
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="tool.worker_queue_triage",
+            description="Repo-local playbook for worker queue starvation during release-window reloads.",
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="tool.auth_rate_limit_triage",
+            description="Repo-local playbook for overly aggressive auth rate limiting.",
+        )
+    )
+    registry.register(
+        ToolSpec(
             name="tool.collect_more_evidence",
             description="Fallback playbook when the current evidence is still too weak.",
             timeout_s=3.0,
@@ -84,34 +108,95 @@ def build_feature_bundle(
 ) -> dict[str, Any]:
     normalized_query = query.strip()
     normalized_tags = sorted({str(tag).strip() for tag in tags if str(tag).strip()})
-    lowered = evidence_text.lower()
-    cache_signals = _match_signals(
-        lowered,
+    query_text = normalized_query.lower()
+    evidence_lower = evidence_text.lower()
+    primary_evidence_text = evidence_lower.split("\n\n[", 1)[0]
+    route_specs = (
         (
-            "cache invalidation",
-            "stale inventory",
-            "inventory aggregate",
-            "cache freshness",
-            "batch sync",
+            "cache_invalidation",
+            (
+                "cache invalidation",
+                "inventory aggregate",
+                "aggregate invalidation",
+                "invalidation hook",
+                "batch sync",
+                "stale inventory",
+            ),
+            {"cache", "inventory", "invalidation"},
         ),
-    )
-    db_signals = _match_signals(
-        lowered,
         (
-            "db pool saturation",
-            "database pool contention",
-            "connection pool",
-            "orders_created_at",
-            "sql wait",
+            "cache_replica_stale_read",
+            (
+                "read replica",
+                "replica lag",
+                "stale reads on the replica path",
+                "reporting replica",
+                "replica path",
+                "failover",
+            ),
+            {"cache", "inventory", "replica", "failover"},
+        ),
+        (
+            "db_pool_saturation",
+            (
+                "db pool saturation",
+                "database pool contention",
+                "connection pool",
+                "slow orders query",
+                "orders_created_at",
+                "db wait profile",
+                "sql wait",
+            ),
+            {"latency", "database", "orders"},
+        ),
+        (
+            "worker_queue_starvation",
+            (
+                "worker queue starvation",
+                "worker queue stall",
+                "tls certificate reload",
+                "tls reload",
+            ),
+            {"latency", "worker", "release-17"},
+        ),
+        (
+            "auth_session_drift",
+            (
+                "stale jwks",
+                "issuer mismatch",
+                "session cookies",
+                "callback verification",
+                "session drift",
+                "jwks refresh",
+            ),
+            {"auth", "session", "jwks", "sso"},
+        ),
+        (
+            "auth_rate_limit",
+            (
+                "rate limiter",
+                "rate limiting",
+                "backoff window",
+                "auth rate limiter",
+                "aggressive backoff",
+            ),
+            {"auth", "session", "rate-limit", "sso"},
         ),
     )
     route = "generic_triage"
-    matched_signals = list(cache_signals)
-    if db_signals:
-        route = "db_pool_saturation"
-        matched_signals = list(db_signals)
-    elif cache_signals:
-        route = "cache_invalidation"
+    matched_signals: list[str] = []
+    best_score = 0
+    tag_set = {tag.lower() for tag in normalized_tags}
+    for candidate_route, patterns, tag_hints in route_specs:
+        primary_hits = _match_signals(primary_evidence_text, patterns)
+        query_hits = _match_signals(query_text, patterns)
+        all_hits = _match_signals(evidence_lower, patterns)
+        tag_overlap = len(tag_set & {tag.lower() for tag in tag_hints})
+        score = (5 * len(primary_hits)) + (3 * len(query_hits)) + len(all_hits) + (2 * tag_overlap)
+        if score > best_score and (primary_hits or query_hits or tag_overlap):
+            best_score = score
+            route = candidate_route
+            matched_signals = list(dict.fromkeys([*primary_hits, *query_hits, *all_hits]))
 
     query_terms = [
         token.strip(".,:;!?()[]{}")
@@ -143,8 +228,16 @@ def select_tool_name(
     route = str(feature_bundle.get("route", "generic_triage"))
     if route == "cache_invalidation":
         return active_registry.get("tool.cache_invalidation_playbook").name
+    if route == "cache_replica_stale_read":
+        return active_registry.get("tool.replica_stale_read_triage").name
     if route == "db_pool_saturation":
         return active_registry.get("tool.db_pool_triage").name
+    if route == "worker_queue_starvation":
+        return active_registry.get("tool.worker_queue_triage").name
+    if route == "auth_session_drift":
+        return active_registry.get("tool.auth_session_repair").name
+    if route == "auth_rate_limit":
+        return active_registry.get("tool.auth_rate_limit_triage").name
     return active_registry.get("tool.collect_more_evidence").name
 
 
@@ -255,6 +348,70 @@ def run_registered_tool(tool_name: str, payload: dict[str, Any]) -> dict[str, An
                 "rollback release-17",
                 "create orders_created_at index",
                 "check database pool sizing",
+            ],
+            "reusable_steps": ["retrieve", "execute"],
+            "diagnostics": {
+                "matched_signals": matched_signals,
+                "evidence_sha256": feature_bundle.get("evidence_sha256"),
+            },
+            "sandbox_mode": "subprocess",
+        }
+    if tool_name == "tool.auth_session_repair":
+        return {
+            "tool_name": tool_name,
+            "route": route,
+            "actions": [
+                "refresh JWKS cache",
+                "clear stale session cookies",
+                "rerun callback verification",
+            ],
+            "reusable_steps": ["retrieve", "execute"],
+            "diagnostics": {
+                "matched_signals": matched_signals,
+                "evidence_sha256": feature_bundle.get("evidence_sha256"),
+            },
+            "sandbox_mode": "subprocess",
+        }
+    if tool_name == "tool.replica_stale_read_triage":
+        return {
+            "tool_name": tool_name,
+            "route": route,
+            "actions": [
+                "route reads away from lagging replica",
+                "verify replica catch-up after failover",
+                "recheck inventory counts on writer path",
+            ],
+            "reusable_steps": ["retrieve", "execute"],
+            "diagnostics": {
+                "matched_signals": matched_signals,
+                "evidence_sha256": feature_bundle.get("evidence_sha256"),
+            },
+            "sandbox_mode": "subprocess",
+        }
+    if tool_name == "tool.worker_queue_triage":
+        return {
+            "tool_name": tool_name,
+            "route": route,
+            "actions": [
+                "pause release-window TLS reload",
+                "drain and rebalance worker queue",
+                "verify worker saturation clears before DB rollback",
+            ],
+            "reusable_steps": ["retrieve", "execute"],
+            "diagnostics": {
+                "matched_signals": matched_signals,
+                "evidence_sha256": feature_bundle.get("evidence_sha256"),
+            },
+            "sandbox_mode": "subprocess",
+        }
+    if tool_name == "tool.auth_rate_limit_triage":
+        return {
+            "tool_name": tool_name,
+            "route": route,
+            "actions": [
+                "lower auth rate-limiter aggressiveness",
+                "clear the affected backoff window",
+                "verify login recovery after rate-limit reset",
             ],
             "reusable_steps": ["retrieve", "execute"],
             "diagnostics": {

@@ -259,3 +259,38 @@
   - retrieval reuse source still differs in exact selected memory IDs between modes because the generated summaries are not text-identical; keep reports focused on fairness of query policy, not identical memory lineage
   - if needed for defense, add a short methodology note in docs that “reuse eligibility is a runtime policy, not a planner choice”
 - Commit: `80d595d`
+
+## 2026-06-07 15: Realism hardening branch audit and host-side closure
+- Goal: audit `feat/realism-protocol-hardening` against the stricter host-side prototype framing and close the remaining verification gaps on the current working tree.
+- Changes:
+  - wrote the branch audit at `docs/progress/feat_realism_protocol_hardening_audit_20260607.md`
+  - verified the current worktree behavior after the realism-hardening changes:
+    - widened task set to `12` tasks across `cache_chain`, `latency_chain`, and `session_chain`
+    - shifted reuse semantics from prune-and-skip to fresh retrieval plus memory `assist/reject`
+    - switched retriever evidence acquisition to repo-local corpus retrieval with `corpus_doc_ids`
+  - captured fresh benchmark artifacts for the current worktree under:
+    - `runs/realism_hardening_det_r1`
+    - `runs/realism_hardening_shm_r1`
+    - `runs/realism_hardening_det_r10`
+    - `runs/realism_hardening_uds_r1`
+    - `runs/realism_hardening_api_r1`
+- Verification:
+  - `python -m pytest -q tests/test_smoke.py tests/test_llm_runtime.py tests/test_protocol_messages.py tests/test_memory_store.py`
+  - deterministic `mmap` benchmark at `runs/realism_hardening_det_r1`
+  - deterministic `shared_memory` benchmark at `runs/realism_hardening_shm_r1`
+  - deterministic `repeat=10` benchmark at `runs/realism_hardening_det_r10`
+  - real-host `UDS` rerun at `runs/realism_hardening_uds_r1`
+  - real-network API rerun at `runs/realism_hardening_api_r1`
+- Result:
+  - targeted tests passed with `26 passed, 2 skipped`
+  - deterministic `repeat=10` closed with `run_count=10` per mode, `failure_count=0`, `expectation_match_rate=1.00`, and `skipped_step_count=0`
+  - `UDS` validated successfully on the real host; the earlier `AF_UNIX` failure was only the managed sandbox
+  - live API evidence now exists on the current worktree:
+    - `text`: `control_bytes=61501`, `llm_total_tokens=14780`, `task_ms=62194.81`
+    - `protocol`: `control_bytes=51259`, `llm_total_tokens=11063`, `task_ms=56830.90`
+  - the branch can now honestly be described as a contestized host-side prototype with conservative memory assist/reject semantics, real host `UDS`, and real API-backed planner/summarizer evidence
+- Risks / follow-up:
+  - `Executor` is still closer to a playbook/tool selector than a general action executor
+  - remote executor request/response still has a JSON fallback boundary and is not fully converged into `.proto`
+  - benchmark tasks are broader than before but still repo-local synthetic corpora rather than open external workloads
+- Commit: pending current realism-hardening worktree commit
