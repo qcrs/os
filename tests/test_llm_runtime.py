@@ -267,7 +267,10 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     planner_result = asyncio.run(client.complete(planner_messages, purpose="planner"))
     planner_payload = json.loads(planner_result.text)
     assert set(planner_payload) == {"r", "s", "x"}
+    assert "reuse" not in planner_payload["r"]
     assert _plan_from_llm_output(task, planner_result.text) == build_plan(task)
+    parsed_plan = _plan_from_llm_output(task, planner_result.text)
+    assert parsed_plan.steps[0].params["allow_memory_reuse"] is True
 
     summary_messages = _summarizer_messages(
         {

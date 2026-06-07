@@ -1040,6 +1040,7 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Planner model: `{result['manifest']['planner_model']}`",
         f"- Summarizer provider: `{result['manifest']['summarizer_provider']}`",
         f"- Summarizer model: `{result['manifest']['summarizer_model']}`",
+        "- Reuse query policy: `runtime_fixed_allow_memory_reuse`",
         "",
         "## Aggregate",
         "",
@@ -1054,6 +1055,21 @@ def _build_report(result: dict[str, object]) -> str:
             f"{aggregate['state_bytes']:.2f} | {aggregate['llm_total_tokens']:.2f} | "
             f"{aggregate['memory_hit_rate']:.2f} | {aggregate['skipped_step_count']:.2f} | "
             f"{aggregate['reuse_gain']:.2f} | {aggregate['task_ms']:.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Reuse Query Accounting",
+            "",
+            "| mode | memory_query_count | memory_hit_task_count | memory_hit_rate |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        aggregate = summary[mode]["aggregate"]
+        lines.append(
+            f"| {mode} | {aggregate['memory_query_count']:.2f} | "
+            f"{aggregate['memory_hit_task_count']:.2f} | {aggregate['memory_hit_rate']:.2f} |"
         )
     lines.extend(
         [

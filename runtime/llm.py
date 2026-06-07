@@ -314,7 +314,6 @@ class DeterministicLLMClient:
                         "rt": payload.get("reuse_tags", payload.get("tags", [])),
                         "sig": payload.get("reuse_signature", ""),
                         "er": payload.get("expected_reuse", False),
-                        "reuse": True,
                     },
                     "x": {},
                     "s": {

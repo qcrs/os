@@ -442,7 +442,7 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
         system_prompt = (
             "You are the StateBus Planner. Output JSON only. "
             "Return {\"r\":{...},\"x\":{},\"s\":{...}}. "
-            "r must contain q,e,t,rt,sig,er,reuse. "
+            "r must contain q,e,t,rt,sig,er. "
             "s must contain h,t,rt,sig,er. "
             "Copy values from the input packet. Keep keys short. No markdown."
         )
@@ -529,7 +529,7 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
                 "reuse_tags": list(retrieve.get("rt", retrieve.get("t", []))),
                 "reuse_signature": str(retrieve.get("sig", "")),
                 "expected_reuse": bool(retrieve.get("er", False)),
-                "allow_memory_reuse": bool(retrieve.get("reuse", True)),
+                "allow_memory_reuse": True,
             },
         },
         {

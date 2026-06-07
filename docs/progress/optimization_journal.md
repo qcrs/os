@@ -231,3 +231,31 @@
   - protocol reuse currently hits more often than text in live runs because the more canonical summaries are easier to match; keep that distinction explicit in reporting
   - proto regeneration is still checked-in-source driven until `grpcio-tools` is added to the host env
 - Commit: `6cf6271`
+
+## 2026-06-07 14: Fair reuse-query accounting and corrected live repeat-10
+- Goal: remove the last benchmark confound where `protocol` appeared to have a higher memory-hit rate because cold-start tasks skipped reuse queries.
+- Changes:
+  - removed `allow_memory_reuse` from compact protocol planner output so the model can no longer suppress reuse queries
+  - fixed compact plan parsing to force `retrieve.params.allow_memory_reuse = true` as runtime policy
+  - added a `Reuse Query Accounting` section to the benchmark report
+  - reran live preflight and official live `repeat=10` under the corrected reuse-query accounting path
+- Verification:
+  - `python -m pytest -q`
+  - live preflight: `/home/qcrs/statebus/project/runs/benchmark_20260607_reuse_query_fix_preflight`
+  - live official `repeat=10`: `/home/qcrs/statebus/project/runs/benchmark_20260607_reuse_query_fix_repeat10`
+- Result:
+  - the confound is removed; both modes now issue the same number of reuse queries and show the same reuse hit rate:
+    - `text`: `memory_query_count=10`, `memory_hit_task_count=8`, `memory_hit_rate=0.80`
+    - `protocol`: `memory_query_count=10`, `memory_hit_task_count=8`, `memory_hit_rate=0.80`
+  - under this fairer accounting, `protocol` still wins on all headline metrics in the official live `repeat=10` run:
+    - `text`: `control_bytes=30162.40`, `llm_total_tokens=10359.00`, `task_ms=41730.51`
+    - `protocol`: `control_bytes=21914.00`, `llm_total_tokens=6817.90`, `task_ms=31450.46`
+  - relative to `text`, the corrected `protocol` path is now about:
+    - `27%` lower on control bytes
+    - `34%` lower on total tokens
+    - `25%` lower on end-to-end task time
+  - the corrected official run completed with `failure_count=0` and `expectation_match_rate=1.00`
+- Risks / follow-up:
+  - retrieval reuse source still differs in exact selected memory IDs between modes because the generated summaries are not text-identical; keep reports focused on fairness of query policy, not identical memory lineage
+  - if needed for defense, add a short methodology note in docs that “reuse eligibility is a runtime policy, not a planner choice”
+- Commit: pending reuse-query-accounting fix commit
