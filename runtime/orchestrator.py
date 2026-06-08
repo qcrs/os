@@ -13,6 +13,7 @@ from memory.store import EmbeddingProvider, MemoryStore
 from runtime.contracts import CapabilityTable, SchemaInterceptor
 from runtime.llm import LLMResult
 from runtime.reuse_contract import resolve_runtime_reuse_contract
+from runtime.reuse_contract import runtime_reuse_contract_gates
 from runtime.task_profile import RuntimeTaskProfile, build_reuse_signature
 from protocol.messages import (
     Ack,
@@ -406,6 +407,13 @@ class RunContext:
             return resolve_runtime_reuse_contract({})
         return resolve_runtime_reuse_contract(step.params)
 
+    @property
+    def runtime_gates(self) -> dict[str, bool]:
+        return runtime_reuse_contract_gates(self.runtime_reuse_contract())
+
+    def transfer_strategy(self) -> str:
+        return self.runtime_profile.effective_transfer_strategy(self.mode)
+
 
 class Orchestrator:
     """Host-side orchestrator for planner-driven benchmark tasks."""
@@ -559,6 +567,8 @@ class Orchestrator:
         plan: Plan,
         ctx: RunContext,
     ) -> list[StepResult] | None:
+        if not ctx.runtime_gates["allow_exact_replay"]:
+            return None
         retrieve_step = self._find_step(plan, "retrieve")
         execute_step = self._find_step(plan, "execute")
         hits = ctx.replay_candidates(
@@ -592,6 +602,8 @@ class Orchestrator:
         plan: Plan,
         ctx: RunContext,
     ) -> StepResult | None:
+        if not ctx.runtime_gates["allow_execute_prune"]:
+            return None
         retrieve_step = self._find_step(plan, "retrieve")
         execute_step = self._find_step(plan, "execute")
         retrieve_result = ctx.results.get("retrieve")

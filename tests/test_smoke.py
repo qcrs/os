@@ -80,11 +80,11 @@ def test_benchmark_runner_writes_outputs() -> None:
         compare_csv = (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
         assert payload["manifest"]["repeat"] == 1
         assert payload["manifest"]["llm_backend"] == "deterministic"
-        assert payload["manifest"]["continuous_task_count"] == 18
+        assert payload["manifest"]["continuous_task_count"] == 19
         assert payload["manifest"]["expected_reuse_task_count"] == 12
         assert payload["manifest"]["expected_reuse_mode_counts"] == {
             "assist": 6,
-            "none": 6,
+            "none": 7,
             "skip_execute": 3,
             "skip_retrieve_execute": 3,
         }
@@ -93,13 +93,25 @@ def test_benchmark_runner_writes_outputs() -> None:
             "allow_execute_prune": 3,
             "allow_exact_replay": 3,
         }
+        assert payload["manifest"]["benchmark_lane_counts"] == {
+            "internal_regression": 18,
+            "communication": 0,
+            "state_transfer": 1,
+            "memory": 0,
+        }
+        assert payload["manifest"]["transfer_strategy_counts"] == {
+            "state_ref": 18,
+            "text_brief": 0,
+            "mode_split_text_brief_vs_state_ref": 1,
+        }
         assert payload["manifest"]["task_groups"] == [
             "cache_chain",
             "latency_chain",
             "session_chain",
+            "transfer_lane",
         ]
         assert result["summary"]["text"]["run_count"] == 1
-        assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 3
+        assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 4
         assert "__aggregate__" in compare_csv
         assert "text_planner_total_tokens" in compare_csv
         assert "protocol_summarizer_total_tokens" in compare_csv
@@ -112,6 +124,8 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert "Reuse Query Accounting" in report_text
         assert "Replay Contract Slice Summary" in report_text
         assert "Communication Vs Replay Axes" in report_text
+        assert "Contest Benchmark Lanes" in report_text
+        assert "State Transfer Strategies" in report_text
         assert "Memory Reuse Decisions By Mode" in report_text
         assert "Role-Level LLM Tokens" in report_text
         assert "Phase Timing Breakdown" in report_text
@@ -371,7 +385,7 @@ def test_exact_replay_no_longer_requires_preferred_corpus_doc_ids() -> None:
     ]
 
 
-def test_validated_replay_no_longer_requires_runtime_reuse_contract() -> None:
+def test_validated_replay_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
         for task in default_task_chain()
@@ -387,8 +401,8 @@ def test_validated_replay_no_longer_requires_runtime_reuse_contract() -> None:
         tags=("cache", "inventory", "invalidation", "validated-replay"),
         reuse_tags=("cache", "inventory", "invalidation"),
         summary_hint=(
-            "This validated replay should still prune execute from runtime evidence "
-            "even when the benchmark contract disables reuse."
+            "This validated replay should not prune execute when the runtime contract "
+            "explicitly disables reuse."
         ),
         corpus_doc_ids=("cache-invalid-anchor", "cache-invalid-replay"),
         expected_reuse_mode="skip_execute",
@@ -431,13 +445,13 @@ def test_validated_replay_no_longer_requires_runtime_reuse_contract() -> None:
 
     assert final_ctx is not None
     assert final_ctx.runtime_profile.runtime_reuse_contract == "reuse_disabled"
-    assert final_ctx.reuse_mode == "skip_execute"
+    assert final_ctx.reuse_mode == "none"
     assert final_ctx.results["retrieve"].skipped is False
-    assert final_ctx.results["execute"].skipped is True
-    assert final_ctx.results["execute"].reused_from_memory_id
+    assert final_ctx.results["execute"].skipped is False
+    assert final_ctx.results["execute"].reused_from_memory_id is None
 
 
-def test_memory_assist_no_longer_requires_runtime_reuse_contract() -> None:
+def test_memory_assist_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
         for task in default_task_chain()
@@ -453,8 +467,8 @@ def test_memory_assist_no_longer_requires_runtime_reuse_contract() -> None:
         tags=("cache", "inventory", "invalidation", "followup"),
         reuse_tags=("cache", "inventory", "invalidation"),
         summary_hint=(
-            "This follow-up should still accept a matching assist memory even when "
-            "the benchmark contract disables reuse."
+            "This follow-up should not accept assist memory when the runtime "
+            "contract disables reuse."
         ),
         corpus_doc_ids=(
             "cache-invalid-anchor",
@@ -502,13 +516,13 @@ def test_memory_assist_no_longer_requires_runtime_reuse_contract() -> None:
 
     assert final_ctx is not None
     assert final_ctx.runtime_profile.runtime_reuse_contract == "reuse_disabled"
-    assert final_ctx.reuse_mode == "assist"
+    assert final_ctx.reuse_mode == "none"
     assert final_ctx.results["retrieve"].skipped is False
     assert final_ctx.results["execute"].skipped is False
-    assert final_ctx.results["retrieve"].payload["memory_assist_ids"]
+    assert final_ctx.results["retrieve"].payload["memory_assist_ids"] == []
 
 
-def test_exact_replay_no_longer_requires_runtime_reuse_contract() -> None:
+def test_exact_replay_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
         for task in default_task_chain()
@@ -524,8 +538,8 @@ def test_exact_replay_no_longer_requires_runtime_reuse_contract() -> None:
         tags=("cache", "inventory", "invalidation", "exact-replay"),
         reuse_tags=("cache", "inventory", "invalidation"),
         summary_hint=(
-            "This exact replay should still skip retrieve and execute from runtime "
-            "evidence even when the benchmark contract disables reuse."
+            "This exact replay should not skip retrieve or execute when the runtime "
+            "contract disables reuse."
         ),
         corpus_doc_ids=("cache-invalid-anchor", "cache-invalid-replay"),
         expected_reuse_mode="skip_retrieve_execute",
@@ -568,11 +582,11 @@ def test_exact_replay_no_longer_requires_runtime_reuse_contract() -> None:
 
     assert final_ctx is not None
     assert final_ctx.runtime_profile.runtime_reuse_contract == "reuse_disabled"
-    assert final_ctx.reuse_mode == "skip_retrieve_execute"
-    assert final_ctx.results["retrieve"].skipped is True
-    assert final_ctx.results["execute"].skipped is True
-    assert final_ctx.results["retrieve"].reused_from_memory_id
-    assert final_ctx.results["execute"].reused_from_memory_id
+    assert final_ctx.reuse_mode == "none"
+    assert final_ctx.results["retrieve"].skipped is False
+    assert final_ctx.results["execute"].skipped is False
+    assert final_ctx.results["retrieve"].reused_from_memory_id is None
+    assert final_ctx.results["execute"].reused_from_memory_id is None
 
 
 def test_statepool_writes_file_backed_artifacts() -> None:
@@ -896,6 +910,31 @@ def test_select_tool_name_prefers_ranked_tool_candidates() -> None:
         ],
     }
     assert select_tool_name(payload) == "tool.db_pool_triage"
+
+
+def test_state_transfer_lane_uses_text_brief_only_for_text_mode() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-transfer-lane-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    text_tasks = {task["task_id"]: task for task in result["mode_runs"]["text"][0]["tasks"]}
+    protocol_tasks = {
+        task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
+    }
+    text_task = text_tasks["transfer-cache-001"]
+    protocol_task = protocol_tasks["transfer-cache-001"]
+    assert text_task["benchmark_lane"] == "state_transfer"
+    assert protocol_task["benchmark_lane"] == "state_transfer"
+    assert text_task["transfer_strategy"] == "text_brief"
+    assert protocol_task["transfer_strategy"] == "state_ref"
+    assert text_task["results"]["execute"]["payload"]["transfer_strategy"] == "text_brief"
+    assert protocol_task["results"]["execute"]["payload"]["transfer_strategy"] == "state_ref"
 
 
 def test_benchmark_supports_shared_memory_statepool_backend() -> None:

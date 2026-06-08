@@ -89,6 +89,7 @@ class RetrieverAgent(BaseAgent):
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
         preferred_doc_ids = ctx.preferred_corpus_doc_ids(step)
         reuse_signature = ctx.reuse_signature(step)
+        transfer_strategy = ctx.transfer_strategy()
         corpus_docs = retrieve_corpus_docs(
             query=str(step.params["query"]),
             tags=list(step.params.get("tags", [])),
@@ -111,7 +112,7 @@ class RetrieverAgent(BaseAgent):
         hits = []
         accepted_hit = None
         memory_hint_route = ""
-        if step.params.get("allow_memory_reuse"):
+        if step.params.get("allow_memory_reuse") and ctx.runtime_gates["allow_memory_assist"]:
             hits = ctx.search_memory(
                 task_theme=ctx.task_theme,
                 query_text=str(step.params["query"]),
@@ -178,6 +179,15 @@ class RetrieverAgent(BaseAgent):
         feature_bundle["corpus_doc_ids"] = [doc.doc_id for doc in corpus_docs]
         feature_bundle["memory_assist_ids"] = memory_assist_ids
         feature_bundle["memory_hint_route"] = memory_hint_route
+        transfer_brief_text = _build_transfer_brief(
+            query=str(step.params["query"]),
+            retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
+            route=str(feature_bundle["route"]),
+            route_source=str(feature_bundle["route_source"]),
+            matched_signals=[str(item) for item in feature_bundle["matched_signals"]],
+            memory_assist_ids=memory_assist_ids,
+            evidence_text=evidence_text,
+        )
         feature_ref = ctx.put_feature_state(
             state_id=f"{ctx.task_id}-{step.step_id}-features",
             feature_bundle=feature_bundle,
@@ -195,6 +205,18 @@ class RetrieverAgent(BaseAgent):
                 "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
             },
         )
+        transfer_brief_ref = ctx.put_text_state(
+            state_id=f"{ctx.task_id}-{step.step_id}-brief",
+            kind="TOOL_ARTIFACT",
+            text=transfer_brief_text,
+            metadata={
+                "query": step.params["query"],
+                "transfer_strategy": transfer_strategy,
+                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                "feature_route": feature_bundle["route"],
+                "feature_route_source": feature_bundle["route_source"],
+            },
+        )
         embedding_ref = ctx.put_embedding_state(
             state_id=f"{ctx.task_id}-{step.step_id}-embedding",
             text=str(step.params["query"]),
@@ -206,13 +228,15 @@ class RetrieverAgent(BaseAgent):
         return StepResult(
             step_id=step.step_id,
             success=True,
-            output_state_refs=[evidence_ref, feature_ref, embedding_ref],
+            output_state_refs=[evidence_ref, feature_ref, transfer_brief_ref, embedding_ref],
             payload={
                 "query": step.params["query"],
                 "memory_hits": [hit.memory_id for hit in hits],
                 "memory_assist_ids": memory_assist_ids,
                 "reused_memory": reused,
                 "reuse_mode": "assist" if reused else "none",
+                "transfer_strategy": transfer_strategy,
+                "transfer_brief_state_id": transfer_brief_ref.state_id,
                 "feature_route": feature_bundle["route"],
                 "feature_route_source": feature_bundle["route_source"],
                 "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
@@ -234,11 +258,11 @@ class ExecutorAgent(BaseAgent):
 
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
         retrieve_result = ctx.results[step.depends_on[0]]
-        input_refs = [
-            ref
-            for ref in retrieve_result.output_state_refs
-            if ref.kind in {"DENSE_EVIDENCE", "FEATURE_BUNDLE"}
-        ]
+        transfer_strategy = ctx.transfer_strategy()
+        accepted_kinds = {"DENSE_EVIDENCE", "FEATURE_BUNDLE"}
+        if transfer_strategy == "text_brief":
+            accepted_kinds = {"DENSE_EVIDENCE", "TOOL_ARTIFACT"}
+        input_refs = [ref for ref in retrieve_result.output_state_refs if ref.kind in accepted_kinds]
         if self._should_use_uds(step):
             return self._execute_via_uds(step, ctx, input_refs)
         return execute_playbook_step(
@@ -247,6 +271,7 @@ class ExecutorAgent(BaseAgent):
             step=step,
             statepool=ctx.statepool,
             input_state_refs=input_refs,
+            transfer_strategy=transfer_strategy,
         )
 
     def _should_use_uds(self, step: PlanStep) -> bool:
@@ -257,12 +282,20 @@ class ExecutorAgent(BaseAgent):
         socket_path = step.params.get("socket_path") or self.socket_path
         if not socket_path:
             raise ValueError("executor uds transport selected without socket_path")
+        effective_step = PlanStep(
+            step_id=step.step_id,
+            owner_agent=step.owner_agent,
+            action=step.action,
+            input_state_refs=list(step.input_state_refs),
+            params={**step.params, "transfer_strategy": ctx.transfer_strategy()},
+            depends_on=list(step.depends_on),
+        )
         message = RemoteStepRequest(
             mode=str(getattr(ctx, "mode", "protocol")),
             task_id=str(ctx.task_id),
             task_theme=str(ctx.task_theme),
             state_root=str(ctx.statepool.root),
-            step=step,
+            step=effective_step,
             input_state_refs=list(input_refs),
         )
         response = request_response(socket_path, message)
@@ -421,7 +454,7 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                 "retriever",
                 action="RETRIEVE_EVIDENCE",
                 accepted_state_kinds=[],
-                produced_state_kinds=["DENSE_EVIDENCE", "FEATURE_BUNDLE", "EMBEDDING"],
+                produced_state_kinds=["DENSE_EVIDENCE", "FEATURE_BUNDLE", "TOOL_ARTIFACT", "EMBEDDING"],
             ),
         ),
         "executor": ExecutorAgent(
@@ -777,3 +810,30 @@ def _normalize_confidence(value: object) -> float:
         return float(text)
     except ValueError:
         return 0.95
+
+
+def _build_transfer_brief(
+    *,
+    query: str,
+    retrieved_doc_ids: list[str],
+    route: str,
+    route_source: str,
+    matched_signals: list[str],
+    memory_assist_ids: list[str],
+    evidence_text: str,
+) -> str:
+    preview = evidence_text.strip().splitlines()
+    evidence_preview = " ".join(line.strip() for line in preview[:4] if line.strip())[:280]
+    matched = ", ".join(matched_signals) if matched_signals else "none"
+    assist = ", ".join(memory_assist_ids) if memory_assist_ids else "none"
+    doc_ids = ", ".join(retrieved_doc_ids) if retrieved_doc_ids else "none"
+    return (
+        "StateBus transfer brief\n"
+        f"Query: {query}\n"
+        f"Retrieved docs: {doc_ids}\n"
+        f"Suggested route: {route}\n"
+        f"Route source: {route_source}\n"
+        f"Matched signals: {matched}\n"
+        f"Memory assist ids: {assist}\n"
+        f"Evidence preview: {evidence_preview}\n"
+    )

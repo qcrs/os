@@ -43,6 +43,7 @@ def serve(
                         statepool=statepool,
                         input_state_refs=message.input_state_refs,
                         output_storage=MMAP_FILE_STORAGE,
+                        transfer_strategy=str(message.step.params.get("transfer_strategy", "state_ref")),
                     )
                     send_message(conn, RemoteStepResponse(result=result))
                     handled += 1

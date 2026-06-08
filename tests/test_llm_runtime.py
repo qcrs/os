@@ -196,7 +196,13 @@ def test_plan_builder_keeps_runtime_profile_out_of_live_plan_steps() -> None:
     assert "runtime_reuse_contract" not in plan.steps[2].params
     assert "reuse_signature" not in plan.steps[2].params
     assert task.runtime_profile.runtime_reuse_contract == "exact_replay"
-    assert task.runtime_profile.as_dict() == {"runtime_reuse_contract": "exact_replay"}
+    assert task.runtime_profile.resolved_benchmark_lane == "internal_regression"
+    assert task.runtime_profile.resolved_transfer_strategy == "state_ref"
+    assert task.runtime_profile.as_dict() == {
+        "runtime_reuse_contract": "exact_replay",
+        "benchmark_lane": "internal_regression",
+        "transfer_strategy": "state_ref",
+    }
     assert task.runtime_gates == {
         "allow_memory_assist": False,
         "allow_execute_prune": False,

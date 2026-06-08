@@ -11,7 +11,12 @@ from runtime.reuse_contract import (
     resolve_runtime_reuse_contract,
     runtime_reuse_contract_gates,
 )
-from runtime.task_profile import RuntimeTaskProfile, build_reuse_signature
+from runtime.task_profile import (
+    RuntimeTaskProfile,
+    build_reuse_signature,
+    normalize_benchmark_lane,
+    normalize_transfer_strategy,
+)
 
 
 DEFAULT_TASK_SET = Path(__file__).with_name("sample_benchmark.yaml")
@@ -30,6 +35,8 @@ class SampleTask:
     summary_hint: str
     corpus_doc_ids: tuple[str, ...] = ()
     expected_reuse_mode: str = "none"
+    benchmark_lane: str = "internal_regression"
+    transfer_strategy: str = "state_ref"
     runtime_reuse_contract_override: str = ""
     replay_source_task_id: str = ""
     allow_memory_assist_contract: bool | None = None
@@ -78,6 +85,8 @@ class SampleTask:
     def runtime_profile(self) -> RuntimeTaskProfile:
         return RuntimeTaskProfile(
             runtime_reuse_contract=self.runtime_reuse_contract,
+            benchmark_lane=self.benchmark_lane,
+            transfer_strategy=self.transfer_strategy,
         )
 
 
@@ -102,6 +111,8 @@ def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
                         "assist" if bool(item.get("expected_reuse", False)) else "none",
                     )
                 ).strip(),
+                benchmark_lane=normalize_benchmark_lane(item.get("benchmark_lane", "internal_regression")),
+                transfer_strategy=normalize_transfer_strategy(item.get("transfer_strategy", "state_ref")),
                 runtime_reuse_contract_override=str(item.get("runtime_reuse_contract", "")).strip(),
                 replay_source_task_id=str(item.get("replay_source_task_id", "")).strip(),
                 allow_memory_assist_contract=_coerce_optional_bool(item.get("allow_memory_assist")),

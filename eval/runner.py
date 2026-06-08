@@ -89,6 +89,18 @@ REUSE_AXIS_ORDER = (
     "step_skipping",
 )
 
+BENCHMARK_LANE_ORDER = (
+    "internal_regression",
+    "communication",
+    "state_transfer",
+    "memory",
+)
+
+TRANSFER_STRATEGY_ORDER = (
+    "state_ref",
+    "text_brief",
+)
+
 
 def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
@@ -124,6 +136,14 @@ def _task_reuse_axis(task_run: dict[str, object]) -> str:
     if _task_reuse_slice(task_run) in {"validated_replay", "exact_replay"}:
         return "step_skipping"
     return "fresh_retrieval"
+
+
+def _task_benchmark_lane(task_run: dict[str, object]) -> str:
+    return str(task_run.get("benchmark_lane", "internal_regression")).strip() or "internal_regression"
+
+
+def _task_transfer_strategy(task_run: dict[str, object]) -> str:
+    return str(task_run.get("transfer_strategy", "state_ref")).strip() or "state_ref"
 
 
 def _control_metric_key(mode: str) -> str:
@@ -359,6 +379,8 @@ async def _run_mode_once(
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
                 "expected_reuse_mode": task.expected_reuse_mode,
+                "benchmark_lane": task.benchmark_lane,
+                "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
                 "reuse_expectation": {
                     "mode": task.expected_reuse_mode,
                     "task_order": task.task_order,
@@ -440,6 +462,8 @@ async def _run_mode_once(
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
                 "expected_reuse_mode": task.expected_reuse_mode,
+                "benchmark_lane": task.benchmark_lane,
+                "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
                 "reuse_expectation": {
                     "mode": task.expected_reuse_mode,
                     "task_order": task.task_order,
@@ -734,6 +758,8 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
             "task_groups": [],
             "reuse_slices": [],
             "reuse_axes": [],
+            "benchmark_lanes": [],
+            "transfer_strategies": [],
             "tasks": [],
             "message_breakdown": [],
             "stability": {},
@@ -801,6 +827,20 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         order=REUSE_AXIS_ORDER,
         key_name="reuse_axis",
     )
+    benchmark_lanes = _aggregate_named_task_summaries(
+        task_runs=task_rows,
+        mode=str(completed_runs[0]["mode"]),
+        classifier=_task_benchmark_lane,
+        order=BENCHMARK_LANE_ORDER,
+        key_name="benchmark_lane",
+    )
+    transfer_strategies = _aggregate_named_task_summaries(
+        task_runs=task_rows,
+        mode=str(completed_runs[0]["mode"]),
+        classifier=_task_transfer_strategy,
+        order=TRANSFER_STRATEGY_ORDER,
+        key_name="transfer_strategy",
+    )
     setup = _average_counter_rows([run["setup_metrics"] for run in completed_runs])
     steady_state = _merge_reuse_summary(
         _average_metric_rows([run["steady_state_aggregate"] for run in completed_runs]),
@@ -822,6 +862,8 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         "task_groups": group_summaries,
         "reuse_slices": reuse_slices,
         "reuse_axes": reuse_axes,
+        "benchmark_lanes": benchmark_lanes,
+        "transfer_strategies": transfer_strategies,
         "tasks": task_summaries,
         "message_breakdown": _aggregate_message_breakdown(completed_runs),
         "stability": _build_stability_summary(completed_runs),
@@ -990,6 +1032,14 @@ def _build_result(
         expected_mode: sum(1 for task in tasks if task.expected_reuse_mode == expected_mode)
         for expected_mode in ("none", "assist", "skip_execute", "skip_retrieve_execute")
     }
+    benchmark_lane_counts = {
+        lane: sum(1 for task in tasks if task.benchmark_lane == lane)
+        for lane in BENCHMARK_LANE_ORDER
+    }
+    transfer_strategy_counts = {
+        strategy: sum(1 for task in tasks if task.transfer_strategy == strategy)
+        for strategy in ("state_ref", "text_brief", "mode_split_text_brief_vs_state_ref")
+    }
     return {
         "manifest": {
             "task_set_path": str(Path(task_set_path)),
@@ -998,6 +1048,8 @@ def _build_result(
             "expected_reuse_task_count": sum(1 for task in tasks if task.expected_reuse),
             "reuse_expectation_policy": "benchmark_label_only",
             "expected_reuse_mode_counts": expected_reuse_mode_counts,
+            "benchmark_lane_counts": benchmark_lane_counts,
+            "transfer_strategy_counts": transfer_strategy_counts,
             "task_contract_counts": {
                 "allow_memory_assist": sum(
                     1 for task in tasks if task.runtime_gates["allow_memory_assist"]
@@ -1174,6 +1226,14 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
     protocol_slices = {item["reuse_slice"]: item for item in summary["protocol"]["reuse_slices"]}
     text_axes = {item["reuse_axis"]: item for item in summary["text"]["reuse_axes"]}
     protocol_axes = {item["reuse_axis"]: item for item in summary["protocol"]["reuse_axes"]}
+    text_lanes = {item["benchmark_lane"]: item for item in summary["text"]["benchmark_lanes"]}
+    protocol_lanes = {item["benchmark_lane"]: item for item in summary["protocol"]["benchmark_lanes"]}
+    text_transfer = {
+        item["transfer_strategy"]: item for item in summary["text"]["transfer_strategies"]
+    }
+    protocol_transfer = {
+        item["transfer_strategy"]: item for item in summary["protocol"]["transfer_strategies"]
+    }
     fieldnames = [
         "row_kind",
         "row_id",
@@ -1281,6 +1341,30 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
                     reuse_axis,
                     text_axes[reuse_axis],
                     protocol_axes[reuse_axis],
+                    summary["text"],
+                    summary["protocol"],
+                )
+            )
+    for benchmark_lane in BENCHMARK_LANE_ORDER:
+        if benchmark_lane in text_lanes and benchmark_lane in protocol_lanes:
+            rows.append(
+                _compare_row(
+                    "benchmark_lane",
+                    benchmark_lane,
+                    text_lanes[benchmark_lane],
+                    protocol_lanes[benchmark_lane],
+                    summary["text"],
+                    summary["protocol"],
+                )
+            )
+    for transfer_strategy in TRANSFER_STRATEGY_ORDER:
+        if transfer_strategy in text_transfer and transfer_strategy in protocol_transfer:
+            rows.append(
+                _compare_row(
+                    "transfer_strategy",
+                    transfer_strategy,
+                    text_transfer[transfer_strategy],
+                    protocol_transfer[transfer_strategy],
                     summary["text"],
                     summary["protocol"],
                 )
@@ -1462,6 +1546,8 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Expected reuse tasks per run: `{result['manifest']['expected_reuse_task_count']}`",
         f"- Reuse expectation policy: `{result['manifest']['reuse_expectation_policy']}`",
         f"- Expected reuse mode counts: `{json.dumps(result['manifest']['expected_reuse_mode_counts'], sort_keys=True)}`",
+        f"- Benchmark lane counts: `{json.dumps(result['manifest']['benchmark_lane_counts'], sort_keys=True)}`",
+        f"- Transfer strategy counts: `{json.dumps(result['manifest']['transfer_strategy_counts'], sort_keys=True)}`",
         f"- Task contract counts: `{json.dumps(result['manifest']['task_contract_counts'], sort_keys=True)}`",
         f"- Encoder: `{result['manifest']['encoder_id']}`",
         f"- StatePool backend: `{result['manifest']['statepool_backend']}`",
@@ -1627,6 +1713,40 @@ def _build_report(result: dict[str, object]) -> str:
                 f"{control_bytes:.2f} | {axis_summary['llm_total_tokens']:.2f} | {axis_summary['memory_hit_rate']:.2f} | "
                 f"{axis_summary['skipped_step_count']:.2f} | {axis_summary['reuse_gain']:.2f} | "
                 f"{axis_summary['reuse_apply_rate']:.2f} | {axis_summary['task_ms']:.2f} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## Contest Benchmark Lanes",
+            "",
+            "| benchmark_lane | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        for lane_summary in summary[mode]["benchmark_lanes"]:
+            control_bytes = lane_summary["text_bytes"] if mode == "text" else lane_summary["protocol_bytes"]
+            lines.append(
+                f"| {lane_summary['benchmark_lane']} | {mode} | {len(lane_summary['task_ids'])} | "
+                f"{control_bytes:.2f} | {lane_summary['llm_total_tokens']:.2f} | {lane_summary['memory_hit_rate']:.2f} | "
+                f"{lane_summary['skipped_step_count']:.2f} | {lane_summary['reuse_gain']:.2f} | {lane_summary['task_ms']:.2f} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## State Transfer Strategies",
+            "",
+            "| transfer_strategy | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        for transfer_summary in summary[mode]["transfer_strategies"]:
+            control_bytes = transfer_summary["text_bytes"] if mode == "text" else transfer_summary["protocol_bytes"]
+            lines.append(
+                f"| {transfer_summary['transfer_strategy']} | {mode} | {len(transfer_summary['task_ids'])} | "
+                f"{control_bytes:.2f} | {transfer_summary['llm_total_tokens']:.2f} | {transfer_summary['memory_hit_rate']:.2f} | "
+                f"{transfer_summary['skipped_step_count']:.2f} | {transfer_summary['reuse_gain']:.2f} | {transfer_summary['task_ms']:.2f} |"
             )
     if len(available_modes) == 2:
         lines.extend(
@@ -1841,6 +1961,74 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "summarize_ms": round(float(axis_summary["summarize_ms"]), 4),
                     "phase_overhead_ms": round(float(axis_summary["phase_overhead_ms"]), 4),
                     "task_ms": round(float(axis_summary["task_ms"]), 4),
+                }
+            )
+        for lane_summary in mode_summary.get("benchmark_lanes", []):
+            writer.writerow(
+                {
+                    "row_kind": "benchmark_lane",
+                    "row_id": lane_summary["benchmark_lane"],
+                    "mode": mode,
+                    "message_count": round(float(lane_summary["message_count"]), 4),
+                    "setup_control_bytes": 0.0,
+                    "steady_state_control_bytes": round(float(lane_summary[control_key]), 4),
+                    "control_bytes": round(float(lane_summary[control_key]), 4),
+                    "state_bytes": round(float(lane_summary["state_bytes"]), 4),
+                    "shared_memory_state_bytes": round(float(lane_summary["shared_memory_state_bytes"]), 4),
+                    "mmap_state_bytes": round(float(lane_summary["mmap_state_bytes"]), 4),
+                    "llm_total_tokens": round(float(lane_summary["llm_total_tokens"]), 4),
+                    "planner_total_tokens": round(float(lane_summary["planner_total_tokens"]), 4),
+                    "summarizer_total_tokens": round(float(lane_summary["summarizer_total_tokens"]), 4),
+                    "memory_query_count": round(float(lane_summary["memory_query_count"]), 4),
+                    "memory_hit_rate": round(float(lane_summary["memory_hit_rate"]), 4),
+                    "planned_step_count": round(float(lane_summary["planned_step_count"]), 4),
+                    "skipped_step_count": round(float(lane_summary["skipped_step_count"]), 4),
+                    "reuse_gain": round(float(lane_summary["reuse_gain"]), 4),
+                    "reuse_apply_rate": round(float(lane_summary["reuse_apply_rate"]), 4),
+                    "expectation_match_rate": round(float(lane_summary["expectation_match_rate"]), 4),
+                    "control_bytes_reduction_vs_cold": round(float(lane_summary["control_bytes_reduction_vs_cold"]), 4),
+                    "llm_total_tokens_reduction_vs_cold": round(float(lane_summary["llm_total_tokens_reduction_vs_cold"]), 4),
+                    "task_ms_reduction_vs_cold": round(float(lane_summary["task_ms_reduction_vs_cold"]), 4),
+                    "planner_ms": round(float(lane_summary["planner_ms"]), 4),
+                    "retrieve_ms": round(float(lane_summary["retrieve_ms"]), 4),
+                    "execute_ms": round(float(lane_summary["execute_ms"]), 4),
+                    "summarize_ms": round(float(lane_summary["summarize_ms"]), 4),
+                    "phase_overhead_ms": round(float(lane_summary["phase_overhead_ms"]), 4),
+                    "task_ms": round(float(lane_summary["task_ms"]), 4),
+                }
+            )
+        for transfer_summary in mode_summary.get("transfer_strategies", []):
+            writer.writerow(
+                {
+                    "row_kind": "transfer_strategy",
+                    "row_id": transfer_summary["transfer_strategy"],
+                    "mode": mode,
+                    "message_count": round(float(transfer_summary["message_count"]), 4),
+                    "setup_control_bytes": 0.0,
+                    "steady_state_control_bytes": round(float(transfer_summary[control_key]), 4),
+                    "control_bytes": round(float(transfer_summary[control_key]), 4),
+                    "state_bytes": round(float(transfer_summary["state_bytes"]), 4),
+                    "shared_memory_state_bytes": round(float(transfer_summary["shared_memory_state_bytes"]), 4),
+                    "mmap_state_bytes": round(float(transfer_summary["mmap_state_bytes"]), 4),
+                    "llm_total_tokens": round(float(transfer_summary["llm_total_tokens"]), 4),
+                    "planner_total_tokens": round(float(transfer_summary["planner_total_tokens"]), 4),
+                    "summarizer_total_tokens": round(float(transfer_summary["summarizer_total_tokens"]), 4),
+                    "memory_query_count": round(float(transfer_summary["memory_query_count"]), 4),
+                    "memory_hit_rate": round(float(transfer_summary["memory_hit_rate"]), 4),
+                    "planned_step_count": round(float(transfer_summary["planned_step_count"]), 4),
+                    "skipped_step_count": round(float(transfer_summary["skipped_step_count"]), 4),
+                    "reuse_gain": round(float(transfer_summary["reuse_gain"]), 4),
+                    "reuse_apply_rate": round(float(transfer_summary["reuse_apply_rate"]), 4),
+                    "expectation_match_rate": round(float(transfer_summary["expectation_match_rate"]), 4),
+                    "control_bytes_reduction_vs_cold": round(float(transfer_summary["control_bytes_reduction_vs_cold"]), 4),
+                    "llm_total_tokens_reduction_vs_cold": round(float(transfer_summary["llm_total_tokens_reduction_vs_cold"]), 4),
+                    "task_ms_reduction_vs_cold": round(float(transfer_summary["task_ms_reduction_vs_cold"]), 4),
+                    "planner_ms": round(float(transfer_summary["planner_ms"]), 4),
+                    "retrieve_ms": round(float(transfer_summary["retrieve_ms"]), 4),
+                    "execute_ms": round(float(transfer_summary["execute_ms"]), 4),
+                    "summarize_ms": round(float(transfer_summary["summarize_ms"]), 4),
+                    "phase_overhead_ms": round(float(transfer_summary["phase_overhead_ms"]), 4),
+                    "task_ms": round(float(transfer_summary["task_ms"]), 4),
                 }
             )
         aggregate = mode_summary["aggregate"]

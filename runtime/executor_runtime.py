@@ -561,15 +561,28 @@ def execute_playbook_step(
     runner: LightweightSubprocessRunner | None = None,
     registry: ToolRegistry | None = None,
     output_storage: str | None = None,
+    transfer_strategy: str = "state_ref",
 ) -> StepResult:
     evidence_ref = next((ref for ref in input_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
     feature_ref = next((ref for ref in input_state_refs if ref.kind == "FEATURE_BUNDLE"), None)
+    transfer_brief_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
     if evidence_ref is None:
         raise ValueError(f"step {step.step_id} missing DENSE_EVIDENCE input")
-    if feature_ref is None:
-        raise ValueError(f"step {step.step_id} missing FEATURE_BUNDLE input")
-
-    feature_bundle = _load_feature_bundle(statepool, feature_ref)
+    if transfer_strategy == "text_brief":
+        if transfer_brief_ref is None:
+            raise ValueError(f"step {step.step_id} missing transfer brief input")
+        feature_bundle = _feature_bundle_from_transfer_brief(
+            query_text=step.params.get("query", ""),
+            evidence_text=statepool.get_text(evidence_ref),
+            brief_text=statepool.get_text(transfer_brief_ref),
+            registry=registry or default_tool_registry(),
+        )
+        feature_state_id = transfer_brief_ref.state_id
+    else:
+        if feature_ref is None:
+            raise ValueError(f"step {step.step_id} missing FEATURE_BUNDLE input")
+        feature_bundle = _load_feature_bundle(statepool, feature_ref)
+        feature_state_id = feature_ref.state_id
     active_registry = registry or default_tool_registry()
     tool_name = select_tool_name(feature_bundle, registry=active_registry)
     tool_spec = active_registry.get(tool_name)
@@ -600,10 +613,11 @@ def execute_playbook_step(
         payload=artifact_text.encode("utf-8"),
         metadata={
             "source_evidence": evidence_ref.state_id,
-            "source_features": feature_ref.state_id,
+            "source_features": feature_state_id,
             "tool_name": execution.tool_name,
             "route": execution.route,
             "sandbox_mode": execution.sandbox_mode,
+            "transfer_strategy": transfer_strategy,
         },
         storage=preferred_storage,
     )
@@ -618,7 +632,8 @@ def execute_playbook_step(
             "route": execution.route,
             "sandbox_mode": execution.sandbox_mode,
             "matched_signals": list(execution.diagnostics.get("matched_signals", [])),
-            "feature_state_id": feature_ref.state_id,
+            "feature_state_id": feature_state_id,
+            "transfer_strategy": transfer_strategy,
         },
     )
 
@@ -764,3 +779,65 @@ def _serialize_tool_candidates(
 
 def _match_signals(text: str, patterns: tuple[str, ...]) -> list[str]:
     return [pattern for pattern in patterns if pattern in text]
+
+
+def _feature_bundle_from_transfer_brief(
+    *,
+    query_text: object,
+    evidence_text: str,
+    brief_text: str,
+    registry: ToolRegistry,
+) -> dict[str, Any]:
+    lines = [line.strip() for line in brief_text.splitlines() if line.strip()]
+    tags: list[str] = []
+    query = str(query_text or "").strip()
+    route = ""
+    route_source = "text_brief"
+    matched_signals: list[str] = []
+    hint_doc_ids: list[str] = []
+    for line in lines:
+        if line.startswith("Query: ") and not query:
+            query = line.removeprefix("Query: ").strip()
+        elif line.startswith("Suggested route: "):
+            route = line.removeprefix("Suggested route: ").strip()
+        elif line.startswith("Route source: "):
+            route_source = line.removeprefix("Route source: ").strip() or "text_brief"
+        elif line.startswith("Matched signals: "):
+            raw_signals = line.removeprefix("Matched signals: ").strip()
+            if raw_signals and raw_signals.lower() != "none":
+                matched_signals = [item.strip() for item in raw_signals.split(",") if item.strip()]
+        elif line.startswith("Retrieved docs: "):
+            raw_doc_ids = line.removeprefix("Retrieved docs: ").strip()
+            if raw_doc_ids and raw_doc_ids.lower() != "none":
+                hint_doc_ids = [item.strip() for item in raw_doc_ids.split(",") if item.strip()]
+    bundle = build_feature_bundle(
+        query=query,
+        evidence_text=evidence_text,
+        tags=tags,
+        reuse_signature="text_brief_transfer",
+        reused_memory=False,
+        registry=registry,
+    )
+    if route:
+        route_tool = registry.maybe_get_for_route(route)
+        if route_tool is not None:
+            bundle["route"] = route_tool.route
+            bundle["tool_name"] = route_tool.name
+    if matched_signals:
+        bundle["matched_signals"] = matched_signals
+    if hint_doc_ids:
+        bundle["hint_doc_ids"] = hint_doc_ids
+    bundle["route_source"] = route_source
+    bundle["transfer_strategy"] = "text_brief"
+    bundle["tool_candidates"] = _serialize_tool_candidates(
+        selected_match=ToolMatch(
+            tool_name=str(bundle.get("tool_name", "")),
+            route=str(bundle.get("route", "generic_triage")),
+            matched_signals=tuple(str(item) for item in bundle.get("matched_signals", [])),
+            matched_tags=tuple(),
+            score=int(bundle.get("match_score", 0)),
+        ),
+        lexical_candidates=[],
+        selected_source="text_brief",
+    )
+    return bundle

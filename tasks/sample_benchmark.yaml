@@ -3,6 +3,8 @@ tasks:
     task_group: cache_chain
     task_order: 1
     task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Diagnose the first stale inventory report from corpus-backed local evidence.
     query: inventory stale counts batch sync aggregate invalidation
     corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
@@ -19,6 +21,8 @@ tasks:
     task_group: cache_chain
     task_order: 2
     task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Use the current task evidence and prior memory to speed up a follow-up stale inventory triage.
     query: follow-up inventory stale counts shared aggregate invalidation hook
     corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
@@ -35,6 +39,8 @@ tasks:
     task_group: cache_chain
     task_order: 3
     task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Distinguish a misleading stale inventory alert from the known invalidation playbook.
     query: stale inventory after failover replica lag looks like invalidation issue
     corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
@@ -51,6 +57,8 @@ tasks:
     task_group: cache_chain
     task_order: 4
     task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Verify the invalidation path again on a control replay without skipping fresh retrieval.
     query: replay stale inventory aggregate invalidation after sync burst
     corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
@@ -67,6 +75,8 @@ tasks:
     task_group: cache_chain
     task_order: 5
     task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Run a validated replay that still performs fresh retrieval before pruning execute.
     query: validated replay stale inventory aggregate invalidation after sync burst
     corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
@@ -83,6 +93,8 @@ tasks:
     task_group: cache_chain
     task_order: 6
     task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Run an exact replay that skips retrieve and execute from runtime-matched replay evidence.
     query: validated replay stale inventory aggregate invalidation after sync burst
     corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
@@ -99,6 +111,8 @@ tasks:
     task_group: latency_chain
     task_order: 1
     task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Diagnose the first orders latency regression from corpus-backed local evidence.
     query: release-17 orders latency db pool saturation slow query
     corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
@@ -115,6 +129,8 @@ tasks:
     task_group: latency_chain
     task_order: 2
     task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Triage a follow-up orders latency burst with fresh retrieval plus memory assist.
     query: service-c orders latency connection pool contention slow query
     corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
@@ -131,6 +147,8 @@ tasks:
     task_group: latency_chain
     task_order: 3
     task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Separate a misleading release-window latency alert from the known DB playbook.
     query: release-17 latency tls reload worker queue stall not database
     corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
@@ -147,6 +165,8 @@ tasks:
     task_group: latency_chain
     task_order: 4
     task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Re-verify the known orders-query latency path with fresh retrieval in a control replay.
     query: replay orders latency db wait profile release-era saturation
     corpus_doc_ids: [latency-db-anchor, latency-db-replay]
@@ -163,6 +183,8 @@ tasks:
     task_group: latency_chain
     task_order: 5
     task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Run a validated replay that confirms the DB route before pruning execute.
     query: validated replay orders latency db wait profile release-era saturation
     corpus_doc_ids: [latency-db-anchor, latency-db-replay]
@@ -179,6 +201,8 @@ tasks:
     task_group: latency_chain
     task_order: 6
     task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Run an exact replay that skips retrieve and execute from runtime-matched validated replay evidence.
     query: validated replay orders latency db wait profile release-era saturation
     corpus_doc_ids: [latency-db-anchor, latency-db-replay]
@@ -195,6 +219,8 @@ tasks:
     task_group: session_chain
     task_order: 1
     task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Diagnose the first SSO callback failure from corpus-backed local evidence.
     query: sso callback issuer mismatch stale jwks session cookies
     corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
@@ -211,6 +237,8 @@ tasks:
     task_group: session_chain
     task_order: 2
     task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Triage a follow-up SSO callback failure with conservative memory assist.
     query: follow-up auth session issuer mismatch stale jwks callback
     corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
@@ -227,6 +255,8 @@ tasks:
     task_group: session_chain
     task_order: 3
     task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Distinguish a misleading auth failure from the stale-JWKS session path.
     query: auth login failures backoff window looks like session issue
     corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
@@ -243,6 +273,8 @@ tasks:
     task_group: session_chain
     task_order: 4
     task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Re-verify the stale-JWKS session path in a control replay without skipping retrieval.
     query: replay callback issuer mismatch jwks refresh stale session cookies
     corpus_doc_ids: [session-auth-anchor, session-auth-replay]
@@ -259,6 +291,8 @@ tasks:
     task_group: session_chain
     task_order: 5
     task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Run a validated replay that confirms stale-JWKS drift before pruning execute.
     query: validated replay callback issuer mismatch jwks refresh stale session cookies
     corpus_doc_ids: [session-auth-anchor, session-auth-replay]
@@ -275,6 +309,8 @@ tasks:
     task_group: session_chain
     task_order: 6
     task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
     goal: Run an exact replay that skips retrieve and execute from runtime-matched validated replay evidence.
     query: validated replay callback issuer mismatch jwks refresh stale session cookies
     corpus_doc_ids: [session-auth-anchor, session-auth-replay]
@@ -286,3 +322,21 @@ tasks:
     summary_hint: >
       This exact replay should reuse the prior validated replay end to end while
       still writing a current-task summary and memory commit.
+
+  - task_id: transfer-cache-001
+    task_group: transfer_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: state_transfer
+    transfer_strategy: mode_split_text_brief_vs_state_ref
+    goal: Compare text brief handoff against structured StateRef handoff on the same cache triage task.
+    query: inventory stale counts batch sync aggregate invalidation
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup]
+    evidence_text: Use the referenced corpus docs only; compare transfer strategy, not memory reuse.
+    tags: [cache, inventory, invalidation, transfer]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for direct state-transfer comparison only; preserve the same
+      diagnosis while varying the inter-agent handoff format.
