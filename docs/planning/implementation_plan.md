@@ -1,16 +1,37 @@
 # 赛题9实现规划与架构审计
 
-适用范围：基于当前仓库现有文档，对赛题 9 做需求反向拆解、设计交叉审计，并收敛为一条可直接执行的实现路线。
+适用范围：这份文档保留赛题 9 的 requirement 拆解、设计路线和阶段计划，但它**不再是当前实现事实层主文档**。
+
+当前实现与证据请优先看：
+
+- `README.md`
+- `docs/constraints/current_host_and_migration.md`
+- `docs/constraints/current_feature_scope.md`
+- `docs/progress/contest_requirement_host_audit_20260607.md`
+- `runs/comprehensive_eval_20260607_131113/`
+- `runs/host_goal_eval_20260607_233858/`
+- `runs/host_goal_eval_20260608_002101/`
+- `runs/host_goal_eval_20260608_021820_runtime_exact_replay_det_repeat10/`
+- `runs/host_goal_eval_20260608_022627_runtime_exact_replay_api_repeat10/`
+- `runs/host_goal_eval_20260608_093111_planner_contract_refresh/`
+- `runs/host_goal_eval_20260608_112452_plan_sideband_runtime_profile_refresh/`
+- `runs/host_goal_eval_20260608_113845_runtime_drop_reuse_signature_query_refresh/`
+- `docs/planning/goal_prompt_host_mainline_despecialize_then_deepen_20260608.md`
+
+如果本文件后面某些段落仍保留 design-first 或 Docker/openEuler 终态表达，应理解为**历史规划参考或后续阶段对象**，不能覆盖当前 host-mainline 事实。
 
 审计结论先说：
 
-1. 当前仓库对赛题要求的**设计覆盖度高**，但**实现覆盖度接近 0**。仓库目前仍是 design-first、document-centric 状态，没有可运行代码、Docker 资产、测试和 benchmark 脚本，不能把“文档里提到了”当成“系统已经实现了”。依据见 [AGENTS.md](./AGENTS.md)。
-2. 现有文档里最应该保留的主线是 `StateBus`：`控制面 + 数据面 + 记忆面`，以及 `runtime + protocol + statepool + memory + sandbox + eval` 六块实现骨架。
-3. 最终主路线应选择**混合式本地优先路线**：
-   - 运行时、协议、状态池、共享记忆、embedding、工具、评测都本地落地；
-   - `Planner` 和 `Summarizer` 在第一版走 API 大模型；
-   - `Executor` 走脚本/工具优先，`CodeAct` 只做兜底；
-   - Docker 是外层开发与复现环境，`nsjail` 是内层 CodeAct 沙箱，不要混成一层。
+1. 当前仓库已经不是 design-only；它是一个**可运行的 host-side 赛题化原型**。`text/protocol` 双模式、`StateRef`、共享记忆、benchmark、tests、`runtime.smoke` 都已落地。
+2. 现有文档里最应该保留的主线仍是 `StateBus`：`控制面 + 数据面 + 记忆面`，以及 `runtime + protocol + statepool + memory + eval` 的宿主机主链路。
+3. 当前正确路线不是提前补 Docker/openEuler/强沙箱终态，而是继续把 **host-first requirement closure + honest evidence** 收口：
+   - `Planner` 和 `Summarizer` 维持 API LLM；
+   - `Retriever`、`Executor`、`StateRef`、共享记忆、benchmark 在当前 Linux 宿主机继续做实；
+   - Docker / openEuler / `nsjail` 保留到后续验证阶段，不回灌成当前主线前提。
+4. `093111` 之后的下一阶段 active goal，不应直接进入纯 tuning；优先级应改成：
+   - 先去赛题特化
+   - 再做检索/记忆/工具选择分层解耦
+   - 最后才做深度优化与性能细化
 
 ---
 
@@ -111,18 +132,18 @@
 
 ### 2.4 当前实现覆盖结论
 
-| 赛题要求 | 文档级覆盖 | 代码级覆盖 | 结论 |
+| 赛题要求 | 文档级覆盖 | 代码级覆盖 | 当前判断 |
 |---|---|---|---|
-| 4 个 Agent 分工 | 高 | 无 | 只有设计，无实现 |
-| 结构化协议 | 高 | 无 | 只有 schema/流程描述 |
-| 非文本状态传递 | 高 | 无 | `StateRef` 生命周期只在文档中 |
-| 共享记忆 | 高 | 无 | SQLite/FAISS 只有设计 |
-| 2 组连续任务 | 中 | 无 | 场景存在，任务文件不存在 |
-| 双模式 benchmark | 高 | 无 | 指标设计完整，runner 不存在 |
-| Docker/openEuler 复现 | 低到中 | 无 | 有方向，没有镜像、Dockerfile、compose |
-| 10 轮稳定运行 | 中 | 无 | 只有验收口径，没有测试 |
+| 4 个 Agent 分工 | 高 | 高 | 已实现 `Planner/Retriever/Executor/Summarizer` 主链路 |
+| 结构化协议 | 高 | 高 | 已实现 Protobuf 控制帧、握手、能力表与 schema 校验 |
+| 非文本状态传递 | 高 | 高 | 已实现 `StateRef + mmap/shared_memory + FEATURE_BUNDLE/EMBEDDING` |
+| 共享记忆 | 高 | 高 | 已实现 SQLite + FAISS + 共享记忆查询/写回 |
+| 连续任务与复用验证 | 高 | 高 | 已有 `18` 任务链与 replay-aware benchmark 任务集 |
+| 双模式 benchmark | 高 | 高 | `eval.runner`、`benchmark_report.md`、compare CSV 已落地 |
+| Docker/openEuler 复现 | 中 | 低 | 仍属于后续阶段，不应当作当前 host-mainline 已闭环 |
+| 10 轮稳定运行 | 中 | 高 | 宿主机 repeat-10 已有正式基线；replay-aware `18` 任务链现在也已有 deterministic 和 serialized API 两套 repeat-10 证据 |
 
-**硬结论**：当前仓库还不能覆盖赛题要求的“实现”部分，只能覆盖“设计论证”部分。
+**硬结论**：当前仓库已经覆盖赛题实现主骨架；真正未闭环的是通用性去特化、`shared_memory` 更清晰稳定的 backend 结论，以及 Docker/openEuler/强沙箱这些后续阶段对象。
 
 ---
 
@@ -133,13 +154,13 @@
 选择：**StateBus 混合式本地优先路线**
 
 - 控制面：Protobuf 控制帧 + 本地运行时调度
-- 数据面：`StateRef` + `memfd/SharedMemory` 状态池
+- 数据面：`StateRef` + `mmap/shared_memory` 状态池
 - 记忆面：SQLite + FAISS + `MemoryProxy`
 - LLM：`Planner`、`Summarizer` 用 API
 - Embedding：本地模型
 - `Executor`：固定工具优先，CodeAct 兜底
-- 外层环境：Docker + openEuler 24.03-LTS-SP3
-- 内层执行隔离：Phase 5 接 `nsjail`
+- 外层环境：当前主开发固定为 Linux 宿主机；Docker + openEuler 24.03-LTS-SP3 放后续验证阶段
+- 内层执行隔离：当前主线是 tool registry + lightweight subprocess / UDS 样机；正式 `nsjail` 留在 Phase 5 以后
 
 ### 3.2 为什么选它
 

@@ -402,6 +402,53 @@ class MemoryStore:
             return candidate_hits
         return self._search_keyword(query)
 
+    def replay_candidates(
+        self,
+        *,
+        task_theme: str,
+        encoder_id: str | None = None,
+        required_metadata: dict[str, object] | None = None,
+    ) -> list[MemoryHit]:
+        rows = self.conn.execute(
+            """
+            SELECT m.embedding_id, m.memory_id, m.source_task_id, m.task_theme,
+                   m.source_agent_id, m.summary, m.tags_json, m.evidence_state_ids_json,
+                   m.reusable_steps_json, m.confidence, m.metadata_json, m.created_at_ns,
+                   me.state_ref_json
+            FROM memories m
+            JOIN memory_embeddings me USING(embedding_id)
+            WHERE m.task_theme = ?
+              AND m.status = 'active'
+              AND me.faiss_status = 'active'
+              AND me.encoder_id = ?
+            ORDER BY m.created_at_ns DESC
+            """,
+            (task_theme, encoder_id or self.embedder.encoder_id),
+        ).fetchall()
+        hits: list[MemoryHit] = []
+        for row in rows:
+            metadata = json.loads(row["metadata_json"])
+            if not _metadata_matches(metadata, required_metadata or {}):
+                continue
+            hits.append(
+                MemoryHit(
+                    memory_id=row["memory_id"],
+                    embedding_id=int(row["embedding_id"]),
+                    confidence=float(row["confidence"]),
+                    reuse_source="replay_memory",
+                    reusable_steps=json.loads(row["reusable_steps_json"]),
+                    evidence_state_ids=json.loads(row["evidence_state_ids_json"]),
+                    evidence_state_refs=_state_refs_from_json(row["state_ref_json"]),
+                    summary=row["summary"],
+                    tags=json.loads(row["tags_json"]),
+                    task_theme=row["task_theme"],
+                    created_at_ns=int(row["created_at_ns"]),
+                    source_task_id=row["source_task_id"],
+                    metadata=metadata,
+                )
+            )
+        return hits
+
     def list_memories(self) -> list[dict[str, object]]:
         rows = self.conn.execute(
             """
@@ -534,9 +581,13 @@ class MemoryStore:
     ) -> list[MemoryHit]:
         if self._index.ntotal == 0:
             return []
+        candidate_limit = min(
+            int(self._index.ntotal),
+            max(query.top_k, query.top_k * 8),
+        )
         scores, ids = self._index.search(
             np.asarray([query_vector], dtype="float32"),
-            query.top_k,
+            candidate_limit,
         )
         ordered_hits: list[MemoryHit] = []
         for faiss_score, embedding_id in zip(scores[0], ids[0], strict=False):
@@ -599,6 +650,8 @@ class MemoryStore:
                     metadata=metadata,
                 )
             )
+            if len(ordered_hits) >= query.top_k:
+                break
         return ordered_hits
 
     def _search_keyword(self, query: MemoryQuery) -> list[MemoryHit]:

@@ -12,7 +12,7 @@ from agents.sample_agents import (
     _summary_from_llm_output,
 )
 from runtime.llm import DeterministicLLMClient, LLMConfig
-from tasks.sample_tasks import build_plan, default_task_chain
+from tasks.sample_tasks import SampleTask, build_plan, default_task_chain
 
 
 def test_llm_config_supports_role_specific_models_from_env(monkeypatch) -> None:
@@ -114,6 +114,96 @@ def test_plan_parser_accepts_nested_deepseek_shape() -> None:
     assert plan == expected
 
 
+def test_plan_parser_accepts_numeric_step_ids_from_text_llm() -> None:
+    task = default_task_chain()[5]
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": 1,
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "corpus_doc_ids": list(task.corpus_doc_ids),
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "reuse_tags": list(task.reuse_tags),
+                        "reuse_signature": task.reuse_signature,
+                        "runtime_reuse_contract": task.runtime_reuse_contract,
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": 2,
+                    "owner_agent": "executor",
+                    "action": "EXECUTE_PLAYBOOK",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": [1],
+                },
+                {
+                    "step_id": 3,
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                        "reuse_tags": list(task.reuse_tags),
+                        "reuse_signature": task.reuse_signature,
+                        "runtime_reuse_contract": task.runtime_reuse_contract,
+                    },
+                    "depends_on": [2],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    plan = _plan_from_llm_output(task, output_text)
+
+    assert plan == build_plan(task)
+
+
+def test_plan_builder_keeps_runtime_profile_out_of_live_plan_steps() -> None:
+    task = SampleTask(
+        task_id="explicit-contract-001",
+        task_group="contract_chain",
+        task_order=2,
+        task_theme="repo_local_contract_probe",
+        goal="Check that runtime gates do not collapse back into expectation labels.",
+        query="runtime gate separation",
+        tags=("contract", "runtime"),
+        reuse_tags=("contract", "runtime"),
+        summary_hint="Runtime gates should remain explicit.",
+        expected_reuse_mode="assist",
+        replay_source_task_id="explicit-contract-000",
+        allow_memory_assist_contract=False,
+        allow_execute_prune_contract=True,
+        allow_exact_replay_contract=True,
+    )
+
+    plan = build_plan(task)
+
+    assert "expected_reuse_mode" not in plan.steps[0].params
+    assert "runtime_reuse_contract" not in plan.steps[0].params
+    assert "reuse_signature" not in plan.steps[0].params
+    assert "corpus_doc_ids" not in plan.steps[0].params
+    assert plan.steps[0].params["allow_memory_reuse"] is True
+    assert "runtime_reuse_contract" not in plan.steps[2].params
+    assert "reuse_signature" not in plan.steps[2].params
+    assert task.runtime_profile.runtime_reuse_contract == "exact_replay"
+    assert task.runtime_profile.as_dict() == {"runtime_reuse_contract": "exact_replay"}
+    assert task.runtime_gates == {
+        "allow_memory_assist": False,
+        "allow_execute_prune": False,
+        "allow_exact_replay": True,
+    }
+
+
 def test_summary_parser_normalizes_scalar_reusable_steps() -> None:
     payload = _summary_from_llm_output(
         json.dumps(
@@ -157,7 +247,11 @@ def test_text_mode_uses_natural_language_prompts() -> None:
             "corpus_doc_ids": list(task.corpus_doc_ids),
             "evidence_text": task.evidence_text,
             "tags": list(task.tags),
+            "reuse_tags": list(task.reuse_tags),
+            "reuse_signature": task.reuse_signature,
             "expected_reuse_mode": task.expected_reuse_mode,
+            "runtime_reuse_contract": task.runtime_reuse_contract,
+            "replay_source_task_id": task.replay_source_task_id,
             "summary_hint": task.summary_hint,
         },
         mode="text",
@@ -173,14 +267,21 @@ def test_text_mode_uses_natural_language_prompts() -> None:
             "evidence_text": task.evidence_text,
             "tags": list(task.tags),
             "expected_reuse_mode": task.expected_reuse_mode,
+            "runtime_reuse_contract": task.runtime_reuse_contract,
             "summary_hint": task.summary_hint,
         },
         mode="protocol",
     )
     assert "Planner brief for a text-only multi-agent workflow." in planner_messages[-1].content
+    assert "Benchmark reuse expectation:" not in planner_messages[-1].content
+    assert "Runtime reuse contract:" not in planner_messages[-1].content
+    assert "Corpus docs:" not in planner_messages[-1].content
     assert "<statebus-planner-input>" not in planner_messages[-1].content
     assert "<sb-plan-v1>" in protocol_messages[-1].content
+    assert '"erm"' not in protocol_messages[-1].content
     assert '"task_id"' not in protocol_messages[-1].content
+    assert '"cd"' not in protocol_messages[-1].content
+    assert '"rrc"' not in protocol_messages[-1].content
 
     summary_messages = _summarizer_messages(
         {
@@ -225,7 +326,11 @@ def test_deterministic_llm_parses_text_mode_prompts() -> None:
             "corpus_doc_ids": list(task.corpus_doc_ids),
             "evidence_text": task.evidence_text,
             "tags": list(task.tags),
+            "reuse_tags": list(task.reuse_tags),
+            "reuse_signature": task.reuse_signature,
             "expected_reuse_mode": task.expected_reuse_mode,
+            "runtime_reuse_contract": task.runtime_reuse_contract,
+            "replay_source_task_id": task.replay_source_task_id,
             "summary_hint": task.summary_hint,
         },
         mode="text",
@@ -267,6 +372,7 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
             "reuse_tags": list(task.reuse_tags),
             "reuse_signature": task.reuse_signature,
             "expected_reuse_mode": task.expected_reuse_mode,
+            "runtime_reuse_contract": task.runtime_reuse_contract,
             "summary_hint": task.summary_hint,
         },
         mode="protocol",
@@ -275,9 +381,17 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     planner_payload = json.loads(planner_result.text)
     assert set(planner_payload) == {"r", "s", "x"}
     assert "reuse" not in planner_payload["r"]
+    assert "erm" not in planner_payload["r"]
+    assert "cd" not in planner_payload["r"]
+    assert "rrc" not in planner_payload["r"]
+    assert "sig" not in planner_payload["r"]
     assert _plan_from_llm_output(task, planner_result.text) == build_plan(task)
     parsed_plan = _plan_from_llm_output(task, planner_result.text)
     assert parsed_plan.steps[0].params["allow_memory_reuse"] is True
+    assert "expected_reuse_mode" not in parsed_plan.steps[0].params
+    assert "runtime_reuse_contract" not in parsed_plan.steps[0].params
+    assert "reuse_signature" not in parsed_plan.steps[0].params
+    assert "corpus_doc_ids" not in parsed_plan.steps[0].params
 
     summary_messages = _summarizer_messages(
         {

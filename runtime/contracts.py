@@ -100,3 +100,8 @@ class SchemaInterceptor:
                 raise SchemaValidationError(
                     "memory_commit.evidence_state_ids missing refs for: " + ", ".join(missing)
                 )
+
+    @staticmethod
+    def validate_result_memory_commits(result: StepResult) -> None:
+        for commit in result.memory_commits:
+            SchemaInterceptor.validate_memory_commit(commit)

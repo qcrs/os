@@ -10,6 +10,7 @@ tasks:
     tags: [cache, inventory, invalidation, anchor]
     reuse_tags: [cache, inventory, invalidation]
     expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       Fresh evidence should identify delayed aggregate invalidation after batch sync
       and recommend forcing the post-sync invalidation hook.
@@ -25,6 +26,7 @@ tasks:
     tags: [cache, inventory, invalidation, followup]
     reuse_tags: [cache, inventory, invalidation]
     expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       This follow-up should validate the earlier invalidation playbook against fresh
       corpus evidence before recommending the same fix.
@@ -38,8 +40,9 @@ tasks:
     corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
     evidence_text: Use the referenced corpus docs only; reject reused memory if fresh evidence points elsewhere.
     tags: [cache, inventory, sync-window, failover]
-    reuse_tags: [cache, inventory]
+    reuse_tags: [cache, inventory, invalidation]
     expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       Fresh evidence should reject the invalidation shortcut and instead isolate the
       stale-read path on the reporting replica.
@@ -50,14 +53,47 @@ tasks:
     task_theme: repo_local_cache_staleness
     goal: Verify the invalidation path again on a control replay without skipping fresh retrieval.
     query: replay stale inventory aggregate invalidation after sync burst
-    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
     evidence_text: Use the referenced corpus docs only; replay should still fetch fresh evidence.
     tags: [cache, inventory, invalidation, replay]
     reuse_tags: [cache, inventory, invalidation]
     expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       The control replay should validate the same invalidation playbook against fresh
       corpus evidence and keep the reuse path conservative.
+
+  - task_id: sample-cache-005
+    task_group: cache_chain
+    task_order: 5
+    task_theme: repo_local_cache_staleness
+    goal: Run a validated replay that still performs fresh retrieval before pruning execute.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; validated replay must still confirm the route from fresh retrieval.
+    tags: [cache, inventory, invalidation, validated-replay]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      This validated replay should confirm the same invalidation route from fresh
+      evidence, then safely prune execute by reusing the prior tool artifact.
+
+  - task_id: sample-cache-006
+    task_group: cache_chain
+    task_order: 6
+    task_theme: repo_local_cache_staleness
+    goal: Run an exact replay that skips retrieve and execute from runtime-matched replay evidence.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the stored replay evidence plus current task inputs only; exact replay may skip retrieve and execute when the validated replay route matches exactly.
+    tags: [cache, inventory, invalidation, exact-replay]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: skip_retrieve_execute
+    runtime_reuse_contract: exact_replay
+    summary_hint: >
+      This exact replay should reuse the prior validated replay end to end and still
+      summarize a fresh memory commit for the current task.
 
   - task_id: sample-latency-001
     task_group: latency_chain
@@ -70,6 +106,7 @@ tasks:
     tags: [latency, database, release-17, anchor]
     reuse_tags: [latency, database, orders]
     expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       Fresh evidence should point to DB pool saturation and the slow orders query,
       then recommend rollback plus index creation.
@@ -85,6 +122,7 @@ tasks:
     tags: [latency, database, service-c, followup]
     reuse_tags: [latency, database, orders]
     expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       This follow-up should validate the earlier database playbook against fresh
       evidence before recommending the same mitigation steps.
@@ -98,8 +136,9 @@ tasks:
     corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
     evidence_text: Use the referenced corpus docs only; reject recalled DB fixes if the fresh route differs.
     tags: [latency, release-17, orders, worker]
-    reuse_tags: [latency, orders]
+    reuse_tags: [latency, database, orders]
     expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       Fresh evidence should reject the database shortcut and instead escalate the
       worker queue starvation path.
@@ -110,14 +149,47 @@ tasks:
     task_theme: repo_local_latency_triage
     goal: Re-verify the known orders-query latency path with fresh retrieval in a control replay.
     query: replay orders latency db wait profile release-era saturation
-    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    corpus_doc_ids: [latency-db-anchor, latency-db-replay]
     evidence_text: Use the referenced corpus docs only; replay should still fetch and validate current evidence.
     tags: [latency, database, replay, orders]
     reuse_tags: [latency, database, orders]
     expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       The control replay should reuse the prior database playbook only after fresh
       corpus evidence re-confirms the same route.
+
+  - task_id: sample-latency-005
+    task_group: latency_chain
+    task_order: 5
+    task_theme: repo_local_latency_triage
+    goal: Run a validated replay that confirms the DB route before pruning execute.
+    query: validated replay orders latency db wait profile release-era saturation
+    corpus_doc_ids: [latency-db-anchor, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; validated replay must still confirm the database route via fresh retrieval.
+    tags: [latency, database, validated-replay, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      This validated replay should re-confirm the same database route from fresh
+      evidence, then reuse the prior execute artifact to prune the playbook step.
+
+  - task_id: sample-latency-006
+    task_group: latency_chain
+    task_order: 6
+    task_theme: repo_local_latency_triage
+    goal: Run an exact replay that skips retrieve and execute from runtime-matched validated replay evidence.
+    query: validated replay orders latency db wait profile release-era saturation
+    corpus_doc_ids: [latency-db-anchor, latency-db-replay]
+    evidence_text: Use the stored replay evidence plus current task inputs only; exact replay may skip retrieve and execute when the validated replay route matches exactly.
+    tags: [latency, database, exact-replay, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: skip_retrieve_execute
+    runtime_reuse_contract: exact_replay
+    summary_hint: >
+      This exact replay should reuse the prior validated replay end to end while
+      still emitting a current-task summary and memory commit.
 
   - task_id: sample-session-001
     task_group: session_chain
@@ -130,6 +202,7 @@ tasks:
     tags: [auth, session, sso, anchor]
     reuse_tags: [auth, session, jwks]
     expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       Fresh evidence should identify session drift from stale JWKS and cookies, then
       recommend JWKS refresh plus callback verification.
@@ -145,6 +218,7 @@ tasks:
     tags: [auth, session, sso, followup]
     reuse_tags: [auth, session, jwks]
     expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       This follow-up should validate the earlier session-drift playbook against fresh
       evidence before recommending the same remediation.
@@ -158,8 +232,9 @@ tasks:
     corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
     evidence_text: Use the referenced corpus docs only; reject stale-JWKS memory if the fresh route is different.
     tags: [auth, session, sso, rate-limit]
-    reuse_tags: [auth, session, sso]
+    reuse_tags: [auth, session, jwks]
     expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       Fresh evidence should reject the session-drift shortcut and instead isolate the
       auth rate-limiter path.
@@ -170,11 +245,44 @@ tasks:
     task_theme: repo_local_auth_session_drift
     goal: Re-verify the stale-JWKS session path in a control replay without skipping retrieval.
     query: replay callback issuer mismatch jwks refresh stale session cookies
-    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
+    corpus_doc_ids: [session-auth-anchor, session-auth-replay]
     evidence_text: Use the referenced corpus docs only; replay should still validate the route from current evidence.
     tags: [auth, session, replay, jwks]
     reuse_tags: [auth, session, jwks]
     expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
     summary_hint: >
       The control replay should keep the same session-drift remediation only after
       fresh evidence re-confirms the stale-JWKS path.
+
+  - task_id: sample-session-005
+    task_group: session_chain
+    task_order: 5
+    task_theme: repo_local_auth_session_drift
+    goal: Run a validated replay that confirms stale-JWKS drift before pruning execute.
+    query: validated replay callback issuer mismatch jwks refresh stale session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-replay]
+    evidence_text: Use the referenced corpus docs only; validated replay must still confirm the session-drift route via fresh retrieval.
+    tags: [auth, session, validated-replay, jwks]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      This validated replay should confirm the same stale-JWKS route from fresh
+      evidence, then safely prune execute by reusing the prior artifact.
+
+  - task_id: sample-session-006
+    task_group: session_chain
+    task_order: 6
+    task_theme: repo_local_auth_session_drift
+    goal: Run an exact replay that skips retrieve and execute from runtime-matched validated replay evidence.
+    query: validated replay callback issuer mismatch jwks refresh stale session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-replay]
+    evidence_text: Use the stored replay evidence plus current task inputs only; exact replay may skip retrieve and execute when the validated replay route matches exactly.
+    tags: [auth, session, exact-replay, jwks]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: skip_retrieve_execute
+    runtime_reuse_contract: exact_replay
+    summary_hint: >
+      This exact replay should reuse the prior validated replay end to end while
+      still writing a current-task summary and memory commit.

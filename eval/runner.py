@@ -42,6 +42,9 @@ METRIC_FIELDS = (
     "memory_hits",
     "memory_query_count",
     "memory_hit_task_count",
+    "replay_probe_count",
+    "replay_probe_hits",
+    "replay_probe_hit_task_count",
     "memory_assist_task_count",
     "validated_reuse_task_count",
     "memory_rejected_task_count",
@@ -51,6 +54,18 @@ METRIC_FIELDS = (
     "llm_prompt_tokens",
     "llm_completion_tokens",
     "llm_total_tokens",
+    "planner_llm_request_count",
+    "planner_prompt_tokens",
+    "planner_completion_tokens",
+    "planner_total_tokens",
+    "summarizer_llm_request_count",
+    "summarizer_prompt_tokens",
+    "summarizer_completion_tokens",
+    "summarizer_total_tokens",
+    "planner_ms",
+    "retrieve_ms",
+    "execute_ms",
+    "summarize_ms",
     "task_ms",
 )
 
@@ -59,6 +74,19 @@ COUNTER_FIELDS = (
     "text_chars",
     "text_bytes",
     "protocol_bytes",
+)
+
+REUSE_SLICE_ORDER = (
+    "cold_start",
+    "reject_control",
+    "assist",
+    "validated_replay",
+    "exact_replay",
+)
+
+REUSE_AXIS_ORDER = (
+    "fresh_retrieval",
+    "step_skipping",
 )
 
 
@@ -78,6 +106,26 @@ def _task_sort_key(task: SampleTask) -> tuple[str, int, str]:
     return (task.task_group, task.task_order, task.task_id)
 
 
+def _task_reuse_slice(task_run: dict[str, object]) -> str:
+    expected_mode = str(task_run.get("expected_reuse_mode", "none")).strip().lower()
+    task_order = int(task_run.get("task_order", 0))
+    if expected_mode == "assist":
+        return "assist"
+    if expected_mode == "skip_execute":
+        return "validated_replay"
+    if expected_mode == "skip_retrieve_execute":
+        return "exact_replay"
+    if task_order <= 1:
+        return "cold_start"
+    return "reject_control"
+
+
+def _task_reuse_axis(task_run: dict[str, object]) -> str:
+    if _task_reuse_slice(task_run) in {"validated_replay", "exact_replay"}:
+        return "step_skipping"
+    return "fresh_retrieval"
+
+
 def _control_metric_key(mode: str) -> str:
     return "text_bytes" if mode == "text" else "protocol_bytes"
 
@@ -91,9 +139,12 @@ def _relative_reduction(current: float, baseline: float) -> float:
 def _zero_metric_row() -> dict[str, float]:
     payload = {field: 0.0 for field in METRIC_FIELDS}
     payload["memory_hit_rate"] = 0.0
+    payload["replay_probe_hit_rate"] = 0.0
     payload["reuse_gain"] = 0.0
     payload["memory_assist_rate"] = 0.0
     payload["memory_reject_rate"] = 0.0
+    payload["phase_accounted_ms"] = 0.0
+    payload["phase_overhead_ms"] = 0.0
     return payload
 
 
@@ -113,6 +164,11 @@ def _sum_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, float]:
         if totals["memory_query_count"] > 0.0
         else 0.0
     )
+    totals["replay_probe_hit_rate"] = (
+        totals["replay_probe_hit_task_count"] / totals["replay_probe_count"]
+        if totals["replay_probe_count"] > 0.0
+        else 0.0
+    )
     totals["reuse_gain"] = (
         totals["skipped_step_count"] / totals["planned_step_count"]
         if totals["planned_step_count"] > 0.0
@@ -127,6 +183,16 @@ def _sum_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, float]:
         totals["memory_rejected_task_count"] / totals["memory_query_count"]
         if totals["memory_query_count"] > 0.0
         else 0.0
+    )
+    totals["phase_accounted_ms"] = (
+        totals["planner_ms"]
+        + totals["retrieve_ms"]
+        + totals["execute_ms"]
+        + totals["summarize_ms"]
+    )
+    totals["phase_overhead_ms"] = max(
+        totals["task_ms"] - totals["phase_accounted_ms"],
+        0.0,
     )
     return totals
 
@@ -143,6 +209,11 @@ def _average_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, floa
         if averaged["memory_query_count"] > 0.0
         else 0.0
     )
+    averaged["replay_probe_hit_rate"] = (
+        averaged["replay_probe_hit_task_count"] / averaged["replay_probe_count"]
+        if averaged["replay_probe_count"] > 0.0
+        else 0.0
+    )
     averaged["reuse_gain"] = (
         averaged["skipped_step_count"] / averaged["planned_step_count"]
         if averaged["planned_step_count"] > 0.0
@@ -157,6 +228,16 @@ def _average_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, floa
         averaged["memory_rejected_task_count"] / averaged["memory_query_count"]
         if averaged["memory_query_count"] > 0.0
         else 0.0
+    )
+    averaged["phase_accounted_ms"] = (
+        averaged["planner_ms"]
+        + averaged["retrieve_ms"]
+        + averaged["execute_ms"]
+        + averaged["summarize_ms"]
+    )
+    averaged["phase_overhead_ms"] = max(
+        averaged["task_ms"] - averaged["phase_accounted_ms"],
+        0.0,
     )
     return averaged
 
@@ -216,13 +297,12 @@ def _mode_order_for_run(modes: tuple[str, ...], run_index: int) -> tuple[str, ..
     return tuple(reversed(modes))
 
 
-def _matches_reuse_expectation(*, expected_mode: str, applied: bool) -> bool:
-    normalized = (expected_mode or "none").strip().lower()
-    if normalized == "assist":
-        return applied
-    if normalized == "none":
-        return not applied
-    raise ValueError(f"unsupported expected_reuse_mode: {expected_mode}")
+def _matches_reuse_expectation(*, expected_mode: str, actual_mode: str) -> bool:
+    normalized_expected = (expected_mode or "none").strip().lower()
+    normalized_actual = (actual_mode or "none").strip().lower()
+    if normalized_expected not in {"none", "assist", "skip_execute", "skip_retrieve_execute"}:
+        raise ValueError(f"unsupported expected_reuse_mode: {expected_mode}")
+    return normalized_expected == normalized_actual
 
 
 async def _run_mode_once(
@@ -264,10 +344,13 @@ async def _run_mode_once(
             embedder=embedder,
             session=session,
             statepool_config=statepool_config,
+            task_corpus_doc_ids=task.corpus_doc_ids,
+            runtime_profile=task.runtime_profile,
         )
         task_payload: dict[str, object]
         try:
             await orchestrator.run_task(task, ctx)
+            actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
             task_payload = {
                 "task_id": task.task_id,
                 "task_group": task.task_group,
@@ -276,13 +359,20 @@ async def _run_mode_once(
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
                 "expected_reuse_mode": task.expected_reuse_mode,
+                "reuse_expectation": {
+                    "mode": task.expected_reuse_mode,
+                    "task_order": task.task_order,
+                    "expected_reuse": task.expected_reuse,
+                },
+                "runtime_reuse_contract": task.runtime_reuse_contract,
+                "runtime_gates": dict(task.runtime_gates),
                 "status": "completed",
                 "error": None,
                 "metrics": ctx.metrics.to_dict(),
                 "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                 "reuse": {
                     "applied": ctx.reuse_hit is not None,
-                    "mode": "assist" if ctx.reuse_hit is not None else "none",
+                    "mode": actual_reuse_mode,
                     "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
                     "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
                     "skipped_step_ids": list(ctx.pruned_step_ids),
@@ -292,9 +382,10 @@ async def _run_mode_once(
                 },
                 "reuse_validation": {
                     "expected_reuse_mode": task.expected_reuse_mode,
+                    "actual_reuse_mode": actual_reuse_mode,
                     "matched_expectation": _matches_reuse_expectation(
                         expected_mode=task.expected_reuse_mode,
-                        applied=ctx.reuse_hit is not None,
+                        actual_mode=actual_reuse_mode,
                     ),
                 },
                 "state_refs": {
@@ -312,7 +403,13 @@ async def _run_mode_once(
                         "success": result.success,
                         "skipped": result.skipped,
                         "reused_from_memory_id": result.reused_from_memory_id,
-                        "has_memory_commit": result.memory_commit is not None,
+                        "has_memory_commit": (
+                            result.memory_commit is not None or bool(result.memory_commits)
+                        ),
+                        "memory_commit_count": (
+                            (1 if result.memory_commit is not None else 0)
+                            + len(result.memory_commits)
+                        ),
                         "payload": _sanitize_payload(result.payload),
                     }
                     for step_id, result in ctx.results.items()
@@ -334,6 +431,7 @@ async def _run_mode_once(
         except Exception as exc:
             run_status = "failed"
             run_error = f"{type(exc).__name__}: {exc}"
+            actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
             task_payload = {
                 "task_id": task.task_id,
                 "task_group": task.task_group,
@@ -342,13 +440,20 @@ async def _run_mode_once(
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
                 "expected_reuse_mode": task.expected_reuse_mode,
+                "reuse_expectation": {
+                    "mode": task.expected_reuse_mode,
+                    "task_order": task.task_order,
+                    "expected_reuse": task.expected_reuse,
+                },
+                "runtime_reuse_contract": task.runtime_reuse_contract,
+                "runtime_gates": dict(task.runtime_gates),
                 "status": "failed",
                 "error": run_error,
                 "metrics": ctx.metrics.to_dict(),
                 "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                 "reuse": {
                     "applied": ctx.reuse_hit is not None,
-                    "mode": "assist" if ctx.reuse_hit is not None else "none",
+                    "mode": actual_reuse_mode,
                     "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
                     "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
                     "skipped_step_ids": list(ctx.pruned_step_ids),
@@ -358,6 +463,7 @@ async def _run_mode_once(
                 },
                 "reuse_validation": {
                     "expected_reuse_mode": task.expected_reuse_mode,
+                    "actual_reuse_mode": actual_reuse_mode,
                     "matched_expectation": False,
                 },
                 "state_refs": {
@@ -534,6 +640,43 @@ def _aggregate_task_groups(task_runs: list[dict[str, object]]) -> list[dict[str,
     return summaries
 
 
+def _aggregate_named_task_summaries(
+    *,
+    task_runs: list[dict[str, object]],
+    mode: str,
+    classifier: Callable[[dict[str, object]], str],
+    order: tuple[str, ...],
+    key_name: str,
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for task_run in task_runs:
+        grouped.setdefault(classifier(task_run), []).append(task_run)
+    summaries: list[dict[str, object]] = []
+    for name in order:
+        rows = grouped.get(name, [])
+        if not rows:
+            continue
+        completed_rows = [
+            row for row in sorted(rows, key=lambda item: (int(item["task_order"]), str(item["task_id"])))
+            if row["status"] == "completed"
+        ]
+        if not completed_rows:
+            continue
+        summaries.append(
+            {
+                key_name: name,
+                "task_ids": [str(item["task_id"]) for item in completed_rows],
+                **_merge_reuse_summary(
+                    _average_metric_rows([item["metrics"] for item in completed_rows]),
+                    completed_rows,
+                    mode,
+                ),
+                "baseline_task_id": str(completed_rows[0]["task_id"]),
+            }
+        )
+    return summaries
+
+
 def _aggregate_message_breakdown(runs: list[dict[str, object]]) -> list[dict[str, float | str]]:
     grouped: dict[str, dict[str, float]] = {}
     for run in runs:
@@ -589,6 +732,8 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
             "setup": _zero_counter_row(),
             "steady_state": _zero_metric_row(),
             "task_groups": [],
+            "reuse_slices": [],
+            "reuse_axes": [],
             "tasks": [],
             "message_breakdown": [],
             "stability": {},
@@ -641,15 +786,30 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
                 "baseline_task_id": str(matching[0]["task_ids"][0]),
             }
         )
+    task_rows = [task_run for run in completed_runs for task_run in run["tasks"]]
+    reuse_slices = _aggregate_named_task_summaries(
+        task_runs=task_rows,
+        mode=str(completed_runs[0]["mode"]),
+        classifier=_task_reuse_slice,
+        order=REUSE_SLICE_ORDER,
+        key_name="reuse_slice",
+    )
+    reuse_axes = _aggregate_named_task_summaries(
+        task_runs=task_rows,
+        mode=str(completed_runs[0]["mode"]),
+        classifier=_task_reuse_axis,
+        order=REUSE_AXIS_ORDER,
+        key_name="reuse_axis",
+    )
     setup = _average_counter_rows([run["setup_metrics"] for run in completed_runs])
     steady_state = _merge_reuse_summary(
         _average_metric_rows([run["steady_state_aggregate"] for run in completed_runs]),
-        [task_run for run in completed_runs for task_run in run["tasks"]],
+        task_rows,
         str(completed_runs[0]["mode"]),
     )
     aggregate = _merge_reuse_summary(
         _combine_setup_and_steady(setup, steady_state),
-        [task_run for run in completed_runs for task_run in run["tasks"]],
+        task_rows,
         str(completed_runs[0]["mode"]),
     )
     return {
@@ -660,6 +820,8 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         "setup": setup,
         "steady_state": steady_state,
         "task_groups": group_summaries,
+        "reuse_slices": reuse_slices,
+        "reuse_axes": reuse_axes,
         "tasks": task_summaries,
         "message_breakdown": _aggregate_message_breakdown(completed_runs),
         "stability": _build_stability_summary(completed_runs),
@@ -676,9 +838,16 @@ def _build_stability_summary(runs: list[dict[str, object]]) -> dict[str, dict[st
         "steady_state_control_bytes": [float(run["steady_state_aggregate"][steady_key]) for run in runs],
         "setup_control_bytes": [float(run["setup_metrics"][steady_key]) for run in runs],
         "llm_total_tokens": [float(run["aggregate"]["llm_total_tokens"]) for run in runs],
+        "planner_total_tokens": [float(run["aggregate"]["planner_total_tokens"]) for run in runs],
+        "summarizer_total_tokens": [float(run["aggregate"]["summarizer_total_tokens"]) for run in runs],
         "memory_hit_rate": [float(run["aggregate"]["memory_hit_rate"]) for run in runs],
         "skipped_step_count": [float(run["aggregate"]["skipped_step_count"]) for run in runs],
         "reuse_gain": [float(run["aggregate"]["reuse_gain"]) for run in runs],
+        "planner_ms": [float(run["aggregate"]["planner_ms"]) for run in runs],
+        "retrieve_ms": [float(run["aggregate"]["retrieve_ms"]) for run in runs],
+        "execute_ms": [float(run["aggregate"]["execute_ms"]) for run in runs],
+        "summarize_ms": [float(run["aggregate"]["summarize_ms"]) for run in runs],
+        "phase_overhead_ms": [float(run["aggregate"]["phase_overhead_ms"]) for run in runs],
         "task_ms": [float(run["aggregate"]["task_ms"]) for run in runs],
     }
     for field, values in series_map.items():
@@ -817,12 +986,29 @@ def _build_result(
     mode_runs: dict[str, list[dict[str, object]]],
 ) -> dict[str, object]:
     summary = {mode: _aggregate_mode_runs(runs) for mode, runs in mode_runs.items()}
+    expected_reuse_mode_counts = {
+        expected_mode: sum(1 for task in tasks if task.expected_reuse_mode == expected_mode)
+        for expected_mode in ("none", "assist", "skip_execute", "skip_retrieve_execute")
+    }
     return {
         "manifest": {
             "task_set_path": str(Path(task_set_path)),
             "task_count": len(tasks),
             "continuous_task_count": len(tasks),
             "expected_reuse_task_count": sum(1 for task in tasks if task.expected_reuse),
+            "reuse_expectation_policy": "benchmark_label_only",
+            "expected_reuse_mode_counts": expected_reuse_mode_counts,
+            "task_contract_counts": {
+                "allow_memory_assist": sum(
+                    1 for task in tasks if task.runtime_gates["allow_memory_assist"]
+                ),
+                "allow_execute_prune": sum(
+                    1 for task in tasks if task.runtime_gates["allow_execute_prune"]
+                ),
+                "allow_exact_replay": sum(
+                    1 for task in tasks if task.runtime_gates["allow_exact_replay"]
+                ),
+            },
             "task_groups": sorted({task.task_group for task in tasks}),
             "modes": list(modes),
             "mode_schedule": "paired_round_robin_alternating",
@@ -984,6 +1170,10 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
     protocol_tasks = {item["task_id"]: item for item in summary["protocol"]["tasks"]}
     text_groups = {item["task_group"]: item for item in summary["text"]["task_groups"]}
     protocol_groups = {item["task_group"]: item for item in summary["protocol"]["task_groups"]}
+    text_slices = {item["reuse_slice"]: item for item in summary["text"]["reuse_slices"]}
+    protocol_slices = {item["reuse_slice"]: item for item in summary["protocol"]["reuse_slices"]}
+    text_axes = {item["reuse_axis"]: item for item in summary["text"]["reuse_axes"]}
+    protocol_axes = {item["reuse_axis"]: item for item in summary["protocol"]["reuse_axes"]}
     fieldnames = [
         "row_kind",
         "row_id",
@@ -1011,6 +1201,12 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         "text_llm_total_tokens",
         "protocol_llm_total_tokens",
         "llm_total_tokens_delta",
+        "text_planner_total_tokens",
+        "protocol_planner_total_tokens",
+        "planner_total_tokens_delta",
+        "text_summarizer_total_tokens",
+        "protocol_summarizer_total_tokens",
+        "summarizer_total_tokens_delta",
         "text_memory_query_count",
         "protocol_memory_query_count",
         "memory_query_count_delta",
@@ -1041,6 +1237,21 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         "text_task_ms_reduction_vs_cold",
         "protocol_task_ms_reduction_vs_cold",
         "task_ms_reduction_vs_cold_delta",
+        "text_planner_ms",
+        "protocol_planner_ms",
+        "planner_ms_delta",
+        "text_retrieve_ms",
+        "protocol_retrieve_ms",
+        "retrieve_ms_delta",
+        "text_execute_ms",
+        "protocol_execute_ms",
+        "execute_ms_delta",
+        "text_summarize_ms",
+        "protocol_summarize_ms",
+        "summarize_ms_delta",
+        "text_phase_overhead_ms",
+        "protocol_phase_overhead_ms",
+        "phase_overhead_ms_delta",
         "text_task_ms",
         "protocol_task_ms",
         "task_ms_delta",
@@ -1050,6 +1261,30 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         rows.append(_compare_row("task", task_id, text_tasks[task_id], protocol_tasks[task_id], summary["text"], summary["protocol"]))
     for task_group in sorted(text_groups):
         rows.append(_compare_row("task_group", task_group, text_groups[task_group], protocol_groups[task_group], summary["text"], summary["protocol"]))
+    for reuse_slice in REUSE_SLICE_ORDER:
+        if reuse_slice in text_slices and reuse_slice in protocol_slices:
+            rows.append(
+                _compare_row(
+                    "reuse_slice",
+                    reuse_slice,
+                    text_slices[reuse_slice],
+                    protocol_slices[reuse_slice],
+                    summary["text"],
+                    summary["protocol"],
+                )
+            )
+    for reuse_axis in REUSE_AXIS_ORDER:
+        if reuse_axis in text_axes and reuse_axis in protocol_axes:
+            rows.append(
+                _compare_row(
+                    "reuse_axis",
+                    reuse_axis,
+                    text_axes[reuse_axis],
+                    protocol_axes[reuse_axis],
+                    summary["text"],
+                    summary["protocol"],
+                )
+            )
     rows.append(_compare_row("aggregate", "__aggregate__", summary["text"]["aggregate"], summary["protocol"]["aggregate"], summary["text"], summary["protocol"]))
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -1104,6 +1339,18 @@ def _compare_row(
         "text_llm_total_tokens": round(float(text_row["llm_total_tokens"]), 4),
         "protocol_llm_total_tokens": round(float(protocol_row["llm_total_tokens"]), 4),
         "llm_total_tokens_delta": round(float(protocol_row["llm_total_tokens"]) - float(text_row["llm_total_tokens"]), 4),
+        "text_planner_total_tokens": round(float(text_row["planner_total_tokens"]), 4),
+        "protocol_planner_total_tokens": round(float(protocol_row["planner_total_tokens"]), 4),
+        "planner_total_tokens_delta": round(
+            float(protocol_row["planner_total_tokens"]) - float(text_row["planner_total_tokens"]),
+            4,
+        ),
+        "text_summarizer_total_tokens": round(float(text_row["summarizer_total_tokens"]), 4),
+        "protocol_summarizer_total_tokens": round(float(protocol_row["summarizer_total_tokens"]), 4),
+        "summarizer_total_tokens_delta": round(
+            float(protocol_row["summarizer_total_tokens"]) - float(text_row["summarizer_total_tokens"]),
+            4,
+        ),
         "text_memory_query_count": round(float(text_row["memory_query_count"]), 4),
         "protocol_memory_query_count": round(float(protocol_row["memory_query_count"]), 4),
         "memory_query_count_delta": round(float(protocol_row["memory_query_count"]) - float(text_row["memory_query_count"]), 4),
@@ -1141,6 +1388,24 @@ def _compare_row(
         "protocol_task_ms_reduction_vs_cold": round(float(protocol_row["task_ms_reduction_vs_cold"]), 4),
         "task_ms_reduction_vs_cold_delta": round(
             float(protocol_row["task_ms_reduction_vs_cold"]) - float(text_row["task_ms_reduction_vs_cold"]),
+            4,
+        ),
+        "text_planner_ms": round(float(text_row["planner_ms"]), 4),
+        "protocol_planner_ms": round(float(protocol_row["planner_ms"]), 4),
+        "planner_ms_delta": round(float(protocol_row["planner_ms"]) - float(text_row["planner_ms"]), 4),
+        "text_retrieve_ms": round(float(text_row["retrieve_ms"]), 4),
+        "protocol_retrieve_ms": round(float(protocol_row["retrieve_ms"]), 4),
+        "retrieve_ms_delta": round(float(protocol_row["retrieve_ms"]) - float(text_row["retrieve_ms"]), 4),
+        "text_execute_ms": round(float(text_row["execute_ms"]), 4),
+        "protocol_execute_ms": round(float(protocol_row["execute_ms"]), 4),
+        "execute_ms_delta": round(float(protocol_row["execute_ms"]) - float(text_row["execute_ms"]), 4),
+        "text_summarize_ms": round(float(text_row["summarize_ms"]), 4),
+        "protocol_summarize_ms": round(float(protocol_row["summarize_ms"]), 4),
+        "summarize_ms_delta": round(float(protocol_row["summarize_ms"]) - float(text_row["summarize_ms"]), 4),
+        "text_phase_overhead_ms": round(float(text_row["phase_overhead_ms"]), 4),
+        "protocol_phase_overhead_ms": round(float(protocol_row["phase_overhead_ms"]), 4),
+        "phase_overhead_ms_delta": round(
+            float(protocol_row["phase_overhead_ms"]) - float(text_row["phase_overhead_ms"]),
             4,
         ),
         "text_task_ms": round(float(text_row["task_ms"]), 4),
@@ -1195,6 +1460,9 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Repeat: `{result['manifest']['repeat']}`",
         f"- Continuous tasks per run: `{result['manifest']['continuous_task_count']}`",
         f"- Expected reuse tasks per run: `{result['manifest']['expected_reuse_task_count']}`",
+        f"- Reuse expectation policy: `{result['manifest']['reuse_expectation_policy']}`",
+        f"- Expected reuse mode counts: `{json.dumps(result['manifest']['expected_reuse_mode_counts'], sort_keys=True)}`",
+        f"- Task contract counts: `{json.dumps(result['manifest']['task_contract_counts'], sort_keys=True)}`",
         f"- Encoder: `{result['manifest']['encoder_id']}`",
         f"- StatePool backend: `{result['manifest']['statepool_backend']}`",
         f"- Embedding state backend: `{result['manifest']['embed_state_backend']}`",
@@ -1205,7 +1473,7 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Planner model: `{result['manifest']['planner_model']}`",
         f"- Summarizer provider: `{result['manifest']['summarizer_provider']}`",
         f"- Summarizer model: `{result['manifest']['summarizer_model']}`",
-        "- Reuse query policy: `runtime_fixed_allow_memory_reuse`",
+        "- Reuse query policy: `memory assist stays runtime-contract gated; step-skipping now requires runtime evidence; expected_reuse_mode stays in benchmark validation`",
         "",
         "## Aggregate",
         "",
@@ -1220,6 +1488,38 @@ def _build_report(result: dict[str, object]) -> str:
             f"{aggregate['state_bytes']:.2f} | {aggregate['llm_total_tokens']:.2f} | "
             f"{aggregate['memory_hit_rate']:.2f} | {aggregate['skipped_step_count']:.2f} | "
             f"{aggregate['reuse_gain']:.2f} | {aggregate['task_ms']:.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Role-Level LLM Tokens",
+            "",
+            "| mode | planner_requests | planner_total_tokens | summarizer_requests | summarizer_total_tokens | llm_total_tokens |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        aggregate = summary[mode]["aggregate"]
+        lines.append(
+            f"| {mode} | {aggregate['planner_llm_request_count']:.2f} | "
+            f"{aggregate['planner_total_tokens']:.2f} | {aggregate['summarizer_llm_request_count']:.2f} | "
+            f"{aggregate['summarizer_total_tokens']:.2f} | {aggregate['llm_total_tokens']:.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Phase Timing Breakdown",
+            "",
+            "| mode | planner_ms | retrieve_ms | execute_ms | summarize_ms | phase_overhead_ms | task_ms |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        aggregate = summary[mode]["aggregate"]
+        lines.append(
+            f"| {mode} | {aggregate['planner_ms']:.2f} | {aggregate['retrieve_ms']:.2f} | "
+            f"{aggregate['execute_ms']:.2f} | {aggregate['summarize_ms']:.2f} | "
+            f"{aggregate['phase_overhead_ms']:.2f} | {aggregate['task_ms']:.2f} |"
         )
     lines.extend(
         [
@@ -1292,6 +1592,42 @@ def _build_report(result: dict[str, object]) -> str:
                 f"{group['reuse_gain']:.2f} | {group['reuse_apply_rate']:.2f} | "
                 f"{group['expectation_match_rate']:.2f} | {group['task_ms']:.2f} |"
             )
+    lines.extend(
+        [
+            "",
+            "## Replay Contract Slice Summary",
+            "",
+            "| reuse_slice | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        for slice_summary in summary[mode]["reuse_slices"]:
+            control_bytes = slice_summary["text_bytes"] if mode == "text" else slice_summary["protocol_bytes"]
+            lines.append(
+                f"| {slice_summary['reuse_slice']} | {mode} | {len(slice_summary['task_ids'])} | "
+                f"{control_bytes:.2f} | {slice_summary['llm_total_tokens']:.2f} | {slice_summary['memory_hit_rate']:.2f} | "
+                f"{slice_summary['skipped_step_count']:.2f} | {slice_summary['reuse_gain']:.2f} | "
+                f"{slice_summary['reuse_apply_rate']:.2f} | {slice_summary['task_ms']:.2f} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## Communication Vs Replay Axes",
+            "",
+            "| reuse_axis | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        for axis_summary in summary[mode]["reuse_axes"]:
+            control_bytes = axis_summary["text_bytes"] if mode == "text" else axis_summary["protocol_bytes"]
+            lines.append(
+                f"| {axis_summary['reuse_axis']} | {mode} | {len(axis_summary['task_ids'])} | "
+                f"{control_bytes:.2f} | {axis_summary['llm_total_tokens']:.2f} | {axis_summary['memory_hit_rate']:.2f} | "
+                f"{axis_summary['skipped_step_count']:.2f} | {axis_summary['reuse_gain']:.2f} | "
+                f"{axis_summary['reuse_apply_rate']:.2f} | {axis_summary['task_ms']:.2f} |"
+            )
     if len(available_modes) == 2:
         lines.extend(
             [
@@ -1327,7 +1663,7 @@ def _build_report(result: dict[str, object]) -> str:
                     mode_mismatches.append(
                         f"run={run['run_index']:02d} task={task_run['task_id']} "
                         f"expected_reuse_mode={task_run['reuse_validation']['expected_reuse_mode']} "
-                        f"applied={task_run['reuse']['applied']}"
+                        f"actual_reuse_mode={task_run['reuse_validation'].get('actual_reuse_mode', 'none')}"
                     )
         if mode_mismatches:
             mismatch_rows.extend(mode_mismatches)
@@ -1335,7 +1671,7 @@ def _build_report(result: dict[str, object]) -> str:
         else:
             lines.append("- all reuse outcomes matched expectations")
         lines.append("")
-    lines.extend(["", "## Memory Assist Decisions By Mode", ""])
+    lines.extend(["", "## Memory Reuse Decisions By Mode", ""])
     for mode in available_modes:
         lines.append(f"### {mode}")
         reuse_rows = []
@@ -1383,6 +1719,8 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
         "shared_memory_state_bytes",
         "mmap_state_bytes",
         "llm_total_tokens",
+        "planner_total_tokens",
+        "summarizer_total_tokens",
         "memory_query_count",
         "memory_hit_rate",
         "planned_step_count",
@@ -1393,6 +1731,11 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
         "control_bytes_reduction_vs_cold",
         "llm_total_tokens_reduction_vs_cold",
         "task_ms_reduction_vs_cold",
+        "planner_ms",
+        "retrieve_ms",
+        "execute_ms",
+        "summarize_ms",
+        "phase_overhead_ms",
         "task_ms",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -1412,6 +1755,8 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "shared_memory_state_bytes": round(float(task["shared_memory_state_bytes"]), 4),
                     "mmap_state_bytes": round(float(task["mmap_state_bytes"]), 4),
                     "llm_total_tokens": round(float(task["llm_total_tokens"]), 4),
+                    "planner_total_tokens": round(float(task["planner_total_tokens"]), 4),
+                    "summarizer_total_tokens": round(float(task["summarizer_total_tokens"]), 4),
                     "memory_query_count": round(float(task["memory_query_count"]), 4),
                     "memory_hit_rate": round(float(task["memory_hit_rate"]), 4),
                     "planned_step_count": round(float(task["planned_step_count"]), 4),
@@ -1422,7 +1767,80 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "control_bytes_reduction_vs_cold": round(float(task["control_bytes_reduction_vs_cold"]), 4),
                     "llm_total_tokens_reduction_vs_cold": round(float(task["llm_total_tokens_reduction_vs_cold"]), 4),
                     "task_ms_reduction_vs_cold": round(float(task["task_ms_reduction_vs_cold"]), 4),
+                    "planner_ms": round(float(task["planner_ms"]), 4),
+                    "retrieve_ms": round(float(task["retrieve_ms"]), 4),
+                    "execute_ms": round(float(task["execute_ms"]), 4),
+                    "summarize_ms": round(float(task["summarize_ms"]), 4),
+                    "phase_overhead_ms": round(float(task["phase_overhead_ms"]), 4),
                     "task_ms": round(float(task["task_ms"]), 4),
+                }
+            )
+        for slice_summary in mode_summary.get("reuse_slices", []):
+            writer.writerow(
+                {
+                    "row_kind": "reuse_slice",
+                    "row_id": slice_summary["reuse_slice"],
+                    "mode": mode,
+                    "message_count": round(float(slice_summary["message_count"]), 4),
+                    "setup_control_bytes": 0.0,
+                    "steady_state_control_bytes": round(float(slice_summary[control_key]), 4),
+                    "control_bytes": round(float(slice_summary[control_key]), 4),
+                    "state_bytes": round(float(slice_summary["state_bytes"]), 4),
+                    "shared_memory_state_bytes": round(float(slice_summary["shared_memory_state_bytes"]), 4),
+                    "mmap_state_bytes": round(float(slice_summary["mmap_state_bytes"]), 4),
+                    "llm_total_tokens": round(float(slice_summary["llm_total_tokens"]), 4),
+                    "planner_total_tokens": round(float(slice_summary["planner_total_tokens"]), 4),
+                    "summarizer_total_tokens": round(float(slice_summary["summarizer_total_tokens"]), 4),
+                    "memory_query_count": round(float(slice_summary["memory_query_count"]), 4),
+                    "memory_hit_rate": round(float(slice_summary["memory_hit_rate"]), 4),
+                    "planned_step_count": round(float(slice_summary["planned_step_count"]), 4),
+                    "skipped_step_count": round(float(slice_summary["skipped_step_count"]), 4),
+                    "reuse_gain": round(float(slice_summary["reuse_gain"]), 4),
+                    "reuse_apply_rate": round(float(slice_summary["reuse_apply_rate"]), 4),
+                    "expectation_match_rate": round(float(slice_summary["expectation_match_rate"]), 4),
+                    "control_bytes_reduction_vs_cold": round(float(slice_summary["control_bytes_reduction_vs_cold"]), 4),
+                    "llm_total_tokens_reduction_vs_cold": round(float(slice_summary["llm_total_tokens_reduction_vs_cold"]), 4),
+                    "task_ms_reduction_vs_cold": round(float(slice_summary["task_ms_reduction_vs_cold"]), 4),
+                    "planner_ms": round(float(slice_summary["planner_ms"]), 4),
+                    "retrieve_ms": round(float(slice_summary["retrieve_ms"]), 4),
+                    "execute_ms": round(float(slice_summary["execute_ms"]), 4),
+                    "summarize_ms": round(float(slice_summary["summarize_ms"]), 4),
+                    "phase_overhead_ms": round(float(slice_summary["phase_overhead_ms"]), 4),
+                    "task_ms": round(float(slice_summary["task_ms"]), 4),
+                }
+            )
+        for axis_summary in mode_summary.get("reuse_axes", []):
+            writer.writerow(
+                {
+                    "row_kind": "reuse_axis",
+                    "row_id": axis_summary["reuse_axis"],
+                    "mode": mode,
+                    "message_count": round(float(axis_summary["message_count"]), 4),
+                    "setup_control_bytes": 0.0,
+                    "steady_state_control_bytes": round(float(axis_summary[control_key]), 4),
+                    "control_bytes": round(float(axis_summary[control_key]), 4),
+                    "state_bytes": round(float(axis_summary["state_bytes"]), 4),
+                    "shared_memory_state_bytes": round(float(axis_summary["shared_memory_state_bytes"]), 4),
+                    "mmap_state_bytes": round(float(axis_summary["mmap_state_bytes"]), 4),
+                    "llm_total_tokens": round(float(axis_summary["llm_total_tokens"]), 4),
+                    "planner_total_tokens": round(float(axis_summary["planner_total_tokens"]), 4),
+                    "summarizer_total_tokens": round(float(axis_summary["summarizer_total_tokens"]), 4),
+                    "memory_query_count": round(float(axis_summary["memory_query_count"]), 4),
+                    "memory_hit_rate": round(float(axis_summary["memory_hit_rate"]), 4),
+                    "planned_step_count": round(float(axis_summary["planned_step_count"]), 4),
+                    "skipped_step_count": round(float(axis_summary["skipped_step_count"]), 4),
+                    "reuse_gain": round(float(axis_summary["reuse_gain"]), 4),
+                    "reuse_apply_rate": round(float(axis_summary["reuse_apply_rate"]), 4),
+                    "expectation_match_rate": round(float(axis_summary["expectation_match_rate"]), 4),
+                    "control_bytes_reduction_vs_cold": round(float(axis_summary["control_bytes_reduction_vs_cold"]), 4),
+                    "llm_total_tokens_reduction_vs_cold": round(float(axis_summary["llm_total_tokens_reduction_vs_cold"]), 4),
+                    "task_ms_reduction_vs_cold": round(float(axis_summary["task_ms_reduction_vs_cold"]), 4),
+                    "planner_ms": round(float(axis_summary["planner_ms"]), 4),
+                    "retrieve_ms": round(float(axis_summary["retrieve_ms"]), 4),
+                    "execute_ms": round(float(axis_summary["execute_ms"]), 4),
+                    "summarize_ms": round(float(axis_summary["summarize_ms"]), 4),
+                    "phase_overhead_ms": round(float(axis_summary["phase_overhead_ms"]), 4),
+                    "task_ms": round(float(axis_summary["task_ms"]), 4),
                 }
             )
         aggregate = mode_summary["aggregate"]
@@ -1440,6 +1858,8 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                 "shared_memory_state_bytes": round(float(aggregate["shared_memory_state_bytes"]), 4),
                 "mmap_state_bytes": round(float(aggregate["mmap_state_bytes"]), 4),
                 "llm_total_tokens": round(float(aggregate["llm_total_tokens"]), 4),
+                "planner_total_tokens": round(float(aggregate["planner_total_tokens"]), 4),
+                "summarizer_total_tokens": round(float(aggregate["summarizer_total_tokens"]), 4),
                 "memory_query_count": round(float(aggregate["memory_query_count"]), 4),
                 "memory_hit_rate": round(float(aggregate["memory_hit_rate"]), 4),
                 "planned_step_count": round(float(aggregate["planned_step_count"]), 4),
@@ -1450,6 +1870,11 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                 "control_bytes_reduction_vs_cold": round(float(aggregate["control_bytes_reduction_vs_cold"]), 4),
                 "llm_total_tokens_reduction_vs_cold": round(float(aggregate["llm_total_tokens_reduction_vs_cold"]), 4),
                 "task_ms_reduction_vs_cold": round(float(aggregate["task_ms_reduction_vs_cold"]), 4),
+                "planner_ms": round(float(aggregate["planner_ms"]), 4),
+                "retrieve_ms": round(float(aggregate["retrieve_ms"]), 4),
+                "execute_ms": round(float(aggregate["execute_ms"]), 4),
+                "summarize_ms": round(float(aggregate["summarize_ms"]), 4),
+                "phase_overhead_ms": round(float(aggregate["phase_overhead_ms"]), 4),
                 "task_ms": round(float(aggregate["task_ms"]), 4),
             }
         )

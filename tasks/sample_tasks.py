@@ -6,6 +6,12 @@ from pathlib import Path
 import yaml
 
 from protocol.messages import Plan, PlanStep
+from runtime.reuse_contract import (
+    normalize_runtime_reuse_contract,
+    resolve_runtime_reuse_contract,
+    runtime_reuse_contract_gates,
+)
+from runtime.task_profile import RuntimeTaskProfile, build_reuse_signature
 
 
 DEFAULT_TASK_SET = Path(__file__).with_name("sample_benchmark.yaml")
@@ -24,17 +30,55 @@ class SampleTask:
     summary_hint: str
     corpus_doc_ids: tuple[str, ...] = ()
     expected_reuse_mode: str = "none"
+    runtime_reuse_contract_override: str = ""
+    replay_source_task_id: str = ""
+    allow_memory_assist_contract: bool | None = None
+    allow_execute_prune_contract: bool | None = None
+    allow_exact_replay_contract: bool | None = None
     evidence_text: str = ""
 
     @property
     def expected_reuse(self) -> bool:
-        return self.expected_reuse_mode == "assist"
+        return self.expected_reuse_mode != "none"
 
     @property
     def reuse_signature(self) -> str:
-        tags = self.reuse_tags or self.tags
-        normalized = "|".join(sorted(set(tags)))
-        return f"{self.task_theme}:{normalized}"
+        return build_reuse_signature(self.task_theme, self.reuse_tags or self.tags)
+
+    @property
+    def runtime_gates(self) -> dict[str, bool]:
+        return runtime_reuse_contract_gates(self.runtime_reuse_contract)
+
+    @property
+    def allow_memory_assist(self) -> bool:
+        return self.runtime_gates["allow_memory_assist"]
+
+    @property
+    def allow_execute_prune(self) -> bool:
+        return self.runtime_gates["allow_execute_prune"]
+
+    @property
+    def allow_exact_replay(self) -> bool:
+        return self.runtime_gates["allow_exact_replay"]
+
+    @property
+    def runtime_reuse_contract(self) -> str:
+        if self.runtime_reuse_contract_override.strip():
+            return normalize_runtime_reuse_contract(self.runtime_reuse_contract_override)
+        return resolve_runtime_reuse_contract(
+            {
+                "expected_reuse_mode": self.expected_reuse_mode,
+                "allow_memory_assist": self.allow_memory_assist_contract,
+                "allow_execute_prune": self.allow_execute_prune_contract,
+                "allow_exact_replay": self.allow_exact_replay_contract,
+            }
+        )
+
+    @property
+    def runtime_profile(self) -> RuntimeTaskProfile:
+        return RuntimeTaskProfile(
+            runtime_reuse_contract=self.runtime_reuse_contract,
+        )
 
 
 def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
@@ -58,6 +102,11 @@ def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
                         "assist" if bool(item.get("expected_reuse", False)) else "none",
                     )
                 ).strip(),
+                runtime_reuse_contract_override=str(item.get("runtime_reuse_contract", "")).strip(),
+                replay_source_task_id=str(item.get("replay_source_task_id", "")).strip(),
+                allow_memory_assist_contract=_coerce_optional_bool(item.get("allow_memory_assist")),
+                allow_execute_prune_contract=_coerce_optional_bool(item.get("allow_execute_prune")),
+                allow_exact_replay_contract=_coerce_optional_bool(item.get("allow_exact_replay")),
                 evidence_text=str(item.get("evidence_text", "")).strip(),
                 summary_hint=str(item["summary_hint"]).strip(),
             )
@@ -81,12 +130,8 @@ def build_plan(task: SampleTask) -> Plan:
                 input_state_refs=[],
                 params={
                     "query": task.query,
-                    "corpus_doc_ids": list(task.corpus_doc_ids),
                     "evidence_text": task.evidence_text,
                     "tags": list(task.tags),
-                    "reuse_tags": list(task.reuse_tags or task.tags),
-                    "reuse_signature": task.reuse_signature,
-                    "expected_reuse_mode": task.expected_reuse_mode,
                     "allow_memory_reuse": True,
                 },
                 depends_on=[],
@@ -107,11 +152,21 @@ def build_plan(task: SampleTask) -> Plan:
                 params={
                     "summary_hint": task.summary_hint,
                     "tags": list(task.tags),
-                    "reuse_tags": list(task.reuse_tags or task.tags),
-                    "reuse_signature": task.reuse_signature,
-                    "expected_reuse_mode": task.expected_reuse_mode,
                 },
                 depends_on=["retrieve", "execute"],
             ),
         ],
     )
+
+
+def _coerce_optional_bool(value: object) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"cannot coerce to bool: {value!r}")

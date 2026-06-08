@@ -28,3 +28,7 @@ statebus-project-benchmark = "eval.runner:main"
 
 [tool.setuptools]
 py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["third_party"]

@@ -19,6 +19,12 @@ async def _run_all_modes(root: Path) -> dict[str, object]:
 
 
 def main() -> None:
+    print(
+        "statebus smoke scope:"
+        " deterministic repeat=1 host sanity check;"
+        " verifies runnable benchmark path only,"
+        " not formal API timing evidence"
+    )
     with tempfile.TemporaryDirectory(prefix="statebus-smoke-") as tmpdir:
         result = asyncio.run(_run_all_modes(Path(tmpdir)))
         for mode in result["manifest"]["modes"]:
@@ -32,3 +38,7 @@ def main() -> None:
                 f" control_bytes={control_bytes}"
                 f" task_ms={aggregate['task_ms']:.2f}"
             )
+
+
+if __name__ == "__main__":
+    main()

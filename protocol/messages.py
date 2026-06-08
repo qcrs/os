@@ -85,6 +85,7 @@ class StepResult:
     output_state_refs: list[StateRef] = field(default_factory=list)
     payload: dict[str, Any] = field(default_factory=dict)
     memory_commit: MemoryCommit | None = None
+    memory_commits: list[MemoryCommit] = field(default_factory=list)
     error: str | None = None
     skipped: bool = False
     reused_from_memory_id: str | None = None
@@ -525,17 +526,21 @@ def _compact_json(value: Any) -> str:
 
 
 def _wire_required_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    reuse_signature = metadata.get("reuse_signature")
-    if reuse_signature is None:
-        return {}
-    return {"reuse_signature": reuse_signature}
+    return _filtered_memory_metadata(metadata)
 
 
 def _wire_commit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    reuse_signature = metadata.get("reuse_signature")
-    if reuse_signature is None:
-        return {}
-    return {"reuse_signature": reuse_signature}
+    return _filtered_memory_metadata(metadata)
+
+
+def _filtered_memory_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    filtered: dict[str, Any] = {}
+    for key in ("reuse_signature", "memory_purpose", "memory_layer"):
+        value = metadata.get(key)
+        if value in (None, "", [], {}):
+            continue
+        filtered[key] = value
+    return filtered
 
 
 def _to_proto_memory_commit(message: MemoryCommit) -> statebus_pb2.MemoryCommit:
@@ -712,6 +717,7 @@ def _message_from_wire_frame(message_name: str, payload: dict[str, Any]) -> Any:
         return _state_ref_from_payload(payload)
     if message_name == "StepResult":
         memory_commit = payload.get("memory_commit")
+        memory_commits = payload.get("memory_commits", [])
         return StepResult(
             step_id=str(payload.get("step_id", "")),
             success=bool(payload.get("success", False)),
@@ -726,6 +732,11 @@ def _message_from_wire_frame(message_name: str, payload: dict[str, Any]) -> Any:
                 if not isinstance(memory_commit, dict)
                 else _message_from_wire_frame("MemoryCommit", memory_commit)
             ),
+            memory_commits=[
+                _message_from_wire_frame("MemoryCommit", item)
+                for item in memory_commits
+                if isinstance(item, dict)
+            ],
             error=None if payload.get("error") in (None, "") else str(payload.get("error")),
             skipped=bool(payload.get("skipped", False)),
             reused_from_memory_id=(
