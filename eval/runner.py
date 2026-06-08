@@ -101,6 +101,12 @@ TRANSFER_STRATEGY_ORDER = (
     "text_brief",
 )
 
+MEMORY_POLICY_ORDER = (
+    "memory_off",
+    "assist_only",
+    "replay_enabled",
+)
+
 
 def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
@@ -144,6 +150,15 @@ def _task_benchmark_lane(task_run: dict[str, object]) -> str:
 
 def _task_transfer_strategy(task_run: dict[str, object]) -> str:
     return str(task_run.get("transfer_strategy", "state_ref")).strip() or "state_ref"
+
+
+def _task_memory_policy(task_run: dict[str, object]) -> str:
+    contract = str(task_run.get("runtime_reuse_contract", "assist_allowed")).strip().lower()
+    if contract == "reuse_disabled":
+        return "memory_off"
+    if contract == "assist_allowed":
+        return "assist_only"
+    return "replay_enabled"
 
 
 def _control_metric_key(mode: str) -> str:
@@ -760,6 +775,7 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
             "reuse_axes": [],
             "benchmark_lanes": [],
             "transfer_strategies": [],
+            "memory_policies": [],
             "tasks": [],
             "message_breakdown": [],
             "stability": {},
@@ -841,6 +857,13 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         order=TRANSFER_STRATEGY_ORDER,
         key_name="transfer_strategy",
     )
+    memory_policies = _aggregate_named_task_summaries(
+        task_runs=task_rows,
+        mode=str(completed_runs[0]["mode"]),
+        classifier=_task_memory_policy,
+        order=MEMORY_POLICY_ORDER,
+        key_name="memory_policy",
+    )
     setup = _average_counter_rows([run["setup_metrics"] for run in completed_runs])
     steady_state = _merge_reuse_summary(
         _average_metric_rows([run["steady_state_aggregate"] for run in completed_runs]),
@@ -864,6 +887,7 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         "reuse_axes": reuse_axes,
         "benchmark_lanes": benchmark_lanes,
         "transfer_strategies": transfer_strategies,
+        "memory_policies": memory_policies,
         "tasks": task_summaries,
         "message_breakdown": _aggregate_message_breakdown(completed_runs),
         "stability": _build_stability_summary(completed_runs),
@@ -1040,6 +1064,13 @@ def _build_result(
         strategy: sum(1 for task in tasks if task.transfer_strategy == strategy)
         for strategy in ("state_ref", "text_brief", "mode_split_text_brief_vs_state_ref")
     }
+    memory_policy_counts = {
+        "memory_off": sum(1 for task in tasks if task.runtime_reuse_contract == "reuse_disabled"),
+        "assist_only": sum(1 for task in tasks if task.runtime_reuse_contract == "assist_allowed"),
+        "replay_enabled": sum(
+            1 for task in tasks if task.runtime_reuse_contract in {"validated_replay", "exact_replay"}
+        ),
+    }
     return {
         "manifest": {
             "task_set_path": str(Path(task_set_path)),
@@ -1050,6 +1081,7 @@ def _build_result(
             "expected_reuse_mode_counts": expected_reuse_mode_counts,
             "benchmark_lane_counts": benchmark_lane_counts,
             "transfer_strategy_counts": transfer_strategy_counts,
+            "memory_policy_counts": memory_policy_counts,
             "task_contract_counts": {
                 "allow_memory_assist": sum(
                     1 for task in tasks if task.runtime_gates["allow_memory_assist"]
@@ -1234,6 +1266,12 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
     protocol_transfer = {
         item["transfer_strategy"]: item for item in summary["protocol"]["transfer_strategies"]
     }
+    text_memory_policy = {
+        item["memory_policy"]: item for item in summary["text"]["memory_policies"]
+    }
+    protocol_memory_policy = {
+        item["memory_policy"]: item for item in summary["protocol"]["memory_policies"]
+    }
     fieldnames = [
         "row_kind",
         "row_id",
@@ -1365,6 +1403,18 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
                     transfer_strategy,
                     text_transfer[transfer_strategy],
                     protocol_transfer[transfer_strategy],
+                    summary["text"],
+                    summary["protocol"],
+                )
+            )
+    for memory_policy in MEMORY_POLICY_ORDER:
+        if memory_policy in text_memory_policy and memory_policy in protocol_memory_policy:
+            rows.append(
+                _compare_row(
+                    "memory_policy",
+                    memory_policy,
+                    text_memory_policy[memory_policy],
+                    protocol_memory_policy[memory_policy],
                     summary["text"],
                     summary["protocol"],
                 )
@@ -1548,6 +1598,7 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Expected reuse mode counts: `{json.dumps(result['manifest']['expected_reuse_mode_counts'], sort_keys=True)}`",
         f"- Benchmark lane counts: `{json.dumps(result['manifest']['benchmark_lane_counts'], sort_keys=True)}`",
         f"- Transfer strategy counts: `{json.dumps(result['manifest']['transfer_strategy_counts'], sort_keys=True)}`",
+        f"- Memory policy counts: `{json.dumps(result['manifest']['memory_policy_counts'], sort_keys=True)}`",
         f"- Task contract counts: `{json.dumps(result['manifest']['task_contract_counts'], sort_keys=True)}`",
         f"- Encoder: `{result['manifest']['encoder_id']}`",
         f"- StatePool backend: `{result['manifest']['statepool_backend']}`",
@@ -1747,6 +1798,23 @@ def _build_report(result: dict[str, object]) -> str:
                 f"| {transfer_summary['transfer_strategy']} | {mode} | {len(transfer_summary['task_ids'])} | "
                 f"{control_bytes:.2f} | {transfer_summary['llm_total_tokens']:.2f} | {transfer_summary['memory_hit_rate']:.2f} | "
                 f"{transfer_summary['skipped_step_count']:.2f} | {transfer_summary['reuse_gain']:.2f} | {transfer_summary['task_ms']:.2f} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## Memory Policies",
+            "",
+            "| memory_policy | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        for policy_summary in summary[mode]["memory_policies"]:
+            control_bytes = policy_summary["text_bytes"] if mode == "text" else policy_summary["protocol_bytes"]
+            lines.append(
+                f"| {policy_summary['memory_policy']} | {mode} | {len(policy_summary['task_ids'])} | "
+                f"{control_bytes:.2f} | {policy_summary['llm_total_tokens']:.2f} | {policy_summary['memory_hit_rate']:.2f} | "
+                f"{policy_summary['skipped_step_count']:.2f} | {policy_summary['reuse_gain']:.2f} | {policy_summary['task_ms']:.2f} |"
             )
     if len(available_modes) == 2:
         lines.extend(
@@ -2029,6 +2097,40 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "summarize_ms": round(float(transfer_summary["summarize_ms"]), 4),
                     "phase_overhead_ms": round(float(transfer_summary["phase_overhead_ms"]), 4),
                     "task_ms": round(float(transfer_summary["task_ms"]), 4),
+                }
+            )
+        for policy_summary in mode_summary.get("memory_policies", []):
+            writer.writerow(
+                {
+                    "row_kind": "memory_policy",
+                    "row_id": policy_summary["memory_policy"],
+                    "mode": mode,
+                    "message_count": round(float(policy_summary["message_count"]), 4),
+                    "setup_control_bytes": 0.0,
+                    "steady_state_control_bytes": round(float(policy_summary[control_key]), 4),
+                    "control_bytes": round(float(policy_summary[control_key]), 4),
+                    "state_bytes": round(float(policy_summary["state_bytes"]), 4),
+                    "shared_memory_state_bytes": round(float(policy_summary["shared_memory_state_bytes"]), 4),
+                    "mmap_state_bytes": round(float(policy_summary["mmap_state_bytes"]), 4),
+                    "llm_total_tokens": round(float(policy_summary["llm_total_tokens"]), 4),
+                    "planner_total_tokens": round(float(policy_summary["planner_total_tokens"]), 4),
+                    "summarizer_total_tokens": round(float(policy_summary["summarizer_total_tokens"]), 4),
+                    "memory_query_count": round(float(policy_summary["memory_query_count"]), 4),
+                    "memory_hit_rate": round(float(policy_summary["memory_hit_rate"]), 4),
+                    "planned_step_count": round(float(policy_summary["planned_step_count"]), 4),
+                    "skipped_step_count": round(float(policy_summary["skipped_step_count"]), 4),
+                    "reuse_gain": round(float(policy_summary["reuse_gain"]), 4),
+                    "reuse_apply_rate": round(float(policy_summary["reuse_apply_rate"]), 4),
+                    "expectation_match_rate": round(float(policy_summary["expectation_match_rate"]), 4),
+                    "control_bytes_reduction_vs_cold": round(float(policy_summary["control_bytes_reduction_vs_cold"]), 4),
+                    "llm_total_tokens_reduction_vs_cold": round(float(policy_summary["llm_total_tokens_reduction_vs_cold"]), 4),
+                    "task_ms_reduction_vs_cold": round(float(policy_summary["task_ms_reduction_vs_cold"]), 4),
+                    "planner_ms": round(float(policy_summary["planner_ms"]), 4),
+                    "retrieve_ms": round(float(policy_summary["retrieve_ms"]), 4),
+                    "execute_ms": round(float(policy_summary["execute_ms"]), 4),
+                    "summarize_ms": round(float(policy_summary["summarize_ms"]), 4),
+                    "phase_overhead_ms": round(float(policy_summary["phase_overhead_ms"]), 4),
+                    "task_ms": round(float(policy_summary["task_ms"]), 4),
                 }
             )
         aggregate = mode_summary["aggregate"]

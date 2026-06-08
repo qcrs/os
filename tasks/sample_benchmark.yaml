@@ -340,3 +340,93 @@ tasks:
     summary_hint: >
       This task is for direct state-transfer comparison only; preserve the same
       diagnosis while varying the inter-agent handoff format.
+
+  - task_id: communication-cache-001
+    task_group: communication_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a cold cache triage task without memory reuse.
+    query: inventory stale counts batch sync aggregate invalidation
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and keeps memory disabled.
+    tags: [cache, inventory, invalidation, communication, cold-start]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for communication-lane baseline only; keep the diagnosis fixed
+      and do not introduce replay or memory assist.
+
+  - task_id: communication-cache-002
+    task_group: communication_lane
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a reject-control cache task without memory reuse.
+    query: stale inventory after failover replica lag looks like invalidation issue
+    corpus_doc_ids: [cache-invalid-anchor, cache-replica-false]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and fresh retrieval under a misleading incident.
+    tags: [cache, inventory, failover, communication, reject-control]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This communication-lane reject control should still reject the invalidation
+      shortcut and isolate the stale-read replica path.
+
+  - task_id: memory-cache-001
+    task_group: memory_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    goal: Establish the memory-lane cold baseline on the validated replay route with memory fully disabled.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; this lane compares memory policies, so this first task must keep memory disabled.
+    tags: [cache, inventory, invalidation, memory, cold-start]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is the memory-off baseline for the memory lane; confirm the same
+      invalidation route without any assist or replay.
+
+  - task_id: memory-cache-002
+    task_group: memory_lane
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    goal: Measure assist-only memory reuse on the same validated cache route without step skipping.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; this lane keeps retrieval fresh and only allows memory assist.
+    tags: [cache, inventory, invalidation, memory, assist-only]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      This memory-lane assist task should reuse only summary memory after fresh
+      retrieval on the same route and keep execute fully live.
+
+  - task_id: memory-cache-003
+    task_group: memory_lane
+    task_order: 3
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    goal: Measure replay-enabled memory reuse on the same cache route with execute pruning.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; this lane allows replay-enabled reuse after fresh route confirmation.
+    tags: [cache, inventory, invalidation, memory, replay-enabled]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      This memory-lane replay-enabled task should confirm the same invalidation
+      route, then prune execute while preserving summary and commit behavior.

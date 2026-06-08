@@ -80,38 +80,45 @@ def test_benchmark_runner_writes_outputs() -> None:
         compare_csv = (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
         assert payload["manifest"]["repeat"] == 1
         assert payload["manifest"]["llm_backend"] == "deterministic"
-        assert payload["manifest"]["continuous_task_count"] == 19
-        assert payload["manifest"]["expected_reuse_task_count"] == 12
+        assert payload["manifest"]["continuous_task_count"] == 24
+        assert payload["manifest"]["expected_reuse_task_count"] == 14
         assert payload["manifest"]["expected_reuse_mode_counts"] == {
-            "assist": 6,
-            "none": 7,
-            "skip_execute": 3,
+            "assist": 7,
+            "none": 10,
+            "skip_execute": 4,
             "skip_retrieve_execute": 3,
         }
         assert payload["manifest"]["task_contract_counts"] == {
-            "allow_memory_assist": 12,
-            "allow_execute_prune": 3,
+            "allow_memory_assist": 13,
+            "allow_execute_prune": 4,
             "allow_exact_replay": 3,
         }
         assert payload["manifest"]["benchmark_lane_counts"] == {
             "internal_regression": 18,
-            "communication": 0,
+            "communication": 2,
             "state_transfer": 1,
-            "memory": 0,
+            "memory": 3,
         }
         assert payload["manifest"]["transfer_strategy_counts"] == {
-            "state_ref": 18,
+            "state_ref": 23,
             "text_brief": 0,
             "mode_split_text_brief_vs_state_ref": 1,
         }
+        assert payload["manifest"]["memory_policy_counts"] == {
+            "memory_off": 4,
+            "assist_only": 13,
+            "replay_enabled": 7,
+        }
         assert payload["manifest"]["task_groups"] == [
             "cache_chain",
+            "communication_lane",
             "latency_chain",
+            "memory_lane",
             "session_chain",
             "transfer_lane",
         ]
         assert result["summary"]["text"]["run_count"] == 1
-        assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 4
+        assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 6
         assert "__aggregate__" in compare_csv
         assert "text_planner_total_tokens" in compare_csv
         assert "protocol_summarizer_total_tokens" in compare_csv
@@ -126,6 +133,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert "Communication Vs Replay Axes" in report_text
         assert "Contest Benchmark Lanes" in report_text
         assert "State Transfer Strategies" in report_text
+        assert "Memory Policies" in report_text
         assert "Memory Reuse Decisions By Mode" in report_text
         assert "Role-Level LLM Tokens" in report_text
         assert "Phase Timing Breakdown" in report_text
@@ -174,12 +182,12 @@ def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
     expected_anchors = {
         task_id
         for task_id, task in task_specs.items()
-        if task.expected_reuse_mode == "none" and task.task_order == 1
+        if task.benchmark_lane == "internal_regression" and task.expected_reuse_mode == "none" and task.task_order == 1
     }
     expected_reject_controls = {
         task_id
         for task_id, task in task_specs.items()
-        if task.expected_reuse_mode == "none" and task.task_order > 1
+        if task.benchmark_lane == "internal_regression" and task.expected_reuse_mode == "none" and task.task_order > 1
     }
     for mode in ("text", "protocol"):
         run = result["mode_runs"][mode][0]
@@ -935,6 +943,58 @@ def test_state_transfer_lane_uses_text_brief_only_for_text_mode() -> None:
     assert protocol_task["transfer_strategy"] == "state_ref"
     assert text_task["results"]["execute"]["payload"]["transfer_strategy"] == "text_brief"
     assert protocol_task["results"]["execute"]["payload"]["transfer_strategy"] == "state_ref"
+
+
+def test_communication_lane_keeps_memory_disabled_in_both_modes() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-communication-lane-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        for task_id in ("communication-cache-001", "communication-cache-002"):
+            task = tasks[task_id]
+            assert task["benchmark_lane"] == "communication"
+            assert task["runtime_reuse_contract"] == "reuse_disabled"
+            assert task["reuse"]["mode"] == "none"
+            assert task["metrics"]["memory_query_count"] == 0
+            assert task["metrics"]["memory_hit_rate"] == 0.0
+
+
+def test_memory_lane_separates_memory_policies() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-lane-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        memory_off = tasks["memory-cache-001"]
+        assist_only = tasks["memory-cache-002"]
+        replay_enabled = tasks["memory-cache-003"]
+        assert memory_off["benchmark_lane"] == "memory"
+        assert memory_off["runtime_reuse_contract"] == "reuse_disabled"
+        assert memory_off["reuse"]["mode"] == "none"
+        assert memory_off["metrics"]["memory_query_count"] == 0
+        assert assist_only["runtime_reuse_contract"] == "assist_allowed"
+        assert assist_only["reuse"]["mode"] == "assist"
+        assert assist_only["results"]["retrieve"]["skipped"] is False
+        assert assist_only["results"]["execute"]["skipped"] is False
+        assert replay_enabled["runtime_reuse_contract"] == "validated_replay"
+        assert replay_enabled["reuse"]["mode"] == "skip_execute"
+        assert replay_enabled["results"]["retrieve"]["skipped"] is False
+        assert replay_enabled["results"]["execute"]["skipped"] is True
 
 
 def test_benchmark_supports_shared_memory_statepool_backend() -> None:
