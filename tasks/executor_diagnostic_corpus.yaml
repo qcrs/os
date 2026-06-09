@@ -1,0 +1,141 @@
+docs:
+  - doc_id: exec-lowconf-context
+    task_group: executor_diag
+    task_theme: executor_low_confidence
+    title: Vague release issue without route-level evidence
+    tags: [triage]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      Investigate a vague release issue. The current note says only that a release
+      issue exists. It does not confirm a route family, tool family, or any stable
+      incident signature.
+
+  - doc_id: exec-lowconf-weak-db
+    task_group: executor_diag
+    task_theme: executor_low_confidence
+    title: Weak side note for the same vague release issue
+    tags: [triage]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      The same vague release issue has one side note mentioning a slow orders query
+      once, but there is still no db wait profile, no connection-pool evidence,
+      and no stable replay of the issue.
+
+  - doc_id: exec-metadata-only-anchor
+    task_group: executor_diag
+    task_theme: executor_metadata_only
+    title: Investigate an unclear incident with only a metadata label
+    tags: [triage]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      Investigate an unclear incident. This note is intentionally vague and keeps
+      the issue at the release-note level. It carries a database metadata label
+      for retrieval, but it does not provide concrete pool-contention evidence.
+
+  - doc_id: exec-metadata-only-followup
+    task_group: executor_diag
+    task_theme: executor_metadata_only
+    title: Follow-up note for the same unclear incident
+    tags: [triage]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      The follow-up report remains inconclusive, repeats the same unclear incident
+      wording, and still adds no route-level evidence.
+
+  - doc_id: exec-thin-support-context
+    task_group: executor_diag
+    task_theme: executor_thin_support
+    title: Follow-up callback issue without route-confirming evidence
+    tags: [auth, session]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      The current callback issue is still vague. The report does not confirm a
+      concrete authentication failure family, a stable callback root cause, or a
+      route-specific diagnosis.
+
+  - doc_id: exec-thin-support-followup
+    task_group: executor_diag
+    task_theme: executor_thin_support
+    title: Second vague note for the same callback issue
+    tags: [auth, session]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      The follow-up note repeats the callback issue at a high level and again does
+      not isolate a route family, a concrete identity-system failure, or a
+      playbook trigger.
+
+  - doc_id: exec-conflict-hint-anchor
+    task_group: executor_diag
+    task_theme: executor_conflict_thin_override
+    title: Callback issue labeled as a session problem without route proof
+    tags: [auth, session]
+    route_hint: auth_session_drift
+    tool_name: tool.auth_session_repair
+    text: >
+      The current incident is labeled as a session-side callback issue, but the
+      note does not establish a concrete failure family, a verified identity
+      root cause, or a route-specific remediation path.
+
+  - doc_id: exec-conflict-vague-followup
+    task_group: executor_diag
+    task_theme: executor_conflict_thin_override
+    title: Follow-up login issue still lacks route-confirming evidence
+    tags: [auth, session]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      The follow-up report says only that login behavior degraded again and still
+      does not confirm a stable route family or a concrete playbook trigger.
+
+  - doc_id: exec-ambiguous-context
+    task_group: executor_diag
+    task_theme: executor_ambiguous
+    title: Release-17 orders latency report with mixed database and worker signals
+    tags: [latency, database, worker, release-17]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      The incident notes mention db pool saturation, slow orders query behavior,
+      and a concurrent worker queue starvation during tls reload, but they still
+      do not establish which route should win.
+
+  - doc_id: exec-ambiguous-mixed-signals
+    task_group: executor_diag
+    task_theme: executor_ambiguous
+    title: Follow-up report keeps database and worker evidence in tension
+    tags: [database, worker]
+    route_hint: ""
+    tool_name: ""
+    text: >
+      The fresh notes again mention db wait profile, slow orders query behavior,
+      worker queue stall, and tls reload, with neither family strong enough to
+      justify a direct playbook.
+
+  - doc_id: exec-clear-worker-anchor
+    task_group: executor_diag
+    task_theme: executor_clear_worker
+    title: Clear worker queue starvation during tls reload
+    tags: [latency, worker, release-17]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      The strongest evidence points to worker queue starvation during tls reload.
+      The database pool stayed healthy, and the known remediation is to pause the
+      reload and rebalance the worker queue.
+
+  - doc_id: exec-clear-worker-followup
+    task_group: executor_diag
+    task_theme: executor_clear_worker
+    title: Follow-up note confirms the same worker-side route
+    tags: [latency, worker, tls]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      A second note again points to tls reload stalls and worker saturation rather
+      than a database bottleneck.

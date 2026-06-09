@@ -294,9 +294,41 @@
        - `expectation_match_rate = 1.00`
        - `skipped_step_count = 9`
        - `reuse_gain = 0.17`
-       - `memory_hit_rate = 0.83`
+     - `memory_hit_rate = 0.83`
      - control bytes 继续保持：
        - `text/protocol`：`132735 -> 119008`
+13. `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`
+   - 这是在 `state_transfer` text-side brief 收紧为更完整 executor handoff
+     之后，当前 `26` 任务 fairness surface 的最新正式 serialized API
+     `repeat=10` 包
+   - 它重新证明：
+     - 两侧都完成 `run_count = 10`
+     - 两侧 `failure_count = 0`
+     - 两侧 `expectation_match_rate = 1.00`
+   - aggregate 仍继续偏向 `protocol`：
+     - 控制面字节：`150876.20 -> 128743.80`
+     - live API total tokens：`29727.80 -> 19882.30`
+     - 端到端耗时：`127173.46 ms -> 100976.55 ms`
+   - 这包更重要的 lane-level 含义是：
+     - `communication`
+       - `5838.25 -> 4944.60`
+       - `1140.25 -> 727.70`
+       - `5133.40 ms -> 3907.84 ms`
+     - `state_transfer`
+       - text-side baseline 仍然必须写成 `text brief handoff to executor`
+       - 但当前 text-side brief 已比旧 formal 包更完整
+       - handoff textual bytes：`1725.00 -> 738.00`
+       - handoff non-text bytes：`0.00 -> 1704.67`
+       - total tokens：`1116.07 -> 698.53`
+       - task ms：`4840.01 -> 3804.30`
+     - `memory`
+       - `assist_only` 仍然没有打赢 `memory_off`
+       - `replay_enabled` 仍然才是当前稳定成立的 memory gain
+   - 这说明：
+     - `state_transfer` 的正式 claim 仍成立
+     - 但它现在建立在一个更诚实、更完整的 text-side brief baseline 上
+     - 因此这轮应被理解为 fairness / claim-surface hardening，而不是新的
+       performance headline
 
 当前代码层的语义也进一步收敛了：
 
@@ -322,8 +354,12 @@
 > 当前仓库已经具备可运行、deterministic repeat-10 稳定、且当前 host-mainline
 > 已开始用 provenance-aware route gate 收紧 replay 触发条件的 step-skipping
 > replay path；旧综合评测包则保留 assist-only 历史基线，而最新 formal live API
-> timing 现在以 `runs/host_goal_eval_20260608_093111_planner_contract_refresh/`
-> 为准。
+> timing 现在应分两层看：
+> - `18` 任务 replay-aware current-worktree formal 包仍以
+>   `runs/host_goal_eval_20260608_093111_planner_contract_refresh/` 为准
+> - `26` 任务 contest fairness surface 的最新 formal lane 包现在以
+>   `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`
+>   为准。
 
 ---
 
@@ -407,7 +443,8 @@
 1. 把 host-side `text/protocol + StateRef + memory + benchmark` 做得更稳
 2. 保持 `mmap` 主线，同时保留 `shared_memory` 备选验证
 3. 把 `UDS executor` 当作“外部多进程 transport 已有样机”
-4. 继续把 `Executor` 做成更清晰的 tool-first / optional CodeAct fallback
+4. 当前 executor 主线先停在已完成的 claim-boundary / observability closure，
+   不再默认继续叠 mechanism hardening
 5. 等 VM / Docker / 权限条件成熟后，再补 `nsjail`、容器、eBPF、FD passing
 
 ---

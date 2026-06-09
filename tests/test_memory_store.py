@@ -193,6 +193,59 @@ def test_memory_store_supports_memory_purpose_layers() -> None:
         store.close()
 
 
+def test_memory_store_keyword_fallback_can_match_embedding_text() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-") as tmpdir:
+        db_path = Path(tmpdir) / "memory.sqlite3"
+        store = MemoryStore(db_path, embedder=DeterministicEmbeddingProvider())
+        store.init_schema()
+        store.commit_memory(
+            MemoryCommit(
+                memory_id="mem-embedding-keyword",
+                source_agent_id="summarizer",
+                source_task_id="task-keyword",
+                task_theme="repo_local_cache_staleness",
+                summary="Generic cache incident summary.",
+                tags=["cache"],
+                evidence_state_ids=["state-1"],
+                reusable_steps=["retrieve"],
+                confidence=0.9,
+                embedding_text=(
+                    "route: cache_replica_stale_read\n"
+                    "tool_name: tool.replica_stale_read_triage\n"
+                    "retrieved_doc_ids: cache-invalid-anchor"
+                ),
+                metadata={"memory_purpose": "assist"},
+                evidence_state_refs=[
+                    StateRef(
+                        state_id="state-evidence-1",
+                        kind="DENSE_EVIDENCE",
+                        storage="MMAP_FILE",
+                        handle="/tmp/state-evidence-1.bin",
+                        length=16,
+                        metadata={"task": "task-keyword"},
+                    )
+                ],
+            )
+        )
+        store._fts_enabled = False
+        store._search_semantic = lambda query, query_vector, encoder_id: []  # type: ignore[method-assign]
+
+        hits = store.search(
+            MemoryQuery(
+                task_theme="repo_local_cache_staleness",
+                query_text="cache_replica_stale_read",
+                top_k=3,
+                encoder_id=store.embedder.encoder_id,
+                required_metadata={"memory_purpose": "assist"},
+            )
+        )
+
+        assert hits
+        assert hits[0].memory_id == "mem-embedding-keyword"
+        assert hits[0].reuse_source == "keyword_memory"
+        store.close()
+
+
 def test_resolve_embed_device_prefers_explicit_env(monkeypatch) -> None:
     monkeypatch.setenv("STATEBUS_EMBED_DEVICE", "cuda:0")
     assert resolve_embed_device() == "cuda:0"

@@ -1,3 +1,10 @@
+task_set:
+  name: formal_controlled_pack
+  pack_type: formal_controlled
+  description: Controlled 26-task host-mainline pack for formal communication, state_transfer, and replay-scoped memory claims.
+  reading_contract: Read this pack as the controlled headline package only; keep diagnostic and open validation tasks out of formal contest claims.
+  claim_lanes: [communication, state_transfer, memory]
+
 tasks:
   - task_id: sample-cache-001
     task_group: cache_chain
@@ -340,6 +347,42 @@ tasks:
     summary_hint: >
       This task is for direct state-transfer comparison only; preserve the same
       diagnosis while varying the inter-agent handoff format.
+
+  - task_id: transfer-latency-001
+    task_group: transfer_lane
+    task_order: 2
+    task_theme: repo_local_latency_triage
+    benchmark_lane: state_transfer
+    transfer_strategy: mode_split_text_brief_vs_state_ref
+    goal: Compare text brief handoff against structured StateRef handoff on the same latency triage task.
+    query: release-17 orders latency db pool saturation slow query
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup]
+    evidence_text: Use the referenced corpus docs only; compare transfer strategy, not memory reuse.
+    tags: [latency, database, orders, transfer]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for direct state-transfer comparison only; preserve the same
+      database-saturation diagnosis while varying the inter-agent handoff format.
+
+  - task_id: transfer-session-001
+    task_group: transfer_lane
+    task_order: 3
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: state_transfer
+    transfer_strategy: mode_split_text_brief_vs_state_ref
+    goal: Compare text brief handoff against structured StateRef handoff on the same auth session triage task.
+    query: sso callback issuer mismatch stale jwks session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup]
+    evidence_text: Use the referenced corpus docs only; compare transfer strategy, not memory reuse.
+    tags: [auth, session, jwks, transfer]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for direct state-transfer comparison only; preserve the same
+      stale-JWKS diagnosis while varying the inter-agent handoff format.
 
   - task_id: communication-cache-001
     task_group: communication_lane

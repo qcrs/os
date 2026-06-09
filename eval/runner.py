@@ -23,10 +23,11 @@ from memory.store import (
     EmbeddingProvider,
     SentenceTransformerEmbeddingProvider,
 )
+from runtime.executor_runtime import _feature_bundle_from_transfer_brief, default_tool_registry
 from runtime.llm import LLMClient, LLMConfig, build_llm_client
-from runtime.orchestrator import Orchestrator, RunSession
+from runtime.orchestrator import Orchestrator, RunContext, RunSession
 from statepool.store import StatePoolConfig
-from tasks.sample_tasks import DEFAULT_TASK_SET, SampleTask, load_task_set
+from tasks.sample_tasks import DEFAULT_TASK_SET, SampleTask, load_task_set_bundle
 
 METRIC_FIELDS = (
     "message_count",
@@ -39,6 +40,12 @@ METRIC_FIELDS = (
     "shared_memory_state_bytes",
     "state_ref_count",
     "state_bytes",
+    "handoff_ref_count",
+    "handoff_bytes",
+    "handoff_textual_ref_count",
+    "handoff_textual_bytes",
+    "handoff_nontext_ref_count",
+    "handoff_nontext_bytes",
     "memory_hits",
     "memory_query_count",
     "memory_hit_task_count",
@@ -46,6 +53,10 @@ METRIC_FIELDS = (
     "replay_probe_hits",
     "replay_probe_hit_task_count",
     "memory_assist_task_count",
+    "memory_assist_prior_applied_task_count",
+    "memory_assist_candidate_reduction",
+    "memory_assist_route_agreement_task_count",
+    "memory_assist_rescue_task_count",
     "validated_reuse_task_count",
     "memory_rejected_task_count",
     "planned_step_count",
@@ -107,6 +118,20 @@ MEMORY_POLICY_ORDER = (
     "replay_enabled",
 )
 
+MISFIRE_FIELD_ORDER = (
+    "route",
+    "route_source",
+    "tool_name",
+    "top_doc_id",
+)
+
+MISFIRE_SECTION_TITLES = {
+    "route": "Route Misfire Summary",
+    "route_source": "Route-Source Misfire Summary",
+    "tool_name": "Tool-Choice Misfire Summary",
+    "top_doc_id": "Top-Doc Misfire Summary",
+}
+
 
 def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
@@ -118,6 +143,79 @@ def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _feature_bundle_observability(ctx: RunContext, result: Any) -> dict[str, Any]:
+    feature_ref = next((ref for ref in result.output_state_refs if ref.kind == "FEATURE_BUNDLE"), None)
+    if feature_ref is None:
+        feature_state_id = str(result.payload.get("feature_state_id", "")).strip()
+        if feature_state_id:
+            try:
+                resolved = ctx.resolve_ref(feature_state_id)
+            except Exception:
+                resolved = None
+            if resolved is not None and resolved.kind == "FEATURE_BUNDLE":
+                feature_ref = resolved
+    feature_bundle: dict[str, Any] | None = None
+    if feature_ref is not None:
+        try:
+            feature_bundle = ctx.get_feature_state(feature_ref)
+        except Exception:
+            feature_bundle = None
+    if feature_bundle is None:
+        evidence_ref = next((ref for ref in result.output_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
+        brief_ref = next((ref for ref in result.output_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
+        if evidence_ref is None or brief_ref is None:
+            return {}
+        try:
+            feature_bundle = _feature_bundle_from_transfer_brief(
+                query_text=result.payload.get("query", ""),
+                evidence_text=ctx.get_text_state(evidence_ref),
+                brief_text=ctx.get_text_state(brief_ref),
+                registry=default_tool_registry(),
+            )
+        except Exception:
+            return {}
+    return {
+        "route": str(feature_bundle.get("route", "")),
+        "tool_name": str(feature_bundle.get("tool_name", "")),
+        "route_source": str(feature_bundle.get("route_source", "")),
+        "route_confidence": float(feature_bundle.get("route_confidence", 0.0)),
+        "route_provenance": [
+            str(item) for item in feature_bundle.get("route_provenance", []) if str(item).strip()
+        ],
+        "hint_doc_ids": [
+            str(item) for item in feature_bundle.get("hint_doc_ids", []) if str(item).strip()
+        ],
+        "matched_signals": [
+            str(item) for item in feature_bundle.get("matched_signals", []) if str(item).strip()
+        ],
+        "matched_tags": [
+            str(item) for item in feature_bundle.get("matched_tags", []) if str(item).strip()
+        ],
+        "match_score": int(feature_bundle.get("match_score", 0)),
+        "memory_prior_id": str(feature_bundle.get("memory_prior_id", "")),
+        "memory_prior_route": str(feature_bundle.get("memory_prior_route", "")),
+        "memory_prior_tool_name": str(feature_bundle.get("memory_prior_tool_name", "")),
+        "memory_prior_applied": bool(feature_bundle.get("memory_prior_applied", False)),
+        "memory_candidate_reduction": int(feature_bundle.get("memory_candidate_reduction", 0)),
+        "memory_prior_route_agreement": bool(
+            feature_bundle.get("memory_prior_route_agreement", False)
+        ),
+        "memory_prior_rescue": bool(feature_bundle.get("memory_prior_rescue", False)),
+        "tool_candidates": [
+            {
+                "tool_name": str(item.get("tool_name", "")),
+                "route": str(item.get("route", "")),
+                "score": int(item.get("score", 0)),
+                "matched_signals": [str(sig) for sig in item.get("matched_signals", [])],
+                "matched_tags": [str(tag) for tag in item.get("matched_tags", [])],
+                "source": str(item.get("source", "")),
+            }
+            for item in feature_bundle.get("tool_candidates", [])
+            if isinstance(item, dict)
+        ],
+    }
 
 
 def _task_sort_key(task: SampleTask) -> tuple[str, int, str]:
@@ -163,6 +261,93 @@ def _task_memory_policy(task_run: dict[str, object]) -> str:
 
 def _control_metric_key(mode: str) -> str:
     return "text_bytes" if mode == "text" else "protocol_bytes"
+
+
+def _task_artifact_expectations(task_run: dict[str, object]) -> dict[str, str]:
+    raw = task_run.get("artifact_expectations", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        field_name: str(raw.get(field_name, "")).strip() for field_name in MISFIRE_FIELD_ORDER
+    }
+
+
+def _format_artifact_match_rate(field_summary: dict[str, object]) -> str:
+    expected_count = int(field_summary.get("expected_count", 0))
+    if expected_count <= 0:
+        return "n/a"
+    return f"{float(field_summary.get('match_rate', 0.0)):.2f}"
+
+
+def _task_artifact_actuals(task_run: dict[str, object]) -> dict[str, str]:
+    results = task_run.get("results", {})
+    if not isinstance(results, dict):
+        results = {}
+    retrieve_result = results.get("retrieve", {})
+    if not isinstance(retrieve_result, dict):
+        retrieve_result = {}
+    execute_result = results.get("execute", {})
+    if not isinstance(execute_result, dict):
+        execute_result = {}
+    retrieve_payload = retrieve_result.get("payload", {})
+    if not isinstance(retrieve_payload, dict):
+        retrieve_payload = {}
+    execute_payload = execute_result.get("payload", {})
+    if not isinstance(execute_payload, dict):
+        execute_payload = {}
+    observability = retrieve_result.get("feature_observability", {})
+    if not isinstance(observability, dict):
+        observability = {}
+    retrieved_doc_ids = retrieve_payload.get("retrieved_doc_ids", [])
+    if not isinstance(retrieved_doc_ids, list):
+        retrieved_doc_ids = []
+    top_doc_id = next((str(item).strip() for item in retrieved_doc_ids if str(item).strip()), "")
+    return {
+        "route": str(retrieve_payload.get("feature_route", "")).strip()
+        or str(observability.get("route", "")).strip(),
+        "route_source": str(retrieve_payload.get("feature_route_source", "")).strip()
+        or str(observability.get("route_source", "")).strip(),
+        "tool_name": str(execute_payload.get("tool_name", "")).strip()
+        or str(observability.get("tool_name", "")).strip(),
+        "top_doc_id": top_doc_id,
+    }
+
+
+def _build_artifact_misfire(task_run: dict[str, object]) -> dict[str, object]:
+    expected = _task_artifact_expectations(task_run)
+    actual = _task_artifact_actuals(task_run)
+    fields: dict[str, dict[str, object]] = {}
+    expected_field_count = 0
+    matched_field_count = 0
+    for field_name in MISFIRE_FIELD_ORDER:
+        expected_value = expected[field_name]
+        actual_value = actual[field_name]
+        enabled = bool(expected_value)
+        matched = enabled and expected_value == actual_value
+        if enabled:
+            expected_field_count += 1
+            matched_field_count += int(matched)
+        fields[field_name] = {
+            "enabled": enabled,
+            "expected": expected_value,
+            "actual": actual_value,
+            "matched": matched,
+        }
+    return {
+        "has_expectations": expected_field_count > 0,
+        "expected": expected,
+        "actual": actual,
+        "fields": fields,
+        "expected_field_count": expected_field_count,
+        "matched_field_count": matched_field_count,
+        "mismatched_field_count": expected_field_count - matched_field_count,
+        "all_matched": expected_field_count == matched_field_count,
+    }
+
+
+def _annotate_artifact_misfires(task_runs: list[dict[str, object]]) -> None:
+    for task_run in task_runs:
+        task_run["artifact_misfire"] = _build_artifact_misfire(task_run)
 
 
 def _relative_reduction(current: float, baseline: float) -> float:
@@ -380,6 +565,7 @@ async def _run_mode_once(
             session=session,
             statepool_config=statepool_config,
             task_corpus_doc_ids=task.corpus_doc_ids,
+            task_corpus_path=task.corpus_path,
             runtime_profile=task.runtime_profile,
         )
         task_payload: dict[str, object]
@@ -393,6 +579,8 @@ async def _run_mode_once(
                 "task_theme": task.task_theme,
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
+                "corpus_path": task.corpus_path,
+                "artifact_expectations": dict(task.artifact_expectations),
                 "expected_reuse_mode": task.expected_reuse_mode,
                 "benchmark_lane": task.benchmark_lane,
                 "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
@@ -448,6 +636,7 @@ async def _run_mode_once(
                             + len(result.memory_commits)
                         ),
                         "payload": _sanitize_payload(result.payload),
+                        "feature_observability": _feature_bundle_observability(ctx, result),
                     }
                     for step_id, result in ctx.results.items()
                 },
@@ -476,6 +665,8 @@ async def _run_mode_once(
                 "task_theme": task.task_theme,
                 "goal": task.goal,
                 "memory_db_path": str(group_db_paths[task.task_group]),
+                "corpus_path": task.corpus_path,
+                "artifact_expectations": dict(task.artifact_expectations),
                 "expected_reuse_mode": task.expected_reuse_mode,
                 "benchmark_lane": task.benchmark_lane,
                 "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
@@ -542,6 +733,7 @@ async def _run_mode_once(
                     pass
         task_runs.append(task_payload)
 
+    _annotate_artifact_misfires(task_runs)
     _annotate_reuse_effects(task_runs, mode)
     setup_metrics = session.setup_metrics()
     steady_rows = [task_run["metrics"] for task_run in task_runs]
@@ -655,6 +847,80 @@ def _summarize_reuse_rows(
         "task_ms_reduction_vs_cold": float(
             mean(float(row["reuse_effect"]["task_ms_reduction_vs_cold"]) for row in completed_rows)
         ),
+    }
+
+
+def _empty_artifact_misfire_summary() -> dict[str, object]:
+    return {
+        "task_count": 0,
+        "observed_task_runs": 0,
+        "expected_field_runs": 0,
+        "matched_field_runs": 0,
+        "mismatched_task_runs": 0,
+        "field_match_rate": 0.0,
+        "task_match_rate": 0.0,
+        "fields": {
+            field_name: {
+                "expected_count": 0,
+                "matched_count": 0,
+                "match_rate": 0.0,
+            }
+            for field_name in MISFIRE_FIELD_ORDER
+        },
+    }
+
+
+def _summarize_artifact_misfire_rows(rows: list[dict[str, object]]) -> dict[str, object]:
+    audits = []
+    for row in rows:
+        audit = row.get("artifact_misfire")
+        if not isinstance(audit, dict):
+            audit = _build_artifact_misfire(row)
+        if bool(audit.get("has_expectations")):
+            audits.append((row, audit))
+    if not audits:
+        return _empty_artifact_misfire_summary()
+    expected_field_runs = sum(int(audit["expected_field_count"]) for _, audit in audits)
+    matched_field_runs = sum(int(audit["matched_field_count"]) for _, audit in audits)
+    field_rows: dict[str, dict[str, float | int]] = {}
+    for field_name in MISFIRE_FIELD_ORDER:
+        expected_count = sum(1 for _, audit in audits if bool(audit["fields"][field_name]["enabled"]))
+        matched_count = sum(1 for _, audit in audits if bool(audit["fields"][field_name]["matched"]))
+        field_rows[field_name] = {
+            "expected_count": expected_count,
+            "matched_count": matched_count,
+            "match_rate": (matched_count / expected_count) if expected_count else 0.0,
+        }
+    return {
+        "task_count": len({str(row["task_id"]) for row, _ in audits}),
+        "observed_task_runs": len(audits),
+        "expected_field_runs": expected_field_runs,
+        "matched_field_runs": matched_field_runs,
+        "mismatched_task_runs": sum(1 for _, audit in audits if not bool(audit["all_matched"])),
+        "field_match_rate": (matched_field_runs / expected_field_runs) if expected_field_runs else 0.0,
+        "task_match_rate": mean(1.0 if bool(audit["all_matched"]) else 0.0 for _, audit in audits),
+        "fields": field_rows,
+    }
+
+
+def _summarize_reuse_misfire_rows(rows: list[dict[str, object]]) -> dict[str, float | int]:
+    completed_rows = [row for row in rows if row.get("status") == "completed"]
+    if not completed_rows:
+        return {
+            "expected_count": 0,
+            "matched_count": 0,
+            "match_rate": 0.0,
+            "mismatched_count": 0,
+        }
+    matched_count = sum(
+        1 for row in completed_rows if bool(row["reuse_validation"]["matched_expectation"])
+    )
+    expected_count = len(completed_rows)
+    return {
+        "expected_count": expected_count,
+        "matched_count": matched_count,
+        "match_rate": matched_count / expected_count,
+        "mismatched_count": expected_count - matched_count,
     }
 
 
@@ -779,6 +1045,10 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
             "tasks": [],
             "message_breakdown": [],
             "stability": {},
+            "misfire_audit": {
+                "artifact": _empty_artifact_misfire_summary(),
+                "reuse": _summarize_reuse_misfire_rows([]),
+            },
         }
 
     task_order_lookup = [
@@ -891,6 +1161,67 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         "tasks": task_summaries,
         "message_breakdown": _aggregate_message_breakdown(completed_runs),
         "stability": _build_stability_summary(completed_runs),
+        "misfire_audit": {
+            "artifact": _summarize_artifact_misfire_rows(task_rows),
+            "reuse": _summarize_reuse_misfire_rows(task_rows),
+        },
+    }
+
+
+def _executor_observability_summary(
+    result: dict[str, object], mode: str
+) -> dict[str, object]:
+    route_source_counts: dict[str, int] = {}
+    observed_tasks = 0
+    hint_consensus = 0
+    with_signals = 0
+    with_tags = 0
+    signals_ge_2 = 0
+    score_ge_20 = 0
+    top_candidate_matches_selected_tool = 0
+    for run in result["mode_runs"].get(mode, []):
+        for task_run in run.get("tasks", []):
+            retrieve_result = task_run.get("results", {}).get("retrieve", {})
+            observability = retrieve_result.get("feature_observability", {})
+            if not isinstance(observability, dict) or not observability:
+                continue
+            observed_tasks += 1
+            route_source = str(observability.get("route_source", "")).strip() or "unknown"
+            route_source_counts[route_source] = route_source_counts.get(route_source, 0) + 1
+            if route_source != "hint_consensus":
+                continue
+            hint_consensus += 1
+            matched_signals = [
+                str(item) for item in observability.get("matched_signals", []) if str(item).strip()
+            ]
+            matched_tags = [
+                str(item) for item in observability.get("matched_tags", []) if str(item).strip()
+            ]
+            tool_candidates = [
+                item for item in observability.get("tool_candidates", []) if isinstance(item, dict)
+            ]
+            selected_tool = str(observability.get("tool_name", "")).strip()
+            if matched_signals:
+                with_signals += 1
+            if matched_tags:
+                with_tags += 1
+            if len(matched_signals) >= 2:
+                signals_ge_2 += 1
+            if int(observability.get("match_score", 0)) >= 20:
+                score_ge_20 += 1
+            if tool_candidates and str(tool_candidates[0].get("tool_name", "")).strip() == selected_tool:
+                top_candidate_matches_selected_tool += 1
+    return {
+        "observed_tasks": observed_tasks,
+        "route_source_counts": route_source_counts,
+        "hint_consensus_support": {
+            "hint_consensus": hint_consensus,
+            "with_signals": with_signals,
+            "with_tags": with_tags,
+            "signals_ge_2": signals_ge_2,
+            "score_ge_20": score_ge_20,
+            "top_candidate_matches_selected_tool": top_candidate_matches_selected_tool,
+        },
     }
 
 
@@ -926,6 +1257,51 @@ def _build_stability_summary(runs: list[dict[str, object]]) -> dict[str, dict[st
             "stddev": float(variance ** 0.5),
         }
     return summary
+
+
+def _artifact_mismatch_rows(
+    result: dict[str, object], mode: str, field_name: str
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for run in result["mode_runs"].get(mode, []):
+        for task_run in run.get("tasks", []):
+            audit = task_run.get("artifact_misfire")
+            if not isinstance(audit, dict):
+                audit = _build_artifact_misfire(task_run)
+            field = audit.get("fields", {}).get(field_name, {})
+            if not isinstance(field, dict):
+                continue
+            if not bool(field.get("enabled")) or bool(field.get("matched")):
+                continue
+            rows.append(
+                {
+                    "run_index": int(run["run_index"]),
+                    "task_id": str(task_run.get("task_id", "")),
+                    "expected": str(field.get("expected", "")).strip(),
+                    "actual": str(field.get("actual", "")).strip(),
+                }
+            )
+    return rows
+
+
+def _reuse_mismatch_rows(result: dict[str, object], mode: str) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for run in result["mode_runs"].get(mode, []):
+        for task_run in run.get("tasks", []):
+            validation = task_run.get("reuse_validation", {})
+            if not isinstance(validation, dict):
+                continue
+            if bool(validation.get("matched_expectation")):
+                continue
+            rows.append(
+                {
+                    "run_index": int(run["run_index"]),
+                    "task_id": str(task_run.get("task_id", "")),
+                    "expected": str(validation.get("expected_reuse_mode", "")).strip(),
+                    "actual": str(validation.get("actual_reuse_mode", "")).strip(),
+                }
+            )
+    return rows
 
 
 def _progress_line(event: dict[str, object]) -> None:
@@ -1039,6 +1415,7 @@ def _unix_sockets_available() -> bool:
 def _build_result(
     *,
     task_set_path: str | Path,
+    task_set_metadata: dict[str, object],
     tasks: list[SampleTask],
     modes: tuple[str, ...],
     repeat: int,
@@ -1071,9 +1448,19 @@ def _build_result(
             1 for task in tasks if task.runtime_reuse_contract in {"validated_replay", "exact_replay"}
         ),
     }
+    artifact_expectation_counts = {
+        field_name: sum(1 for task in tasks if task.artifact_expectations[field_name])
+        for field_name in MISFIRE_FIELD_ORDER
+    }
     return {
         "manifest": {
             "task_set_path": str(Path(task_set_path)),
+            "task_set_name": str(task_set_metadata.get("name", "")),
+            "task_pack_type": str(task_set_metadata.get("pack_type", "ad_hoc")),
+            "task_set_description": str(task_set_metadata.get("description", "")),
+            "task_set_reading_contract": str(task_set_metadata.get("reading_contract", "")),
+            "task_set_claim_lanes": list(task_set_metadata.get("claim_lanes", [])),
+            "support_evidence_only": bool(task_set_metadata.get("support_only", False)),
             "task_count": len(tasks),
             "continuous_task_count": len(tasks),
             "expected_reuse_task_count": sum(1 for task in tasks if task.expected_reuse),
@@ -1082,6 +1469,10 @@ def _build_result(
             "benchmark_lane_counts": benchmark_lane_counts,
             "transfer_strategy_counts": transfer_strategy_counts,
             "memory_policy_counts": memory_policy_counts,
+            "artifact_expectation_counts": artifact_expectation_counts,
+            "artifact_expectation_task_count": sum(
+                1 for task in tasks if any(task.artifact_expectations.values())
+            ),
             "task_contract_counts": {
                 "allow_memory_assist": sum(
                     1 for task in tasks if task.runtime_gates["allow_memory_assist"]
@@ -1138,7 +1529,16 @@ async def run_benchmark(
 ) -> dict[str, object]:
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    tasks = load_task_set(task_set_path)
+    task_bundle = load_task_set_bundle(task_set_path)
+    tasks = list(task_bundle.tasks)
+    task_set_metadata = {
+        "name": task_bundle.metadata.name,
+        "pack_type": task_bundle.metadata.pack_type,
+        "description": task_bundle.metadata.description,
+        "reading_contract": task_bundle.metadata.reading_contract,
+        "claim_lanes": list(task_bundle.metadata.claim_lanes),
+        "support_only": task_bundle.metadata.support_only,
+    }
     active_embedder = embedder or SentenceTransformerEmbeddingProvider(embedder_model_path)
     active_llm = llm_client or build_llm_client(llm_config)
     llm_description = active_llm.describe()
@@ -1172,6 +1572,7 @@ async def run_benchmark(
                 )
                 partial = _build_result(
                     task_set_path=task_set_path,
+                    task_set_metadata=task_set_metadata,
                     tasks=tasks,
                     modes=modes,
                     repeat=repeat,
@@ -1187,6 +1588,7 @@ async def run_benchmark(
                 _write_results(out_path, partial)
         result = _build_result(
             task_set_path=task_set_path,
+            task_set_metadata=task_set_metadata,
             tasks=tasks,
             modes=modes,
             repeat=repeat,
@@ -1290,6 +1692,24 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         "text_state_bytes",
         "protocol_state_bytes",
         "state_bytes_delta",
+        "text_handoff_ref_count",
+        "protocol_handoff_ref_count",
+        "handoff_ref_count_delta",
+        "text_handoff_bytes",
+        "protocol_handoff_bytes",
+        "handoff_bytes_delta",
+        "text_handoff_textual_ref_count",
+        "protocol_handoff_textual_ref_count",
+        "handoff_textual_ref_count_delta",
+        "text_handoff_textual_bytes",
+        "protocol_handoff_textual_bytes",
+        "handoff_textual_bytes_delta",
+        "text_handoff_nontext_ref_count",
+        "protocol_handoff_nontext_ref_count",
+        "handoff_nontext_ref_count_delta",
+        "text_handoff_nontext_bytes",
+        "protocol_handoff_nontext_bytes",
+        "handoff_nontext_bytes_delta",
         "text_mmap_state_bytes",
         "protocol_mmap_state_bytes",
         "mmap_state_bytes_delta",
@@ -1461,6 +1881,46 @@ def _compare_row(
         "text_state_bytes": round(float(text_row["state_bytes"]), 4),
         "protocol_state_bytes": round(float(protocol_row["state_bytes"]), 4),
         "state_bytes_delta": round(float(protocol_row["state_bytes"]) - float(text_row["state_bytes"]), 4),
+        "text_handoff_ref_count": round(float(text_row["handoff_ref_count"]), 4),
+        "protocol_handoff_ref_count": round(float(protocol_row["handoff_ref_count"]), 4),
+        "handoff_ref_count_delta": round(
+            float(protocol_row["handoff_ref_count"]) - float(text_row["handoff_ref_count"]),
+            4,
+        ),
+        "text_handoff_bytes": round(float(text_row["handoff_bytes"]), 4),
+        "protocol_handoff_bytes": round(float(protocol_row["handoff_bytes"]), 4),
+        "handoff_bytes_delta": round(
+            float(protocol_row["handoff_bytes"]) - float(text_row["handoff_bytes"]),
+            4,
+        ),
+        "text_handoff_textual_ref_count": round(float(text_row["handoff_textual_ref_count"]), 4),
+        "protocol_handoff_textual_ref_count": round(float(protocol_row["handoff_textual_ref_count"]), 4),
+        "handoff_textual_ref_count_delta": round(
+            float(protocol_row["handoff_textual_ref_count"])
+            - float(text_row["handoff_textual_ref_count"]),
+            4,
+        ),
+        "text_handoff_textual_bytes": round(float(text_row["handoff_textual_bytes"]), 4),
+        "protocol_handoff_textual_bytes": round(float(protocol_row["handoff_textual_bytes"]), 4),
+        "handoff_textual_bytes_delta": round(
+            float(protocol_row["handoff_textual_bytes"])
+            - float(text_row["handoff_textual_bytes"]),
+            4,
+        ),
+        "text_handoff_nontext_ref_count": round(float(text_row["handoff_nontext_ref_count"]), 4),
+        "protocol_handoff_nontext_ref_count": round(float(protocol_row["handoff_nontext_ref_count"]), 4),
+        "handoff_nontext_ref_count_delta": round(
+            float(protocol_row["handoff_nontext_ref_count"])
+            - float(text_row["handoff_nontext_ref_count"]),
+            4,
+        ),
+        "text_handoff_nontext_bytes": round(float(text_row["handoff_nontext_bytes"]), 4),
+        "protocol_handoff_nontext_bytes": round(float(protocol_row["handoff_nontext_bytes"]), 4),
+        "handoff_nontext_bytes_delta": round(
+            float(protocol_row["handoff_nontext_bytes"])
+            - float(text_row["handoff_nontext_bytes"]),
+            4,
+        ),
         "text_mmap_state_bytes": round(float(text_row["mmap_state_bytes"]), 4),
         "protocol_mmap_state_bytes": round(float(protocol_row["mmap_state_bytes"]), 4),
         "mmap_state_bytes_delta": round(float(protocol_row["mmap_state_bytes"]) - float(text_row["mmap_state_bytes"]), 4),
@@ -1575,48 +2035,86 @@ def _build_message_sizes_md(result: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _named_summary_lookup(
+    rows: list[dict[str, object]], key_name: str
+) -> dict[str, dict[str, object]]:
+    return {str(item[key_name]): item for item in rows if key_name in item}
+
+
 def _build_report(result: dict[str, object]) -> str:
     summary = result["summary"]
+    manifest = result["manifest"]
     available_modes = [
         mode
         for mode in ("text", "protocol")
         if mode in summary and int(summary[mode].get("run_count", 0)) > 0
     ]
+    observability_summary = {
+        mode: _executor_observability_summary(result, mode) for mode in available_modes
+    }
     lines = [
         "# StateBus Benchmark Report",
         "",
-        f"- Task set: `{result['manifest']['task_set_path']}`",
-        f"- Task groups: `{', '.join(result['manifest']['task_groups'])}`",
-        f"- Modes: `{', '.join(result['manifest']['modes'])}`",
-        f"- Mode schedule: `{result['manifest'].get('mode_schedule', 'legacy_blocked')}`",
-        f"- Text baseline: `{result['manifest']['text_baseline']}`",
-        f"- Protocol baseline: `{result['manifest']['protocol_baseline']}`",
-        f"- Repeat: `{result['manifest']['repeat']}`",
-        f"- Continuous tasks per run: `{result['manifest']['continuous_task_count']}`",
-        f"- Expected reuse tasks per run: `{result['manifest']['expected_reuse_task_count']}`",
-        f"- Reuse expectation policy: `{result['manifest']['reuse_expectation_policy']}`",
-        f"- Expected reuse mode counts: `{json.dumps(result['manifest']['expected_reuse_mode_counts'], sort_keys=True)}`",
-        f"- Benchmark lane counts: `{json.dumps(result['manifest']['benchmark_lane_counts'], sort_keys=True)}`",
-        f"- Transfer strategy counts: `{json.dumps(result['manifest']['transfer_strategy_counts'], sort_keys=True)}`",
-        f"- Memory policy counts: `{json.dumps(result['manifest']['memory_policy_counts'], sort_keys=True)}`",
-        f"- Task contract counts: `{json.dumps(result['manifest']['task_contract_counts'], sort_keys=True)}`",
-        f"- Encoder: `{result['manifest']['encoder_id']}`",
-        f"- StatePool backend: `{result['manifest']['statepool_backend']}`",
-        f"- Embedding state backend: `{result['manifest']['embed_state_backend']}`",
-        f"- Executor transport: `{result['manifest'].get('executor_transport', 'local')}`",
-        f"- LLM backend: `{result['manifest']['llm_backend']}`",
-        f"- LLM config: `{result['manifest']['llm_config_source']}`",
-        f"- Planner provider: `{result['manifest']['planner_provider']}`",
-        f"- Planner model: `{result['manifest']['planner_model']}`",
-        f"- Summarizer provider: `{result['manifest']['summarizer_provider']}`",
-        f"- Summarizer model: `{result['manifest']['summarizer_model']}`",
+        f"- Task set: `{manifest['task_set_path']}`",
+        f"- Task set name: `{manifest.get('task_set_name', '')}`",
+        f"- Task pack type: `{manifest.get('task_pack_type', 'ad_hoc')}`",
+        f"- Task groups: `{', '.join(manifest['task_groups'])}`",
+        f"- Modes: `{', '.join(manifest['modes'])}`",
+        f"- Mode schedule: `{manifest.get('mode_schedule', 'legacy_blocked')}`",
+        f"- Text baseline: `{manifest['text_baseline']}`",
+        f"- Protocol baseline: `{manifest['protocol_baseline']}`",
+        f"- Repeat: `{manifest['repeat']}`",
+        f"- Continuous tasks per run: `{manifest['continuous_task_count']}`",
+        f"- Expected reuse tasks per run: `{manifest['expected_reuse_task_count']}`",
+        f"- Reuse expectation policy: `{manifest['reuse_expectation_policy']}`",
+        f"- Expected reuse mode counts: `{json.dumps(manifest['expected_reuse_mode_counts'], sort_keys=True)}`",
+        f"- Benchmark lane counts: `{json.dumps(manifest['benchmark_lane_counts'], sort_keys=True)}`",
+        f"- Transfer strategy counts: `{json.dumps(manifest['transfer_strategy_counts'], sort_keys=True)}`",
+        f"- Memory policy counts: `{json.dumps(manifest['memory_policy_counts'], sort_keys=True)}`",
+        f"- Artifact expectation counts: `{json.dumps(manifest['artifact_expectation_counts'], sort_keys=True)}`",
+        f"- Artifact expectation tasks per run: `{manifest['artifact_expectation_task_count']}`",
+        f"- Task contract counts: `{json.dumps(manifest['task_contract_counts'], sort_keys=True)}`",
+        f"- Encoder: `{manifest['encoder_id']}`",
+        f"- StatePool backend: `{manifest['statepool_backend']}`",
+        f"- Embedding state backend: `{manifest['embed_state_backend']}`",
+        f"- Executor transport: `{manifest.get('executor_transport', 'local')}`",
+        f"- LLM backend: `{manifest['llm_backend']}`",
+        f"- LLM config: `{manifest['llm_config_source']}`",
+        f"- Planner provider: `{manifest['planner_provider']}`",
+        f"- Planner model: `{manifest['planner_model']}`",
+        f"- Summarizer provider: `{manifest['summarizer_provider']}`",
+        f"- Summarizer model: `{manifest['summarizer_model']}`",
         "- Reuse query policy: `memory assist stays runtime-contract gated; step-skipping now requires runtime evidence; expected_reuse_mode stays in benchmark validation`",
-        "",
-        "## Aggregate",
-        "",
-        "| mode | message_count | control_bytes | state_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "- Interpretation note: `aggregate mixes internal_regression, communication, state_transfer, and memory lanes; use the lane tables below for isolated contest claims`",
+        "- State-transfer note: `non-text transfer claims should be read from executor handoff metrics, not raw total state_bytes`",
+        "- State-transfer baseline note: `the text-side comparison in state_transfer lane is text brief handoff to the executor, not full natural-language regeneration of every intermediate state`",
     ]
+    task_set_description = str(manifest.get("task_set_description", "")).strip()
+    if task_set_description:
+        lines.append(f"- Task set description: `{task_set_description}`")
+    claim_lanes = [str(item) for item in manifest.get("task_set_claim_lanes", []) if str(item).strip()]
+    if claim_lanes:
+        lines.append(f"- Claim lanes for this pack: `{', '.join(claim_lanes)}`")
+    reading_contract = str(manifest.get("task_set_reading_contract", "")).strip()
+    if reading_contract:
+        lines.append(f"- Task set reading contract: `{reading_contract}`")
+    if bool(manifest.get("support_evidence_only", False)):
+        lines.append(
+            "- Pack boundary: `support evidence only; do not promote this pack into formal communication/state_transfer/memory headline claims without a separate controlled rerun`"
+        )
+    elif str(manifest.get("task_pack_type", "")) == "formal_controlled":
+        lines.append(
+            "- Pack boundary: `formal controlled pack; use this pack for contest headline claims and keep open/diagnostic tasks out of the main headline package`"
+        )
+    lines.extend(
+        [
+            "",
+            "## Aggregate",
+            "",
+            "| mode | message_count | control_bytes | state_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
     for mode in available_modes:
         aggregate = summary[mode]["aggregate"]
         control_bytes = aggregate["text_bytes"] if mode == "text" else aggregate["protocol_bytes"]
@@ -1657,6 +2155,22 @@ def _build_report(result: dict[str, object]) -> str:
             f"| {mode} | {aggregate['planner_ms']:.2f} | {aggregate['retrieve_ms']:.2f} | "
             f"{aggregate['execute_ms']:.2f} | {aggregate['summarize_ms']:.2f} | "
             f"{aggregate['phase_overhead_ms']:.2f} | {aggregate['task_ms']:.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Executor Handoff Breakdown",
+            "",
+            "| mode | handoff_ref_count | handoff_bytes | handoff_textual_ref_count | handoff_textual_bytes | handoff_nontext_ref_count | handoff_nontext_bytes |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        aggregate = summary[mode]["aggregate"]
+        lines.append(
+            f"| {mode} | {aggregate['handoff_ref_count']:.2f} | {aggregate['handoff_bytes']:.2f} | "
+            f"{aggregate['handoff_textual_ref_count']:.2f} | {aggregate['handoff_textual_bytes']:.2f} | "
+            f"{aggregate['handoff_nontext_ref_count']:.2f} | {aggregate['handoff_nontext_bytes']:.2f} |"
         )
     lines.extend(
         [
@@ -1770,8 +2284,8 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## Contest Benchmark Lanes",
             "",
-            "| benchmark_lane | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| benchmark_lane | mode | task_count | control_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for mode in available_modes:
@@ -1779,15 +2293,17 @@ def _build_report(result: dict[str, object]) -> str:
             control_bytes = lane_summary["text_bytes"] if mode == "text" else lane_summary["protocol_bytes"]
             lines.append(
                 f"| {lane_summary['benchmark_lane']} | {mode} | {len(lane_summary['task_ids'])} | "
-                f"{control_bytes:.2f} | {lane_summary['llm_total_tokens']:.2f} | {lane_summary['memory_hit_rate']:.2f} | "
-                f"{lane_summary['skipped_step_count']:.2f} | {lane_summary['reuse_gain']:.2f} | {lane_summary['task_ms']:.2f} |"
+                f"{control_bytes:.2f} | {lane_summary['handoff_textual_bytes']:.2f} | "
+                f"{lane_summary['handoff_nontext_bytes']:.2f} | {lane_summary['llm_total_tokens']:.2f} | "
+                f"{lane_summary['memory_hit_rate']:.2f} | {lane_summary['skipped_step_count']:.2f} | "
+                f"{lane_summary['reuse_gain']:.2f} | {lane_summary['task_ms']:.2f} |"
             )
     lines.extend(
         [
             "",
             "## State Transfer Strategies",
             "",
-            "| transfer_strategy | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| transfer_strategy | mode | task_count | control_bytes | handoff_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -1796,8 +2312,9 @@ def _build_report(result: dict[str, object]) -> str:
             control_bytes = transfer_summary["text_bytes"] if mode == "text" else transfer_summary["protocol_bytes"]
             lines.append(
                 f"| {transfer_summary['transfer_strategy']} | {mode} | {len(transfer_summary['task_ids'])} | "
-                f"{control_bytes:.2f} | {transfer_summary['llm_total_tokens']:.2f} | {transfer_summary['memory_hit_rate']:.2f} | "
-                f"{transfer_summary['skipped_step_count']:.2f} | {transfer_summary['reuse_gain']:.2f} | {transfer_summary['task_ms']:.2f} |"
+                f"{control_bytes:.2f} | {transfer_summary['handoff_bytes']:.2f} | "
+                f"{transfer_summary['handoff_textual_bytes']:.2f} | {transfer_summary['handoff_nontext_bytes']:.2f} | "
+                f"{transfer_summary['llm_total_tokens']:.2f} | {transfer_summary['task_ms']:.2f} |"
             )
     lines.extend(
         [
@@ -1816,6 +2333,196 @@ def _build_report(result: dict[str, object]) -> str:
                 f"{control_bytes:.2f} | {policy_summary['llm_total_tokens']:.2f} | {policy_summary['memory_hit_rate']:.2f} | "
                 f"{policy_summary['skipped_step_count']:.2f} | {policy_summary['reuse_gain']:.2f} | {policy_summary['task_ms']:.2f} |"
             )
+    lines.extend(
+        [
+            "",
+            "## Memory Assist Diagnostics",
+            "",
+            "| memory_policy | mode | task_count | prior_applied_rate | candidate_reduction | route_agreement_rate | rescue_rate |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        for policy_summary in summary[mode]["memory_policies"]:
+            lines.append(
+                f"| {policy_summary['memory_policy']} | {mode} | {len(policy_summary['task_ids'])} | "
+                f"{policy_summary['memory_assist_prior_applied_task_count']:.2f} | "
+                f"{policy_summary['memory_assist_candidate_reduction']:.2f} | "
+                f"{policy_summary['memory_assist_route_agreement_task_count']:.2f} | "
+                f"{policy_summary['memory_assist_rescue_task_count']:.2f} |"
+            )
+    if len(available_modes) == 2:
+        text_reuse_axes = _named_summary_lookup(summary["text"]["reuse_axes"], "reuse_axis")
+        protocol_reuse_axes = _named_summary_lookup(summary["protocol"]["reuse_axes"], "reuse_axis")
+        text_lanes = _named_summary_lookup(summary["text"]["benchmark_lanes"], "benchmark_lane")
+        protocol_lanes = _named_summary_lookup(summary["protocol"]["benchmark_lanes"], "benchmark_lane")
+        text_memory_policies = _named_summary_lookup(summary["text"]["memory_policies"], "memory_policy")
+        protocol_memory_policies = _named_summary_lookup(summary["protocol"]["memory_policies"], "memory_policy")
+        lines.extend(
+            [
+                "",
+                "## Claim-Surface Audit Views",
+                "",
+                "- Audit note: `fresh_retrieval` best isolates structured-vs-text communication/orchestration deltas; `step_skipping` includes replay effects.",
+                "- Memory note: `assist_only` rows remain diagnostic; the currently supported memory headline is still `replay_enabled / step-skipping reuse`.",
+                "- Assist note: use `prior_applied_rate`, `candidate_reduction`, `route_agreement_rate`, and `rescue_rate` as the mechanism-level assist diagnostics, not `memory_hit_rate` alone.",
+                "",
+                "### Structured-vs-Text By Reuse Axis",
+                "",
+                "| reuse_axis | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_planner_tokens | protocol_planner_tokens | planner_tokens_delta | text_summarizer_tokens | protocol_summarizer_tokens | summarizer_tokens_delta | text_llm_total_tokens | protocol_llm_total_tokens | llm_total_tokens_delta | text_task_ms | protocol_task_ms | task_ms_delta |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for reuse_axis in REUSE_AXIS_ORDER:
+            if reuse_axis not in text_reuse_axes or reuse_axis not in protocol_reuse_axes:
+                continue
+            text_axis = text_reuse_axes[reuse_axis]
+            protocol_axis = protocol_reuse_axes[reuse_axis]
+            lines.append(
+                f"| {reuse_axis} | {text_axis['text_bytes']:.2f} | {protocol_axis['protocol_bytes']:.2f} | "
+                f"{protocol_axis['protocol_bytes'] - text_axis['text_bytes']:.2f} | "
+                f"{text_axis['planner_total_tokens']:.2f} | {protocol_axis['planner_total_tokens']:.2f} | "
+                f"{protocol_axis['planner_total_tokens'] - text_axis['planner_total_tokens']:.2f} | "
+                f"{text_axis['summarizer_total_tokens']:.2f} | {protocol_axis['summarizer_total_tokens']:.2f} | "
+                f"{protocol_axis['summarizer_total_tokens'] - text_axis['summarizer_total_tokens']:.2f} | "
+                f"{text_axis['llm_total_tokens']:.2f} | {protocol_axis['llm_total_tokens']:.2f} | "
+                f"{protocol_axis['llm_total_tokens'] - text_axis['llm_total_tokens']:.2f} | "
+                f"{text_axis['task_ms']:.2f} | {protocol_axis['task_ms']:.2f} | "
+                f"{protocol_axis['task_ms'] - text_axis['task_ms']:.2f} |"
+            )
+        lines.extend(
+            [
+                "",
+                "### Contest Claim Lane Deltas",
+                "",
+                "| benchmark_lane | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_handoff_textual_bytes | protocol_handoff_textual_bytes | text_handoff_nontext_bytes | protocol_handoff_nontext_bytes | llm_total_tokens_delta | task_ms_delta |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for benchmark_lane in BENCHMARK_LANE_ORDER:
+            if benchmark_lane not in text_lanes or benchmark_lane not in protocol_lanes:
+                continue
+            text_lane = text_lanes[benchmark_lane]
+            protocol_lane = protocol_lanes[benchmark_lane]
+            lines.append(
+                f"| {benchmark_lane} | {text_lane['text_bytes']:.2f} | {protocol_lane['protocol_bytes']:.2f} | "
+                f"{protocol_lane['protocol_bytes'] - text_lane['text_bytes']:.2f} | "
+                f"{text_lane['handoff_textual_bytes']:.2f} | {protocol_lane['handoff_textual_bytes']:.2f} | "
+                f"{text_lane['handoff_nontext_bytes']:.2f} | {protocol_lane['handoff_nontext_bytes']:.2f} | "
+                f"{protocol_lane['llm_total_tokens'] - text_lane['llm_total_tokens']:.2f} | "
+                f"{protocol_lane['task_ms'] - text_lane['task_ms']:.2f} |"
+            )
+        lines.extend(
+            [
+                "",
+                "### Memory Policy Claim Surface",
+                "",
+                "| memory_policy | text_llm_total_tokens | protocol_llm_total_tokens | text_task_ms | protocol_task_ms | text_skipped_step_count | protocol_skipped_step_count | text_reuse_gain | protocol_reuse_gain |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for memory_policy in MEMORY_POLICY_ORDER:
+            if memory_policy not in text_memory_policies or memory_policy not in protocol_memory_policies:
+                continue
+            text_policy = text_memory_policies[memory_policy]
+            protocol_policy = protocol_memory_policies[memory_policy]
+            lines.append(
+                f"| {memory_policy} | {text_policy['llm_total_tokens']:.2f} | {protocol_policy['llm_total_tokens']:.2f} | "
+                f"{text_policy['task_ms']:.2f} | {protocol_policy['task_ms']:.2f} | "
+                f"{text_policy['skipped_step_count']:.2f} | {protocol_policy['skipped_step_count']:.2f} | "
+                f"{text_policy['reuse_gain']:.2f} | {protocol_policy['reuse_gain']:.2f} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## Executor Feature Observability",
+            "",
+            "- Artifact-only note: `these counts are reconstructed from benchmark artifacts and do not add fields to the live control plane`",
+            "",
+            "### Route Source Distribution",
+            "",
+            "| mode | route_source | task_count | observed_tasks |",
+            "| --- | --- | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        route_counts = observability_summary[mode]["route_source_counts"]
+        for route_source, task_count in sorted(route_counts.items(), key=lambda item: (-item[1], item[0])):
+            lines.append(
+                f"| {mode} | {route_source} | {task_count} | "
+                f"{observability_summary[mode]['observed_tasks']} |"
+            )
+    lines.extend(
+        [
+            "",
+            "### Hint-Consensus Support",
+            "",
+            "| mode | hint_consensus | with_signals | with_tags | signals_ge_2 | score_ge_20 | top_candidate_matches_selected_tool |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        hint_support = observability_summary[mode]["hint_consensus_support"]
+        lines.append(
+            f"| {mode} | {hint_support['hint_consensus']} | {hint_support['with_signals']} | "
+            f"{hint_support['with_tags']} | {hint_support['signals_ge_2']} | "
+            f"{hint_support['score_ge_20']} | {hint_support['top_candidate_matches_selected_tool']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Misfire Audit",
+            "",
+            "- Artifact-only note: `task expectations are declared in the task YAML and checked against archived route/tool/doc outputs only`",
+            "",
+            "| mode | expected_tasks | observed_task_runs | expected_field_runs | field_match_rate | task_match_rate | route_match_rate | route_source_match_rate | tool_match_rate | top_doc_match_rate | reuse_match_rate |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        artifact_audit = summary[mode]["misfire_audit"]["artifact"]
+        reuse_audit = summary[mode]["misfire_audit"]["reuse"]
+        lines.append(
+            f"| {mode} | {artifact_audit['task_count']} | {artifact_audit['observed_task_runs']} | "
+            f"{artifact_audit['expected_field_runs']} | {artifact_audit['field_match_rate']:.2f} | "
+            f"{artifact_audit['task_match_rate']:.2f} | "
+            f"{_format_artifact_match_rate(artifact_audit['fields']['route'])} | "
+            f"{_format_artifact_match_rate(artifact_audit['fields']['route_source'])} | "
+            f"{_format_artifact_match_rate(artifact_audit['fields']['tool_name'])} | "
+            f"{_format_artifact_match_rate(artifact_audit['fields']['top_doc_id'])} | "
+            f"{float(reuse_audit['match_rate']):.2f} |"
+        )
+    for field_name in MISFIRE_FIELD_ORDER:
+        lines.extend(["", f"### {MISFIRE_SECTION_TITLES[field_name]}", ""])
+        for mode in available_modes:
+            lines.append(f"#### {mode}")
+            mismatches = _artifact_mismatch_rows(result, mode, field_name)
+            if mismatches:
+                for mismatch in mismatches:
+                    expected_value = mismatch["expected"] or "<empty>"
+                    actual_value = mismatch["actual"] or "<empty>"
+                    lines.append(
+                        f"- run={mismatch['run_index']:02d} task={mismatch['task_id']} "
+                        f"expected={expected_value} actual={actual_value}"
+                    )
+            else:
+                lines.append("- none")
+            lines.append("")
+    lines.extend(["### Reuse Misfire Summary", ""])
+    for mode in available_modes:
+        lines.append(f"#### {mode}")
+        mismatches = _reuse_mismatch_rows(result, mode)
+        if mismatches:
+            for mismatch in mismatches:
+                expected_value = mismatch["expected"] or "<empty>"
+                actual_value = mismatch["actual"] or "<empty>"
+                lines.append(
+                    f"- run={mismatch['run_index']:02d} task={mismatch['task_id']} "
+                    f"expected_reuse_mode={expected_value} actual_reuse_mode={actual_value}"
+                )
+        else:
+            lines.append("- none")
+        lines.append("")
     if len(available_modes) == 2:
         lines.extend(
             [

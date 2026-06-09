@@ -13,19 +13,36 @@ from pathlib import Path
 import msgpack
 import numpy as np
 import pytest
+import hashlib
 
-from agents.sample_agents import build_sample_agents_with_executor
+from agents.sample_agents import (
+    _build_memory_assist_hint,
+    _build_protocol_summary_handoff,
+    _build_transfer_brief,
+    build_sample_agents_with_executor,
+)
 from eval.runner import _mode_order_for_run, run_benchmark
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
-from protocol.messages import PlanStep, RemoteStepRequest, RemoteStepResponse, StateRef, text_frame
+from protocol.messages import MemoryHit
+from protocol.messages import PlanStep, RemoteStepRequest, RemoteStepResponse, StateRef, StepResult, text_frame
 from runtime.llm import DeterministicLLMClient
-from runtime.orchestrator import Orchestrator, RunSession
+from runtime.orchestrator import Orchestrator, RunSession, _route_is_replay_eligible
 from runtime.uds_transport import request_response
 from runtime.smoke import main
-from runtime.executor_runtime import build_feature_bundle, select_tool_name
+from runtime.executor_runtime import (
+    _feature_bundle_from_transfer_brief,
+    build_feature_bundle,
+    default_tool_registry,
+    select_tool_name,
+)
 from statepool.store import FileBackedStatePool, StatePool, StatePoolConfig
-from tasks.local_corpus import extract_corpus_feature_hints, load_corpus_docs, retrieve_corpus_docs
-from tasks.sample_tasks import SampleTask, default_task_chain
+from tasks.local_corpus import (
+    extract_corpus_feature_hints,
+    load_corpus_docs,
+    render_corpus_evidence,
+    retrieve_corpus_docs,
+)
+from tasks.sample_tasks import SampleTask, default_task_chain, load_task_set_bundle
 
 
 def test_smoke_runs(capsys) -> None:
@@ -78,45 +95,59 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert (out_dir / "benchmark_report.md").exists()
         payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
         compare_csv = (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
+        task_chain = default_task_chain()
+        expected_lane_counts = {
+            "internal_regression": sum(1 for task in task_chain if task.benchmark_lane == "internal_regression"),
+            "communication": sum(1 for task in task_chain if task.benchmark_lane == "communication"),
+            "state_transfer": sum(1 for task in task_chain if task.benchmark_lane == "state_transfer"),
+            "memory": sum(1 for task in task_chain if task.benchmark_lane == "memory"),
+        }
+        expected_transfer_strategy_counts = {
+            "state_ref": sum(1 for task in task_chain if task.transfer_strategy == "state_ref"),
+            "text_brief": sum(1 for task in task_chain if task.transfer_strategy == "text_brief"),
+            "mode_split_text_brief_vs_state_ref": sum(
+                1 for task in task_chain if task.transfer_strategy == "mode_split_text_brief_vs_state_ref"
+            ),
+        }
+        expected_memory_policy_counts = {
+            "memory_off": sum(1 for task in task_chain if task.runtime_reuse_contract == "reuse_disabled"),
+            "assist_only": sum(1 for task in task_chain if task.runtime_reuse_contract == "assist_allowed"),
+            "replay_enabled": sum(
+                1 for task in task_chain if task.runtime_reuse_contract in {"validated_replay", "exact_replay"}
+            ),
+        }
+        expected_artifact_expectation_counts = {
+            "route": sum(1 for task in task_chain if task.expected_route),
+            "route_source": sum(1 for task in task_chain if task.expected_route_source),
+            "tool_name": sum(1 for task in task_chain if task.expected_tool_name),
+            "top_doc_id": sum(1 for task in task_chain if task.expected_top_doc_id),
+        }
+        expected_task_contract_counts = {
+            "allow_memory_assist": sum(1 for task in task_chain if task.runtime_gates["allow_memory_assist"]),
+            "allow_execute_prune": sum(1 for task in task_chain if task.runtime_gates["allow_execute_prune"]),
+            "allow_exact_replay": sum(1 for task in task_chain if task.runtime_gates["allow_exact_replay"]),
+        }
         assert payload["manifest"]["repeat"] == 1
         assert payload["manifest"]["llm_backend"] == "deterministic"
-        assert payload["manifest"]["continuous_task_count"] == 24
-        assert payload["manifest"]["expected_reuse_task_count"] == 14
+        assert payload["manifest"]["continuous_task_count"] == len(task_chain)
+        assert payload["manifest"]["expected_reuse_task_count"] == sum(1 for task in task_chain if task.expected_reuse)
         assert payload["manifest"]["expected_reuse_mode_counts"] == {
-            "assist": 7,
-            "none": 10,
-            "skip_execute": 4,
-            "skip_retrieve_execute": 3,
+            "assist": sum(1 for task in task_chain if task.expected_reuse_mode == "assist"),
+            "none": sum(1 for task in task_chain if task.expected_reuse_mode == "none"),
+            "skip_execute": sum(1 for task in task_chain if task.expected_reuse_mode == "skip_execute"),
+            "skip_retrieve_execute": sum(
+                1 for task in task_chain if task.expected_reuse_mode == "skip_retrieve_execute"
+            ),
         }
-        assert payload["manifest"]["task_contract_counts"] == {
-            "allow_memory_assist": 13,
-            "allow_execute_prune": 4,
-            "allow_exact_replay": 3,
-        }
-        assert payload["manifest"]["benchmark_lane_counts"] == {
-            "internal_regression": 18,
-            "communication": 2,
-            "state_transfer": 1,
-            "memory": 3,
-        }
-        assert payload["manifest"]["transfer_strategy_counts"] == {
-            "state_ref": 23,
-            "text_brief": 0,
-            "mode_split_text_brief_vs_state_ref": 1,
-        }
-        assert payload["manifest"]["memory_policy_counts"] == {
-            "memory_off": 4,
-            "assist_only": 13,
-            "replay_enabled": 7,
-        }
-        assert payload["manifest"]["task_groups"] == [
-            "cache_chain",
-            "communication_lane",
-            "latency_chain",
-            "memory_lane",
-            "session_chain",
-            "transfer_lane",
-        ]
+        assert payload["manifest"]["task_contract_counts"] == expected_task_contract_counts
+        assert payload["manifest"]["benchmark_lane_counts"] == expected_lane_counts
+        assert payload["manifest"]["transfer_strategy_counts"] == expected_transfer_strategy_counts
+        assert payload["manifest"]["memory_policy_counts"] == expected_memory_policy_counts
+        assert payload["manifest"]["artifact_expectation_counts"] == expected_artifact_expectation_counts
+        assert payload["manifest"]["artifact_expectation_task_count"] == sum(
+            1 for task in task_chain if any(task.artifact_expectations.values())
+        )
+        assert payload["manifest"]["task_groups"] == sorted({task.task_group for task in task_chain})
         assert result["summary"]["text"]["run_count"] == 1
         assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 6
         assert "__aggregate__" in compare_csv
@@ -134,15 +165,37 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert "Contest Benchmark Lanes" in report_text
         assert "State Transfer Strategies" in report_text
         assert "Memory Policies" in report_text
+        assert "Claim-Surface Audit Views" in report_text
+        assert "Structured-vs-Text By Reuse Axis" in report_text
+        assert "Contest Claim Lane Deltas" in report_text
+        assert "Memory Policy Claim Surface" in report_text
+        assert "fresh_retrieval" in report_text
+        assert "step_skipping" in report_text
+        assert "assist_only" in report_text
+        assert "replay_enabled" in report_text
+        assert "Executor Feature Observability" in report_text
+        assert "Route Source Distribution" in report_text
+        assert "Hint-Consensus Support" in report_text
+        assert "reconstructed from benchmark artifacts" in report_text
+        assert "Misfire Audit" in report_text
+        assert "Route Misfire Summary" in report_text
+        assert "Route-Source Misfire Summary" in report_text
+        assert "Tool-Choice Misfire Summary" in report_text
+        assert "Top-Doc Misfire Summary" in report_text
+        assert "Reuse Misfire Summary" in report_text
+        assert "| text | 0 | 0 | 0 | 0.00 | 0.00 | n/a | n/a | n/a | n/a | 1.00 |" in report_text
         assert "Memory Reuse Decisions By Mode" in report_text
         assert "Role-Level LLM Tokens" in report_text
         assert "Phase Timing Breakdown" in report_text
+        assert "Executor Handoff Breakdown" in report_text
+        assert "text brief handoff to the executor" in report_text
         assert result["summary"]["text"]["aggregate"]["skipped_step_count"] > 0
         assert result["summary"]["protocol"]["aggregate"]["skipped_step_count"] > 0
         assert result["summary"]["text"]["aggregate"]["reuse_gain"] > 0.0
         assert result["summary"]["protocol"]["aggregate"]["reuse_gain"] > 0.0
         assert result["summary"]["text"]["aggregate"]["planner_llm_request_count"] > 0
         assert result["summary"]["text"]["aggregate"]["summarizer_llm_request_count"] > 0
+        assert "text_handoff_nontext_bytes" in compare_csv
         assert result["summary"]["text"]["aggregate"]["planner_total_tokens"] == 0
         assert result["summary"]["text"]["aggregate"]["summarizer_total_tokens"] == 0
         assert result["summary"]["text"]["aggregate"]["planner_ms"] >= 0.0
@@ -158,6 +211,45 @@ def test_benchmark_runner_writes_outputs() -> None:
             result["summary"]["protocol"]["steady_state"]["protocol_bytes"]
             < result["summary"]["text"]["steady_state"]["text_bytes"]
         )
+
+
+def test_default_task_set_is_formal_controlled_pack() -> None:
+    bundle = load_task_set_bundle()
+    assert bundle.metadata.name == "formal_controlled_pack"
+    assert bundle.metadata.pack_type == "formal_controlled"
+    assert bundle.metadata.support_only is False
+    assert bundle.metadata.claim_lanes == ("communication", "state_transfer", "memory")
+
+
+def test_open_validation_task_set_is_support_only() -> None:
+    bundle = load_task_set_bundle("open_validation")
+    assert bundle.metadata.name == "open_validation_pack"
+    assert bundle.metadata.pack_type == "open_validation"
+    assert bundle.metadata.support_only is True
+    assert bundle.metadata.claim_lanes == ()
+    assert len(bundle.tasks) == 12
+
+
+def test_open_validation_report_marks_support_only_boundary() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-open-pack-") as tmpdir:
+        out_dir = Path(tmpdir) / "runs"
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="open_validation",
+                repeat=1,
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
+        assert payload["manifest"]["task_set_name"] == "open_validation_pack"
+        assert payload["manifest"]["task_pack_type"] == "open_validation"
+        assert payload["manifest"]["support_evidence_only"] is True
+        assert "support evidence only" in report_text
+        assert "Task pack type: `open_validation`" in report_text
+        assert "Task set name: `open_validation_pack`" in report_text
 
 def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
@@ -275,6 +367,24 @@ def test_exact_replay_copies_reused_state_into_current_task_root() -> None:
             "cache-invalid-replay",
             "cache-invalid-anchor",
         ]
+        observability = task["results"]["retrieve"]["feature_observability"]
+        assert observability["matched_signals"] == [
+            "inventory aggregate",
+            "aggregate invalidation",
+            "invalidation hook",
+            "stale inventory",
+            "cache invalidation",
+            "batch sync",
+        ]
+        assert observability["matched_tags"] == [
+            "cache",
+            "invalidation",
+            "inventory",
+        ]
+        assert observability["match_score"] == 35
+        assert observability["tool_candidates"][0]["tool_name"] == (
+            "tool.cache_invalidation_playbook"
+        )
         assert task["results"]["execute"]["payload"]["route_source"] == "hint_consensus"
         assert task["results"]["execute"]["payload"]["route_confidence"] >= 0.8
         assert task["results"]["execute"]["payload"]["route_provenance"] == [
@@ -530,6 +640,145 @@ def test_memory_assist_respects_runtime_reuse_contract_gate() -> None:
     assert final_ctx.results["retrieve"].payload["memory_assist_ids"] == []
 
 
+def test_memory_assist_hint_is_compact() -> None:
+    hit = MemoryHit(
+        memory_id="mem-sample-cache-001-assist",
+        confidence=0.95,
+        summary=(
+            "Fresh evidence should identify delayed aggregate invalidation after batch sync "
+            "and recommend forcing the post-sync invalidation hook with extra rollout detail "
+            "that should not be copied into the live prompt verbatim."
+        ),
+    )
+    hint = _build_memory_assist_hint(hit)
+    assert hint.startswith("MEMORY_ASSIST_HINT mem-sample-cache-001-assist:")
+    assert len(hint) <= 240
+    assert hint.endswith("...")
+
+
+def test_memory_assist_uses_compact_hint_and_keeps_feature_bundle_fresh() -> None:
+    cache_prefix = [
+        task
+        for task in default_task_chain()
+        if task.task_group == "cache_chain" and task.task_order <= 2
+    ]
+    orchestrator = Orchestrator(
+        build_sample_agents_with_executor(
+            llm_client=DeterministicLLMClient(),
+            executor_transport="local",
+        )
+    )
+    session = RunSession(mode="text")
+    embedder = DeterministicEmbeddingProvider()
+
+    with tempfile.TemporaryDirectory(prefix="statebus-assist-compact-") as tmpdir:
+        root = Path(tmpdir)
+        memory_db_path = root / "cache_chain.sqlite3"
+        final_ctx = None
+        assist_task = None
+        evidence_text = ""
+        feature_bundle: dict[str, object] | None = None
+        for task in cache_prefix:
+            ctx = Orchestrator.create_context(
+                mode="text",
+                task_id=task.task_id,
+                task_group=task.task_group,
+                task_theme=task.task_theme,
+                state_root=root / task.task_id,
+                memory_db_path=memory_db_path,
+                embedder=embedder,
+                session=session,
+                task_corpus_doc_ids=task.corpus_doc_ids,
+                runtime_profile=task.runtime_profile,
+            )
+            asyncio.run(orchestrator.run_task(task, ctx))
+            if task.task_id == "sample-cache-002":
+                final_ctx = ctx
+                assist_task = task
+                retrieve_result = final_ctx.results["retrieve"]
+                evidence_ref = next(
+                    ref for ref in retrieve_result.output_state_refs if ref.kind == "DENSE_EVIDENCE"
+                )
+                feature_ref = next(
+                    ref for ref in retrieve_result.output_state_refs if ref.kind == "FEATURE_BUNDLE"
+                )
+                evidence_text = final_ctx.get_text_state(evidence_ref)
+                feature_bundle = msgpack.unpackb(
+                    final_ctx.statepool.get_bytes(feature_ref),
+                    raw=False,
+                    strict_map_key=False,
+                )
+
+    assert final_ctx is not None
+    assert assist_task is not None
+    retrieve_result = final_ctx.results["retrieve"]
+    assert retrieve_result.payload["memory_assist_ids"] == ["mem-sample-cache-001-assist"]
+    assert feature_bundle is not None
+    fresh_docs = retrieve_corpus_docs(
+        query=assist_task.query,
+        tags=list(assist_task.tags),
+        task_group=assist_task.task_group,
+        task_theme=assist_task.task_theme,
+        corpus_doc_ids=assist_task.corpus_doc_ids,
+        embedder=embedder,
+    )
+    fresh_evidence_text = render_corpus_evidence(fresh_docs)
+    expected_fresh_sha256 = hashlib.sha256(fresh_evidence_text.encode("utf-8")).hexdigest()
+
+    assert "MEMORY_ASSIST_HINT mem-sample-cache-001-assist:" in evidence_text
+    assert "MEMORY_ASSIST mem-sample-cache-001-assist:" not in evidence_text
+    assert "should not be copied into the live prompt verbatim" not in evidence_text
+    assert feature_bundle["memory_assist_ids"] == ["mem-sample-cache-001-assist"]
+    assert feature_bundle["memory_assist_hint"].startswith(
+        "MEMORY_ASSIST_HINT mem-sample-cache-001-assist:"
+    )
+    assert feature_bundle["evidence_sha256"] == expected_fresh_sha256
+
+
+def test_protocol_summary_handoff_is_compact() -> None:
+    handoff = _build_protocol_summary_handoff(
+        query="validated replay stale inventory aggregate invalidation after sync burst",
+        route="cache_invalidation",
+        route_source="hint_consensus",
+        route_confidence=0.95,
+        retrieved_doc_ids=["cache-invalid-anchor", "cache-invalid-replay", "cache-extra"],
+        matched_signals=["aggregate invalidation", "stale inventory", "sync burst", "follow-up", "extra"],
+        memory_assist_hint="MEMORY_ASSIST_HINT mem-memory-cache-001-assist: Confirm prior invalidation summary.",
+        evidence_preview="This should stay short and not expand into the full retrieved corpus evidence body.",
+    )
+    assert "StateBus protocol summary handoff" in handoff
+    assert "Route: cache_invalidation" in handoff
+    assert "Retrieved docs: cache-invalid-anchor, cache-invalid-replay, cache-extra" in handoff
+    assert "Matched signals: aggregate invalidation, stale inventory, sync burst, follow-up" in handoff
+    assert "MEMORY_ASSIST_HINT mem-memory-cache-001-assist:" in handoff
+    assert "full retrieved corpus evidence body" in handoff
+    assert handoff.count("\n") <= 9
+
+
+def test_protocol_summarizer_uses_compact_evidence_handoff() -> None:
+    summary_text = ""
+    with tempfile.TemporaryDirectory(prefix="statebus-protocol-summary-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
+        task = tasks["memory-cache-002"]
+        summary_state_id = task["results"]["summarize"]["payload"]["summary_state_id"]
+        summary_ref = task["state_refs"][summary_state_id]
+        summary_text = Path(summary_ref["handle"]).read_text(encoding="utf-8")
+    assert "StateBus protocol summary handoff" not in summary_text
+    assert "MEMORY_ASSIST_HINT mem-memory-cache-001-assist:" not in summary_text
+    assert "[cache-invalid-anchor]" not in summary_text
+    assert "Actions:" in summary_text
+    assert "Evidence:" not in summary_text
+
+
 def test_exact_replay_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
@@ -713,6 +962,45 @@ def test_feature_bundle_falls_back_to_generic_tool_when_signals_are_weak() -> No
     assert select_tool_name(payload) == "tool.collect_more_evidence"
 
 
+def test_feature_bundle_abstains_on_low_confidence_single_route_match() -> None:
+    payload = build_feature_bundle(
+        query="investigate a vague release issue",
+        evidence_text=(
+            "The current note is still inconclusive.\n\n"
+            "[latency-db-anchor] slow orders query"
+        ),
+        tags=[],
+        reuse_signature="generic_triage:none",
+        reused_memory=False,
+    )
+    assert payload["route"] == "generic_triage"
+    assert payload["tool_name"] == "tool.collect_more_evidence"
+    assert payload["route_source"] == "low_confidence_abstain"
+    assert payload["route_confidence"] == 0.0
+    assert payload["route_provenance"] == ["lexical_below_threshold"]
+    assert payload["tool_candidates"][0]["tool_name"] == "tool.collect_more_evidence"
+    assert payload["tool_candidates"][0]["source"] == "low_confidence_abstain"
+    assert payload["tool_candidates"][1]["tool_name"] == "tool.db_pool_triage"
+
+
+def test_feature_bundle_abstains_on_thin_query_only_route_without_hints() -> None:
+    payload = build_feature_bundle(
+        query="follow-up stale jwks callback issue",
+        evidence_text="The current note is vague and still does not confirm a stable route.",
+        tags=["auth", "session"],
+        reuse_signature="repo_local_auth_session_drift:auth|session",
+        reused_memory=False,
+    )
+    assert payload["route"] == "generic_triage"
+    assert payload["tool_name"] == "tool.collect_more_evidence"
+    assert payload["route_source"] == "low_confidence_abstain"
+    assert payload["route_confidence"] == 0.0
+    assert payload["route_provenance"] == ["lexical_thin_support"]
+    assert payload["tool_candidates"][0]["tool_name"] == "tool.collect_more_evidence"
+    assert payload["tool_candidates"][0]["source"] == "low_confidence_abstain"
+    assert payload["tool_candidates"][1]["tool_name"] == "tool.auth_session_repair"
+
+
 def test_corpus_retrieval_can_surface_stronger_out_of_hint_docs() -> None:
     docs = retrieve_corpus_docs(
         query="reporting replica lag after failover caused stale reads",
@@ -768,6 +1056,80 @@ def test_feature_bundle_prefers_retrieved_corpus_hints() -> None:
     assert payload["tool_candidates"][0]["source"] == "hint_consensus"
 
 
+def test_feature_bundle_keeps_hint_consensus_with_weak_but_aligned_support() -> None:
+    corpus_docs = load_corpus_docs()
+    hints = extract_corpus_feature_hints([corpus_docs["latency-db-anchor"]])
+    payload = build_feature_bundle(
+        query="investigate a vague release issue",
+        evidence_text="The current note is too terse to isolate a route.",
+        tags=["database"],
+        reuse_signature="generic_triage:database",
+        reused_memory=False,
+        retrieved_hints=hints,
+    )
+    assert payload["route"] == "db_pool_saturation"
+    assert payload["tool_name"] == "tool.db_pool_triage"
+    assert payload["route_source"] == "hint_consensus"
+    assert payload["route_confidence"] == 0.8
+    assert payload["route_provenance"] == ["corpus_metadata", "lexical"]
+    assert payload["hint_doc_ids"] == ["latency-db-anchor"]
+    assert payload["tool_candidates"][0]["tool_name"] == "tool.db_pool_triage"
+    assert payload["tool_candidates"][0]["source"] == "hint_consensus"
+
+
+def test_transfer_brief_round_trip_preserves_executor_snapshot() -> None:
+    corpus_docs = load_corpus_docs()
+    hints = extract_corpus_feature_hints([corpus_docs["latency-db-anchor"]])
+    query = "investigate a vague release issue"
+    evidence_text = "The current note is too terse to isolate a route."
+    payload = build_feature_bundle(
+        query=query,
+        evidence_text=evidence_text,
+        tags=["database"],
+        reuse_signature="generic_triage:database",
+        reused_memory=False,
+        retrieved_hints=hints,
+    )
+    brief = _build_transfer_brief(
+        query=query,
+        retrieved_doc_ids=["latency-db-anchor"],
+        route=str(payload["route"]),
+        tool_name=str(payload["tool_name"]),
+        route_source=str(payload["route_source"]),
+        route_confidence=float(payload["route_confidence"]),
+        route_provenance=[str(item) for item in payload["route_provenance"]],
+        matched_signals=[str(item) for item in payload["matched_signals"]],
+        matched_tags=[str(item) for item in payload["matched_tags"]],
+        match_score=int(payload["match_score"]),
+        hint_doc_ids=[str(item) for item in payload["hint_doc_ids"]],
+        hint_route=str(payload["hint_route"]),
+        hint_tool_name=str(payload["hint_tool_name"]),
+        tool_candidates=[dict(item) for item in payload["tool_candidates"]],
+        memory_assist_ids=[],
+        evidence_text=evidence_text,
+    )
+    assert "Suggested tool: tool.db_pool_triage" in brief
+    assert "Route confidence: 0.80" in brief
+    assert "Tool candidates: tool.db_pool_triage@db_pool_saturation#hint_consensus#" in brief
+    rebuilt = _feature_bundle_from_transfer_brief(
+        query_text=query,
+        evidence_text=evidence_text,
+        brief_text=brief,
+        registry=default_tool_registry(),
+    )
+    assert rebuilt["route"] == payload["route"]
+    assert rebuilt["tool_name"] == payload["tool_name"]
+    assert rebuilt["route_source"] == payload["route_source"]
+    assert rebuilt["route_confidence"] == payload["route_confidence"]
+    assert rebuilt["route_provenance"] == payload["route_provenance"]
+    assert rebuilt["matched_tags"] == payload["matched_tags"]
+    assert rebuilt["hint_doc_ids"] == payload["hint_doc_ids"]
+    assert [candidate["tool_name"] for candidate in rebuilt["tool_candidates"]] == [
+        candidate["tool_name"] for candidate in payload["tool_candidates"]
+    ]
+    assert select_tool_name(rebuilt) == payload["tool_name"]
+
+
 def test_feature_bundle_abstains_on_metadata_only_hints_without_supporting_signals() -> None:
     corpus_docs = load_corpus_docs()
     hints = extract_corpus_feature_hints([corpus_docs["latency-db-anchor"]])
@@ -790,6 +1152,195 @@ def test_feature_bundle_abstains_on_metadata_only_hints_without_supporting_signa
     assert payload["tool_candidates"][0]["tool_name"] == "tool.collect_more_evidence"
     assert payload["tool_candidates"][0]["source"] == "metadata_only_abstain"
     assert payload["tool_candidates"][1]["tool_name"] == "tool.db_pool_triage"
+
+
+def test_feature_bundle_memory_prior_can_prune_ambiguous_candidates_upstream() -> None:
+    payload = build_feature_bundle(
+        query="release-17 orders latency db wait profile plus worker queue stall",
+        evidence_text=(
+            "The incident notes mention db pool saturation, slow orders query behavior, "
+            "and a concurrent worker queue starvation during tls reload."
+        ),
+        tags=["latency", "database", "worker", "release-17"],
+        reuse_signature="repo_local_latency_triage:database|latency|worker",
+        reused_memory=False,
+        memory_prior={
+            "memory_id": "mem-worker-prior",
+            "route": "worker_queue_starvation",
+            "tool_name": "tool.worker_queue_triage",
+            "confidence": 0.91,
+            "summary": "Prior aligned worker-queue diagnosis.",
+        },
+    )
+    assert payload["route"] == "worker_queue_starvation"
+    assert payload["tool_name"] == "tool.worker_queue_triage"
+    assert payload["route_source"] == "lexical_match"
+    assert payload["memory_prior_id"] == "mem-worker-prior"
+    assert payload["memory_prior_route"] == "worker_queue_starvation"
+    assert payload["memory_prior_tool_name"] == "tool.worker_queue_triage"
+    assert payload["memory_prior_applied"] is True
+    assert payload["memory_candidate_count_before"] >= 2
+    assert payload["memory_candidate_count_after"] == 1
+    assert payload["memory_candidate_reduction"] >= 1
+    assert payload["memory_prior_route_agreement"] is True
+    assert payload["memory_prior_rescue"] is True
+    assert payload["tool_candidates"][0]["tool_name"] == "tool.worker_queue_triage"
+    assert payload["tool_candidates"][0]["source"] == "lexical_match"
+
+
+def test_feature_bundle_memory_prior_does_not_override_without_live_support() -> None:
+    payload = build_feature_bundle(
+        query="investigate an unclear incident",
+        evidence_text="The current note is too vague to isolate a route.",
+        tags=["triage"],
+        reuse_signature="generic_triage:triage",
+        reused_memory=False,
+        memory_prior={
+            "memory_id": "mem-db-prior",
+            "route": "db_pool_saturation",
+            "tool_name": "tool.db_pool_triage",
+            "confidence": 0.93,
+            "summary": "Prior DB saturation diagnosis.",
+        },
+    )
+    assert payload["route"] == "generic_triage"
+    assert payload["tool_name"] == "tool.collect_more_evidence"
+    assert payload["route_source"] == "fallback"
+    assert payload["memory_prior_id"] == "mem-db-prior"
+    assert payload["memory_prior_route"] == "db_pool_saturation"
+    assert payload["memory_prior_tool_name"] == "tool.db_pool_triage"
+    assert payload["memory_prior_applied"] is False
+    assert payload["memory_candidate_count_after"] == payload["memory_candidate_count_before"]
+    assert payload["memory_candidate_reduction"] == 0
+    assert payload["memory_prior_route_agreement"] is False
+    assert payload["memory_prior_rescue"] is False
+
+
+def test_route_replay_eligibility_requires_lexical_provenance() -> None:
+    assert _route_is_replay_eligible(
+        route_confidence=0.95,
+        route_provenance=["corpus_metadata", "lexical"],
+        minimum_confidence=0.80,
+    )
+    assert not _route_is_replay_eligible(
+        route_confidence=0.95,
+        route_provenance=["corpus_metadata_unverified"],
+        minimum_confidence=0.80,
+    )
+    assert not _route_is_replay_eligible(
+        route_confidence=0.79,
+        route_provenance=["corpus_metadata", "lexical"],
+        minimum_confidence=0.80,
+    )
+
+
+def test_exact_replay_route_gate_requires_lexical_provenance() -> None:
+    orchestrator = Orchestrator({})
+    hit = MemoryHit(
+        memory_id="mem-provenance-exact-anchor",
+        confidence=0.95,
+        task_theme="executor_metadata_only",
+        reusable_steps=["retrieve", "execute"],
+        metadata={
+            "feature_route": "db_pool_saturation",
+            "retrieved_doc_ids": [
+                "exec-metadata-only-anchor",
+                "exec-metadata-only-followup",
+            ],
+            "feature_query": "investigate an unclear incident",
+            "feature_route_confidence": 0.95,
+            "feature_route_provenance": ["corpus_metadata", "lexical"],
+            "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+        },
+    )
+    assert orchestrator._matches_skip_retrieve_execute(
+        hit=hit,
+        task_theme="executor_metadata_only",
+        current_query="investigate an unclear incident",
+    )
+    hit.metadata["feature_route_provenance"] = ["corpus_metadata_unverified"]
+    assert not orchestrator._matches_skip_retrieve_execute(
+        hit=hit,
+        task_theme="executor_metadata_only",
+        current_query="investigate an unclear incident",
+    )
+
+
+def test_validated_replay_route_gate_requires_lexical_provenance_on_both_sides() -> None:
+    hit = MemoryHit(
+        memory_id="mem-provenance-validated-anchor",
+        confidence=0.95,
+        reusable_steps=["execute"],
+        metadata={
+            "feature_route": "db_pool_saturation",
+            "retrieved_doc_ids": [
+                "exec-metadata-only-anchor",
+                "exec-metadata-only-followup",
+            ],
+            "feature_query": "investigate an unclear incident",
+            "feature_route_confidence": 0.95,
+            "feature_route_provenance": ["corpus_metadata", "lexical"],
+            "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+        },
+    )
+    retrieve_result = StepResult(
+        step_id="retrieve",
+        success=True,
+        payload={
+            "feature_route": "db_pool_saturation",
+            "retrieved_doc_ids": [
+                "exec-metadata-only-anchor",
+                "exec-metadata-only-followup",
+            ],
+            "feature_route_confidence": 0.95,
+            "feature_route_provenance": ["corpus_metadata", "lexical"],
+            "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+        },
+    )
+    assert Orchestrator._matches_skip_execute(
+        hit=hit,
+        retrieve_result=retrieve_result,
+        current_query="investigate an unclear incident",
+    )
+    retrieve_result.payload["feature_route_provenance"] = ["corpus_metadata_unverified"]
+    assert not Orchestrator._matches_skip_execute(
+        hit=hit,
+        retrieve_result=retrieve_result,
+        current_query="investigate an unclear incident",
+    )
+    retrieve_result.payload["feature_route_provenance"] = ["corpus_metadata", "lexical"]
+    hit.metadata["feature_route_provenance"] = ["corpus_metadata_unverified"]
+    assert not Orchestrator._matches_skip_execute(
+        hit=hit,
+        retrieve_result=retrieve_result,
+        current_query="investigate an unclear incident",
+    )
+
+
+def test_feature_bundle_abstains_on_conflicting_hint_with_thin_lexical_override() -> None:
+    corpus_docs = load_corpus_docs()
+    hints = extract_corpus_feature_hints([corpus_docs["session-auth-anchor"]])
+    payload = build_feature_bundle(
+        query="aggressive backoff window login issue",
+        evidence_text="The current note remains vague and does not confirm a stable route.",
+        tags=["auth", "session"],
+        reuse_signature="repo_local_auth_session_drift:auth|session",
+        reused_memory=False,
+        retrieved_hints=hints,
+    )
+    assert payload["route"] == "generic_triage"
+    assert payload["tool_name"] == "tool.collect_more_evidence"
+    assert payload["route_source"] == "low_confidence_abstain"
+    assert payload["route_confidence"] == 0.0
+    assert payload["route_provenance"] == ["lexical_thin_support", "corpus_metadata_conflict"]
+    assert payload["hint_doc_ids"] == ["session-auth-anchor"]
+    assert payload["hint_route"] == "auth_session_drift"
+    assert payload["hint_tool_name"] == "tool.auth_session_repair"
+    assert payload["tool_candidates"][0]["tool_name"] == "tool.collect_more_evidence"
+    assert payload["tool_candidates"][0]["source"] == "low_confidence_abstain"
+    candidate_names = [candidate["tool_name"] for candidate in payload["tool_candidates"]]
+    assert "tool.auth_session_repair" in candidate_names
+    assert "tool.auth_rate_limit_triage" in candidate_names
 
 
 def test_feature_bundle_ignores_invalid_hints_and_falls_back_to_lexical_match() -> None:
@@ -935,14 +1486,71 @@ def test_state_transfer_lane_uses_text_brief_only_for_text_mode() -> None:
     protocol_tasks = {
         task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
     }
-    text_task = text_tasks["transfer-cache-001"]
-    protocol_task = protocol_tasks["transfer-cache-001"]
-    assert text_task["benchmark_lane"] == "state_transfer"
-    assert protocol_task["benchmark_lane"] == "state_transfer"
-    assert text_task["transfer_strategy"] == "text_brief"
-    assert protocol_task["transfer_strategy"] == "state_ref"
-    assert text_task["results"]["execute"]["payload"]["transfer_strategy"] == "text_brief"
-    assert protocol_task["results"]["execute"]["payload"]["transfer_strategy"] == "state_ref"
+    transfer_task_ids = [
+        task.task_id
+        for task in default_task_chain()
+        if task.benchmark_lane == "state_transfer"
+    ]
+    assert transfer_task_ids
+    for task_id in transfer_task_ids:
+        text_task = text_tasks[task_id]
+        protocol_task = protocol_tasks[task_id]
+        assert text_task["benchmark_lane"] == "state_transfer"
+        assert protocol_task["benchmark_lane"] == "state_transfer"
+        assert text_task["transfer_strategy"] == "text_brief"
+        assert protocol_task["transfer_strategy"] == "state_ref"
+        assert text_task["results"]["execute"]["payload"]["transfer_strategy"] == "text_brief"
+        assert protocol_task["results"]["execute"]["payload"]["transfer_strategy"] == "state_ref"
+        assert text_task["results"]["retrieve"]["payload"]["transfer_brief_state_id"]
+        assert protocol_task["results"]["retrieve"]["payload"]["transfer_brief_state_id"] == ""
+        text_kinds = {ref["kind"] for ref in text_task["state_refs"].values()}
+        protocol_kinds = {ref["kind"] for ref in protocol_task["state_refs"].values()}
+        assert "FEATURE_BUNDLE" not in text_kinds
+        assert "EMBEDDING" not in text_kinds
+        assert "FEATURE_BUNDLE" in protocol_kinds
+        assert "EMBEDDING" in protocol_kinds
+        assert text_task["metrics"]["handoff_nontext_ref_count"] == 0
+
+
+def test_state_transfer_text_brief_preserves_retriever_executor_snapshot() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-transfer-brief-fidelity-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                modes=("text",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        tasks = {task["task_id"]: task for task in result["mode_runs"]["text"][0]["tasks"]}
+        for task_id in ("transfer-cache-001", "transfer-latency-001", "transfer-session-001"):
+            task = tasks[task_id]
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            execute_payload = task["results"]["execute"]["payload"]
+            brief_state_id = retrieve_payload["transfer_brief_state_id"]
+            assert brief_state_id
+            brief_ref = task["state_refs"][brief_state_id]
+            brief_text = Path(brief_ref["handle"]).read_text(encoding="utf-8")
+            assert "Suggested tool:" in brief_text
+            assert "Route confidence:" in brief_text
+            assert "Tool candidates:" in brief_text
+            evidence_ref = next(
+                ref for ref in task["state_refs"].values() if ref["kind"] == "DENSE_EVIDENCE"
+            )
+            evidence_text = Path(evidence_ref["handle"]).read_text(encoding="utf-8")
+            rebuilt = _feature_bundle_from_transfer_brief(
+                query_text=retrieve_payload["query"],
+                evidence_text=evidence_text,
+                brief_text=brief_text,
+                registry=default_tool_registry(),
+            )
+            assert rebuilt["route"] == retrieve_payload["feature_route"]
+            assert rebuilt["route_source"] == retrieve_payload["feature_route_source"]
+            assert rebuilt["route_confidence"] == retrieve_payload["feature_route_confidence"]
+            assert rebuilt["route_provenance"] == retrieve_payload["feature_route_provenance"]
+            assert select_tool_name(rebuilt) == execute_payload["tool_name"]
+            assert rebuilt["tool_candidates"][0]["tool_name"] == execute_payload["tool_name"]
 
 
 def test_communication_lane_keeps_memory_disabled_in_both_modes() -> None:
@@ -1127,6 +1735,891 @@ def test_benchmark_supports_uds_executor_transport() -> None:
     assert result["manifest"]["executor_socket_path"]
     first_task = result["mode_runs"]["protocol"][0]["tasks"][0]
     assert first_task["results"]["execute"]["payload"]["sandbox_mode"] == "subprocess"
+
+
+def test_executor_diagnostic_task_set_covers_abstain_boundaries() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-executor-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/executor_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "Executor Feature Observability" in report_text
+        assert "| text | low_confidence_abstain | 3 | 6 |" in report_text
+        assert "| protocol | metadata_only_abstain | 1 | 6 |" in report_text
+        assert "| text | 1 | 1 | 1 | 1 | 1 | 1 |" in report_text
+    expected = {
+        "exec-low-confidence-001": ("low_confidence_abstain", "tool.collect_more_evidence", 0.0),
+        "exec-thin-support-001": ("low_confidence_abstain", "tool.collect_more_evidence", 0.0),
+        "exec-conflict-thin-override-001": ("low_confidence_abstain", "tool.collect_more_evidence", 0.0),
+        "exec-metadata-only-001": ("metadata_only_abstain", "tool.collect_more_evidence", 0.0),
+        "exec-ambiguous-001": ("ambiguous_candidates_abstain", "tool.collect_more_evidence", 0.0),
+        "exec-clear-worker-001": ("hint_consensus", "tool.worker_queue_triage", 0.95),
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == set(expected)
+        for task_id, (route_source, tool_name, confidence) in expected.items():
+            task = tasks[task_id]
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            execute_payload = task["results"]["execute"]["payload"]
+            observability = task["results"]["retrieve"]["feature_observability"]
+            assert task["corpus_path"].endswith("tasks/executor_diagnostic_corpus.yaml")
+            assert retrieve_payload["feature_route_source"] == route_source
+            assert "matched_signals" in observability
+            assert "matched_tags" in observability
+            assert "match_score" in observability
+            assert "tool_candidates" in observability
+            assert execute_payload["tool_name"] == tool_name
+            assert retrieve_payload["feature_route_confidence"] == confidence
+            artifact_misfire = task["artifact_misfire"]
+            assert artifact_misfire["fields"]["route_source"]["matched"] is True
+            assert artifact_misfire["fields"]["tool_name"]["matched"] is True
+            assert artifact_misfire["fields"]["route"]["enabled"] is False
+            assert artifact_misfire["fields"]["top_doc_id"]["enabled"] is False
+
+
+def test_retrieval_replay_diagnostic_task_set_covers_p1_boundaries() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-retrieval-replay-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "fresh_retrieval" in report_text
+        assert "step_skipping" in report_text
+        assert "replay_enabled" in report_text
+    expected_tasks = {
+        "diag-retrieval-out-of-hint-001",
+        "diag-replay-no-doc-pref-001",
+        "diag-replay-validated-001",
+        "diag-replay-validated-docset-drift-001",
+        "diag-replay-no-doc-pref-002",
+        "diag-replay-tag-drift-001",
+        "diag-replay-query-drift-001",
+        "diag-replay-theme-drift-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+
+        retrieval_diag = tasks["diag-retrieval-out-of-hint-001"]
+        assert retrieval_diag["reuse"]["mode"] == "none"
+        assert retrieval_diag["results"]["retrieve"]["skipped"] is False
+        assert retrieval_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "cache-replica-false"
+        assert retrieval_diag["results"]["retrieve"]["payload"]["feature_route"] == "cache_replica_stale_read"
+        assert retrieval_diag["results"]["execute"]["payload"]["tool_name"] == "tool.replica_stale_read_triage"
+        assert retrieval_diag["artifact_misfire"]["all_matched"] is True
+
+        validated_diag = tasks["diag-replay-validated-001"]
+        assert validated_diag["reuse"]["mode"] == "skip_execute"
+        assert validated_diag["results"]["retrieve"]["skipped"] is False
+        assert validated_diag["results"]["execute"]["skipped"] is True
+        assert validated_diag["artifact_misfire"]["fields"]["route"]["matched"] is True
+
+        validated_docset_drift_diag = tasks["diag-replay-validated-docset-drift-001"]
+        assert validated_docset_drift_diag["reuse"]["mode"] == "none"
+        assert validated_docset_drift_diag["results"]["retrieve"]["skipped"] is False
+        assert validated_docset_drift_diag["results"]["execute"]["skipped"] is False
+        assert sorted(validated_docset_drift_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"]) == [
+            "cache-invalid-anchor",
+            "cache-invalid-followup",
+        ]
+        assert validated_docset_drift_diag["reuse_validation"]["matched_expectation"] is True
+        assert validated_docset_drift_diag["artifact_misfire"]["fields"]["route"]["matched"] is True
+
+        exact_diag = tasks["diag-replay-no-doc-pref-002"]
+        assert exact_diag["reuse"]["mode"] == "skip_retrieve_execute"
+        assert exact_diag["results"]["retrieve"]["skipped"] is True
+        assert exact_diag["results"]["execute"]["skipped"] is True
+        assert sorted(exact_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"]) == [
+            "cache-invalid-anchor",
+            "cache-invalid-replay",
+        ]
+        assert "preferred_corpus_doc_ids" not in exact_diag["results"]["retrieve"]["payload"]
+        assert "candidate_corpus_doc_ids" not in exact_diag["results"]["retrieve"]["payload"]
+        assert exact_diag["artifact_misfire"]["fields"]["route"]["matched"] is True
+
+        tag_drift_diag = tasks["diag-replay-tag-drift-001"]
+        assert tag_drift_diag["reuse"]["mode"] == "skip_retrieve_execute"
+        assert tag_drift_diag["results"]["retrieve"]["skipped"] is True
+        assert tag_drift_diag["results"]["execute"]["skipped"] is True
+        assert sorted(tag_drift_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"]) == [
+            "cache-invalid-anchor",
+            "cache-invalid-replay",
+        ]
+        assert tag_drift_diag["task_theme"] == "repo_local_cache_staleness"
+        assert tag_drift_diag["reuse_validation"]["matched_expectation"] is True
+        assert tag_drift_diag["artifact_misfire"]["fields"]["route"]["matched"] is True
+
+        drift_diag = tasks["diag-replay-query-drift-001"]
+        assert drift_diag["reuse"]["mode"] == "none"
+        assert drift_diag["results"]["retrieve"]["skipped"] is False
+        assert drift_diag["results"]["execute"]["skipped"] is False
+
+        theme_drift_diag = tasks["diag-replay-theme-drift-001"]
+        assert theme_drift_diag["task_theme"] == "repo_local_cache_staleness_variant"
+        assert theme_drift_diag["reuse"]["mode"] == "none"
+        assert theme_drift_diag["results"]["retrieve"]["skipped"] is False
+        assert theme_drift_diag["results"]["execute"]["skipped"] is False
+        assert theme_drift_diag["reuse_validation"]["matched_expectation"] is True
+
+
+def test_retrieval_hint_diagnostic_task_set_covers_weakened_hint_boundaries() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-retrieval-hint-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_hint_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "fresh_retrieval" in report_text
+        assert "internal_regression" in report_text
+    expected_tasks = {
+        "diag-retrieval-no-tags-001",
+        "diag-retrieval-misleading-tags-001",
+        "diag-retrieval-invalidation-control-001",
+        "diag-retrieval-latency-no-tags-001",
+        "diag-retrieval-latency-misleading-tags-001",
+        "diag-retrieval-latency-db-control-001",
+        "diag-retrieval-session-no-tags-001",
+        "diag-retrieval-session-misleading-tags-001",
+        "diag-retrieval-session-drift-control-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+
+        no_tags_diag = tasks["diag-retrieval-no-tags-001"]
+        assert no_tags_diag["reuse"]["mode"] == "none"
+        assert no_tags_diag["results"]["retrieve"]["skipped"] is False
+        assert no_tags_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "cache-replica-false"
+        assert no_tags_diag["results"]["retrieve"]["payload"]["feature_route"] == "cache_replica_stale_read"
+        assert no_tags_diag["results"]["execute"]["payload"]["tool_name"] == "tool.replica_stale_read_triage"
+        assert no_tags_diag["artifact_misfire"]["all_matched"] is True
+
+        misleading_tags_diag = tasks["diag-retrieval-misleading-tags-001"]
+        assert misleading_tags_diag["reuse"]["mode"] == "none"
+        assert misleading_tags_diag["results"]["retrieve"]["skipped"] is False
+        assert misleading_tags_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "cache-replica-false"
+        assert misleading_tags_diag["results"]["retrieve"]["payload"]["feature_route"] == "cache_replica_stale_read"
+        assert misleading_tags_diag["results"]["execute"]["payload"]["tool_name"] == "tool.replica_stale_read_triage"
+        assert misleading_tags_diag["artifact_misfire"]["all_matched"] is True
+
+        invalidation_control = tasks["diag-retrieval-invalidation-control-001"]
+        assert invalidation_control["reuse"]["mode"] == "none"
+        assert invalidation_control["results"]["retrieve"]["skipped"] is False
+        assert invalidation_control["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "cache-invalid-anchor"
+        assert invalidation_control["results"]["retrieve"]["payload"]["feature_route"] == "cache_invalidation"
+        assert invalidation_control["results"]["execute"]["payload"]["tool_name"] == "tool.cache_invalidation_playbook"
+        assert invalidation_control["artifact_misfire"]["all_matched"] is True
+
+        latency_no_tags_diag = tasks["diag-retrieval-latency-no-tags-001"]
+        assert latency_no_tags_diag["reuse"]["mode"] == "none"
+        assert latency_no_tags_diag["results"]["retrieve"]["skipped"] is False
+        assert latency_no_tags_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "latency-worker-false"
+        assert latency_no_tags_diag["results"]["retrieve"]["payload"]["feature_route"] == "worker_queue_starvation"
+        assert latency_no_tags_diag["results"]["execute"]["payload"]["tool_name"] == "tool.worker_queue_triage"
+        assert latency_no_tags_diag["artifact_misfire"]["all_matched"] is True
+
+        latency_misleading_tags_diag = tasks["diag-retrieval-latency-misleading-tags-001"]
+        assert latency_misleading_tags_diag["reuse"]["mode"] == "none"
+        assert latency_misleading_tags_diag["results"]["retrieve"]["skipped"] is False
+        assert latency_misleading_tags_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "latency-worker-false"
+        assert latency_misleading_tags_diag["results"]["retrieve"]["payload"]["feature_route"] == "worker_queue_starvation"
+        assert latency_misleading_tags_diag["results"]["execute"]["payload"]["tool_name"] == "tool.worker_queue_triage"
+        assert latency_misleading_tags_diag["artifact_misfire"]["all_matched"] is True
+
+        latency_db_control = tasks["diag-retrieval-latency-db-control-001"]
+        assert latency_db_control["reuse"]["mode"] == "none"
+        assert latency_db_control["results"]["retrieve"]["skipped"] is False
+        assert latency_db_control["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "latency-db-anchor"
+        assert latency_db_control["results"]["retrieve"]["payload"]["feature_route"] == "db_pool_saturation"
+        assert latency_db_control["results"]["execute"]["payload"]["tool_name"] == "tool.db_pool_triage"
+        assert latency_db_control["artifact_misfire"]["all_matched"] is True
+
+        session_no_tags_diag = tasks["diag-retrieval-session-no-tags-001"]
+        assert session_no_tags_diag["reuse"]["mode"] == "none"
+        assert session_no_tags_diag["results"]["retrieve"]["skipped"] is False
+        assert session_no_tags_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "session-rate-limit-false"
+        assert session_no_tags_diag["results"]["retrieve"]["payload"]["feature_route"] == "auth_rate_limit"
+        assert session_no_tags_diag["results"]["execute"]["payload"]["tool_name"] == "tool.auth_rate_limit_triage"
+        assert session_no_tags_diag["artifact_misfire"]["all_matched"] is True
+
+        session_misleading_tags_diag = tasks["diag-retrieval-session-misleading-tags-001"]
+        assert session_misleading_tags_diag["reuse"]["mode"] == "none"
+        assert session_misleading_tags_diag["results"]["retrieve"]["skipped"] is False
+        assert session_misleading_tags_diag["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "session-rate-limit-false"
+        assert session_misleading_tags_diag["results"]["retrieve"]["payload"]["feature_route"] == "auth_rate_limit"
+        assert session_misleading_tags_diag["results"]["execute"]["payload"]["tool_name"] == "tool.auth_rate_limit_triage"
+        assert session_misleading_tags_diag["artifact_misfire"]["all_matched"] is True
+
+        session_drift_control = tasks["diag-retrieval-session-drift-control-001"]
+        assert session_drift_control["reuse"]["mode"] == "none"
+        assert session_drift_control["results"]["retrieve"]["skipped"] is False
+        assert session_drift_control["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "session-auth-anchor"
+        assert session_drift_control["results"]["retrieve"]["payload"]["feature_route"] == "auth_session_drift"
+        assert session_drift_control["results"]["execute"]["payload"]["tool_name"] == "tool.auth_session_repair"
+        assert session_drift_control["artifact_misfire"]["all_matched"] is True
+
+
+def test_retrieval_context_diagnostic_task_set_covers_wrong_family_context_boundaries() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-retrieval-context-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_context_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "fresh_retrieval" in report_text
+        assert "internal_regression" in report_text
+    expected_tasks = {
+        "diag-retrieval-session-context-rate-limit-001",
+        "diag-retrieval-session-context-drift-control-001",
+        "diag-retrieval-latency-context-worker-001",
+        "diag-retrieval-latency-context-db-control-001",
+        "diag-retrieval-cache-context-replica-001",
+        "diag-retrieval-cache-context-invalidation-control-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+
+        session_rate_limit = tasks["diag-retrieval-session-context-rate-limit-001"]
+        assert session_rate_limit["reuse"]["mode"] == "none"
+        assert session_rate_limit["results"]["retrieve"]["skipped"] is False
+        assert session_rate_limit["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "session-rate-limit-false"
+        assert session_rate_limit["results"]["retrieve"]["payload"]["feature_route"] == "auth_rate_limit"
+        assert session_rate_limit["results"]["execute"]["payload"]["tool_name"] == "tool.auth_rate_limit_triage"
+        assert session_rate_limit["task_group"] == "cache_chain"
+        assert session_rate_limit["task_theme"] == "repo_local_cache_staleness"
+
+        session_drift = tasks["diag-retrieval-session-context-drift-control-001"]
+        assert session_drift["reuse"]["mode"] == "none"
+        assert session_drift["results"]["retrieve"]["skipped"] is False
+        assert session_drift["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "session-auth-anchor"
+        assert session_drift["results"]["retrieve"]["payload"]["feature_route"] == "auth_session_drift"
+        assert session_drift["results"]["execute"]["payload"]["tool_name"] == "tool.auth_session_repair"
+        assert session_drift["task_group"] == "cache_chain"
+        assert session_drift["task_theme"] == "repo_local_cache_staleness"
+
+        latency_worker = tasks["diag-retrieval-latency-context-worker-001"]
+        assert latency_worker["reuse"]["mode"] == "none"
+        assert latency_worker["results"]["retrieve"]["skipped"] is False
+        assert latency_worker["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "latency-worker-false"
+        assert latency_worker["results"]["retrieve"]["payload"]["feature_route"] == "worker_queue_starvation"
+        assert latency_worker["results"]["execute"]["payload"]["tool_name"] == "tool.worker_queue_triage"
+        assert latency_worker["task_group"] == "session_chain"
+        assert latency_worker["task_theme"] == "repo_local_auth_session_drift"
+
+        latency_db = tasks["diag-retrieval-latency-context-db-control-001"]
+        assert latency_db["reuse"]["mode"] == "none"
+        assert latency_db["results"]["retrieve"]["skipped"] is False
+        assert latency_db["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "latency-db-anchor"
+        assert latency_db["results"]["retrieve"]["payload"]["feature_route"] == "db_pool_saturation"
+        assert latency_db["results"]["execute"]["payload"]["tool_name"] == "tool.db_pool_triage"
+        assert latency_db["task_group"] == "session_chain"
+        assert latency_db["task_theme"] == "repo_local_auth_session_drift"
+
+        cache_replica = tasks["diag-retrieval-cache-context-replica-001"]
+        assert cache_replica["reuse"]["mode"] == "none"
+        assert cache_replica["results"]["retrieve"]["skipped"] is False
+        assert cache_replica["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "cache-replica-false"
+        assert cache_replica["results"]["retrieve"]["payload"]["feature_route"] == "cache_replica_stale_read"
+        assert cache_replica["results"]["execute"]["payload"]["tool_name"] == "tool.replica_stale_read_triage"
+        assert cache_replica["task_group"] == "latency_chain"
+        assert cache_replica["task_theme"] == "repo_local_latency_triage"
+
+        cache_invalidation = tasks["diag-retrieval-cache-context-invalidation-control-001"]
+        assert cache_invalidation["reuse"]["mode"] == "none"
+        assert cache_invalidation["results"]["retrieve"]["skipped"] is False
+        assert cache_invalidation["results"]["retrieve"]["payload"]["retrieved_doc_ids"][0] == "cache-invalid-anchor"
+        assert cache_invalidation["results"]["retrieve"]["payload"]["feature_route"] == "cache_invalidation"
+        assert cache_invalidation["results"]["execute"]["payload"]["tool_name"] == "tool.cache_invalidation_playbook"
+        assert cache_invalidation["task_group"] == "latency_chain"
+        assert cache_invalidation["task_theme"] == "repo_local_latency_triage"
+
+
+def test_retrieval_mixed_docset_diagnostic_task_set_covers_widened_docset_boundaries() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-retrieval-mixed-docset-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_mixed_docset_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "internal_regression" in report_text
+        assert "fresh_retrieval" in report_text
+    expected_routes = {
+        "diag-retrieval-mixed-latency-worker-001": ("worker_queue_starvation", "tool.worker_queue_triage"),
+        "diag-retrieval-mixed-latency-db-control-001": ("db_pool_saturation", "tool.db_pool_triage"),
+        "diag-retrieval-mixed-cache-replica-001": ("cache_replica_stale_read", "tool.replica_stale_read_triage"),
+        "diag-retrieval-mixed-cache-invalidation-control-001": (
+            "cache_invalidation",
+            "tool.cache_invalidation_playbook",
+        ),
+        "diag-retrieval-mixed-session-rate-limit-001": ("auth_rate_limit", "tool.auth_rate_limit_triage"),
+        "diag-retrieval-mixed-session-drift-control-001": ("auth_session_drift", "tool.auth_session_repair"),
+    }
+    expected_top_docs = {
+        "diag-retrieval-mixed-latency-worker-001": "latency-worker-false",
+        "diag-retrieval-mixed-latency-db-control-001": "latency-db-anchor",
+        "diag-retrieval-mixed-cache-replica-001": "cache-replica-false",
+        "diag-retrieval-mixed-cache-invalidation-control-001": "cache-invalid-anchor",
+        "diag-retrieval-mixed-session-rate-limit-001": "session-rate-limit-false",
+        "diag-retrieval-mixed-session-drift-control-001": "session-auth-anchor",
+    }
+    expected_contexts = {
+        "diag-retrieval-mixed-latency-worker-001": ("cache_chain", "repo_local_cache_staleness"),
+        "diag-retrieval-mixed-latency-db-control-001": ("cache_chain", "repo_local_cache_staleness"),
+        "diag-retrieval-mixed-cache-replica-001": ("session_chain", "repo_local_auth_session_drift"),
+        "diag-retrieval-mixed-cache-invalidation-control-001": ("session_chain", "repo_local_auth_session_drift"),
+        "diag-retrieval-mixed-session-rate-limit-001": ("latency_chain", "repo_local_latency_triage"),
+        "diag-retrieval-mixed-session-drift-control-001": ("latency_chain", "repo_local_latency_triage"),
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == set(expected_routes)
+        for task_id, (route, tool_name) in expected_routes.items():
+            task = tasks[task_id]
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            execute_payload = task["results"]["execute"]["payload"]
+            assert task["reuse"]["mode"] == "none"
+            assert task["reuse_validation"]["matched_expectation"] is True
+            assert retrieve_payload["retrieved_doc_ids"][0] == expected_top_docs[task_id]
+            assert retrieve_payload["feature_route"] == route
+            assert execute_payload["route"] == route
+            assert execute_payload["tool_name"] == tool_name
+            assert (task["task_group"], task["task_theme"]) == expected_contexts[task_id]
+
+
+def test_retrieval_weak_route_diagnostic_task_set_surfaces_route_family_sensitivity() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-retrieval-weak-route-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_weak_route_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "internal_regression" in report_text
+        assert "fresh_retrieval" in report_text
+    expected_routes = {
+        "diag-retrieval-weak-route-cache-invalidation-001": (
+            "cache-invalid-anchor",
+            "cache_invalidation",
+            "tool.cache_invalidation_playbook",
+        ),
+        "diag-retrieval-weak-route-cache-replica-001": (
+            "cache-replica-false",
+            "cache_replica_stale_read",
+            "tool.replica_stale_read_triage",
+        ),
+        "diag-retrieval-weak-route-latency-db-001": (
+            "latency-db-anchor",
+            "db_pool_saturation",
+            "tool.db_pool_triage",
+        ),
+        "diag-retrieval-weak-route-latency-worker-001": (
+            "latency-worker-false",
+            "worker_queue_starvation",
+            "tool.worker_queue_triage",
+        ),
+        "diag-retrieval-weak-route-session-drift-001": (
+            "session-auth-anchor",
+            "auth_session_drift",
+            "tool.auth_session_repair",
+        ),
+        "diag-retrieval-weak-route-session-rate-limit-001": (
+            "session-rate-limit-false",
+            "auth_rate_limit",
+            "tool.auth_rate_limit_triage",
+        ),
+    }
+    expected_contexts = {
+        "diag-retrieval-weak-route-cache-invalidation-001": ("session_chain", "repo_local_auth_session_drift"),
+        "diag-retrieval-weak-route-cache-replica-001": ("session_chain", "repo_local_auth_session_drift"),
+        "diag-retrieval-weak-route-latency-db-001": ("cache_chain", "repo_local_cache_staleness"),
+        "diag-retrieval-weak-route-latency-worker-001": ("cache_chain", "repo_local_cache_staleness"),
+        "diag-retrieval-weak-route-session-drift-001": ("latency_chain", "repo_local_latency_triage"),
+        "diag-retrieval-weak-route-session-rate-limit-001": ("latency_chain", "repo_local_latency_triage"),
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == set(expected_routes)
+        for task_id, (top_doc_id, route, tool_name) in expected_routes.items():
+            task = tasks[task_id]
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            execute_payload = task["results"]["execute"]["payload"]
+            assert task["reuse"]["mode"] == "none"
+            assert task["reuse_validation"]["matched_expectation"] is True
+            assert retrieve_payload["retrieved_doc_ids"][0] == top_doc_id
+            assert retrieve_payload["feature_route"] == route
+            assert execute_payload["route"] == route
+            assert execute_payload["tool_name"] == tool_name
+            assert (task["task_group"], task["task_theme"]) == expected_contexts[task_id]
+
+
+def test_retrieval_theme_variant_diagnostic_task_set_shows_theme_is_not_a_primary_route_gate() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-retrieval-theme-variant-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_theme_variant_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "internal_regression" in report_text
+        assert "fresh_retrieval" in report_text
+    expected_routes = {
+        "diag-retrieval-theme-variant-latency-db-001": ("latency-db-anchor", "db_pool_saturation"),
+        "diag-retrieval-theme-variant-latency-worker-001": ("latency-worker-false", "worker_queue_starvation"),
+        "diag-retrieval-theme-variant-session-drift-001": ("session-auth-anchor", "auth_session_drift"),
+        "diag-retrieval-theme-variant-session-rate-limit-001": ("session-rate-limit-false", "auth_rate_limit"),
+        "diag-retrieval-theme-variant-cache-invalidation-001": ("cache-invalid-anchor", "cache_invalidation"),
+        "diag-retrieval-theme-variant-cache-replica-001": ("cache-replica-false", "cache_replica_stale_read"),
+    }
+    expected_themes = {
+        "diag-retrieval-theme-variant-latency-db-001": "repo_local_latency_triage_variant",
+        "diag-retrieval-theme-variant-latency-worker-001": "repo_local_latency_triage_variant",
+        "diag-retrieval-theme-variant-session-drift-001": "repo_local_auth_session_variant",
+        "diag-retrieval-theme-variant-session-rate-limit-001": "repo_local_auth_session_variant",
+        "diag-retrieval-theme-variant-cache-invalidation-001": "repo_local_cache_variant",
+        "diag-retrieval-theme-variant-cache-replica-001": "repo_local_cache_variant",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == set(expected_routes)
+        for task_id, (top_doc_id, route) in expected_routes.items():
+            task = tasks[task_id]
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            assert task["reuse"]["mode"] == "none"
+            assert task["reuse_validation"]["matched_expectation"] is True
+            assert retrieve_payload["retrieved_doc_ids"][0] == top_doc_id
+            assert retrieve_payload["feature_route"] == route
+            assert task["task_theme"] == expected_themes[task_id]
+
+
+def test_retrieval_replay_multi_anchor_task_set_surfaces_anchor_selection_behavior() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-multi-anchor-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_multi_anchor_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "step_skipping" in report_text
+        assert "replay_enabled" in report_text
+    expected_tasks = {
+        "diag-replay-multi-anchor-a-001",
+        "diag-replay-multi-anchor-b-001",
+        "diag-replay-multi-anchor-exact-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+
+        anchor_a = tasks["diag-replay-multi-anchor-a-001"]
+        assert anchor_a["reuse"]["mode"] == "none"
+        assert anchor_a["results"]["retrieve"]["skipped"] is False
+        assert anchor_a["results"]["execute"]["skipped"] is False
+        assert sorted(anchor_a["results"]["retrieve"]["payload"]["retrieved_doc_ids"]) == [
+            "cache-invalid-anchor",
+            "cache-invalid-replay",
+        ]
+
+        anchor_b = tasks["diag-replay-multi-anchor-b-001"]
+        assert anchor_b["reuse"]["mode"] == "none"
+        assert anchor_b["results"]["retrieve"]["skipped"] is False
+        assert anchor_b["results"]["execute"]["skipped"] is False
+        assert sorted(anchor_b["results"]["retrieve"]["payload"]["retrieved_doc_ids"]) == [
+            "cache-invalid-anchor",
+            "cache-invalid-followup",
+        ]
+
+        exact = tasks["diag-replay-multi-anchor-exact-001"]
+        assert exact["reuse"]["mode"] == "skip_retrieve_execute"
+        assert exact["results"]["retrieve"]["skipped"] is True
+        assert exact["results"]["execute"]["skipped"] is True
+        assert sorted(exact["results"]["retrieve"]["payload"]["retrieved_doc_ids"]) == [
+            "cache-invalid-anchor",
+            "cache-invalid-followup",
+        ]
+        assert exact["results"]["retrieve"]["reused_from_memory_id"] == "mem-diag-replay-multi-anchor-b-001-replay"
+
+
+def test_retrieval_replay_route_diagnostic_task_set_covers_route_eligibility_boundaries() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-route-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_route_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "step_skipping" in report_text
+        assert "replay_enabled" in report_text
+    expected_tasks = {
+        "diag-replay-route-weak-anchor-001",
+        "diag-replay-route-weak-exact-001",
+        "diag-replay-route-clear-anchor-001",
+        "diag-replay-route-clear-exact-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+
+        weak_anchor = tasks["diag-replay-route-weak-anchor-001"]
+        assert weak_anchor["reuse"]["mode"] == "none"
+        assert weak_anchor["results"]["retrieve"]["skipped"] is False
+        assert weak_anchor["results"]["execute"]["skipped"] is False
+        assert weak_anchor["results"]["retrieve"]["payload"]["feature_route"] == "generic_triage"
+        assert weak_anchor["results"]["retrieve"]["payload"]["feature_route_source"] == "low_confidence_abstain"
+
+        weak_exact = tasks["diag-replay-route-weak-exact-001"]
+        assert weak_exact["reuse"]["mode"] == "none"
+        assert weak_exact["results"]["retrieve"]["skipped"] is False
+        assert weak_exact["results"]["execute"]["skipped"] is False
+        assert weak_exact["results"]["retrieve"]["payload"]["feature_route"] == "generic_triage"
+        assert weak_exact["results"]["retrieve"]["payload"]["feature_route_source"] == "low_confidence_abstain"
+        assert weak_exact["reuse_validation"]["matched_expectation"] is True
+
+        clear_anchor = tasks["diag-replay-route-clear-anchor-001"]
+        assert clear_anchor["reuse"]["mode"] == "none"
+        assert clear_anchor["results"]["retrieve"]["skipped"] is False
+        assert clear_anchor["results"]["execute"]["skipped"] is False
+        assert clear_anchor["results"]["retrieve"]["payload"]["feature_route"] == "worker_queue_starvation"
+        assert clear_anchor["results"]["retrieve"]["payload"]["feature_route_source"] == "hint_consensus"
+
+        clear_exact = tasks["diag-replay-route-clear-exact-001"]
+        assert clear_exact["reuse"]["mode"] == "skip_retrieve_execute"
+        assert clear_exact["results"]["retrieve"]["skipped"] is True
+        assert clear_exact["results"]["execute"]["skipped"] is True
+        assert clear_exact["results"]["retrieve"]["payload"]["feature_route"] == "worker_queue_starvation"
+        assert clear_exact["results"]["retrieve"]["payload"]["feature_route_source"] == "hint_consensus"
+        assert clear_exact["results"]["retrieve"]["reused_from_memory_id"] == "mem-diag-replay-route-clear-anchor-001-replay"
+
+
+def test_retrieval_replay_override_task_set_covers_lexical_override_route_provenance() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-override-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_override_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "fresh_retrieval" in report_text
+        assert "step_skipping" in report_text
+        assert "replay_enabled" in report_text
+    expected_tasks = {
+        "diag-replay-override-anchor-001",
+        "diag-replay-override-validated-001",
+        "diag-replay-override-exact-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+
+        anchor = tasks["diag-replay-override-anchor-001"]
+        assert anchor["reuse"]["mode"] == "none"
+        assert anchor["results"]["retrieve"]["skipped"] is False
+        assert anchor["results"]["execute"]["skipped"] is False
+        assert anchor["results"]["retrieve"]["payload"]["feature_route"] == "auth_rate_limit"
+        assert anchor["results"]["retrieve"]["payload"]["feature_route_source"] == "lexical_override"
+        assert anchor["results"]["retrieve"]["payload"]["feature_route_provenance"] == [
+            "lexical",
+            "corpus_metadata_conflict",
+        ]
+
+        validated = tasks["diag-replay-override-validated-001"]
+        assert validated["reuse"]["mode"] == "skip_execute"
+        assert validated["results"]["retrieve"]["skipped"] is False
+        assert validated["results"]["execute"]["skipped"] is True
+        assert validated["results"]["retrieve"]["payload"]["feature_route"] == "auth_rate_limit"
+        assert validated["results"]["retrieve"]["payload"]["feature_route_source"] == "lexical_override"
+        assert validated["results"]["retrieve"]["payload"]["feature_route_provenance"] == [
+            "lexical",
+            "corpus_metadata_conflict",
+        ]
+        assert validated["reuse_validation"]["matched_expectation"] is True
+
+        exact = tasks["diag-replay-override-exact-001"]
+        assert exact["reuse"]["mode"] == "skip_retrieve_execute"
+        assert exact["results"]["retrieve"]["skipped"] is True
+        assert exact["results"]["execute"]["skipped"] is True
+        assert exact["results"]["retrieve"]["payload"]["feature_route"] == "auth_rate_limit"
+        assert exact["results"]["retrieve"]["payload"]["feature_route_source"] == "lexical_override"
+        assert exact["results"]["retrieve"]["payload"]["feature_route_provenance"] == [
+            "lexical",
+            "corpus_metadata_conflict",
+        ]
+        assert exact["results"]["retrieve"]["reused_from_memory_id"] == (
+            "mem-diag-replay-override-validated-001-replay"
+        )
+
+
+def test_retrieval_replay_override_cache_task_set_covers_cross_family_lexical_override() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-override-cache-diag-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_override_cache_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "fresh_retrieval" in report_text
+        assert "step_skipping" in report_text
+        assert "replay_enabled" in report_text
+    expected_tasks = {
+        "diag-replay-override-cache-anchor-001",
+        "diag-replay-override-cache-validated-001",
+        "diag-replay-override-cache-exact-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+
+        anchor = tasks["diag-replay-override-cache-anchor-001"]
+        assert anchor["reuse"]["mode"] == "none"
+        assert anchor["results"]["retrieve"]["skipped"] is False
+        assert anchor["results"]["execute"]["skipped"] is False
+        assert anchor["results"]["retrieve"]["payload"]["feature_route"] == "cache_replica_stale_read"
+        assert anchor["results"]["retrieve"]["payload"]["feature_route_source"] == "lexical_override"
+        assert anchor["results"]["retrieve"]["payload"]["feature_route_provenance"] == [
+            "lexical",
+            "corpus_metadata_conflict",
+        ]
+
+        validated = tasks["diag-replay-override-cache-validated-001"]
+        assert validated["reuse"]["mode"] == "skip_execute"
+        assert validated["results"]["retrieve"]["skipped"] is False
+        assert validated["results"]["execute"]["skipped"] is True
+        assert validated["results"]["retrieve"]["payload"]["feature_route"] == "cache_replica_stale_read"
+        assert validated["results"]["retrieve"]["payload"]["feature_route_source"] == "lexical_override"
+        assert validated["results"]["retrieve"]["payload"]["feature_route_provenance"] == [
+            "lexical",
+            "corpus_metadata_conflict",
+        ]
+        assert validated["reuse_validation"]["matched_expectation"] is True
+
+        exact = tasks["diag-replay-override-cache-exact-001"]
+        assert exact["reuse"]["mode"] == "skip_retrieve_execute"
+        assert exact["results"]["retrieve"]["skipped"] is True
+        assert exact["results"]["execute"]["skipped"] is True
+        assert exact["results"]["retrieve"]["payload"]["feature_route"] == "cache_replica_stale_read"
+        assert exact["results"]["retrieve"]["payload"]["feature_route_source"] == "lexical_override"
+        assert exact["results"]["retrieve"]["payload"]["feature_route_provenance"] == [
+            "lexical",
+            "corpus_metadata_conflict",
+        ]
+        assert exact["results"]["retrieve"]["reused_from_memory_id"] == (
+            "mem-diag-replay-override-cache-validated-001-replay"
+        )
+
+
+def test_retrieval_replay_override_cross_family_task_set_preserves_lexical_led_replay() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-override-cross-family-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_override_cross_family_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "step_skipping" in report_text
+        assert "replay_enabled" in report_text
+        assert "| text | lexical_override | 6 | 6 |" in report_text
+        assert "| protocol | lexical_override | 6 | 6 |" in report_text
+    expected_modes = {
+        "diag-replay-override-validated-001": "skip_execute",
+        "diag-replay-override-exact-001": "skip_retrieve_execute",
+        "diag-replay-override-cache-validated-001": "skip_execute",
+        "diag-replay-override-cache-exact-001": "skip_retrieve_execute",
+    }
+    expected_routes = {
+        "diag-replay-override-anchor-001": "auth_rate_limit",
+        "diag-replay-override-validated-001": "auth_rate_limit",
+        "diag-replay-override-exact-001": "auth_rate_limit",
+        "diag-replay-override-cache-anchor-001": "cache_replica_stale_read",
+        "diag-replay-override-cache-validated-001": "cache_replica_stale_read",
+        "diag-replay-override-cache-exact-001": "cache_replica_stale_read",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        for task_id, route in expected_routes.items():
+            retrieve_payload = tasks[task_id]["results"]["retrieve"]["payload"]
+            assert retrieve_payload["feature_route"] == route
+            assert retrieve_payload["feature_route_source"] == "lexical_override"
+            assert retrieve_payload["feature_route_provenance"] == [
+                "lexical",
+                "corpus_metadata_conflict",
+            ]
+        for task_id, reuse_mode in expected_modes.items():
+            assert tasks[task_id]["reuse"]["mode"] == reuse_mode
+            assert tasks[task_id]["reuse_validation"]["matched_expectation"] is True
+
+
+def test_retrieval_replay_override_theme_drift_task_set_blocks_exact_replay_across_families() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-override-theme-drift-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_override_theme_drift_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "fresh_retrieval" in report_text
+        assert "internal_regression" in report_text
+    expected_tasks = {
+        "diag-replay-override-theme-auth-anchor-001",
+        "diag-replay-override-theme-auth-drift-001",
+        "diag-replay-override-theme-cache-anchor-001",
+        "diag-replay-override-theme-cache-drift-001",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        assert set(tasks) == expected_tasks
+        for task_id in (
+            "diag-replay-override-theme-auth-drift-001",
+            "diag-replay-override-theme-cache-drift-001",
+        ):
+            task = tasks[task_id]
+            assert task["reuse"]["mode"] == "none"
+            assert task["results"]["retrieve"]["skipped"] is False
+            assert task["results"]["execute"]["skipped"] is False
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            assert retrieve_payload["feature_route_source"] == "lexical_override"
+            assert retrieve_payload["feature_route_provenance"] == [
+                "lexical",
+                "corpus_metadata_conflict",
+            ]
+            assert task["reuse_validation"]["matched_expectation"] is True
+
+
+def test_retrieval_replay_override_matched_task_set_pairs_exact_replay_and_theme_drift() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-override-matched-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_replay_override_matched_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "step_skipping" in report_text
+        assert "fresh_retrieval" in report_text
+        assert "| text | lexical_override | 6 | 6 |" in report_text
+        assert "| protocol | lexical_override | 6 | 6 |" in report_text
+    exact_positive = {
+        "diag-replay-override-exact-001": "auth_rate_limit",
+        "diag-replay-override-cache-exact-001": "cache_replica_stale_read",
+    }
+    exact_negative = {
+        "diag-replay-override-theme-auth-drift-001": "auth_rate_limit",
+        "diag-replay-override-theme-cache-drift-001": "cache_replica_stale_read",
+    }
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        for task_id, route in exact_positive.items():
+            task = tasks[task_id]
+            assert task["reuse"]["mode"] == "skip_retrieve_execute"
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            assert retrieve_payload["feature_route"] == route
+            assert retrieve_payload["feature_route_source"] == "lexical_override"
+            assert retrieve_payload["feature_route_provenance"] == [
+                "lexical",
+                "corpus_metadata_conflict",
+            ]
+            assert task["reuse_validation"]["matched_expectation"] is True
+        for task_id, route in exact_negative.items():
+            task = tasks[task_id]
+            assert task["reuse"]["mode"] == "none"
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            assert retrieve_payload["feature_route"] == route
+            assert retrieve_payload["feature_route_source"] == "lexical_override"
+            assert retrieve_payload["feature_route_provenance"] == [
+                "lexical",
+                "corpus_metadata_conflict",
+            ]
+            assert task["reuse_validation"]["matched_expectation"] is True
 
 
 def _unix_sockets_available() -> bool:

@@ -116,6 +116,7 @@ class RunContext:
     statepool: StatePool
     memory_store: MemoryStore
     task_corpus_doc_ids: tuple[str, ...] = ()
+    task_corpus_path: str = ""
     metrics: TaskMetrics = field(default_factory=TaskMetrics)
     results: dict[str, StepResult] = field(default_factory=dict)
     state_refs: dict[str, StateRef] = field(default_factory=dict)
@@ -148,6 +149,19 @@ class RunContext:
         else:
             self.metrics.mmap_state_ref_count += 1
             self.metrics.mmap_state_bytes += ref.length
+
+    def record_transfer_inputs(self, refs: list[StateRef]) -> None:
+        textual_kinds = {"DENSE_EVIDENCE", "TOOL_ARTIFACT"}
+        nontext_kinds = {"FEATURE_BUNDLE", "EMBEDDING"}
+        self.metrics.handoff_ref_count += len(refs)
+        for ref in refs:
+            self.metrics.handoff_bytes += ref.length
+            if ref.kind in nontext_kinds:
+                self.metrics.handoff_nontext_ref_count += 1
+                self.metrics.handoff_nontext_bytes += ref.length
+            elif ref.kind in textual_kinds:
+                self.metrics.handoff_textual_ref_count += 1
+                self.metrics.handoff_textual_bytes += ref.length
 
     def resolve_ref(self, state_id: str) -> StateRef:
         ref = self.state_refs.get(state_id)
@@ -393,6 +407,9 @@ class RunContext:
             return []
         return _normalize_string_list(step.params.get("corpus_doc_ids", []))
 
+    def corpus_path(self) -> str:
+        return self.task_corpus_path.strip()
+
     def reuse_signature(self, step: PlanStep | None = None) -> str:
         tags: list[str] = []
         if step is not None:
@@ -436,6 +453,7 @@ class Orchestrator:
         session: RunSession | None = None,
         statepool_config: StatePoolConfig | None = None,
         task_corpus_doc_ids: list[str] | tuple[str, ...] | None = None,
+        task_corpus_path: str = "",
         runtime_profile: RuntimeTaskProfile | dict[str, Any] | None = None,
     ) -> RunContext:
         active_session = session or RunSession(mode=mode)
@@ -458,6 +476,7 @@ class Orchestrator:
             task_corpus_doc_ids=tuple(
                 str(doc_id).strip() for doc_id in (task_corpus_doc_ids or []) if str(doc_id).strip()
             ),
+            task_corpus_path=str(task_corpus_path).strip(),
             runtime_profile=(
                 runtime_profile
                 if isinstance(runtime_profile, RuntimeTaskProfile)

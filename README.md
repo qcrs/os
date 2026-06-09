@@ -146,6 +146,24 @@ The latest deterministic repeat-10 runtime-profile trim refresh bundle is:
 
 - `runs/host_goal_eval_20260608_124900_runtime_profile_trim_refresh/`
 
+The latest controlled serialized API repeat-10 claim-boundary package for the
+current `26`-task fairness surface is:
+
+- `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`
+
+Current benchmark-pack split in the repo:
+
+- `tasks/sample_benchmark.yaml`
+  - formal controlled pack
+  - use this for `communication`, scoped `state_transfer`, and replay-scoped
+    `memory` headline claims
+- `tasks/open_validation_benchmark.yaml`
+  - support-only open validation pack
+  - use this for retrieval / executor / replay boundary checks, retain/revert
+    decisions, and misfire explanation
+  - do not promote this pack into formal contest headline claims without a
+    separate controlled rerun
+
 The earlier deterministic + smoke refresh bundle after the provenance-aware
 route-gate cleanup is:
 
@@ -154,12 +172,19 @@ route-gate cleanup is:
 Headline status from the current host-side evidence stack:
 
 - host env is valid and `AF_UNIX` socket bind works on the host
-- full pytest now passes: `41 passed`
+- full pytest now passes: `56 passed`
 - `runtime.smoke` now has a real module entry and emits visible stdout; the
   latest archived smoke log is non-empty in
   `runs/host_goal_eval_20260608_093111_planner_contract_refresh/`
 - `nsjail` is still missing on the host
 - Docker CLI exists, but the current user still cannot access `/var/run/docker.sock`
+- the latest controlled serialized API `repeat=10` lane package confirms:
+  - `communication` claim: supported
+  - `state_transfer` claim: supported with the explicit
+    `text brief handoff` baseline scope, after the text-side brief was tightened
+    into a more complete executor handoff
+  - `memory` claim: supported for `replay_enabled / step-skipping`, but
+    `assist_only` still does not beat `memory_off`
 
 Historical comprehensive package interpretation from
 `runs/comprehensive_eval_20260607_131113/`:
@@ -291,6 +316,40 @@ Current-worktree serialized API repeat-10 refresh interpretation from
 - this is now the latest formal live API timing bundle on the current
   provenance-aware worktree
 
+Current `26`-task serialized API repeat-10 claim-boundary interpretation from
+`runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`:
+
+- this package refreshes the earlier `230711` formal lane bundle after the
+  text-side `state_transfer` brief was tightened into a more complete executor
+  handoff
+- both modes finish all `10` runs with:
+  - `failure_count = 0`
+  - `expectation_match_rate = 1.00`
+- aggregate still favors `protocol`:
+  - control bytes: `150876.20 -> 128743.80`
+  - live API total tokens: `29727.80 -> 19882.30`
+  - end-to-end wall-clock: `127173.46 ms -> 100976.55 ms`
+- the more important contest-claim reading comes from the lane tables:
+  - `communication`
+    - control bytes: `5838.25 -> 4944.60`
+    - total tokens: `1140.25 -> 727.70`
+    - task time: `5133.40 ms -> 3907.84 ms`
+  - `state_transfer`
+    - text-side baseline remains `text brief handoff to executor`
+    - the text-side brief is now a more complete executor handoff, so the text
+      baseline is more honest rather than cheaper
+    - control bytes: `5148.30 -> 4603.23`
+    - handoff textual bytes: `1725.00 -> 738.00`
+    - handoff non-text bytes: `0.00 -> 1704.67`
+    - total tokens: `1116.07 -> 698.53`
+    - task time: `4840.01 -> 3804.30`
+  - `memory`
+    - `replay_enabled` still shows stable step-skipping gain
+    - `assist_only` still does not beat `memory_off`
+- use this package when the question is:
+  - what the current host-mainline can honestly claim for the contest surface
+  - what it still cannot claim without overstatement
+
 Interpretation boundary:
 
 - `runs/comprehensive_eval_20260607_131113/` remains the older assist-only comprehensive baseline and broader host-side capability package
@@ -306,6 +365,10 @@ Interpretation boundary:
 - `runs/host_goal_eval_20260608_093111_planner_contract_refresh/` is now the
   latest full current-worktree bundle with regression gate, deterministic
   repeat-10, and serialized API repeat-10
+- `runs/host_goal_eval_20260608_230711_26task_api_repeat10_serial/` remains the
+  earlier formal `26`-task lane package before the text-side brief fidelity
+  refresh; use it as the historical comparison point rather than the latest
+  truth
 - `runs/host_goal_eval_20260608_120619_executor_candidate_tool_refresh/`
   is the latest deterministic bundle for the executor candidate-tool boundary;
   it keeps `tool_candidates` in `FEATURE_BUNDLE` without echoing them into the
@@ -321,6 +384,9 @@ Interpretation boundary:
   runtime memory-query prefilters
 - for current live API timing claims on the replay-aware `18`-task host
   mainline, cite `runs/host_goal_eval_20260608_093111_planner_contract_refresh/`
+- for the current `26`-task fairness / contest-claim surface under serialized
+  live API `repeat=10`, cite
+  `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`
 - for the first provenance-aware route-proof bundle before the planner fix,
   cite `runs/host_goal_eval_20260608_084835_provenance_gate_refresh/`
 
@@ -340,10 +406,13 @@ Use these files for the authoritative current snapshot:
 - `runs/host_goal_eval_20260608_122921_exact_replay_drop_doc_preference_refresh/deterministic_repeat10/benchmark_report.md`
 - `runs/host_goal_eval_20260608_124900_runtime_profile_trim_refresh/deterministic_repeat10/benchmark_report.md`
 - `runs/host_goal_eval_20260608_130836_runtime_drop_reuse_tags_refresh/deterministic_repeat10/benchmark_report.md`
+- `runs/host_goal_eval_20260608_230711_26task_api_repeat10_serial/benchmark_report.md`
+- `runs/host_goal_eval_20260608_230711_26task_api_repeat10_serial/benchmark_results.json`
 - `runs/host_goal_eval_20260608_084835_provenance_gate_refresh/SUMMARY.md`
 - `runs/host_goal_eval_20260608_084835_provenance_gate_refresh/deterministic_repeat10/benchmark_report.md`
 - `runs/host_goal_eval_20260608_093111_planner_contract_refresh/pytest_q.txt`
 - `runs/host_goal_eval_20260608_093111_planner_contract_refresh/runtime_smoke.txt`
+- `docs/progress/host_goal_26task_serialized_api_decision_20260608.md`
 
 ## Current Engineering Scope
 

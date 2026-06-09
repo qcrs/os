@@ -375,11 +375,16 @@ class DeterministicLLMClient:
                     else parse_text_summarizer_handoff(user_content)
                 )
             reusable_steps = list(payload.get("reusable_steps") or ["retrieve", "execute"])
-            summary = (
-                f"{payload['summary_hint']}\n"
-                f"Evidence: {payload['evidence_text']}\n"
-                f"Playbook:\n{payload['actions_text']}"
-            )
+            if compact_protocol:
+                action_lines = [line.strip() for line in str(payload["actions_text"]).splitlines() if line.strip()]
+                action_summary = "; ".join(action_lines[:3]) if action_lines else "no action emitted"
+                summary = f"{payload['summary_hint']} Actions: {action_summary}"
+            else:
+                summary = (
+                    f"{payload['summary_hint']}\n"
+                    f"Evidence: {payload['evidence_text']}\n"
+                    f"Playbook:\n{payload['actions_text']}"
+                )
             summary_payload = (
                 {
                     "s": summary,

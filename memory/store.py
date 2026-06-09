@@ -695,13 +695,14 @@ class MemoryStore:
                   AND m.status = 'active'
                   AND me.faiss_status = 'active'
                   AND me.encoder_id = ?
-                  AND (m.summary LIKE ? OR m.memory_id LIKE ?)
+                  AND (m.summary LIKE ? OR m.memory_id LIKE ? OR me.embedding_text LIKE ?)
                 ORDER BY m.created_at_ns DESC
                 LIMIT ?
                 """,
                 (
                     query.task_theme,
                     query.encoder_id or self.embedder.encoder_id,
+                    like_text,
                     like_text,
                     like_text,
                     query.top_k,

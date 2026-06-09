@@ -1,0 +1,114 @@
+tasks:
+  - task_id: diag-retrieval-mixed-latency-worker-001
+    task_group: cache_chain
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that latency worker-queue retrieval still wins under wrong-family task context and a widened mixed preferred doc set.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_doc_ids: [cache-invalid-anchor, session-auth-anchor, latency-db-anchor]
+    evidence_text: This retrieval diagnostic uses a widened mixed doc set plus cache-family task context, but the query evidence should still surface the latency worker-queue route.
+    tags: [latency, database, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should still surface the latency worker-queue
+      route even though preferred docs mix cache, session, and the in-family DB
+      path.
+
+  - task_id: diag-retrieval-mixed-latency-db-control-001
+    task_group: cache_chain
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the latency DB route still wins under the same wrong-family task context and widened mixed preferred doc set when the query really points there.
+    query: release-17 orders latency db pool saturation slow query
+    corpus_doc_ids: [cache-invalid-anchor, session-auth-anchor, latency-db-anchor]
+    evidence_text: This retrieval diagnostic keeps the same mixed preferred docs and wrong-family context, but the query evidence should still recover the latency DB route.
+    tags: [latency, worker, tls]
+    reuse_tags: [latency, worker, tls]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should keep the latency DB route on top under
+      the same widened mixed doc set, proving retrieval has not collapsed into a
+      generic worker bias.
+
+  - task_id: diag-retrieval-mixed-cache-replica-001
+    task_group: session_chain
+    task_order: 3
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that cache replica retrieval still wins under wrong-family task context and a widened mixed preferred doc set.
+    query: reporting replica lag after failover caused stale reads
+    corpus_doc_ids: [session-auth-anchor, latency-db-anchor, cache-invalid-anchor]
+    evidence_text: This retrieval diagnostic uses a widened mixed doc set plus session-family task context, but the query evidence should still surface the cache replica route.
+    tags: [cache, inventory, invalidation]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should still surface the cache replica route
+      even though preferred docs mix session, latency, and the in-family
+      invalidation path.
+
+  - task_id: diag-retrieval-mixed-cache-invalidation-control-001
+    task_group: session_chain
+    task_order: 4
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the cache invalidation route still wins under the same wrong-family task context and widened mixed preferred doc set when the query really points there.
+    query: inventory aggregate invalidation lag after sync burst
+    corpus_doc_ids: [session-auth-anchor, latency-db-anchor, cache-invalid-anchor]
+    evidence_text: This retrieval diagnostic keeps the same mixed preferred docs and wrong-family context, but the query evidence should still recover the cache invalidation route.
+    tags: [cache, inventory, replica]
+    reuse_tags: [cache, inventory, replica]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should keep the cache invalidation route on top
+      under the same widened mixed doc set, proving retrieval has not collapsed
+      into a generic replica bias.
+
+  - task_id: diag-retrieval-mixed-session-rate-limit-001
+    task_group: latency_chain
+    task_order: 5
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that auth rate-limit retrieval still wins under wrong-family task context and a widened mixed preferred doc set.
+    query: login failures from aggressive backoff window and auth rate limiter
+    corpus_doc_ids: [latency-db-anchor, cache-invalid-anchor, session-auth-anchor]
+    evidence_text: This retrieval diagnostic uses a widened mixed doc set plus latency-family task context, but the query evidence should still surface the auth rate-limit route.
+    tags: [auth, session, jwks]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should still surface the auth rate-limit route
+      even though preferred docs mix latency, cache, and the in-family
+      session-drift path.
+
+  - task_id: diag-retrieval-mixed-session-drift-control-001
+    task_group: latency_chain
+    task_order: 6
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the auth session-drift route still wins under the same wrong-family task context and widened mixed preferred doc set when the query really points there.
+    query: sso callback issuer mismatch stale jwks session cookies
+    corpus_doc_ids: [latency-db-anchor, cache-invalid-anchor, session-auth-anchor]
+    evidence_text: This retrieval diagnostic keeps the same mixed preferred docs and wrong-family context, but the query evidence should still recover the auth session-drift route.
+    tags: [auth, session, rate-limit]
+    reuse_tags: [auth, session, rate-limit]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should keep the auth session-drift route on top
+      under the same widened mixed doc set, proving retrieval has not collapsed
+      into a generic rate-limit bias.

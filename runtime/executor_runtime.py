@@ -15,6 +15,9 @@ import msgpack
 from protocol.messages import PlanStep, StateRef, StepResult
 from statepool.store import MMAP_FILE_STORAGE, PY_SHARED_MEMORY_STORAGE, StatePool
 
+MIN_DIRECT_ROUTE_CONFIDENCE = 0.70
+MIN_DIRECT_EVIDENCE_SIGNALS = 2
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -298,6 +301,7 @@ def build_feature_bundle(
     reuse_signature: str,
     reused_memory: bool,
     retrieved_hints: list[dict[str, Any]] | None = None,
+    memory_prior: dict[str, Any] | None = None,
     registry: ToolRegistry | None = None,
 ) -> dict[str, Any]:
     normalized_query = query.strip()
@@ -313,9 +317,50 @@ def build_feature_bundle(
         tags=normalized_tags,
         limit=3,
     )
-    lexical_match = lexical_candidates[0] if lexical_candidates else active_registry.fallback_match()
-    lexical_ambiguous = _has_ambiguous_tool_candidates(lexical_candidates)
     selected_hint = _select_retrieved_hint(retrieved_hints or [], registry=active_registry)
+    candidate_pool = list(lexical_candidates)
+    baseline_lexical_match = (
+        candidate_pool[0] if candidate_pool else active_registry.fallback_match()
+    )
+    memory_prior_match = _normalize_memory_prior(memory_prior, registry=active_registry)
+    memory_prior_id = str((memory_prior or {}).get("memory_id", "")).strip()
+    memory_prior_route = "" if memory_prior_match is None else memory_prior_match.route
+    memory_prior_tool_name = "" if memory_prior_match is None else memory_prior_match.tool_name
+    memory_prior_source_task_id = str((memory_prior or {}).get("source_task_id", "")).strip()
+    memory_prior_summary = str((memory_prior or {}).get("summary", "")).strip()
+    memory_prior_confidence = _parse_float_or_default(
+        (memory_prior or {}).get("confidence"),
+        default=0.0,
+    )
+    memory_prior_applied = False
+    memory_candidate_reduction = 0
+    if memory_prior_match is not None and candidate_pool:
+        supported_by_hint = False
+        if selected_hint is not None:
+            hint_match_for_prior, _ = selected_hint
+            supported_by_hint = (
+                hint_match_for_prior.route == memory_prior_match.route
+                and hint_match_for_prior.tool_name == memory_prior_match.tool_name
+            )
+        supported_candidates = [
+            candidate
+            for candidate in candidate_pool
+            if candidate.route == memory_prior_match.route
+            and candidate.tool_name == memory_prior_match.tool_name
+        ]
+        if supported_candidates and (
+            supported_by_hint
+            or (
+                baseline_lexical_match.route == memory_prior_match.route
+                and baseline_lexical_match.tool_name == memory_prior_match.tool_name
+            )
+        ):
+            original_count = len(candidate_pool)
+            candidate_pool = supported_candidates
+            memory_candidate_reduction = max(0, original_count - len(candidate_pool))
+            memory_prior_applied = memory_candidate_reduction > 0
+    lexical_match = candidate_pool[0] if candidate_pool else active_registry.fallback_match()
+    lexical_ambiguous = _has_ambiguous_tool_candidates(candidate_pool)
     hint_doc_ids: list[str] = []
     hint_route = ""
     hint_tool_name = ""
@@ -328,7 +373,32 @@ def build_feature_bundle(
             route_confidence = 0.0
             tool_candidates = _serialize_tool_candidates(
                 selected_match=match,
-                lexical_candidates=lexical_candidates,
+                lexical_candidates=candidate_pool,
+                selected_source=route_source,
+            )
+        elif lexical_match.score > 0 and not _match_passes_threshold(lexical_match):
+            match = active_registry.fallback_match()
+            route_source = "low_confidence_abstain"
+            route_provenance = ["lexical_below_threshold"]
+            route_confidence = 0.0
+            tool_candidates = _serialize_tool_candidates(
+                selected_match=match,
+                lexical_candidates=candidate_pool,
+                selected_source=route_source,
+            )
+        elif lexical_match.score > 0 and not _match_has_minimum_evidence_support(
+            lexical_match,
+            primary_evidence_text=primary_evidence_text,
+            evidence_text=evidence_lower,
+            registry=active_registry,
+        ):
+            match = active_registry.fallback_match()
+            route_source = "low_confidence_abstain"
+            route_provenance = ["lexical_thin_support"]
+            route_confidence = 0.0
+            tool_candidates = _serialize_tool_candidates(
+                selected_match=match,
+                lexical_candidates=candidate_pool,
                 selected_source=route_source,
             )
         else:
@@ -338,7 +408,7 @@ def build_feature_bundle(
             route_confidence = _route_confidence_from_match(lexical_match)
             tool_candidates = _serialize_tool_candidates(
                 selected_match=match,
-                lexical_candidates=lexical_candidates,
+                lexical_candidates=candidate_pool,
                 selected_source=route_source,
             )
     else:
@@ -358,18 +428,45 @@ def build_feature_bundle(
             route_confidence = max(0.80, _route_confidence_from_match(lexical_match))
             tool_candidates = _serialize_tool_candidates(
                 selected_match=match,
-                lexical_candidates=lexical_candidates,
+                lexical_candidates=candidate_pool,
                 selected_source=route_source,
             )
         elif lexical_supported:
-            if lexical_ambiguous:
+            if not _match_passes_threshold(lexical_match):
+                match = active_registry.fallback_match()
+                route_source = "low_confidence_abstain"
+                route_provenance = ["lexical_below_threshold", "corpus_metadata_conflict"]
+                route_confidence = 0.0
+                tool_candidates = _serialize_tool_candidates(
+                    selected_match=match,
+                    lexical_candidates=candidate_pool,
+                    selected_source=route_source,
+                    extra_candidates=[(hint_match, "corpus_metadata_conflict")],
+                )
+            elif lexical_ambiguous:
                 match = active_registry.fallback_match()
                 route_source = "ambiguous_candidates_abstain"
                 route_provenance = ["lexical_ambiguous", "corpus_metadata_conflict"]
                 route_confidence = 0.0
                 tool_candidates = _serialize_tool_candidates(
                     selected_match=match,
-                    lexical_candidates=lexical_candidates,
+                    lexical_candidates=candidate_pool,
+                    selected_source=route_source,
+                    extra_candidates=[(hint_match, "corpus_metadata_conflict")],
+                )
+            elif not _match_has_minimum_evidence_support(
+                lexical_match,
+                primary_evidence_text=primary_evidence_text,
+                evidence_text=evidence_lower,
+                registry=active_registry,
+            ):
+                match = active_registry.fallback_match()
+                route_source = "low_confidence_abstain"
+                route_provenance = ["lexical_thin_support", "corpus_metadata_conflict"]
+                route_confidence = 0.0
+                tool_candidates = _serialize_tool_candidates(
+                    selected_match=match,
+                    lexical_candidates=candidate_pool,
                     selected_source=route_source,
                     extra_candidates=[(hint_match, "corpus_metadata_conflict")],
                 )
@@ -380,7 +477,7 @@ def build_feature_bundle(
                 route_confidence = _route_confidence_from_match(lexical_match)
                 tool_candidates = _serialize_tool_candidates(
                     selected_match=match,
-                    lexical_candidates=lexical_candidates,
+                    lexical_candidates=candidate_pool,
                     selected_source=route_source,
                     extra_candidates=[(hint_match, "corpus_metadata_conflict")],
                 )
@@ -418,6 +515,26 @@ def build_feature_bundle(
         "hint_route": hint_route,
         "hint_tool_name": hint_tool_name,
         "tool_candidates": tool_candidates,
+        "memory_prior_id": memory_prior_id,
+        "memory_prior_route": memory_prior_route,
+        "memory_prior_tool_name": memory_prior_tool_name,
+        "memory_prior_source_task_id": memory_prior_source_task_id,
+        "memory_prior_summary": memory_prior_summary,
+        "memory_prior_confidence": memory_prior_confidence,
+        "memory_prior_applied": bool(memory_prior_applied),
+        "memory_candidate_count_before": len(lexical_candidates),
+        "memory_candidate_count_after": len(candidate_pool),
+        "memory_candidate_reduction": int(memory_candidate_reduction),
+        "memory_prior_route_agreement": bool(
+            memory_prior_match is not None
+            and match.route == memory_prior_match.route
+            and match.tool_name == memory_prior_match.tool_name
+        ),
+        "memory_prior_rescue": bool(
+            memory_prior_applied
+            and memory_candidate_reduction > 0
+            and match.route != "generic_triage"
+        ),
         "reuse_signature": reuse_signature,
         "reused_memory": bool(reused_memory),
         "evidence_chars": len(evidence_text),
@@ -715,10 +832,75 @@ def _normalize_retrieved_hint(
     return None
 
 
+def _normalize_memory_prior(
+    raw_prior: dict[str, Any] | None,
+    *,
+    registry: ToolRegistry,
+) -> ToolMatch | None:
+    if not raw_prior:
+        return None
+    route = str(raw_prior.get("route", "")).strip()
+    tool_name = str(raw_prior.get("tool_name", "")).strip()
+    if tool_name:
+        try:
+            tool_spec = registry.get(tool_name)
+        except KeyError:
+            return None
+        if route and route != tool_spec.route:
+            return None
+        resolved_route = tool_spec.route
+        resolved_tool_name = tool_spec.name
+    elif route:
+        tool_spec = registry.maybe_get_for_route(route)
+        if tool_spec is None:
+            return None
+        resolved_route = tool_spec.route
+        resolved_tool_name = tool_spec.name
+    else:
+        return None
+    confidence = _parse_float_or_default(raw_prior.get("confidence"), default=0.0)
+    score = max(1, int(round(100.0 * confidence)))
+    return ToolMatch(
+        tool_name=resolved_tool_name,
+        route=resolved_route,
+        matched_signals=(),
+        matched_tags=(),
+        score=score,
+    )
+
+
 def _route_confidence_from_match(match: ToolMatch) -> float:
     if match.score <= 0 or match.route == "generic_triage":
         return 0.0
     return min(0.95, 0.45 + (0.05 * float(match.score)))
+
+
+def _match_passes_threshold(match: ToolMatch) -> bool:
+    return _route_confidence_from_match(match) >= MIN_DIRECT_ROUTE_CONFIDENCE
+
+
+def _match_has_minimum_evidence_support(
+    match: ToolMatch,
+    *,
+    primary_evidence_text: str,
+    evidence_text: str,
+    registry: ToolRegistry,
+) -> bool:
+    if match.score <= 0 or match.route == "generic_triage":
+        return False
+    try:
+        spec = registry.get(match.tool_name)
+    except KeyError:
+        return False
+    evidence_hits = tuple(
+        dict.fromkeys(
+            [
+                *_match_signals(primary_evidence_text, spec.match_patterns),
+                *_match_signals(evidence_text, spec.match_patterns),
+            ]
+        )
+    )
+    return len(evidence_hits) >= MIN_DIRECT_EVIDENCE_SIGNALS
 
 
 def _has_ambiguous_tool_candidates(candidates: list[ToolMatch]) -> bool:
@@ -792,24 +974,62 @@ def _feature_bundle_from_transfer_brief(
     tags: list[str] = []
     query = str(query_text or "").strip()
     route = ""
+    tool_name = ""
     route_source = "text_brief"
+    route_confidence = 0.0
+    route_provenance: list[str] = []
     matched_signals: list[str] = []
+    matched_tags: list[str] = []
     hint_doc_ids: list[str] = []
+    hint_route = ""
+    hint_tool_name = ""
+    tool_candidates: list[dict[str, Any]] = []
+    match_score: int | None = None
     for line in lines:
         if line.startswith("Query: ") and not query:
             query = line.removeprefix("Query: ").strip()
         elif line.startswith("Suggested route: "):
-            route = line.removeprefix("Suggested route: ").strip()
+            route = _normalize_brief_scalar(line.removeprefix("Suggested route: ").strip())
+        elif line.startswith("Suggested tool: "):
+            tool_name = _normalize_brief_scalar(line.removeprefix("Suggested tool: ").strip())
         elif line.startswith("Route source: "):
             route_source = line.removeprefix("Route source: ").strip() or "text_brief"
+        elif line.startswith("Route confidence: "):
+            route_confidence = _parse_float_or_default(
+                line.removeprefix("Route confidence: ").strip(),
+                default=0.0,
+            )
+        elif line.startswith("Route provenance: "):
+            raw_provenance = line.removeprefix("Route provenance: ").strip()
+            if raw_provenance and raw_provenance.lower() != "none":
+                route_provenance = [item.strip() for item in raw_provenance.split(",") if item.strip()]
+        elif line.startswith("Match score: "):
+            match_score = _parse_int_or_default(
+                line.removeprefix("Match score: ").strip(),
+                default=0,
+            )
+        elif line.startswith("Tool candidates: "):
+            tool_candidates = _parse_transfer_tool_candidates(
+                line.removeprefix("Tool candidates: ").strip()
+            )
         elif line.startswith("Matched signals: "):
             raw_signals = line.removeprefix("Matched signals: ").strip()
             if raw_signals and raw_signals.lower() != "none":
                 matched_signals = [item.strip() for item in raw_signals.split(",") if item.strip()]
+        elif line.startswith("Matched tags: "):
+            raw_tags = line.removeprefix("Matched tags: ").strip()
+            if raw_tags and raw_tags.lower() != "none":
+                matched_tags = [item.strip() for item in raw_tags.split(",") if item.strip()]
         elif line.startswith("Retrieved docs: "):
-            raw_doc_ids = line.removeprefix("Retrieved docs: ").strip()
+            continue
+        elif line.startswith("Hint docs: "):
+            raw_doc_ids = line.removeprefix("Hint docs: ").strip()
             if raw_doc_ids and raw_doc_ids.lower() != "none":
                 hint_doc_ids = [item.strip() for item in raw_doc_ids.split(",") if item.strip()]
+        elif line.startswith("Hint route: "):
+            hint_route = _normalize_brief_scalar(line.removeprefix("Hint route: ").strip())
+        elif line.startswith("Hint tool: "):
+            hint_tool_name = _normalize_brief_scalar(line.removeprefix("Hint tool: ").strip())
     bundle = build_feature_bundle(
         query=query,
         evidence_text=evidence_text,
@@ -822,22 +1042,90 @@ def _feature_bundle_from_transfer_brief(
         route_tool = registry.maybe_get_for_route(route)
         if route_tool is not None:
             bundle["route"] = route_tool.route
-            bundle["tool_name"] = route_tool.name
+            bundle["tool_name"] = tool_name or route_tool.name
+    elif tool_name:
+        try:
+            bundle["tool_name"] = registry.get(tool_name).name
+        except KeyError:
+            pass
     if matched_signals:
         bundle["matched_signals"] = matched_signals
+    if matched_tags:
+        bundle["matched_tags"] = matched_tags
     if hint_doc_ids:
         bundle["hint_doc_ids"] = hint_doc_ids
+    if hint_route:
+        bundle["hint_route"] = hint_route
+    if hint_tool_name:
+        bundle["hint_tool_name"] = hint_tool_name
     bundle["route_source"] = route_source
+    if route_confidence > 0.0 or route_source.endswith("abstain"):
+        bundle["route_confidence"] = route_confidence
+    if route_provenance:
+        bundle["route_provenance"] = route_provenance
+    if match_score is not None:
+        bundle["match_score"] = match_score
     bundle["transfer_strategy"] = "text_brief"
-    bundle["tool_candidates"] = _serialize_tool_candidates(
+    bundle["tool_candidates"] = tool_candidates or _serialize_tool_candidates(
         selected_match=ToolMatch(
             tool_name=str(bundle.get("tool_name", "")),
             route=str(bundle.get("route", "generic_triage")),
             matched_signals=tuple(str(item) for item in bundle.get("matched_signals", [])),
-            matched_tags=tuple(),
+            matched_tags=tuple(str(item) for item in bundle.get("matched_tags", [])),
             score=int(bundle.get("match_score", 0)),
         ),
         lexical_candidates=[],
         selected_source="text_brief",
     )
     return bundle
+
+
+def _parse_transfer_tool_candidates(raw_value: str) -> list[dict[str, Any]]:
+    text = str(raw_value).strip()
+    if not text or text.lower() == "none":
+        return []
+    parsed: list[dict[str, Any]] = []
+    for item in text.split(";"):
+        token = item.strip()
+        if not token:
+            continue
+        try:
+            tool_and_route, source, score_text = token.rsplit("#", 2)
+            tool_name, route = tool_and_route.split("@", 1)
+        except ValueError:
+            continue
+        tool_name = tool_name.strip()
+        route = route.strip()
+        source = source.strip()
+        if not tool_name or not route:
+            continue
+        parsed.append(
+            {
+                "tool_name": tool_name,
+                "route": route,
+                "score": _parse_int_or_default(score_text.strip(), default=0),
+                "matched_signals": [],
+                "matched_tags": [],
+                "source": source,
+            }
+        )
+    return parsed
+
+
+def _parse_float_or_default(raw_value: str, *, default: float) -> float:
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_int_or_default(raw_value: str, *, default: int) -> int:
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_brief_scalar(raw_value: str) -> str:
+    text = str(raw_value).strip()
+    return "" if text.lower() == "none" else text

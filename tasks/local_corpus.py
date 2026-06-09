@@ -29,8 +29,30 @@ class CorpusDoc:
         return f"{self.title}\n{self.text}".strip()
 
 
+@dataclass(frozen=True)
+class _CorpusDocScore:
+    doc: CorpusDoc
+    semantic: float
+    lexical: float
+    tag_overlap: float
+    theme_bonus: float
+    group_bonus: float
+    preference_bonus: float
+
+    @property
+    def combined_score(self) -> float:
+        return (
+            self.semantic
+            + (0.20 * self.lexical)
+            + (0.25 * self.tag_overlap)
+            + self.preference_bonus
+            + self.theme_bonus
+            + self.group_bonus
+        )
+
+
 def load_corpus_docs(path: str | Path | None = None) -> dict[str, CorpusDoc]:
-    corpus_path = Path(path) if path is not None else DEFAULT_TASK_CORPUS
+    corpus_path = Path(path) if path else DEFAULT_TASK_CORPUS
     payload = yaml.safe_load(corpus_path.read_text(encoding="utf-8")) or {}
     docs = payload["docs"] if isinstance(payload, dict) else payload
     loaded: dict[str, CorpusDoc] = {}
@@ -70,7 +92,7 @@ def retrieve_corpus_docs(
     query_vector = embedder.embed_text(query)
     query_terms = _normalized_terms(query)
     tag_terms = {tag.strip().lower() for tag in tags if tag.strip()}
-    scored: list[tuple[float, CorpusDoc]] = []
+    scored: list[_CorpusDocScore] = []
     for doc in candidates:
         doc_vector = embedder.embed_text(doc.full_text)
         semantic = float(np.dot(query_vector, doc_vector))
@@ -82,17 +104,55 @@ def retrieve_corpus_docs(
         # close replay/control ties, but not strong enough to override clearly better
         # lexical/semantic evidence outside the hinted doc set.
         preference_bonus = 0.20 if doc.doc_id in preferred_doc_ids else 0.0
-        score = (
-            semantic
-            + (0.20 * lexical)
-            + (0.25 * tag_overlap)
-            + preference_bonus
-            + theme_bonus
-            + group_bonus
+        scored.append(
+            _CorpusDocScore(
+                doc=doc,
+                semantic=semantic,
+                lexical=lexical,
+                tag_overlap=tag_overlap,
+                theme_bonus=theme_bonus,
+                group_bonus=group_bonus,
+                preference_bonus=preference_bonus,
+            )
         )
-        scored.append((score, doc))
-    scored.sort(key=lambda item: (-item[0], item[1].doc_id))
-    return [doc for _score, doc in scored[:top_k]]
+    if not scored:
+        return []
+
+    # Borrow a small-candidate-first retrieval shape: overfetch a few candidates from
+    # independent weak signals, then rerank only inside that pool.
+    signal_window = min(len(scored), max(top_k, top_k * 2))
+    semantic_ids = set(_top_doc_ids(scored, key=lambda item: item.semantic, limit=signal_window))
+    lexical_ids = set(
+        _top_doc_ids(
+            scored,
+            key=lambda item: item.lexical,
+            limit=signal_window,
+            positive_only=True,
+        )
+    )
+    tag_ids = set(
+        _top_doc_ids(
+            scored,
+            key=lambda item: item.tag_overlap,
+            limit=signal_window,
+            positive_only=True,
+        )
+    )
+    baseline_ids = set(_top_doc_ids(scored, key=lambda item: item.combined_score, limit=top_k))
+    candidate_ids = semantic_ids | lexical_ids | tag_ids | baseline_ids | preferred_doc_ids
+    shortlisted = [item for item in scored if item.doc.doc_id in candidate_ids]
+    shortlisted.sort(
+        key=lambda item: (
+            -_rerank_score(
+                item,
+                semantic_ids=semantic_ids,
+                lexical_ids=lexical_ids,
+                tag_ids=tag_ids,
+            ),
+            item.doc.doc_id,
+        )
+    )
+    return [item.doc for item in shortlisted[:top_k]]
 
 
 def render_corpus_evidence(docs: list[CorpusDoc]) -> str:
@@ -138,3 +198,32 @@ def resolve_corpus_feature_hint(
 
 def _normalized_terms(text: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9_/-]+", text.lower()) if len(token) >= 3}
+
+
+def _top_doc_ids(
+    scored: list[_CorpusDocScore],
+    *,
+    key,
+    limit: int,
+    positive_only: bool = False,
+) -> list[str]:
+    ranked = sorted(scored, key=lambda item: (-float(key(item)), item.doc.doc_id))
+    if positive_only:
+        ranked = [item for item in ranked if float(key(item)) > 0.0]
+    return [item.doc.doc_id for item in ranked[:limit]]
+
+
+def _rerank_score(
+    item: _CorpusDocScore,
+    *,
+    semantic_ids: set[str],
+    lexical_ids: set[str],
+    tag_ids: set[str],
+) -> float:
+    support_count = (
+        int(item.doc.doc_id in semantic_ids)
+        + int(item.doc.doc_id in lexical_ids)
+        + int(item.doc.doc_id in tag_ids)
+    )
+    support_bonus = 0.03 * max(0, support_count - 1)
+    return item.combined_score + support_bonus

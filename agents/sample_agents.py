@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+import msgpack
+
 from agents.base_agent import BaseAgent
 from protocol.messages import (
     Capability,
@@ -34,6 +36,83 @@ from tasks.sample_tasks import SampleTask
 
 PROTOCOL_PLANNER_TAG = "sb-plan-v1"
 PROTOCOL_SUMMARIZER_TAG = "sb-summary-v1"
+MAX_MEMORY_ASSIST_HINT_CHARS = 160
+MAX_PROTOCOL_SUMMARY_DOC_IDS = 3
+MAX_PROTOCOL_SUMMARY_SIGNALS = 4
+
+
+def _build_memory_assist_lookup_text(
+    *,
+    query: str,
+    task_theme: str,
+    tags: list[str],
+    reuse_signature: str,
+    retrieved_doc_ids: list[str],
+    retrieved_hints: list[dict[str, str]],
+) -> str:
+    hint_parts = [
+        f"{hint.get('route', '').strip()}/{hint.get('tool_name', '').strip()}"
+        for hint in retrieved_hints
+        if str(hint.get("route", "")).strip() or str(hint.get("tool_name", "")).strip()
+    ]
+    return "\n".join(
+        [
+            "StateBus assist memory lookup",
+            f"Task theme: {task_theme}",
+            f"Query: {query.strip()}",
+            f"Tags: {', '.join(tags) if tags else 'none'}",
+            f"Retrieved docs: {', '.join(retrieved_doc_ids) if retrieved_doc_ids else 'none'}",
+            f"Corpus hints: {', '.join(hint_parts) if hint_parts else 'none'}",
+            f"Reuse signature: {reuse_signature}",
+        ]
+    )
+
+
+def _build_memory_commit_embedding_text(
+    *,
+    memory_purpose: str,
+    task_theme: str,
+    query: str,
+    summary: str,
+    route: str,
+    route_source: str,
+    tool_name: str,
+    retrieved_doc_ids: list[str],
+    reuse_signature: str,
+    reusable_steps: list[str],
+    tags: list[str],
+    evidence_state_ids: list[str],
+) -> str:
+    return "\n".join(
+        [
+            f"memory_purpose: {memory_purpose}",
+            f"task_theme: {task_theme}",
+            f"query: {query.strip()}",
+            f"summary: {summary.strip()}",
+            f"route: {route.strip()}",
+            f"route_source: {route_source.strip()}",
+            f"tool_name: {tool_name.strip()}",
+            f"retrieved_doc_ids: {', '.join(retrieved_doc_ids) if retrieved_doc_ids else 'none'}",
+            f"reuse_signature: {reuse_signature}",
+            f"reusable_steps: {', '.join(reusable_steps) if reusable_steps else 'none'}",
+            f"tags: {', '.join(tags) if tags else 'none'}",
+            f"evidence_state_ids: {', '.join(evidence_state_ids) if evidence_state_ids else 'none'}",
+        ]
+    )
+
+
+def _build_memory_prior(hit: Any) -> dict[str, Any] | None:
+    route = str(getattr(hit, "metadata", {}).get("feature_route", "")).strip()
+    if not route or route == "generic_triage":
+        return None
+    return {
+        "memory_id": str(getattr(hit, "memory_id", "")).strip(),
+        "source_task_id": str(getattr(hit, "source_task_id", "")).strip(),
+        "route": route,
+        "confidence": float(getattr(hit, "confidence", 0.0)),
+        "summary": str(getattr(hit, "summary", "")).strip(),
+        "tool_name": str(getattr(hit, "metadata", {}).get("feature_tool_name", "")).strip(),
+    }
 
 
 def _build_capability(
@@ -97,25 +176,27 @@ class RetrieverAgent(BaseAgent):
             task_theme=str(getattr(ctx, "task_theme", "")),
             corpus_doc_ids=preferred_doc_ids,
             embedder=ctx.memory_store.embedder,
+            corpus_path=ctx.corpus_path(),
         )
         retrieved_hints = extract_corpus_feature_hints(corpus_docs)
         fresh_evidence_text = render_corpus_evidence(corpus_docs)
-        fresh_bundle = build_feature_bundle(
-            query=str(step.params["query"]),
-            evidence_text=fresh_evidence_text,
-            tags=list(step.params.get("tags", [])),
-            reuse_signature=reuse_signature,
-            reused_memory=False,
-            retrieved_hints=retrieved_hints,
-        )
 
         hits = []
         accepted_hit = None
         memory_hint_route = ""
+        memory_prior = None
         if step.params.get("allow_memory_reuse") and ctx.runtime_gates["allow_memory_assist"]:
+            assist_lookup_text = _build_memory_assist_lookup_text(
+                query=str(step.params["query"]),
+                task_theme=str(getattr(ctx, "task_theme", "")),
+                tags=list(step.params.get("tags", [])),
+                reuse_signature=reuse_signature,
+                retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
+                retrieved_hints=retrieved_hints,
+            )
             hits = ctx.search_memory(
                 task_theme=ctx.task_theme,
-                query_text=str(step.params["query"]),
+                query_text=assist_lookup_text,
                 top_k=3,
                 tags=[],
                 tags_any=[],
@@ -125,25 +206,40 @@ class RetrieverAgent(BaseAgent):
                 required_metadata={"memory_purpose": "assist"},
             )
             if hits:
-                for candidate in hits:
-                    candidate_route = str(candidate.metadata.get("feature_route", "")).strip()
-                    if (
-                        candidate_route
-                        and candidate_route == fresh_bundle["route"]
-                        and candidate_route != "generic_triage"
-                    ):
-                        accepted_hit = candidate
-                        memory_hint_route = candidate_route
-                        ctx.note_reuse(candidate, reuse_mode="assist")
-                        break
-                if accepted_hit is None:
-                    ctx.note_rejected_memory(hits[0])
+                memory_prior = _build_memory_prior(hits[0])
+
+        fresh_bundle = build_feature_bundle(
+            query=str(step.params["query"]),
+            evidence_text=fresh_evidence_text,
+            tags=list(step.params.get("tags", [])),
+            reuse_signature=reuse_signature,
+            reused_memory=False,
+            retrieved_hints=retrieved_hints,
+            memory_prior=memory_prior,
+        )
+
+        if hits:
+            for candidate in hits:
+                candidate_route = str(candidate.metadata.get("feature_route", "")).strip()
+                if (
+                    candidate_route
+                    and candidate_route == fresh_bundle["route"]
+                    and candidate_route != "generic_triage"
+                ):
+                    accepted_hit = candidate
+                    memory_hint_route = candidate_route
+                    ctx.note_reuse(candidate, reuse_mode="assist")
+                    break
+            if accepted_hit is None:
+                ctx.note_rejected_memory(hits[0])
 
         reused = accepted_hit is not None
         memory_assist_ids = [] if accepted_hit is None else [accepted_hit.memory_id]
+        assist_hint = ""
         evidence_sections = [fresh_evidence_text]
         if accepted_hit is not None:
-            evidence_sections.append(f"MEMORY_ASSIST {accepted_hit.memory_id}: {accepted_hit.summary}")
+            assist_hint = _build_memory_assist_hint(accepted_hit)
+            evidence_sections.append(assist_hint)
         benchmark_note = str(step.params.get("evidence_text", "")).strip()
         if benchmark_note:
             evidence_sections.append(f"BENCHMARK_NOTE {benchmark_note}")
@@ -159,15 +255,17 @@ class RetrieverAgent(BaseAgent):
                 "reuse_signature": reuse_signature,
                 "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
                 "memory_assist_ids": memory_assist_ids,
+                "memory_assist_hint": assist_hint,
             },
         )
         feature_bundle = build_feature_bundle(
             query=str(step.params["query"]),
-            evidence_text=evidence_text,
+            evidence_text=fresh_evidence_text,
             tags=list(step.params.get("tags", [])),
             reuse_signature=reuse_signature,
             reused_memory=reused,
             retrieved_hints=retrieved_hints,
+            memory_prior=memory_prior,
         )
         canonical_fresh_evidence = "\n\n".join(
             f"[{doc.doc_id}] {doc.title}\n{doc.text}".strip()
@@ -178,70 +276,121 @@ class RetrieverAgent(BaseAgent):
         ).hexdigest()
         feature_bundle["corpus_doc_ids"] = [doc.doc_id for doc in corpus_docs]
         feature_bundle["memory_assist_ids"] = memory_assist_ids
+        feature_bundle["memory_assist_hint"] = assist_hint
         feature_bundle["memory_hint_route"] = memory_hint_route
-        transfer_brief_text = _build_transfer_brief(
-            query=str(step.params["query"]),
-            retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
-            route=str(feature_bundle["route"]),
-            route_source=str(feature_bundle["route_source"]),
-            matched_signals=[str(item) for item in feature_bundle["matched_signals"]],
-            memory_assist_ids=memory_assist_ids,
-            evidence_text=evidence_text,
-        )
-        feature_ref = ctx.put_feature_state(
-            state_id=f"{ctx.task_id}-{step.step_id}-features",
-            feature_bundle=feature_bundle,
-            metadata={
-                "query": step.params["query"],
-                "reused_memory": reused,
-                "reuse_signature": reuse_signature,
-                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
-                "memory_assist_ids": memory_assist_ids,
-                "feature_route_source": feature_bundle["route_source"],
-                "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
-                "feature_route_confidence": feature_bundle["route_confidence"],
-                "feature_route_provenance": feature_bundle["route_provenance"],
-                "feature_evidence_sha256": feature_bundle["evidence_sha256"],
-                "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
-            },
-        )
-        transfer_brief_ref = ctx.put_text_state(
-            state_id=f"{ctx.task_id}-{step.step_id}-brief",
-            kind="TOOL_ARTIFACT",
-            text=transfer_brief_text,
-            metadata={
-                "query": step.params["query"],
-                "transfer_strategy": transfer_strategy,
-                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
-                "feature_route": feature_bundle["route"],
-                "feature_route_source": feature_bundle["route_source"],
-            },
-        )
-        embedding_ref = ctx.put_embedding_state(
-            state_id=f"{ctx.task_id}-{step.step_id}-embedding",
-            text=str(step.params["query"]),
-            metadata={
-                "query": step.params["query"],
-                "source_text_kind": "query",
-            },
-        )
+        if memory_prior is not None:
+            feature_bundle["memory_prior_id"] = memory_prior["memory_id"]
+            feature_bundle["memory_prior_source_task_id"] = memory_prior["source_task_id"]
+            feature_bundle["memory_prior_summary"] = memory_prior["summary"]
+        if accepted_hit is not None:
+            prior_applied = bool(feature_bundle.get("memory_prior_applied"))
+            ctx.metrics.memory_assist_prior_applied_task_count += int(
+                prior_applied
+            )
+            ctx.metrics.memory_assist_candidate_reduction += int(
+                feature_bundle.get("memory_candidate_reduction", 0)
+            )
+            ctx.metrics.memory_assist_route_agreement_task_count += int(
+                prior_applied and bool(feature_bundle.get("memory_prior_route_agreement"))
+            )
+            ctx.metrics.memory_assist_rescue_task_count += int(
+                bool(feature_bundle.get("memory_prior_rescue"))
+            )
+        feature_ref = None
+        if transfer_strategy == "state_ref":
+            feature_ref = ctx.put_feature_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-features",
+                feature_bundle=feature_bundle,
+                metadata={
+                    "query": step.params["query"],
+                    "reused_memory": reused,
+                    "reuse_signature": reuse_signature,
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                    "memory_assist_ids": memory_assist_ids,
+                    "memory_assist_hint": assist_hint,
+                    "memory_prior_applied": feature_bundle["memory_prior_applied"],
+                    "memory_candidate_reduction": feature_bundle["memory_candidate_reduction"],
+                    "memory_prior_route": feature_bundle["memory_prior_route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
+                    "feature_route_confidence": feature_bundle["route_confidence"],
+                    "feature_route_provenance": feature_bundle["route_provenance"],
+                    "feature_evidence_sha256": feature_bundle["evidence_sha256"],
+                    "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                },
+            )
+        transfer_brief_ref = None
+        if transfer_strategy == "text_brief":
+            transfer_brief_text = _build_transfer_brief(
+                query=str(step.params["query"]),
+                retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
+                route=str(feature_bundle["route"]),
+                tool_name=str(feature_bundle["tool_name"]),
+                route_source=str(feature_bundle["route_source"]),
+                route_confidence=float(feature_bundle["route_confidence"]),
+                route_provenance=[str(item) for item in feature_bundle["route_provenance"]],
+                matched_signals=[str(item) for item in feature_bundle["matched_signals"]],
+                matched_tags=[str(item) for item in feature_bundle["matched_tags"]],
+                match_score=int(feature_bundle["match_score"]),
+                hint_doc_ids=[str(item) for item in feature_bundle["hint_doc_ids"]],
+                hint_route=str(feature_bundle["hint_route"]),
+                hint_tool_name=str(feature_bundle["hint_tool_name"]),
+                tool_candidates=[dict(item) for item in feature_bundle["tool_candidates"]],
+                memory_assist_ids=memory_assist_ids,
+                evidence_text=evidence_text,
+            )
+            transfer_brief_ref = ctx.put_text_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-brief",
+                kind="TOOL_ARTIFACT",
+                text=transfer_brief_text,
+                metadata={
+                    "query": step.params["query"],
+                    "transfer_strategy": transfer_strategy,
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                },
+            )
+        embedding_ref = None
+        if transfer_strategy == "state_ref":
+            embedding_ref = ctx.put_embedding_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-embedding",
+                text=str(step.params["query"]),
+                metadata={
+                    "query": step.params["query"],
+                    "source_text_kind": "query",
+                },
+            )
+        output_state_refs = [evidence_ref]
+        if feature_ref is not None:
+            output_state_refs.append(feature_ref)
+        if transfer_brief_ref is not None:
+            output_state_refs.append(transfer_brief_ref)
+        if embedding_ref is not None:
+            output_state_refs.append(embedding_ref)
         return StepResult(
             step_id=step.step_id,
             success=True,
-            output_state_refs=[evidence_ref, feature_ref, transfer_brief_ref, embedding_ref],
+            output_state_refs=output_state_refs,
             payload={
                 "query": step.params["query"],
                 "memory_hits": [hit.memory_id for hit in hits],
                 "memory_assist_ids": memory_assist_ids,
+                "memory_assist_hint": assist_hint,
                 "reused_memory": reused,
                 "reuse_mode": "assist" if reused else "none",
                 "transfer_strategy": transfer_strategy,
-                "transfer_brief_state_id": transfer_brief_ref.state_id,
+                "transfer_brief_state_id": (
+                    transfer_brief_ref.state_id if transfer_brief_ref is not None else ""
+                ),
                 "feature_route": feature_bundle["route"],
                 "feature_route_source": feature_bundle["route_source"],
                 "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
                 "feature_route_confidence": feature_bundle["route_confidence"],
                 "feature_route_provenance": feature_bundle["route_provenance"],
+                "memory_prior_applied": feature_bundle["memory_prior_applied"],
+                "memory_candidate_reduction": feature_bundle["memory_candidate_reduction"],
+                "memory_prior_route": feature_bundle["memory_prior_route"],
                 "feature_evidence_sha256": feature_bundle["evidence_sha256"],
                 "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
                 "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
@@ -263,6 +412,7 @@ class ExecutorAgent(BaseAgent):
         if transfer_strategy == "text_brief":
             accepted_kinds = {"DENSE_EVIDENCE", "TOOL_ARTIFACT"}
         input_refs = [ref for ref in retrieve_result.output_state_refs if ref.kind in accepted_kinds]
+        ctx.record_transfer_inputs(input_refs)
         if self._should_use_uds(step):
             return self._execute_via_uds(step, ctx, input_refs)
         return execute_playbook_step(
@@ -324,20 +474,39 @@ class SummarizerAgent(BaseAgent):
         )
         artifact_ref = execute_result.output_state_refs[0]
         evidence_text = ctx.get_text_state(evidence_ref)
+        feature_bundle = _load_feature_bundle_from_ref(ctx, feature_ref)
         actions_text = ctx.get_text_state(artifact_ref)
         reusable_steps = list(execute_result.payload.get("reusable_steps", ["retrieve", "execute"]))
+        mode = str(getattr(ctx, "mode", "protocol"))
+        summary_evidence_text = evidence_text
+        if mode != "text":
+            summary_evidence_text = _build_protocol_summary_handoff(
+                query=str(retrieve_result.payload.get("query", "")),
+                route=str(execute_result.payload.get("route", "")),
+                route_source=str(retrieve_result.payload.get("feature_route_source", "")),
+                route_confidence=float(retrieve_result.payload.get("feature_route_confidence", 0.0)),
+                retrieved_doc_ids=[str(item) for item in retrieve_result.payload.get("retrieved_doc_ids", [])],
+                matched_signals=(
+                    [] if feature_bundle is None else [str(item) for item in feature_bundle.get("matched_signals", [])]
+                ),
+                memory_assist_hint=str(retrieve_result.payload.get("memory_assist_hint", "")),
+                evidence_preview=(
+                    "" if feature_bundle is None else str(feature_bundle.get("evidence_preview", ""))
+                ),
+            )
         summary_input = {
             "task_id": ctx.task_id,
             "task_theme": ctx.task_theme,
             "summary_hint": step.params["summary_hint"],
-            "evidence_text": evidence_text,
+            "evidence_text": summary_evidence_text,
             "actions_text": actions_text,
             "tags": list(step.params.get("tags", [])),
             "reusable_steps": reusable_steps,
         }
-        messages = _summarizer_messages(summary_input, mode=str(getattr(ctx, "mode", "protocol")))
+        messages = _summarizer_messages(summary_input, mode=mode)
         result = await self.llm_client.complete(messages, purpose="summarizer")
         ctx.record_llm_result(result, purpose="summarizer")
+        result_model = result.model
         summary_payload = _summary_from_llm_output(result.text)
         summary_text = str(summary_payload["summary"]).strip()
         summary_ref = ctx.put_text_state(
@@ -355,6 +524,7 @@ class SummarizerAgent(BaseAgent):
             "task_group": getattr(ctx, "task_group", ""),
             "reuse_signature": ctx.reuse_signature(step),
             "feature_route": execute_result.payload.get("route", ""),
+            "feature_tool_name": execute_result.payload.get("tool_name", ""),
             "feature_route_source": retrieve_result.payload.get("feature_route_source", ""),
             "feature_hint_doc_ids": retrieve_result.payload.get("feature_hint_doc_ids", []),
             "feature_route_confidence": retrieve_result.payload.get("feature_route_confidence", 0.0),
@@ -367,7 +537,7 @@ class SummarizerAgent(BaseAgent):
             "feature_query": retrieve_result.payload.get("query", ""),
             "retrieved_doc_ids": retrieve_result.payload.get("retrieved_doc_ids", []),
             "trace_id": ctx.trace_id,
-            "llm_model": result.model,
+            "llm_model": result_model,
         }
         assist_refs = [
             evidence_ref,
@@ -379,6 +549,34 @@ class SummarizerAgent(BaseAgent):
             *assist_refs,
             artifact_ref,
         ]
+        assist_embedding_text = _build_memory_commit_embedding_text(
+            memory_purpose="assist",
+            task_theme=ctx.task_theme,
+            query=str(retrieve_result.payload.get("query", "")),
+            summary=summary_text,
+            route=str(execute_result.payload.get("route", "")),
+            route_source=str(retrieve_result.payload.get("feature_route_source", "")),
+            tool_name=str(execute_result.payload.get("tool_name", "")),
+            retrieved_doc_ids=[str(item) for item in retrieve_result.payload.get("retrieved_doc_ids", [])],
+            reuse_signature=ctx.reuse_signature(step),
+            reusable_steps=["retrieve"],
+            tags=tags,
+            evidence_state_ids=[ref.state_id for ref in assist_refs],
+        )
+        replay_embedding_text = _build_memory_commit_embedding_text(
+            memory_purpose="replay",
+            task_theme=ctx.task_theme,
+            query=str(retrieve_result.payload.get("query", "")),
+            summary=summary_text,
+            route=str(execute_result.payload.get("route", "")),
+            route_source=str(retrieve_result.payload.get("feature_route_source", "")),
+            tool_name=str(execute_result.payload.get("tool_name", "")),
+            retrieved_doc_ids=[str(item) for item in retrieve_result.payload.get("retrieved_doc_ids", [])],
+            reuse_signature=ctx.reuse_signature(step),
+            reusable_steps=replay_reusable_steps,
+            tags=tags,
+            evidence_state_ids=[ref.state_id for ref in replay_refs],
+        )
         memory_commits = [
             MemoryCommit(
                 memory_id=f"mem-{ctx.task_id}-assist",
@@ -390,7 +588,7 @@ class SummarizerAgent(BaseAgent):
                 evidence_state_ids=[ref.state_id for ref in assist_refs],
                 reusable_steps=["retrieve"],
                 confidence=confidence,
-                embedding_text=summary_text,
+                embedding_text=assist_embedding_text,
                 embedding_state_id=embedding_ref.state_id if embedding_ref is not None else None,
                 encoder_id=ctx.memory_store.embedder.encoder_id,
                 metadata={
@@ -410,7 +608,7 @@ class SummarizerAgent(BaseAgent):
                 evidence_state_ids=[ref.state_id for ref in replay_refs],
                 reusable_steps=replay_reusable_steps,
                 confidence=confidence,
-                embedding_text=summary_text,
+                embedding_text=replay_embedding_text,
                 embedding_state_id=embedding_ref.state_id if embedding_ref is not None else None,
                 encoder_id=ctx.memory_store.embedder.encoder_id,
                 metadata={
@@ -425,7 +623,11 @@ class SummarizerAgent(BaseAgent):
             step_id=step.step_id,
             success=True,
             output_state_refs=[summary_ref],
-            payload={"summary": summary_text, "llm_model": result.model},
+            payload={
+                "summary": summary_text,
+                "summary_state_id": summary_ref.state_id,
+                "llm_model": result_model,
+            },
             memory_commit=memory_commits[0],
             memory_commits=memory_commits[1:],
         )
@@ -817,23 +1019,109 @@ def _build_transfer_brief(
     query: str,
     retrieved_doc_ids: list[str],
     route: str,
+    tool_name: str,
     route_source: str,
+    route_confidence: float,
+    route_provenance: list[str],
     matched_signals: list[str],
+    matched_tags: list[str],
+    match_score: int,
+    hint_doc_ids: list[str],
+    hint_route: str,
+    hint_tool_name: str,
+    tool_candidates: list[dict[str, Any]],
     memory_assist_ids: list[str],
     evidence_text: str,
 ) -> str:
     preview = evidence_text.strip().splitlines()
     evidence_preview = " ".join(line.strip() for line in preview[:4] if line.strip())[:280]
-    matched = ", ".join(matched_signals) if matched_signals else "none"
-    assist = ", ".join(memory_assist_ids) if memory_assist_ids else "none"
-    doc_ids = ", ".join(retrieved_doc_ids) if retrieved_doc_ids else "none"
-    return (
-        "StateBus transfer brief\n"
-        f"Query: {query}\n"
-        f"Retrieved docs: {doc_ids}\n"
-        f"Suggested route: {route}\n"
-        f"Route source: {route_source}\n"
-        f"Matched signals: {matched}\n"
-        f"Memory assist ids: {assist}\n"
-        f"Evidence preview: {evidence_preview}\n"
-    )
+    lines = [
+        "StateBus transfer brief",
+        f"Query: {query}",
+        f"Retrieved docs: {', '.join(retrieved_doc_ids) if retrieved_doc_ids else 'none'}",
+        f"Suggested route: {route}",
+        f"Suggested tool: {tool_name or 'none'}",
+        f"Route source: {route_source}",
+        f"Route confidence: {route_confidence:.2f}",
+        f"Route provenance: {', '.join(route_provenance) if route_provenance else 'none'}",
+        f"Match score: {match_score}",
+        f"Tool candidates: {_format_transfer_tool_candidates(tool_candidates)}",
+    ]
+    if matched_signals:
+        lines.append(f"Matched signals: {', '.join(matched_signals)}")
+    if matched_tags:
+        lines.append(f"Matched tags: {', '.join(matched_tags)}")
+    if hint_doc_ids:
+        lines.append(f"Hint docs: {', '.join(hint_doc_ids)}")
+    if hint_route:
+        lines.append(f"Hint route: {hint_route}")
+    if hint_tool_name:
+        lines.append(f"Hint tool: {hint_tool_name}")
+    if memory_assist_ids:
+        lines.append(f"Memory assist ids: {', '.join(memory_assist_ids)}")
+    lines.append(f"Evidence preview: {evidence_preview}")
+    return "\n".join(lines) + "\n"
+
+
+def _format_transfer_tool_candidates(candidates: list[dict[str, Any]]) -> str:
+    serialized: list[str] = []
+    for candidate in candidates:
+        tool_name = str(candidate.get("tool_name", "")).strip()
+        route = str(candidate.get("route", "")).strip()
+        source = str(candidate.get("source", "")).strip()
+        score = int(candidate.get("score", 0))
+        if not tool_name or not route:
+            continue
+        serialized.append(f"{tool_name}@{route}#{source}#{score}")
+    return "; ".join(serialized) if serialized else "none"
+
+
+def _build_memory_assist_hint(hit: MemoryCommit | Any) -> str:
+    memory_id = str(getattr(hit, "memory_id", "")).strip()
+    summary = " ".join(str(getattr(hit, "summary", "")).split())
+    if len(summary) > MAX_MEMORY_ASSIST_HINT_CHARS:
+        summary = summary[: MAX_MEMORY_ASSIST_HINT_CHARS - 3].rstrip() + "..."
+    if not memory_id and not summary:
+        return ""
+    if not summary:
+        return f"MEMORY_ASSIST_HINT {memory_id}".strip()
+    return f"MEMORY_ASSIST_HINT {memory_id}: {summary}".strip()
+
+
+def _load_feature_bundle_from_ref(ctx: object, ref: object | None) -> dict[str, Any] | None:
+    if ref is None:
+        return None
+    payload = ctx.statepool.get_bytes(ref)
+    feature_bundle = msgpack.unpackb(payload, raw=False, strict_map_key=False)
+    if not isinstance(feature_bundle, dict):
+        return None
+    return dict(feature_bundle)
+
+
+def _build_protocol_summary_handoff(
+    *,
+    query: str,
+    route: str,
+    route_source: str,
+    route_confidence: float,
+    retrieved_doc_ids: list[str],
+    matched_signals: list[str],
+    memory_assist_hint: str,
+    evidence_preview: str,
+) -> str:
+    doc_ids = ", ".join(retrieved_doc_ids[:MAX_PROTOCOL_SUMMARY_DOC_IDS]) if retrieved_doc_ids else "none"
+    signals = ", ".join(matched_signals[:MAX_PROTOCOL_SUMMARY_SIGNALS]) if matched_signals else "none"
+    parts = [
+        "StateBus protocol summary handoff",
+        f"Query: {query}",
+        f"Route: {route or 'generic_triage'}",
+        f"Route source: {route_source or 'protocol'}",
+        f"Route confidence: {route_confidence:.2f}",
+        f"Retrieved docs: {doc_ids}",
+        f"Matched signals: {signals}",
+    ]
+    if memory_assist_hint.strip():
+        parts.append(memory_assist_hint.strip())
+    if evidence_preview.strip():
+        parts.append(f"Evidence preview: {evidence_preview.strip()}")
+    return "\n".join(parts) + "\n"

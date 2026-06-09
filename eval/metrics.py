@@ -15,6 +15,12 @@ class TaskMetrics:
     shared_memory_state_bytes: int = 0
     state_ref_count: int = 0
     state_bytes: int = 0
+    handoff_ref_count: int = 0
+    handoff_bytes: int = 0
+    handoff_textual_ref_count: int = 0
+    handoff_textual_bytes: int = 0
+    handoff_nontext_ref_count: int = 0
+    handoff_nontext_bytes: int = 0
     memory_hits: int = 0
     memory_query_count: int = 0
     memory_hit_task_count: int = 0
@@ -22,6 +28,10 @@ class TaskMetrics:
     replay_probe_hits: int = 0
     replay_probe_hit_task_count: int = 0
     memory_assist_task_count: int = 0
+    memory_assist_prior_applied_task_count: int = 0
+    memory_assist_candidate_reduction: int = 0
+    memory_assist_route_agreement_task_count: int = 0
+    memory_assist_rescue_task_count: int = 0
     validated_reuse_task_count: int = 0
     memory_rejected_task_count: int = 0
     planned_step_count: int = 0

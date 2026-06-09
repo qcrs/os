@@ -417,3 +417,6 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     normalized = _summary_from_llm_output(summary_result.text)
     assert normalized["summary"]
     assert normalized["reusable_steps"] == ["retrieve", "execute"]
+    assert "Evidence:" not in normalized["summary"]
+    assert "Playbook:" not in normalized["summary"]
+    assert "Actions:" in normalized["summary"]
