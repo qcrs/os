@@ -202,35 +202,83 @@ replay_enabled    3,934ms    382     0.00    1       0.33      ← 匹配跳步
 
 ### 6.2 authenticity（结构化握手真实性）—— ✅ 成立
 
-`state_transfer_authenticity` 专用包（protocol-only, 6 task × r3）：
+**先理解"真实性"在测什么**：
 
-测试：`text_brief`（格式化的 Key-Value 文本）vs `state_ref`（结构化 msgpack blob）
+赛题要求"实现一种非文本中间状态传递机制，支持 embedding、语义向量或其他中间表示在 Agent 间直接交换，并说明其生成方式、传递方式、接收方式及后续使用方式"。
+
+"真实性"回答的问题是：**Retriever 用结构化数据（state_ref）代替文本描述（text_brief）传给 Executor——这件事到底是真的在发生吗？Executor 能正确理解和使用这些结构化数据吗？文本依赖真的下降了吗？**
+
+这个实验在 protocol 模式下，对同一个 task 跑两种握手方式，看 Executor 的行为是否一致。
+
+**表格每一列的含义**：
 
 ```
-handoff策略   控制面  线上握手  负载字节  文本握手  非文本    耗时
-────────────────────────────────────────────────────────────
-text_brief     5,012   123       1,830     1,830     0        4,445ms
-state_ref      5,757   204       4,443     772       3,671    4,624ms
-差异            +745    +81      +2,613    ↓1,058    +3,671   +179ms
+                  text_brief (文本握手)          state_ref (结构化握手)
+                  ──────────────────           ──────────────────────
+Retriever做的:    构建 Key-Value 文本           构建 msgpack 结构化 blob
+                  "Route: cache_invalidation    {route:"cache_invalidation",
+                   Tool: fix_cache              tool:"fix_cache",
+                   Confidence: 0.92"            confidence:0.92, ...}
+                  写入 StatePool → 1个指针     写入 StatePool → 5个指针
+
+Executor收到的:   1个 TOOL_ARTIFACT             1个 FEATURE_BUNDLE + 
+                  (Key-Value文本)               1个 TOOL_CANDIDATE_SET +
+                                               1个 RANKED_EVIDENCE +
+                                               1个 REPLAY_ELIGIBILITY +
+                                               1个 EMBEDDING
+
+Executor做的事:   解析文本 "Route:\s*(.+)"      直接读字段 bundle["route"]
+                  → 正则提取字段                 → 直接使用
+                  → 选 tool                      → 选 tool
 ```
 
-**这个数据说明三件事**：
+**具体数据**：
 
-1. **真实性成立**：`Executor` 在 typed handoff 下正常工作——选了相同的 tool，做了相同的决策（`expectation_match`=1.00）。结构化握手是真实可用的，不是花架子。
+```
+handoff策略   控制面    线上握手    负载字节    文本握手    非文本     耗时
+             (总消息)  (指针字节)  (mmap大小)  (文本payload) (结构化)   (端到端)
+──────────────────────────────────────────────────────────────────────────
+text_brief     5,012     123        1,830       1,830        0        4,445ms
+state_ref      5,757     204        4,443        772        3,671     4,624ms
+差异            +745     +81        +2,613      ↓1,058      +3,671    +179ms
+```
 
-2. **文本依赖下降 59%**：`handoff_textual_bytes` 从 1,830 降到 772。Executor 不再需要消费大段文本描述来做决策。
+**逐列解读**：
 
-3. **非文本状态从无到有**：`handoff_nontext_bytes` 从 0 涨到 3,671。系统确实在 Agent 间传递了非文本的中间状态（FEATURE_BUNDLE 等）。
+- **`控制面`（`control_bytes`，总消息字节）**：text_brief=5,012, state_ref=5,757。state_ref 多 745 字节——因为 StepResult 的 `output_state_refs` 有 5 个 StateRef 而非 1 个，序列化出来的 StepResult 消息体积稍大。
 
-4. **线上通信差异极小**：`handoff_wire_bytes`（线上指针字节）只差了 81 字节——不是几千字节。因为两者都走 StatePool 基础设施，线上只传指针。
+- **`线上握手`（`handoff_wire_bytes`，StateRef 指针字节）**：text_brief=123, state_ref=204。差异仅 81 字节——1 个指针 vs 5 个指针。**这才是 Agent 间真实的通信量——几十到一百多字节，不是几千字节。**
 
-**不能说的是**：`state_ref` 比文本更轻、typed handoff 打��了纯文本 baseline。因为 `text_brief` 不是真正的"自然语言通信"——它把结构化信息写成 Key-Value，然后走 StatePool 传指针。
+- **`负载字节`（`handoff_payload_bytes`，mmap 文件大小）**：text_brief=1,830, state_ref=4,443。差异 +2,613 字节。这不是通信量——是 StatePool 里 mmap 文件的 payload 大小。state_ref 更大是因为存了 5 种 blob。**这个数字不要理解为"通信开销"。**
+
+- **`文本握手`（`handoff_textual_bytes`，文本类 payload 大小）**：text_brief=1,830, state_ref=772。**↓1,058 字节（↓59%）**。Executor 在 state_ref 下收到的文本描述从 1,830 字节降到了 772 字节。**文本依赖大幅减少。**
+
+- **`非文本`（`handoff_nontext_bytes`，结构化 payload 大小）**：text_brief=0, state_ref=3,671。**从 0 到 3,671。** 非文本的中间状态确实在 Agent 间传递了——FEATURE_BUNDLE、TOOL_CANDIDATE_SET 等 msgpack blob。
+
+- **`耗时`（`task_ms`，端到端时间）**：text_brief=4,445ms, state_ref=4,624ms。+179ms，基本持平。Executor 多读了几个 StateRef 的 payload，但总时间影响很小。
+
+**这个数据证明了什么（可以说的）**：
+
+1. **真实性成立**：Executor 在两种握手方式下选了相同的 tool，做了相同的决策（`expectation_match`=1.00）。结构化握手不是花架子——它真的能工作。
+
+2. **文本依赖下降了 59%**：Executor 不再需要消费大段文本描述来做决策。从"收到一段 Key-Value 文本→自己解析"变成了"直接读结构化字段"。
+
+3. **非文本状态从无到有**：`handoff_nontext_bytes` 从 0 涨到 3,671。系统确实在 Agent 间传递了非文本的中间状态——满足了赛题"实现非文本中间状态传递机制"的要求。
+
+4. **通信层面差异极小**：线上指针字节只差了 81 字节。不是因为"结构化传递更省通信"——而是因为两者都走 StatePool（共享内存→指针），通信路径相同。
+
+**这个数据不能证明什么（不能说的）**：
+
+- "state_ref 比文本更轻"——payload 更大（+2,613），控制面也更大（+745）
+- "typed handoff 已经打败了纯文本协作"——这里的 text_brief 不是真·自然语言，它走的是和 state_ref 相同的 StatePool 基础设施
+
+**这个对比的本质**：不是"结构化通信 vs 自然语言通信"，而是"在共享内存基础设施上，payload 编码格式是 Key-Value 文本还是 msgpack 二进制"。真正的"纯文本通信"应该把文本内联在 StepResult 消息里，不经过 StatePool——那个实验在下面的 pure_text 包。
 
 ### 6.3 pure_text（纯文本 vs 结构化）—— ⚠️ 正式补齐
 
 `state_transfer_pure_text` 专用包（protocol-only, 6 task × r3）：
 
-测试：`natural_handoff_text`（真正的自然语言描述）vs `state_ref`（结构化 msgpack）
+测试：`natural_handoff_text`（真正的自然语言描述，不做 Key-Value 格式化）vs `state_ref`（结构化 msgpack）
 
 ```
 handoff策略           控制面  线上握手  负载字节  文本握手  非文本    耗时
@@ -241,13 +289,14 @@ state_ref              5,988   216       4,481     786       3,695    4,455ms
 ```
 
 **这个数据说明**：
-- pure-text baseline 已正式补齐——有了真正的"自然语言"对照组
+- pure-text baseline 已正式补齐——有了真正的"自然语言"对照组（不是格式化的 Key-Value，是更像人写的自然语言描述）
 - `state_ref` 仍然让非文本状态出现（文本握手↓483，非文本 +3,695）
 - 但从 carrier 成本看，`state_ref` 更重——**不支持低开销 headline**
+- 耗时几乎持平（+27ms）——两者的执行时间差异在噪声范围
 
 **两个 state_transfer 包的分工**：
-- `authenticity`：证明"这件事是真的能做"——typed handoff 真实可用
-- `pure_text`：提供了诚实的 pure-text baseline——防止把 text_brief 误当成"普通文本"
+- `authenticity`（authenticity）：证明"结构化握手这件事是真的能做"——typed handoff 真实可用。text_brief 是 hybrid baseline（用了 StatePool 的半结构化文本）
+- `pure_text`：提供真正的 natural language baseline——防止把 text_brief 误当成"普通文本"。让对比更诚实
 
 ---
 
