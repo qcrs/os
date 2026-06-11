@@ -261,6 +261,50 @@ def _feature_bundle_observability(ctx: RunContext, result: Any) -> dict[str, Any
     }
 
 
+def _restored_replay_refs(ctx: RunContext) -> list[Any]:
+    if ctx.reuse_hit is None:
+        return []
+    memory_id = ctx.reuse_hit.memory_id
+    return [
+        ref
+        for ref in ctx.state_refs.values()
+        if ref.metadata.get("reused_from_memory_id") == memory_id
+    ]
+
+
+def _reuse_artifact_payload(ctx: RunContext, actual_reuse_mode: str) -> dict[str, Any]:
+    restored_refs = _restored_replay_refs(ctx)
+    cas_summary = ctx.statepool.cas_summary()
+    return {
+        "applied": ctx.reuse_hit is not None,
+        "mode": actual_reuse_mode,
+        "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
+        "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
+        "skipped_step_ids": list(ctx.pruned_step_ids),
+        "rejected_memory_id": None
+        if ctx.rejected_memory_hit is None
+        else ctx.rejected_memory_hit.memory_id,
+        "replay_class": None if ctx.reuse_hit is None else ctx.reuse_hit.replay_class,
+        "replay_candidate_count": ctx.metrics.replay_probe_hits,
+        "replay_reject_reason": "" if ctx.reuse_hit is not None else (
+            "no_candidate" if ctx.metrics.replay_probe_count > 0 else "not_probed"
+        ),
+        "replay_restored_state_ref_count": len(restored_refs),
+        "replay_restored_channel_names": sorted(
+            {
+                str(ref.metadata.get("channel_name", "")).strip()
+                for ref in restored_refs
+                if str(ref.metadata.get("channel_name", "")).strip()
+            }
+        ),
+        "physical_blob_reused": bool(any(ref.is_cas for ref in restored_refs)),
+        "logical_replay_reuse": bool(ctx.reuse_hit is not None),
+        "physical_blob_reuse": bool(cas_summary.get("dedup_hit", False)),
+        "dedup_bytes_saved": int(cas_summary.get("dedup_bytes_saved", 0)),
+        "cas_hit_rate": float(cas_summary.get("cas_hit_rate", 0.0)),
+    }
+
+
 def _task_sort_key(task: SampleTask) -> tuple[str, int, str]:
     return (task.task_group, task.task_order, task.task_id)
 
@@ -637,6 +681,7 @@ async def _run_mode_once(
                     state_root=root / task.task_group / task.task_id,
                     memory_db_path=group_db_paths[task.task_group],
                     session=session,
+                    ctx=ctx,
                 )
                 actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
                 task_payload = {
@@ -666,35 +711,7 @@ async def _run_mode_once(
                     "error": None,
                     "metrics": graph_result.metrics,
                     "memory_hits": graph_result.memory_hits,
-                    "reuse": {
-                        "applied": ctx.reuse_hit is not None,
-                        "mode": actual_reuse_mode,
-                        "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
-                        "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
-                        "skipped_step_ids": list(ctx.pruned_step_ids),
-                        "rejected_memory_id": None
-                        if ctx.rejected_memory_hit is None
-                        else ctx.rejected_memory_hit.memory_id,
-                        "replay_class": None if ctx.reuse_hit is None else ctx.reuse_hit.replay_class,
-                        "replay_candidate_count": ctx.metrics.replay_probe_hits,
-                        "replay_reject_reason": "" if ctx.reuse_hit is not None else (
-                            "no_candidate" if ctx.metrics.replay_probe_count > 0 else "not_probed"
-                        ),
-                        "replay_restored_state_ref_count": (
-                            len(ctx.reuse_hit.step_output_state_refs) if ctx.reuse_hit is not None else 0
-                        ),
-                        "replay_restored_channel_names": sorted(
-                            {
-                                str(ref.metadata.get("channel_name", "")).strip()
-                                for ref in (ctx.reuse_hit.step_output_state_refs if ctx.reuse_hit is not None else [])
-                                if str(ref.metadata.get("channel_name", "")).strip()
-                            }
-                        ),
-                        "physical_blob_reused": bool(
-                            ctx.reuse_hit is not None
-                            and any(ref.is_cas for ref in ctx.reuse_hit.step_output_state_refs)
-                        ),
-                    },
+                    "reuse": _reuse_artifact_payload(ctx, actual_reuse_mode),
                     "reuse_validation": {
                         "expected_reuse_mode": task.expected_reuse_mode,
                         "actual_reuse_mode": actual_reuse_mode,
@@ -755,35 +772,7 @@ async def _run_mode_once(
                     "error": None,
                     "metrics": ctx.metrics.to_dict(),
                     "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
-                    "reuse": {
-                        "applied": ctx.reuse_hit is not None,
-                        "mode": actual_reuse_mode,
-                        "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
-                        "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
-                        "skipped_step_ids": list(ctx.pruned_step_ids),
-                        "rejected_memory_id": None
-                        if ctx.rejected_memory_hit is None
-                        else ctx.rejected_memory_hit.memory_id,
-                        "replay_class": None if ctx.reuse_hit is None else ctx.reuse_hit.replay_class,
-                        "replay_candidate_count": ctx.metrics.replay_probe_hits,
-                        "replay_reject_reason": "" if ctx.reuse_hit is not None else (
-                            "no_candidate" if ctx.metrics.replay_probe_count > 0 else "not_probed"
-                        ),
-                        "replay_restored_state_ref_count": (
-                            len(ctx.reuse_hit.step_output_state_refs) if ctx.reuse_hit is not None else 0
-                        ),
-                        "replay_restored_channel_names": sorted(
-                            {
-                                str(ref.metadata.get("channel_name", "")).strip()
-                                for ref in (ctx.reuse_hit.step_output_state_refs if ctx.reuse_hit is not None else [])
-                                if str(ref.metadata.get("channel_name", "")).strip()
-                            }
-                        ),
-                        "physical_blob_reused": bool(
-                            ctx.reuse_hit is not None
-                            and any(ref.is_cas for ref in ctx.reuse_hit.step_output_state_refs)
-                        ),
-                    },
+                    "reuse": _reuse_artifact_payload(ctx, actual_reuse_mode),
                     "reuse_validation": {
                         "expected_reuse_mode": task.expected_reuse_mode,
                         "actual_reuse_mode": actual_reuse_mode,
@@ -881,6 +870,10 @@ async def _run_mode_once(
                     "replay_restored_state_ref_count": 0,
                     "replay_restored_channel_names": [],
                     "physical_blob_reused": False,
+                    "logical_replay_reuse": False,
+                    "physical_blob_reuse": False,
+                    "dedup_bytes_saved": 0,
+                    "cas_hit_rate": 0.0,
                 },
                 "reuse_validation": {
                     "expected_reuse_mode": task.expected_reuse_mode,
@@ -1739,7 +1732,7 @@ async def run_benchmark(
     statepool_config: StatePoolConfig | None = None,
     executor_transport: str = "local",
     executor_socket_path: str | None = None,
-    engine: str = "orchestrator",
+    engine: str = "langgraph",
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     out_path = Path(out_dir)
@@ -1761,11 +1754,6 @@ async def run_benchmark(
     selected_engines = ("orchestrator", "langgraph") if engine == "both" else (engine,)
     engine_results: dict[str, dict[str, object]] = {}
     for selected_engine in selected_engines:
-        if selected_engine == "langgraph" and not langgraph_available():
-            raise RuntimeError(
-                "langgraph engine requested but optional dependency is not installed. "
-                "Install with: pip install .[langgraph]"
-            )
         mode_runs: dict[str, list[dict[str, object]]] = {mode: [] for mode in modes}
         with _executor_transport_context(
             out_dir=out_path / selected_engine,
@@ -3564,7 +3552,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--embed-state-backend", default=None)
     parser.add_argument("--executor-transport", choices=("local", "uds"), default="local")
     parser.add_argument("--executor-socket-path", default=None)
-    parser.add_argument("--engine", choices=("orchestrator", "langgraph", "both"), default="orchestrator")
+    parser.add_argument("--engine", choices=("orchestrator", "langgraph", "both"), default="langgraph")
     parser.add_argument("--quiet-progress", action="store_true")
     return parser
 

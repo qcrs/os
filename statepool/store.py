@@ -17,6 +17,15 @@ PY_SHARED_MEMORY_STORAGE = "PY_SHARED_MEMORY"
 CAS_BLOB_STORAGE = "CAS_BLOB"
 DEFAULT_STATEPOOL_BACKEND = "mmap"
 DEFAULT_EMBED_STATE_BACKEND = "mmap"
+CAS_REPLAY_RESTORABLE_KINDS = frozenset(
+    {
+        "FEATURE_BUNDLE",
+        "RANKED_EVIDENCE_BUNDLE",
+        "TOOL_CANDIDATE_SET",
+        "REPLAY_ELIGIBILITY_BUNDLE",
+        "EMBEDDING",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -216,6 +225,8 @@ class StatePool:
         storage: str | None = None,
     ) -> StateRef:
         backend = storage or self.config.default_backend
+        if backend == CAS_BLOB_STORAGE:
+            return self.cas_blobs.put(state_id, kind, payload, metadata=metadata)
         if backend == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.put_bytes(state_id, kind, payload, metadata=metadata)
         return self.file_pool.put_bytes(state_id, kind, payload, metadata=metadata)
@@ -258,6 +269,46 @@ class StatePool:
         """
         return self.cas_blobs.put(state_id, kind, payload, metadata=metadata)
 
+    def put_replay_restorable_bytes(
+        self,
+        state_id: str,
+        kind: str,
+        payload: bytes,
+        metadata: dict[str, object] | None = None,
+        *,
+        storage: str | None = None,
+    ) -> StateRef:
+        if self.should_use_cas(kind=kind, metadata=metadata):
+            return self.put_or_dedup_bytes(state_id, kind, payload, metadata=metadata)
+        return self.put_bytes(
+            state_id=state_id,
+            kind=kind,
+            payload=payload,
+            metadata=metadata,
+            storage=storage,
+        )
+
+    @staticmethod
+    def should_use_cas(*, kind: str, metadata: dict[str, object] | None = None) -> bool:
+        meta = dict(metadata or {})
+        if kind in CAS_REPLAY_RESTORABLE_KINDS:
+            return True
+        if kind == "TOOL_ARTIFACT":
+            return all(
+                str(meta.get(key, "")).strip()
+                for key in ("source_evidence", "tool_name", "route")
+            )
+        return False
+
+    def link_cas_ref(
+        self,
+        *,
+        state_id: str,
+        source_ref: StateRef,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        return self.cas_blobs.link_ref(state_id=state_id, source_ref=source_ref, metadata=metadata)
+
     def put_text(
         self,
         state_id: str,
@@ -290,9 +341,14 @@ class StatePool:
     def get_bytes(self, ref: StateRef) -> bytes:
         if ref.storage == CAS_BLOB_STORAGE:
             payload = self.cas_blobs.get_bytes_by_hash(ref.blob_hash)
-            if payload is None:
-                raise FileNotFoundError(f"missing CAS blob: {ref.blob_hash}")
-            return payload
+            if payload is not None:
+                return payload
+            handle_path = Path(ref.handle)
+            if handle_path.exists():
+                with handle_path.open("rb") as handle:
+                    with mmap.mmap(handle.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
+                        return mm[:]
+            raise FileNotFoundError(f"missing CAS blob: {ref.blob_hash}")
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_bytes(ref)
         return self.file_pool.get_bytes(ref)
@@ -410,6 +466,49 @@ class ContentAddressedBlobStore:
             },
         )
         _write_ref_meta(self._blob_meta_path(blob_hash), ref)
+        _write_ref_meta(self.ref_meta_path(state_id), ref)
+        return ref
+
+    def link_ref(
+        self,
+        *,
+        state_id: str,
+        source_ref: StateRef,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        blob_hash = source_ref.blob_hash
+        if not blob_hash:
+            raise ValueError(f"source ref {source_ref.state_id} is missing a CAS blob hash")
+        blob_path = self._blob_path(blob_hash)
+        if not blob_path.exists():
+            source_path = Path(source_ref.handle)
+            if not source_path.exists():
+                raise FileNotFoundError(f"missing CAS blob for link: {blob_hash}")
+            blob_path.parent.mkdir(parents=True, exist_ok=True)
+            with source_path.open("rb") as source_handle, blob_path.open("wb") as target_handle:
+                target_handle.write(source_handle.read())
+            _write_ref_meta(self._blob_meta_path(blob_hash), source_ref)
+        self._refcount[blob_hash] = self._load_refcount(blob_hash) + 1
+        self._logical_state_count += 1
+        self._dedup_hits += 1
+        self._dedup_bytes_saved += int(source_ref.length)
+        meta = {
+            **dict(source_ref.metadata),
+            **dict(metadata or {}),
+            "blob_hash": blob_hash,
+            "blob_refcount": self._refcount[blob_hash],
+            "dedup_hit": True,
+            "cas_linked_from_state_id": source_ref.state_id,
+        }
+        ref = StateRef(
+            state_id=state_id,
+            kind=source_ref.kind,
+            storage=CAS_BLOB_STORAGE,
+            handle=str(blob_path),
+            length=source_ref.length,
+            checksum=blob_hash,
+            metadata=meta,
+        )
         _write_ref_meta(self.ref_meta_path(state_id), ref)
         return ref
 
