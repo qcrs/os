@@ -1,7 +1,7 @@
 # Start Here
 
 ```bash
-cd /path/to/statebus/project
+cd /path/to/statebus
 git status --short
 git rev-parse --short HEAD
 source deploy/activate_statebus_host.sh

@@ -25,7 +25,7 @@ $HOME/statebus/
 安装步骤：
 
 ```bash
-cd /path/to/statebus/project
+cd /path/to/statebus
 bash scripts/setup_host_dev_env.sh
 source deploy/activate_statebus_host.sh
 ```
