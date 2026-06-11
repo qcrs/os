@@ -14,6 +14,7 @@ from protocol.messages import StateRef
 
 MMAP_FILE_STORAGE = "MMAP_FILE"
 PY_SHARED_MEMORY_STORAGE = "PY_SHARED_MEMORY"
+CAS_BLOB_STORAGE = "CAS_BLOB"
 DEFAULT_STATEPOOL_BACKEND = "mmap"
 DEFAULT_EMBED_STATE_BACKEND = "mmap"
 
@@ -239,6 +240,9 @@ class StatePool:
     def cas_refcount(self, blob_hash: str) -> int:
         return self.cas_blobs.blob_refcount(blob_hash)
 
+    def cas_summary(self) -> dict[str, object]:
+        return self.cas_blobs.summary()
+
     def put_or_dedup_bytes(
         self,
         state_id: str,
@@ -284,16 +288,33 @@ class StatePool:
         )
 
     def get_bytes(self, ref: StateRef) -> bytes:
+        if ref.storage == CAS_BLOB_STORAGE:
+            payload = self.cas_blobs.get_bytes_by_hash(ref.blob_hash)
+            if payload is None:
+                raise FileNotFoundError(f"missing CAS blob: {ref.blob_hash}")
+            return payload
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_bytes(ref)
         return self.file_pool.get_bytes(ref)
 
     def get_text(self, ref: StateRef) -> str:
+        if ref.storage == CAS_BLOB_STORAGE:
+            return self.get_bytes(ref).decode("utf-8")
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_text(ref)
         return self.file_pool.get_text(ref)
 
     def get_embedding(self, ref: StateRef) -> np.ndarray:
+        if ref.storage == CAS_BLOB_STORAGE:
+            dtype = str(ref.metadata.get("dtype", "float32"))
+            vector_dim = int(ref.metadata["vector_dim"])
+            vector = np.frombuffer(self.get_bytes(ref), dtype=dtype)
+            if vector.shape != (vector_dim,):
+                raise ValueError(
+                    f"embedding state {ref.state_id} shape mismatch:"
+                    f" expected {(vector_dim,)}, got {vector.shape}"
+                )
+            return np.asarray(vector, dtype="float32")
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_embedding(ref)
         return self.file_pool.get_embedding(ref)
@@ -302,6 +323,9 @@ class StatePool:
         mmap_meta = self.file_pool.meta_dir / f"{state_id}.json"
         if mmap_meta.exists():
             return self.file_pool.load_ref(state_id)
+        cas_meta = self.cas_blobs.ref_meta_path(state_id)
+        if cas_meta.exists():
+            return self.cas_blobs.load_ref(state_id)
         return self.shared_pool.load_ref(state_id)
 
 
@@ -316,15 +340,23 @@ class ContentAddressedBlobStore:
         self.root = Path(root)
         self.blobs_dir = self.root / "blobs"
         self.meta_dir = self.root / "meta"
+        self.refs_dir = self.root / "refs"
         self.blobs_dir.mkdir(parents=True, exist_ok=True)
         self.meta_dir.mkdir(parents=True, exist_ok=True)
+        self.refs_dir.mkdir(parents=True, exist_ok=True)
         self._refcount: dict[str, int] = {}
+        self._logical_state_count = 0
+        self._dedup_hits = 0
+        self._dedup_bytes_saved = 0
 
     def _blob_path(self, blob_hash: str) -> Path:
         return self.blobs_dir / blob_hash[:2] / blob_hash[2:]
 
     def _blob_meta_path(self, blob_hash: str) -> Path:
         return self.meta_dir / f"{blob_hash}.json"
+
+    def ref_meta_path(self, state_id: str) -> Path:
+        return self.refs_dir / f"{state_id}.json"
 
     def has_blob(self, blob_hash: str) -> bool:
         return self._blob_path(blob_hash).exists()
@@ -353,32 +385,93 @@ class ContentAddressedBlobStore:
             blob_path.parent.mkdir(parents=True, exist_ok=True)
             with blob_path.open("wb") as handle:
                 handle.write(payload)
-            self._refcount[blob_hash] = 1
+            self._refcount[blob_hash] = self._load_refcount(blob_hash) + 1
+            dedup_hit = False
         else:
-            self._refcount[blob_hash] = self._refcount.get(blob_hash, 0) + 1
+            self._refcount[blob_hash] = self._load_refcount(blob_hash) + 1
+            dedup_hit = True
+            self._dedup_hits += 1
+            self._dedup_bytes_saved += len(payload)
+        self._logical_state_count += 1
 
+        refcount = self._refcount[blob_hash]
         ref = StateRef(
             state_id=state_id,
             kind=kind,
-            storage="CAS_BLOB",
+            storage=CAS_BLOB_STORAGE,
             handle=str(blob_path),
             length=len(payload),
             checksum=blob_hash,
-            metadata=meta,
+            metadata={
+                **meta,
+                "blob_hash": blob_hash,
+                "blob_refcount": refcount,
+                "dedup_hit": dedup_hit,
+            },
         )
-        meta["blob_hash"] = blob_hash
-        meta["blob_refcount"] = self._refcount.get(blob_hash, 1)
         _write_ref_meta(self._blob_meta_path(blob_hash), ref)
+        _write_ref_meta(self.ref_meta_path(state_id), ref)
         return ref
 
     def blob_refcount(self, blob_hash: str) -> int:
-        return self._refcount.get(blob_hash, 0)
+        return self._load_refcount(blob_hash)
+
+    def load_ref(self, state_id: str) -> StateRef:
+        return _read_ref_meta(self.ref_meta_path(state_id))
 
     def load_ref_by_hash(self, blob_hash: str) -> StateRef | None:
         meta_path = self._blob_meta_path(blob_hash)
         if not meta_path.exists():
             return None
         return _read_ref_meta(meta_path)
+
+    def _load_refcount(self, blob_hash: str) -> int:
+        in_memory = self._refcount.get(blob_hash)
+        if in_memory is not None:
+            return in_memory
+        count = 0
+        for path in self.refs_dir.glob("*.json"):
+            try:
+                ref = _read_ref_meta(path)
+            except Exception:
+                continue
+            if ref.blob_hash == blob_hash:
+                count += 1
+        self._refcount[blob_hash] = count
+        return count
+
+    def summary(self) -> dict[str, object]:
+        shared_blobs = []
+        for blob_hash in sorted(self._all_blob_hashes()):
+            refcount = self.blob_refcount(blob_hash)
+            if refcount <= 1:
+                continue
+            payload = self.get_bytes_by_hash(blob_hash) or b""
+            shared_blobs.append(
+                {
+                    "blob_hash": blob_hash,
+                    "refcount": refcount,
+                    "bytes": len(payload),
+                }
+            )
+        shared_blobs.sort(key=lambda item: (-int(item["refcount"]), -int(item["bytes"]), str(item["blob_hash"])))
+        physical_blob_count = len(self._all_blob_hashes())
+        logical_state_count = max(self._logical_state_count, sum(self._load_refcount(blob) for blob in self._all_blob_hashes()))
+        return {
+            "logical_state_count": logical_state_count,
+            "physical_blob_count": physical_blob_count,
+            "dedup_hit": self._dedup_hits > 0,
+            "dedup_hit_count": self._dedup_hits,
+            "dedup_bytes_saved": self._dedup_bytes_saved,
+            "cas_hit_rate": (self._dedup_hits / logical_state_count) if logical_state_count else 0.0,
+            "shared_blobs": shared_blobs[:10],
+        }
+
+    def _all_blob_hashes(self) -> list[str]:
+        hashes: list[str] = []
+        for path in self.meta_dir.glob("*.json"):
+            hashes.append(path.stem)
+        return hashes
 
 
 def _write_ref_meta(path: Path, ref: StateRef) -> None:

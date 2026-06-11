@@ -146,6 +146,18 @@ class MemoryHit:
     task_theme: str = ""
     created_at_ns: int | None = None
     source_task_id: str | None = None
+    replay_class: str = ""
+    route: str = ""
+    route_source: str = ""
+    route_provenance: list[str] = field(default_factory=list)
+    route_confidence: float = 0.0
+    retrieved_doc_ids: list[str] = field(default_factory=list)
+    fresh_evidence_sha256: str = ""
+    reuse_signature: str = ""
+    step_output_state_ids: list[str] = field(default_factory=list)
+    step_output_state_refs: list[StateRef] = field(default_factory=list)
+    tool_name: str = ""
+    source_session_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -166,6 +178,20 @@ class MemoryCommit:
     metadata: dict[str, Any] = field(default_factory=dict)
     evidence_state_refs: list[StateRef] = field(default_factory=list)
     created_at_ns: int | None = None
+    memory_purpose: str = ""
+    memory_layer: str = ""
+    replay_class: str = ""
+    route: str = ""
+    route_source: str = ""
+    route_provenance: list[str] = field(default_factory=list)
+    route_confidence: float = 0.0
+    retrieved_doc_ids: list[str] = field(default_factory=list)
+    fresh_evidence_sha256: str = ""
+    reuse_signature: str = ""
+    step_output_state_ids: list[str] = field(default_factory=list)
+    step_output_state_refs: list[StateRef] = field(default_factory=list)
+    tool_name: str = ""
+    source_session_id: str = ""
 
 
 @dataclass

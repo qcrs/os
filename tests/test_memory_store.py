@@ -192,6 +192,75 @@ def test_memory_store_supports_memory_purpose_layers() -> None:
         assert replay_hits
         assert all(hit.metadata.get("memory_purpose") == "replay" for hit in replay_hits)
         assert replay_hits[0].memory_id == "mem-1-replay"
+        assert replay_hits[0].replay_class == ""
+        store.close()
+
+
+def test_memory_store_replay_episode_v2_fields_roundtrip() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-") as tmpdir:
+        db_path = Path(tmpdir) / "memory.sqlite3"
+        store = MemoryStore(db_path, embedder=DeterministicEmbeddingProvider())
+        store.init_schema()
+        refs = [
+            StateRef(
+                state_id="state-feature-1",
+                kind="FEATURE_BUNDLE",
+                storage="CAS_BLOB",
+                handle="/tmp/blob-a",
+                length=64,
+                checksum="a" * 64,
+                metadata={"channel_name": "features"},
+            )
+        ]
+        store.commit_memory(
+            MemoryCommit(
+                memory_id="mem-replay-v2",
+                source_agent_id="summarizer",
+                source_task_id="task-replay-v2",
+                task_theme="repo_local_latency_triage",
+                summary="Validated replay episode.",
+                tags=["latency"],
+                evidence_state_ids=["state-feature-1"],
+                reusable_steps=["retrieve", "execute"],
+                confidence=0.95,
+                embedding_text="validated replay latency route",
+                metadata={"memory_purpose": "replay", "memory_layer": "episode"},
+                evidence_state_refs=refs,
+                memory_purpose="replay",
+                memory_layer="episode",
+                replay_class="validated",
+                route="db_pool_saturation",
+                route_source="hint_consensus",
+                route_provenance=["corpus_metadata", "lexical"],
+                route_confidence=0.92,
+                retrieved_doc_ids=["doc-1", "doc-2"],
+                fresh_evidence_sha256="b" * 64,
+                reuse_signature="repo_local_latency_triage:latency",
+                step_output_state_ids=["state-feature-1"],
+                step_output_state_refs=refs,
+                tool_name="tool.db_pool_triage",
+                source_session_id="session-v2",
+            )
+        )
+        hits = store.replay_candidates(
+            task_theme="repo_local_latency_triage",
+            encoder_id=store.embedder.encoder_id,
+            required_metadata={"memory_purpose": "replay"},
+        )
+        assert hits
+        hit = hits[0]
+        assert hit.memory_id == "mem-replay-v2"
+        assert hit.replay_class == "validated"
+        assert hit.route == "db_pool_saturation"
+        assert hit.route_source == "hint_consensus"
+        assert hit.route_provenance == ["corpus_metadata", "lexical"]
+        assert hit.retrieved_doc_ids == ["doc-1", "doc-2"]
+        assert hit.fresh_evidence_sha256 == "b" * 64
+        assert hit.reuse_signature == "repo_local_latency_triage:latency"
+        assert hit.tool_name == "tool.db_pool_triage"
+        assert hit.source_session_id == "session-v2"
+        assert len(hit.step_output_state_refs) == 1
+        assert hit.step_output_state_refs[0].metadata["channel_name"] == "features"
         store.close()
 
 

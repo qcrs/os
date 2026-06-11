@@ -12,6 +12,7 @@ from typing import Any
 
 import msgpack
 
+from protocol.channels import attach_channel_metadata
 from protocol.messages import PlanStep, StateRef, StepResult
 from statepool.store import MMAP_FILE_STORAGE, PY_SHARED_MEMORY_STORAGE, StatePool
 
@@ -924,17 +925,20 @@ def execute_playbook_step(
         state_id=f"{task_id}-{step.step_id}-artifact",
         kind="TOOL_ARTIFACT",
         payload=artifact_text.encode("utf-8"),
-        metadata={
-            "source_evidence": evidence_ref.state_id,
-            "source_features": feature_state_id,
-            "source_tool_candidates": (
-                tool_candidate_ref.state_id if tool_candidate_ref is not None else ""
-            ),
-            "tool_name": execution.tool_name,
-            "route": execution.route,
-            "sandbox_mode": execution.sandbox_mode,
-            "transfer_strategy": transfer_strategy,
-        },
+        metadata=attach_channel_metadata(
+            {
+                "source_evidence": evidence_ref.state_id,
+                "source_features": feature_state_id,
+                "source_tool_candidates": (
+                    tool_candidate_ref.state_id if tool_candidate_ref is not None else ""
+                ),
+                "tool_name": execution.tool_name,
+                "route": execution.route,
+                "sandbox_mode": execution.sandbox_mode,
+                "transfer_strategy": transfer_strategy,
+            },
+            state_kind="TOOL_ARTIFACT",
+        ),
         storage=preferred_storage,
     )
     return StepResult(

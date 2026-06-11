@@ -1,4 +1,4 @@
-# StateBus 系统讲解总览
+# StateBus 总览
 
 日期：`2026-06-11`
 
@@ -8,7 +8,6 @@
 
 ## 一、文档定位
 
-| 你要讲什么 | 看哪个 | 内容 |
 |-----------|--------|------|
 | 系统跑出什么结果？ | `benchmark_results_interpretation` | 完整数据 + 每指标含义 + 公平性边界 |
 | 系统怎么设计的？测了什么？ | `task_design_and_mode_comparison` | 24 task 设计 + 三层差异矩阵 + pack 分工 |
@@ -37,13 +36,13 @@
 
 ---
 
-## 三、讲述路线
+## 三、路线
 
-### 第1步：一句话定义（30秒）
+### 第1步：定义
 
 > StateBus 是四个 Agent（Planner/Retriever/Executor/Summarizer）通过两种模式协作的运行时。text 模拟传统自然语言通信，protocol 用结构化协议通信。同一个任务各跑一遍，控制所有变量，只让通信格式不同——对比开销差异。
 
-### 第2步：三分钟讲架构
+### 第2步：架构
 
 1. **控制面 vs 状态面**（`architecture_and_data_flow` §一、§六）
    - 控制面传"谁干什么"（协议消息），线上传输
@@ -58,20 +57,11 @@
    - 21 个 task：只有消息格式+prompt 不同（握手相同）
    - 3 个 task：多了握手策略不同（text_brief vs state_ref）
 
-### 第3步：两分钟跑结果
+### 第3步：结果
 
 1. **通信**→ 见 `benchmark_results_interpretation` §三：protocol 省 15.9% 控制面、21.4% token
 2. **状态传递**→ 见 §五：文本握手↓59%，非文本从无到有，wire 仅差81字节
 3. **记忆**→ 见 §四：replay 跳过步骤省 12.3%，assist 不 work（诚实标注）
-
-### 第4步：预判评委提问
-
-| 可能问 | 答 | 证据 |
-|--------|-----|------|
-| "Planner真的会规划吗？" | 受控包不让它干活（控制变量）。开放包真调LLM，全部通过 | open_validation expectation=1.00 |
-| "protocol省token是不是因为给了更少信息？" | 不是更少，是更浓缩。上游已提取结论，不需要Summarizer再推理。输出一致证明等价 | expectation_match=1.00 |
-| "state_transfer wire才差81字节，意义大吗？" | 因为两者都走StatePool。真正纯文本应内联在消息里。我们诚实标注了这个边界 | 见fairness分析 |
-| "assist怎么不行？" | 记忆当额外文本塞给Summarizer，prompt变长→token反而多。我们诚实不claim | memory结果 |
 
 ### 第5步：诚实边界（加分项）
 
