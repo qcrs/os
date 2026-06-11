@@ -38,6 +38,7 @@ from protocol.messages import (
     text_frame,
 )
 from statepool.store import (
+    CAS_BLOB_STORAGE,
     MMAP_FILE_STORAGE,
     PY_SHARED_MEMORY_STORAGE,
     StatePool,
@@ -156,7 +157,7 @@ class RunContext:
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             self.metrics.shared_memory_state_ref_count += 1
             self.metrics.shared_memory_state_bytes += ref.length
-        else:
+        elif ref.storage == MMAP_FILE_STORAGE:
             self.metrics.mmap_state_ref_count += 1
             self.metrics.mmap_state_bytes += ref.length
 
@@ -613,6 +614,19 @@ class Orchestrator:
 
     async def run_task(self, task: object, ctx: RunContext) -> dict[str, StepResult]:
         started = time.perf_counter()
+        plan = await self.compile_task_plan(task, ctx)
+        results = await self._execute_plan(plan, ctx)
+        ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
+        return results
+
+    async def run_plan(self, plan: Plan, ctx: RunContext) -> dict[str, StepResult]:
+        started = time.perf_counter()
+        self.prepare_plan(plan, ctx)
+        results = await self._execute_plan(plan, ctx)
+        ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
+        return results
+
+    async def compile_task_plan(self, task: object, ctx: RunContext) -> Plan:
         ctx.task = task
         if ctx.runtime_profile.is_empty and hasattr(task, "runtime_profile"):
             maybe_profile = getattr(task, "runtime_profile")
@@ -622,90 +636,66 @@ class Orchestrator:
         plan_started = time.perf_counter()
         plan = await self._plan_task(task, ctx)
         ctx.record_phase_duration("planner", (time.perf_counter() - plan_started) * 1000.0)
-        SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
-        ctx.metrics.planned_step_count = len(plan.steps)
-        results = await self._execute_plan(plan, ctx)
-        ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
-        return results
+        self.prepare_plan(plan, ctx)
+        return plan
 
-    async def run_plan(self, plan: Plan, ctx: RunContext) -> dict[str, StepResult]:
-        started = time.perf_counter()
+    def prepare_plan(self, plan: Plan, ctx: RunContext) -> None:
         self._ensure_handshake(ctx)
         SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
         ctx.metrics.planned_step_count = len(plan.steps)
-        results = await self._execute_plan(plan, ctx)
-        ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
-        return results
+        if getattr(ctx, "_statebus_plan_emitted", False):
+            return
+        ctx.emit(plan)
+        setattr(ctx, "_statebus_plan_emitted", True)
 
     async def _execute_plan(self, plan: Plan, ctx: RunContext) -> dict[str, StepResult]:
-        ctx.emit(plan)
+        self.prepare_plan(plan, ctx)
         retrieve_gate_started = time.perf_counter()
-        precomputed_skip = self._resolve_skip_retrieve_execute(plan, ctx)
+        precomputed_skip = self.resolve_skip_retrieve_execute(plan, ctx)
         ctx.record_phase_duration(
             "retrieve",
             (time.perf_counter() - retrieve_gate_started) * 1000.0,
         )
         for step in plan.steps:
-            if step.owner_agent not in self.agents:
-                error = Error(
-                    code="unknown_agent",
-                    detail=f"missing agent {step.owner_agent}",
-                    related_id=step.step_id,
-                )
-                ctx.emit(error)
-                raise KeyError(error.detail)
-            self._ensure_dependencies(step, ctx)
+            self.ensure_step_ready(step, ctx)
             if step.step_id in ctx.results:
                 continue
             if step.step_id == "retrieve" and precomputed_skip is not None:
                 for synthetic_step in precomputed_skip:
                     synthetic_plan_step = self._step_for_emit(plan, synthetic_step.step_id)
-                    ctx.emit(synthetic_plan_step)
-                    SchemaInterceptor.validate_result(
+                    self.register_step_result(
                         step=synthetic_plan_step,
                         result=synthetic_step,
-                        capability_table=ctx.session.capability_table,
-                        state_contract_registry=self.state_contract_registry,
-                        statepool=ctx.statepool,
+                        ctx=ctx,
+                        emit_step=True,
                     )
-                    self._register_result(synthetic_step, ctx)
                 continue
             if step.step_id == "execute":
                 execute_phase_ms = 0.0
                 execute_gate_started = time.perf_counter()
-                maybe_skip = self._resolve_skip_execute(plan, ctx)
+                maybe_skip = self.resolve_skip_execute(plan, ctx)
                 execute_phase_ms += (time.perf_counter() - execute_gate_started) * 1000.0
                 if maybe_skip is not None:
                     ctx.record_phase_duration("execute", execute_phase_ms)
-                    ctx.emit(step)
-                    SchemaInterceptor.validate_result(
+                    self.register_step_result(
                         step=step,
                         result=maybe_skip,
-                        capability_table=ctx.session.capability_table,
-                        state_contract_registry=self.state_contract_registry,
-                        statepool=ctx.statepool,
+                        ctx=ctx,
+                        emit_step=True,
                     )
-                    self._register_result(maybe_skip, ctx)
                     continue
-            self._prepare_step_input_refs(plan, step, ctx)
-            ctx.emit(step)
-            agent = self.agents[step.owner_agent]
-            step_started = time.perf_counter()
-            result = await agent.execute_step(step, ctx)
-            step_elapsed_ms = (time.perf_counter() - step_started) * 1000.0
+            result, step_elapsed_ms = await self.invoke_plan_step(plan, step, ctx)
             if step.step_id == "execute":
                 step_elapsed_ms += execute_phase_ms
             phase_name = self._phase_name_for_step(step.step_id)
             if phase_name is not None:
                 ctx.record_phase_duration(phase_name, step_elapsed_ms)
-            SchemaInterceptor.validate_result(
+            self.register_step_result(
                 step=step,
                 result=result,
-                capability_table=ctx.session.capability_table,
-                state_contract_registry=self.state_contract_registry,
-                statepool=ctx.statepool,
+                ctx=ctx,
+                emit_step=False,
             )
-            self._register_result(result, ctx)
             if not result.success:
                 error = Error(
                     code="step_failed",
@@ -716,7 +706,50 @@ class Orchestrator:
                 break
         return ctx.results
 
-    def _resolve_skip_retrieve_execute(
+    def ensure_step_ready(self, step: PlanStep, ctx: RunContext) -> None:
+        if step.owner_agent not in self.agents:
+            error = Error(
+                code="unknown_agent",
+                detail=f"missing agent {step.owner_agent}",
+                related_id=step.step_id,
+            )
+            ctx.emit(error)
+            raise KeyError(error.detail)
+        self._ensure_dependencies(step, ctx)
+
+    async def invoke_plan_step(
+        self,
+        plan: Plan,
+        step: PlanStep,
+        ctx: RunContext,
+    ) -> tuple[StepResult, float]:
+        self.prepare_step_input_refs(plan, step, ctx)
+        ctx.emit(step)
+        agent = self.agents[step.owner_agent]
+        step_started = time.perf_counter()
+        result = await agent.execute_step(step, ctx)
+        return result, (time.perf_counter() - step_started) * 1000.0
+
+    def register_step_result(
+        self,
+        *,
+        step: PlanStep,
+        result: StepResult,
+        ctx: RunContext,
+        emit_step: bool = False,
+    ) -> None:
+        if emit_step:
+            ctx.emit(step)
+        SchemaInterceptor.validate_result(
+            step=step,
+            result=result,
+            capability_table=ctx.session.capability_table,
+            state_contract_registry=self.state_contract_registry,
+            statepool=ctx.statepool,
+        )
+        self.register_result(result, ctx)
+
+    def resolve_skip_retrieve_execute(
         self,
         plan: Plan,
         ctx: RunContext,
@@ -774,7 +807,7 @@ class Orchestrator:
             return [retrieve_result, execute_result]
         return None
 
-    def _resolve_skip_execute(
+    def resolve_skip_execute(
         self,
         plan: Plan,
         ctx: RunContext,
@@ -864,7 +897,7 @@ class Orchestrator:
         for ref in result.output_state_refs:
             ctx.register_state(ref)
 
-    def _register_result(self, result: StepResult, ctx: RunContext) -> None:
+    def register_result(self, result: StepResult, ctx: RunContext) -> None:
         self._register_step_outputs(result, ctx)
         commits: list[MemoryCommit] = []
         maybe_commit = result.memory_commit
@@ -877,6 +910,8 @@ class Orchestrator:
             ctx.emit(Ack(related_id=commit.memory_id, detail="memory committed"))
         ctx.emit(result)
         ctx.results[result.step_id] = result
+
+    _register_result = register_result
 
     @staticmethod
     def _find_step(plan: Plan, step_id: str) -> PlanStep:
@@ -893,7 +928,7 @@ class Orchestrator:
         raise KeyError(f"missing step in plan: {step_id}")
 
     @staticmethod
-    def _phase_name_for_step(step_id: str) -> str | None:
+    def phase_name_for_step(step_id: str) -> str | None:
         if step_id == "retrieve":
             return "retrieve"
         if step_id == "execute":
@@ -902,7 +937,9 @@ class Orchestrator:
             return "summarize"
         return None
 
-    def _prepare_step_input_refs(
+    _phase_name_for_step = phase_name_for_step
+
+    def prepare_step_input_refs(
         self,
         plan: Plan,
         step: PlanStep,
@@ -959,6 +996,8 @@ class Orchestrator:
             ctx.set_step_input_refs(step.step_id, selected_refs)
         return selected_refs
 
+    _prepare_step_input_refs = prepare_step_input_refs
+
     @staticmethod
     def _step_input_contract_variant(step: PlanStep, ctx: RunContext) -> str:
         if step.owner_agent == "executor" and step.action == "EXECUTE_PLAYBOOK":
@@ -983,13 +1022,14 @@ class Orchestrator:
             refs=retrieve_result.output_state_refs,
             kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
-        feature_route = _bundle_string(
+        feature_route = hit.route or _bundle_string(
             stored_bundle,
             "route",
             fallback=hit.metadata.get("feature_route", ""),
         )
         retrieved_doc_ids = sorted(
-            _bundle_string_list(
+            hit.retrieved_doc_ids
+            or _bundle_string_list(
                 stored_bundle,
                 "retrieved_doc_ids",
                 fallback=hit.metadata.get("retrieved_doc_ids", []),
@@ -1012,7 +1052,7 @@ class Orchestrator:
             "query",
             fallback=hit.metadata.get("feature_query", ""),
         )
-        stored_evidence_sha256 = _bundle_string(
+        stored_evidence_sha256 = hit.fresh_evidence_sha256 or _bundle_string(
             stored_bundle,
             "feature_fresh_evidence_sha256",
             fallback=hit.metadata.get(
@@ -1028,7 +1068,7 @@ class Orchestrator:
                 retrieve_result.payload.get("feature_evidence_sha256", ""),
             ),
         )
-        stored_route_confidence = _bundle_float(
+        stored_route_confidence = hit.route_confidence or _bundle_float(
             stored_bundle,
             "route_confidence",
             fallback=hit.metadata.get("feature_route_confidence"),
@@ -1040,7 +1080,7 @@ class Orchestrator:
             fallback=retrieve_result.payload.get("feature_route_confidence"),
             default=0.0,
         )
-        stored_route_provenance = _bundle_string_list(
+        stored_route_provenance = hit.route_provenance or _bundle_string_list(
             stored_bundle,
             "route_provenance",
             fallback=hit.metadata.get("feature_route_provenance", []),
@@ -1057,6 +1097,7 @@ class Orchestrator:
             and feature_route == fresh_route
             and "execute" in reusable_steps
             and _query_is_validated_replay_match(stored_query=stored_query, current_query=current_query)
+            and _replay_class_allows(hit.replay_class, required="validated_replay")
             and retrieved_doc_ids == fresh_doc_ids
             and stored_evidence_sha256
             and stored_evidence_sha256 == fresh_evidence_sha256
@@ -1085,13 +1126,14 @@ class Orchestrator:
             refs=hit.evidence_state_refs,
             kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
-        feature_route = _bundle_string(
+        feature_route = hit.route or _bundle_string(
             replay_bundle,
             "route",
             fallback=hit.metadata.get("feature_route", ""),
         )
         retrieved_doc_ids = sorted(
-            _bundle_string_list(
+            hit.retrieved_doc_ids
+            or _bundle_string_list(
                 replay_bundle,
                 "retrieved_doc_ids",
                 fallback=hit.metadata.get("retrieved_doc_ids", []),
@@ -1105,18 +1147,18 @@ class Orchestrator:
             )
         )
         normalized_query = _normalize_replay_query(current_query)
-        route_confidence = _bundle_float(
+        route_confidence = hit.route_confidence or _bundle_float(
             replay_bundle,
             "route_confidence",
             fallback=hit.metadata.get("feature_route_confidence"),
             default=0.0,
         )
-        route_provenance = _bundle_string_list(
+        route_provenance = hit.route_provenance or _bundle_string_list(
             replay_bundle,
             "route_provenance",
             fallback=hit.metadata.get("feature_route_provenance", []),
         )
-        evidence_sha256 = _bundle_string(
+        evidence_sha256 = hit.fresh_evidence_sha256 or _bundle_string(
             replay_bundle,
             "feature_fresh_evidence_sha256",
             fallback=hit.metadata.get(
@@ -1136,6 +1178,7 @@ class Orchestrator:
             and {"retrieve", "execute"}.issubset(reusable_steps)
             and bool(retrieved_doc_ids)
             and inferred_source_match
+            and _replay_class_allows(hit.replay_class, required="exact_replay")
             and bool(evidence_sha256)
             and _route_is_replay_eligible(
                 route_confidence=route_confidence,
@@ -1182,19 +1225,19 @@ class Orchestrator:
             refs=hit.evidence_state_refs,
             kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
-        route = _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
-        route_source = _bundle_string(
+        route = hit.route or _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
+        route_source = hit.route_source or _bundle_string(
             replay_bundle,
             "route_source",
             fallback=hit.metadata.get("feature_route_source", ""),
         )
-        route_confidence = _bundle_float(
+        route_confidence = hit.route_confidence or _bundle_float(
             replay_bundle,
             "route_confidence",
             fallback=hit.metadata.get("feature_route_confidence"),
             default=0.0,
         )
-        route_provenance = _bundle_string_list(
+        route_provenance = hit.route_provenance or _bundle_string_list(
             replay_bundle,
             "route_provenance",
             fallback=hit.metadata.get("feature_route_provenance", []),
@@ -1279,25 +1322,25 @@ class Orchestrator:
             refs=hit.evidence_state_refs,
             kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
-        route = _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
-        route_source = _bundle_string(
+        route = hit.route or _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
+        route_source = hit.route_source or _bundle_string(
             replay_bundle,
             "route_source",
             fallback=hit.metadata.get("feature_route_source", ""),
         )
-        route_confidence = _bundle_float(
+        route_confidence = hit.route_confidence or _bundle_float(
             replay_bundle,
             "route_confidence",
             fallback=hit.metadata.get("feature_route_confidence"),
             default=0.0,
         )
-        route_provenance = _bundle_string_list(
+        route_provenance = hit.route_provenance or _bundle_string_list(
             replay_bundle,
             "route_provenance",
             fallback=hit.metadata.get("feature_route_provenance", []),
         )
         hint_doc_ids = [str(doc_id) for doc_id in hit.metadata.get("feature_hint_doc_ids", [])]
-        retrieved_doc_ids = _bundle_string_list(
+        retrieved_doc_ids = hit.retrieved_doc_ids or _bundle_string_list(
             replay_bundle,
             "retrieved_doc_ids",
             fallback=hit.metadata.get("retrieved_doc_ids", []),
@@ -1389,16 +1432,14 @@ class Orchestrator:
             source_kind=source_kind,
             required=True,
         )
-        payload = ctx.statepool.get_bytes(source_ref)
         metadata: dict[str, Any] = dict(source_ref.metadata)
         metadata["reused_from_memory_id"] = hit.memory_id
         metadata["reused_from_source_task_id"] = hit.source_task_id or ""
-        ref = ctx.statepool.put_bytes(
-            state_id=target_state_id,
-            kind=source_ref.kind,
-            payload=payload,
+        ref = self._restore_replay_ref(
+            ctx=ctx,
+            source_ref=source_ref,
+            target_state_id=target_state_id,
             metadata=metadata,
-            storage=source_ref.storage,
         )
         ctx.register_state(ref)
         return ref
@@ -1419,19 +1460,40 @@ class Orchestrator:
         )
         if source_ref is None:
             return None
-        payload = ctx.statepool.get_bytes(source_ref)
         metadata: dict[str, Any] = dict(source_ref.metadata)
         metadata["reused_from_memory_id"] = hit.memory_id
         metadata["reused_from_source_task_id"] = hit.source_task_id or ""
-        ref = ctx.statepool.put_bytes(
+        ref = self._restore_replay_ref(
+            ctx=ctx,
+            source_ref=source_ref,
+            target_state_id=target_state_id,
+            metadata=metadata,
+        )
+        ctx.register_state(ref)
+        return ref
+
+    @staticmethod
+    def _restore_replay_ref(
+        *,
+        ctx: RunContext,
+        source_ref: StateRef,
+        target_state_id: str,
+        metadata: dict[str, Any],
+    ) -> StateRef:
+        payload = ctx.statepool.get_bytes(source_ref)
+        if source_ref.storage == CAS_BLOB_STORAGE and source_ref.blob_hash:
+            return ctx.statepool.link_cas_ref(
+                state_id=target_state_id,
+                source_ref=source_ref,
+                metadata=metadata,
+            )
+        return ctx.statepool.put_replay_restorable_bytes(
             state_id=target_state_id,
             kind=source_ref.kind,
             payload=payload,
             metadata=metadata,
             storage=source_ref.storage,
         )
-        ctx.register_state(ref)
-        return ref
 
     def _select_replay_source_ref(
         self,
@@ -1484,6 +1546,30 @@ def _query_is_validated_replay_match(*, stored_query: str, current_query: str) -
     overlap = stored_terms & current_terms
     coverage = len(overlap) / max(len(stored_terms), len(current_terms))
     return coverage >= 0.85
+
+
+def _normalize_replay_class(value: object) -> str:
+    text = str(value or "").strip().lower()
+    alias_map = {
+        "": "",
+        "validated": "validated_replay",
+        "validated_replay": "validated_replay",
+        "skip_execute": "validated_replay",
+        "exact": "exact_replay",
+        "exact_replay": "exact_replay",
+        "skip_retrieve_execute": "exact_replay",
+    }
+    return alias_map.get(text, text)
+
+
+def _replay_class_allows(value: object, *, required: str) -> bool:
+    normalized = _normalize_replay_class(value)
+    if not normalized:
+        return True
+    required_normalized = _normalize_replay_class(required)
+    if normalized == required_normalized:
+        return True
+    return required_normalized == "validated_replay" and normalized == "exact_replay"
 
 
 def _normalize_route_provenance(value: object) -> list[str]:

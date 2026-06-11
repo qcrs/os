@@ -671,6 +671,13 @@ class SummarizerAgent(BaseAgent):
         tags = list(summary_payload.get("tags") or step.params.get("tags", []))
         confidence = float(summary_payload.get("confidence", 0.95))
         replay_reusable_steps = list(summary_payload.get("reusable_steps") or reusable_steps)
+        replay_class = (
+            "exact_replay"
+            if {"retrieve", "execute"}.issubset({str(step_id) for step_id in replay_reusable_steps})
+            else "validated_replay"
+            if "execute" in {str(step_id) for step_id in replay_reusable_steps}
+            else "assist"
+        )
         shared_metadata = {
             "source_agent_id": self.agent_id,
             "goal": getattr(ctx, "task_id", ""),
@@ -753,6 +760,26 @@ class SummarizerAgent(BaseAgent):
                     "memory_layer": "summary",
                 },
                 evidence_state_refs=assist_refs,
+                memory_purpose="assist",
+                memory_layer="summary",
+                replay_class="assist",
+                route=str(execute_result.payload.get("route", "")),
+                route_source=str(retrieve_result.payload.get("feature_route_source", "")),
+                route_provenance=[
+                    str(item) for item in retrieve_result.payload.get("feature_route_provenance", [])
+                ],
+                route_confidence=float(retrieve_result.payload.get("feature_route_confidence", 0.0)),
+                retrieved_doc_ids=[
+                    str(item) for item in retrieve_result.payload.get("retrieved_doc_ids", [])
+                ],
+                fresh_evidence_sha256=str(
+                    retrieve_result.payload.get("feature_fresh_evidence_sha256", "")
+                ),
+                reuse_signature=ctx.reuse_signature(step),
+                step_output_state_ids=[ref.state_id for ref in assist_refs],
+                step_output_state_refs=assist_refs,
+                tool_name=str(execute_result.payload.get("tool_name", "")),
+                source_session_id=ctx.trace_id,
             ),
             MemoryCommit(
                 memory_id=f"mem-{ctx.task_id}-replay",
@@ -773,6 +800,26 @@ class SummarizerAgent(BaseAgent):
                     "memory_layer": "episode",
                 },
                 evidence_state_refs=replay_refs,
+                memory_purpose="replay",
+                memory_layer="episode",
+                replay_class=replay_class,
+                route=str(execute_result.payload.get("route", "")),
+                route_source=str(retrieve_result.payload.get("feature_route_source", "")),
+                route_provenance=[
+                    str(item) for item in retrieve_result.payload.get("feature_route_provenance", [])
+                ],
+                route_confidence=float(retrieve_result.payload.get("feature_route_confidence", 0.0)),
+                retrieved_doc_ids=[
+                    str(item) for item in retrieve_result.payload.get("retrieved_doc_ids", [])
+                ],
+                fresh_evidence_sha256=str(
+                    retrieve_result.payload.get("feature_fresh_evidence_sha256", "")
+                ),
+                reuse_signature=ctx.reuse_signature(step),
+                step_output_state_ids=[ref.state_id for ref in replay_refs],
+                step_output_state_refs=replay_refs,
+                tool_name=str(execute_result.payload.get("tool_name", "")),
+                source_session_id=ctx.trace_id,
             ),
         ]
         return StepResult(

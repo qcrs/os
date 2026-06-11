@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from protocol.messages import Plan, StepResult
 from runtime.llm import DeterministicLLMClient, LLMClient
 from runtime.orchestrator import Orchestrator, RunContext, RunSession
 from statepool.store import StatePoolConfig
-from tasks.sample_tasks import SampleTask, build_plan, normalize_plan_source
+from tasks.sample_tasks import SampleTask
 
 STATEBUS_GRAPH_NODES = ("planner", "retriever", "executor", "summarizer")
 
@@ -29,15 +30,16 @@ class GraphRunnerResult:
     graph_state: dict[str, object]
     state_refs: dict[str, dict[str, object]]
     memory_hits: list[str]
+    ctx: RunContext
     langgraph_available: bool
 
 
 class StateBusGraphRunner:
-    """LangGraph-compatible facade over the host-side StateBus orchestrator.
+    """LangGraph-backed StateBus runtime.
 
-    LangGraph is an optional orchestration surface here. The authoritative data
-    path remains the existing Orchestrator, StateRef, StatePool, and MemoryStore
-    implementation used by the benchmark runner.
+    The graph owns task execution state. It reuses public StateBus runtime
+    primitives for schema validation, replay gates, step invocation, result
+    registration, and StatePool/MemoryStore effects.
     """
 
     def __init__(
@@ -67,7 +69,10 @@ class StateBusGraphRunner:
         state_root: str | Path | None = None,
         memory_db_path: str | Path | None = None,
         session: RunSession | None = None,
+        ctx: RunContext | None = None,
     ) -> GraphRunnerResult:
+        if ctx is not None:
+            return await self._run_task_with_context(task, ctx)
         with _maybe_temp_runtime_paths(
             state_root=state_root,
             memory_db_path=memory_db_path,
@@ -86,29 +91,39 @@ class StateBusGraphRunner:
                 task_corpus_path=task.corpus_path,
                 runtime_profile=task.runtime_profile,
             )
-            results = await self._run_compiled_graph(task, ctx)
-            return GraphRunnerResult(
-                task_id=task.task_id,
-                mode=mode,
-                engine="langgraph",
-                node_order=STATEBUS_GRAPH_NODES,
-                results=results,
-                metrics=ctx.metrics.to_dict(),
-                state_channels=_state_channel_summary(ctx),
-                graph_state=_graph_state_snapshot(task, ctx, results),
-                state_refs={
-                    state_id: {
-                        "kind": ref.kind,
-                        "storage": ref.storage,
-                        "handle": ref.handle,
-                        "length": ref.length,
-                        "metadata": dict(ref.metadata),
-                    }
-                    for state_id, ref in ctx.state_refs.items()
-                },
-                memory_hits=[hit.memory_id for hit in ctx.memory_hits],
-                langgraph_available=langgraph_available(),
-            )
+            return await self._run_task_with_context(task, ctx)
+
+    async def _run_task_with_context(
+        self,
+        task: SampleTask,
+        ctx: RunContext,
+    ) -> GraphRunnerResult:
+        started = time.perf_counter()
+        results = await self._run_compiled_graph(task, ctx)
+        ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
+        return GraphRunnerResult(
+            task_id=task.task_id,
+            mode=ctx.mode,
+            engine="langgraph",
+            node_order=STATEBUS_GRAPH_NODES,
+            results=results,
+            metrics=ctx.metrics.to_dict(),
+            state_channels=_state_channel_summary(ctx),
+            graph_state=_graph_state_snapshot(task, ctx, results),
+            state_refs={
+                state_id: {
+                    "kind": ref.kind,
+                    "storage": ref.storage,
+                    "handle": ref.handle,
+                    "length": ref.length,
+                    "metadata": dict(ref.metadata),
+                }
+                for state_id, ref in ctx.state_refs.items()
+            },
+            memory_hits=[hit.memory_id for hit in ctx.memory_hits],
+            ctx=ctx,
+            langgraph_available=langgraph_available(),
+        )
 
     async def _run_compiled_graph(
         self,
@@ -119,20 +134,11 @@ class StateBusGraphRunner:
         results = state.get("results", {})
         return results if isinstance(results, dict) else {}
 
-    async def _compile_plan(self, task: SampleTask, ctx: RunContext) -> Plan:
-        if normalize_plan_source(task.plan_source) == "yaml":
-            return build_plan(task)
-        planner = self.agents.get("planner")
-        if planner is None or not hasattr(planner, "plan_task"):
-            raise KeyError("planner agent is required for plan_source=llm")
-        return await planner.plan_task(task, ctx)
-
     def build_langgraph(self) -> Any:
         """Return a compiled LangGraph StateGraph when langgraph is installed.
 
-        The nodes are intentionally thin labels around the existing StateBus
-        phases. Tests and host benchmark paths do not require this optional
-        dependency.
+        Tests and host benchmark paths can still use the graph-native fallback
+        when the optional dependency is absent.
         """
         try:
             from langgraph.graph import END, StateGraph
@@ -140,38 +146,16 @@ class StateBusGraphRunner:
             raise RuntimeError("langgraph is not installed in this host env") from exc
 
         async def planner_node(state: dict[str, Any]) -> dict[str, Any]:
-            plan = await self._compile_plan(state["task"], state["ctx"])
-            state["plan"] = plan
-            state["ctx"].metrics.planned_step_count = len(plan.steps)
-            state["metrics"] = state["ctx"].metrics.to_dict()
-            return state
+            return await self._planner_node(state)
 
         async def retriever_node(state: dict[str, Any]) -> dict[str, Any]:
-            plan: Plan = state["plan"]
-            retrieve_step = next(step for step in plan.steps if step.step_id == "retrieve")
-            result = await self.agents["retriever"].execute_step(retrieve_step, state["ctx"])
-            self.orchestrator._register_result(result, state["ctx"])
-            state["results"]["retrieve"] = result
-            return state
+            return await self._retriever_node(state)
 
         async def executor_node(state: dict[str, Any]) -> dict[str, Any]:
-            plan: Plan = state["plan"]
-            execute_step = next(step for step in plan.steps if step.step_id == "execute")
-            self.orchestrator._prepare_step_input_refs(plan, execute_step, state["ctx"])
-            result = await self.agents["executor"].execute_step(execute_step, state["ctx"])
-            self.orchestrator._register_result(result, state["ctx"])
-            state["results"]["execute"] = result
-            return state
+            return await self._executor_node(state)
 
         async def summarizer_node(state: dict[str, Any]) -> dict[str, Any]:
-            plan: Plan = state["plan"]
-            summarize_step = next(step for step in plan.steps if step.step_id == "summarize")
-            self.orchestrator._prepare_step_input_refs(plan, summarize_step, state["ctx"])
-            result = await self.agents["summarizer"].execute_step(summarize_step, state["ctx"])
-            self.orchestrator._register_result(result, state["ctx"])
-            state["results"]["summarize"] = result
-            state["metrics"] = state["ctx"].metrics.to_dict()
-            return state
+            return await self._summarizer_node(state)
 
         graph = StateGraph(dict)
         graph.add_node("planner", planner_node)
@@ -186,28 +170,142 @@ class StateBusGraphRunner:
         return graph.compile()
 
     async def _invoke_graph(self, task: SampleTask, ctx: RunContext) -> dict[str, Any]:
-        self.orchestrator._ensure_handshake(ctx)
         state = {
             "task": task,
             "ctx": ctx,
             "task_id": task.task_id,
             "plan": None,
+            "step_results": {},
             "results": {},
             "state_refs": {},
             "memory_hits": [],
+            "replay_decision": {
+                "mode": "none",
+                "candidate_count": 0,
+                "reject_reason": "not_probed",
+                "restored_state_ref_count": 0,
+            },
             "metrics": ctx.metrics.to_dict(),
+            "status": "running",
         }
         if langgraph_available():
             graph = self.build_langgraph()
             return await graph.ainvoke(state)
-        plan = await self._compile_plan(task, ctx)
-        results = await self.orchestrator.run_plan(plan, ctx)
+        for node in (
+            self._planner_node,
+            self._retriever_node,
+            self._executor_node,
+            self._summarizer_node,
+        ):
+            state = await node(state)
+        return state
+
+    async def _planner_node(self, state: dict[str, Any]) -> dict[str, Any]:
+        ctx: RunContext = state["ctx"]
+        plan = await self.orchestrator.compile_task_plan(state["task"], ctx)
         state["plan"] = plan
-        state["results"] = results
+        self._refresh_state_snapshot(state)
+        return state
+
+    async def _retriever_node(self, state: dict[str, Any]) -> dict[str, Any]:
+        plan = _require_plan(state)
+        ctx: RunContext = state["ctx"]
+        if state.get("status") == "failed":
+            return state
+        gate_started = time.perf_counter()
+        precomputed_skip = self.orchestrator.resolve_skip_retrieve_execute(plan, ctx)
+        gate_elapsed_ms = (time.perf_counter() - gate_started) * 1000.0
+        if precomputed_skip is not None:
+            ctx.record_phase_duration("retrieve", gate_elapsed_ms)
+            for result in precomputed_skip:
+                step = _step_by_id(plan, result.step_id)
+                self.orchestrator.register_step_result(
+                    step=step,
+                    result=result,
+                    ctx=ctx,
+                    emit_step=True,
+                )
+            self._refresh_state_snapshot(state)
+            return state
+        step = _step_by_id(plan, "retrieve")
+        await self._invoke_normal_step(state, step)
+        return state
+
+    async def _executor_node(self, state: dict[str, Any]) -> dict[str, Any]:
+        plan = _require_plan(state)
+        ctx: RunContext = state["ctx"]
+        if state.get("status") == "failed":
+            return state
+        if "execute" in ctx.results:
+            self._refresh_state_snapshot(state)
+            return state
+        step = _step_by_id(plan, "execute")
+        gate_started = time.perf_counter()
+        maybe_skip = self.orchestrator.resolve_skip_execute(plan, ctx)
+        gate_elapsed_ms = (time.perf_counter() - gate_started) * 1000.0
+        if maybe_skip is not None:
+            ctx.record_phase_duration("execute", gate_elapsed_ms)
+            self.orchestrator.register_step_result(
+                step=step,
+                result=maybe_skip,
+                ctx=ctx,
+                emit_step=True,
+            )
+            self._refresh_state_snapshot(state)
+            return state
+        await self._invoke_normal_step(state, step)
+        return state
+
+    async def _summarizer_node(self, state: dict[str, Any]) -> dict[str, Any]:
+        if state.get("status") == "failed":
+            return state
+        plan = _require_plan(state)
+        step = _step_by_id(plan, "summarize")
+        await self._invoke_normal_step(state, step)
+        state["status"] = "completed"
+        return state
+
+    async def _invoke_normal_step(
+        self,
+        state: dict[str, Any],
+        step: Any,
+    ) -> None:
+        plan = _require_plan(state)
+        ctx: RunContext = state["ctx"]
+        self.orchestrator.ensure_step_ready(step, ctx)
+        result, elapsed_ms = await self.orchestrator.invoke_plan_step(plan, step, ctx)
+        phase_name = self.orchestrator.phase_name_for_step(step.step_id)
+        if phase_name is not None:
+            ctx.record_phase_duration(phase_name, elapsed_ms)
+        self.orchestrator.register_step_result(
+            step=step,
+            result=result,
+            ctx=ctx,
+            emit_step=False,
+        )
+        if not result.success:
+            state["status"] = "failed"
+        self._refresh_state_snapshot(state)
+
+    @staticmethod
+    def _refresh_state_snapshot(state: dict[str, Any]) -> None:
+        ctx: RunContext = state["ctx"]
+        state["step_results"] = dict(ctx.results)
+        state["results"] = dict(ctx.results)
         state["state_refs"] = dict(ctx.state_refs)
         state["memory_hits"] = [hit.memory_id for hit in ctx.memory_hits]
         state["metrics"] = ctx.metrics.to_dict()
-        return state
+        state["replay_decision"] = {
+            "mode": ctx.reuse_mode if ctx.reuse_hit is not None else "none",
+            "candidate_count": ctx.metrics.replay_probe_hits,
+            "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
+            "reject_reason": "" if ctx.reuse_hit is not None else (
+                "no_candidate" if ctx.metrics.replay_probe_count > 0 else "not_probed"
+            ),
+            "restored_state_ref_count": (
+                len(ctx.reuse_hit.step_output_state_refs) if ctx.reuse_hit is not None else 0
+            ),
+        }
 
 
 def run_task_sync(
@@ -290,5 +388,31 @@ def _graph_state_snapshot(
         "plan_step_ids": list(results),
         "state_ref_ids": sorted(ctx.state_refs),
         "memory_hit_ids": [hit.memory_id for hit in ctx.memory_hits],
+        "replay_decision": {
+            "mode": ctx.reuse_mode if ctx.reuse_hit is not None else "none",
+            "candidate_count": ctx.metrics.replay_probe_hits,
+            "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
+            "reject_reason": "" if ctx.reuse_hit is not None else (
+                "no_candidate" if ctx.metrics.replay_probe_count > 0 else "not_probed"
+            ),
+            "restored_state_ref_count": (
+                len(ctx.reuse_hit.step_output_state_refs) if ctx.reuse_hit is not None else 0
+            ),
+        },
         "metrics": ctx.metrics.to_dict(),
+        "status": "completed" if "summarize" in results else "running",
     }
+
+
+def _require_plan(state: dict[str, Any]) -> Plan:
+    plan = state.get("plan")
+    if not isinstance(plan, Plan):
+        raise RuntimeError("graph state is missing compiled plan")
+    return plan
+
+
+def _step_by_id(plan: Plan, step_id: str) -> Any:
+    for step in plan.steps:
+        if step.step_id == step_id:
+            return step
+    raise KeyError(f"missing step in graph plan: {step_id}")

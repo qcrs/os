@@ -155,7 +155,7 @@ def test_benchmark_runner_writes_outputs() -> None:
             for mode in ("text", "protocol")
         }
         assert payload["manifest"]["repeat"] == 1
-        assert payload["manifest"]["engine"] == "orchestrator"
+        assert payload["manifest"]["engine"] == "langgraph"
         assert payload["manifest"]["llm_backend"] == "deterministic"
         assert payload["manifest"]["continuous_task_count"] == len(task_chain)
         assert payload["manifest"]["task_mode_counts"] == expected_task_mode_counts
@@ -212,6 +212,13 @@ def test_benchmark_runner_writes_outputs() -> None:
             "## Aggregate"
         )
         assert report_text.index("## Aggregate") < report_text.index("## Diagnostic Appendix")
+        task_run = payload["mode_runs"]["protocol"][0]["tasks"][0]
+        assert task_run["engine"] == "langgraph"
+        assert task_run["graph_state"]["metrics"] == task_run["metrics"]
+        assert sorted(task_run["state_refs"]) == sorted(task_run["graph_state"]["state_ref_ids"])
+        assert task_run["state_channels"]
+        assert "logical_replay_reuse" in task_run["reuse"]
+        assert "physical_blob_reuse" in task_run["reuse"]
 
 
 def test_benchmark_runner_supports_both_engines() -> None:
@@ -572,8 +579,17 @@ def test_exact_replay_copies_reused_state_into_current_task_root() -> None:
         }
         for ref in copied_refs:
             assert ref["metadata"]["reused_from_memory_id"] == reused_memory_id
-            assert "sample-cache-006" in ref["handle"]
+            if ref["storage"] != "CAS_BLOB":
+                assert "sample-cache-006" in ref["handle"]
             assert Path(ref["handle"]).exists()
+        cas_refs = [ref for ref in copied_refs if ref["storage"] == "CAS_BLOB"]
+        assert cas_refs
+        assert {"FEATURE_BUNDLE", "TOOL_ARTIFACT"}.issubset({ref["kind"] for ref in cas_refs})
+        assert task["reuse"]["logical_replay_reuse"] is True
+        assert task["reuse"]["physical_blob_reuse"] is True
+        assert task["reuse"]["dedup_bytes_saved"] > 0
+        assert task["reuse"]["cas_hit_rate"] > 0
+        assert task["cas_summary"]["physical_blob_count"] >= 1
         copied_artifact = next(ref for ref in copied_refs if ref["kind"] == "TOOL_ARTIFACT")
         assert copied_artifact["metadata"]["tool_name"] == "tool.cache_invalidation_playbook"
         assert copied_artifact["metadata"]["route"] == "cache_invalidation"
