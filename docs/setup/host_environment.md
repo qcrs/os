@@ -26,7 +26,7 @@ $HOME/statebus/
 
 其中：
 
-- 代码仓库本身：单独 clone 到任意位置，例如 `~/statebus/project`
+- 代码仓库本身：单独 clone 到任意位置，例如 `~/workspace/statebus`
 - Python 环境：默认在 `$HOME/statebus/conda-envs/statebus_host`
 - 模型目录：默认在 `$HOME/statebus/models`
 - benchmark / 日志 / 状态池产物：默认都放在 `$HOME/statebus` 下
