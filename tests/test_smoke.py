@@ -56,6 +56,8 @@ from tasks.local_corpus import (
 )
 from tasks.sample_tasks import SampleTask, default_task_chain, load_task_set_bundle
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_smoke_runs(capsys) -> None:
     main()
@@ -67,7 +69,7 @@ def test_smoke_runs(capsys) -> None:
 def test_runtime_smoke_module_entry_emits_stdout() -> None:
     completed = subprocess.run(
         [sys.executable, "-m", "runtime.smoke"],
-        cwd="/home/qcrs/statebus/project",
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=True,
@@ -2276,7 +2278,7 @@ def test_remote_executor_serves_over_uds() -> None:
                 "--max-requests",
                 "1",
             ],
-            cwd="/home/qcrs/statebus/project",
+            cwd=REPO_ROOT,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

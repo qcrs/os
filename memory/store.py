@@ -18,7 +18,12 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in host envs without
 from protocol.messages import MemoryCommit, MemoryHit, MemoryQuery, StateRef
 
 
-DEFAULT_EMBEDDING_MODEL_PATH = Path("/home/qcrs/statebus/models/Qwen3-Embedding-0.6B")
+def _default_embedding_model_path() -> Path:
+    statebus_home = Path(os.getenv("STATEBUS_HOME", Path.home() / "statebus"))
+    return Path(os.getenv("STATEBUS_EMBED_MODEL_PATH", statebus_home / "models" / "Qwen3-Embedding-0.6B"))
+
+
+DEFAULT_EMBEDDING_MODEL_PATH = _default_embedding_model_path()
 DEFAULT_EMBED_DEVICE = "auto"
 
 

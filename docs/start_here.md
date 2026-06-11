@@ -1,7 +1,7 @@
 # Start Here
 
 ```bash
-cd /home/qcrs/statebus/project
+cd /path/to/statebus/project
 git status --short
 git rev-parse --short HEAD
 source deploy/activate_statebus_host.sh
@@ -34,6 +34,10 @@ If dependencies are missing:
 ```bash
 bash scripts/setup_host_dev_env.sh
 ```
+
+Full host environment notes:
+
+- `docs/setup/host_environment.md`
 
 Current branch audit and verification closure:
 

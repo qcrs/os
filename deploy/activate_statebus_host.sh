@@ -3,6 +3,23 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+resolve_conda_base() {
+  if [[ -n "${CONDA_EXE:-}" ]]; then
+    "$CONDA_EXE" info --base
+    return
+  fi
+  if command -v conda >/dev/null 2>&1; then
+    conda info --base
+    return
+  fi
+  if [[ -x "/opt/miniconda/bin/conda" ]]; then
+    /opt/miniconda/bin/conda info --base
+    return
+  fi
+  echo "[statebus] conda executable not found; set CONDA_EXE or add conda to PATH" >&2
+  return 1
+}
+
 export STATEBUS_HOME="${STATEBUS_HOME:-$HOME/statebus}"
 export STATEBUS_ENV_PREFIX="${STATEBUS_ENV_PREFIX:-$STATEBUS_HOME/conda-envs/statebus_host}"
 
@@ -25,7 +42,7 @@ if [ -f "$STATEBUS_LLM_ENV_FILE" ]; then
   source "$STATEBUS_LLM_ENV_FILE"
 fi
 
-CONDA_BASE="$("/opt/miniconda/bin/conda" info --base)"
+CONDA_BASE="$(resolve_conda_base)"
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 conda activate "$STATEBUS_ENV_PREFIX"
 

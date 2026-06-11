@@ -29,11 +29,68 @@ For the current host-side evidence stack, also read:
 ## Quick Start
 
 ```bash
-cd /home/qcrs/statebus/project
+cd /path/to/statebus/project
+git status --short
 source deploy/activate_statebus_host.sh
 python -m pytest -q
 python -m runtime.smoke
 ```
+
+For a clean host-side setup recipe, see:
+
+- `docs/setup/host_environment.md`
+
+## Project Layout
+
+The main implementation folders are:
+
+- `agents/`
+  - `Planner / Retriever / Executor / Summarizer` implementations
+- `runtime/`
+  - orchestration, contracts, LLM integration, remote executor entrypoints
+- `protocol/`
+  - message schema, wire serialization, protocol helpers
+- `statepool/`
+  - host-side state storage backends such as file-backed mmap
+- `memory/`
+  - SQLite + vector retrieval memory store
+- `eval/`
+  - benchmark runner, metrics, report generation
+- `tasks/`
+  - corpus definitions, task YAMLs, benchmark pack definitions
+- `tests/`
+  - smoke, runtime, protocol, memory, and benchmark-facing tests
+- `deploy/`
+  - host activation and local config templates
+- `scripts/`
+  - host environment bootstrap and repo maintenance helpers
+
+## Environment Setup
+
+The recommended host-side setup is:
+
+1. Install a working conda distribution.
+2. Run `bash scripts/setup_host_dev_env.sh`.
+3. Activate with `source deploy/activate_statebus_host.sh`.
+4. Put local models under `$HOME/statebus/models` or override the model path env vars.
+
+The detailed setup contract lives in:
+
+- `docs/setup/host_environment.md`
+- `docs/start_here.md`
+
+## Testing
+
+The baseline verification commands are:
+
+```bash
+python -m pytest -q
+python -m runtime.smoke
+```
+
+For benchmark-native evaluation, use the task packs under `tasks/` together with
+`eval/runner.py`. Benchmark outputs are written to `runs/`, which is intentionally
+excluded from git.
 
 ## LLM API Config
 
@@ -57,10 +114,15 @@ Role behavior such as `provider`, `model`, `json_output`, `max_tokens`, and
 vendor-specific `extra_body` now lives in the YAML file, so switching between
 OpenAI-compatible models should not require Python changes.
 
+Commit the `.example` files. Do not commit:
+
+- `deploy/statebus_llm.env.local`
+- `deploy/statebus_llm.yaml.local`
+
 ## Model Paths
 
-- Embedding: `/home/qcrs/statebus/models/Qwen3-Embedding-0.6B`
-- Optional reranker: `/home/qcrs/statebus/models/Qwen3-Reranker-0.6B`
+- Embedding: `$HOME/statebus/models/Qwen3-Embedding-0.6B`
+- Optional reranker: `$HOME/statebus/models/Qwen3-Reranker-0.6B`
 
 ## Branch Roles
 
@@ -104,6 +166,14 @@ Deferred until later:
 - final sandbox isolation path
 
 ## Current Validation Snapshot
+
+The repo keeps benchmark code, packs, and report-generation logic in git, but
+does not commit local `runs/` artifacts. If you need the historical host-side
+evidence trail, rebuild it locally or consult the summary/report documents under
+`docs/reports/`, `docs/planning/`, and `docs/analysis/`.
+
+Selected local evidence pointers from the current host-side work are listed
+below for orientation only:
 
 The latest checked host-side comprehensive evaluation package is still:
 

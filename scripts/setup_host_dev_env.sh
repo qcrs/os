@@ -9,6 +9,25 @@ STATEBUS_TORCH_SPEC="${STATEBUS_TORCH_SPEC:-torch==2.5.1+cu121}"
 STATEBUS_TORCH_INDEX_URL="${STATEBUS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 STATEBUS_TRANSFORMERS_SPEC="${STATEBUS_TRANSFORMERS_SPEC:-transformers==4.46.3}"
 STATEBUS_SENTENCE_TRANSFORMERS_SPEC="${STATEBUS_SENTENCE_TRANSFORMERS_SPEC:-sentence-transformers==5.5.1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-$SCRIPT_DIR/../requirements-host.txt}"
+
+resolve_conda_base() {
+  if [[ -n "${CONDA_EXE:-}" ]]; then
+    "$CONDA_EXE" info --base
+    return
+  fi
+  if command -v conda >/dev/null 2>&1; then
+    conda info --base
+    return
+  fi
+  if [[ -x "/opt/miniconda/bin/conda" ]]; then
+    /opt/miniconda/bin/conda info --base
+    return
+  fi
+  echo "[statebus] conda executable not found; set CONDA_EXE or add conda to PATH" >&2
+  return 1
+}
 
 echo "[statebus] host root: $STATEBUS_HOME"
 echo "[statebus] conda env: $ENV_PREFIX"
@@ -16,6 +35,7 @@ echo "[statebus] pip index: $STATEBUS_PIP_INDEX_URL"
 echo "[statebus] torch spec: $STATEBUS_TORCH_SPEC"
 echo "[statebus] transformers spec: $STATEBUS_TRANSFORMERS_SPEC"
 echo "[statebus] sentence-transformers spec: $STATEBUS_SENTENCE_TRANSFORMERS_SPEC"
+echo "[statebus] requirements file: $REQUIREMENTS_FILE"
 
 mkdir -p \
   "$STATEBUS_HOME/conda-envs" \
@@ -28,7 +48,7 @@ mkdir -p \
   "$STATEBUS_HOME/logs" \
   "$STATEBUS_HOME/runs"
 
-CONDA_BASE="$("/opt/miniconda/bin/conda" info --base)"
+CONDA_BASE="$(resolve_conda_base)"
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 
 if [[ ! -d "$ENV_PREFIX" ]]; then
@@ -44,20 +64,7 @@ conda run -p "$ENV_PREFIX" python -m pip install --upgrade \
   "$STATEBUS_TORCH_SPEC"
 conda run -p "$ENV_PREFIX" python -m pip install \
   --index-url "$STATEBUS_PIP_INDEX_URL" \
-  numpy \
-  protobuf \
-  pydantic \
-  orjson \
-  msgpack \
-  openai \
-  faiss-cpu \
-  "$STATEBUS_TRANSFORMERS_SPEC" \
-  "$STATEBUS_SENTENCE_TRANSFORMERS_SPEC" \
-  networkx \
-  pyyaml \
-  rich \
-  pytest \
-  pytest-asyncio
+  -r "$REQUIREMENTS_FILE"
 
 echo "[statebus] host dev environment is ready"
 echo "[statebus] activate with: source deploy/activate_statebus_host.sh"
