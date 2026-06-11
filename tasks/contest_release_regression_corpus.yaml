@@ -1,0 +1,231 @@
+docs:
+  - doc_id: rr-checkout-incident
+    task_group: checkout_release_chain
+    task_theme: contest_release_checkout_regression
+    title: Checkout release introduced order latency and connection waits
+    tags: [release, checkout, latency, database, canary]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      Release 17.4 shipped to the checkout service canary and the first alerts
+      showed order confirmation p95 rising from the normal band to a degraded
+      range. The incident report says most affected requests are stuck behind
+      connection pool waits on the write path rather than failing at the edge.
+
+  - doc_id: rr-checkout-metrics
+    task_group: checkout_release_chain
+    task_theme: contest_release_checkout_regression
+    title: Metrics snapshot shows connection pool pressure and slow orders query
+    tags: [release, checkout, latency, database, metrics]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The metrics snapshot records repeated connection pool saturation, a rising
+      sql wait band, and a slow orders query tied to the orders_created_at
+      filter. CPU stayed below saturation and worker queue depth was near the
+      usual baseline.
+
+  - doc_id: rr-checkout-logs
+    task_group: checkout_release_chain
+    task_theme: contest_release_checkout_regression
+    title: Log excerpt points to db wait profile after checkout canary rollout
+    tags: [release, checkout, latency, database, logs]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The checkout logs show db wait profile spikes within minutes of the canary
+      rollout. Multiple traces include connection pool exhaustion warnings and a
+      slow orders query path before order confirmation completes.
+
+  - doc_id: rr-checkout-config
+    task_group: checkout_release_chain
+    task_theme: contest_release_checkout_regression
+    title: Rollout diff reduced pool headroom while adding a new orders filter
+    tags: [release, checkout, rollout, database, config]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The rollout diff changed the checkout read/write pool caps and added a new
+      orders_created_at query filter in the confirmation path. The runbook note
+      says these two changes should be rolled back together if sql wait and
+      connection pool contention appear at the same time.
+
+  - doc_id: rr-checkout-worker-false
+    task_group: checkout_release_chain
+    task_theme: contest_release_checkout_regression
+    title: Similar release incident previously came from worker queue starvation
+    tags: [release, checkout, latency, worker, distractor]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      A different checkout incident during a certificate rotation looked similar
+      at first, but the root cause there was worker queue starvation during a
+      tls reload. That event had healthy database pool metrics and no slow
+      orders query evidence.
+
+  - doc_id: rr-checkout-scope
+    task_group: checkout_release_chain
+    task_theme: contest_release_checkout_regression
+    title: Scope note narrows the blast radius to the release canary shard
+    tags: [release, checkout, scope, canary, database]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The later scope update shows the latency spike is concentrated in the new
+      canary shard and in tenants that hit the changed confirmation path. The
+      fastest safe validation is to rollback release 17.4 on that shard, create
+      the missing index, and recheck pool pressure before widening action.
+
+  - doc_id: rr-auth-incident
+    task_group: auth_rotation_chain
+    task_theme: contest_release_auth_rotation
+    title: SSO callback regression appeared after auth metadata rotation
+    tags: [release, auth, sso, session, callback]
+    route_hint: auth_session_drift
+    tool_name: tool.auth_session_repair
+    text: >
+      After the auth metadata rotation, the incident report shows callback
+      failures and repeated sign-outs for users who crossed the new canary.
+      Operators noted issuer mismatch errors and stale session cookies rather
+      than a hard outage at the identity provider.
+
+  - doc_id: rr-auth-metrics
+    task_group: auth_rotation_chain
+    task_theme: contest_release_auth_rotation
+    title: Metrics snapshot shows callback verification drift instead of edge throttling
+    tags: [release, auth, session, jwks, metrics]
+    route_hint: auth_session_drift
+    tool_name: tool.auth_session_repair
+    text: >
+      The auth dashboard shows callback verification failures rising alongside
+      stale jwks cache hits. Rate-limit counters stayed close to baseline and
+      there is no matching aggressive backoff window on the affected shard.
+
+  - doc_id: rr-auth-logs
+    task_group: auth_rotation_chain
+    task_theme: contest_release_auth_rotation
+    title: Log excerpt shows issuer mismatch and stale JWKS refresh lag
+    tags: [release, auth, session, jwks, logs]
+    route_hint: auth_session_drift
+    tool_name: tool.auth_session_repair
+    text: >
+      The auth logs include repeated issuer mismatch lines followed by callback
+      verification retries. Several traces also show stale jwks cache entries
+      surviving after the metadata rotation completed.
+
+  - doc_id: rr-auth-rotation
+    task_group: auth_rotation_chain
+    task_theme: contest_release_auth_rotation
+    title: Runbook excerpt recommends JWKS refresh plus stale session cleanup
+    tags: [release, auth, session, runbook, jwks]
+    route_hint: auth_session_drift
+    tool_name: tool.auth_session_repair
+    text: >
+      The runbook for post-rotation callback regressions says to refresh jwks,
+      clear stale session cookies, and rerun callback verification before
+      widening rollback. It specifically distinguishes this path from pure auth
+      rate limiter regressions.
+
+  - doc_id: rr-auth-rate-limit-false
+    task_group: auth_rotation_chain
+    task_theme: contest_release_auth_rotation
+    title: Earlier login failures were caused by aggressive auth rate limiting
+    tags: [release, auth, session, rate-limit, distractor]
+    route_hint: auth_rate_limit
+    tool_name: tool.auth_rate_limit_triage
+    text: >
+      A previous login incident in the same service came from an aggressive
+      backoff window and auth rate limiter tuning mistake. In that case jwks and
+      callback verification remained healthy, and the main signal was rate
+      limiting rather than issuer mismatch.
+
+  - doc_id: rr-auth-scope
+    task_group: auth_rotation_chain
+    task_theme: contest_release_auth_rotation
+    title: Scope note narrows failures to tenants with cached pre-rotation sessions
+    tags: [release, auth, scope, session, jwks]
+    route_hint: auth_session_drift
+    tool_name: tool.auth_session_repair
+    text: >
+      The follow-up scope note shows most failures cluster in tenants whose
+      users carried pre-rotation session cookies into the canary. The safest
+      next action is to refresh jwks and clear stale session cookies only on the
+      affected canary tenant slice, then re-run callback verification.
+
+  - doc_id: rr-cache-incident
+    task_group: inventory_rollout_chain
+    task_theme: contest_release_inventory_rollout
+    title: Inventory rollout left stale counts after the new sync path shipped
+    tags: [release, inventory, cache, invalidation, sync-window]
+    route_hint: cache_invalidation
+    tool_name: tool.cache_invalidation_playbook
+    text: >
+      The release incident report says inventory pages stayed stale after the
+      new sync path shipped to one region. The first responder noted the issue
+      follows the batch sync window and looks tied to the inventory aggregate
+      path rather than a store write failure.
+
+  - doc_id: rr-cache-metrics
+    task_group: inventory_rollout_chain
+    task_theme: contest_release_inventory_rollout
+    title: Metrics snapshot shows stale inventory after batch sync with healthy writes
+    tags: [release, inventory, cache, invalidation, metrics]
+    route_hint: cache_invalidation
+    tool_name: tool.cache_invalidation_playbook
+    text: >
+      The metrics view shows healthy writer success but stale inventory counters
+      on the read side immediately after batch sync. The aggregate invalidation
+      rate drops during the same window, while replica lag stays inside normal
+      bounds.
+
+  - doc_id: rr-cache-logs
+    task_group: inventory_rollout_chain
+    task_theme: contest_release_inventory_rollout
+    title: Log excerpt points to missing aggregate invalidation hook
+    tags: [release, inventory, cache, invalidation, logs]
+    route_hint: cache_invalidation
+    tool_name: tool.cache_invalidation_playbook
+    text: >
+      The rollout logs include a repeated warning that the post-sync
+      invalidation hook skipped the inventory aggregate key on the new path.
+      Fresh product writes still commit, but stale inventory views persist until
+      manual invalidation runs.
+
+  - doc_id: rr-cache-flag-diff
+    task_group: inventory_rollout_chain
+    task_theme: contest_release_inventory_rollout
+    title: Feature-flag diff moved aggregate invalidation behind the new sync path
+    tags: [release, inventory, cache, invalidation, config]
+    route_hint: cache_invalidation
+    tool_name: tool.cache_invalidation_playbook
+    text: >
+      The feature-flag diff moved the aggregate invalidation hook behind the new
+      sync orchestration path. The rollout note says to force inventory
+      aggregate invalidation and rerun post-sync validation if stale inventory
+      appears without replica lag.
+
+  - doc_id: rr-cache-replica-false
+    task_group: inventory_rollout_chain
+    task_theme: contest_release_inventory_rollout
+    title: Another stale inventory incident was actually read replica lag
+    tags: [release, inventory, cache, replica, distractor]
+    route_hint: cache_replica_stale_read
+    tool_name: tool.replica_stale_read_triage
+    text: >
+      A separate inventory incident after failover was caused by stale reads on
+      the reporting replica path. That case had healthy invalidation hooks and a
+      visible replica lag rise, so operators routed reads away from the lagging
+      replica instead of forcing invalidation.
+
+  - doc_id: rr-cache-scope
+    task_group: inventory_rollout_chain
+    task_theme: contest_release_inventory_rollout
+    title: Scope note isolates the stale inventory path to the rollout region
+    tags: [release, inventory, cache, scope, invalidation]
+    route_hint: cache_invalidation
+    tool_name: tool.cache_invalidation_playbook
+    text: >
+      The scope update shows only the rollout region and the new sync path are
+      affected. The safest validation is to force inventory aggregate
+      invalidation in that region, rerun the post-sync hook, and verify cache
+      freshness before touching replica routing.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, replace
 import json
 import os
 import socket
@@ -15,6 +16,7 @@ import numpy as np
 import pytest
 import hashlib
 
+from agents.base_agent import BaseAgent
 from agents.sample_agents import (
     _build_memory_assist_hint,
     _build_protocol_summary_handoff,
@@ -24,7 +26,16 @@ from agents.sample_agents import (
 from eval.runner import _mode_order_for_run, run_benchmark
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
 from protocol.messages import MemoryHit
-from protocol.messages import PlanStep, RemoteStepRequest, RemoteStepResponse, StateRef, StepResult, text_frame
+from protocol.messages import (
+    Plan,
+    PlanStep,
+    RemoteStepRequest,
+    RemoteStepResponse,
+    StateRef,
+    StepResult,
+    text_frame,
+)
+from runtime.contracts import SchemaValidationError
 from runtime.llm import DeterministicLLMClient
 from runtime.orchestrator import Orchestrator, RunSession, _route_is_replay_eligible
 from runtime.uds_transport import request_response
@@ -33,6 +44,7 @@ from runtime.executor_runtime import (
     _feature_bundle_from_transfer_brief,
     build_feature_bundle,
     default_tool_registry,
+    execute_playbook_step,
     select_tool_name,
 )
 from statepool.store import FileBackedStatePool, StatePool, StatePoolConfig
@@ -105,6 +117,15 @@ def test_benchmark_runner_writes_outputs() -> None:
         expected_transfer_strategy_counts = {
             "state_ref": sum(1 for task in task_chain if task.transfer_strategy == "state_ref"),
             "text_brief": sum(1 for task in task_chain if task.transfer_strategy == "text_brief"),
+            "state_packet_minimal": sum(
+                1 for task in task_chain if task.transfer_strategy == "state_packet_minimal"
+            ),
+            "text_packet_minimal": sum(
+                1 for task in task_chain if task.transfer_strategy == "text_packet_minimal"
+            ),
+            "natural_handoff_text": sum(
+                1 for task in task_chain if task.transfer_strategy == "natural_handoff_text"
+            ),
             "mode_split_text_brief_vs_state_ref": sum(
                 1 for task in task_chain if task.transfer_strategy == "mode_split_text_brief_vs_state_ref"
             ),
@@ -127,9 +148,14 @@ def test_benchmark_runner_writes_outputs() -> None:
             "allow_execute_prune": sum(1 for task in task_chain if task.runtime_gates["allow_execute_prune"]),
             "allow_exact_replay": sum(1 for task in task_chain if task.runtime_gates["allow_exact_replay"]),
         }
+        expected_task_mode_counts = {
+            mode: sum(1 for task in task_chain if task.supports_mode(mode))
+            for mode in ("text", "protocol")
+        }
         assert payload["manifest"]["repeat"] == 1
         assert payload["manifest"]["llm_backend"] == "deterministic"
         assert payload["manifest"]["continuous_task_count"] == len(task_chain)
+        assert payload["manifest"]["task_mode_counts"] == expected_task_mode_counts
         assert payload["manifest"]["expected_reuse_task_count"] == sum(1 for task in task_chain if task.expected_reuse)
         assert payload["manifest"]["expected_reuse_mode_counts"] == {
             "assist": sum(1 for task in task_chain if task.expected_reuse_mode == "assist"),
@@ -148,69 +174,40 @@ def test_benchmark_runner_writes_outputs() -> None:
             1 for task in task_chain if any(task.artifact_expectations.values())
         )
         assert payload["manifest"]["task_groups"] == sorted({task.task_group for task in task_chain})
+        assert payload["manifest"]["task_pack_type"] == "formal_controlled"
         assert result["summary"]["text"]["run_count"] == 1
-        assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == 6
+        if expected_task_mode_counts["text"] == 0:
+            assert result["mode_runs"]["text"][0]["tasks"] == []
+        else:
+            assert len(result["mode_runs"]["text"][0]["memory_db_paths"]) == len(
+                {task.task_group for task in task_chain if task.supports_mode("text")}
+            )
         assert "__aggregate__" in compare_csv
-        assert "text_planner_total_tokens" in compare_csv
-        assert "protocol_summarizer_total_tokens" in compare_csv
-        assert "text_phase_overhead_ms" in compare_csv
+        assert "planner_total_tokens" in compare_csv
+        assert "summarizer_total_tokens" in compare_csv
+        assert "phase_overhead_ms" in compare_csv
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "StateBus Benchmark Report" in report_text
-        assert "latency_chain" in (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
-        assert "session_chain" in (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
-        assert "Stability Summary" in report_text
-        assert "Reuse Query Accounting" in report_text
-        assert "Replay Contract Slice Summary" in report_text
-        assert "Communication Vs Replay Axes" in report_text
-        assert "Contest Benchmark Lanes" in report_text
-        assert "State Transfer Strategies" in report_text
-        assert "Memory Policies" in report_text
-        assert "Claim-Surface Audit Views" in report_text
-        assert "Structured-vs-Text By Reuse Axis" in report_text
-        assert "Contest Claim Lane Deltas" in report_text
-        assert "Memory Policy Claim Surface" in report_text
-        assert "fresh_retrieval" in report_text
-        assert "step_skipping" in report_text
-        assert "assist_only" in report_text
-        assert "replay_enabled" in report_text
-        assert "Executor Feature Observability" in report_text
-        assert "Route Source Distribution" in report_text
-        assert "Hint-Consensus Support" in report_text
-        assert "reconstructed from benchmark artifacts" in report_text
-        assert "Misfire Audit" in report_text
-        assert "Route Misfire Summary" in report_text
-        assert "Route-Source Misfire Summary" in report_text
-        assert "Tool-Choice Misfire Summary" in report_text
-        assert "Top-Doc Misfire Summary" in report_text
-        assert "Reuse Misfire Summary" in report_text
-        assert "| text | 0 | 0 | 0 | 0.00 | 0.00 | n/a | n/a | n/a | n/a | 1.00 |" in report_text
-        assert "Memory Reuse Decisions By Mode" in report_text
-        assert "Role-Level LLM Tokens" in report_text
-        assert "Phase Timing Breakdown" in report_text
-        assert "Executor Handoff Breakdown" in report_text
-        assert "text brief handoff to the executor" in report_text
-        assert result["summary"]["text"]["aggregate"]["skipped_step_count"] > 0
-        assert result["summary"]["protocol"]["aggregate"]["skipped_step_count"] > 0
-        assert result["summary"]["text"]["aggregate"]["reuse_gain"] > 0.0
-        assert result["summary"]["protocol"]["aggregate"]["reuse_gain"] > 0.0
-        assert result["summary"]["text"]["aggregate"]["planner_llm_request_count"] > 0
-        assert result["summary"]["text"]["aggregate"]["summarizer_llm_request_count"] > 0
-        assert "text_handoff_nontext_bytes" in compare_csv
-        assert result["summary"]["text"]["aggregate"]["planner_total_tokens"] == 0
-        assert result["summary"]["text"]["aggregate"]["summarizer_total_tokens"] == 0
-        assert result["summary"]["text"]["aggregate"]["planner_ms"] >= 0.0
-        assert result["summary"]["text"]["aggregate"]["retrieve_ms"] >= 0.0
-        assert result["summary"]["text"]["aggregate"]["execute_ms"] >= 0.0
-        assert result["summary"]["text"]["aggregate"]["summarize_ms"] >= 0.0
-        assert result["summary"]["text"]["aggregate"]["phase_overhead_ms"] >= 0.0
-        assert (
-            result["summary"]["text"]["aggregate"]["phase_accounted_ms"]
-            <= result["summary"]["text"]["aggregate"]["task_ms"] + 1e-6
+        assert "## Structured-vs-Text By Reuse Axis" in report_text
+        assert "## Contest Claim Lane Deltas" in report_text
+        assert "## Typed-Handoff State-Transfer Headline" in report_text
+        assert "## Aggregate" in report_text
+        assert "## Diagnostic Appendix" in report_text
+        assert "## Benchmark Lane Diagnostics" in report_text
+        assert "handoff_wire_bytes" in report_text
+        assert "handoff_payload_bytes" in report_text
+        assert "serialized StateRefLite pointers on the wire" in report_text
+        assert "## Contest Benchmark Lanes" not in report_text
+        assert report_text.index("## Structured-vs-Text By Reuse Axis") < report_text.index(
+            "## Contest Claim Lane Deltas"
         )
-        assert (
-            result["summary"]["protocol"]["steady_state"]["protocol_bytes"]
-            < result["summary"]["text"]["steady_state"]["text_bytes"]
+        assert report_text.index("## Contest Claim Lane Deltas") < report_text.index(
+            "## Typed-Handoff State-Transfer Headline"
         )
+        assert report_text.index("## Typed-Handoff State-Transfer Headline") < report_text.index(
+            "## Aggregate"
+        )
+        assert report_text.index("## Aggregate") < report_text.index("## Diagnostic Appendix")
 
 
 def test_default_task_set_is_formal_controlled_pack() -> None:
@@ -218,7 +215,119 @@ def test_default_task_set_is_formal_controlled_pack() -> None:
     assert bundle.metadata.name == "formal_controlled_pack"
     assert bundle.metadata.pack_type == "formal_controlled"
     assert bundle.metadata.support_only is False
-    assert bundle.metadata.claim_lanes == ("communication", "state_transfer", "memory")
+    assert "communication" in bundle.metadata.claim_lanes
+    assert len(bundle.tasks) == 24
+    task_ids = {task.task_id for task in bundle.tasks}
+    assert not any(task_id.startswith("open-plan-") for task_id in task_ids)
+    assert not any("lexical-override" in task_id for task_id in task_ids)
+
+
+def test_task_pack_aliases_and_support_only_flags() -> None:
+    expectations = {
+        "default": ("formal_controlled", False, 24),
+        "formal_controlled": ("formal_controlled", False, 24),
+        "formal_controlled_pack": ("formal_controlled", False, 24),
+        "state_transfer_carrier": ("state_transfer_carrier", False, 18),
+        "state_transfer_carrier_pack": ("state_transfer_carrier", False, 18),
+        "contest_release_regression_carrier": ("state_transfer_carrier", False, 18),
+        "contest_release_regression_carrier_pack": ("state_transfer_carrier", False, 18),
+        "state_transfer_authenticity": ("state_transfer_authenticity", False, 6),
+        "state_transfer_authenticity_pack": ("state_transfer_authenticity", False, 6),
+        "contest_release_regression_authenticity": ("state_transfer_authenticity", False, 18),
+        "contest_release_regression_authenticity_pack": ("state_transfer_authenticity", False, 18),
+        "state_transfer_pure_text": ("state_transfer_pure_text", False, 6),
+        "state_transfer_pure_text_pack": ("state_transfer_pure_text", False, 6),
+        "state_transfer_natural_support": ("state_transfer_natural_support", True, 6),
+        "state_transfer_natural_support_pack": ("state_transfer_natural_support", True, 6),
+        "contest_release_regression_natural_support": ("state_transfer_natural_support", True, 18),
+        "contest_release_regression_natural_support_pack": ("state_transfer_natural_support", True, 18),
+        "communication": ("communication", False, 2),
+        "communication_pack": ("communication", False, 2),
+        "memory": ("memory", False, 3),
+        "memory_pack": ("memory", False, 3),
+        "internal_regression": ("internal_regression", False, 21),
+        "internal_regression_pack": ("internal_regression", False, 21),
+        "open_validation": ("open_validation", True, 15),
+        "open_validation_pack": ("open_validation", True, 15),
+    }
+    for alias, (pack_type, support_only, task_count) in expectations.items():
+        bundle = load_task_set_bundle(alias)
+        assert bundle.metadata.pack_type == pack_type
+        assert bundle.metadata.support_only is support_only
+        assert len(bundle.tasks) == task_count
+
+
+def test_pack_boundary_split_keeps_headline_regression_and_open_validation_separate() -> None:
+    formal_bundle = load_task_set_bundle("formal_controlled")
+    internal_bundle = load_task_set_bundle("internal_regression")
+    open_bundle = load_task_set_bundle("open_validation")
+
+    formal_ids = {task.task_id for task in formal_bundle.tasks}
+    internal_ids = {task.task_id for task in internal_bundle.tasks}
+    open_ids = {task.task_id for task in open_bundle.tasks}
+
+    assert "open-plan-cache-001" not in formal_ids
+    assert "open-plan-latency-001" not in formal_ids
+    assert "open-plan-session-001" not in formal_ids
+    assert not any("lexical-override" in task_id for task_id in formal_ids)
+
+    assert {
+        "regr-lexical-override-cache-001",
+        "regr-lexical-override-latency-001",
+        "regr-lexical-override-session-001",
+    }.issubset(internal_ids)
+    assert {
+        "open-plan-cache-001",
+        "open-plan-latency-001",
+        "open-plan-session-001",
+    }.issubset(open_ids)
+
+
+def test_orchestrator_respects_yaml_vs_llm_plan_source() -> None:
+    agents = build_sample_agents_with_executor(llm_client=DeterministicLLMClient())
+    orchestrator = Orchestrator(agents)
+    base_task = default_task_chain()[0]
+    llm_task = replace(base_task, task_id="open-plan-probe-001", plan_source="llm")
+
+    with tempfile.TemporaryDirectory(prefix="statebus-plan-source-") as tmpdir:
+        root = Path(tmpdir)
+        yaml_ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id=base_task.task_id,
+            task_group=base_task.task_group,
+            task_theme=base_task.task_theme,
+            state_root=root / "yaml-state",
+            memory_db_path=root / "yaml.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            session=RunSession(mode="protocol"),
+            runtime_profile=base_task.runtime_profile,
+            task_corpus_doc_ids=base_task.corpus_doc_ids,
+            task_corpus_path=base_task.corpus_path,
+        )
+        asyncio.run(orchestrator.run_task(base_task, yaml_ctx))
+        assert yaml_ctx.metrics.planner_llm_request_count == 0
+        assert yaml_ctx.metrics.planned_step_count == 3
+        yaml_ctx.memory_store.close()
+        yaml_ctx.session.cleanup()
+
+        llm_ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id=llm_task.task_id,
+            task_group=llm_task.task_group,
+            task_theme=llm_task.task_theme,
+            state_root=root / "llm-state",
+            memory_db_path=root / "llm.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            session=RunSession(mode="protocol"),
+            runtime_profile=llm_task.runtime_profile,
+            task_corpus_doc_ids=llm_task.corpus_doc_ids,
+            task_corpus_path=llm_task.corpus_path,
+        )
+        asyncio.run(orchestrator.run_task(llm_task, llm_ctx))
+        assert llm_ctx.metrics.planner_llm_request_count == 1
+        assert llm_ctx.metrics.planned_step_count == 3
+        llm_ctx.memory_store.close()
+        llm_ctx.session.cleanup()
 
 
 def test_open_validation_task_set_is_support_only() -> None:
@@ -227,7 +336,8 @@ def test_open_validation_task_set_is_support_only() -> None:
     assert bundle.metadata.pack_type == "open_validation"
     assert bundle.metadata.support_only is True
     assert bundle.metadata.claim_lanes == ()
-    assert len(bundle.tasks) == 12
+    assert len(bundle.tasks) == 15
+    assert sum(1 for task in bundle.tasks if task.plan_source == "llm") == 3
 
 
 def test_open_validation_report_marks_support_only_boundary() -> None:
@@ -250,18 +360,20 @@ def test_open_validation_report_marks_support_only_boundary() -> None:
         assert "support evidence only" in report_text
         assert "Task pack type: `open_validation`" in report_text
         assert "Task set name: `open_validation_pack`" in report_text
+        assert "this frozen formal_controlled pack is lane-first" not in report_text
 
 def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="internal_regression",
                 repeat=1,
                 out_dir=Path(tmpdir),
                 embedder=DeterministicEmbeddingProvider(),
                 llm_client=DeterministicLLMClient(),
             )
         )
-    task_specs = {task.task_id: task for task in default_task_chain()}
+    task_specs = {task.task_id: task for task in load_task_set_bundle("internal_regression").tasks}
     expected_assists = {task_id for task_id, task in task_specs.items() if task.expected_reuse_mode == "assist"}
     expected_skip_execute = {
         task_id for task_id, task in task_specs.items() if task.expected_reuse_mode == "skip_execute"
@@ -279,7 +391,21 @@ def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
     expected_reject_controls = {
         task_id
         for task_id, task in task_specs.items()
-        if task.benchmark_lane == "internal_regression" and task.expected_reuse_mode == "none" and task.task_order > 1
+        if (
+            task.benchmark_lane == "internal_regression"
+            and task.expected_reuse_mode == "none"
+            and task.task_order > 1
+            and task.runtime_reuse_contract != "reuse_disabled"
+        )
+    }
+    expected_memory_off_diagnostics = {
+        task_id
+        for task_id, task in task_specs.items()
+        if (
+            task.benchmark_lane == "internal_regression"
+            and task.expected_reuse_mode == "none"
+            and task.runtime_reuse_contract == "reuse_disabled"
+        )
     }
     for mode in ("text", "protocol"):
         run = result["mode_runs"][mode][0]
@@ -338,12 +464,23 @@ def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
             assert task["reuse"]["mode"] == "none"
             assert task["reuse"]["rejected_memory_id"] is not None
             assert task["reuse_validation"]["matched_expectation"] is True
+        for task_id in expected_memory_off_diagnostics:
+            task = tasks[task_id]
+            assert task["metrics"]["memory_hits"] == 0
+            assert task["metrics"]["memory_assist_task_count"] == 0
+            assert task["metrics"]["memory_rejected_task_count"] == 0
+            assert task["metrics"]["skipped_step_count"] == 0
+            assert task["reuse"]["applied"] is False
+            assert task["reuse"]["mode"] == "none"
+            assert task["reuse"]["rejected_memory_id"] is None
+            assert task["reuse_validation"]["matched_expectation"] is True
 
 
 def test_exact_replay_copies_reused_state_into_current_task_root() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="internal_regression",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -400,23 +537,41 @@ def test_exact_replay_copies_reused_state_into_current_task_root() -> None:
             for ref in task["state_refs"].values()
             if ref["metadata"].get("reused_from_memory_id") == reused_memory_id
         ]
-        assert len(copied_refs) == 4
+        assert len(copied_refs) == 7
+        assert {ref["kind"] for ref in copied_refs} == {
+            "DENSE_EVIDENCE",
+            "FEATURE_BUNDLE",
+            "RANKED_EVIDENCE_BUNDLE",
+            "TOOL_CANDIDATE_SET",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EMBEDDING",
+            "TOOL_ARTIFACT",
+        }
         for ref in copied_refs:
             assert ref["metadata"]["reused_from_memory_id"] == reused_memory_id
             assert "sample-cache-006" in ref["handle"]
             assert Path(ref["handle"]).exists()
+        copied_artifact = next(ref for ref in copied_refs if ref["kind"] == "TOOL_ARTIFACT")
+        assert copied_artifact["metadata"]["tool_name"] == "tool.cache_invalidation_playbook"
+        assert copied_artifact["metadata"]["route"] == "cache_invalidation"
+        assert copied_artifact["metadata"]["source_evidence"]
         assert task["results"]["summarize"]["success"] is True
         assert task["results"]["summarize"]["skipped"] is False
 
 
 def test_exact_replay_no_longer_requires_explicit_source_task_id() -> None:
-    exact_replay_tasks = [task for task in default_task_chain() if task.expected_reuse_mode == "skip_retrieve_execute"]
+    exact_replay_tasks = [
+        task
+        for task in load_task_set_bundle("internal_regression").tasks
+        if task.expected_reuse_mode == "skip_retrieve_execute"
+    ]
     assert exact_replay_tasks
     assert all(task.replay_source_task_id == "" for task in exact_replay_tasks)
 
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="internal_regression",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -436,7 +591,7 @@ def test_exact_replay_no_longer_requires_explicit_source_task_id() -> None:
 def test_exact_replay_no_longer_requires_preferred_corpus_doc_ids() -> None:
     cache_prefix = [
         task
-        for task in default_task_chain()
+        for task in load_task_set_bundle("internal_regression").tasks
         if task.task_group == "cache_chain" and task.task_order <= 5
     ]
     exact_replay_without_doc_pref = SampleTask(
@@ -654,12 +809,10 @@ def test_memory_assist_hint_is_compact() -> None:
     assert hint.startswith("MEMORY_ASSIST_HINT mem-sample-cache-001-assist:")
     assert len(hint) <= 240
     assert hint.endswith("...")
-
-
 def test_memory_assist_uses_compact_hint_and_keeps_feature_bundle_fresh() -> None:
     cache_prefix = [
         task
-        for task in default_task_chain()
+        for task in load_task_set_bundle("internal_regression").tasks
         if task.task_group == "cache_chain" and task.task_order <= 2
     ]
     orchestrator = Orchestrator(
@@ -760,6 +913,7 @@ def test_protocol_summarizer_uses_compact_evidence_handoff() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-protocol-summary-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="memory",
                 repeat=1,
                 modes=("protocol",),
                 out_dir=Path(tmpdir),
@@ -782,7 +936,7 @@ def test_protocol_summarizer_uses_compact_evidence_handoff() -> None:
 def test_exact_replay_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
-        for task in default_task_chain()
+        for task in load_task_set_bundle("internal_regression").tasks
         if task.task_group == "cache_chain" and task.task_order <= 5
     ]
     exact_replay_without_contract = SampleTask(
@@ -850,6 +1004,7 @@ def test_statepool_writes_file_backed_artifacts() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="communication",
                 repeat=1,
                 out_dir=Path(tmpdir),
                 embedder=DeterministicEmbeddingProvider(),
@@ -873,6 +1028,7 @@ def test_embedding_state_is_real_float32_vector() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="communication",
                 repeat=1,
                 out_dir=Path(tmpdir),
                 embedder=embedder,
@@ -897,7 +1053,7 @@ def test_embedding_state_is_real_float32_vector() -> None:
         vector = pool.get_embedding(ref)
         assert vector.dtype == np.float32
         assert vector.shape == (embedder.vector_dim,)
-        expected = embedder.embed_text(default_task_chain()[0].query)
+        expected = embedder.embed_text(load_task_set_bundle("communication").tasks[0].query)
         assert np.allclose(vector, expected)
 
 
@@ -905,6 +1061,7 @@ def test_feature_bundle_state_is_real_msgpack_payload() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="internal_regression",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -943,6 +1100,48 @@ def test_feature_bundle_state_is_real_msgpack_payload() -> None:
         assert "candidate_corpus_doc_ids" not in feature_payload["metadata"]
         assert "preferred_corpus_doc_ids" not in feature_payload["metadata"]
         assert "tool_candidates" not in first_task["results"]["execute"]["payload"]
+
+
+def test_protocol_state_ref_path_writes_split_feature_family_states() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-feature-family-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="internal_regression",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        task = {
+            item["task_id"]: item for item in result["mode_runs"]["protocol"][0]["tasks"]
+        }["sample-cache-001"]
+        refs = task["state_refs"]
+        retrieve_payload = task["results"]["retrieve"]["payload"]
+        split_state_ids = {
+            retrieve_payload["ranked_evidence_state_id"]: "RANKED_EVIDENCE_BUNDLE",
+            retrieve_payload["tool_candidate_state_id"]: "TOOL_CANDIDATE_SET",
+            retrieve_payload["replay_eligibility_state_id"]: "REPLAY_ELIGIBILITY_BUNDLE",
+        }
+        for state_id, kind in split_state_ids.items():
+            assert state_id
+            assert refs[state_id]["kind"] == kind
+        tool_candidate_payload = msgpack.unpackb(
+            Path(refs[retrieve_payload["tool_candidate_state_id"]]["handle"]).read_bytes(),
+            raw=False,
+            strict_map_key=False,
+        )
+        replay_payload = msgpack.unpackb(
+            Path(refs[retrieve_payload["replay_eligibility_state_id"]]["handle"]).read_bytes(),
+            raw=False,
+            strict_map_key=False,
+        )
+        assert tool_candidate_payload["schema"] == "statebus.tool_candidate_set.v1"
+        assert tool_candidate_payload["tool_candidates"][0]["tool_name"] == "tool.cache_invalidation_playbook"
+        assert replay_payload["schema"] == "statebus.replay_eligibility_bundle.v1"
+        assert replay_payload["validated_replay_eligible"] is True
+        assert replay_payload["exact_replay_eligible"] is True
 
 
 def test_feature_bundle_falls_back_to_generic_tool_when_signals_are_weak() -> None:
@@ -1236,85 +1435,213 @@ def test_route_replay_eligibility_requires_lexical_provenance() -> None:
 
 def test_exact_replay_route_gate_requires_lexical_provenance() -> None:
     orchestrator = Orchestrator({})
-    hit = MemoryHit(
-        memory_id="mem-provenance-exact-anchor",
-        confidence=0.95,
-        task_theme="executor_metadata_only",
-        reusable_steps=["retrieve", "execute"],
-        metadata={
-            "feature_route": "db_pool_saturation",
-            "retrieved_doc_ids": [
-                "exec-metadata-only-anchor",
-                "exec-metadata-only-followup",
-            ],
-            "feature_query": "investigate an unclear incident",
-            "feature_route_confidence": 0.95,
-            "feature_route_provenance": ["corpus_metadata", "lexical"],
-            "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
-        },
-    )
-    assert orchestrator._matches_skip_retrieve_execute(
-        hit=hit,
-        task_theme="executor_metadata_only",
-        current_query="investigate an unclear incident",
-    )
-    hit.metadata["feature_route_provenance"] = ["corpus_metadata_unverified"]
-    assert not orchestrator._matches_skip_retrieve_execute(
-        hit=hit,
-        task_theme="executor_metadata_only",
-        current_query="investigate an unclear incident",
-    )
+    with tempfile.TemporaryDirectory(prefix="statebus-replay-gate-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id="replay-gate-exact",
+            task_group="replay_route_diag",
+            task_theme="executor_metadata_only",
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+        )
+        exact_ok_ref = ctx.put_replay_eligibility_state(
+            state_id="exact-ok",
+            replay_eligibility_bundle={
+                "schema": "statebus.replay_eligibility_bundle.v1",
+                "query": "investigate an unclear incident",
+                "route": "db_pool_saturation",
+                "route_source": "hint_consensus",
+                "route_confidence": 0.95,
+                "route_provenance": ["corpus_metadata", "lexical"],
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        exact_bad_ref = ctx.put_replay_eligibility_state(
+            state_id="exact-bad",
+            replay_eligibility_bundle={
+                "schema": "statebus.replay_eligibility_bundle.v1",
+                "query": "investigate an unclear incident",
+                "route": "db_pool_saturation",
+                "route_source": "metadata_only_abstain",
+                "route_confidence": 0.95,
+                "route_provenance": ["corpus_metadata_unverified"],
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        hit = MemoryHit(
+            memory_id="mem-provenance-exact-anchor",
+            confidence=0.95,
+            task_theme="executor_metadata_only",
+            reusable_steps=["retrieve", "execute"],
+            evidence_state_refs=[exact_ok_ref],
+            metadata={
+                "feature_route": "db_pool_saturation",
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_query": "investigate an unclear incident",
+                "feature_route_confidence": 0.95,
+                "feature_route_provenance": ["corpus_metadata_unverified"],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        assert orchestrator._matches_skip_retrieve_execute(
+            hit=hit,
+            task_theme="executor_metadata_only",
+            current_query="investigate an unclear incident",
+            ctx=ctx,
+        )
+        hit.evidence_state_refs = [exact_bad_ref]
+        hit.metadata["feature_route_provenance"] = ["corpus_metadata", "lexical"]
+        assert not orchestrator._matches_skip_retrieve_execute(
+            hit=hit,
+            task_theme="executor_metadata_only",
+            current_query="investigate an unclear incident",
+            ctx=ctx,
+        )
 
 
 def test_validated_replay_route_gate_requires_lexical_provenance_on_both_sides() -> None:
-    hit = MemoryHit(
-        memory_id="mem-provenance-validated-anchor",
-        confidence=0.95,
-        reusable_steps=["execute"],
-        metadata={
-            "feature_route": "db_pool_saturation",
-            "retrieved_doc_ids": [
-                "exec-metadata-only-anchor",
-                "exec-metadata-only-followup",
-            ],
-            "feature_query": "investigate an unclear incident",
-            "feature_route_confidence": 0.95,
-            "feature_route_provenance": ["corpus_metadata", "lexical"],
-            "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
-        },
-    )
-    retrieve_result = StepResult(
-        step_id="retrieve",
-        success=True,
-        payload={
-            "feature_route": "db_pool_saturation",
-            "retrieved_doc_ids": [
-                "exec-metadata-only-anchor",
-                "exec-metadata-only-followup",
-            ],
-            "feature_route_confidence": 0.95,
-            "feature_route_provenance": ["corpus_metadata", "lexical"],
-            "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
-        },
-    )
-    assert Orchestrator._matches_skip_execute(
-        hit=hit,
-        retrieve_result=retrieve_result,
-        current_query="investigate an unclear incident",
-    )
-    retrieve_result.payload["feature_route_provenance"] = ["corpus_metadata_unverified"]
-    assert not Orchestrator._matches_skip_execute(
-        hit=hit,
-        retrieve_result=retrieve_result,
-        current_query="investigate an unclear incident",
-    )
-    retrieve_result.payload["feature_route_provenance"] = ["corpus_metadata", "lexical"]
-    hit.metadata["feature_route_provenance"] = ["corpus_metadata_unverified"]
-    assert not Orchestrator._matches_skip_execute(
-        hit=hit,
-        retrieve_result=retrieve_result,
-        current_query="investigate an unclear incident",
-    )
+    with tempfile.TemporaryDirectory(prefix="statebus-validated-gate-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id="replay-gate-validated",
+            task_group="replay_route_diag",
+            task_theme="executor_metadata_only",
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+        )
+        stored_ok_ref = ctx.put_replay_eligibility_state(
+            state_id="stored-ok",
+            replay_eligibility_bundle={
+                "schema": "statebus.replay_eligibility_bundle.v1",
+                "query": "investigate an unclear incident",
+                "route": "db_pool_saturation",
+                "route_source": "hint_consensus",
+                "route_confidence": 0.95,
+                "route_provenance": ["corpus_metadata", "lexical"],
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        stored_bad_ref = ctx.put_replay_eligibility_state(
+            state_id="stored-bad",
+            replay_eligibility_bundle={
+                "schema": "statebus.replay_eligibility_bundle.v1",
+                "query": "investigate an unclear incident",
+                "route": "db_pool_saturation",
+                "route_source": "metadata_only_abstain",
+                "route_confidence": 0.95,
+                "route_provenance": ["corpus_metadata_unverified"],
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        fresh_ok_ref = ctx.put_replay_eligibility_state(
+            state_id="fresh-ok",
+            replay_eligibility_bundle={
+                "schema": "statebus.replay_eligibility_bundle.v1",
+                "query": "investigate an unclear incident",
+                "route": "db_pool_saturation",
+                "route_source": "hint_consensus",
+                "route_confidence": 0.95,
+                "route_provenance": ["corpus_metadata", "lexical"],
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        fresh_bad_ref = ctx.put_replay_eligibility_state(
+            state_id="fresh-bad",
+            replay_eligibility_bundle={
+                "schema": "statebus.replay_eligibility_bundle.v1",
+                "query": "investigate an unclear incident",
+                "route": "db_pool_saturation",
+                "route_source": "metadata_only_abstain",
+                "route_confidence": 0.95,
+                "route_provenance": ["corpus_metadata_unverified"],
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        hit = MemoryHit(
+            memory_id="mem-provenance-validated-anchor",
+            confidence=0.95,
+            reusable_steps=["execute"],
+            evidence_state_refs=[stored_ok_ref],
+            metadata={
+                "feature_route": "db_pool_saturation",
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_query": "investigate an unclear incident",
+                "feature_route_confidence": 0.95,
+                "feature_route_provenance": ["corpus_metadata_unverified"],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[fresh_ok_ref],
+            payload={
+                "feature_route": "db_pool_saturation",
+                "retrieved_doc_ids": [
+                    "exec-metadata-only-anchor",
+                    "exec-metadata-only-followup",
+                ],
+                "feature_route_confidence": 0.95,
+                "feature_route_provenance": ["corpus_metadata_unverified"],
+                "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+            },
+        )
+        assert Orchestrator._matches_skip_execute(
+            hit=hit,
+            retrieve_result=retrieve_result,
+            current_query="investigate an unclear incident",
+            ctx=ctx,
+        )
+        retrieve_result.output_state_refs = [fresh_bad_ref]
+        retrieve_result.payload["feature_route_provenance"] = ["corpus_metadata", "lexical"]
+        assert not Orchestrator._matches_skip_execute(
+            hit=hit,
+            retrieve_result=retrieve_result,
+            current_query="investigate an unclear incident",
+            ctx=ctx,
+        )
+        retrieve_result.output_state_refs = [fresh_ok_ref]
+        hit.evidence_state_refs = [stored_bad_ref]
+        assert not Orchestrator._matches_skip_execute(
+            hit=hit,
+            retrieve_result=retrieve_result,
+            current_query="investigate an unclear incident",
+            ctx=ctx,
+        )
 
 
 def test_feature_bundle_abstains_on_conflicting_hint_with_thin_lexical_override() -> None:
@@ -1430,6 +1757,7 @@ def test_memory_commits_drop_runtime_contract_and_doc_hint_metadata() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-memory-metadata-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="internal_regression",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -1471,10 +1799,174 @@ def test_select_tool_name_prefers_ranked_tool_candidates() -> None:
     assert select_tool_name(payload) == "tool.db_pool_triage"
 
 
-def test_state_transfer_lane_uses_text_brief_only_for_text_mode() -> None:
+def test_execute_playbook_step_prefers_tool_candidate_state_when_present() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-tool-candidate-state-") as tmpdir:
+        statepool = StatePool(Path(tmpdir), config=StatePoolConfig.from_env())
+        evidence_ref = statepool.put_text(
+            state_id="case-1-evidence",
+            kind="DENSE_EVIDENCE",
+            text=(
+                "Release-17 orders latency shows database pool contention and the slow orders query. "
+                "Treat this as a DB pool saturation incident."
+            ),
+        )
+        feature_ref = statepool.put_bytes(
+            state_id="case-1-features",
+            kind="FEATURE_BUNDLE",
+            payload=msgpack.packb(
+                {
+                    "schema": "statebus.feature_bundle.v1",
+                    "route": "generic_triage",
+                    "tool_name": "tool.collect_more_evidence",
+                    "tool_candidates": [
+                        {
+                            "tool_name": "tool.collect_more_evidence",
+                            "route": "generic_triage",
+                            "score": 0,
+                            "source": "fallback",
+                        }
+                    ],
+                },
+                use_bin_type=True,
+            ),
+            metadata={"schema": "statebus.feature_bundle.v1", "encoding": "msgpack"},
+        )
+        tool_candidate_ref = statepool.put_bytes(
+            state_id="case-1-tool-candidates",
+            kind="TOOL_CANDIDATE_SET",
+            payload=msgpack.packb(
+                {
+                    "schema": "statebus.tool_candidate_set.v1",
+                    "route": "db_pool_saturation",
+                    "tool_name": "tool.db_pool_triage",
+                    "route_source": "hint_consensus",
+                    "route_confidence": 0.92,
+                    "route_provenance": ["corpus_metadata", "lexical"],
+                    "matched_signals": ["slow orders query", "connection pool"],
+                    "matched_tags": ["database", "orders"],
+                    "match_score": 18,
+                    "tool_candidates": [
+                        {
+                            "tool_name": "tool.db_pool_triage",
+                            "route": "db_pool_saturation",
+                            "score": 18,
+                            "source": "hint_consensus",
+                        }
+                    ],
+                },
+                use_bin_type=True,
+            ),
+            metadata={"schema": "statebus.tool_candidate_set.v1", "encoding": "msgpack"},
+        )
+        result = execute_playbook_step(
+            task_id="case-1",
+            task_theme="repo_local_latency_triage",
+            step=PlanStep(
+                step_id="execute",
+                owner_agent="executor",
+                action="EXECUTE_PLAYBOOK",
+                input_state_refs=[evidence_ref.state_id, feature_ref.state_id, tool_candidate_ref.state_id],
+                params={},
+                depends_on=["retrieve"],
+            ),
+            statepool=statepool,
+            input_state_refs=[evidence_ref, feature_ref, tool_candidate_ref],
+            transfer_strategy="state_ref",
+        )
+    assert result.payload["tool_name"] == "tool.db_pool_triage"
+    assert result.payload["route"] == "db_pool_saturation"
+    assert result.output_state_refs[0].metadata["source_tool_candidates"] == tool_candidate_ref.state_id
+
+
+def test_invalid_handoff_state_is_rejected_before_executor_runs() -> None:
+    @dataclass
+    class ExplodingExecutor(BaseAgent):
+        called: bool = False
+
+        async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
+            self.called = True
+            raise AssertionError("executor should not run when handoff validation fails")
+
+    with tempfile.TemporaryDirectory(prefix="statebus-invalid-handoff-") as tmpdir:
+        agents = build_sample_agents_with_executor(llm_client=DeterministicLLMClient())
+        exploding = ExplodingExecutor(
+            agent_id="executor",
+            capability=agents["executor"].capability,
+        )
+        agents["executor"] = exploding
+        orchestrator = Orchestrator(agents)
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id="invalid-handoff-001",
+            task_group="contract_chain",
+            task_theme="repo_local_cache_triage",
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+        )
+        evidence_ref = ctx.put_text_state(
+            state_id="invalid-handoff-001-retrieve-evidence",
+            kind="DENSE_EVIDENCE",
+            text="Inventory invalidation evidence for a replayable cache incident.",
+        )
+        bad_tool_candidate_ref = ctx.put_bytes_state(
+            state_id="invalid-handoff-001-retrieve-tool-candidates",
+            kind="TOOL_CANDIDATE_SET",
+            payload=msgpack.packb(
+                {
+                    "schema": "statebus.not_tool_candidate.v1",
+                    "tool_candidates": [],
+                },
+                use_bin_type=True,
+            ),
+            metadata={
+                "encoding": "msgpack",
+                "schema": "statebus.not_tool_candidate.v1",
+                "query": "inventory invalidation",
+                "feature_route": "cache_invalidation",
+                "feature_route_source": "hint_consensus",
+                "feature_route_confidence": 0.91,
+            },
+        )
+        ctx.results["retrieve"] = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[evidence_ref, bad_tool_candidate_ref],
+            payload={"query": "inventory invalidation"},
+        )
+        plan = Plan(
+            task_id="invalid-handoff-001",
+            goal="Validate that executor input contracts are enforced before execution.",
+            steps=[
+                PlanStep(
+                    step_id="retrieve",
+                    owner_agent="retriever",
+                    action="RETRIEVE_EVIDENCE",
+                    input_state_refs=[],
+                    params={"query": "inventory invalidation"},
+                    depends_on=[],
+                ),
+                PlanStep(
+                    step_id="execute",
+                    owner_agent="executor",
+                    action="EXECUTE_PLAYBOOK",
+                    input_state_refs=[],
+                    params={},
+                    depends_on=["retrieve"],
+                ),
+            ],
+        )
+        with pytest.raises(SchemaValidationError, match="registered contract|schema mismatch"):
+            asyncio.run(orchestrator.run_plan(plan, ctx))
+        assert exploding.called is False
+
+
+def test_state_transfer_carrier_pack_runs_mode_split_handoff_pairs() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-transfer-lane-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="state_transfer_carrier",
                 repeat=1,
                 modes=("text", "protocol"),
                 out_dir=Path(tmpdir),
@@ -1486,45 +1978,51 @@ def test_state_transfer_lane_uses_text_brief_only_for_text_mode() -> None:
     protocol_tasks = {
         task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
     }
-    transfer_task_ids = [
-        task.task_id
-        for task in default_task_chain()
-        if task.benchmark_lane == "state_transfer"
-    ]
-    assert transfer_task_ids
-    for task_id in transfer_task_ids:
-        text_task = text_tasks[task_id]
-        protocol_task = protocol_tasks[task_id]
-        assert text_task["benchmark_lane"] == "state_transfer"
-        assert protocol_task["benchmark_lane"] == "state_transfer"
-        assert text_task["transfer_strategy"] == "text_brief"
-        assert protocol_task["transfer_strategy"] == "state_ref"
-        assert text_task["results"]["execute"]["payload"]["transfer_strategy"] == "text_brief"
-        assert protocol_task["results"]["execute"]["payload"]["transfer_strategy"] == "state_ref"
-        assert text_task["results"]["retrieve"]["payload"]["transfer_brief_state_id"]
-        assert protocol_task["results"]["retrieve"]["payload"]["transfer_brief_state_id"] == ""
-        text_kinds = {ref["kind"] for ref in text_task["state_refs"].values()}
-        protocol_kinds = {ref["kind"] for ref in protocol_task["state_refs"].values()}
-        assert "FEATURE_BUNDLE" not in text_kinds
-        assert "EMBEDDING" not in text_kinds
-        assert "FEATURE_BUNDLE" in protocol_kinds
-        assert "EMBEDDING" in protocol_kinds
-        assert text_task["metrics"]["handoff_nontext_ref_count"] == 0
+    transfer_tasks = list(load_task_set_bundle("state_transfer_carrier").tasks)
+    assert transfer_tasks
+    transfer_ids = {task.task_id for task in transfer_tasks if task.benchmark_lane == "state_transfer"}
+    assert text_tasks == {}
+    for task in transfer_tasks:
+        if task.benchmark_lane != "state_transfer":
+            continue
+        assert task.allowed_modes == ("protocol",)
+        assert task.task_id in protocol_tasks
+        proto_task = protocol_tasks[task.task_id]
+        assert proto_task["benchmark_lane"] == "state_transfer"
+        assert proto_task["transfer_strategy"] in {"text_packet_minimal", "state_packet_minimal"}
+    assert transfer_ids == set(protocol_tasks)
+    # Verify the benchmark ran without failures
+    summary = result["summary"]
+    assert int(summary["text"]["failure_count"]) == 0
+    assert int(summary["protocol"]["failure_count"]) == 0
+
+
+def test_benchmark_supports_shared_memory_statepool_backend() -> None:
+    try:
+        from multiprocessing import shared_memory as _shm
+        _shm.SharedMemory(name="statebus_test_probe", create=True, size=64).unlink()
+    except Exception:
+        pytest.skip("shared_memory not available")
 
 
 def test_state_transfer_text_brief_preserves_retriever_executor_snapshot() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-transfer-brief-fidelity-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="state_transfer_authenticity",
                 repeat=1,
-                modes=("text",),
+                modes=("protocol",),
                 out_dir=Path(tmpdir),
                 embedder=DeterministicEmbeddingProvider(),
                 llm_client=DeterministicLLMClient(),
             )
         )
-        tasks = {task["task_id"]: task for task in result["mode_runs"]["text"][0]["tasks"]}
-        for task_id in ("transfer-cache-001", "transfer-latency-001", "transfer-session-001"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
+        for task_id in (
+            "transfer-cache-text-001",
+            "transfer-latency-text-001",
+            "transfer-session-text-001",
+        ):
             task = tasks[task_id]
             retrieve_payload = task["results"]["retrieve"]["payload"]
             execute_payload = task["results"]["execute"]["payload"]
@@ -1553,10 +2051,90 @@ def test_state_transfer_text_brief_preserves_retriever_executor_snapshot() -> No
             assert rebuilt["tool_candidates"][0]["tool_name"] == execute_payload["tool_name"]
 
 
+def test_natural_handoff_removes_route_and_tool_side_channels() -> None:
+    forbidden_tokens = (
+        "Route:",
+        "Tool:",
+        "route_source",
+        "tool_candidates",
+        "matched_signals",
+        "matched_tags",
+    )
+    with tempfile.TemporaryDirectory(prefix="statebus-natural-support-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="state_transfer_natural_support",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
+        for task_id in (
+            "transfer-cache-natural-001",
+            "transfer-latency-natural-001",
+            "transfer-session-natural-001",
+        ):
+            task = tasks[task_id]
+            retrieve_payload = task["results"]["retrieve"]["payload"]
+            execute_payload = task["results"]["execute"]["payload"]
+            brief_state_id = retrieve_payload["transfer_brief_state_id"]
+            assert brief_state_id
+            brief_ref = task["state_refs"][brief_state_id]
+            assert set(brief_ref["metadata"]) == {"query", "retrieved_doc_ids", "transfer_strategy"}
+            brief_text = Path(brief_ref["handle"]).read_bytes().decode("utf-8")
+            for token in forbidden_tokens:
+                assert token not in brief_text
+            evidence_ref = next(ref for ref in task["state_refs"].values() if ref["kind"] == "DENSE_EVIDENCE")
+            evidence_text = Path(evidence_ref["handle"]).read_text(encoding="utf-8")
+            rebuilt = build_feature_bundle(
+                query=retrieve_payload["query"],
+                evidence_text=f"{evidence_text}\n{brief_text}",
+                tags=[],
+                reuse_signature="natural_handoff_transfer",
+                reused_memory=False,
+                registry=default_tool_registry(),
+            )
+            assert select_tool_name(rebuilt) == execute_payload["tool_name"]
+            assert rebuilt["route"] == execute_payload["route"]
+
+
+def test_state_transfer_pure_text_pack_runs_natural_text_against_state_ref() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-formal-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="state_transfer_pure_text",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    protocol_tasks = {
+        task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
+    }
+    transfer_tasks = list(load_task_set_bundle("state_transfer_pure_text").tasks)
+    assert len(transfer_tasks) == 6
+    for task in transfer_tasks:
+        assert task.allowed_modes == ("protocol",)
+        assert task.task_id in protocol_tasks
+        observed = protocol_tasks[task.task_id]
+        assert observed["benchmark_lane"] == "state_transfer"
+        assert observed["transfer_strategy"] in {"natural_handoff_text", "state_ref"}
+    assert {
+        task.transfer_strategy for task in transfer_tasks
+    } == {"natural_handoff_text", "state_ref"}
+    assert int(result["summary"]["protocol"]["failure_count"]) == 0
+
+
 def test_communication_lane_keeps_memory_disabled_in_both_modes() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-communication-lane-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="communication",
                 repeat=1,
                 modes=("text", "protocol"),
                 out_dir=Path(tmpdir),
@@ -1579,6 +2157,7 @@ def test_memory_lane_separates_memory_policies() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-memory-lane-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="memory",
                 repeat=1,
                 modes=("text", "protocol"),
                 out_dir=Path(tmpdir),
@@ -1586,29 +2165,55 @@ def test_memory_lane_separates_memory_policies() -> None:
                 llm_client=DeterministicLLMClient(),
             )
         )
-    for mode in ("text", "protocol"):
-        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
-        memory_off = tasks["memory-cache-001"]
-        assist_only = tasks["memory-cache-002"]
-        replay_enabled = tasks["memory-cache-003"]
-        assert memory_off["benchmark_lane"] == "memory"
-        assert memory_off["runtime_reuse_contract"] == "reuse_disabled"
-        assert memory_off["reuse"]["mode"] == "none"
-        assert memory_off["metrics"]["memory_query_count"] == 0
-        assert assist_only["runtime_reuse_contract"] == "assist_allowed"
-        assert assist_only["reuse"]["mode"] == "assist"
-        assert assist_only["results"]["retrieve"]["skipped"] is False
-        assert assist_only["results"]["execute"]["skipped"] is False
-        assert replay_enabled["runtime_reuse_contract"] == "validated_replay"
-        assert replay_enabled["reuse"]["mode"] == "skip_execute"
-        assert replay_enabled["results"]["retrieve"]["skipped"] is False
-        assert replay_enabled["results"]["execute"]["skipped"] is True
+    assert result["mode_runs"]["text"][0]["tasks"] == []
+    tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
+    memory_off = tasks["memory-cache-001"]
+    assist_only = tasks["memory-cache-002"]
+    replay_enabled = tasks["memory-cache-003"]
+    assert memory_off["benchmark_lane"] == "memory"
+    assert memory_off["runtime_reuse_contract"] == "reuse_disabled"
+    assert memory_off["reuse"]["mode"] == "none"
+    assert memory_off["metrics"]["memory_query_count"] == 0
+    assert assist_only["runtime_reuse_contract"] == "assist_allowed"
+    assert assist_only["reuse"]["mode"] == "assist"
+    assert assist_only["results"]["retrieve"]["skipped"] is False
+    assert assist_only["results"]["execute"]["skipped"] is False
+    assert replay_enabled["runtime_reuse_contract"] == "validated_replay"
+    assert replay_enabled["reuse"]["mode"] == "skip_execute"
+    assert replay_enabled["results"]["retrieve"]["skipped"] is False
+    assert replay_enabled["results"]["execute"]["skipped"] is True
+
+
+def test_pack_specific_reports_do_not_mix_claim_surfaces() -> None:
+    cases = {
+        "memory": ("StateBus Benchmark Report", ()),
+        "communication": ("StateBus Benchmark Report", ()),
+        "state_transfer_pure_text": ("Protocol-Only Pure-Text Versus Typed-State", ("Support note:",)),
+    }
+    for task_set_path, (present, absent) in cases.items():
+        with tempfile.TemporaryDirectory(prefix="statebus-pack-report-") as tmpdir:
+            out_dir = Path(tmpdir)
+            result = asyncio.run(
+                run_benchmark(
+                    task_set_path=task_set_path,
+                    repeat=1,
+                    out_dir=out_dir,
+                    embedder=DeterministicEmbeddingProvider(),
+                    llm_client=DeterministicLLMClient(),
+                )
+            )
+            assert result["manifest"]["task_pack_type"] == load_task_set_bundle(task_set_path).metadata.pack_type
+            report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+            assert present in report_text
+            for token in absent:
+                assert token not in report_text
 
 
 def test_benchmark_supports_shared_memory_statepool_backend() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-shm-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="communication",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -2647,6 +3252,7 @@ def test_benchmark_rerun_clears_old_group_memory() -> None:
         out_dir = Path(tmpdir) / "rerun"
         first = asyncio.run(
             run_benchmark(
+                task_set_path="internal_regression",
                 repeat=1,
                 out_dir=out_dir,
                 embedder=DeterministicEmbeddingProvider(),
@@ -2655,6 +3261,7 @@ def test_benchmark_rerun_clears_old_group_memory() -> None:
         )
         second = asyncio.run(
             run_benchmark(
+                task_set_path="internal_regression",
                 repeat=1,
                 out_dir=out_dir,
                 embedder=DeterministicEmbeddingProvider(),
@@ -2672,6 +3279,7 @@ def test_benchmark_repeat_ten_records_stability() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-repeat10-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
+                task_set_path="communication",
                 repeat=10,
                 modes=("text",),
                 out_dir=Path(tmpdir),

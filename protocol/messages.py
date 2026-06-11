@@ -18,6 +18,16 @@ class StateRef:
     checksum: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def blob_hash(self) -> str:
+        """Content-addressed blob hash (alias for checksum)."""
+        return self.checksum or ""
+
+    @property
+    def is_cas(self) -> bool:
+        """Whether this ref uses content-addressed storage."""
+        return self.storage == "CAS_BLOB"
+
 
 @dataclass
 class Hello:
@@ -72,6 +82,16 @@ class PlanStep:
 
 
 @dataclass
+class DeltaPlanStep:
+    """增量PlanStep：同chain连续task间只传变更字段"""
+    step_id: str
+    base_step_id: str
+    delta_params: dict[str, Any] = field(default_factory=dict)
+    delta_depends_on: list[str] = field(default_factory=list)
+    delta_version: int = 1
+
+
+@dataclass
 class Plan:
     task_id: str
     goal: str
@@ -105,6 +125,7 @@ class MemoryQuery:
     encoder_id: str | None = None
     limit_active_only: bool = True
     required_metadata: dict[str, Any] = field(default_factory=dict)
+    session_id: str = ""
 
 
 @dataclass
@@ -113,6 +134,7 @@ class MemoryHit:
     confidence: float
     embedding_id: int | None = None
     faiss_score: float = 0.0
+    combined_score: float = 0.0
     reuse_source: str = ""
     reused_as_plan_patch: bool = False
     skipped_step_ids: list[str] = field(default_factory=list)
@@ -192,6 +214,14 @@ def protocol_bytes(message: Any) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def state_ref_lite_wire_bytes(ref: StateRef) -> int:
+    return _to_proto_state_ref(ref).ByteSize()
+
+
+def total_state_ref_lite_wire_bytes(refs: list[StateRef]) -> int:
+    return sum(state_ref_lite_wire_bytes(ref) for ref in refs)
 
 
 def parse_protocol_bytes(payload: bytes) -> Any:
@@ -767,6 +797,7 @@ def _message_from_wire_frame(message_name: str, payload: dict[str, Any]) -> Any:
             encoder_id=None if payload.get("encoder_id") in (None, "") else str(payload.get("encoder_id")),
             limit_active_only=bool(payload.get("limit_active_only", True)),
             required_metadata=dict(payload.get("required_metadata", {}) or {}),
+            session_id=str(payload.get("session_id", "")).strip(),
         )
     if message_name == "MemoryCommit":
         return MemoryCommit(
@@ -842,3 +873,134 @@ def _parse_json_object(payload: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("expected JSON object payload")
     return value
+
+
+# Experimental CASF structures. They are not wired into the current host
+# mainline and should be treated as reserved design-only data shapes.
+
+
+@dataclass
+class StepTree:
+    """一个PlanStep的完整状态快照 — CASF Merkle DAG的叶子节点。
+
+    记录一个step消费了哪些StateBlob、产出了哪些StateBlob。
+    tree_hash = SHA-256(input_blobs + output_blobs + step_metadata)
+    """
+    step_id: str
+    agent_id: str
+    action: str
+    input_blobs: dict[str, str] = field(default_factory=dict)
+    output_blobs: dict[str, str] = field(default_factory=dict)
+    started_at: float = 0.0
+    finished_at: float = 0.0
+    phase_timing: dict[str, float] = field(default_factory=dict)
+
+    def compute_tree_hash(self) -> str:
+        import hashlib, msgpack
+        payload = msgpack.packb({
+            "step_id": self.step_id,
+            "agent_id": self.agent_id,
+            "action": self.action,
+            "input_blobs": sorted(self.input_blobs.items()),
+            "output_blobs": sorted(self.output_blobs.items()),
+        })
+        return hashlib.sha256(payload).hexdigest()
+
+
+@dataclass
+class TaskCommit:
+    """一个task的完整执行快照 — CASF Merkle DAG的节点。
+
+    commit_hash = SHA-256(step_tree_hashes + parent_hash + metadata)
+    通过parent_hash链接到同task_group内的前一个TaskCommit。
+    """
+    task_id: str
+    task_group: str
+    task_theme: str
+    step_trees: list[StepTree] = field(default_factory=list)
+    parent_hash: str = ""
+    commit_hash: str = ""
+    mode: str = "protocol"
+    created_at: float = 0.0
+    task_metrics: dict[str, Any] = field(default_factory=dict)
+    memory_queries: list[dict[str, Any]] = field(default_factory=list)
+
+    def compute_commit_hash(self) -> str:
+        import hashlib, msgpack
+        payload = msgpack.packb({
+            "task_id": self.task_id,
+            "task_group": self.task_group,
+            "task_theme": self.task_theme,
+            "step_hashes": [st.compute_tree_hash() for st in self.step_trees],
+            "parent_hash": self.parent_hash,
+            "mode": self.mode,
+        })
+        return hashlib.sha256(payload).hexdigest()
+
+    def seal(self) -> str:
+        self.commit_hash = self.compute_commit_hash()
+        return self.commit_hash
+
+
+@dataclass
+class ExecutionDAG:
+    """一个benchmark run的完整执行轨迹DAG。
+
+    包含所有TaskCommit。通过root_hashes定位起点。
+    通过verify_integrity()做Merkle完整性验证。
+    通过find_similar_subtree()做结构相似记忆检索。
+    """
+    dag_id: str
+    task_commits: dict[str, TaskCommit] = field(default_factory=dict)
+
+    @property
+    def root_hashes(self) -> list[str]:
+        return [tc.commit_hash for tc in self.task_commits.values()
+                if not tc.parent_hash]
+
+    def verify_integrity(self) -> bool:
+        for tc in self.task_commits.values():
+            if tc.commit_hash != tc.compute_commit_hash():
+                return False
+            if tc.parent_hash:
+                if tc.parent_hash not in self.task_commits:
+                    return False
+        return True
+
+    def find_similar_subtree(
+        self, task_theme: str, query_terms: set[str], min_similarity: float = 0.5
+    ) -> list[tuple[TaskCommit, float]]:
+        results: list[tuple[TaskCommit, float]] = []
+        for tc in self.task_commits.values():
+            if tc.task_theme != task_theme:
+                continue
+            sim = self._structural_similarity(tc, query_terms)
+            if sim >= min_similarity:
+                results.append((tc, sim))
+        results.sort(key=lambda x: -x[1])
+        return results
+
+    @staticmethod
+    def _structural_similarity(commit: TaskCommit, query_terms: set[str]) -> float:
+        score = 0.0
+        if not commit.step_trees:
+            return 0.0
+        actions = [st.action for st in commit.step_trees]
+        expected = ["RETRIEVE_EVIDENCE", "EXECUTE_PLAYBOOK", "SUMMARIZE_AND_COMMIT"]
+        for i, act in enumerate(actions):
+            if i < len(expected) and act == expected[i]:
+                score += 0.15
+        for st in commit.step_trees:
+            input_kinds = set(st.input_blobs.keys())
+            if "DENSE_EVIDENCE" in input_kinds:
+                score += 0.10
+            if "FEATURE_BUNDLE" in st.output_blobs:
+                score += 0.10
+        stored_terms: set[str] = set()
+        for st in commit.step_trees:
+            for blob_hash in st.input_blobs.values():
+                stored_terms.update(t for t in blob_hash.split("_") if len(t) >= 4)
+        if query_terms and stored_terms:
+            overlap = len(query_terms & stored_terms)
+            score += 0.15 * (overlap / max(len(query_terms), 1))
+        return min(score, 1.0)

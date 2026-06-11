@@ -146,21 +146,53 @@ The latest deterministic repeat-10 runtime-profile trim refresh bundle is:
 
 - `runs/host_goal_eval_20260608_124900_runtime_profile_trim_refresh/`
 
-The latest controlled serialized API repeat-10 claim-boundary package for the
-current `26`-task fairness surface is:
+The latest serialized API repeat-10 controlled lane bundle from the earlier
+`26`-task claim-boundary surface is:
 
 - `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`
+
+The latest controlled serialized API repeat-3 reread package for the dedicated
+typed-handoff `state_transfer` boundary is:
+
+- `runs/host_goal_eval_20260610_113710_controlled_api_repeat3_serial/`
+
+The frozen headline object and current artifact pointer are:
+
+- task object: `tasks/sample_benchmark.yaml` (`formal_controlled`)
+- report artifact:
+  `runs/host_goal_eval_20260610_113710_controlled_api_repeat3_serial/benchmark_report.md`
+- result artifact:
+  `runs/host_goal_eval_20260610_113710_controlled_api_repeat3_serial/benchmark_results.json`
 
 Current benchmark-pack split in the repo:
 
 - `tasks/sample_benchmark.yaml`
-  - formal controlled pack
-  - use this for `communication`, scoped `state_transfer`, and replay-scoped
-    `memory` headline claims
+  - unique frozen `formal_controlled` headline pack
+  - contains the two controlled replay chains plus the dedicated `communication` / `state_transfer` / `memory` headline lanes
+  - does not carry planner-open validation or route-regression diagnostics
+- `tasks/contest_release_regression_carrier_benchmark.yaml`
+  - explicit `state_transfer_carrier` formal pack
+  - use this for protocol-only carrier efficiency only
+- `tasks/state_transfer_authenticity_benchmark.yaml`
+  - `state_transfer_authenticity` formal pack
+  - use this for protocol-only `text_brief` versus `state_ref` authenticity
+- `tasks/state_transfer_pure_text_benchmark.yaml`
+  - `state_transfer_pure_text` formal pack
+  - use this for protocol-only `natural_handoff_text` versus `state_ref` pure-text-versus-typed-state comparison
+- `tasks/state_transfer_natural_support_benchmark.yaml`
+  - support-only `state_transfer_natural_support` pack
+  - use this for natural free-text support evidence only
+- `tasks/communication_benchmark.yaml`
+  - `communication` formal pack
+- `tasks/memory_benchmark.yaml`
+  - `memory` formal pack
+- `tasks/internal_regression_benchmark.yaml`
+  - `internal_regression` engineering pack
+  - includes the relocated `lexical_override` route-diagnostic tasks
 - `tasks/open_validation_benchmark.yaml`
   - support-only open validation pack
-  - use this for retrieval / executor / replay boundary checks, retain/revert
-    decisions, and misfire explanation
+  - use this for retrieval / executor / replay / planner pre-pass boundary checks,
+    retain/revert decisions, and misfire explanation
   - do not promote this pack into formal contest headline claims without a
     separate controlled rerun
 
@@ -178,11 +210,15 @@ Headline status from the current host-side evidence stack:
   `runs/host_goal_eval_20260608_093111_planner_contract_refresh/`
 - `nsjail` is still missing on the host
 - Docker CLI exists, but the current user still cannot access `/var/run/docker.sock`
-- the latest controlled serialized API `repeat=10` lane package confirms:
+- the latest controlled serialized API formal lane packages currently support:
   - `communication` claim: supported
-  - `state_transfer` claim: supported with the explicit
-    `text brief handoff` baseline scope, after the text-side brief was tightened
-    into a more complete executor handoff
+  - `state_transfer` mechanism claim: supported as a typed-handoff comparison
+    in the frozen headline pack, with the dedicated authenticity pack kept as a
+    protocol-only support read
+  - `state_transfer` carrier claim is evaluated separately as
+    `text_packet_minimal` versus `state_packet_minimal`
+  - `state_transfer` natural free-text comparison is support-only rather than a
+    headline pack
   - `memory` claim: supported for `replay_enabled / step-skipping`, but
     `assist_only` still does not beat `memory_off`
 
@@ -313,10 +349,13 @@ Current-worktree serialized API repeat-10 refresh interpretation from
   - the three `skip_retrieve_execute` tasks still skip under live API reruns
   - text mode no longer drops `sample-cache-006` on a planner numeric-step-id
     wobble
-- this is now the latest formal live API timing bundle on the current
-  provenance-aware worktree
+- this remains the latest full serialized API repeat-10 regression bundle on
+  the current provenance-aware `18`-task replay-aware mainline
+- it is not the frozen `formal_controlled` contest-headline artifact; use
+  `runs/host_goal_eval_20260610_113710_controlled_api_repeat3_serial/` for the
+  current frozen headline object and report surface
 
-Current `26`-task serialized API repeat-10 claim-boundary interpretation from
+Earlier `26`-task serialized API repeat-10 claim-boundary interpretation from
 `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`:
 
 - this package refreshes the earlier `230711` formal lane bundle after the
@@ -384,7 +423,7 @@ Interpretation boundary:
   runtime memory-query prefilters
 - for current live API timing claims on the replay-aware `18`-task host
   mainline, cite `runs/host_goal_eval_20260608_093111_planner_contract_refresh/`
-- for the current `26`-task fairness / contest-claim surface under serialized
+- for the earlier `26`-task fairness / contest-claim surface under serialized
   live API `repeat=10`, cite
   `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`
 - for the first provenance-aware route-proof bundle before the planner fix,

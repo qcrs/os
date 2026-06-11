@@ -23,7 +23,13 @@ from memory.store import (
     EmbeddingProvider,
     SentenceTransformerEmbeddingProvider,
 )
-from runtime.executor_runtime import _feature_bundle_from_transfer_brief, default_tool_registry
+from runtime.executor_runtime import (
+    _feature_bundle_from_executor_decision_packet,
+    _feature_bundle_from_natural_handoff,
+    _feature_bundle_from_text_packet,
+    _feature_bundle_from_transfer_brief,
+    default_tool_registry,
+)
 from runtime.llm import LLMClient, LLMConfig, build_llm_client
 from runtime.orchestrator import Orchestrator, RunContext, RunSession
 from statepool.store import StatePoolConfig
@@ -42,6 +48,8 @@ METRIC_FIELDS = (
     "state_bytes",
     "handoff_ref_count",
     "handoff_bytes",
+    "handoff_payload_bytes",
+    "handoff_wire_bytes",
     "handoff_textual_ref_count",
     "handoff_textual_bytes",
     "handoff_nontext_ref_count",
@@ -110,6 +118,9 @@ BENCHMARK_LANE_ORDER = (
 TRANSFER_STRATEGY_ORDER = (
     "state_ref",
     "text_brief",
+    "state_packet_minimal",
+    "text_packet_minimal",
+    "natural_handoff_text",
 )
 
 MEMORY_POLICY_ORDER = (
@@ -164,16 +175,47 @@ def _feature_bundle_observability(ctx: RunContext, result: Any) -> dict[str, Any
             feature_bundle = None
     if feature_bundle is None:
         evidence_ref = next((ref for ref in result.output_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
+        decision_packet_ref = next(
+            (ref for ref in result.output_state_refs if ref.kind == "EXECUTOR_DECISION_PACKET"),
+            None,
+        )
         brief_ref = next((ref for ref in result.output_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
-        if evidence_ref is None or brief_ref is None:
+        transfer_strategy = str(result.payload.get("transfer_strategy", "text_brief")).strip()
+        if evidence_ref is None:
             return {}
         try:
-            feature_bundle = _feature_bundle_from_transfer_brief(
-                query_text=result.payload.get("query", ""),
-                evidence_text=ctx.get_text_state(evidence_ref),
-                brief_text=ctx.get_text_state(brief_ref),
-                registry=default_tool_registry(),
-            )
+            if transfer_strategy == "state_packet_minimal" and decision_packet_ref is not None:
+                feature_bundle = _feature_bundle_from_executor_decision_packet(
+                    query_text=result.payload.get("query", ""),
+                    evidence_text=ctx.get_text_state(evidence_ref),
+                    decision_packet=ctx.get_executor_decision_state(decision_packet_ref),
+                    registry=default_tool_registry(),
+                )
+            elif brief_ref is None:
+                return {}
+            else:
+                brief_text = ctx.get_text_state(brief_ref)
+                if transfer_strategy == "text_packet_minimal":
+                    feature_bundle = _feature_bundle_from_text_packet(
+                        query_text=result.payload.get("query", ""),
+                        evidence_text=ctx.get_text_state(evidence_ref),
+                        packet_text=brief_text,
+                        registry=default_tool_registry(),
+                    )
+                elif transfer_strategy == "natural_handoff_text":
+                    feature_bundle = _feature_bundle_from_natural_handoff(
+                        query_text=result.payload.get("query", ""),
+                        evidence_text=ctx.get_text_state(evidence_ref),
+                        handoff_text=brief_text,
+                        registry=default_tool_registry(),
+                    )
+                else:
+                    feature_bundle = _feature_bundle_from_transfer_brief(
+                        query_text=result.payload.get("query", ""),
+                        evidence_text=ctx.get_text_state(evidence_ref),
+                        brief_text=brief_text,
+                        registry=default_tool_registry(),
+                    )
         except Exception:
             return {}
     return {
@@ -546,7 +588,9 @@ async def _run_mode_once(
             executor_socket_path=executor_socket_path,
         )
     )
-    ordered_tasks = sorted(tasks, key=_task_sort_key)
+    ordered_tasks = [
+        task for task in sorted(tasks, key=_task_sort_key) if task.supports_mode(mode)
+    ]
     task_runs: list[dict[str, object]] = []
     group_db_paths = {
         task.task_group: root / f"{task.task_group}.sqlite3" for task in ordered_tasks
@@ -1433,13 +1477,24 @@ def _build_result(
         expected_mode: sum(1 for task in tasks if task.expected_reuse_mode == expected_mode)
         for expected_mode in ("none", "assist", "skip_execute", "skip_retrieve_execute")
     }
+    task_mode_counts = {
+        mode: sum(1 for task in tasks if task.supports_mode(mode))
+        for mode in modes
+    }
     benchmark_lane_counts = {
         lane: sum(1 for task in tasks if task.benchmark_lane == lane)
         for lane in BENCHMARK_LANE_ORDER
     }
     transfer_strategy_counts = {
         strategy: sum(1 for task in tasks if task.transfer_strategy == strategy)
-        for strategy in ("state_ref", "text_brief", "mode_split_text_brief_vs_state_ref")
+        for strategy in (
+            "state_ref",
+            "text_brief",
+            "state_packet_minimal",
+            "text_packet_minimal",
+            "natural_handoff_text",
+            "mode_split_text_brief_vs_state_ref",
+        )
     }
     memory_policy_counts = {
         "memory_off": sum(1 for task in tasks if task.runtime_reuse_contract == "reuse_disabled"),
@@ -1463,6 +1518,7 @@ def _build_result(
             "support_evidence_only": bool(task_set_metadata.get("support_only", False)),
             "task_count": len(tasks),
             "continuous_task_count": len(tasks),
+            "task_mode_counts": task_mode_counts,
             "expected_reuse_task_count": sum(1 for task in tasks if task.expected_reuse),
             "reuse_expectation_policy": "benchmark_label_only",
             "expected_reuse_mode_counts": expected_reuse_mode_counts,
@@ -1698,6 +1754,12 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         "text_handoff_bytes",
         "protocol_handoff_bytes",
         "handoff_bytes_delta",
+        "text_handoff_payload_bytes",
+        "protocol_handoff_payload_bytes",
+        "handoff_payload_bytes_delta",
+        "text_handoff_wire_bytes",
+        "protocol_handoff_wire_bytes",
+        "handoff_wire_bytes_delta",
         "text_handoff_textual_ref_count",
         "protocol_handoff_textual_ref_count",
         "handoff_textual_ref_count_delta",
@@ -1893,6 +1955,26 @@ def _compare_row(
             float(protocol_row["handoff_bytes"]) - float(text_row["handoff_bytes"]),
             4,
         ),
+        "text_handoff_payload_bytes": round(
+            float(text_row.get("handoff_payload_bytes", text_row["handoff_bytes"])),
+            4,
+        ),
+        "protocol_handoff_payload_bytes": round(
+            float(protocol_row.get("handoff_payload_bytes", protocol_row["handoff_bytes"])),
+            4,
+        ),
+        "handoff_payload_bytes_delta": round(
+            float(protocol_row.get("handoff_payload_bytes", protocol_row["handoff_bytes"]))
+            - float(text_row.get("handoff_payload_bytes", text_row["handoff_bytes"])),
+            4,
+        ),
+        "text_handoff_wire_bytes": round(float(text_row.get("handoff_wire_bytes", 0.0)), 4),
+        "protocol_handoff_wire_bytes": round(float(protocol_row.get("handoff_wire_bytes", 0.0)), 4),
+        "handoff_wire_bytes_delta": round(
+            float(protocol_row.get("handoff_wire_bytes", 0.0))
+            - float(text_row.get("handoff_wire_bytes", 0.0)),
+            4,
+        ),
         "text_handoff_textual_ref_count": round(float(text_row["handoff_textual_ref_count"]), 4),
         "protocol_handoff_textual_ref_count": round(float(protocol_row["handoff_textual_ref_count"]), 4),
         "handoff_textual_ref_count_delta": round(
@@ -2041,14 +2123,347 @@ def _named_summary_lookup(
     return {str(item[key_name]): item for item in rows if key_name in item}
 
 
-def _build_report(result: dict[str, object]) -> str:
-    summary = result["summary"]
+def _aggregate_filtered_mode_task_runs(
+    result: dict[str, object],
+    mode: str,
+    *,
+    benchmark_lane: str | None = None,
+    transfer_strategy: str | None = None,
+) -> dict[str, object] | None:
+    matched_rows: list[dict[str, object]] = []
+    task_ids: list[str] = []
+    for run in result["mode_runs"].get(mode, []):
+        for task_run in run.get("tasks", []):
+            if task_run.get("status") != "completed":
+                continue
+            if benchmark_lane is not None and str(task_run.get("benchmark_lane", "")) != benchmark_lane:
+                continue
+            if transfer_strategy is not None and str(task_run.get("transfer_strategy", "")) != transfer_strategy:
+                continue
+            matched_rows.append(task_run)
+            task_id = str(task_run.get("task_id", "")).strip()
+            if task_id and task_id not in task_ids:
+                task_ids.append(task_id)
+    if not matched_rows:
+        return None
+    return {
+        "task_count": len(task_ids),
+        "task_ids": task_ids,
+        **_merge_reuse_summary(
+            _average_metric_rows([row["metrics"] for row in matched_rows]),
+            matched_rows,
+            mode,
+        ),
+    }
+
+
+def _pack_available_modes(result: dict[str, object]) -> list[str]:
     manifest = result["manifest"]
-    available_modes = [
+    summary = result["summary"]
+    task_mode_counts = dict(manifest.get("task_mode_counts", {}))
+    return [
         mode
         for mode in ("text", "protocol")
-        if mode in summary and int(summary[mode].get("run_count", 0)) > 0
+        if int(task_mode_counts.get(mode, 0)) > 0 and int(summary.get(mode, {}).get("run_count", 0)) > 0
     ]
+
+
+def _report_header_lines(result: dict[str, object]) -> list[str]:
+    manifest = result["manifest"]
+    lines = [
+        "# StateBus Benchmark Report",
+        "",
+        f"- Task set: `{manifest['task_set_path']}`",
+        f"- Task set name: `{manifest.get('task_set_name', '')}`",
+        f"- Task pack type: `{manifest.get('task_pack_type', 'ad_hoc')}`",
+        f"- Task groups: `{', '.join(manifest['task_groups'])}`",
+        f"- Modes: `{', '.join(manifest['modes'])}`",
+        f"- Mode-specific task counts: `{manifest.get('task_mode_counts', {})}`",
+        f"- Repeat: `{manifest['repeat']}`",
+        f"- StatePool backend: `{manifest['statepool_backend']}`",
+        f"- Embedding state backend: `{manifest['embed_state_backend']}`",
+        f"- Executor transport: `{manifest.get('executor_transport', 'local')}`",
+    ]
+    task_set_description = str(manifest.get("task_set_description", "")).strip()
+    if task_set_description:
+        lines.append(f"- Task set description: `{task_set_description}`")
+    claim_lanes = [str(item) for item in manifest.get("task_set_claim_lanes", []) if str(item).strip()]
+    if claim_lanes:
+        lines.append(f"- Claim lanes for this pack: `{', '.join(claim_lanes)}`")
+    reading_contract = str(manifest.get("task_set_reading_contract", "")).strip()
+    if reading_contract:
+        lines.append(f"- Task set reading contract: `{reading_contract}`")
+    if bool(manifest.get("support_evidence_only", False)):
+        lines.append(
+            "- Pack boundary: `support evidence only; do not promote this pack into formal headline claims without a separate controlled rerun`"
+        )
+    return lines
+
+
+def _append_protocol_only_handoff_table(
+    lines: list[str],
+    *,
+    result: dict[str, object],
+    left_strategy: str,
+    right_strategy: str,
+    title: str,
+    scope_note: str,
+) -> None:
+    left = _aggregate_filtered_mode_task_runs(
+        result,
+        "protocol",
+        benchmark_lane="state_transfer",
+        transfer_strategy=left_strategy,
+    )
+    right = _aggregate_filtered_mode_task_runs(
+        result,
+        "protocol",
+        benchmark_lane="state_transfer",
+        transfer_strategy=right_strategy,
+    )
+    if left is None or right is None:
+        return
+    lines.extend(
+        [
+            "",
+            f"## {title}",
+            "",
+            f"- Scope note: `{scope_note}`",
+            "",
+            "| handoff_strategy | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            f"| {left_strategy} | {left['task_count']} | {left['protocol_bytes']:.2f} | "
+            f"{left.get('handoff_wire_bytes', 0.0):.2f} | "
+            f"{left.get('handoff_payload_bytes', left['handoff_bytes']):.2f} | "
+            f"{left['handoff_textual_bytes']:.2f} | {left['handoff_nontext_bytes']:.2f} | "
+            f"{left['llm_total_tokens']:.2f} | {left['task_ms']:.2f} |",
+            f"| {right_strategy} | {right['task_count']} | {right['protocol_bytes']:.2f} | "
+            f"{right.get('handoff_wire_bytes', 0.0):.2f} | "
+            f"{right.get('handoff_payload_bytes', right['handoff_bytes']):.2f} | "
+            f"{right['handoff_textual_bytes']:.2f} | {right['handoff_nontext_bytes']:.2f} | "
+            f"{right['llm_total_tokens']:.2f} | {right['task_ms']:.2f} |",
+            f"| delta({right_strategy} - {left_strategy}) | n/a | {right['protocol_bytes'] - left['protocol_bytes']:.2f} | "
+            f"{right.get('handoff_wire_bytes', 0.0) - left.get('handoff_wire_bytes', 0.0):.2f} | "
+            f"{right.get('handoff_payload_bytes', right['handoff_bytes']) - left.get('handoff_payload_bytes', left['handoff_bytes']):.2f} | "
+            f"{right['handoff_textual_bytes'] - left['handoff_textual_bytes']:.2f} | "
+            f"{right['handoff_nontext_bytes'] - left['handoff_nontext_bytes']:.2f} | "
+            f"{right['llm_total_tokens'] - left['llm_total_tokens']:.2f} | "
+            f"{right['task_ms'] - left['task_ms']:.2f} |",
+        ]
+    )
+
+
+def _append_headline_claim_sections(
+    lines: list[str],
+    *,
+    result: dict[str, object],
+    summary: dict[str, object],
+) -> None:
+    available_modes = _pack_available_modes(result)
+    if len(available_modes) != 2:
+        return
+    manifest = result["manifest"]
+    text_reuse_axes = _named_summary_lookup(summary["text"]["reuse_axes"], "reuse_axis")
+    protocol_reuse_axes = _named_summary_lookup(summary["protocol"]["reuse_axes"], "reuse_axis")
+    text_lanes = _named_summary_lookup(summary["text"]["benchmark_lanes"], "benchmark_lane")
+    protocol_lanes = _named_summary_lookup(summary["protocol"]["benchmark_lanes"], "benchmark_lane")
+    claim_lane_order = [
+        str(item)
+        for item in manifest.get("task_set_claim_lanes", [])
+        if str(item) in BENCHMARK_LANE_ORDER
+    ]
+    lines.extend(
+        [
+            "",
+            "## Structured-vs-Text By Reuse Axis",
+            "",
+            "- Audit note: `fresh_retrieval best isolates structured-vs-text communication and orchestration deltas; step_skipping includes replay effects.`",
+            "- Memory note: `assist_only remains diagnostic; replay_enabled is still the only headline memory row.`",
+            "- State-transfer note: `the dedicated typed-handoff table below separates wire bytes from payload bytes; only wire bytes should be read as communication overhead.`",
+            "",
+            "| reuse_axis | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_planner_tokens | protocol_planner_tokens | planner_tokens_delta | text_summarizer_tokens | protocol_summarizer_tokens | summarizer_tokens_delta | text_llm_total_tokens | protocol_llm_total_tokens | llm_total_tokens_delta | text_task_ms | protocol_task_ms | task_ms_delta |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for reuse_axis in REUSE_AXIS_ORDER:
+        if reuse_axis not in text_reuse_axes or reuse_axis not in protocol_reuse_axes:
+            continue
+        text_axis = text_reuse_axes[reuse_axis]
+        protocol_axis = protocol_reuse_axes[reuse_axis]
+        lines.append(
+            f"| {reuse_axis} | {text_axis['text_bytes']:.2f} | {protocol_axis['protocol_bytes']:.2f} | "
+            f"{protocol_axis['protocol_bytes'] - text_axis['text_bytes']:.2f} | "
+            f"{text_axis['planner_total_tokens']:.2f} | {protocol_axis['planner_total_tokens']:.2f} | "
+            f"{protocol_axis['planner_total_tokens'] - text_axis['planner_total_tokens']:.2f} | "
+            f"{text_axis['summarizer_total_tokens']:.2f} | {protocol_axis['summarizer_total_tokens']:.2f} | "
+            f"{protocol_axis['summarizer_total_tokens'] - text_axis['summarizer_total_tokens']:.2f} | "
+            f"{text_axis['llm_total_tokens']:.2f} | {protocol_axis['llm_total_tokens']:.2f} | "
+            f"{protocol_axis['llm_total_tokens'] - text_axis['llm_total_tokens']:.2f} | "
+            f"{text_axis['task_ms']:.2f} | {protocol_axis['task_ms']:.2f} | "
+            f"{protocol_axis['task_ms'] - text_axis['task_ms']:.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Contest Claim Lane Deltas",
+            "",
+            "| benchmark_lane | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_handoff_wire_bytes | protocol_handoff_wire_bytes | text_handoff_payload_bytes | protocol_handoff_payload_bytes | llm_total_tokens_delta | task_ms_delta |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for benchmark_lane in claim_lane_order:
+        if benchmark_lane not in text_lanes or benchmark_lane not in protocol_lanes:
+            continue
+        text_lane = text_lanes[benchmark_lane]
+        protocol_lane = protocol_lanes[benchmark_lane]
+        lines.append(
+            f"| {benchmark_lane} | {text_lane['text_bytes']:.2f} | {protocol_lane['protocol_bytes']:.2f} | "
+            f"{protocol_lane['protocol_bytes'] - text_lane['text_bytes']:.2f} | "
+            f"{text_lane.get('handoff_wire_bytes', 0.0):.2f} | {protocol_lane.get('handoff_wire_bytes', 0.0):.2f} | "
+            f"{text_lane.get('handoff_payload_bytes', text_lane['handoff_bytes']):.2f} | "
+            f"{protocol_lane.get('handoff_payload_bytes', protocol_lane['handoff_bytes']):.2f} | "
+            f"{protocol_lane['llm_total_tokens'] - text_lane['llm_total_tokens']:.2f} | "
+            f"{protocol_lane['task_ms'] - text_lane['task_ms']:.2f} |"
+        )
+    text_state_transfer = _aggregate_filtered_mode_task_runs(
+        result,
+        "text",
+        benchmark_lane="state_transfer",
+    )
+    protocol_state_transfer = _aggregate_filtered_mode_task_runs(
+        result,
+        "protocol",
+        benchmark_lane="state_transfer",
+    )
+    if text_state_transfer is not None and protocol_state_transfer is not None:
+        lines.extend(
+            [
+                "",
+                "## Typed-Handoff State-Transfer Headline",
+                "",
+                "- Scope note: `this is the frozen headline pack's state_transfer read: text-mode structured-shadow text_brief handoff versus protocol-mode state_ref handoff on the same controlled tasks.`",
+                "- Metric note: `handoff_wire_bytes counts serialized StateRefLite pointers on the wire; handoff_payload_bytes counts local StatePool payload bytes available to the executor.`",
+                "",
+                "| mode / handoff | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                f"| text / text_brief | {text_state_transfer['task_count']} | {text_state_transfer['text_bytes']:.2f} | "
+                f"{text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
+                f"{text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
+                f"{text_state_transfer['handoff_textual_bytes']:.2f} | {text_state_transfer['handoff_nontext_bytes']:.2f} | "
+                f"{text_state_transfer['llm_total_tokens']:.2f} | {text_state_transfer['task_ms']:.2f} |",
+                f"| protocol / state_ref | {protocol_state_transfer['task_count']} | {protocol_state_transfer['protocol_bytes']:.2f} | "
+                f"{protocol_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
+                f"{protocol_state_transfer.get('handoff_payload_bytes', protocol_state_transfer['handoff_bytes']):.2f} | "
+                f"{protocol_state_transfer['handoff_textual_bytes']:.2f} | {protocol_state_transfer['handoff_nontext_bytes']:.2f} | "
+                f"{protocol_state_transfer['llm_total_tokens']:.2f} | {protocol_state_transfer['task_ms']:.2f} |",
+                f"| delta(protocol/state_ref - text/text_brief) | n/a | {protocol_state_transfer['protocol_bytes'] - text_state_transfer['text_bytes']:.2f} | "
+                f"{protocol_state_transfer.get('handoff_wire_bytes', 0.0) - text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
+                f"{protocol_state_transfer.get('handoff_payload_bytes', protocol_state_transfer['handoff_bytes']) - text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
+                f"{protocol_state_transfer['handoff_textual_bytes'] - text_state_transfer['handoff_textual_bytes']:.2f} | "
+                f"{protocol_state_transfer['handoff_nontext_bytes'] - text_state_transfer['handoff_nontext_bytes']:.2f} | "
+                f"{protocol_state_transfer['llm_total_tokens'] - text_state_transfer['llm_total_tokens']:.2f} | "
+                f"{protocol_state_transfer['task_ms'] - text_state_transfer['task_ms']:.2f} |",
+            ]
+        )
+
+
+def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
+    pack_type = str(result["manifest"].get("task_pack_type", "ad_hoc"))
+    available_modes = _pack_available_modes(result)
+    lines = _report_header_lines(result)
+    if pack_type == "state_transfer_carrier":
+        _append_protocol_only_handoff_table(
+            lines,
+            result=result,
+            left_strategy="text_packet_minimal",
+            right_strategy="state_packet_minimal",
+            title="Protocol-Only Carrier Efficiency",
+            scope_note="this table holds executor decision semantics fixed as a minimal packet and changes only the carrier: text packet versus non-text state packet.",
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "state_transfer_authenticity":
+        _append_protocol_only_handoff_table(
+            lines,
+            result=result,
+            left_strategy="text_brief",
+            right_strategy="state_ref",
+            title="Protocol-Only Typed-Handoff Authenticity",
+            scope_note="this table fixes control mode at protocol and compares the text-shadow handoff against the rich state_ref handoff.",
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "state_transfer_pure_text":
+        _append_protocol_only_handoff_table(
+            lines,
+            result=result,
+            left_strategy="natural_handoff_text",
+            right_strategy="state_ref",
+            title="Protocol-Only Pure-Text Versus Typed-State",
+            scope_note="this table fixes control mode at protocol and compares natural free-text handoff against the real state_ref typed handoff.",
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "state_transfer_natural_support":
+        lines.append("- Support note: `this pack is support-only by design; use it to contextualize natural free-text handoff, not as the carrier headline.`")
+        _append_protocol_only_handoff_table(
+            lines,
+            result=result,
+            left_strategy="natural_handoff_text",
+            right_strategy="state_packet_minimal",
+            title="Protocol-Only Natural-Text Support",
+            scope_note="this support table compares free-text retriever handoff against the same minimal state packet baseline.",
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "communication":
+        if len(available_modes) == 2:
+            text_lane = _aggregate_filtered_mode_task_runs(result, "text", benchmark_lane="communication")
+            protocol_lane = _aggregate_filtered_mode_task_runs(result, "protocol", benchmark_lane="communication")
+            if text_lane is not None and protocol_lane is not None:
+                lines.extend(
+                    [
+                        "",
+                        "## Communication Claim Surface",
+                        "",
+                        "| mode | task_count | control_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
+                        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                        f"| text | {text_lane['task_count']} | {text_lane['text_bytes']:.2f} | {text_lane['handoff_textual_bytes']:.2f} | {text_lane['handoff_nontext_bytes']:.2f} | {text_lane['llm_total_tokens']:.2f} | {text_lane['task_ms']:.2f} |",
+                        f"| protocol | {protocol_lane['task_count']} | {protocol_lane['protocol_bytes']:.2f} | {protocol_lane['handoff_textual_bytes']:.2f} | {protocol_lane['handoff_nontext_bytes']:.2f} | {protocol_lane['llm_total_tokens']:.2f} | {protocol_lane['task_ms']:.2f} |",
+                        f"| delta(protocol - text) | n/a | {protocol_lane['protocol_bytes'] - text_lane['text_bytes']:.2f} | {protocol_lane['handoff_textual_bytes'] - text_lane['handoff_textual_bytes']:.2f} | {protocol_lane['handoff_nontext_bytes'] - text_lane['handoff_nontext_bytes']:.2f} | {protocol_lane['llm_total_tokens'] - text_lane['llm_total_tokens']:.2f} | {protocol_lane['task_ms'] - text_lane['task_ms']:.2f} |",
+                    ]
+                )
+        return "\n".join(lines) + "\n"
+    if pack_type == "memory":
+        protocol_memory_policies = _named_summary_lookup(
+            result["summary"]["protocol"]["memory_policies"],
+            "memory_policy",
+        )
+        lines.extend(
+            [
+                "",
+                "## Memory Claim Surface",
+                "",
+                "- Boundary note: `assist_only remains diagnostic; replay_enabled is the only row eligible for headline memory-reuse claims.`",
+                "",
+                "| memory_policy | task_count | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for memory_policy in MEMORY_POLICY_ORDER:
+            row = protocol_memory_policies.get(memory_policy)
+            if row is None:
+                continue
+            lines.append(
+                f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row['memory_hit_rate']:.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
+            )
+        return "\n".join(lines) + "\n"
+    return None
+
+
+def _build_report(result: dict[str, object]) -> str:
+    specialized = _build_specialized_pack_report(result)
+    if specialized is not None:
+        return specialized
+    summary = result["summary"]
+    manifest = result["manifest"]
+    available_modes = _pack_available_modes(result)
     observability_summary = {
         mode: _executor_observability_summary(result, mode) for mode in available_modes
     }
@@ -2065,6 +2480,7 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Protocol baseline: `{manifest['protocol_baseline']}`",
         f"- Repeat: `{manifest['repeat']}`",
         f"- Continuous tasks per run: `{manifest['continuous_task_count']}`",
+        f"- Mode-specific task counts: `{manifest.get('task_mode_counts', {})}`",
         f"- Expected reuse tasks per run: `{manifest['expected_reuse_task_count']}`",
         f"- Reuse expectation policy: `{manifest['reuse_expectation_policy']}`",
         f"- Expected reuse mode counts: `{json.dumps(manifest['expected_reuse_mode_counts'], sort_keys=True)}`",
@@ -2085,10 +2501,16 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Summarizer provider: `{manifest['summarizer_provider']}`",
         f"- Summarizer model: `{manifest['summarizer_model']}`",
         "- Reuse query policy: `memory assist stays runtime-contract gated; step-skipping now requires runtime evidence; expected_reuse_mode stays in benchmark validation`",
-        "- Interpretation note: `aggregate mixes internal_regression, communication, state_transfer, and memory lanes; use the lane tables below for isolated contest claims`",
-        "- State-transfer note: `non-text transfer claims should be read from executor handoff metrics, not raw total state_bytes`",
-        "- State-transfer baseline note: `the text-side comparison in state_transfer lane is text brief handoff to the executor, not full natural-language regeneration of every intermediate state`",
     ]
+    if str(manifest.get("task_pack_type", "")) == "formal_controlled":
+        lines.extend(
+            [
+                "- Headline note: `this frozen formal_controlled pack is lane-first; read the reuse-axis, lane-delta, and dedicated state_transfer sections before the aggregate.`",
+                "- Interpretation note: `aggregate mixes the two controlled replay chains with the dedicated communication/state_transfer/memory lanes and now serves only as a secondary overview.`",
+                "- State-transfer note: `read state_transfer with two layers: handoff_wire_bytes for communication overhead, handoff_payload_bytes for executor-visible local payload size; do not use raw state_bytes as the transfer headline.`",
+                "- State-transfer baseline note: `the frozen headline pack compares text-mode text_brief against protocol-mode state_ref as a typed-handoff authenticity read; do not describe text_brief as a natural-text baseline`",
+            ]
+        )
     task_set_description = str(manifest.get("task_set_description", "")).strip()
     if task_set_description:
         lines.append(f"- Task set description: `{task_set_description}`")
@@ -2102,14 +2524,32 @@ def _build_report(result: dict[str, object]) -> str:
         lines.append(
             "- Pack boundary: `support evidence only; do not promote this pack into formal communication/state_transfer/memory headline claims without a separate controlled rerun`"
         )
-    elif str(manifest.get("task_pack_type", "")) == "formal_controlled":
+    elif str(manifest.get("task_pack_type", "")) == "state_transfer_carrier":
         lines.append(
-            "- Pack boundary: `formal controlled pack; use this pack for contest headline claims and keep open/diagnostic tasks out of the main headline package`"
+            "- Pack boundary: `formal carrier pack; use this pack only for the protocol-only carrier headline and keep other lanes in their dedicated packs`"
         )
+    task_mode_counts = manifest.get("task_mode_counts", {})
+    text_tasks = int(task_mode_counts.get("text", 0))
+    protocol_tasks = int(task_mode_counts.get("protocol", 0))
+    if text_tasks != protocol_tasks:
+        lines.extend(
+            [
+                "",
+                "> **Aggregate interpretation note**: text and protocol run different numbers of tasks "
+                f"(text={text_tasks}, protocol={protocol_tasks}). "
+                "Protocol's higher aggregate control_bytes reflects the extra tasks, not an inherent "
+                "protocol disadvantage. **Use lane-level tables and the fresh_retrieval axis below for "
+                "apples-to-apples comparison.**",
+            ]
+        )
+    if str(manifest.get("task_pack_type", "")) == "formal_controlled":
+        _append_headline_claim_sections(lines, result=result, summary=summary)
     lines.extend(
         [
             "",
             "## Aggregate",
+            "",
+            "- Secondary view note: `this table remains useful for whole-pack smoke checks, but the headline read now lives in the three sections above.`",
             "",
             "| mode | message_count | control_bytes | state_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -2124,6 +2564,14 @@ def _build_report(result: dict[str, object]) -> str:
             f"{aggregate['memory_hit_rate']:.2f} | {aggregate['skipped_step_count']:.2f} | "
             f"{aggregate['reuse_gain']:.2f} | {aggregate['task_ms']:.2f} |"
         )
+    lines.extend(
+        [
+            "",
+            "## Diagnostic Appendix",
+            "",
+            "- Appendix note: `the sections below are secondary diagnostics and artifact audits; keep the frozen headline read on the reuse-axis, claim-lane, typed-handoff, and aggregate sections above.`",
+        ]
+    )
     lines.extend(
         [
             "",
@@ -2161,14 +2609,15 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## Executor Handoff Breakdown",
             "",
-            "| mode | handoff_ref_count | handoff_bytes | handoff_textual_ref_count | handoff_textual_bytes | handoff_nontext_ref_count | handoff_nontext_bytes |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| mode | handoff_ref_count | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_ref_count | handoff_textual_bytes | handoff_nontext_ref_count | handoff_nontext_bytes |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for mode in available_modes:
         aggregate = summary[mode]["aggregate"]
         lines.append(
-            f"| {mode} | {aggregate['handoff_ref_count']:.2f} | {aggregate['handoff_bytes']:.2f} | "
+            f"| {mode} | {aggregate['handoff_ref_count']:.2f} | {aggregate.get('handoff_wire_bytes', 0.0):.2f} | "
+            f"{aggregate.get('handoff_payload_bytes', aggregate['handoff_bytes']):.2f} | "
             f"{aggregate['handoff_textual_ref_count']:.2f} | {aggregate['handoff_textual_bytes']:.2f} | "
             f"{aggregate['handoff_nontext_ref_count']:.2f} | {aggregate['handoff_nontext_bytes']:.2f} |"
         )
@@ -2282,7 +2731,7 @@ def _build_report(result: dict[str, object]) -> str:
     lines.extend(
         [
             "",
-            "## Contest Benchmark Lanes",
+            "## Benchmark Lane Diagnostics",
             "",
             "| benchmark_lane | mode | task_count | control_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -2303,8 +2752,8 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## State Transfer Strategies",
             "",
-            "| transfer_strategy | mode | task_count | control_bytes | handoff_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| transfer_strategy | mode | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for mode in available_modes:
@@ -2312,7 +2761,8 @@ def _build_report(result: dict[str, object]) -> str:
             control_bytes = transfer_summary["text_bytes"] if mode == "text" else transfer_summary["protocol_bytes"]
             lines.append(
                 f"| {transfer_summary['transfer_strategy']} | {mode} | {len(transfer_summary['task_ids'])} | "
-                f"{control_bytes:.2f} | {transfer_summary['handoff_bytes']:.2f} | "
+                f"{control_bytes:.2f} | {transfer_summary.get('handoff_wire_bytes', 0.0):.2f} | "
+                f"{transfer_summary.get('handoff_payload_bytes', transfer_summary['handoff_bytes']):.2f} | "
                 f"{transfer_summary['handoff_textual_bytes']:.2f} | {transfer_summary['handoff_nontext_bytes']:.2f} | "
                 f"{transfer_summary['llm_total_tokens']:.2f} | {transfer_summary['task_ms']:.2f} |"
             )
@@ -2352,65 +2802,89 @@ def _build_report(result: dict[str, object]) -> str:
                 f"{policy_summary['memory_assist_rescue_task_count']:.2f} |"
             )
     if len(available_modes) == 2:
-        text_reuse_axes = _named_summary_lookup(summary["text"]["reuse_axes"], "reuse_axis")
-        protocol_reuse_axes = _named_summary_lookup(summary["protocol"]["reuse_axes"], "reuse_axis")
-        text_lanes = _named_summary_lookup(summary["text"]["benchmark_lanes"], "benchmark_lane")
-        protocol_lanes = _named_summary_lookup(summary["protocol"]["benchmark_lanes"], "benchmark_lane")
         text_memory_policies = _named_summary_lookup(summary["text"]["memory_policies"], "memory_policy")
         protocol_memory_policies = _named_summary_lookup(summary["protocol"]["memory_policies"], "memory_policy")
-        lines.extend(
-            [
-                "",
-                "## Claim-Surface Audit Views",
-                "",
-                "- Audit note: `fresh_retrieval` best isolates structured-vs-text communication/orchestration deltas; `step_skipping` includes replay effects.",
-                "- Memory note: `assist_only` rows remain diagnostic; the currently supported memory headline is still `replay_enabled / step-skipping reuse`.",
-                "- Assist note: use `prior_applied_rate`, `candidate_reduction`, `route_agreement_rate`, and `rescue_rate` as the mechanism-level assist diagnostics, not `memory_hit_rate` alone.",
-                "",
-                "### Structured-vs-Text By Reuse Axis",
-                "",
-                "| reuse_axis | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_planner_tokens | protocol_planner_tokens | planner_tokens_delta | text_summarizer_tokens | protocol_summarizer_tokens | summarizer_tokens_delta | text_llm_total_tokens | protocol_llm_total_tokens | llm_total_tokens_delta | text_task_ms | protocol_task_ms | task_ms_delta |",
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-            ]
+        protocol_transfer_text_packet = _aggregate_filtered_mode_task_runs(
+            result,
+            "protocol",
+            benchmark_lane="state_transfer",
+            transfer_strategy="text_packet_minimal",
         )
-        for reuse_axis in REUSE_AXIS_ORDER:
-            if reuse_axis not in text_reuse_axes or reuse_axis not in protocol_reuse_axes:
-                continue
-            text_axis = text_reuse_axes[reuse_axis]
-            protocol_axis = protocol_reuse_axes[reuse_axis]
-            lines.append(
-                f"| {reuse_axis} | {text_axis['text_bytes']:.2f} | {protocol_axis['protocol_bytes']:.2f} | "
-                f"{protocol_axis['protocol_bytes'] - text_axis['text_bytes']:.2f} | "
-                f"{text_axis['planner_total_tokens']:.2f} | {protocol_axis['planner_total_tokens']:.2f} | "
-                f"{protocol_axis['planner_total_tokens'] - text_axis['planner_total_tokens']:.2f} | "
-                f"{text_axis['summarizer_total_tokens']:.2f} | {protocol_axis['summarizer_total_tokens']:.2f} | "
-                f"{protocol_axis['summarizer_total_tokens'] - text_axis['summarizer_total_tokens']:.2f} | "
-                f"{text_axis['llm_total_tokens']:.2f} | {protocol_axis['llm_total_tokens']:.2f} | "
-                f"{protocol_axis['llm_total_tokens'] - text_axis['llm_total_tokens']:.2f} | "
-                f"{text_axis['task_ms']:.2f} | {protocol_axis['task_ms']:.2f} | "
-                f"{protocol_axis['task_ms'] - text_axis['task_ms']:.2f} |"
+        protocol_transfer_state_packet = _aggregate_filtered_mode_task_runs(
+            result,
+            "protocol",
+            benchmark_lane="state_transfer",
+            transfer_strategy="state_packet_minimal",
+        )
+        if (
+            protocol_transfer_text_packet is not None
+            and protocol_transfer_state_packet is not None
+        ):
+            lines.extend(
+                [
+                    "",
+                    "### Protocol-Only Carrier Efficiency",
+                    "",
+                    "- Scope note: `this table holds executor decision semantics fixed as a minimal packet and changes only the carrier: text packet versus non-text state packet.`",
+                    "",
+                    "| handoff_strategy | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                    f"| text_packet_minimal | {protocol_transfer_text_packet['task_count']} | {protocol_transfer_text_packet['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_text_packet.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_text_packet.get('handoff_payload_bytes', protocol_transfer_text_packet['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_text_packet['handoff_textual_bytes']:.2f} | {protocol_transfer_text_packet['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_text_packet['llm_total_tokens']:.2f} | {protocol_transfer_text_packet['task_ms']:.2f} |",
+                    f"| state_packet_minimal | {protocol_transfer_state_packet['task_count']} | {protocol_transfer_state_packet['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_payload_bytes', protocol_transfer_state_packet['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_textual_bytes']:.2f} | {protocol_transfer_state_packet['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['llm_total_tokens']:.2f} | {protocol_transfer_state_packet['task_ms']:.2f} |",
+                    f"| delta(state_packet_minimal - text_packet_minimal) | n/a | {protocol_transfer_state_packet['protocol_bytes'] - protocol_transfer_text_packet['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_wire_bytes', 0.0) - protocol_transfer_text_packet.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_payload_bytes', protocol_transfer_state_packet['handoff_bytes']) - protocol_transfer_text_packet.get('handoff_payload_bytes', protocol_transfer_text_packet['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_textual_bytes'] - protocol_transfer_text_packet['handoff_textual_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_nontext_bytes'] - protocol_transfer_text_packet['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['llm_total_tokens'] - protocol_transfer_text_packet['llm_total_tokens']:.2f} | "
+                    f"{protocol_transfer_state_packet['task_ms'] - protocol_transfer_text_packet['task_ms']:.2f} |",
+                ]
             )
-        lines.extend(
-            [
-                "",
-                "### Contest Claim Lane Deltas",
-                "",
-                "| benchmark_lane | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_handoff_textual_bytes | protocol_handoff_textual_bytes | text_handoff_nontext_bytes | protocol_handoff_nontext_bytes | llm_total_tokens_delta | task_ms_delta |",
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-            ]
+        protocol_transfer_natural_handoff = _aggregate_filtered_mode_task_runs(
+            result,
+            "protocol",
+            benchmark_lane="state_transfer",
+            transfer_strategy="natural_handoff_text",
         )
-        for benchmark_lane in BENCHMARK_LANE_ORDER:
-            if benchmark_lane not in text_lanes or benchmark_lane not in protocol_lanes:
-                continue
-            text_lane = text_lanes[benchmark_lane]
-            protocol_lane = protocol_lanes[benchmark_lane]
-            lines.append(
-                f"| {benchmark_lane} | {text_lane['text_bytes']:.2f} | {protocol_lane['protocol_bytes']:.2f} | "
-                f"{protocol_lane['protocol_bytes'] - text_lane['text_bytes']:.2f} | "
-                f"{text_lane['handoff_textual_bytes']:.2f} | {protocol_lane['handoff_textual_bytes']:.2f} | "
-                f"{text_lane['handoff_nontext_bytes']:.2f} | {protocol_lane['handoff_nontext_bytes']:.2f} | "
-                f"{protocol_lane['llm_total_tokens'] - text_lane['llm_total_tokens']:.2f} | "
-                f"{protocol_lane['task_ms'] - text_lane['task_ms']:.2f} |"
+        if (
+            protocol_transfer_natural_handoff is not None
+            and protocol_transfer_state_packet is not None
+        ):
+            lines.extend(
+                [
+                    "",
+                    "### Protocol-Only Natural-Text Support",
+                    "",
+                    "- Scope note: `this support table compares free-text retriever handoff against the same minimal state packet baseline. Read it as natural-text support evidence, not the main carrier headline.`",
+                    "",
+                    "| handoff_strategy | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                    f"| natural_handoff_text | {protocol_transfer_natural_handoff['task_count']} | {protocol_transfer_natural_handoff['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_natural_handoff.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_natural_handoff.get('handoff_payload_bytes', protocol_transfer_natural_handoff['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_natural_handoff['handoff_textual_bytes']:.2f} | {protocol_transfer_natural_handoff['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_natural_handoff['llm_total_tokens']:.2f} | {protocol_transfer_natural_handoff['task_ms']:.2f} |",
+                    f"| state_packet_minimal | {protocol_transfer_state_packet['task_count']} | {protocol_transfer_state_packet['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_payload_bytes', protocol_transfer_state_packet['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_textual_bytes']:.2f} | {protocol_transfer_state_packet['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['llm_total_tokens']:.2f} | {protocol_transfer_state_packet['task_ms']:.2f} |",
+                    f"| delta(state_packet_minimal - natural_handoff_text) | n/a | {protocol_transfer_state_packet['protocol_bytes'] - protocol_transfer_natural_handoff['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_wire_bytes', 0.0) - protocol_transfer_natural_handoff.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_payload_bytes', protocol_transfer_state_packet['handoff_bytes']) - protocol_transfer_natural_handoff.get('handoff_payload_bytes', protocol_transfer_natural_handoff['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_textual_bytes'] - protocol_transfer_natural_handoff['handoff_textual_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_nontext_bytes'] - protocol_transfer_natural_handoff['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['llm_total_tokens'] - protocol_transfer_natural_handoff['llm_total_tokens']:.2f} | "
+                    f"{protocol_transfer_state_packet['task_ms'] - protocol_transfer_natural_handoff['task_ms']:.2f} |",
+                ]
             )
         lines.extend(
             [
@@ -2589,6 +3063,24 @@ def _build_report(result: dict[str, object]) -> str:
             lines.append("- none")
         lines.append("")
     lines.extend(["## Failure/Retry Summary", ""])
+    lines.append("- none" if all(
+        int(summary[m]["failure_count"]) == 0 for m in available_modes
+    ) else "- see per-mode failure lists below")
+    lines.append("")
+    lines.extend(["## Protocol Compliance (Invariant Checks)", ""])
+    invariant_data = result.get("invariant_checks", {})
+    if invariant_data:
+        total_checks = invariant_data.get("total_checks", 0)
+        total_violations = invariant_data.get("total_violations", 0)
+        lines.append(f"- Total invariant checks: {total_checks}")
+        lines.append(f"- Total violations: {total_violations}")
+        compliance = 100.0 if total_checks == 0 else 100.0 * (1.0 - total_violations / total_checks)
+        lines.append(f"- Compliance rate: {compliance:.1f}%")
+        for inv_name, inv_info in invariant_data.get("details", {}).items():
+            lines.append(f"- {inv_name}: {inv_info['checks']} checks, {inv_info['violations']} violations")
+    else:
+        lines.append("- InvariantChecker not yet enabled for this run")
+    lines.append("")
     failure_rows = []
     for mode in available_modes:
         for failure in summary[mode]["failures"]:

@@ -107,5 +107,5 @@
 而不是：
 
 1. replay / executor misfire 已经全部清零
-2. `assist_only` 已经可以升级成 headline
+2. `assist_only` 仍然不能升级成 headline
 3. 阶段 4 还应该继续默认做 mechanism expansion

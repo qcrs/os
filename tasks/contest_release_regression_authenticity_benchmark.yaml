@@ -1,0 +1,367 @@
+task_set:
+  name: contest_release_regression_authenticity_pack
+  pack_type: state_transfer_authenticity
+  description: Contest-oriented protocol-only typed-handoff authenticity pack for release-regression collaborative chains.
+  reading_contract: Read this pack as a draft typed-handoff authenticity pack only; it keeps protocol mode and memory-off fixed while checking whether rich non-text handoff preserves the same executor-facing decision object as the text-shadow baseline on thicker release-regression tasks.
+  claim_lanes: [state_transfer]
+
+tasks:
+  - task_id: rr-checkout-step1-text-brief-001
+    task_group: checkout_release_chain
+    task_order: 1
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+    query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, checkout, canary, latency, database, authenticity]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: most likely cause, strongest competing
+      explanation ruled out, first action, and first validation check.
+
+  - task_id: rr-checkout-step1-state-ref-001
+    task_group: checkout_release_chain
+    task_order: 2
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+    query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, checkout, canary, latency, database, authenticity]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: most likely cause, strongest competing
+      explanation ruled out, first action, and first validation check.
+
+  - task_id: rr-checkout-step2-text-brief-001
+    task_group: checkout_release_chain
+    task_order: 3
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the checkout regression after the rollout diff arrives and recommend the next action.
+    query: checkout canary still shows sql wait and connection pool contention after the rollout diff exposed orders_created_at path changes
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-config, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, checkout, rollout, latency, database, authenticity]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: updated cause, strongest conflicting
+      evidence, next action, and the validation window to watch.
+
+  - task_id: rr-checkout-step2-state-ref-001
+    task_group: checkout_release_chain
+    task_order: 4
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the checkout regression after the rollout diff arrives and recommend the next action.
+    query: checkout canary still shows sql wait and connection pool contention after the rollout diff exposed orders_created_at path changes
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-config, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, checkout, rollout, latency, database, authenticity]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: updated cause, strongest conflicting
+      evidence, next action, and the validation window to watch.
+
+  - task_id: rr-checkout-step3-text-brief-001
+    task_group: checkout_release_chain
+    task_order: 5
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Narrow the checkout blast radius and recommend the safest validation action.
+    query: checkout canary blast radius narrowed to one shard with db wait profile and connection pool saturation still present
+    corpus_doc_ids: [rr-checkout-metrics, rr-checkout-config, rr-checkout-scope, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, checkout, scope, latency, database, authenticity]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: narrowed cause, competing explanation
+      ruled out, safest scoped action, and post-action validation check.
+
+  - task_id: rr-checkout-step3-state-ref-001
+    task_group: checkout_release_chain
+    task_order: 6
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Narrow the checkout blast radius and recommend the safest validation action.
+    query: checkout canary blast radius narrowed to one shard with db wait profile and connection pool saturation still present
+    corpus_doc_ids: [rr-checkout-metrics, rr-checkout-config, rr-checkout-scope, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, checkout, scope, latency, database, authenticity]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: narrowed cause, competing explanation
+      ruled out, safest scoped action, and post-action validation check.
+
+  - task_id: rr-auth-step1-text-brief-001
+    task_group: auth_rotation_chain
+    task_order: 1
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the auth callback regression and recommend the first action.
+    query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated callback verification failures
+    corpus_doc_ids: [rr-auth-incident, rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, auth, sso, session, jwks, authenticity]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: most likely cause, strongest competing
+      explanation ruled out, first action, and first validation check.
+
+  - task_id: rr-auth-step1-state-ref-001
+    task_group: auth_rotation_chain
+    task_order: 2
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the auth callback regression and recommend the first action.
+    query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated callback verification failures
+    corpus_doc_ids: [rr-auth-incident, rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, auth, sso, session, jwks, authenticity]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: most likely cause, strongest competing
+      explanation ruled out, first action, and first validation check.
+
+  - task_id: rr-auth-step2-text-brief-001
+    task_group: auth_rotation_chain
+    task_order: 3
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the auth callback regression after the runbook evidence arrives and recommend the next action.
+    query: auth canary still shows callback verification failures while runbook links stale jwks and session cookies after rotation
+    corpus_doc_ids: [rr-auth-incident, rr-auth-metrics, rr-auth-rotation, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, auth, runbook, session, jwks, authenticity]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: updated cause, strongest conflicting
+      evidence, next action, and the validation window to watch.
+
+  - task_id: rr-auth-step2-state-ref-001
+    task_group: auth_rotation_chain
+    task_order: 4
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the auth callback regression after the runbook evidence arrives and recommend the next action.
+    query: auth canary still shows callback verification failures while runbook links stale jwks and session cookies after rotation
+    corpus_doc_ids: [rr-auth-incident, rr-auth-metrics, rr-auth-rotation, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, auth, runbook, session, jwks, authenticity]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: updated cause, strongest conflicting
+      evidence, next action, and the validation window to watch.
+
+  - task_id: rr-auth-step3-text-brief-001
+    task_group: auth_rotation_chain
+    task_order: 5
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Narrow the auth callback blast radius and recommend the safest scoped validation action.
+    query: auth callback failures narrowed to pre rotation session tenants with stale jwks and issuer mismatch on canary
+    corpus_doc_ids: [rr-auth-metrics, rr-auth-rotation, rr-auth-scope, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, auth, scope, session, jwks, authenticity]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: narrowed cause, competing explanation
+      ruled out, safest scoped action, and post-action validation check.
+
+  - task_id: rr-auth-step3-state-ref-001
+    task_group: auth_rotation_chain
+    task_order: 6
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Narrow the auth callback blast radius and recommend the safest scoped validation action.
+    query: auth callback failures narrowed to pre rotation session tenants with stale jwks and issuer mismatch on canary
+    corpus_doc_ids: [rr-auth-metrics, rr-auth-rotation, rr-auth-scope, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, auth, scope, session, jwks, authenticity]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: narrowed cause, competing explanation
+      ruled out, safest scoped action, and post-action validation check.
+
+  - task_id: rr-cache-step1-text-brief-001
+    task_group: inventory_rollout_chain
+    task_order: 1
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the stale inventory rollout regression and recommend the first action.
+    query: inventory rollout region shows stale inventory after batch sync with dropped aggregate invalidation rate
+    corpus_doc_ids: [rr-cache-incident, rr-cache-metrics, rr-cache-logs, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, sync-window, authenticity]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: most likely cause, strongest competing
+      explanation ruled out, first action, and first validation check.
+
+  - task_id: rr-cache-step1-state-ref-001
+    task_group: inventory_rollout_chain
+    task_order: 2
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the stale inventory rollout regression and recommend the first action.
+    query: inventory rollout region shows stale inventory after batch sync with dropped aggregate invalidation rate
+    corpus_doc_ids: [rr-cache-incident, rr-cache-metrics, rr-cache-logs, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, sync-window, authenticity]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: most likely cause, strongest competing
+      explanation ruled out, first action, and first validation check.
+
+  - task_id: rr-cache-step2-text-brief-001
+    task_group: inventory_rollout_chain
+    task_order: 3
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the stale inventory rollout regression after the feature-flag diff arrives and recommend the next action.
+    query: new sync path rollout diff shows aggregate invalidation hook moved and stale inventory still follows batch sync
+    corpus_doc_ids: [rr-cache-incident, rr-cache-metrics, rr-cache-flag-diff, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, inventory, cache, config, invalidation, authenticity]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: updated cause, strongest conflicting
+      evidence, next action, and the validation window to watch.
+
+  - task_id: rr-cache-step2-state-ref-001
+    task_group: inventory_rollout_chain
+    task_order: 4
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the stale inventory rollout regression after the feature-flag diff arrives and recommend the next action.
+    query: new sync path rollout diff shows aggregate invalidation hook moved and stale inventory still follows batch sync
+    corpus_doc_ids: [rr-cache-incident, rr-cache-metrics, rr-cache-flag-diff, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, inventory, cache, config, invalidation, authenticity]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: updated cause, strongest conflicting
+      evidence, next action, and the validation window to watch.
+
+  - task_id: rr-cache-step3-text-brief-001
+    task_group: inventory_rollout_chain
+    task_order: 5
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    transfer_strategy: text_brief
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Narrow the stale inventory blast radius and recommend the safest scoped validation action.
+    query: stale inventory narrowed to rollout region where aggregate invalidation hook skipped after batch sync
+    corpus_doc_ids: [rr-cache-metrics, rr-cache-flag-diff, rr-cache-scope, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, inventory, cache, scope, invalidation, authenticity]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: narrowed cause, competing explanation
+      ruled out, safest scoped action, and post-action validation check.
+
+  - task_id: rr-cache-step3-state-ref-001
+    task_group: inventory_rollout_chain
+    task_order: 6
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Narrow the stale inventory blast radius and recommend the safest scoped validation action.
+    query: stale inventory narrowed to rollout region where aggregate invalidation hook skipped after batch sync
+    corpus_doc_ids: [rr-cache-metrics, rr-cache-flag-diff, rr-cache-scope, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare executor handoff representation only and ignore memory reuse.
+    tags: [release, inventory, cache, scope, invalidation, authenticity]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return four concise points only: narrowed cause, competing explanation
+      ruled out, safest scoped action, and post-action validation check.

@@ -27,14 +27,51 @@ TASK_SET_ALIASES = {
     "formal_controlled": "sample_benchmark.yaml",
     "formal_controlled_pack": "sample_benchmark.yaml",
     "sample_benchmark": "sample_benchmark.yaml",
+    "state_transfer_carrier": "contest_release_regression_carrier_benchmark.yaml",
+    "state_transfer_carrier_pack": "contest_release_regression_carrier_benchmark.yaml",
+    "contest_release_regression_carrier": "contest_release_regression_carrier_benchmark.yaml",
+    "contest_release_regression_carrier_pack": "contest_release_regression_carrier_benchmark.yaml",
+    "state_transfer_authenticity": "state_transfer_authenticity_benchmark.yaml",
+    "state_transfer_authenticity_pack": "state_transfer_authenticity_benchmark.yaml",
+    "contest_release_regression_authenticity": "contest_release_regression_authenticity_benchmark.yaml",
+    "contest_release_regression_authenticity_pack": "contest_release_regression_authenticity_benchmark.yaml",
+    "state_transfer_pure_text": "state_transfer_pure_text_benchmark.yaml",
+    "state_transfer_pure_text_pack": "state_transfer_pure_text_benchmark.yaml",
+    "state_transfer_natural_support": "state_transfer_natural_support_benchmark.yaml",
+    "state_transfer_natural_support_pack": "state_transfer_natural_support_benchmark.yaml",
+    "contest_release_regression_natural_support": "contest_release_regression_natural_support_benchmark.yaml",
+    "contest_release_regression_natural_support_pack": "contest_release_regression_natural_support_benchmark.yaml",
+    "communication": "communication_benchmark.yaml",
+    "communication_pack": "communication_benchmark.yaml",
+    "memory": "memory_benchmark.yaml",
+    "memory_pack": "memory_benchmark.yaml",
+    "internal_regression": "internal_regression_benchmark.yaml",
+    "internal_regression_pack": "internal_regression_benchmark.yaml",
     "open_validation": "open_validation_benchmark.yaml",
     "open_validation_pack": "open_validation_benchmark.yaml",
 }
 
 TASK_PACK_TYPES = (
     "formal_controlled",
+    "state_transfer_carrier",
+    "state_transfer_authenticity",
+    "state_transfer_pure_text",
+    "state_transfer_natural_support",
+    "communication",
+    "memory",
+    "internal_regression",
     "open_validation",
     "ad_hoc",
+)
+
+TASK_MODES = (
+    "text",
+    "protocol",
+)
+
+PLAN_SOURCES = (
+    "yaml",
+    "llm",
 )
 
 
@@ -44,6 +81,13 @@ def normalize_task_pack_type(value: object) -> str:
         "": "ad_hoc",
         "formal": "formal_controlled",
         "formal_controlled": "formal_controlled",
+        "state_transfer_carrier": "state_transfer_carrier",
+        "state_transfer_authenticity": "state_transfer_authenticity",
+        "state_transfer_pure_text": "state_transfer_pure_text",
+        "state_transfer_natural_support": "state_transfer_natural_support",
+        "communication": "communication",
+        "memory": "memory",
+        "internal_regression": "internal_regression",
         "open": "open_validation",
         "open_validation": "open_validation",
         "support_only": "open_validation",
@@ -56,6 +100,36 @@ def normalize_task_pack_type(value: object) -> str:
     return normalized
 
 
+def normalize_plan_source(value: object) -> str:
+    text = str(value or "").strip().lower()
+    normalized = "yaml" if not text else text
+    if normalized not in PLAN_SOURCES:
+        raise ValueError(f"unsupported plan_source: {value!r}")
+    return normalized
+
+
+def normalize_task_modes(values: object) -> tuple[str, ...]:
+    if values is None or values == "":
+        return TASK_MODES
+    if isinstance(values, str):
+        candidates = [values]
+    else:
+        try:
+            candidates = list(values)
+        except TypeError as exc:
+            raise ValueError(f"unsupported allowed_modes payload: {values!r}") from exc
+    normalized: list[str] = []
+    for value in candidates:
+        text = str(value or "").strip().lower()
+        if not text:
+            continue
+        if text not in TASK_MODES:
+            raise ValueError(f"unsupported task mode: {value!r}")
+        if text not in normalized:
+            normalized.append(text)
+    return tuple(normalized) if normalized else TASK_MODES
+
+
 @dataclass(frozen=True)
 class TaskSetMetadata:
     name: str
@@ -66,7 +140,7 @@ class TaskSetMetadata:
 
     @property
     def support_only(self) -> bool:
-        return self.pack_type == "open_validation"
+        return self.pack_type in {"state_transfer_natural_support", "open_validation"}
 
 
 @dataclass(frozen=True)
@@ -102,6 +176,8 @@ class SampleTask:
     expected_route_source: str = ""
     expected_tool_name: str = ""
     expected_top_doc_id: str = ""
+    allowed_modes: tuple[str, ...] = TASK_MODES
+    plan_source: str = "yaml"
 
     @property
     def expected_reuse(self) -> bool:
@@ -156,6 +232,9 @@ class SampleTask:
             benchmark_lane=self.benchmark_lane,
             transfer_strategy=self.transfer_strategy,
         )
+
+    def supports_mode(self, mode: str) -> bool:
+        return str(mode).strip().lower() in self.allowed_modes
 
 
 def resolve_task_set_path(path: str | Path | None = None) -> Path:
@@ -314,4 +393,6 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
         expected_tool_name=str(item.get("expected_tool_name", "")).strip(),
         expected_top_doc_id=str(item.get("expected_top_doc_id", "")).strip(),
         summary_hint=str(item["summary_hint"]).strip(),
+        allowed_modes=normalize_task_modes(item.get("allowed_modes", TASK_MODES)),
+        plan_source=normalize_plan_source(item.get("plan_source", "yaml")),
     )

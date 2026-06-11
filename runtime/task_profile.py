@@ -15,6 +15,9 @@ BENCHMARK_LANES = (
 TRANSFER_STRATEGIES = (
     "state_ref",
     "text_brief",
+    "text_packet_minimal",
+    "state_packet_minimal",
+    "natural_handoff_text",
     "mode_split_text_brief_vs_state_ref",
 )
 
@@ -35,6 +38,9 @@ def normalize_transfer_strategy(value: object) -> str:
         "state_ref": "state_ref",
         "structured_state": "state_ref",
         "text_brief": "text_brief",
+        "text_packet_minimal": "text_packet_minimal",
+        "state_packet_minimal": "state_packet_minimal",
+        "natural_handoff_text": "natural_handoff_text",
         "mode_split": "mode_split_text_brief_vs_state_ref",
         "mode_split_text_brief_vs_state_ref": "mode_split_text_brief_vs_state_ref",
     }

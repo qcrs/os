@@ -17,6 +17,10 @@ from statepool.store import MMAP_FILE_STORAGE, PY_SHARED_MEMORY_STORAGE, StatePo
 
 MIN_DIRECT_ROUTE_CONFIDENCE = 0.70
 MIN_DIRECT_EVIDENCE_SIGNALS = 2
+CHANNEL_LAST_VALUE = "last_value"
+CHANNEL_TOPIC_ACCUMULATE = "topic_accumulate"
+CHANNEL_TOPIC_REPLACE = "topic_replace"
+CHANNEL_EPHEMERAL = "ephemeral"
 
 
 @dataclass(frozen=True)
@@ -541,6 +545,150 @@ def build_feature_bundle(
         "evidence_lines": len([line for line in evidence_text.splitlines() if line.strip()]),
         "evidence_preview": evidence_text[:240],
         "evidence_sha256": hashlib.sha256(evidence_text.encode("utf-8")).hexdigest(),
+        "_channel_schema": {
+            "route": CHANNEL_LAST_VALUE,
+            "tool_name": CHANNEL_LAST_VALUE,
+            "route_source": CHANNEL_LAST_VALUE,
+            "route_confidence": CHANNEL_LAST_VALUE,
+            "route_provenance": CHANNEL_LAST_VALUE,
+            "evidence_sha256": CHANNEL_LAST_VALUE,
+            "hint_route": CHANNEL_LAST_VALUE,
+            "hint_tool_name": CHANNEL_LAST_VALUE,
+            "hint_doc_ids": CHANNEL_LAST_VALUE,
+            "query": CHANNEL_LAST_VALUE,
+            "query_terms": CHANNEL_TOPIC_ACCUMULATE,
+            "tool_candidates": CHANNEL_TOPIC_REPLACE,
+            "matched_signals": CHANNEL_TOPIC_REPLACE,
+            "matched_tags": CHANNEL_TOPIC_REPLACE,
+            "match_score": CHANNEL_TOPIC_REPLACE,
+            "evidence_preview": CHANNEL_EPHEMERAL,
+            "evidence_chars": CHANNEL_EPHEMERAL,
+            "evidence_lines": CHANNEL_EPHEMERAL,
+            "reused_memory": CHANNEL_LAST_VALUE,
+            "reuse_signature": CHANNEL_LAST_VALUE,
+            "memory_prior_id": CHANNEL_LAST_VALUE,
+            "memory_prior_route": CHANNEL_LAST_VALUE,
+            "memory_prior_applied": CHANNEL_LAST_VALUE,
+        },
+    }
+
+
+def build_ranked_evidence_bundle(
+    *,
+    query: str,
+    feature_bundle: dict[str, Any],
+    ranked_docs: list[dict[str, Any]],
+    retrieved_doc_ids: list[str],
+    evidence_text: str,
+) -> dict[str, Any]:
+    return {
+        "schema": "statebus.ranked_evidence_bundle.v1",
+        "query": str(query).strip(),
+        "route": str(feature_bundle.get("route", "")).strip(),
+        "route_source": str(feature_bundle.get("route_source", "")).strip(),
+        "route_confidence": float(feature_bundle.get("route_confidence", 0.0)),
+        "route_provenance": [str(item) for item in feature_bundle.get("route_provenance", [])],
+        "retrieved_doc_ids": [str(doc_id) for doc_id in retrieved_doc_ids if str(doc_id).strip()],
+        "hint_doc_ids": [str(doc_id) for doc_id in feature_bundle.get("hint_doc_ids", [])],
+        "ranked_docs": [dict(item) for item in ranked_docs if isinstance(item, dict)],
+        "evidence_chars": len(evidence_text),
+        "evidence_sha256": hashlib.sha256(evidence_text.encode("utf-8")).hexdigest(),
+    }
+
+
+def build_tool_candidate_set(feature_bundle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "statebus.tool_candidate_set.v1",
+        "route": str(feature_bundle.get("route", "")).strip(),
+        "tool_name": str(feature_bundle.get("tool_name", "")).strip(),
+        "route_source": str(feature_bundle.get("route_source", "")).strip(),
+        "route_confidence": float(feature_bundle.get("route_confidence", 0.0)),
+        "route_provenance": [str(item) for item in feature_bundle.get("route_provenance", [])],
+        "matched_signals": [str(item) for item in feature_bundle.get("matched_signals", [])],
+        "matched_tags": [str(item) for item in feature_bundle.get("matched_tags", [])],
+        "match_score": int(feature_bundle.get("match_score", 0)),
+        "hint_doc_ids": [str(item) for item in feature_bundle.get("hint_doc_ids", [])],
+        "hint_route": str(feature_bundle.get("hint_route", "")).strip(),
+        "hint_tool_name": str(feature_bundle.get("hint_tool_name", "")).strip(),
+        "tool_candidates": [
+            dict(item)
+            for item in feature_bundle.get("tool_candidates", [])
+            if isinstance(item, dict)
+        ],
+        "memory_prior_id": str(feature_bundle.get("memory_prior_id", "")).strip(),
+        "memory_prior_route": str(feature_bundle.get("memory_prior_route", "")).strip(),
+        "memory_prior_tool_name": str(feature_bundle.get("memory_prior_tool_name", "")).strip(),
+        "memory_prior_applied": bool(feature_bundle.get("memory_prior_applied", False)),
+        "memory_candidate_reduction": int(feature_bundle.get("memory_candidate_reduction", 0)),
+    }
+
+
+def build_replay_eligibility_bundle(
+    *,
+    query: str,
+    feature_bundle: dict[str, Any],
+    retrieved_doc_ids: list[str],
+    fresh_evidence_sha256: str,
+) -> dict[str, Any]:
+    route = str(feature_bundle.get("route", "")).strip()
+    route_confidence = float(feature_bundle.get("route_confidence", 0.0))
+    route_provenance = [str(item) for item in feature_bundle.get("route_provenance", [])]
+    validated_replay_eligible = route != "generic_triage" and _is_route_replay_eligible(
+        route_confidence=route_confidence,
+        route_provenance=route_provenance,
+        minimum_confidence=0.70,
+    )
+    exact_replay_eligible = bool(retrieved_doc_ids) and route != "generic_triage" and _is_route_replay_eligible(
+        route_confidence=route_confidence,
+        route_provenance=route_provenance,
+        minimum_confidence=0.80,
+    )
+    return {
+        "schema": "statebus.replay_eligibility_bundle.v1",
+        "query": str(query).strip(),
+        "route": route,
+        "tool_name": str(feature_bundle.get("tool_name", "")).strip(),
+        "route_source": str(feature_bundle.get("route_source", "")).strip(),
+        "route_confidence": route_confidence,
+        "route_provenance": route_provenance,
+        "retrieved_doc_ids": [str(doc_id) for doc_id in retrieved_doc_ids if str(doc_id).strip()],
+        "feature_evidence_sha256": str(feature_bundle.get("evidence_sha256", "")).strip(),
+        "feature_fresh_evidence_sha256": str(fresh_evidence_sha256).strip(),
+        "validated_replay_eligible": validated_replay_eligible,
+        "exact_replay_eligible": exact_replay_eligible,
+    }
+
+
+def build_executor_decision_packet(
+    *,
+    query: str,
+    feature_bundle: dict[str, Any],
+    retrieved_doc_ids: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema": "statebus.executor_decision_packet.v1",
+        "query": str(query).strip(),
+        "route": str(feature_bundle.get("route", "")).strip(),
+        "tool_name": str(feature_bundle.get("tool_name", "")).strip(),
+        "route_source": str(feature_bundle.get("route_source", "")).strip(),
+        "route_confidence": float(feature_bundle.get("route_confidence", 0.0)),
+        "route_provenance": [str(item) for item in feature_bundle.get("route_provenance", [])],
+        "matched_signals": [str(item) for item in feature_bundle.get("matched_signals", [])],
+        "matched_tags": [str(item) for item in feature_bundle.get("matched_tags", [])],
+        "match_score": int(feature_bundle.get("match_score", 0)),
+        "hint_doc_ids": [str(item) for item in feature_bundle.get("hint_doc_ids", [])],
+        "hint_route": str(feature_bundle.get("hint_route", "")).strip(),
+        "hint_tool_name": str(feature_bundle.get("hint_tool_name", "")).strip(),
+        "tool_candidates": [
+            dict(item)
+            for item in feature_bundle.get("tool_candidates", [])
+            if isinstance(item, dict)
+        ],
+        "retrieved_doc_ids": [str(doc_id) for doc_id in retrieved_doc_ids if str(doc_id).strip()],
+        "feature_evidence_sha256": str(feature_bundle.get("evidence_sha256", "")).strip(),
+        "feature_fresh_evidence_sha256": str(
+            feature_bundle.get("fresh_evidence_sha256", "")
+        ).strip(),
     }
 
 
@@ -682,6 +830,11 @@ def execute_playbook_step(
 ) -> StepResult:
     evidence_ref = next((ref for ref in input_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
     feature_ref = next((ref for ref in input_state_refs if ref.kind == "FEATURE_BUNDLE"), None)
+    tool_candidate_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_CANDIDATE_SET"), None)
+    decision_packet_ref = next(
+        (ref for ref in input_state_refs if ref.kind == "EXECUTOR_DECISION_PACKET"),
+        None,
+    )
     transfer_brief_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
     if evidence_ref is None:
         raise ValueError(f"step {step.step_id} missing DENSE_EVIDENCE input")
@@ -695,11 +848,54 @@ def execute_playbook_step(
             registry=registry or default_tool_registry(),
         )
         feature_state_id = transfer_brief_ref.state_id
+    elif transfer_strategy == "text_packet_minimal":
+        if transfer_brief_ref is None:
+            raise ValueError(f"step {step.step_id} missing text packet input")
+        feature_bundle = _feature_bundle_from_text_packet(
+            query_text=step.params.get("query", ""),
+            evidence_text=statepool.get_text(evidence_ref),
+            packet_text=statepool.get_text(transfer_brief_ref),
+            registry=registry or default_tool_registry(),
+        )
+        feature_state_id = transfer_brief_ref.state_id
+    elif transfer_strategy == "natural_handoff_text":
+        if transfer_brief_ref is None:
+            raise ValueError(f"step {step.step_id} missing natural handoff input")
+        feature_bundle = _feature_bundle_from_natural_handoff(
+            query_text=step.params.get("query", ""),
+            evidence_text=statepool.get_text(evidence_ref),
+            handoff_text=statepool.get_text(transfer_brief_ref),
+            registry=registry or default_tool_registry(),
+        )
+        feature_state_id = transfer_brief_ref.state_id
+    elif transfer_strategy == "state_packet_minimal":
+        if decision_packet_ref is None:
+            raise ValueError(f"step {step.step_id} missing executor decision packet input")
+        feature_bundle = _feature_bundle_from_executor_decision_packet(
+            query_text=step.params.get("query", ""),
+            evidence_text=statepool.get_text(evidence_ref),
+            decision_packet=_load_executor_decision_packet(statepool, decision_packet_ref),
+            registry=registry or default_tool_registry(),
+        )
+        feature_state_id = decision_packet_ref.state_id
     else:
-        if feature_ref is None:
-            raise ValueError(f"step {step.step_id} missing FEATURE_BUNDLE input")
-        feature_bundle = _load_feature_bundle(statepool, feature_ref)
-        feature_state_id = feature_ref.state_id
+        if feature_ref is None and tool_candidate_ref is None:
+            raise ValueError(
+                f"step {step.step_id} missing FEATURE_BUNDLE and TOOL_CANDIDATE_SET inputs"
+            )
+        feature_bundle = (
+            _load_feature_bundle(statepool, feature_ref) if feature_ref is not None else {}
+        )
+        if tool_candidate_ref is not None:
+            feature_bundle = _merge_feature_bundle_with_tool_candidates(
+                feature_bundle=feature_bundle,
+                tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
+            )
+        feature_state_id = (
+            feature_ref.state_id
+            if feature_ref is not None
+            else tool_candidate_ref.state_id
+        )
     active_registry = registry or default_tool_registry()
     tool_name = select_tool_name(feature_bundle, registry=active_registry)
     tool_spec = active_registry.get(tool_name)
@@ -731,6 +927,9 @@ def execute_playbook_step(
         metadata={
             "source_evidence": evidence_ref.state_id,
             "source_features": feature_state_id,
+            "source_tool_candidates": (
+                tool_candidate_ref.state_id if tool_candidate_ref is not None else ""
+            ),
             "tool_name": execution.tool_name,
             "route": execution.route,
             "sandbox_mode": execution.sandbox_mode,
@@ -756,11 +955,60 @@ def execute_playbook_step(
 
 
 def _load_feature_bundle(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
+    return _load_structured_bundle(statepool, ref, expected_kind="FEATURE_BUNDLE")
+
+
+def _load_tool_candidate_set(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
+    return _load_structured_bundle(statepool, ref, expected_kind="TOOL_CANDIDATE_SET")
+
+
+def _load_executor_decision_packet(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
+    return _load_structured_bundle(statepool, ref, expected_kind="EXECUTOR_DECISION_PACKET")
+
+
+def _load_structured_bundle(
+    statepool: StatePool,
+    ref: StateRef,
+    *,
+    expected_kind: str,
+) -> dict[str, Any]:
+    if ref.kind != expected_kind:
+        raise ValueError(f"expected {expected_kind} state, got {ref.kind}")
     payload = statepool.get_bytes(ref)
-    feature_bundle = msgpack.unpackb(payload, raw=False, strict_map_key=False)
-    if not isinstance(feature_bundle, dict):
-        raise ValueError(f"feature bundle {ref.state_id} is not a map")
-    return dict(feature_bundle)
+    bundle = msgpack.unpackb(payload, raw=False, strict_map_key=False)
+    if not isinstance(bundle, dict):
+        raise ValueError(f"{expected_kind.lower()} {ref.state_id} is not a map")
+    return dict(bundle)
+
+
+def _merge_feature_bundle_with_tool_candidates(
+    *,
+    feature_bundle: dict[str, Any],
+    tool_candidate_set: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(feature_bundle)
+    for key in (
+        "route",
+        "tool_name",
+        "route_source",
+        "route_confidence",
+        "route_provenance",
+        "matched_signals",
+        "matched_tags",
+        "match_score",
+        "hint_doc_ids",
+        "hint_route",
+        "hint_tool_name",
+        "tool_candidates",
+        "memory_prior_id",
+        "memory_prior_route",
+        "memory_prior_tool_name",
+        "memory_prior_applied",
+        "memory_candidate_reduction",
+    ):
+        if key in tool_candidate_set:
+            merged[key] = tool_candidate_set[key]
+    return merged
 
 
 def _select_retrieved_hint(
@@ -1080,6 +1328,208 @@ def _feature_bundle_from_transfer_brief(
     return bundle
 
 
+def _build_text_packet_minimal(packet: dict[str, Any]) -> str:
+    lines = [
+        "StateBus text packet",
+        f"Query: {str(packet.get('query', '')).strip()}",
+        f"Route: {str(packet.get('route', '')).strip() or 'generic_triage'}",
+        f"Tool: {str(packet.get('tool_name', '')).strip() or 'none'}",
+        f"Route source: {str(packet.get('route_source', '')).strip() or 'text_packet'}",
+        f"Route confidence: {float(packet.get('route_confidence', 0.0)):.2f}",
+        "Route provenance: "
+        + (
+            ", ".join(str(item) for item in packet.get("route_provenance", []))
+            if packet.get("route_provenance")
+            else "none"
+        ),
+        "Matched signals: "
+        + (
+            ", ".join(str(item) for item in packet.get("matched_signals", []))
+            if packet.get("matched_signals")
+            else "none"
+        ),
+        "Matched tags: "
+        + (
+            ", ".join(str(item) for item in packet.get("matched_tags", []))
+            if packet.get("matched_tags")
+            else "none"
+        ),
+        f"Match score: {int(packet.get('match_score', 0))}",
+        "Hint docs: "
+        + (
+            ", ".join(str(item) for item in packet.get("hint_doc_ids", []))
+            if packet.get("hint_doc_ids")
+            else "none"
+        ),
+        f"Hint route: {str(packet.get('hint_route', '')).strip() or 'none'}",
+        f"Hint tool: {str(packet.get('hint_tool_name', '')).strip() or 'none'}",
+        "Tool candidates: " + _format_transfer_tool_candidates(
+            [dict(item) for item in packet.get("tool_candidates", []) if isinstance(item, dict)]
+        ),
+        "Retrieved docs: "
+        + (
+            ", ".join(str(item) for item in packet.get("retrieved_doc_ids", []))
+            if packet.get("retrieved_doc_ids")
+            else "none"
+        ),
+        f"Fresh evidence sha: {str(packet.get('feature_fresh_evidence_sha256', '')).strip() or 'none'}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _feature_bundle_from_text_packet(
+    *,
+    query_text: object,
+    evidence_text: str,
+    packet_text: str,
+    registry: ToolRegistry,
+) -> dict[str, Any]:
+    lines = [line.strip() for line in packet_text.splitlines() if line.strip()]
+    decision_packet: dict[str, Any] = {
+        "schema": "statebus.executor_decision_packet.v1",
+        "query": str(query_text or "").strip(),
+        "tool_candidates": [],
+    }
+    for line in lines:
+        if line.startswith("Query: ") and not decision_packet["query"]:
+            decision_packet["query"] = line.removeprefix("Query: ").strip()
+        elif line.startswith("Route: "):
+            decision_packet["route"] = _normalize_brief_scalar(line.removeprefix("Route: ").strip())
+        elif line.startswith("Tool: "):
+            decision_packet["tool_name"] = _normalize_brief_scalar(line.removeprefix("Tool: ").strip())
+        elif line.startswith("Route source: "):
+            decision_packet["route_source"] = line.removeprefix("Route source: ").strip() or "text_packet"
+        elif line.startswith("Route confidence: "):
+            decision_packet["route_confidence"] = _parse_float_or_default(
+                line.removeprefix("Route confidence: ").strip(),
+                default=0.0,
+            )
+        elif line.startswith("Route provenance: "):
+            raw = line.removeprefix("Route provenance: ").strip()
+            decision_packet["route_provenance"] = [] if not raw or raw.lower() == "none" else [
+                item.strip() for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Matched signals: "):
+            raw = line.removeprefix("Matched signals: ").strip()
+            decision_packet["matched_signals"] = [] if not raw or raw.lower() == "none" else [
+                item.strip() for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Matched tags: "):
+            raw = line.removeprefix("Matched tags: ").strip()
+            decision_packet["matched_tags"] = [] if not raw or raw.lower() == "none" else [
+                item.strip() for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Match score: "):
+            decision_packet["match_score"] = _parse_int_or_default(
+                line.removeprefix("Match score: ").strip(),
+                default=0,
+            )
+        elif line.startswith("Hint docs: "):
+            raw = line.removeprefix("Hint docs: ").strip()
+            decision_packet["hint_doc_ids"] = [] if not raw or raw.lower() == "none" else [
+                item.strip() for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Hint route: "):
+            decision_packet["hint_route"] = _normalize_brief_scalar(
+                line.removeprefix("Hint route: ").strip()
+            )
+        elif line.startswith("Hint tool: "):
+            decision_packet["hint_tool_name"] = _normalize_brief_scalar(
+                line.removeprefix("Hint tool: ").strip()
+            )
+        elif line.startswith("Tool candidates: "):
+            decision_packet["tool_candidates"] = _parse_transfer_tool_candidates(
+                line.removeprefix("Tool candidates: ").strip()
+            )
+        elif line.startswith("Retrieved docs: "):
+            raw = line.removeprefix("Retrieved docs: ").strip()
+            decision_packet["retrieved_doc_ids"] = [] if not raw or raw.lower() == "none" else [
+                item.strip() for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Fresh evidence sha: "):
+            decision_packet["feature_fresh_evidence_sha256"] = _normalize_brief_scalar(
+                line.removeprefix("Fresh evidence sha: ").strip()
+            )
+    bundle = _feature_bundle_from_executor_decision_packet(
+        query_text=query_text,
+        evidence_text=evidence_text,
+        decision_packet=decision_packet,
+        registry=registry,
+    )
+    bundle["transfer_strategy"] = "text_packet_minimal"
+    return bundle
+
+
+def _build_natural_handoff_text(
+    *,
+    query: str,
+    evidence_text: str,
+) -> str:
+    evidence_preview = " ".join(
+        line.strip() for line in evidence_text.splitlines()[:3] if line.strip()
+    )[:220]
+    return (
+        "Retriever handoff.\n"
+        f"Request: {query.strip()}.\n"
+        "Use only the cited evidence to decide the most likely issue, rule out the strongest competing explanation, and choose the first action.\n"
+        f"Evidence snapshot: {evidence_preview}\n"
+    )
+
+
+def _feature_bundle_from_natural_handoff(
+    *,
+    query_text: object,
+    evidence_text: str,
+    handoff_text: str,
+    registry: ToolRegistry,
+) -> dict[str, Any]:
+    bundle = build_feature_bundle(
+        query=query_text,
+        evidence_text=f"{evidence_text}\n{handoff_text}",
+        tags=[],
+        reuse_signature="natural_handoff_transfer",
+        reused_memory=False,
+        registry=registry,
+    )
+    bundle["transfer_strategy"] = "natural_handoff_text"
+    return bundle
+
+
+def _feature_bundle_from_executor_decision_packet(
+    *,
+    query_text: object,
+    evidence_text: str,
+    decision_packet: dict[str, Any],
+    registry: ToolRegistry,
+) -> dict[str, Any]:
+    bundle = build_feature_bundle(
+        query=query_text,
+        evidence_text=evidence_text,
+        tags=[],
+        reuse_signature="state_packet_transfer",
+        reused_memory=False,
+        registry=registry,
+    )
+    for key in (
+        "route",
+        "tool_name",
+        "route_source",
+        "route_confidence",
+        "route_provenance",
+        "matched_signals",
+        "matched_tags",
+        "match_score",
+        "hint_doc_ids",
+        "hint_route",
+        "hint_tool_name",
+        "tool_candidates",
+    ):
+        if key in decision_packet:
+            bundle[key] = decision_packet[key]
+    bundle["transfer_strategy"] = "state_packet_minimal"
+    return bundle
+
+
 def _parse_transfer_tool_candidates(raw_value: str) -> list[dict[str, Any]]:
     text = str(raw_value).strip()
     if not text or text.lower() == "none":
@@ -1112,6 +1562,19 @@ def _parse_transfer_tool_candidates(raw_value: str) -> list[dict[str, Any]]:
     return parsed
 
 
+def _format_transfer_tool_candidates(candidates: list[dict[str, Any]]) -> str:
+    serialized: list[str] = []
+    for candidate in candidates:
+        tool_name = str(candidate.get("tool_name", "")).strip()
+        route = str(candidate.get("route", "")).strip()
+        source = str(candidate.get("source", "")).strip()
+        score = int(candidate.get("score", 0))
+        if not tool_name or not route:
+            continue
+        serialized.append(f"{tool_name}@{route}#{source}#{score}")
+    return "; ".join(serialized) if serialized else "none"
+
+
 def _parse_float_or_default(raw_value: str, *, default: float) -> float:
     try:
         return float(raw_value)
@@ -1124,6 +1587,15 @@ def _parse_int_or_default(raw_value: str, *, default: int) -> int:
         return int(raw_value)
     except (TypeError, ValueError):
         return default
+
+
+def _is_route_replay_eligible(
+    *,
+    route_confidence: float,
+    route_provenance: list[str],
+    minimum_confidence: float,
+) -> bool:
+    return route_confidence >= minimum_confidence and "lexical" in set(route_provenance)
 
 
 def _normalize_brief_scalar(raw_value: str) -> str:

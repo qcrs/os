@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import time
@@ -632,12 +633,38 @@ class MemoryStore:
                 continue
             if not _metadata_matches(metadata, query.required_metadata):
                 continue
+            session_bonus = _env_optional_float("STATEBUS_MEM_WORKING_TIER", 1.5)
+            # These weights are heuristics, not benchmark-validated constants.
+            lexical_weight = _env_optional_float(
+                "STATEBUS_MEM_LEXICAL_WEIGHT",
+                _env_optional_float("STATEBUS_MEM_BM25_WEIGHT", 0.25),
+            )
+            tag_weight = _env_optional_float("STATEBUS_MEM_TAG_WEIGHT", 0.20)
+            recency_weight = _env_optional_float("STATEBUS_MEM_RECENCY_WEIGHT", 0.10)
+            recency_lambda = _env_optional_float("STATEBUS_MEM_RECENCY_LAMBDA", 0.0001)
+            base_score = float(faiss_score)
+            lexical_score = _compute_keyword_overlap(query.query_text or "", row["summary"] or "")
+            query_tags = query.tags or query.tags_any or query.tags_all or []
+            tag_score = 0.0
+            if query_tags:
+                overlap = len(set(query_tags) & set(tags))
+                tag_score = overlap / max(len(query_tags), 1)
+            age_seconds = (time.time_ns() - int(row["created_at_ns"])) / 1_000_000_000.0
+            recency = math.exp(-recency_lambda * max(age_seconds, 0.0))
+            tier_mult = session_bonus if (query.session_id and _row_session_id(row) == query.session_id) else 1.0
+            combined = (
+                base_score * tier_mult
+                + lexical_weight * lexical_score
+                + tag_weight * tag_score
+                + recency_weight * recency
+            )
             ordered_hits.append(
                 MemoryHit(
                     memory_id=row["memory_id"],
                     embedding_id=int(row["embedding_id"]),
                     confidence=confidence,
-                    faiss_score=float(faiss_score),
+                    faiss_score=base_score,
+                    combined_score=float(combined),
                     reuse_source="semantic_memory",
                     reusable_steps=json.loads(row["reusable_steps_json"]),
                     evidence_state_ids=json.loads(row["evidence_state_ids_json"]),
@@ -650,9 +677,17 @@ class MemoryStore:
                     metadata=metadata,
                 )
             )
-            if len(ordered_hits) >= query.top_k:
+            if len(ordered_hits) >= query.top_k * 8:
                 break
-        return ordered_hits
+        ordered_hits.sort(
+            key=lambda hit: (
+                -hit.combined_score,
+                -hit.faiss_score,
+                -(hit.created_at_ns or 0),
+                hit.memory_id,
+            )
+        )
+        return ordered_hits[: query.top_k]
 
     def _search_keyword(self, query: MemoryQuery) -> list[MemoryHit]:
         rows = []
@@ -663,7 +698,7 @@ class MemoryStore:
                 SELECT m.embedding_id, m.memory_id, m.source_task_id, m.task_theme,
                        m.source_agent_id, m.summary, m.tags_json, m.evidence_state_ids_json,
                        m.reusable_steps_json, m.confidence, m.metadata_json, m.created_at_ns,
-                       me.state_ref_json
+                       me.embedding_text, me.state_ref_json
                 FROM memories_fts f
                 JOIN memories m ON m.embedding_id = f.rowid
                 JOIN memory_embeddings me ON me.embedding_id = m.embedding_id
@@ -688,7 +723,7 @@ class MemoryStore:
                 SELECT m.embedding_id, m.memory_id, m.source_task_id, m.task_theme,
                        m.source_agent_id, m.summary, m.tags_json, m.evidence_state_ids_json,
                        m.reusable_steps_json, m.confidence, m.metadata_json, m.created_at_ns,
-                       me.state_ref_json
+                       me.embedding_text, me.state_ref_json
                 FROM memories m
                 JOIN memory_embeddings me USING(embedding_id)
                 WHERE m.task_theme = ?
@@ -727,11 +762,29 @@ class MemoryStore:
                 continue
             if not _metadata_matches(metadata, query.required_metadata):
                 continue
+            session_bonus = _env_optional_float("STATEBUS_MEM_WORKING_TIER", 1.5)
+            tag_weight = _env_optional_float("STATEBUS_MEM_TAG_WEIGHT", 0.20)
+            recency_weight = _env_optional_float("STATEBUS_MEM_RECENCY_WEIGHT", 0.10)
+            recency_lambda = _env_optional_float("STATEBUS_MEM_RECENCY_LAMBDA", 0.0001)
+            query_tags = query.tags or query.tags_any or query.tags_all or []
+            tag_score = 0.0
+            if query_tags:
+                overlap = len(set(query_tags) & set(tags))
+                tag_score = overlap / max(len(query_tags), 1)
+            lexical_score = _compute_keyword_overlap(
+                query.query_text or "",
+                f"{row['summary'] or ''} {row['embedding_text'] or ''}",
+            )
+            age_seconds = (time.time_ns() - int(row["created_at_ns"])) / 1_000_000_000.0
+            recency = math.exp(-recency_lambda * max(age_seconds, 0.0))
+            tier_mult = session_bonus if (query.session_id and _row_session_id(row) == query.session_id) else 1.0
+            combined = (lexical_score * tier_mult) + (tag_weight * tag_score) + (recency_weight * recency)
             hits.append(
                 MemoryHit(
                     memory_id=row["memory_id"],
                     embedding_id=int(row["embedding_id"]),
                     confidence=confidence,
+                    combined_score=float(combined),
                     reuse_source="keyword_memory",
                     reusable_steps=json.loads(row["reusable_steps_json"]),
                     evidence_state_ids=json.loads(row["evidence_state_ids_json"]),
@@ -744,6 +797,13 @@ class MemoryStore:
                     metadata=metadata,
                 )
             )
+        hits.sort(
+            key=lambda hit: (
+                -hit.combined_score,
+                -(hit.created_at_ns or 0),
+                hit.memory_id,
+            )
+        )
         return hits
 
     def _replace_index_vector(self, embedding_id: int, vector: np.ndarray) -> None:
@@ -818,3 +878,37 @@ def _metadata_matches(
         if metadata.get(key) != expected:
             return False
     return True
+
+
+def _env_optional_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _compute_keyword_overlap(query_text: str, doc_text: str) -> float:
+    """Simple lexical overlap score in [0, 1]."""
+    if not query_text or not doc_text:
+        return 0.0
+    query_tokens = {t.lower() for t in query_text.split() if len(t) >= 3}
+    doc_tokens = {t.lower() for t in doc_text.split() if len(t) >= 3}
+    if not query_tokens:
+        return 0.0
+    overlap = len(query_tokens & doc_tokens)
+    return min(overlap / len(query_tokens), 1.0)
+
+
+def _row_session_id(row: sqlite3.Row) -> str:
+    if "session_id" in row.keys():
+        return str(row["session_id"] or "")
+    if "metadata_json" not in row.keys():
+        return ""
+    try:
+        meta = json.loads(row["metadata_json"] or "{}")
+        return str(meta.get("session_id", ""))
+    except (json.JSONDecodeError, TypeError):
+        return ""

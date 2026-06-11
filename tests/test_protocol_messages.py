@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
+import msgpack
+import pytest
+
 from protocol import statebus_pb2
 from protocol.messages import (
+    Capability,
+    CapabilityItem,
     MemoryCommit,
     MemoryQuery,
     PlanStep,
@@ -11,7 +19,16 @@ from protocol.messages import (
     StepResult,
     parse_protocol_bytes,
     protocol_bytes,
+    state_ref_lite_wire_bytes,
+    total_state_ref_lite_wire_bytes,
 )
+from runtime.contracts import (
+    CapabilityTable,
+    SchemaInterceptor,
+    SchemaValidationError,
+    default_state_contract_registry,
+)
+from statepool.store import StatePool, StatePoolConfig
 
 
 def test_memory_commit_wire_ignores_rich_state_ref_payloads() -> None:
@@ -138,6 +155,29 @@ def test_step_result_protobuf_round_trip_preserves_core_fields() -> None:
     assert parsed.payload["route"] == "db_pool_saturation"
 
 
+def test_state_ref_lite_wire_bytes_ignore_rich_payload_fields() -> None:
+    rich_ref = StateRef(
+        state_id="artifact-1",
+        kind="TOOL_ARTIFACT",
+        storage="MMAP_FILE",
+        handle="/tmp/very/long/path/not-on-wire.bin",
+        length=1024,
+        checksum="a" * 64,
+        metadata={"tool_name": "tool.db_pool_triage", "extra": "x" * 256},
+    )
+    minimal_ref = StateRef(
+        state_id=rich_ref.state_id,
+        kind=rich_ref.kind,
+        storage="PY_SHARED_MEMORY",
+        handle="ignored",
+        length=rich_ref.length,
+    )
+    assert state_ref_lite_wire_bytes(rich_ref) == state_ref_lite_wire_bytes(minimal_ref)
+    assert total_state_ref_lite_wire_bytes([rich_ref, minimal_ref]) == (
+        state_ref_lite_wire_bytes(rich_ref) + state_ref_lite_wire_bytes(minimal_ref)
+    )
+
+
 def test_remote_step_request_protobuf_round_trip_preserves_full_state_refs() -> None:
     request = RemoteStepRequest(
         mode="protocol",
@@ -171,6 +211,15 @@ def test_remote_step_request_protobuf_round_trip_preserves_full_state_refs() -> 
                 checksum="e" * 64,
                 metadata={"schema": "statebus.feature_bundle.v1"},
             ),
+            StateRef(
+                state_id="state-tool-candidates-1",
+                kind="TOOL_CANDIDATE_SET",
+                storage="MMAP_FILE",
+                handle="/tmp/tool-candidates.bin",
+                length=96,
+                checksum="f" * 64,
+                metadata={"schema": "statebus.tool_candidate_set.v1"},
+            ),
         ],
     )
     payload = protocol_bytes(request)
@@ -182,6 +231,7 @@ def test_remote_step_request_protobuf_round_trip_preserves_full_state_refs() -> 
     assert parsed.step.params["transport"] == "uds"
     assert parsed.input_state_refs[0].handle == "/tmp/evidence.bin"
     assert parsed.input_state_refs[1].kind == "FEATURE_BUNDLE"
+    assert parsed.input_state_refs[2].kind == "TOOL_CANDIDATE_SET"
 
 
 def test_remote_step_response_protobuf_round_trip_preserves_result_payload() -> None:
@@ -210,3 +260,61 @@ def test_remote_step_response_protobuf_round_trip_preserves_result_payload() -> 
     assert isinstance(parsed, RemoteStepResponse)
     assert parsed.result.output_state_refs[0].handle == "psm_artifact_1"
     assert parsed.result.payload["tool_name"] == "tool.cache_invalidation_playbook"
+
+
+def test_schema_interceptor_rejects_invalid_structured_state_at_producer_boundary() -> None:
+    capability_table = CapabilityTable()
+    capability_table.register(
+        Capability(
+            agent_id="retriever",
+            items=[
+                CapabilityItem(
+                    name="RETRIEVE_EVIDENCE",
+                    kind="TOOLCHAIN",
+                    input_schema="dict",
+                    output_schema="StepResult",
+                    produced_state_kinds=["TOOL_CANDIDATE_SET"],
+                )
+            ],
+        )
+    )
+    with tempfile.TemporaryDirectory(prefix="statebus-bad-producer-state-") as tmpdir:
+        statepool = StatePool(Path(tmpdir), config=StatePoolConfig.from_env())
+        bad_ref = statepool.put_bytes(
+            state_id="bad-tool-candidates",
+            kind="TOOL_CANDIDATE_SET",
+            payload=msgpack.packb(
+                {
+                    "schema": "statebus.not_tool_candidate.v1",
+                    "tool_candidates": [],
+                },
+                use_bin_type=True,
+            ),
+            metadata={
+                "encoding": "msgpack",
+                "schema": "statebus.not_tool_candidate.v1",
+                "query": "inventory invalidation",
+                "feature_route": "cache_invalidation",
+                "feature_route_source": "hint_consensus",
+                "feature_route_confidence": 0.91,
+            },
+        )
+        with pytest.raises(SchemaValidationError, match="registered contract|schema mismatch"):
+            SchemaInterceptor.validate_result(
+                step=PlanStep(
+                    step_id="retrieve",
+                    owner_agent="retriever",
+                    action="RETRIEVE_EVIDENCE",
+                    input_state_refs=[],
+                    params={"query": "inventory invalidation"},
+                    depends_on=[],
+                ),
+                result=StepResult(
+                    step_id="retrieve",
+                    success=True,
+                    output_state_refs=[bad_ref],
+                ),
+                capability_table=capability_table,
+                state_contract_registry=default_state_contract_registry(),
+                statepool=statepool,
+            )

@@ -1,8 +1,8 @@
 task_set:
   name: formal_controlled_pack
   pack_type: formal_controlled
-  description: Controlled 26-task host-mainline pack for formal communication, state_transfer, and replay-scoped memory claims.
-  reading_contract: Read this pack as the controlled headline package only; keep diagnostic and open validation tasks out of formal contest claims.
+  description: Frozen 24-task host-mainline headline pack with two controlled replay chains plus dedicated communication, typed-handoff state_transfer, and replay-scoped memory lanes.
+  reading_contract: Read this pack as the unique frozen headline object only; it keeps the controlled replay chains and dedicated claim lanes, and excludes route diagnostics plus planner pre-pass validation.
   claim_lanes: [communication, state_transfer, memory]
 
 tasks:
@@ -222,114 +222,6 @@ tasks:
       This exact replay should reuse the prior validated replay end to end while
       still emitting a current-task summary and memory commit.
 
-  - task_id: sample-session-001
-    task_group: session_chain
-    task_order: 1
-    task_theme: repo_local_auth_session_drift
-    benchmark_lane: internal_regression
-    transfer_strategy: state_ref
-    goal: Diagnose the first SSO callback failure from corpus-backed local evidence.
-    query: sso callback issuer mismatch stale jwks session cookies
-    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
-    evidence_text: Use the referenced corpus docs only; do not assume an existing auth fix.
-    tags: [auth, session, sso, anchor]
-    reuse_tags: [auth, session, jwks]
-    expected_reuse_mode: none
-    runtime_reuse_contract: assist_allowed
-    summary_hint: >
-      Fresh evidence should identify session drift from stale JWKS and cookies, then
-      recommend JWKS refresh plus callback verification.
-
-  - task_id: sample-session-002
-    task_group: session_chain
-    task_order: 2
-    task_theme: repo_local_auth_session_drift
-    benchmark_lane: internal_regression
-    transfer_strategy: state_ref
-    goal: Triage a follow-up SSO callback failure with conservative memory assist.
-    query: follow-up auth session issuer mismatch stale jwks callback
-    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
-    evidence_text: Use the referenced corpus docs only; validate any prior auth playbook against fresh evidence.
-    tags: [auth, session, sso, followup]
-    reuse_tags: [auth, session, jwks]
-    expected_reuse_mode: assist
-    runtime_reuse_contract: assist_allowed
-    summary_hint: >
-      This follow-up should validate the earlier session-drift playbook against fresh
-      evidence before recommending the same remediation.
-
-  - task_id: sample-session-003
-    task_group: session_chain
-    task_order: 3
-    task_theme: repo_local_auth_session_drift
-    benchmark_lane: internal_regression
-    transfer_strategy: state_ref
-    goal: Distinguish a misleading auth failure from the stale-JWKS session path.
-    query: auth login failures backoff window looks like session issue
-    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false, session-auth-replay]
-    evidence_text: Use the referenced corpus docs only; reject stale-JWKS memory if the fresh route is different.
-    tags: [auth, session, sso, rate-limit]
-    reuse_tags: [auth, session, jwks]
-    expected_reuse_mode: none
-    runtime_reuse_contract: assist_allowed
-    summary_hint: >
-      Fresh evidence should reject the session-drift shortcut and instead isolate the
-      auth rate-limiter path.
-
-  - task_id: sample-session-004
-    task_group: session_chain
-    task_order: 4
-    task_theme: repo_local_auth_session_drift
-    benchmark_lane: internal_regression
-    transfer_strategy: state_ref
-    goal: Re-verify the stale-JWKS session path in a control replay without skipping retrieval.
-    query: replay callback issuer mismatch jwks refresh stale session cookies
-    corpus_doc_ids: [session-auth-anchor, session-auth-replay]
-    evidence_text: Use the referenced corpus docs only; replay should still validate the route from current evidence.
-    tags: [auth, session, replay, jwks]
-    reuse_tags: [auth, session, jwks]
-    expected_reuse_mode: assist
-    runtime_reuse_contract: assist_allowed
-    summary_hint: >
-      The control replay should keep the same session-drift remediation only after
-      fresh evidence re-confirms the stale-JWKS path.
-
-  - task_id: sample-session-005
-    task_group: session_chain
-    task_order: 5
-    task_theme: repo_local_auth_session_drift
-    benchmark_lane: internal_regression
-    transfer_strategy: state_ref
-    goal: Run a validated replay that confirms stale-JWKS drift before pruning execute.
-    query: validated replay callback issuer mismatch jwks refresh stale session cookies
-    corpus_doc_ids: [session-auth-anchor, session-auth-replay]
-    evidence_text: Use the referenced corpus docs only; validated replay must still confirm the session-drift route via fresh retrieval.
-    tags: [auth, session, validated-replay, jwks]
-    reuse_tags: [auth, session, jwks]
-    expected_reuse_mode: skip_execute
-    runtime_reuse_contract: validated_replay
-    summary_hint: >
-      This validated replay should confirm the same stale-JWKS route from fresh
-      evidence, then safely prune execute by reusing the prior artifact.
-
-  - task_id: sample-session-006
-    task_group: session_chain
-    task_order: 6
-    task_theme: repo_local_auth_session_drift
-    benchmark_lane: internal_regression
-    transfer_strategy: state_ref
-    goal: Run an exact replay that skips retrieve and execute from runtime-matched validated replay evidence.
-    query: validated replay callback issuer mismatch jwks refresh stale session cookies
-    corpus_doc_ids: [session-auth-anchor, session-auth-replay]
-    evidence_text: Use the stored replay evidence plus current task inputs only; exact replay may skip retrieve and execute when the validated replay route matches exactly.
-    tags: [auth, session, exact-replay, jwks]
-    reuse_tags: [auth, session, jwks]
-    expected_reuse_mode: skip_retrieve_execute
-    runtime_reuse_contract: exact_replay
-    summary_hint: >
-      This exact replay should reuse the prior validated replay end to end while
-      still writing a current-task summary and memory commit.
-
   - task_id: transfer-cache-001
     task_group: transfer_lane
     task_order: 1
@@ -473,3 +365,67 @@ tasks:
     summary_hint: >
       This memory-lane replay-enabled task should confirm the same invalidation
       route, then prune execute while preserving summary and commit behavior.
+
+  - task_id: communication-latency-001
+    task_group: communication_lane
+    task_order: 3
+    task_theme: repo_local_latency_triage
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a cold latency triage task.
+    query: release-17 orders latency db pool saturation slow query checkpoint
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead.
+    tags: [latency, orders, database, communication, cold-start]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane baseline for latency domain; keep the diagnosis fixed.
+
+  - task_id: communication-latency-002
+    task_group: communication_lane
+    task_order: 4
+    task_theme: repo_local_latency_triage
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure protocol overhead on a latency triage variant that should reject stale memory.
+    query: release-17 latency worker queue stall not database
+    corpus_doc_ids: [latency-db-anchor, latency-worker-false]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and keeps memory disabled.
+    tags: [latency, orders, worker, communication, reject-control]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane reject-control for latency domain; keep the diagnosis fixed.
+
+  - task_id: communication-session-001
+    task_group: communication_lane
+    task_order: 5
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a cold auth session triage task.
+    query: sso callback issuer mismatch stale jwks session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead.
+    tags: [auth, session, communication, cold-start]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane baseline for session domain; keep the diagnosis fixed.
+
+  - task_id: communication-session-002
+    task_group: communication_lane
+    task_order: 6
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure protocol overhead on an auth session triage variant that should reject stale memory.
+    query: auth login failures backoff window looks like session issue
+    corpus_doc_ids: [session-auth-anchor, session-rate-limit-false]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and keeps memory disabled.
+    tags: [auth, session, rate-limit, communication, reject-control]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane reject-control for session domain; keep the diagnosis fixed.

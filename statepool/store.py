@@ -203,6 +203,7 @@ class StatePool:
             self.root / "shared_memory",
             owned_handles=owned_shared_handles,
         )
+        self.cas_blobs = ContentAddressedBlobStore(self.root / "cas")
 
     def put_bytes(
         self,
@@ -217,6 +218,41 @@ class StatePool:
         if backend == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.put_bytes(state_id, kind, payload, metadata=metadata)
         return self.file_pool.put_bytes(state_id, kind, payload, metadata=metadata)
+
+    def put_cas(
+        self,
+        state_id: str,
+        kind: str,
+        payload: bytes,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        """Content-addressed put: dedup via SHA-256, Git-style blob storage."""
+        return self.cas_blobs.put(state_id, kind, payload, metadata=metadata)
+
+    def get_by_hash(self, blob_hash: str) -> bytes | None:
+        """Lookup blob by SHA-256 hash. Returns None if not found."""
+        return self.cas_blobs.get_bytes_by_hash(blob_hash)
+
+    def has_blob(self, blob_hash: str) -> bool:
+        return self.cas_blobs.has_blob(blob_hash)
+
+    def cas_refcount(self, blob_hash: str) -> int:
+        return self.cas_blobs.blob_refcount(blob_hash)
+
+    def put_or_dedup_bytes(
+        self,
+        state_id: str,
+        kind: str,
+        payload: bytes,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        """Content-addressed put with automatic dedup.
+
+        Computes SHA-256 of payload. If an identical blob already exists,
+        returns a ref to the existing blob (refcount +1). Otherwise stores
+        a new blob under its content hash.
+        """
+        return self.cas_blobs.put(state_id, kind, payload, metadata=metadata)
 
     def put_text(
         self,
@@ -267,6 +303,82 @@ class StatePool:
         if mmap_meta.exists():
             return self.file_pool.load_ref(state_id)
         return self.shared_pool.load_ref(state_id)
+
+
+class ContentAddressedBlobStore:
+    """Git-style content-addressed blob storage.
+
+    Every blob is stored at ``blobs/<hash[0:2]>/<hash[2:]>``.
+    Identical content produces the same SHA-256 hash → automatic dedup.
+    """
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root)
+        self.blobs_dir = self.root / "blobs"
+        self.meta_dir = self.root / "meta"
+        self.blobs_dir.mkdir(parents=True, exist_ok=True)
+        self.meta_dir.mkdir(parents=True, exist_ok=True)
+        self._refcount: dict[str, int] = {}
+
+    def _blob_path(self, blob_hash: str) -> Path:
+        return self.blobs_dir / blob_hash[:2] / blob_hash[2:]
+
+    def _blob_meta_path(self, blob_hash: str) -> Path:
+        return self.meta_dir / f"{blob_hash}.json"
+
+    def has_blob(self, blob_hash: str) -> bool:
+        return self._blob_path(blob_hash).exists()
+
+    def get_bytes_by_hash(self, blob_hash: str) -> bytes | None:
+        path = self._blob_path(blob_hash)
+        if not path.exists():
+            return None
+        with path.open("rb") as handle:
+            with mmap.mmap(handle.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
+                return mm[:]
+
+    def put(
+        self,
+        state_id: str,
+        kind: str,
+        payload: bytes,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        """Content-addressed put. Returns existing blob ref if content matches."""
+        blob_hash = hashlib.sha256(payload).hexdigest()
+        blob_path = self._blob_path(blob_hash)
+        meta = dict(metadata or {})
+
+        if not blob_path.exists():
+            blob_path.parent.mkdir(parents=True, exist_ok=True)
+            with blob_path.open("wb") as handle:
+                handle.write(payload)
+            self._refcount[blob_hash] = 1
+        else:
+            self._refcount[blob_hash] = self._refcount.get(blob_hash, 0) + 1
+
+        ref = StateRef(
+            state_id=state_id,
+            kind=kind,
+            storage="CAS_BLOB",
+            handle=str(blob_path),
+            length=len(payload),
+            checksum=blob_hash,
+            metadata=meta,
+        )
+        meta["blob_hash"] = blob_hash
+        meta["blob_refcount"] = self._refcount.get(blob_hash, 1)
+        _write_ref_meta(self._blob_meta_path(blob_hash), ref)
+        return ref
+
+    def blob_refcount(self, blob_hash: str) -> int:
+        return self._refcount.get(blob_hash, 0)
+
+    def load_ref_by_hash(self, blob_hash: str) -> StateRef | None:
+        meta_path = self._blob_meta_path(blob_hash)
+        if not meta_path.exists():
+            return None
+        return _read_ref_meta(meta_path)
 
 
 def _write_ref_meta(path: Path, ref: StateRef) -> None:

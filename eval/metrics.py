@@ -17,6 +17,8 @@ class TaskMetrics:
     state_bytes: int = 0
     handoff_ref_count: int = 0
     handoff_bytes: int = 0
+    handoff_payload_bytes: int = 0
+    handoff_wire_bytes: int = 0
     handoff_textual_ref_count: int = 0
     handoff_textual_bytes: int = 0
     handoff_nontext_ref_count: int = 0

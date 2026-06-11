@@ -39,5 +39,6 @@ Current branch audit and verification closure:
 
 - `docs/progress/feat_realism_protocol_hardening_audit_20260607.md`
 - `docs/progress/contest_requirement_host_audit_20260607.md`
+- `docs/planning/host_mainline_authenticity_execution_plan_20260610.md`
 - `docs/planning/host_goal_mainline_dependency_20260607.md`
 - `runs/host_goal_eval_20260608_093111_planner_contract_refresh/SUMMARY.md`

@@ -20,7 +20,8 @@ hidden-state/KV 传递或交付阶段对象重新拉回当前主线。
 2. 当前对象也不是开放任务上的通用多 Agent runtime 完成态。
 3. 当前正式 claim 边界已经收口到：
    - `communication`：成立
-   - `state_transfer`：成立，但必须带 `text brief handoff` 范围
+   - `state_transfer`：真实性成立，但当前只限于
+     `protocol text_brief handoff` 对 `protocol state_ref handoff`
    - `memory`：只成立到 `replay_enabled / step-skipping reuse`
    - `assist_only`：仍不能写成优于 `memory_off`
 4. 当前最需要继续收口的，不再是“是否偏题”的空泛争论，

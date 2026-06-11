@@ -1,8 +1,8 @@
 task_set:
   name: open_validation_pack
   pack_type: open_validation
-  description: Support-only host-mainline pack for retrieval, executor, and replay boundary checks after controlled-pack changes.
-  reading_contract: Read this pack as open validation and diagnostic support evidence only; use it for retain/revert and misfire explanation, not formal contest headline claims.
+  description: Support-only host-mainline pack for retrieval, executor, replay, and planner pre-pass boundary checks after controlled-pack changes.
+  reading_contract: Read this pack as open validation and diagnostic support evidence only; use it for retain/revert, planner pre-pass validation, and misfire explanation, not formal contest headline claims.
   claim_lanes: []
 
 tasks:
@@ -252,3 +252,51 @@ tasks:
     summary_hint: >
       This replay route diagnostic should allow exact replay because the
       archived worker route remains clear and replay eligible.
+
+  - task_id: open-plan-cache-001
+    task_group: open_plan_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Use planner pre-pass compilation to diagnose stale inventory counts after batch sync and recommend the first action.
+    query: inventory counts stay stale after a batch sync and mismatch across views
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false]
+    evidence_text: This open-validation task checks planner pre-pass compilation only; it is not a headline planner benchmark.
+    tags: [cache, open-plan]
+    expected_reuse_mode: none
+    summary_hint: Return root cause, ruled-out explanation, and first action.
+
+  - task_id: open-plan-latency-001
+    task_group: open_plan_lane
+    task_order: 2
+    task_theme: repo_local_latency_triage
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Use planner pre-pass compilation to diagnose a release-17 orders latency spike and recommend the first action.
+    query: release-17 orders latency spike with connection waits and a slow checkout path
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false]
+    evidence_text: This open-validation task checks planner pre-pass compilation only; it is not a headline planner benchmark.
+    tags: [latency, open-plan]
+    expected_reuse_mode: none
+    summary_hint: Return root cause, ruled-out explanation, and first action.
+
+  - task_id: open-plan-session-001
+    task_group: open_plan_lane
+    task_order: 3
+    task_theme: repo_local_auth_session_drift
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Use planner pre-pass compilation to diagnose SSO callback failures with stale JWKS and cookie drift, then recommend the first action.
+    query: sso callback failures after auth changes with repeated logouts and cookie drift
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false]
+    evidence_text: This open-validation task checks planner pre-pass compilation only; it is not a headline planner benchmark.
+    tags: [auth, open-plan]
+    expected_reuse_mode: none
+    summary_hint: Return root cause, ruled-out explanation, and first action.

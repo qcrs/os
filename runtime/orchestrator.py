@@ -10,7 +10,13 @@ import msgpack
 
 from eval.metrics import TaskMetrics
 from memory.store import EmbeddingProvider, MemoryStore
-from runtime.contracts import CapabilityTable, SchemaInterceptor
+from runtime.contracts import (
+    CapabilityTable,
+    SchemaInterceptor,
+    SchemaValidationError,
+    StateContractRegistry,
+    default_state_contract_registry,
+)
 from runtime.llm import LLMResult
 from runtime.reuse_contract import resolve_runtime_reuse_contract
 from runtime.reuse_contract import runtime_reuse_contract_gates
@@ -27,6 +33,7 @@ from protocol.messages import (
     StepResult,
     message_type,
     protocol_bytes,
+    total_state_ref_lite_wire_bytes,
     text_frame,
 )
 from statepool.store import (
@@ -117,8 +124,10 @@ class RunContext:
     memory_store: MemoryStore
     task_corpus_doc_ids: tuple[str, ...] = ()
     task_corpus_path: str = ""
+    task: object | None = None
     metrics: TaskMetrics = field(default_factory=TaskMetrics)
     results: dict[str, StepResult] = field(default_factory=dict)
+    prepared_input_refs: dict[str, list[StateRef]] = field(default_factory=dict)
     state_refs: dict[str, StateRef] = field(default_factory=dict)
     memory_hits: list[MemoryHit] = field(default_factory=list)
     memory_search_cache: dict[tuple[object, ...], list[MemoryHit]] = field(default_factory=dict)
@@ -152,10 +161,19 @@ class RunContext:
 
     def record_transfer_inputs(self, refs: list[StateRef]) -> None:
         textual_kinds = {"DENSE_EVIDENCE", "TOOL_ARTIFACT"}
-        nontext_kinds = {"FEATURE_BUNDLE", "EMBEDDING"}
+        nontext_kinds = {
+            "FEATURE_BUNDLE",
+            "EMBEDDING",
+            "RANKED_EVIDENCE_BUNDLE",
+            "TOOL_CANDIDATE_SET",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EXECUTOR_DECISION_PACKET",
+        }
         self.metrics.handoff_ref_count += len(refs)
+        self.metrics.handoff_wire_bytes += total_state_ref_lite_wire_bytes(refs)
         for ref in refs:
             self.metrics.handoff_bytes += ref.length
+            self.metrics.handoff_payload_bytes += ref.length
             if ref.kind in nontext_kinds:
                 self.metrics.handoff_nontext_ref_count += 1
                 self.metrics.handoff_nontext_bytes += ref.length
@@ -170,6 +188,12 @@ class RunContext:
         ref = self.statepool.load_ref(state_id)
         self.state_refs[state_id] = ref
         return ref
+
+    def set_step_input_refs(self, step_id: str, refs: list[StateRef]) -> None:
+        self.prepared_input_refs[step_id] = list(refs)
+
+    def step_input_refs(self, step_id: str) -> list[StateRef]:
+        return list(self.prepared_input_refs.get(step_id, []))
 
     def put_text_state(
         self,
@@ -239,21 +263,112 @@ class RunContext:
         feature_bundle: dict[str, object],
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
-        payload = msgpack.packb(feature_bundle, use_bin_type=True)
-        ref = self.statepool.put_bytes(
+        return self._put_msgpack_state(
             state_id=state_id,
             kind="FEATURE_BUNDLE",
-            payload=payload,
+            schema="statebus.feature_bundle.v1",
+            payload=feature_bundle,
+            metadata=metadata,
+        )
+
+    def get_feature_state(self, ref: StateRef) -> dict[str, object]:
+        return self._get_msgpack_state(ref)
+
+    def put_ranked_evidence_state(
+        self,
+        *,
+        state_id: str,
+        ranked_evidence_bundle: dict[str, object],
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        return self._put_msgpack_state(
+            state_id=state_id,
+            kind="RANKED_EVIDENCE_BUNDLE",
+            schema="statebus.ranked_evidence_bundle.v1",
+            payload=ranked_evidence_bundle,
+            metadata=metadata,
+        )
+
+    def get_ranked_evidence_state(self, ref: StateRef) -> dict[str, object]:
+        return self._get_msgpack_state(ref)
+
+    def put_tool_candidate_state(
+        self,
+        *,
+        state_id: str,
+        tool_candidate_set: dict[str, object],
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        return self._put_msgpack_state(
+            state_id=state_id,
+            kind="TOOL_CANDIDATE_SET",
+            schema="statebus.tool_candidate_set.v1",
+            payload=tool_candidate_set,
+            metadata=metadata,
+        )
+
+    def get_tool_candidate_state(self, ref: StateRef) -> dict[str, object]:
+        return self._get_msgpack_state(ref)
+
+    def put_replay_eligibility_state(
+        self,
+        *,
+        state_id: str,
+        replay_eligibility_bundle: dict[str, object],
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        return self._put_msgpack_state(
+            state_id=state_id,
+            kind="REPLAY_ELIGIBILITY_BUNDLE",
+            schema="statebus.replay_eligibility_bundle.v1",
+            payload=replay_eligibility_bundle,
+            metadata=metadata,
+        )
+
+    def get_replay_eligibility_state(self, ref: StateRef) -> dict[str, object]:
+        return self._get_msgpack_state(ref)
+
+    def put_executor_decision_state(
+        self,
+        *,
+        state_id: str,
+        decision_packet: dict[str, object],
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        return self._put_msgpack_state(
+            state_id=state_id,
+            kind="EXECUTOR_DECISION_PACKET",
+            schema="statebus.executor_decision_packet.v1",
+            payload=decision_packet,
+            metadata=metadata,
+        )
+
+    def get_executor_decision_state(self, ref: StateRef) -> dict[str, object]:
+        return self._get_msgpack_state(ref)
+
+    def _put_msgpack_state(
+        self,
+        *,
+        state_id: str,
+        kind: str,
+        schema: str,
+        payload: dict[str, object],
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        ref = self.statepool.put_bytes(
+            state_id=state_id,
+            kind=kind,
+            payload=msgpack.packb(payload, use_bin_type=True),
             metadata={
                 "encoding": "msgpack",
-                "schema": "statebus.feature_bundle.v1",
+                "schema": schema,
                 **dict(metadata or {}),
             },
         )
         self.register_state(ref)
         return ref
 
-    def get_feature_state(self, ref: StateRef) -> dict[str, object]:
+    def _get_msgpack_state(self, ref: StateRef) -> dict[str, object]:
         payload = self.statepool.get_bytes(ref)
         return dict(msgpack.unpackb(payload, raw=False, strict_map_key=False))
 
@@ -269,6 +384,7 @@ class RunContext:
         min_confidence: float = 0.0,
         encoder_id: str | None = None,
         required_metadata: dict[str, object] | None = None,
+        session_id: str = "",
     ) -> list[MemoryHit]:
         from protocol.messages import MemoryQuery
 
@@ -282,6 +398,7 @@ class RunContext:
             min_confidence,
             encoder_id,
             tuple(sorted((required_metadata or {}).items())),
+            session_id,
         )
         if cache_key in self.memory_search_cache:
             return list(self.memory_search_cache[cache_key])
@@ -295,6 +412,7 @@ class RunContext:
             min_confidence=min_confidence,
             encoder_id=encoder_id,
             required_metadata=dict(required_metadata or {}),
+            session_id=session_id,
         )
         self.metrics.memory_query_count += 1
         self.emit(query)
@@ -435,8 +553,14 @@ class RunContext:
 class Orchestrator:
     """Host-side orchestrator for planner-driven benchmark tasks."""
 
-    def __init__(self, agents: dict[str, object]) -> None:
+    def __init__(
+        self,
+        agents: dict[str, object],
+        *,
+        state_contract_registry: StateContractRegistry | None = None,
+    ) -> None:
         self.agents = agents
+        self.state_contract_registry = state_contract_registry or default_state_contract_registry()
 
     @classmethod
     def create_context(
@@ -486,6 +610,7 @@ class Orchestrator:
 
     async def run_task(self, task: object, ctx: RunContext) -> dict[str, StepResult]:
         started = time.perf_counter()
+        ctx.task = task
         if ctx.runtime_profile.is_empty and hasattr(task, "runtime_profile"):
             maybe_profile = getattr(task, "runtime_profile")
             if isinstance(maybe_profile, RuntimeTaskProfile):
@@ -537,6 +662,8 @@ class Orchestrator:
                         step=synthetic_plan_step,
                         result=synthetic_step,
                         capability_table=ctx.session.capability_table,
+                        state_contract_registry=self.state_contract_registry,
+                        statepool=ctx.statepool,
                     )
                     self._register_result(synthetic_step, ctx)
                 continue
@@ -552,9 +679,12 @@ class Orchestrator:
                         step=step,
                         result=maybe_skip,
                         capability_table=ctx.session.capability_table,
+                        state_contract_registry=self.state_contract_registry,
+                        statepool=ctx.statepool,
                     )
                     self._register_result(maybe_skip, ctx)
                     continue
+            self._prepare_step_input_refs(plan, step, ctx)
             ctx.emit(step)
             agent = self.agents[step.owner_agent]
             step_started = time.perf_counter()
@@ -569,6 +699,8 @@ class Orchestrator:
                 step=step,
                 result=result,
                 capability_table=ctx.session.capability_table,
+                state_contract_registry=self.state_contract_registry,
+                statepool=ctx.statepool,
             )
             self._register_result(result, ctx)
             if not result.success:
@@ -601,6 +733,7 @@ class Orchestrator:
                 hit=hit,
                 task_theme=ctx.task_theme,
                 current_query=current_query,
+                ctx=ctx,
             ):
                 continue
             ctx.note_reuse(hit, reuse_mode="skip_retrieve_execute")
@@ -610,6 +743,28 @@ class Orchestrator:
                 execute_step=execute_step,
                 ctx=ctx,
             )
+            self._prepare_step_input_refs(
+                plan,
+                execute_step,
+                ctx,
+                result_overrides={"retrieve": retrieve_result},
+                persist=False,
+            )
+            try:
+                summarize_step = self._find_step(plan, "summarize")
+            except KeyError:
+                summarize_step = None
+            if summarize_step is not None:
+                self._prepare_step_input_refs(
+                    plan,
+                    summarize_step,
+                    ctx,
+                    result_overrides={
+                        "retrieve": retrieve_result,
+                        "execute": execute_result,
+                    },
+                    persist=False,
+                )
             hit.skipped_step_ids = ["retrieve", "execute"]
             ctx.pruned_step_ids = ["retrieve", "execute"]
             ctx.metrics.skipped_step_count += 2
@@ -639,10 +794,23 @@ class Orchestrator:
                 hit=hit,
                 retrieve_result=retrieve_result,
                 current_query=current_query,
+                ctx=ctx,
             ):
                 continue
             ctx.note_reuse(hit, reuse_mode="skip_execute")
             result = self._build_skip_execute_result(hit=hit, execute_step=execute_step, ctx=ctx)
+            try:
+                summarize_step = self._find_step(plan, "summarize")
+            except KeyError:
+                summarize_step = None
+            if summarize_step is not None:
+                self._prepare_step_input_refs(
+                    plan,
+                    summarize_step,
+                    ctx,
+                    result_overrides={"execute": result},
+                    persist=False,
+                )
             hit.skipped_step_ids = ["execute"]
             ctx.pruned_step_ids = ["execute"]
             ctx.metrics.skipped_step_count += 1
@@ -650,12 +818,17 @@ class Orchestrator:
         return None
 
     async def _plan_task(self, task: object, ctx: RunContext) -> Plan:
-        planner = self.agents.get("planner")
-        if planner is not None and hasattr(planner, "plan_task"):
-            return await planner.plan_task(task, ctx)
-        from tasks.sample_tasks import build_plan
+        from tasks.sample_tasks import build_plan, normalize_plan_source
 
-        return build_plan(task)
+        plan_source = normalize_plan_source(getattr(task, "plan_source", "yaml"))
+        if plan_source == "yaml":
+            return build_plan(task)
+        # plan_source=llm compiles the plan up front; the resulting DAG still runs
+        # through the normal retriever/executor/summarizer step path.
+        planner = self.agents.get("planner")
+        if planner is None or not hasattr(planner, "plan_task"):
+            raise KeyError("planner agent is required for plan_source=llm pre-plan compilation")
+        return await planner.plan_task(task, ctx)
 
     def _ensure_handshake(self, ctx: RunContext) -> None:
         if ctx.session.handshake_complete:
@@ -726,42 +899,153 @@ class Orchestrator:
             return "summarize"
         return None
 
+    def _prepare_step_input_refs(
+        self,
+        plan: Plan,
+        step: PlanStep,
+        ctx: RunContext,
+        *,
+        result_overrides: dict[str, StepResult] | None = None,
+        persist: bool = True,
+    ) -> list[StateRef]:
+        if not step.depends_on:
+            if persist:
+                ctx.set_step_input_refs(step.step_id, [])
+            return []
+        contract = self.state_contract_registry.step_input_contract(
+            agent_id=step.owner_agent,
+            action=step.action,
+            variant=self._step_input_contract_variant(step, ctx),
+        )
+        selected_refs: list[StateRef] = []
+        producer_agents_by_state_id: dict[str, str] = {}
+        overrides = result_overrides or {}
+        for source in contract.sources:
+            source_step = self._find_step(plan, source.step_id)
+            source_result = overrides.get(source.step_id, ctx.results.get(source.step_id))
+            if source_result is None:
+                raise SchemaValidationError(
+                    f"step {step.step_id} missing source result {source.step_id}"
+                )
+            source_refs = [
+                ref for ref in source_result.output_state_refs if ref.kind in source.include_kinds
+            ]
+            missing_groups = [
+                group
+                for group in source.required_kind_groups
+                if not any(ref.kind in group for ref in source_refs)
+            ]
+            if missing_groups:
+                formatted_groups = ", ".join("/".join(group) for group in missing_groups)
+                raise SchemaValidationError(
+                    f"step {step.step_id} missing required input kinds from {source.step_id}: "
+                    f"{formatted_groups}"
+                )
+            for ref in source_refs:
+                producer_agents_by_state_id[ref.state_id] = source_step.owner_agent
+            selected_refs.extend(source_refs)
+        SchemaInterceptor.validate_input_state_refs(
+            step=step,
+            input_state_refs=selected_refs,
+            capability_table=ctx.session.capability_table,
+            state_contract_registry=self.state_contract_registry,
+            statepool=ctx.statepool,
+            producer_agents_by_state_id=producer_agents_by_state_id,
+        )
+        if persist:
+            ctx.set_step_input_refs(step.step_id, selected_refs)
+        return selected_refs
+
+    @staticmethod
+    def _step_input_contract_variant(step: PlanStep, ctx: RunContext) -> str:
+        if step.owner_agent == "executor" and step.action == "EXECUTE_PLAYBOOK":
+            return ctx.transfer_strategy()
+        return "default"
+
     @staticmethod
     def _matches_skip_execute(
         *,
         hit: MemoryHit,
         retrieve_result: StepResult,
         current_query: str,
+        ctx: RunContext,
     ) -> bool:
-        feature_route = str(hit.metadata.get("feature_route", "")).strip()
-        retrieved_doc_ids = sorted(str(doc_id) for doc_id in hit.metadata.get("retrieved_doc_ids", []))
-        fresh_route = str(retrieve_result.payload.get("feature_route", "")).strip()
-        fresh_doc_ids = sorted(
-            str(doc_id) for doc_id in retrieve_result.payload.get("retrieved_doc_ids", [])
+        stored_bundle = _find_state_bundle(
+            ctx=ctx,
+            refs=hit.evidence_state_refs,
+            kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
-        stored_query = str(hit.metadata.get("feature_query", "")).strip()
-        stored_evidence_sha256 = str(
-            hit.metadata.get(
+        fresh_bundle = _find_state_bundle(
+            ctx=ctx,
+            refs=retrieve_result.output_state_refs,
+            kind="REPLAY_ELIGIBILITY_BUNDLE",
+        )
+        feature_route = _bundle_string(
+            stored_bundle,
+            "route",
+            fallback=hit.metadata.get("feature_route", ""),
+        )
+        retrieved_doc_ids = sorted(
+            _bundle_string_list(
+                stored_bundle,
+                "retrieved_doc_ids",
+                fallback=hit.metadata.get("retrieved_doc_ids", []),
+            )
+        )
+        fresh_route = _bundle_string(
+            fresh_bundle,
+            "route",
+            fallback=retrieve_result.payload.get("feature_route", ""),
+        )
+        fresh_doc_ids = sorted(
+            _bundle_string_list(
+                fresh_bundle,
+                "retrieved_doc_ids",
+                fallback=retrieve_result.payload.get("retrieved_doc_ids", []),
+            )
+        )
+        stored_query = _bundle_string(
+            stored_bundle,
+            "query",
+            fallback=hit.metadata.get("feature_query", ""),
+        )
+        stored_evidence_sha256 = _bundle_string(
+            stored_bundle,
+            "feature_fresh_evidence_sha256",
+            fallback=hit.metadata.get(
                 "feature_fresh_evidence_sha256",
                 hit.metadata.get("feature_evidence_sha256", ""),
-            )
-        ).strip()
-        fresh_evidence_sha256 = str(
-            retrieve_result.payload.get(
+            ),
+        )
+        fresh_evidence_sha256 = _bundle_string(
+            fresh_bundle,
+            "feature_fresh_evidence_sha256",
+            fallback=retrieve_result.payload.get(
                 "feature_fresh_evidence_sha256",
                 retrieve_result.payload.get("feature_evidence_sha256", ""),
-            )
-        ).strip()
-        stored_route_confidence = _coerce_float(hit.metadata.get("feature_route_confidence"), default=0.0)
-        fresh_route_confidence = _coerce_float(
-            retrieve_result.payload.get("feature_route_confidence"),
+            ),
+        )
+        stored_route_confidence = _bundle_float(
+            stored_bundle,
+            "route_confidence",
+            fallback=hit.metadata.get("feature_route_confidence"),
             default=0.0,
         )
-        stored_route_provenance = _normalize_route_provenance(
-            hit.metadata.get("feature_route_provenance", [])
+        fresh_route_confidence = _bundle_float(
+            fresh_bundle,
+            "route_confidence",
+            fallback=retrieve_result.payload.get("feature_route_confidence"),
+            default=0.0,
         )
-        fresh_route_provenance = _normalize_route_provenance(
-            retrieve_result.payload.get("feature_route_provenance", [])
+        stored_route_provenance = _bundle_string_list(
+            stored_bundle,
+            "route_provenance",
+            fallback=hit.metadata.get("feature_route_provenance", []),
+        )
+        fresh_route_provenance = _bundle_string_list(
+            fresh_bundle,
+            "route_provenance",
+            fallback=retrieve_result.payload.get("feature_route_provenance", []),
         )
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
         return (
@@ -791,21 +1075,52 @@ class Orchestrator:
         hit: MemoryHit,
         task_theme: str,
         current_query: str,
+        ctx: RunContext,
     ) -> bool:
-        feature_route = str(hit.metadata.get("feature_route", "")).strip()
-        retrieved_doc_ids = sorted(str(doc_id) for doc_id in hit.metadata.get("retrieved_doc_ids", []))
-        stored_query = _normalize_replay_query(str(hit.metadata.get("feature_query", "")))
-        normalized_query = _normalize_replay_query(current_query)
-        route_confidence = _coerce_float(hit.metadata.get("feature_route_confidence"), default=0.0)
-        route_provenance = _normalize_route_provenance(
-            hit.metadata.get("feature_route_provenance", [])
+        replay_bundle = _find_state_bundle(
+            ctx=ctx,
+            refs=hit.evidence_state_refs,
+            kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
-        evidence_sha256 = str(
-            hit.metadata.get(
+        feature_route = _bundle_string(
+            replay_bundle,
+            "route",
+            fallback=hit.metadata.get("feature_route", ""),
+        )
+        retrieved_doc_ids = sorted(
+            _bundle_string_list(
+                replay_bundle,
+                "retrieved_doc_ids",
+                fallback=hit.metadata.get("retrieved_doc_ids", []),
+            )
+        )
+        stored_query = _normalize_replay_query(
+            _bundle_string(
+                replay_bundle,
+                "query",
+                fallback=hit.metadata.get("feature_query", ""),
+            )
+        )
+        normalized_query = _normalize_replay_query(current_query)
+        route_confidence = _bundle_float(
+            replay_bundle,
+            "route_confidence",
+            fallback=hit.metadata.get("feature_route_confidence"),
+            default=0.0,
+        )
+        route_provenance = _bundle_string_list(
+            replay_bundle,
+            "route_provenance",
+            fallback=hit.metadata.get("feature_route_provenance", []),
+        )
+        evidence_sha256 = _bundle_string(
+            replay_bundle,
+            "feature_fresh_evidence_sha256",
+            fallback=hit.metadata.get(
                 "feature_fresh_evidence_sha256",
                 hit.metadata.get("feature_evidence_sha256", ""),
             )
-        ).strip()
+        )
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
         inferred_source_match = (
             bool(normalized_query)
@@ -835,6 +1150,7 @@ class Orchestrator:
     ) -> StepResult:
         retrieve_result = ctx.results.get("retrieve")
         feature_state_id = ""
+        tool_candidate_state_id = ""
         if retrieve_result is not None:
             feature_state_id = next(
                 (
@@ -844,17 +1160,41 @@ class Orchestrator:
                 ),
                 "",
             )
+            tool_candidate_state_id = next(
+                (
+                    ref.state_id
+                    for ref in retrieve_result.output_state_refs
+                    if ref.kind == "TOOL_CANDIDATE_SET"
+                ),
+                "",
+            )
         artifact_ref = self._copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="TOOL_ARTIFACT",
             target_state_id=f"{ctx.task_id}-{execute_step.step_id}-artifact",
         )
-        route = str(hit.metadata.get("feature_route", "")).strip()
-        route_source = str(hit.metadata.get("feature_route_source", "")).strip()
-        route_confidence = _coerce_float(hit.metadata.get("feature_route_confidence"), default=0.0)
-        route_provenance = _normalize_route_provenance(
-            hit.metadata.get("feature_route_provenance", [])
+        replay_bundle = _find_state_bundle(
+            ctx=ctx,
+            refs=hit.evidence_state_refs,
+            kind="REPLAY_ELIGIBILITY_BUNDLE",
+        )
+        route = _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
+        route_source = _bundle_string(
+            replay_bundle,
+            "route_source",
+            fallback=hit.metadata.get("feature_route_source", ""),
+        )
+        route_confidence = _bundle_float(
+            replay_bundle,
+            "route_confidence",
+            fallback=hit.metadata.get("feature_route_confidence"),
+            default=0.0,
+        )
+        route_provenance = _bundle_string_list(
+            replay_bundle,
+            "route_provenance",
+            fallback=hit.metadata.get("feature_route_provenance", []),
         )
         hint_doc_ids = [str(doc_id) for doc_id in hit.metadata.get("feature_hint_doc_ids", [])]
         return StepResult(
@@ -873,6 +1213,7 @@ class Orchestrator:
                 "sandbox_mode": artifact_ref.metadata.get("sandbox_mode", "reused"),
                 "matched_signals": [],
                 "feature_state_id": feature_state_id,
+                "tool_candidate_state_id": tool_candidate_state_id,
                 "reused_memory": True,
                 "reuse_mode": "skip_execute",
             },
@@ -900,6 +1241,24 @@ class Orchestrator:
             source_kind="FEATURE_BUNDLE",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-features",
         )
+        ranked_evidence_ref = self._maybe_copy_memory_ref(
+            ctx=ctx,
+            hit=hit,
+            source_kind="RANKED_EVIDENCE_BUNDLE",
+            target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-ranked-evidence",
+        )
+        tool_candidate_ref = self._maybe_copy_memory_ref(
+            ctx=ctx,
+            hit=hit,
+            source_kind="TOOL_CANDIDATE_SET",
+            target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-tool-candidates",
+        )
+        replay_eligibility_ref = self._maybe_copy_memory_ref(
+            ctx=ctx,
+            hit=hit,
+            source_kind="REPLAY_ELIGIBILITY_BUNDLE",
+            target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-replay-eligibility",
+        )
         embedding_ref = self._copy_memory_ref(
             ctx=ctx,
             hit=hit,
@@ -912,18 +1271,46 @@ class Orchestrator:
             source_kind="TOOL_ARTIFACT",
             target_state_id=f"{ctx.task_id}-{execute_step.step_id}-artifact",
         )
-        route = str(hit.metadata.get("feature_route", "")).strip()
-        route_source = str(hit.metadata.get("feature_route_source", "")).strip()
-        route_confidence = _coerce_float(hit.metadata.get("feature_route_confidence"), default=0.0)
-        route_provenance = _normalize_route_provenance(
-            hit.metadata.get("feature_route_provenance", [])
+        replay_bundle = _find_state_bundle(
+            ctx=ctx,
+            refs=hit.evidence_state_refs,
+            kind="REPLAY_ELIGIBILITY_BUNDLE",
+        )
+        route = _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
+        route_source = _bundle_string(
+            replay_bundle,
+            "route_source",
+            fallback=hit.metadata.get("feature_route_source", ""),
+        )
+        route_confidence = _bundle_float(
+            replay_bundle,
+            "route_confidence",
+            fallback=hit.metadata.get("feature_route_confidence"),
+            default=0.0,
+        )
+        route_provenance = _bundle_string_list(
+            replay_bundle,
+            "route_provenance",
+            fallback=hit.metadata.get("feature_route_provenance", []),
         )
         hint_doc_ids = [str(doc_id) for doc_id in hit.metadata.get("feature_hint_doc_ids", [])]
-        retrieved_doc_ids = list(hit.metadata.get("retrieved_doc_ids", []))
+        retrieved_doc_ids = _bundle_string_list(
+            replay_bundle,
+            "retrieved_doc_ids",
+            fallback=hit.metadata.get("retrieved_doc_ids", []),
+        )
+        retrieve_refs = [evidence_ref, feature_ref]
+        if ranked_evidence_ref is not None:
+            retrieve_refs.append(ranked_evidence_ref)
+        if tool_candidate_ref is not None:
+            retrieve_refs.append(tool_candidate_ref)
+        if replay_eligibility_ref is not None:
+            retrieve_refs.append(replay_eligibility_ref)
+        retrieve_refs.append(embedding_ref)
         retrieve_result = StepResult(
             step_id=retrieve_step.step_id,
             success=True,
-            output_state_refs=[evidence_ref, feature_ref, embedding_ref],
+            output_state_refs=retrieve_refs,
             payload={
                 "query": retrieve_step.params.get("query", ""),
                 "memory_hits": [hit.memory_id],
@@ -945,6 +1332,15 @@ class Orchestrator:
                 "retrieved_doc_ids": retrieved_doc_ids,
                 "corpus_doc_count": len(retrieved_doc_ids),
                 "memory_hint_route": route,
+                "ranked_evidence_state_id": (
+                    "" if ranked_evidence_ref is None else ranked_evidence_ref.state_id
+                ),
+                "tool_candidate_state_id": (
+                    "" if tool_candidate_ref is None else tool_candidate_ref.state_id
+                ),
+                "replay_eligibility_state_id": (
+                    "" if replay_eligibility_ref is None else replay_eligibility_ref.state_id
+                ),
             },
             skipped=True,
             reused_from_memory_id=hit.memory_id,
@@ -965,6 +1361,9 @@ class Orchestrator:
                 "sandbox_mode": artifact_ref.metadata.get("sandbox_mode", "reused"),
                 "matched_signals": [],
                 "feature_state_id": feature_ref.state_id,
+                "tool_candidate_state_id": (
+                    "" if tool_candidate_ref is None else tool_candidate_ref.state_id
+                ),
                 "reused_memory": True,
                 "reuse_mode": "skip_retrieve_execute",
             },
@@ -973,20 +1372,20 @@ class Orchestrator:
         )
         return retrieve_result, execute_result
 
-    @staticmethod
     def _copy_memory_ref(
+        self,
         *,
         ctx: RunContext,
         hit: MemoryHit,
         source_kind: str,
         target_state_id: str,
     ) -> StateRef:
-        source_ref = next(
-            (ref for ref in hit.evidence_state_refs if ref.kind == source_kind),
-            None,
+        source_ref = self._select_replay_source_ref(
+            ctx=ctx,
+            hit=hit,
+            source_kind=source_kind,
+            required=True,
         )
-        if source_ref is None:
-            raise ValueError(f"memory {hit.memory_id} missing required state kind {source_kind}")
         payload = ctx.statepool.get_bytes(source_ref)
         metadata: dict[str, Any] = dict(source_ref.metadata)
         metadata["reused_from_memory_id"] = hit.memory_id
@@ -1000,6 +1399,67 @@ class Orchestrator:
         )
         ctx.register_state(ref)
         return ref
+
+    def _maybe_copy_memory_ref(
+        self,
+        *,
+        ctx: RunContext,
+        hit: MemoryHit,
+        source_kind: str,
+        target_state_id: str,
+    ) -> StateRef | None:
+        source_ref = self._select_replay_source_ref(
+            ctx=ctx,
+            hit=hit,
+            source_kind=source_kind,
+            required=False,
+        )
+        if source_ref is None:
+            return None
+        payload = ctx.statepool.get_bytes(source_ref)
+        metadata: dict[str, Any] = dict(source_ref.metadata)
+        metadata["reused_from_memory_id"] = hit.memory_id
+        metadata["reused_from_source_task_id"] = hit.source_task_id or ""
+        ref = ctx.statepool.put_bytes(
+            state_id=target_state_id,
+            kind=source_ref.kind,
+            payload=payload,
+            metadata=metadata,
+            storage=source_ref.storage,
+        )
+        ctx.register_state(ref)
+        return ref
+
+    def _select_replay_source_ref(
+        self,
+        *,
+        ctx: RunContext,
+        hit: MemoryHit,
+        source_kind: str,
+        required: bool,
+    ) -> StateRef | None:
+        candidates = [ref for ref in hit.evidence_state_refs if ref.kind == source_kind]
+        if not candidates:
+            if required:
+                raise ValueError(
+                    f"memory {hit.memory_id} missing required state kind {source_kind}"
+                )
+            return None
+        for ref in candidates:
+            try:
+                self.state_contract_registry.validate_state_ref(
+                    ref,
+                    require_replay_compatible=True,
+                    statepool=ctx.statepool,
+                )
+                return ref
+            except SchemaValidationError:
+                continue
+        if required:
+            raise ValueError(
+                f"memory {hit.memory_id} missing replay-compatible state kind {source_kind}"
+            )
+        return None
 
 def _normalize_replay_query(text: str) -> str:
     return " ".join(text.lower().split())
@@ -1061,3 +1521,56 @@ def _coerce_float(value: object, *, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _find_state_bundle(
+    *,
+    ctx: RunContext,
+    refs: list[StateRef],
+    kind: str,
+) -> dict[str, Any] | None:
+    ref = next((item for item in refs if item.kind == kind), None)
+    if ref is None:
+        return None
+    try:
+        payload = ctx.statepool.get_bytes(ref)
+        parsed = msgpack.unpackb(payload, raw=False, strict_map_key=False)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return dict(parsed)
+
+
+def _bundle_string(
+    bundle: dict[str, Any] | None,
+    key: str,
+    *,
+    fallback: object,
+) -> str:
+    if bundle is not None and key in bundle:
+        return str(bundle.get(key, "")).strip()
+    return str(fallback or "").strip()
+
+
+def _bundle_string_list(
+    bundle: dict[str, Any] | None,
+    key: str,
+    *,
+    fallback: object,
+) -> list[str]:
+    if bundle is not None and key in bundle:
+        return _normalize_string_list(bundle.get(key, []))
+    return _normalize_string_list(fallback)
+
+
+def _bundle_float(
+    bundle: dict[str, Any] | None,
+    key: str,
+    *,
+    fallback: object,
+    default: float,
+) -> float:
+    if bundle is not None and key in bundle:
+        return _coerce_float(bundle.get(key), default=default)
+    return _coerce_float(fallback, default=default)

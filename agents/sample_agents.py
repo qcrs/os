@@ -18,7 +18,16 @@ from protocol.messages import (
     RemoteStepResponse,
     StepResult,
 )
-from runtime.executor_runtime import build_feature_bundle, execute_playbook_step
+from runtime.executor_runtime import (
+    _build_natural_handoff_text,
+    _build_text_packet_minimal,
+    build_executor_decision_packet,
+    build_feature_bundle,
+    build_ranked_evidence_bundle,
+    build_replay_eligibility_bundle,
+    build_tool_candidate_set,
+    execute_playbook_step,
+)
 from runtime.llm import (
     ChatMessage,
     DeterministicLLMClient,
@@ -144,9 +153,16 @@ class PlannerAgent(BaseAgent):
     llm_client: LLMClient
 
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
-        raise NotImplementedError("planner does not execute plan steps directly")
+        raise NotImplementedError(
+            "planner steps are not executed on the host mainline; "
+            "open-plan tasks use PlannerAgent.plan_task() only as a pre-plan compilation pass"
+        )
 
     async def plan_task(self, task: SampleTask, ctx: object) -> Plan:
+        from tasks.sample_tasks import build_plan, normalize_plan_source
+
+        if normalize_plan_source(getattr(task, "plan_source", "yaml")) == "yaml":
+            return build_plan(task)
         planner_input = {
             "task_id": task.task_id,
             "task_group": task.task_group,
@@ -282,6 +298,31 @@ class RetrieverAgent(BaseAgent):
             feature_bundle["memory_prior_id"] = memory_prior["memory_id"]
             feature_bundle["memory_prior_source_task_id"] = memory_prior["source_task_id"]
             feature_bundle["memory_prior_summary"] = memory_prior["summary"]
+        ranked_docs = [
+            {
+                "rank": index + 1,
+                "doc_id": doc.doc_id,
+                "title": doc.title,
+                "route_hint": doc.route_hint,
+                "tool_name": doc.tool_name,
+                "tags": list(doc.tags),
+            }
+            for index, doc in enumerate(corpus_docs)
+        ]
+        ranked_evidence_bundle = build_ranked_evidence_bundle(
+            query=str(step.params["query"]),
+            feature_bundle=feature_bundle,
+            ranked_docs=ranked_docs,
+            retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
+            evidence_text=fresh_evidence_text,
+        )
+        tool_candidate_set = build_tool_candidate_set(feature_bundle)
+        replay_eligibility_bundle = build_replay_eligibility_bundle(
+            query=str(step.params["query"]),
+            feature_bundle=feature_bundle,
+            retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
+            fresh_evidence_sha256=feature_bundle["fresh_evidence_sha256"],
+        )
         if accepted_hit is not None:
             prior_applied = bool(feature_bundle.get("memory_prior_applied"))
             ctx.metrics.memory_assist_prior_applied_task_count += int(
@@ -297,6 +338,9 @@ class RetrieverAgent(BaseAgent):
                 bool(feature_bundle.get("memory_prior_rescue"))
             )
         feature_ref = None
+        ranked_evidence_ref = None
+        tool_candidate_ref = None
+        replay_eligibility_ref = None
         if transfer_strategy == "state_ref":
             feature_ref = ctx.put_feature_state(
                 state_id=f"{ctx.task_id}-{step.step_id}-features",
@@ -319,7 +363,48 @@ class RetrieverAgent(BaseAgent):
                     "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
                 },
             )
+            ranked_evidence_ref = ctx.put_ranked_evidence_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-ranked-evidence",
+                ranked_evidence_bundle=ranked_evidence_bundle,
+                metadata={
+                    "query": step.params["query"],
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                },
+            )
+            tool_candidate_ref = ctx.put_tool_candidate_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-tool-candidates",
+                tool_candidate_set=tool_candidate_set,
+                metadata={
+                    "query": step.params["query"],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_route_confidence": feature_bundle["route_confidence"],
+                },
+            )
+            replay_eligibility_ref = ctx.put_replay_eligibility_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-replay-eligibility",
+                replay_eligibility_bundle=replay_eligibility_bundle,
+                metadata={
+                    "query": step.params["query"],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_route_confidence": feature_bundle["route_confidence"],
+                    "feature_route_provenance": feature_bundle["route_provenance"],
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                    "feature_evidence_sha256": feature_bundle["evidence_sha256"],
+                    "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                },
+            )
         transfer_brief_ref = None
+        decision_packet_ref = None
+        decision_packet = build_executor_decision_packet(
+            query=str(step.params["query"]),
+            feature_bundle=feature_bundle,
+            retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
+        )
         if transfer_strategy == "text_brief":
             transfer_brief_text = _build_transfer_brief(
                 query=str(step.params["query"]),
@@ -351,6 +436,47 @@ class RetrieverAgent(BaseAgent):
                     "feature_route_source": feature_bundle["route_source"],
                 },
             )
+        elif transfer_strategy == "text_packet_minimal":
+            transfer_brief_ref = ctx.put_text_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-text-packet",
+                kind="TOOL_ARTIFACT",
+                text=_build_text_packet_minimal(decision_packet),
+                metadata={
+                    "query": step.params["query"],
+                    "transfer_strategy": transfer_strategy,
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                },
+            )
+        elif transfer_strategy == "natural_handoff_text":
+            transfer_brief_ref = ctx.put_text_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-natural-handoff",
+                kind="TOOL_ARTIFACT",
+                text=_build_natural_handoff_text(
+                    query=str(step.params["query"]),
+                    evidence_text=evidence_text,
+                ),
+                metadata={
+                    "query": step.params["query"],
+                    "transfer_strategy": transfer_strategy,
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                },
+            )
+        elif transfer_strategy == "state_packet_minimal":
+            decision_packet_ref = ctx.put_executor_decision_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-decision-packet",
+                decision_packet=decision_packet,
+                metadata={
+                    "query": step.params["query"],
+                    "transfer_strategy": transfer_strategy,
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_route_confidence": feature_bundle["route_confidence"],
+                    "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                },
+            )
         embedding_ref = None
         if transfer_strategy == "state_ref":
             embedding_ref = ctx.put_embedding_state(
@@ -364,8 +490,16 @@ class RetrieverAgent(BaseAgent):
         output_state_refs = [evidence_ref]
         if feature_ref is not None:
             output_state_refs.append(feature_ref)
+        if ranked_evidence_ref is not None:
+            output_state_refs.append(ranked_evidence_ref)
+        if tool_candidate_ref is not None:
+            output_state_refs.append(tool_candidate_ref)
+        if replay_eligibility_ref is not None:
+            output_state_refs.append(replay_eligibility_ref)
         if transfer_brief_ref is not None:
             output_state_refs.append(transfer_brief_ref)
+        if decision_packet_ref is not None:
+            output_state_refs.append(decision_packet_ref)
         if embedding_ref is not None:
             output_state_refs.append(embedding_ref)
         return StepResult(
@@ -396,6 +530,18 @@ class RetrieverAgent(BaseAgent):
                 "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
                 "corpus_doc_count": len(corpus_docs),
                 "memory_hint_route": memory_hint_route,
+                "ranked_evidence_state_id": (
+                    "" if ranked_evidence_ref is None else ranked_evidence_ref.state_id
+                ),
+                "tool_candidate_state_id": (
+                    "" if tool_candidate_ref is None else tool_candidate_ref.state_id
+                ),
+                "decision_packet_state_id": (
+                    "" if decision_packet_ref is None else decision_packet_ref.state_id
+                ),
+                "replay_eligibility_state_id": (
+                    "" if replay_eligibility_ref is None else replay_eligibility_ref.state_id
+                ),
             },
         )
 
@@ -406,12 +552,8 @@ class ExecutorAgent(BaseAgent):
     socket_path: str | None = None
 
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
-        retrieve_result = ctx.results[step.depends_on[0]]
         transfer_strategy = ctx.transfer_strategy()
-        accepted_kinds = {"DENSE_EVIDENCE", "FEATURE_BUNDLE"}
-        if transfer_strategy == "text_brief":
-            accepted_kinds = {"DENSE_EVIDENCE", "TOOL_ARTIFACT"}
-        input_refs = [ref for ref in retrieve_result.output_state_refs if ref.kind in accepted_kinds]
+        input_refs = ctx.step_input_refs(step.step_id)
         ctx.record_transfer_inputs(input_refs)
         if self._should_use_uds(step):
             return self._execute_via_uds(step, ctx, input_refs)
@@ -461,18 +603,29 @@ class SummarizerAgent(BaseAgent):
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
         retrieve_result = ctx.results["retrieve"]
         execute_result = ctx.results["execute"]
-        evidence_ref = next(
-            ref for ref in retrieve_result.output_state_refs if ref.kind == "DENSE_EVIDENCE"
-        )
+        input_refs = ctx.step_input_refs(step.step_id)
+        evidence_ref = next(ref for ref in input_refs if ref.kind == "DENSE_EVIDENCE")
         feature_ref = next(
-            (ref for ref in retrieve_result.output_state_refs if ref.kind == "FEATURE_BUNDLE"),
+            (ref for ref in input_refs if ref.kind == "FEATURE_BUNDLE"),
+            None,
+        )
+        ranked_evidence_ref = next(
+            (ref for ref in input_refs if ref.kind == "RANKED_EVIDENCE_BUNDLE"),
+            None,
+        )
+        tool_candidate_ref = next(
+            (ref for ref in input_refs if ref.kind == "TOOL_CANDIDATE_SET"),
+            None,
+        )
+        replay_eligibility_ref = next(
+            (ref for ref in input_refs if ref.kind == "REPLAY_ELIGIBILITY_BUNDLE"),
             None,
         )
         embedding_ref = next(
-            (ref for ref in retrieve_result.output_state_refs if ref.kind == "EMBEDDING"),
+            (ref for ref in input_refs if ref.kind == "EMBEDDING"),
             None,
         )
-        artifact_ref = execute_result.output_state_refs[0]
+        artifact_ref = next(ref for ref in input_refs if ref.kind == "TOOL_ARTIFACT")
         evidence_text = ctx.get_text_state(evidence_ref)
         feature_bundle = _load_feature_bundle_from_ref(ctx, feature_ref)
         actions_text = ctx.get_text_state(artifact_ref)
@@ -542,6 +695,9 @@ class SummarizerAgent(BaseAgent):
         assist_refs = [
             evidence_ref,
             *([feature_ref] if feature_ref is not None else []),
+            *([ranked_evidence_ref] if ranked_evidence_ref is not None else []),
+            *([tool_candidate_ref] if tool_candidate_ref is not None else []),
+            *([replay_eligibility_ref] if replay_eligibility_ref is not None else []),
             *([embedding_ref] if embedding_ref is not None else []),
             summary_ref,
         ]
@@ -656,7 +812,16 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                 "retriever",
                 action="RETRIEVE_EVIDENCE",
                 accepted_state_kinds=[],
-                produced_state_kinds=["DENSE_EVIDENCE", "FEATURE_BUNDLE", "TOOL_ARTIFACT", "EMBEDDING"],
+                produced_state_kinds=[
+                    "DENSE_EVIDENCE",
+                    "FEATURE_BUNDLE",
+                    "RANKED_EVIDENCE_BUNDLE",
+                    "TOOL_CANDIDATE_SET",
+                    "REPLAY_ELIGIBILITY_BUNDLE",
+                    "EXECUTOR_DECISION_PACKET",
+                    "TOOL_ARTIFACT",
+                    "EMBEDDING",
+                ],
             ),
         ),
         "executor": ExecutorAgent(
@@ -664,7 +829,13 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
             capability=_build_capability(
                 "executor",
                 action="EXECUTE_PLAYBOOK",
-                accepted_state_kinds=["DENSE_EVIDENCE", "FEATURE_BUNDLE"],
+                accepted_state_kinds=[
+                    "DENSE_EVIDENCE",
+                    "FEATURE_BUNDLE",
+                    "TOOL_CANDIDATE_SET",
+                    "EXECUTOR_DECISION_PACKET",
+                    "TOOL_ARTIFACT",
+                ],
                 produced_state_kinds=["TOOL_ARTIFACT"],
             ),
             transport=executor_transport,
@@ -675,7 +846,15 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
             capability=_build_capability(
                 "summarizer",
                 action="SUMMARIZE_AND_COMMIT",
-                accepted_state_kinds=["DENSE_EVIDENCE", "TOOL_ARTIFACT"],
+                accepted_state_kinds=[
+                    "DENSE_EVIDENCE",
+                    "FEATURE_BUNDLE",
+                    "RANKED_EVIDENCE_BUNDLE",
+                    "TOOL_CANDIDATE_SET",
+                    "REPLAY_ELIGIBILITY_BUNDLE",
+                    "EMBEDDING",
+                    "TOOL_ARTIFACT",
+                ],
                 produced_state_kinds=["TOOL_ARTIFACT"],
             ),
             llm_client=active_llm,

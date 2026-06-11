@@ -25,6 +25,7 @@ Your role in this window is:
 - `docs/constraints/current_host_and_migration.md`
 - `docs/constraints/current_feature_scope.md`
 - `docs/planning/implementation_plan.md`
+- `docs/planning/host_mainline_authenticity_execution_plan_20260610.md`
 - `docs/reference/题目.md`
 - `docs/progress/contest_requirement_host_audit_20260607.md`
 - `runs/comprehensive_eval_20260607_131113/SUMMARY.md`
@@ -159,6 +160,7 @@ python -m eval.runner --repeat 1 --llm-mode deterministic --out /tmp/statebus_ev
 
 特别注意：
 
+- 如果这次窗口要执行多轮改造，`docs/planning/host_mainline_authenticity_execution_plan_20260610.md` 是当前操作性主文档；开始每一轮前，都要按其中的“每轮执行合同”先报告 phase、已读材料和明确不做项。
 - 当前最重要的不是继续泛泛谈架构，而是继续核对赛题与正式 benchmark 的对应关系。
 - 当前最弱的一条不是通信，而是“共享记忆是否真的减少重复计算”。
 - 如果你给后续建议，优先建议“补 memory gain 证据 + 降低 retriever/executor 的赛题特化”，而不是先去纠缠 Docker。

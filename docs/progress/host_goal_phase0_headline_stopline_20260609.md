@@ -18,11 +18,13 @@ replay / benchmark split 串行推进的入口。
    - 当前正式包应读：
      - `runs/host_goal_eval_20260609_085938_text_brief_fidelity_api_repeat10_serial/`
 2. `state_transfer`
-   - 已成立
-   - 但范围必须写成：
-     - `text brief handoff to executor`
+   - 真实性成立
+   - 当前只能正式写成：
+     - `protocol text_brief handoff to executor`
        对
-     - `state_ref handoff`
+     - `protocol state_ref handoff`
+   - 当前不能再直接写成：
+     - `state_ref` 已证明更低开销
 3. `memory`
    - 只成立到：
      - `replay_enabled / step-skipping reuse`
