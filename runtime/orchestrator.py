@@ -10,6 +10,7 @@ import msgpack
 
 from eval.metrics import TaskMetrics
 from memory.store import EmbeddingProvider, MemoryStore
+from protocol.channels import attach_channel_metadata
 from runtime.contracts import (
     CapabilityTable,
     SchemaInterceptor,
@@ -207,7 +208,7 @@ class RunContext:
             state_id,
             kind,
             text,
-            metadata=metadata,
+            metadata=attach_channel_metadata(metadata, state_kind=kind),
         )
         self.register_state(ref)
         return ref
@@ -224,7 +225,7 @@ class RunContext:
             state_id,
             kind,
             payload,
-            metadata=metadata,
+            metadata=attach_channel_metadata(metadata, state_kind=kind),
         )
         self.register_state(ref)
         return ref
@@ -247,6 +248,7 @@ class RunContext:
                 "encoder_id": self.memory_store.embedder.encoder_id,
                 "vector_dim": int(vector.shape[0]),
                 "dtype": "float32",
+                **attach_channel_metadata(None, state_kind="EMBEDDING"),
                 **dict(metadata or {}),
             },
         )
@@ -362,6 +364,7 @@ class RunContext:
             metadata={
                 "encoding": "msgpack",
                 "schema": schema,
+                **attach_channel_metadata(None, state_kind=kind),
                 **dict(metadata or {}),
             },
         )

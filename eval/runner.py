@@ -31,6 +31,7 @@ from runtime.executor_runtime import (
     default_tool_registry,
 )
 from runtime.llm import LLMClient, LLMConfig, build_llm_client
+from runtime.langgraph_adapter import StateBusGraphRunner, langgraph_available
 from runtime.orchestrator import Orchestrator, RunContext, RunSession
 from statepool.store import StatePoolConfig
 from tasks.sample_tasks import DEFAULT_TASK_SET, SampleTask, load_task_set_bundle
@@ -299,6 +300,13 @@ def _task_memory_policy(task_run: dict[str, object]) -> str:
     if contract == "assist_allowed":
         return "assist_only"
     return "replay_enabled"
+
+
+def _task_channel_form(task_run: dict[str, object]) -> str:
+    strategy = str(task_run.get("transfer_strategy", "state_ref")).strip()
+    if strategy in {"state_ref", "state_packet_minimal", "mode_split_text_brief_vs_state_ref"}:
+        return "typed_channel"
+    return "text_channel"
 
 
 def _control_metric_key(mode: str) -> str:
@@ -570,6 +578,7 @@ def _matches_reuse_expectation(*, expected_mode: str, actual_mode: str) -> bool:
 async def _run_mode_once(
     *,
     mode: str,
+    engine: str,
     run_index: int,
     root: Path,
     tasks: list[SampleTask],
@@ -587,6 +596,13 @@ async def _run_mode_once(
             executor_transport=executor_transport,
             executor_socket_path=executor_socket_path,
         )
+    )
+    graph_runner = StateBusGraphRunner(
+        llm_client=llm_client,
+        embedder=embedder,
+        statepool_config=statepool_config,
+        executor_transport=executor_transport,
+        executor_socket_path=executor_socket_path,
     )
     ordered_tasks = [
         task for task in sorted(tasks, key=_task_sort_key) if task.supports_mode(mode)
@@ -614,81 +630,202 @@ async def _run_mode_once(
         )
         task_payload: dict[str, object]
         try:
-            await orchestrator.run_task(task, ctx)
-            actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
-            task_payload = {
-                "task_id": task.task_id,
-                "task_group": task.task_group,
-                "task_order": task.task_order,
-                "task_theme": task.task_theme,
-                "goal": task.goal,
-                "memory_db_path": str(group_db_paths[task.task_group]),
-                "corpus_path": task.corpus_path,
-                "artifact_expectations": dict(task.artifact_expectations),
-                "expected_reuse_mode": task.expected_reuse_mode,
-                "benchmark_lane": task.benchmark_lane,
-                "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
-                "reuse_expectation": {
-                    "mode": task.expected_reuse_mode,
+            if engine == "langgraph":
+                graph_result = await graph_runner.run_task(
+                    task,
+                    mode=mode,
+                    state_root=root / task.task_group / task.task_id,
+                    memory_db_path=group_db_paths[task.task_group],
+                    session=session,
+                )
+                actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
+                task_payload = {
+                    "task_id": task.task_id,
+                    "task_group": task.task_group,
                     "task_order": task.task_order,
-                    "expected_reuse": task.expected_reuse,
-                },
-                "runtime_reuse_contract": task.runtime_reuse_contract,
-                "runtime_gates": dict(task.runtime_gates),
-                "status": "completed",
-                "error": None,
-                "metrics": ctx.metrics.to_dict(),
-                "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
-                "reuse": {
-                    "applied": ctx.reuse_hit is not None,
-                    "mode": actual_reuse_mode,
-                    "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
-                    "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
-                    "skipped_step_ids": list(ctx.pruned_step_ids),
-                    "rejected_memory_id": None
-                    if ctx.rejected_memory_hit is None
-                    else ctx.rejected_memory_hit.memory_id,
-                },
-                "reuse_validation": {
-                    "expected_reuse_mode": task.expected_reuse_mode,
-                    "actual_reuse_mode": actual_reuse_mode,
-                    "matched_expectation": _matches_reuse_expectation(
-                        expected_mode=task.expected_reuse_mode,
-                        actual_mode=actual_reuse_mode,
+                    "task_theme": task.task_theme,
+                    "goal": task.goal,
+                    "engine": engine,
+                    "channel_form": _task_channel_form(
+                        {"transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode)}
                     ),
-                },
-                "state_refs": {
-                    state_id: {
-                        "kind": ref.kind,
-                        "storage": ref.storage,
-                        "handle": ref.handle,
-                        "length": ref.length,
-                        "metadata": dict(ref.metadata),
-                    }
-                    for state_id, ref in ctx.state_refs.items()
-                },
-                "results": {
-                    step_id: {
-                        "success": result.success,
-                        "skipped": result.skipped,
-                        "reused_from_memory_id": result.reused_from_memory_id,
-                        "has_memory_commit": (
-                            result.memory_commit is not None or bool(result.memory_commits)
+                    "memory_db_path": str(group_db_paths[task.task_group]),
+                    "corpus_path": task.corpus_path,
+                    "artifact_expectations": dict(task.artifact_expectations),
+                    "expected_reuse_mode": task.expected_reuse_mode,
+                    "benchmark_lane": task.benchmark_lane,
+                    "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
+                    "reuse_expectation": {
+                        "mode": task.expected_reuse_mode,
+                        "task_order": task.task_order,
+                        "expected_reuse": task.expected_reuse,
+                    },
+                    "runtime_reuse_contract": task.runtime_reuse_contract,
+                    "runtime_gates": dict(task.runtime_gates),
+                    "status": "completed",
+                    "error": None,
+                    "metrics": graph_result.metrics,
+                    "memory_hits": graph_result.memory_hits,
+                    "reuse": {
+                        "applied": ctx.reuse_hit is not None,
+                        "mode": actual_reuse_mode,
+                        "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
+                        "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
+                        "skipped_step_ids": list(ctx.pruned_step_ids),
+                        "rejected_memory_id": None
+                        if ctx.rejected_memory_hit is None
+                        else ctx.rejected_memory_hit.memory_id,
+                        "replay_class": None if ctx.reuse_hit is None else ctx.reuse_hit.replay_class,
+                        "replay_candidate_count": ctx.metrics.replay_probe_hits,
+                        "replay_reject_reason": "" if ctx.reuse_hit is not None else (
+                            "no_candidate" if ctx.metrics.replay_probe_count > 0 else "not_probed"
                         ),
-                        "memory_commit_count": (
-                            (1 if result.memory_commit is not None else 0)
-                            + len(result.memory_commits)
+                        "replay_restored_state_ref_count": (
+                            len(ctx.reuse_hit.step_output_state_refs) if ctx.reuse_hit is not None else 0
                         ),
-                        "payload": _sanitize_payload(result.payload),
-                        "feature_observability": _feature_bundle_observability(ctx, result),
-                    }
-                    for step_id, result in ctx.results.items()
-                },
-            }
+                        "replay_restored_channel_names": sorted(
+                            {
+                                str(ref.metadata.get("channel_name", "")).strip()
+                                for ref in (ctx.reuse_hit.step_output_state_refs if ctx.reuse_hit is not None else [])
+                                if str(ref.metadata.get("channel_name", "")).strip()
+                            }
+                        ),
+                        "physical_blob_reused": bool(
+                            ctx.reuse_hit is not None
+                            and any(ref.is_cas for ref in ctx.reuse_hit.step_output_state_refs)
+                        ),
+                    },
+                    "reuse_validation": {
+                        "expected_reuse_mode": task.expected_reuse_mode,
+                        "actual_reuse_mode": actual_reuse_mode,
+                        "matched_expectation": _matches_reuse_expectation(
+                            expected_mode=task.expected_reuse_mode,
+                            actual_mode=actual_reuse_mode,
+                        ),
+                    },
+                    "state_refs": graph_result.state_refs,
+                    "state_channels": graph_result.state_channels,
+                    "cas_summary": ctx.statepool.cas_summary(),
+                    "graph_state": graph_result.graph_state,
+                    "results": {
+                        step_id: {
+                            "success": result.success,
+                            "skipped": result.skipped,
+                            "reused_from_memory_id": result.reused_from_memory_id,
+                            "has_memory_commit": (
+                                result.memory_commit is not None or bool(result.memory_commits)
+                            ),
+                            "memory_commit_count": (
+                                (1 if result.memory_commit is not None else 0)
+                                + len(result.memory_commits)
+                            ),
+                            "payload": _sanitize_payload(result.payload),
+                            "feature_observability": _feature_bundle_observability(ctx, result),
+                        }
+                        for step_id, result in graph_result.results.items()
+                    },
+                }
+            else:
+                await orchestrator.run_task(task, ctx)
+                actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
+                task_payload = {
+                    "task_id": task.task_id,
+                    "task_group": task.task_group,
+                    "task_order": task.task_order,
+                    "task_theme": task.task_theme,
+                    "goal": task.goal,
+                    "engine": engine,
+                    "channel_form": _task_channel_form(
+                        {"transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode)}
+                    ),
+                    "memory_db_path": str(group_db_paths[task.task_group]),
+                    "corpus_path": task.corpus_path,
+                    "artifact_expectations": dict(task.artifact_expectations),
+                    "expected_reuse_mode": task.expected_reuse_mode,
+                    "benchmark_lane": task.benchmark_lane,
+                    "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
+                    "reuse_expectation": {
+                        "mode": task.expected_reuse_mode,
+                        "task_order": task.task_order,
+                        "expected_reuse": task.expected_reuse,
+                    },
+                    "runtime_reuse_contract": task.runtime_reuse_contract,
+                    "runtime_gates": dict(task.runtime_gates),
+                    "status": "completed",
+                    "error": None,
+                    "metrics": ctx.metrics.to_dict(),
+                    "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
+                    "reuse": {
+                        "applied": ctx.reuse_hit is not None,
+                        "mode": actual_reuse_mode,
+                        "memory_id": None if ctx.reuse_hit is None else ctx.reuse_hit.memory_id,
+                        "reuse_source": None if ctx.reuse_hit is None else ctx.reuse_hit.reuse_source,
+                        "skipped_step_ids": list(ctx.pruned_step_ids),
+                        "rejected_memory_id": None
+                        if ctx.rejected_memory_hit is None
+                        else ctx.rejected_memory_hit.memory_id,
+                        "replay_class": None if ctx.reuse_hit is None else ctx.reuse_hit.replay_class,
+                        "replay_candidate_count": ctx.metrics.replay_probe_hits,
+                        "replay_reject_reason": "" if ctx.reuse_hit is not None else (
+                            "no_candidate" if ctx.metrics.replay_probe_count > 0 else "not_probed"
+                        ),
+                        "replay_restored_state_ref_count": (
+                            len(ctx.reuse_hit.step_output_state_refs) if ctx.reuse_hit is not None else 0
+                        ),
+                        "replay_restored_channel_names": sorted(
+                            {
+                                str(ref.metadata.get("channel_name", "")).strip()
+                                for ref in (ctx.reuse_hit.step_output_state_refs if ctx.reuse_hit is not None else [])
+                                if str(ref.metadata.get("channel_name", "")).strip()
+                            }
+                        ),
+                        "physical_blob_reused": bool(
+                            ctx.reuse_hit is not None
+                            and any(ref.is_cas for ref in ctx.reuse_hit.step_output_state_refs)
+                        ),
+                    },
+                    "reuse_validation": {
+                        "expected_reuse_mode": task.expected_reuse_mode,
+                        "actual_reuse_mode": actual_reuse_mode,
+                        "matched_expectation": _matches_reuse_expectation(
+                            expected_mode=task.expected_reuse_mode,
+                            actual_mode=actual_reuse_mode,
+                        ),
+                    },
+                    "state_refs": {
+                        state_id: {
+                            "kind": ref.kind,
+                            "storage": ref.storage,
+                            "handle": ref.handle,
+                            "length": ref.length,
+                            "metadata": dict(ref.metadata),
+                        }
+                        for state_id, ref in ctx.state_refs.items()
+                    },
+                    "cas_summary": ctx.statepool.cas_summary(),
+                    "results": {
+                        step_id: {
+                            "success": result.success,
+                            "skipped": result.skipped,
+                            "reused_from_memory_id": result.reused_from_memory_id,
+                            "has_memory_commit": (
+                                result.memory_commit is not None or bool(result.memory_commits)
+                            ),
+                            "memory_commit_count": (
+                                (1 if result.memory_commit is not None else 0)
+                                + len(result.memory_commits)
+                            ),
+                            "payload": _sanitize_payload(result.payload),
+                            "feature_observability": _feature_bundle_observability(ctx, result),
+                        }
+                        for step_id, result in ctx.results.items()
+                    },
+                }
             if progress_callback is not None:
                 progress_callback(
                     {
                         "mode": mode,
+                        "engine": engine,
                         "run_index": run_index,
                         "task_index": task_index,
                         "task_count": len(ordered_tasks),
@@ -708,6 +845,10 @@ async def _run_mode_once(
                 "task_order": task.task_order,
                 "task_theme": task.task_theme,
                 "goal": task.goal,
+                "engine": engine,
+                "channel_form": _task_channel_form(
+                    {"transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode)}
+                ),
                 "memory_db_path": str(group_db_paths[task.task_group]),
                 "corpus_path": task.corpus_path,
                 "artifact_expectations": dict(task.artifact_expectations),
@@ -734,6 +875,12 @@ async def _run_mode_once(
                     "rejected_memory_id": None
                     if ctx.rejected_memory_hit is None
                     else ctx.rejected_memory_hit.memory_id,
+                    "replay_class": None if ctx.reuse_hit is None else ctx.reuse_hit.replay_class,
+                    "replay_candidate_count": ctx.metrics.replay_probe_hits,
+                    "replay_reject_reason": "exception",
+                    "replay_restored_state_ref_count": 0,
+                    "replay_restored_channel_names": [],
+                    "physical_blob_reused": False,
                 },
                 "reuse_validation": {
                     "expected_reuse_mode": task.expected_reuse_mode,
@@ -750,12 +897,14 @@ async def _run_mode_once(
                     }
                     for state_id, ref in ctx.state_refs.items()
                 },
+                "cas_summary": ctx.statepool.cas_summary(),
                 "results": {},
             }
             if progress_callback is not None:
                 progress_callback(
                     {
                         "mode": mode,
+                        "engine": engine,
                         "run_index": run_index,
                         "task_index": task_index,
                         "task_count": len(ordered_tasks),
@@ -791,6 +940,7 @@ async def _run_mode_once(
     session.cleanup()
     return {
         "mode": mode,
+        "engine": engine,
         "run_index": run_index,
         "status": run_status,
         "error": run_error,
@@ -1470,6 +1620,7 @@ def _build_result(
     statepool_config: StatePoolConfig,
     executor_transport: str,
     executor_socket_path: str | None,
+    engine: str,
     mode_runs: dict[str, list[dict[str, object]]],
 ) -> dict[str, object]:
     summary = {mode: _aggregate_mode_runs(runs) for mode, runs in mode_runs.items()}
@@ -1495,6 +1646,10 @@ def _build_result(
             "natural_handoff_text",
             "mode_split_text_brief_vs_state_ref",
         )
+    }
+    channel_form_counts = {
+        "text_channel": sum(1 for task in tasks if _task_channel_form({"transfer_strategy": task.transfer_strategy}) == "text_channel"),
+        "typed_channel": sum(1 for task in tasks if _task_channel_form({"transfer_strategy": task.transfer_strategy}) == "typed_channel"),
     }
     memory_policy_counts = {
         "memory_off": sum(1 for task in tasks if task.runtime_reuse_contract == "reuse_disabled"),
@@ -1524,6 +1679,7 @@ def _build_result(
             "expected_reuse_mode_counts": expected_reuse_mode_counts,
             "benchmark_lane_counts": benchmark_lane_counts,
             "transfer_strategy_counts": transfer_strategy_counts,
+            "channel_form_counts": channel_form_counts,
             "memory_policy_counts": memory_policy_counts,
             "artifact_expectation_counts": artifact_expectation_counts,
             "artifact_expectation_task_count": sum(
@@ -1542,6 +1698,8 @@ def _build_result(
             },
             "task_groups": sorted({task.task_group for task in tasks}),
             "modes": list(modes),
+            "engine": engine,
+            "langgraph_available": langgraph_available(),
             "mode_schedule": "paired_round_robin_alternating",
             "text_baseline": "natural_language_briefs_and_narrative_frames",
             "protocol_baseline": "protobuf_control_frames",
@@ -1581,6 +1739,7 @@ async def run_benchmark(
     statepool_config: StatePoolConfig | None = None,
     executor_transport: str = "local",
     executor_socket_path: str | None = None,
+    engine: str = "orchestrator",
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     out_path = Path(out_dir)
@@ -1599,69 +1758,82 @@ async def run_benchmark(
     active_llm = llm_client or build_llm_client(llm_config)
     llm_description = active_llm.describe()
     active_statepool_config = statepool_config or StatePoolConfig.from_env()
-    mode_runs: dict[str, list[dict[str, object]]] = {mode: [] for mode in modes}
-    with _executor_transport_context(
-        out_dir=out_path,
-        transport=executor_transport,
-        socket_path=executor_socket_path,
-        statepool_config=active_statepool_config,
-    ) as active_socket_path:
-        for run_index in range(repeat):
-            for mode in _mode_order_for_run(modes, run_index):
-                run_root = out_path / "artifacts" / mode / f"run_{run_index:02d}"
-                if run_root.exists():
-                    shutil.rmtree(run_root)
-                run_root.mkdir(parents=True, exist_ok=True)
-                mode_runs[mode].append(
-                    await _run_mode_once(
-                        mode=mode,
-                        run_index=run_index,
-                        root=run_root,
-                        tasks=tasks,
-                        embedder=active_embedder,
-                        llm_client=active_llm,
-                        statepool_config=active_statepool_config,
-                        executor_transport=executor_transport,
-                        executor_socket_path=active_socket_path,
-                        progress_callback=progress_callback,
-                    )
-                )
-                partial = _build_result(
-                    task_set_path=task_set_path,
-                    task_set_metadata=task_set_metadata,
-                    tasks=tasks,
-                    modes=modes,
-                    repeat=repeat,
-                    seed=seed,
-                    active_embedder=active_embedder,
-                    active_llm=active_llm,
-                    llm_description=llm_description,
-                    statepool_config=active_statepool_config,
-                    executor_transport=executor_transport,
-                    executor_socket_path=active_socket_path,
-                    mode_runs=mode_runs,
-                )
-                _write_results(out_path, partial)
-        result = _build_result(
-            task_set_path=task_set_path,
-            task_set_metadata=task_set_metadata,
-            tasks=tasks,
-            modes=modes,
-            repeat=repeat,
-            seed=seed,
-            active_embedder=active_embedder,
-            active_llm=active_llm,
-            llm_description=llm_description,
+    selected_engines = ("orchestrator", "langgraph") if engine == "both" else (engine,)
+    engine_results: dict[str, dict[str, object]] = {}
+    for selected_engine in selected_engines:
+        if selected_engine == "langgraph" and not langgraph_available():
+            raise RuntimeError(
+                "langgraph engine requested but optional dependency is not installed. "
+                "Install with: pip install .[langgraph]"
+            )
+        mode_runs: dict[str, list[dict[str, object]]] = {mode: [] for mode in modes}
+        with _executor_transport_context(
+            out_dir=out_path / selected_engine,
+            transport=executor_transport,
+            socket_path=executor_socket_path,
             statepool_config=active_statepool_config,
-            executor_transport=executor_transport,
-            executor_socket_path=active_socket_path,
-            mode_runs=mode_runs,
+        ) as active_socket_path:
+            for run_index in range(repeat):
+                for mode in _mode_order_for_run(modes, run_index):
+                    run_root = out_path / "artifacts" / selected_engine / mode / f"run_{run_index:02d}"
+                    if run_root.exists():
+                        shutil.rmtree(run_root)
+                    run_root.mkdir(parents=True, exist_ok=True)
+                    mode_runs[mode].append(
+                        await _run_mode_once(
+                            mode=mode,
+                            engine=selected_engine,
+                            run_index=run_index,
+                            root=run_root,
+                            tasks=tasks,
+                            embedder=active_embedder,
+                            llm_client=active_llm,
+                            statepool_config=active_statepool_config,
+                            executor_transport=executor_transport,
+                            executor_socket_path=active_socket_path,
+                            progress_callback=progress_callback,
+                        )
+                    )
+            engine_results[selected_engine] = _build_result(
+                task_set_path=task_set_path,
+                task_set_metadata=task_set_metadata,
+                tasks=tasks,
+                modes=modes,
+                repeat=repeat,
+                seed=seed,
+                active_embedder=active_embedder,
+                active_llm=active_llm,
+                llm_description=llm_description,
+                statepool_config=active_statepool_config,
+                executor_transport=executor_transport,
+                executor_socket_path=active_socket_path,
+                engine=selected_engine,
+                mode_runs=mode_runs,
+            )
+            _write_results(
+                out_path / selected_engine if engine == "both" else out_path,
+                engine_results[selected_engine],
+            )
+    if engine == "both":
+        combined = {
+            "manifest": {
+                "engine": "both",
+                "engines": list(selected_engines),
+                "modes": list(modes),
+                "repeat": repeat,
+            },
+            "engine_results": engine_results,
+        }
+        (out_path / "benchmark_results.json").write_text(
+            json.dumps(combined, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
         )
-        _write_results(out_path, result)
-        return result
+        return combined
+    return engine_results[selected_engines[0]]
 
 
 def _write_results(out_dir: Path, result: dict[str, object]) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "benchmark_results.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -3392,6 +3564,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--embed-state-backend", default=None)
     parser.add_argument("--executor-transport", choices=("local", "uds"), default="local")
     parser.add_argument("--executor-socket-path", default=None)
+    parser.add_argument("--engine", choices=("orchestrator", "langgraph", "both"), default="orchestrator")
     parser.add_argument("--quiet-progress", action="store_true")
     return parser
 
@@ -3429,6 +3602,7 @@ def main() -> None:
             statepool_config=statepool_config,
             executor_transport=args.executor_transport,
             executor_socket_path=args.executor_socket_path,
+            engine=args.engine,
             progress_callback=None if args.quiet_progress else _progress_line,
         )
     )

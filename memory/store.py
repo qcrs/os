@@ -18,6 +18,10 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in host envs without
 from protocol.messages import MemoryCommit, MemoryHit, MemoryQuery, StateRef
 
 
+def _json_dumps(value: object) -> str:
+    return json.dumps(value, ensure_ascii=True, sort_keys=True)
+
+
 def _default_embedding_model_path() -> Path:
     statebus_home = Path(os.getenv("STATEBUS_HOME", Path.home() / "statebus"))
     return Path(os.getenv("STATEBUS_EMBED_MODEL_PATH", statebus_home / "models" / "Qwen3-Embedding-0.6B"))
@@ -232,6 +236,32 @@ class MemoryStore:
                 updated_at_ns INTEGER NOT NULL,
                 FOREIGN KEY(embedding_id) REFERENCES memories(embedding_id)
             );
+
+            CREATE TABLE IF NOT EXISTS replay_episodes (
+                episode_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id TEXT NOT NULL UNIQUE,
+                source_task_id TEXT NOT NULL,
+                task_theme TEXT NOT NULL,
+                memory_purpose TEXT NOT NULL,
+                memory_layer TEXT NOT NULL,
+                replay_class TEXT NOT NULL,
+                route TEXT NOT NULL,
+                route_source TEXT NOT NULL,
+                route_provenance_json TEXT NOT NULL,
+                route_confidence REAL NOT NULL,
+                retrieved_doc_ids_json TEXT NOT NULL,
+                fresh_evidence_sha256 TEXT NOT NULL,
+                reuse_signature TEXT NOT NULL,
+                reusable_steps_json TEXT NOT NULL,
+                step_output_state_ids_json TEXT NOT NULL,
+                step_output_state_refs_json TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                source_session_id TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at_ns INTEGER NOT NULL,
+                updated_at_ns INTEGER NOT NULL,
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id)
+            );
             """
         )
         try:
@@ -256,23 +286,22 @@ class MemoryStore:
         encoder_id = commit.encoder_id or self.embedder.encoder_id
         vector = self._embed_commit_text(embedding_text, encoder_id)
         vector_json = json.dumps(vector.tolist(), ensure_ascii=True)
-        metadata_json = json.dumps(commit.metadata, ensure_ascii=True, sort_keys=True)
-        evidence_state_ids_json = json.dumps(
-            commit.evidence_state_ids,
-            ensure_ascii=True,
-            sort_keys=True,
-        )
-        reusable_steps_json = json.dumps(
-            commit.reusable_steps,
-            ensure_ascii=True,
-            sort_keys=True,
-        )
-        state_ref_json = json.dumps(
-            [asdict(ref) for ref in commit.evidence_state_refs],
-            ensure_ascii=True,
-            sort_keys=True,
-        )
-        tags_json = json.dumps(commit.tags, ensure_ascii=True, sort_keys=True)
+        metadata_payload = dict(commit.metadata)
+        if commit.memory_purpose and "memory_purpose" not in metadata_payload:
+            metadata_payload["memory_purpose"] = commit.memory_purpose
+        if commit.memory_layer and "memory_layer" not in metadata_payload:
+            metadata_payload["memory_layer"] = commit.memory_layer
+        if commit.replay_class and "replay_class" not in metadata_payload:
+            metadata_payload["replay_class"] = commit.replay_class
+        metadata_json = _json_dumps(metadata_payload)
+        evidence_state_ids_json = _json_dumps(commit.evidence_state_ids)
+        reusable_steps_json = _json_dumps(commit.reusable_steps)
+        state_ref_json = _json_dumps([asdict(ref) for ref in commit.evidence_state_refs])
+        tags_json = _json_dumps(commit.tags)
+        route_provenance_json = _json_dumps(commit.route_provenance)
+        retrieved_doc_ids_json = _json_dumps(commit.retrieved_doc_ids)
+        step_output_state_ids_json = _json_dumps(commit.step_output_state_ids)
+        step_output_state_refs_json = _json_dumps([asdict(ref) for ref in commit.step_output_state_refs])
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             self.conn.execute(
@@ -372,6 +401,65 @@ class MemoryStore:
                     updated_at_ns,
                 ),
             )
+            if (
+                (commit.memory_layer or str(metadata_payload.get("memory_layer", ""))) == "episode"
+                or (commit.memory_purpose or str(metadata_payload.get("memory_purpose", ""))) == "replay"
+            ):
+                self.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO replay_episodes (
+                        episode_id,
+                        memory_id,
+                        source_task_id,
+                        task_theme,
+                        memory_purpose,
+                        memory_layer,
+                        replay_class,
+                        route,
+                        route_source,
+                        route_provenance_json,
+                        route_confidence,
+                        retrieved_doc_ids_json,
+                        fresh_evidence_sha256,
+                        reuse_signature,
+                        reusable_steps_json,
+                        step_output_state_ids_json,
+                        step_output_state_refs_json,
+                        tool_name,
+                        source_session_id,
+                        metadata_json,
+                        created_at_ns,
+                        updated_at_ns
+                    ) VALUES (
+                        COALESCE((SELECT episode_id FROM replay_episodes WHERE memory_id = ?), NULL),
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        commit.memory_id,
+                        commit.memory_id,
+                        commit.source_task_id,
+                        commit.task_theme,
+                        commit.memory_purpose or str(metadata_payload.get("memory_purpose", "")),
+                        commit.memory_layer or str(metadata_payload.get("memory_layer", "")),
+                        commit.replay_class or str(metadata_payload.get("replay_class", "")),
+                        commit.route,
+                        commit.route_source,
+                        route_provenance_json,
+                        float(commit.route_confidence),
+                        retrieved_doc_ids_json,
+                        commit.fresh_evidence_sha256,
+                        commit.reuse_signature,
+                        reusable_steps_json,
+                        step_output_state_ids_json,
+                        step_output_state_refs_json,
+                        commit.tool_name,
+                        commit.source_session_id,
+                        metadata_json,
+                        created_at_ns,
+                        updated_at_ns,
+                    ),
+                )
             if self._fts_enabled:
                 self.conn.execute(
                     """
@@ -420,14 +508,18 @@ class MemoryStore:
             SELECT m.embedding_id, m.memory_id, m.source_task_id, m.task_theme,
                    m.source_agent_id, m.summary, m.tags_json, m.evidence_state_ids_json,
                    m.reusable_steps_json, m.confidence, m.metadata_json, m.created_at_ns,
-                   me.state_ref_json
-            FROM memories m
+                   me.state_ref_json, re.replay_class, re.route, re.route_source,
+                   re.route_provenance_json, re.route_confidence, re.retrieved_doc_ids_json,
+                   re.fresh_evidence_sha256, re.reuse_signature, re.step_output_state_ids_json,
+                   re.step_output_state_refs_json, re.tool_name, re.source_session_id
+            FROM replay_episodes re
+            JOIN memories m USING(memory_id)
             JOIN memory_embeddings me USING(embedding_id)
-            WHERE m.task_theme = ?
+            WHERE re.task_theme = ?
               AND m.status = 'active'
               AND me.faiss_status = 'active'
               AND me.encoder_id = ?
-            ORDER BY m.created_at_ns DESC
+            ORDER BY re.created_at_ns DESC
             """,
             (task_theme, encoder_id or self.embedder.encoder_id),
         ).fetchall()
@@ -450,6 +542,18 @@ class MemoryStore:
                     task_theme=row["task_theme"],
                     created_at_ns=int(row["created_at_ns"]),
                     source_task_id=row["source_task_id"],
+                    replay_class=str(row["replay_class"]),
+                    route=str(row["route"]),
+                    route_source=str(row["route_source"]),
+                    route_provenance=json.loads(row["route_provenance_json"]),
+                    route_confidence=float(row["route_confidence"]),
+                    retrieved_doc_ids=json.loads(row["retrieved_doc_ids_json"]),
+                    fresh_evidence_sha256=str(row["fresh_evidence_sha256"]),
+                    reuse_signature=str(row["reuse_signature"]),
+                    step_output_state_ids=json.loads(row["step_output_state_ids_json"]),
+                    step_output_state_refs=_state_refs_from_json(row["step_output_state_refs_json"]),
+                    tool_name=str(row["tool_name"]),
+                    source_session_id=str(row["source_session_id"]),
                     metadata=metadata,
                 )
             )

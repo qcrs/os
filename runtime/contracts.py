@@ -289,6 +289,7 @@ def default_state_contract_registry() -> StateContractRegistry:
             kind="DENSE_EVIDENCE",
             producer_agents=("retriever",),
             consumer_agents=("executor", "summarizer"),
+            required_metadata=("channel_name", "channel_kind"),
             lifecycle="task_scoped",
             replay_compatible=True,
         )
@@ -301,6 +302,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             consumer_agents=("executor", "summarizer"),
             schema="statebus.feature_bundle.v1",
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "encoding",
                 "schema",
                 "query",
@@ -320,6 +323,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             consumer_agents=("summarizer",),
             schema="statebus.ranked_evidence_bundle.v1",
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "encoding",
                 "schema",
                 "query",
@@ -340,6 +345,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             consumer_agents=("executor", "summarizer"),
             schema="statebus.tool_candidate_set.v1",
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "encoding",
                 "schema",
                 "query",
@@ -359,6 +366,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             consumer_agents=("summarizer",),
             schema="statebus.replay_eligibility_bundle.v1",
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "encoding",
                 "schema",
                 "query",
@@ -381,6 +390,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             consumer_agents=("executor",),
             schema="statebus.executor_decision_packet.v1",
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "encoding",
                 "schema",
                 "query",
@@ -400,6 +411,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             producer_agents=("retriever",),
             consumer_agents=("executor",),
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "query",
                 "transfer_strategy",
                 "retrieved_doc_ids",
@@ -417,6 +430,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             producer_agents=("retriever",),
             consumer_agents=("executor",),
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "query",
                 "transfer_strategy",
                 "retrieved_doc_ids",
@@ -432,6 +447,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             producer_agents=("executor",),
             consumer_agents=("summarizer",),
             required_metadata=(
+                "channel_name",
+                "channel_kind",
                 "source_evidence",
                 "source_features",
                 "tool_name",
@@ -448,7 +465,7 @@ def default_state_contract_registry() -> StateContractRegistry:
             name="summary_artifact",
             kind="TOOL_ARTIFACT",
             producer_agents=("summarizer",),
-            required_metadata=("task_theme",),
+            required_metadata=("channel_name", "channel_kind", "task_theme"),
             lifecycle="memory_summary",
             replay_compatible=False,
         )
@@ -459,7 +476,7 @@ def default_state_contract_registry() -> StateContractRegistry:
             kind="EMBEDDING",
             producer_agents=("retriever",),
             consumer_agents=("summarizer",),
-            required_metadata=("encoder_id", "vector_dim", "dtype"),
+            required_metadata=("channel_name", "channel_kind", "encoder_id", "vector_dim", "dtype"),
             lifecycle="task_scoped",
             replay_compatible=True,
         )

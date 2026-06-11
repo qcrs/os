@@ -155,6 +155,7 @@ def test_benchmark_runner_writes_outputs() -> None:
             for mode in ("text", "protocol")
         }
         assert payload["manifest"]["repeat"] == 1
+        assert payload["manifest"]["engine"] == "orchestrator"
         assert payload["manifest"]["llm_backend"] == "deterministic"
         assert payload["manifest"]["continuous_task_count"] == len(task_chain)
         assert payload["manifest"]["task_mode_counts"] == expected_task_mode_counts
@@ -170,6 +171,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert payload["manifest"]["task_contract_counts"] == expected_task_contract_counts
         assert payload["manifest"]["benchmark_lane_counts"] == expected_lane_counts
         assert payload["manifest"]["transfer_strategy_counts"] == expected_transfer_strategy_counts
+        assert payload["manifest"]["channel_form_counts"]["typed_channel"] >= 1
         assert payload["manifest"]["memory_policy_counts"] == expected_memory_policy_counts
         assert payload["manifest"]["artifact_expectation_counts"] == expected_artifact_expectation_counts
         assert payload["manifest"]["artifact_expectation_task_count"] == sum(
@@ -210,6 +212,25 @@ def test_benchmark_runner_writes_outputs() -> None:
             "## Aggregate"
         )
         assert report_text.index("## Aggregate") < report_text.index("## Diagnostic Appendix")
+
+
+def test_benchmark_runner_supports_both_engines() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-benchmark-both-") as tmpdir:
+        out_dir = Path(tmpdir) / "runs"
+        result = asyncio.run(
+            run_benchmark(
+                repeat=1,
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+                engine="both",
+            )
+        )
+        payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
+        assert result["manifest"]["engine"] == "both"
+        assert sorted(payload["engine_results"]) == ["langgraph", "orchestrator"]
+        assert (out_dir / "orchestrator" / "benchmark_results.json").exists()
+        assert (out_dir / "langgraph" / "benchmark_results.json").exists()
 
 
 def test_default_task_set_is_formal_controlled_pack() -> None:
@@ -2085,7 +2106,12 @@ def test_natural_handoff_removes_route_and_tool_side_channels() -> None:
             brief_state_id = retrieve_payload["transfer_brief_state_id"]
             assert brief_state_id
             brief_ref = task["state_refs"][brief_state_id]
-            assert set(brief_ref["metadata"]) == {"query", "retrieved_doc_ids", "transfer_strategy"}
+            assert {"query", "retrieved_doc_ids", "transfer_strategy"}.issubset(
+                set(brief_ref["metadata"])
+            )
+            assert brief_ref["metadata"]["channel_name"] == "artifact"
+            assert "feature_route" not in brief_ref["metadata"]
+            assert "feature_route_source" not in brief_ref["metadata"]
             brief_text = Path(brief_ref["handle"]).read_bytes().decode("utf-8")
             for token in forbidden_tokens:
                 assert token not in brief_text
