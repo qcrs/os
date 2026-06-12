@@ -16,9 +16,11 @@
 | `memory` | formal | 3 | proto-only | 三种记忆策略 | `memory replay` | 不证明text vs proto |
 | `state_transfer_authenticity` | formal | 6 | proto-only | text_brief vs state_ref | `typed handoff真实性` | 不证明战胜纯文本 |
 | `state_transfer_pure_text` | formal | 40 | proto-only | natural_text vs state_ref | `pure text fairness` | 不支持state更轻 |
+| `state_transfer_strict_pure_text` | formal-secondary | 40 | proto-only | strict inline text vs minimal state packet | `strict executor-facing pure text` | 不进正式headline aggregate |
 | `state_transfer_carrier` | formal | 40 | proto-only | 载体编码格式对比 | `carrier headline` | 不混读真实性/公平性 |
-| `state_transfer_inline_text_support` | support | 6 | proto-only | 严格内联纯文本 vs 最小状态包 | inline-text support | 不做headline |
+| `state_transfer_inline_text_support` | support | 6 | proto-only | 严格内联纯文本 vs 最小状态包 | inline-text smoke support | 不做headline |
 | `open_validation` | support | 15 | text+proto | Planner/歧义/边界 | 开放能力证明 | 不进入正式claim |
+| `open_planner_support` | support | 5 | text+proto | 5-family `plan_source=llm` | Planner真实生成plan | 不进入正式claim |
 
 ---
 
@@ -163,3 +165,5 @@ memory-cache-003    replay_enabled  命中匹配→跳过步骤
 | 纯文本 vs 结构化 | `state_transfer_pure_text` |
 | 整体门面 | `formal_controlled` |
 | Planner能力/边界行为 | `open_validation`（support-only） |
+| 固定工作流质疑 | `open_planner_support`（support-only，text/protocol 都跑 `plan_source=llm`） |
+| 最严格纯文本 baseline | `state_transfer_strict_pure_text`（formal-secondary，executor-facing 输入只允许消息体文本） |
