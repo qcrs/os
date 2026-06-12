@@ -99,7 +99,7 @@ class RuntimeTaskProfile:
     def effective_transfer_strategy(self, mode: str) -> str:
         strategy = self.resolved_transfer_strategy
         if strategy == "mode_split_text_brief_vs_state_ref":
-            return "text_brief" if str(mode).strip().lower() == "text" else "state_ref"
+            return "natural_handoff_text" if str(mode).strip().lower() == "text" else "state_ref"
         return strategy
 
 

@@ -317,6 +317,48 @@ def default_state_contract_registry() -> StateContractRegistry:
     )
     registry.register_state_contract(
         StateContract(
+            name="channel_patch",
+            kind="CHANNEL_PATCH",
+            producer_agents=("retriever",),
+            consumer_agents=("executor", "summarizer"),
+            schema="statebus.channel_patch.v2",
+            required_metadata=(
+                "channel_name",
+                "channel_kind",
+                "encoding",
+                "schema",
+                "query",
+                "feature_route_source",
+                "feature_route_confidence",
+                "feature_fresh_evidence_sha256",
+            ),
+            lifecycle="task_scoped",
+            replay_compatible=True,
+        )
+    )
+    registry.register_state_contract(
+        StateContract(
+            name="channel_snapshot",
+            kind="CHANNEL_SNAPSHOT",
+            producer_agents=("retriever",),
+            consumer_agents=("executor", "summarizer"),
+            schema="statebus.channel_snapshot.v2",
+            required_metadata=(
+                "channel_name",
+                "channel_kind",
+                "encoding",
+                "schema",
+                "query",
+                "feature_route_source",
+                "feature_route_confidence",
+                "feature_fresh_evidence_sha256",
+            ),
+            lifecycle="task_scoped",
+            replay_compatible=True,
+        )
+    )
+    registry.register_state_contract(
+        StateContract(
             name="ranked_evidence_bundle",
             kind="RANKED_EVIDENCE_BUNDLE",
             producer_agents=("retriever",),
@@ -462,6 +504,25 @@ def default_state_contract_registry() -> StateContractRegistry:
     )
     registry.register_state_contract(
         StateContract(
+            name="execution_artifact_natural_handoff",
+            kind="TOOL_ARTIFACT",
+            producer_agents=("executor",),
+            consumer_agents=("summarizer",),
+            required_metadata=(
+                "channel_name",
+                "channel_kind",
+                "source_features",
+                "tool_name",
+                "route",
+                "sandbox_mode",
+                "transfer_strategy",
+            ),
+            lifecycle="task_scoped",
+            replay_compatible=True,
+        )
+    )
+    registry.register_state_contract(
+        StateContract(
             name="summary_artifact",
             kind="TOOL_ARTIFACT",
             producer_agents=("summarizer",),
@@ -491,12 +552,13 @@ def default_state_contract_registry() -> StateContractRegistry:
                     step_id="retrieve",
                     include_kinds=(
                         "DENSE_EVIDENCE",
+                        "CHANNEL_SNAPSHOT",
                         "FEATURE_BUNDLE",
                         "TOOL_CANDIDATE_SET",
                     ),
                     required_kind_groups=(
                         ("DENSE_EVIDENCE",),
-                        ("FEATURE_BUNDLE", "TOOL_CANDIDATE_SET"),
+                        ("CHANNEL_SNAPSHOT", "FEATURE_BUNDLE", "TOOL_CANDIDATE_SET"),
                     ),
                 ),
             ),
@@ -544,9 +606,8 @@ def default_state_contract_registry() -> StateContractRegistry:
             sources=(
                 StepInputSource(
                     step_id="retrieve",
-                    include_kinds=("DENSE_EVIDENCE", "TOOL_ARTIFACT"),
+                    include_kinds=("TOOL_ARTIFACT",),
                     required_kind_groups=(
-                        ("DENSE_EVIDENCE",),
                         ("TOOL_ARTIFACT",),
                     ),
                 ),
@@ -579,6 +640,7 @@ def default_state_contract_registry() -> StateContractRegistry:
                     step_id="retrieve",
                     include_kinds=(
                         "DENSE_EVIDENCE",
+                        "CHANNEL_SNAPSHOT",
                         "FEATURE_BUNDLE",
                         "RANKED_EVIDENCE_BUNDLE",
                         "TOOL_CANDIDATE_SET",

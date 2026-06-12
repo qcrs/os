@@ -27,9 +27,15 @@ class GraphRunnerResult:
     results: dict[str, StepResult]
     metrics: dict[str, int | float]
     state_channels: dict[str, dict[str, object]]
+    channel_store: dict[str, dict[str, object]]
+    channel_snapshots: dict[str, dict[str, object]]
     graph_state: dict[str, object]
     state_refs: dict[str, dict[str, object]]
     memory_hits: list[str]
+    memory_tiers: dict[str, list[str]]
+    replay_decision: dict[str, object]
+    blob_fetch_metrics: dict[str, object]
+    execution_dag: dict[str, object]
     ctx: RunContext
     langgraph_available: bool
 
@@ -99,8 +105,12 @@ class StateBusGraphRunner:
         ctx: RunContext,
     ) -> GraphRunnerResult:
         started = time.perf_counter()
-        results = await self._run_compiled_graph(task, ctx)
+        runtime_state = await self._invoke_graph(task, ctx)
+        results = runtime_state.get("results", {})
+        if not isinstance(results, dict):
+            results = {}
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
+        self.orchestrator.seal_task_commit(ctx)
         return GraphRunnerResult(
             task_id=task.task_id,
             mode=ctx.mode,
@@ -109,6 +119,16 @@ class StateBusGraphRunner:
             results=results,
             metrics=ctx.metrics.to_dict(),
             state_channels=_state_channel_summary(ctx),
+            channel_store={name: dict(values) for name, values in ctx.channel_store.items()},
+            channel_snapshots={
+                name: {
+                    "kind": snapshot.kind,
+                    "values": dict(snapshot.values),
+                    "snapshot_hash": snapshot.snapshot_hash,
+                    "state_ref_ids": list(snapshot.state_ref_ids),
+                }
+                for name, snapshot in ctx.channel_snapshots.items()
+            },
             graph_state=_graph_state_snapshot(task, ctx, results),
             state_refs={
                 state_id: {
@@ -121,18 +141,18 @@ class StateBusGraphRunner:
                 for state_id, ref in ctx.state_refs.items()
             },
             memory_hits=[hit.memory_id for hit in ctx.memory_hits],
+            memory_tiers={name: list(values) for name, values in ctx.memory_tiers.items()},
+            replay_decision=dict(runtime_state.get("replay_decision", ctx.replay_decision) or {}),
+            blob_fetch_metrics=dict(ctx.blob_fetch_metrics),
+            execution_dag={
+                "dag_id": ctx.execution_dag.dag_id,
+                "root_hashes": list(ctx.execution_dag.root_hashes),
+                "task_order": list(ctx.execution_dag.task_order),
+                "commit_hashes": sorted(ctx.execution_dag.task_commits),
+            },
             ctx=ctx,
             langgraph_available=langgraph_available(),
         )
-
-    async def _run_compiled_graph(
-        self,
-        task: SampleTask,
-        ctx: RunContext,
-    ) -> dict[str, StepResult]:
-        state = await self._invoke_graph(task, ctx)
-        results = state.get("results", {})
-        return results if isinstance(results, dict) else {}
 
     def build_langgraph(self) -> Any:
         """Return a compiled LangGraph StateGraph when langgraph is installed.
@@ -185,6 +205,7 @@ class StateBusGraphRunner:
                 "reject_reason": "not_probed",
                 "restored_state_ref_count": 0,
             },
+            "channel_store": {},
             "metrics": ctx.metrics.to_dict(),
             "status": "running",
         }

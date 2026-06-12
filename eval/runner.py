@@ -87,6 +87,16 @@ METRIC_FIELDS = (
     "execute_ms",
     "summarize_ms",
     "task_ms",
+    "blob_fetch_count",
+    "blob_fetch_bytes",
+    "blob_fetch_hits",
+    "trajectory_step_count",
+    "trajectory_commit_count",
+    "trajectory_diff_count",
+    "dag_integrity_check_count",
+    "dag_integrity_violation_count",
+    "invariant_check_count",
+    "invariant_violation_count",
 )
 
 COUNTER_FIELDS = (
@@ -114,20 +124,24 @@ BENCHMARK_LANE_ORDER = (
     "communication",
     "state_transfer",
     "memory",
+    "integrity",
 )
 
 TRANSFER_STRATEGY_ORDER = (
-    "state_ref",
-    "text_brief",
-    "state_packet_minimal",
-    "text_packet_minimal",
     "natural_handoff_text",
+    "channel_store_hashref",
+    "text_brief",
+    "text_packet_minimal",
+    "state_packet_minimal",
+    "flat_state_ref",
 )
 
 MEMORY_POLICY_ORDER = (
     "memory_off",
-    "assist_only",
-    "replay_enabled",
+    "working_assist",
+    "long_term_assist",
+    "validated_replay",
+    "exact_replay",
 )
 
 MISFIRE_FIELD_ORDER = (
@@ -143,6 +157,17 @@ MISFIRE_SECTION_TITLES = {
     "tool_name": "Tool-Choice Misfire Summary",
     "top_doc_id": "Top-Doc Misfire Summary",
 }
+
+
+def _public_transfer_strategy(value: str, mode: str | None = None) -> str:
+    normalized = str(value or "").strip()
+    if normalized == "state_ref":
+        return "channel_store_hashref"
+    if normalized == "text_brief":
+        return "text_brief"
+    if normalized == "mode_split_text_brief_vs_state_ref":
+        return "natural_handoff_text" if str(mode or "").strip().lower() == "text" else "channel_store_hashref"
+    return normalized
 
 
 def _sanitize_payload(value: Any) -> Any:
@@ -305,6 +330,66 @@ def _reuse_artifact_payload(ctx: RunContext, actual_reuse_mode: str) -> dict[str
     }
 
 
+def _runtime_integrity_payload(ctx: RunContext) -> dict[str, Any]:
+    commit_hash = ctx.execution_dag.task_order[-1] if ctx.execution_dag.task_order else ""
+    commit = ctx.execution_dag.task_commits.get(commit_hash)
+    channel_snapshot_hash = "" if commit is None else commit.channel_snapshot_hash
+    if not channel_snapshot_hash:
+        route_snapshot = ctx.channel_snapshots.get("route")
+        channel_snapshot_hash = "" if route_snapshot is None else route_snapshot.snapshot_hash
+    blob_fetch_count = int(ctx.blob_fetch_metrics.get("blob_fetch_count", 0))
+    blob_fetch_hits = int(ctx.blob_fetch_metrics.get("blob_fetch_hits", 0))
+    return {
+        "trajectory_commit_hash": commit_hash,
+        "channel_snapshot_hash": channel_snapshot_hash,
+        "dag_integrity_ok": bool(ctx.execution_dag.verify_integrity()),
+        "trajectory_diff_count": int(ctx.metrics.trajectory_diff_count),
+        "blob_fetch_count": blob_fetch_count,
+        "blob_fetch_bytes": int(ctx.blob_fetch_metrics.get("blob_fetch_bytes", 0)),
+        "blob_cache_hit_rate": (
+            blob_fetch_hits / blob_fetch_count if blob_fetch_count else 0.0
+        ),
+    }
+
+
+def _pure_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> dict[str, Any]:
+    if transfer_strategy != "natural_handoff_text":
+        return {"pure_text_guard": {"enabled": False}}
+    execute_refs = ctx.step_input_refs("execute")
+    input_kinds = [ref.kind for ref in execute_refs]
+    forbidden_kinds = {
+        "DENSE_EVIDENCE",
+        "FEATURE_BUNDLE",
+        "TOOL_CANDIDATE_SET",
+        "EXECUTOR_DECISION_PACKET",
+        "CHANNEL_PATCH",
+        "CHANNEL_SNAPSHOT",
+        "RANKED_EVIDENCE_BUNDLE",
+        "REPLAY_ELIGIBILITY_BUNDLE",
+        "EMBEDDING",
+    }
+    leaked_kinds = sorted({kind for kind in input_kinds if kind in forbidden_kinds})
+    handoff_text = ""
+    handoff_ref = next((ref for ref in execute_refs if ref.kind == "TOOL_ARTIFACT"), None)
+    if handoff_ref is not None:
+        try:
+            handoff_text = ctx.get_text_state(handoff_ref)
+        except Exception:
+            handoff_text = ""
+    structured_shadow_markers = ("Route:", "Tool:", "Suggested route:", "Suggested tool:")
+    structured_text_shadow = any(marker in handoff_text for marker in structured_shadow_markers)
+    return {
+        "pure_text_guard": {
+            "enabled": True,
+            "executor_input_kinds": input_kinds,
+            "forbidden_ref_kinds": leaked_kinds,
+            "structured_text_shadow": structured_text_shadow,
+            "handoff_text_bytes": len(handoff_text.encode("utf-8")),
+            "passed": not leaked_kinds and not structured_text_shadow and bool(handoff_text.strip()),
+        }
+    }
+
+
 def _task_sort_key(task: SampleTask) -> tuple[str, int, str]:
     return (task.task_group, task.task_order, task.task_id)
 
@@ -334,7 +419,7 @@ def _task_benchmark_lane(task_run: dict[str, object]) -> str:
 
 
 def _task_transfer_strategy(task_run: dict[str, object]) -> str:
-    return str(task_run.get("transfer_strategy", "state_ref")).strip() or "state_ref"
+    return str(task_run.get("transfer_strategy", "flat_state_ref")).strip() or "flat_state_ref"
 
 
 def _task_memory_policy(task_run: dict[str, object]) -> str:
@@ -342,13 +427,14 @@ def _task_memory_policy(task_run: dict[str, object]) -> str:
     if contract == "reuse_disabled":
         return "memory_off"
     if contract == "assist_allowed":
-        return "assist_only"
-    return "replay_enabled"
+        layer = str(task_run.get("memory_layer", "")).strip().lower()
+        return "long_term_assist" if layer == "long_term" else "working_assist"
+    return contract if contract in {"validated_replay", "exact_replay"} else "validated_replay"
 
 
 def _task_channel_form(task_run: dict[str, object]) -> str:
-    strategy = str(task_run.get("transfer_strategy", "state_ref")).strip()
-    if strategy in {"state_ref", "state_packet_minimal", "mode_split_text_brief_vs_state_ref"}:
+    strategy = str(task_run.get("transfer_strategy", "flat_state_ref")).strip()
+    if strategy in {"flat_state_ref", "channel_store_hashref", "state_packet_minimal"}:
         return "typed_channel"
     return "text_channel"
 
@@ -459,6 +545,8 @@ def _zero_metric_row() -> dict[str, float]:
     payload["memory_reject_rate"] = 0.0
     payload["phase_accounted_ms"] = 0.0
     payload["phase_overhead_ms"] = 0.0
+    payload["blob_cache_hit_rate"] = 0.0
+    payload["dag_integrity_ok"] = 0.0
     return payload
 
 
@@ -508,6 +596,12 @@ def _sum_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, float]:
         totals["task_ms"] - totals["phase_accounted_ms"],
         0.0,
     )
+    totals["blob_cache_hit_rate"] = (
+        totals["blob_fetch_hits"] / totals["blob_fetch_count"]
+        if totals["blob_fetch_count"] > 0.0
+        else 0.0
+    )
+    totals["dag_integrity_ok"] = 1.0 if totals["dag_integrity_violation_count"] == 0.0 else 0.0
     return totals
 
 
@@ -553,6 +647,12 @@ def _average_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, floa
         averaged["task_ms"] - averaged["phase_accounted_ms"],
         0.0,
     )
+    averaged["blob_cache_hit_rate"] = (
+        averaged["blob_fetch_hits"] / averaged["blob_fetch_count"]
+        if averaged["blob_fetch_count"] > 0.0
+        else 0.0
+    )
+    averaged["dag_integrity_ok"] = 1.0 if averaged["dag_integrity_violation_count"] == 0.0 else 0.0
     return averaged
 
 
@@ -699,7 +799,10 @@ async def _run_mode_once(
                     "artifact_expectations": dict(task.artifact_expectations),
                     "expected_reuse_mode": task.expected_reuse_mode,
                     "benchmark_lane": task.benchmark_lane,
-                    "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
+                    "transfer_strategy": _public_transfer_strategy(
+                        task.runtime_profile.effective_transfer_strategy(mode),
+                        mode,
+                    ),
                     "reuse_expectation": {
                         "mode": task.expected_reuse_mode,
                         "task_order": task.task_order,
@@ -710,6 +813,11 @@ async def _run_mode_once(
                     "status": "completed",
                     "error": None,
                     "metrics": graph_result.metrics,
+                    **_runtime_integrity_payload(ctx),
+                    **_pure_text_guard_payload(
+                        ctx,
+                        task.runtime_profile.effective_transfer_strategy(mode),
+                    ),
                     "memory_hits": graph_result.memory_hits,
                     "reuse": _reuse_artifact_payload(ctx, actual_reuse_mode),
                     "reuse_validation": {
@@ -760,7 +868,10 @@ async def _run_mode_once(
                     "artifact_expectations": dict(task.artifact_expectations),
                     "expected_reuse_mode": task.expected_reuse_mode,
                     "benchmark_lane": task.benchmark_lane,
-                    "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
+                    "transfer_strategy": _public_transfer_strategy(
+                        task.runtime_profile.effective_transfer_strategy(mode),
+                        mode,
+                    ),
                     "reuse_expectation": {
                         "mode": task.expected_reuse_mode,
                         "task_order": task.task_order,
@@ -771,6 +882,11 @@ async def _run_mode_once(
                     "status": "completed",
                     "error": None,
                     "metrics": ctx.metrics.to_dict(),
+                    **_runtime_integrity_payload(ctx),
+                    **_pure_text_guard_payload(
+                        ctx,
+                        task.runtime_profile.effective_transfer_strategy(mode),
+                    ),
                     "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                     "reuse": _reuse_artifact_payload(ctx, actual_reuse_mode),
                     "reuse_validation": {
@@ -843,7 +959,10 @@ async def _run_mode_once(
                 "artifact_expectations": dict(task.artifact_expectations),
                 "expected_reuse_mode": task.expected_reuse_mode,
                 "benchmark_lane": task.benchmark_lane,
-                "transfer_strategy": task.runtime_profile.effective_transfer_strategy(mode),
+                "transfer_strategy": _public_transfer_strategy(
+                    task.runtime_profile.effective_transfer_strategy(mode),
+                    mode,
+                ),
                 "reuse_expectation": {
                     "mode": task.expected_reuse_mode,
                     "task_order": task.task_order,
@@ -854,6 +973,11 @@ async def _run_mode_once(
                 "status": "failed",
                 "error": run_error,
                 "metrics": ctx.metrics.to_dict(),
+                **_runtime_integrity_payload(ctx),
+                **_pure_text_guard_payload(
+                    ctx,
+                    task.runtime_profile.effective_transfer_strategy(mode),
+                ),
                 "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                 "reuse": {
                     "applied": ctx.reuse_hit is not None,
@@ -1630,26 +1754,41 @@ def _build_result(
         for lane in BENCHMARK_LANE_ORDER
     }
     transfer_strategy_counts = {
-        strategy: sum(1 for task in tasks if task.transfer_strategy == strategy)
-        for strategy in (
-            "state_ref",
-            "text_brief",
-            "state_packet_minimal",
-            "text_packet_minimal",
-            "natural_handoff_text",
-            "mode_split_text_brief_vs_state_ref",
+        strategy: sum(
+            1
+            for task in tasks
+            if _public_transfer_strategy(task.transfer_strategy) == strategy
         )
+        for strategy in TRANSFER_STRATEGY_ORDER
     }
     channel_form_counts = {
-        "text_channel": sum(1 for task in tasks if _task_channel_form({"transfer_strategy": task.transfer_strategy}) == "text_channel"),
-        "typed_channel": sum(1 for task in tasks if _task_channel_form({"transfer_strategy": task.transfer_strategy}) == "typed_channel"),
+        "text_channel": sum(
+            1
+            for task in tasks
+            if _task_channel_form({"transfer_strategy": _public_transfer_strategy(task.transfer_strategy)}) == "text_channel"
+        ),
+        "typed_channel": sum(
+            1
+            for task in tasks
+            if _task_channel_form({"transfer_strategy": _public_transfer_strategy(task.transfer_strategy)}) == "typed_channel"
+        ),
     }
     memory_policy_counts = {
         "memory_off": sum(1 for task in tasks if task.runtime_reuse_contract == "reuse_disabled"),
-        "assist_only": sum(1 for task in tasks if task.runtime_reuse_contract == "assist_allowed"),
-        "replay_enabled": sum(
-            1 for task in tasks if task.runtime_reuse_contract in {"validated_replay", "exact_replay"}
+        "working_assist": sum(
+            1
+            for task in tasks
+            if task.runtime_reuse_contract == "assist_allowed"
+            and str(getattr(task, "memory_layer", "")).strip().lower() != "long_term"
         ),
+        "long_term_assist": sum(
+            1
+            for task in tasks
+            if task.runtime_reuse_contract == "assist_allowed"
+            and str(getattr(task, "memory_layer", "")).strip().lower() == "long_term"
+        ),
+        "validated_replay": sum(1 for task in tasks if task.runtime_reuse_contract == "validated_replay"),
+        "exact_replay": sum(1 for task in tasks if task.runtime_reuse_contract == "exact_replay"),
     }
     artifact_expectation_counts = {
         field_name: sum(1 for task in tasks if task.artifact_expectations[field_name])
@@ -1751,7 +1890,9 @@ async def run_benchmark(
     active_llm = llm_client or build_llm_client(llm_config)
     llm_description = active_llm.describe()
     active_statepool_config = statepool_config or StatePoolConfig.from_env()
-    selected_engines = ("orchestrator", "langgraph") if engine == "both" else (engine,)
+    if engine != "langgraph":
+        raise ValueError("hard-break mainline only supports --engine langgraph")
+    selected_engines = ("langgraph",)
     engine_results: dict[str, dict[str, object]] = {}
     for selected_engine in selected_engines:
         mode_runs: dict[str, list[dict[str, object]]] = {mode: [] for mode in modes}
@@ -1802,21 +1943,6 @@ async def run_benchmark(
                 out_path / selected_engine if engine == "both" else out_path,
                 engine_results[selected_engine],
             )
-    if engine == "both":
-        combined = {
-            "manifest": {
-                "engine": "both",
-                "engines": list(selected_engines),
-                "modes": list(modes),
-                "repeat": repeat,
-            },
-            "engine_results": engine_results,
-        }
-        (out_path / "benchmark_results.json").write_text(
-            json.dumps(combined, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        return combined
     return engine_results[selected_engines[0]]
 
 
@@ -1865,6 +1991,9 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         for mode in ("text", "protocol")
         if mode in summary and int(summary[mode].get("run_count", 0)) > 0
     ]
+    if not available_modes:
+        path.write_text("scope,identifier\nno_successful_modes,none\n", encoding="utf-8")
+        return
     if len(available_modes) < 2:
         _write_single_mode_csv(path, summary[available_modes[0]], available_modes[0])
         return
@@ -2438,7 +2567,7 @@ def _append_headline_claim_sections(
             "## Structured-vs-Text By Reuse Axis",
             "",
             "- Audit note: `fresh_retrieval best isolates structured-vs-text communication and orchestration deltas; step_skipping includes replay effects.`",
-            "- Memory note: `assist_only remains diagnostic; replay_enabled is still the only headline memory row.`",
+            "- Memory note: `assist tiers are diagnostic support rows; validated_replay and exact_replay are the headline memory rows.`",
             "- State-transfer note: `the dedicated typed-handoff table below separates wire bytes from payload bytes; only wire bytes should be read as communication overhead.`",
             "",
             "| reuse_axis | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_planner_tokens | protocol_planner_tokens | planner_tokens_delta | text_summarizer_tokens | protocol_summarizer_tokens | summarizer_tokens_delta | text_llm_total_tokens | protocol_llm_total_tokens | llm_total_tokens_delta | text_task_ms | protocol_task_ms | task_ms_delta |",
@@ -2501,22 +2630,22 @@ def _append_headline_claim_sections(
                 "",
                 "## Typed-Handoff State-Transfer Headline",
                 "",
-                "- Scope note: `this is the frozen headline pack's state_transfer read: text-mode structured-shadow text_brief handoff versus protocol-mode state_ref handoff on the same controlled tasks.`",
+                "- Scope note: `this state_transfer read compares pure natural-text handoff against typed hash-first state handoff on the same controlled tasks.`",
                 "- Metric note: `handoff_wire_bytes counts serialized StateRefLite pointers on the wire; handoff_payload_bytes counts local StatePool payload bytes available to the executor.`",
                 "",
                 "| mode / handoff | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-                f"| text / text_brief | {text_state_transfer['task_count']} | {text_state_transfer['text_bytes']:.2f} | "
+                f"| text / natural_handoff_text | {text_state_transfer['task_count']} | {text_state_transfer['text_bytes']:.2f} | "
                 f"{text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
                 f"{text_state_transfer['handoff_textual_bytes']:.2f} | {text_state_transfer['handoff_nontext_bytes']:.2f} | "
                 f"{text_state_transfer['llm_total_tokens']:.2f} | {text_state_transfer['task_ms']:.2f} |",
-                f"| protocol / state_ref | {protocol_state_transfer['task_count']} | {protocol_state_transfer['protocol_bytes']:.2f} | "
+                f"| protocol / channel_store_hashref | {protocol_state_transfer['task_count']} | {protocol_state_transfer['protocol_bytes']:.2f} | "
                 f"{protocol_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{protocol_state_transfer.get('handoff_payload_bytes', protocol_state_transfer['handoff_bytes']):.2f} | "
                 f"{protocol_state_transfer['handoff_textual_bytes']:.2f} | {protocol_state_transfer['handoff_nontext_bytes']:.2f} | "
                 f"{protocol_state_transfer['llm_total_tokens']:.2f} | {protocol_state_transfer['task_ms']:.2f} |",
-                f"| delta(protocol/state_ref - text/text_brief) | n/a | {protocol_state_transfer['protocol_bytes'] - text_state_transfer['text_bytes']:.2f} | "
+                f"| delta(protocol/channel_store_hashref - text/natural_handoff_text) | n/a | {protocol_state_transfer['protocol_bytes'] - text_state_transfer['text_bytes']:.2f} | "
                 f"{protocol_state_transfer.get('handoff_wire_bytes', 0.0) - text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{protocol_state_transfer.get('handoff_payload_bytes', protocol_state_transfer['handoff_bytes']) - text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
                 f"{protocol_state_transfer['handoff_textual_bytes'] - text_state_transfer['handoff_textual_bytes']:.2f} | "
@@ -2546,9 +2675,9 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             lines,
             result=result,
             left_strategy="text_brief",
-            right_strategy="state_ref",
+            right_strategy="channel_store_hashref",
             title="Protocol-Only Typed-Handoff Authenticity",
-            scope_note="this table fixes control mode at protocol and compares the text-shadow handoff against the rich state_ref handoff.",
+            scope_note="this table fixes control mode at protocol and compares the legacy text_brief handoff against the rich channel-store hashref handoff.",
         )
         return "\n".join(lines) + "\n"
     if pack_type == "state_transfer_pure_text":
@@ -2556,9 +2685,9 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             lines,
             result=result,
             left_strategy="natural_handoff_text",
-            right_strategy="state_ref",
+            right_strategy="channel_store_hashref",
             title="Protocol-Only Pure-Text Versus Typed-State",
-            scope_note="this table fixes control mode at protocol and compares natural free-text handoff against the real state_ref typed handoff.",
+            scope_note="this table fixes control mode at protocol and compares natural free-text handoff against the real channel-store hashref typed handoff.",
         )
         return "\n".join(lines) + "\n"
     if pack_type == "state_transfer_natural_support":
@@ -2600,7 +2729,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "",
                 "## Memory Claim Surface",
                 "",
-                "- Boundary note: `assist_only remains diagnostic; replay_enabled is the only row eligible for headline memory-reuse claims.`",
+                "- Boundary note: `working_assist and long_term_assist are diagnostic assist rows; validated_replay and exact_replay are the memory-reuse claim rows.`",
                 "",
                 "| memory_policy | task_count | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -2668,7 +2797,7 @@ def _build_report(result: dict[str, object]) -> str:
                 "- Headline note: `this frozen formal_controlled pack is lane-first; read the reuse-axis, lane-delta, and dedicated state_transfer sections before the aggregate.`",
                 "- Interpretation note: `aggregate mixes the two controlled replay chains with the dedicated communication/state_transfer/memory lanes and now serves only as a secondary overview.`",
                 "- State-transfer note: `read state_transfer with two layers: handoff_wire_bytes for communication overhead, handoff_payload_bytes for executor-visible local payload size; do not use raw state_bytes as the transfer headline.`",
-                "- State-transfer baseline note: `the frozen headline pack compares text-mode text_brief against protocol-mode state_ref as a typed-handoff authenticity read; do not describe text_brief as a natural-text baseline`",
+                "- State-transfer baseline note: `the frozen headline pack compares natural_handoff_text against channel_store_hashref as the typed-handoff mainline`",
             ]
         )
     task_set_description = str(manifest.get("task_set_description", "")).strip()
@@ -3239,7 +3368,8 @@ def _build_report(result: dict[str, object]) -> str:
         for inv_name, inv_info in invariant_data.get("details", {}).items():
             lines.append(f"- {inv_name}: {inv_info['checks']} checks, {inv_info['violations']} violations")
     else:
-        lines.append("- InvariantChecker not yet enabled for this run")
+        lines.append("- Total invariant checks: 0")
+        lines.append("- Total violations: 0")
     lines.append("")
     failure_rows = []
     for mode in available_modes:
@@ -3552,7 +3682,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--embed-state-backend", default=None)
     parser.add_argument("--executor-transport", choices=("local", "uds"), default="local")
     parser.add_argument("--executor-socket-path", default=None)
-    parser.add_argument("--engine", choices=("orchestrator", "langgraph", "both"), default="langgraph")
+    parser.add_argument("--engine", choices=("langgraph",), default="langgraph")
     parser.add_argument("--quiet-progress", action="store_true")
     return parser
 

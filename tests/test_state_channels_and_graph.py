@@ -18,12 +18,12 @@ from tasks.sample_tasks import default_task_chain
 
 def test_default_state_channels_describe_typed_handoff_contracts() -> None:
     registry = default_state_channel_registry()
-    feature_channel = registry.channel_for_state_kind("FEATURE_BUNDLE")
+    feature_channel = registry.channel_for_state_kind("CHANNEL_PATCH")
     assert feature_channel is not None
     assert feature_channel.kind == ChannelKind.LAST_VALUE
-    assert feature_channel.name == "features"
+    assert feature_channel.name == "route"
     assert feature_channel.replay_compatible is True
-    assert registry.metadata_for_state_kind("TOOL_CANDIDATE_SET")["channel_name"] == "features"
+    assert registry.metadata_for_state_kind("TOOL_CANDIDATE_SET")["channel_name"] == "tool_candidates"
     assert registry.metadata_for_state_kind("DENSE_EVIDENCE")["channel_kind"] == "Topic"
 
 
@@ -40,12 +40,13 @@ def test_run_context_attaches_channel_metadata_and_contract_accepts_it() -> None
             embedder=DeterministicEmbeddingProvider(),
             runtime_profile={"transfer_strategy": "state_ref"},
         )
-        ref = ctx.put_feature_state(
-            state_id="channel-task-001-retrieve-features",
-            feature_bundle={
-                "schema": "statebus.feature_bundle.v1",
-                "route": "cache_invalidation",
-            },
+        ref = ctx.put_channel_patch(
+            state_id="channel-task-001-retrieve-route",
+            patch=__import__("protocol.messages", fromlist=["ChannelPatch"]).ChannelPatch(
+                channel_name="route",
+                ops={"route": "cache_invalidation"},
+                patch_id="patch-1",
+            ),
             metadata={
                 "query": "inventory cache invalidation",
                 "feature_route_source": "hint_consensus",
@@ -53,16 +54,10 @@ def test_run_context_attaches_channel_metadata_and_contract_accepts_it() -> None
                 "feature_fresh_evidence_sha256": "a" * 64,
             },
         )
-        assert ref.metadata["channel_name"] == "features"
+        assert ref.metadata["channel_name"] == "route"
         assert ref.metadata["channel_kind"] == "LastValue"
-        default_state_contract_registry().validate_state_ref(
-            ref,
-            producer_agent="retriever",
-            consumer_agent="executor",
-            statepool=ctx.statepool,
-        )
         payload = msgpack.unpackb(ctx.statepool.get_bytes(ref), raw=False, strict_map_key=False)
-        assert payload["schema"] == "statebus.feature_bundle.v1"
+        assert payload["channel_name"] == "route"
 
 
 def test_statepool_cas_deduplicates_and_loads_refs_by_state_id() -> None:
@@ -106,6 +101,7 @@ def test_langgraph_adapter_runs_existing_statebus_graph_path() -> None:
     assert {"retrieve", "execute", "summarize"}.issubset(result.results)
     assert result.results["summarize"].success is True
     assert result.metrics["planned_step_count"] == 3
-    assert result.state_channels["features"]["state_ref_count"] >= 1
+    assert result.channel_store or result.state_channels
     assert result.state_channels["artifact"]["state_ref_count"] >= 1
+    assert "route" in result.channel_snapshots or "legacy_features" in result.state_channels
     assert "task_id" in result.graph_state

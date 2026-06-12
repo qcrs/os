@@ -55,6 +55,16 @@ class TaskMetrics:
     execute_ms: float = 0.0
     summarize_ms: float = 0.0
     task_ms: float = 0.0
+    blob_fetch_count: int = 0
+    blob_fetch_bytes: int = 0
+    blob_fetch_hits: int = 0
+    trajectory_step_count: int = 0
+    trajectory_commit_count: int = 0
+    trajectory_diff_count: int = 0
+    dag_integrity_check_count: int = 0
+    dag_integrity_violation_count: int = 0
+    invariant_check_count: int = 0
+    invariant_violation_count: int = 0
 
     @property
     def memory_hit_rate(self) -> float:
@@ -82,6 +92,16 @@ class TaskMetrics:
     def phase_overhead_ms(self) -> float:
         return max(self.task_ms - self.phase_accounted_ms, 0.0)
 
+    @property
+    def blob_cache_hit_rate(self) -> float:
+        if self.blob_fetch_count == 0:
+            return 0.0
+        return self.blob_fetch_hits / self.blob_fetch_count
+
+    @property
+    def dag_integrity_ok(self) -> float:
+        return 1.0 if self.dag_integrity_violation_count == 0 else 0.0
+
     def to_dict(self) -> dict[str, int | float]:
         payload = asdict(self)
         payload["memory_hit_rate"] = self.memory_hit_rate
@@ -89,4 +109,6 @@ class TaskMetrics:
         payload["reuse_gain"] = self.reuse_gain
         payload["phase_accounted_ms"] = self.phase_accounted_ms
         payload["phase_overhead_ms"] = self.phase_overhead_ms
+        payload["blob_cache_hit_rate"] = self.blob_cache_hit_rate
+        payload["dag_integrity_ok"] = self.dag_integrity_ok
         return payload

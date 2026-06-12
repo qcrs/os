@@ -11,6 +11,8 @@ from agents.base_agent import BaseAgent
 from protocol.messages import (
     Capability,
     CapabilityItem,
+    ChannelPatch,
+    ChannelSnapshot,
     MemoryCommit,
     Plan,
     PlanStep,
@@ -337,11 +339,69 @@ class RetrieverAgent(BaseAgent):
             ctx.metrics.memory_assist_rescue_task_count += int(
                 bool(feature_bundle.get("memory_prior_rescue"))
             )
+        channel_patch_ref = None
+        channel_snapshot_ref = None
         feature_ref = None
         ranked_evidence_ref = None
         tool_candidate_ref = None
         replay_eligibility_ref = None
         if transfer_strategy == "state_ref":
+            channel_values = {
+                "query": str(step.params["query"]),
+                "route": feature_bundle["route"],
+                "tool_name": feature_bundle["tool_name"],
+                "route_source": feature_bundle["route_source"],
+                "route_confidence": feature_bundle["route_confidence"],
+                "route_provenance": feature_bundle["route_provenance"],
+                "matched_signals": feature_bundle["matched_signals"],
+                "matched_tags": feature_bundle["matched_tags"],
+                "match_score": feature_bundle["match_score"],
+                "hint_doc_ids": feature_bundle["hint_doc_ids"],
+                "hint_route": feature_bundle["hint_route"],
+                "hint_tool_name": feature_bundle["hint_tool_name"],
+                "tool_candidates": tool_candidate_set["tool_candidates"],
+                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                "feature_evidence_sha256": feature_bundle["evidence_sha256"],
+                "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                "reuse_signature": reuse_signature,
+                "reused_memory": reused,
+                "memory_assist_ids": memory_assist_ids,
+            }
+            channel_patch = ChannelPatch(
+                channel_name="route",
+                ops=channel_values,
+                patch_id=f"{ctx.task_id}-{step.step_id}-route-patch",
+            )
+            channel_patch_ref = ctx.put_channel_patch(
+                state_id=f"{ctx.task_id}-{step.step_id}-route-patch",
+                patch=channel_patch,
+                metadata={
+                    "query": step.params["query"],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_route_confidence": feature_bundle["route_confidence"],
+                    "feature_route_provenance": feature_bundle["route_provenance"],
+                    "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                },
+            )
+            route_snapshot = ChannelSnapshot(
+                channel_name="route",
+                kind="LAST_VALUE",
+                values=channel_values,
+                state_ref_ids=[evidence_ref.state_id, channel_patch_ref.state_id],
+            )
+            channel_snapshot_ref = ctx.put_channel_snapshot(
+                state_id=f"{ctx.task_id}-{step.step_id}-route-snapshot",
+                snapshot=route_snapshot,
+                metadata={
+                    "query": step.params["query"],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_route_confidence": feature_bundle["route_confidence"],
+                    "feature_route_provenance": feature_bundle["route_provenance"],
+                    "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                },
+            )
             feature_ref = ctx.put_feature_state(
                 state_id=f"{ctx.task_id}-{step.step_id}-features",
                 feature_bundle=feature_bundle,
@@ -488,6 +548,10 @@ class RetrieverAgent(BaseAgent):
                 },
             )
         output_state_refs = [evidence_ref]
+        if channel_patch_ref is not None:
+            output_state_refs.append(channel_patch_ref)
+        if channel_snapshot_ref is not None:
+            output_state_refs.append(channel_snapshot_ref)
         if feature_ref is not None:
             output_state_refs.append(feature_ref)
         if ranked_evidence_ref is not None:
@@ -530,6 +594,12 @@ class RetrieverAgent(BaseAgent):
                 "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
                 "corpus_doc_count": len(corpus_docs),
                 "memory_hint_route": memory_hint_route,
+                "channel_snapshot_state_id": (
+                    "" if channel_snapshot_ref is None else channel_snapshot_ref.state_id
+                ),
+                "channel_snapshot_hash": (
+                    "" if channel_snapshot_ref is None else ctx.get_channel_snapshot_state(channel_snapshot_ref).snapshot_hash
+                ),
                 "ranked_evidence_state_id": (
                     "" if ranked_evidence_ref is None else ranked_evidence_ref.state_id
                 ),
@@ -555,6 +625,12 @@ class ExecutorAgent(BaseAgent):
         transfer_strategy = ctx.transfer_strategy()
         input_refs = ctx.step_input_refs(step.step_id)
         ctx.record_transfer_inputs(input_refs)
+        if transfer_strategy != "natural_handoff_text" and self._should_use_uds(step):
+            self._record_hash_first_fetches(
+                ctx=ctx,
+                refs=input_refs,
+                requester_id="uds_executor",
+            )
         if self._should_use_uds(step):
             return self._execute_via_uds(step, ctx, input_refs)
         return execute_playbook_step(
@@ -569,6 +645,16 @@ class ExecutorAgent(BaseAgent):
     def _should_use_uds(self, step: PlanStep) -> bool:
         transport = str(step.params.get("transport", self.transport or "local")).strip().lower()
         return transport == "uds"
+
+    @staticmethod
+    def _record_hash_first_fetches(*, ctx: object, refs: list[object], requester_id: str) -> None:
+        seen_hashes: set[str] = set()
+        for ref in refs:
+            blob_hash = str(getattr(ref, "canonical_hash", "") or "").strip()
+            if not blob_hash or blob_hash in seen_hashes:
+                continue
+            seen_hashes.add(blob_hash)
+            ctx.fetch_blob(ref, requester_id=requester_id)
 
     def _execute_via_uds(self, step: PlanStep, ctx: object, input_refs: list[object]) -> StepResult:
         socket_path = step.params.get("socket_path") or self.socket_path
@@ -607,6 +693,15 @@ class SummarizerAgent(BaseAgent):
         evidence_ref = next(ref for ref in input_refs if ref.kind == "DENSE_EVIDENCE")
         feature_ref = next(
             (ref for ref in input_refs if ref.kind == "FEATURE_BUNDLE"),
+            None,
+        )
+        route_channel_snapshot_ref = next(
+            (
+                ref
+                for ref in input_refs
+                if ref.kind == "CHANNEL_SNAPSHOT"
+                and str(ref.metadata.get("channel_name", ref.channel)).strip() == "route"
+            ),
             None,
         )
         ranked_evidence_ref = next(
@@ -696,11 +791,20 @@ class SummarizerAgent(BaseAgent):
             ),
             "feature_query": retrieve_result.payload.get("query", ""),
             "retrieved_doc_ids": retrieve_result.payload.get("retrieved_doc_ids", []),
+            "channel_snapshot_hash": retrieve_result.payload.get("channel_snapshot_hash", ""),
+            "cas_blob_hashes": sorted(
+                {
+                    ref.canonical_hash
+                    for ref in input_refs
+                    if getattr(ref, "canonical_hash", "")
+                }
+            ),
             "trace_id": ctx.trace_id,
             "llm_model": result_model,
         }
         assist_refs = [
             evidence_ref,
+            *([route_channel_snapshot_ref] if route_channel_snapshot_ref is not None else []),
             *([feature_ref] if feature_ref is not None else []),
             *([ranked_evidence_ref] if ranked_evidence_ref is not None else []),
             *([tool_candidate_ref] if tool_candidate_ref is not None else []),
@@ -861,6 +965,8 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                 accepted_state_kinds=[],
                 produced_state_kinds=[
                     "DENSE_EVIDENCE",
+                    "CHANNEL_PATCH",
+                    "CHANNEL_SNAPSHOT",
                     "FEATURE_BUNDLE",
                     "RANKED_EVIDENCE_BUNDLE",
                     "TOOL_CANDIDATE_SET",
@@ -878,6 +984,7 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                 action="EXECUTE_PLAYBOOK",
                 accepted_state_kinds=[
                     "DENSE_EVIDENCE",
+                    "CHANNEL_SNAPSHOT",
                     "FEATURE_BUNDLE",
                     "TOOL_CANDIDATE_SET",
                     "EXECUTOR_DECISION_PACKET",
@@ -895,6 +1002,7 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                 action="SUMMARIZE_AND_COMMIT",
                 accepted_state_kinds=[
                     "DENSE_EVIDENCE",
+                    "CHANNEL_SNAPSHOT",
                     "FEATURE_BUNDLE",
                     "RANKED_EVIDENCE_BUNDLE",
                     "TOOL_CANDIDATE_SET",

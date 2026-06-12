@@ -7,7 +7,7 @@ import sqlite3
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 try:
@@ -16,6 +16,14 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in host envs without
     faiss = None
 
 from protocol.messages import MemoryCommit, MemoryHit, MemoryQuery, StateRef
+
+MEMORY_SCHEMA_VERSION = 3
+MEMORY_TIERS = (
+    "working_memories",
+    "long_term_memories",
+    "replay_episodes",
+    "task_commits",
+)
 
 
 def _json_dumps(value: object) -> str:
@@ -194,6 +202,11 @@ class MemoryStore:
     def init_schema(self) -> None:
         self.conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS memories (
                 embedding_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 memory_id TEXT NOT NULL UNIQUE,
@@ -209,6 +222,23 @@ class MemoryStore:
                 metadata_json TEXT NOT NULL,
                 created_at_ns INTEGER NOT NULL,
                 updated_at_ns INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS working_memories (
+                memory_id TEXT PRIMARY KEY,
+                embedding_id INTEGER NOT NULL UNIQUE,
+                session_id TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at_ns INTEGER NOT NULL,
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS long_term_memories (
+                memory_id TEXT PRIMARY KEY,
+                embedding_id INTEGER NOT NULL UNIQUE,
+                metadata_json TEXT NOT NULL,
+                created_at_ns INTEGER NOT NULL,
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id)
             );
 
             CREATE TABLE IF NOT EXISTS memory_embeddings (
@@ -262,8 +292,31 @@ class MemoryStore:
                 updated_at_ns INTEGER NOT NULL,
                 FOREIGN KEY(memory_id) REFERENCES memories(memory_id)
             );
+
+            CREATE TABLE IF NOT EXISTS task_commits (
+                commit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id TEXT NOT NULL UNIQUE,
+                task_theme TEXT NOT NULL,
+                commit_ref TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at_ns INTEGER NOT NULL,
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id)
+            );
             """
         )
+        version_row = self.conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if version_row is None:
+            self.conn.execute(
+                "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
+                (str(MEMORY_SCHEMA_VERSION),),
+            )
+        elif int(version_row["value"]) != MEMORY_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"memory schema version mismatch: found {version_row['value']}, expected {MEMORY_SCHEMA_VERSION}. "
+                "Create a fresh run-local DB for the hard-break mainline."
+            )
         try:
             self.conn.execute(
                 """
@@ -284,6 +337,13 @@ class MemoryStore:
         if not embedding_text:
             raise ValueError(f"memory {commit.memory_id} missing embedding_text and summary")
         encoder_id = commit.encoder_id or self.embedder.encoder_id
+        tier = _normalize_memory_tier(
+            commit.tier
+            or commit.memory_purpose
+            or commit.memory_layer
+            or str(commit.metadata.get("memory_purpose", ""))
+            or str(commit.metadata.get("memory_layer", ""))
+        )
         vector = self._embed_commit_text(embedding_text, encoder_id)
         vector_json = json.dumps(vector.tolist(), ensure_ascii=True)
         metadata_payload = dict(commit.metadata)
@@ -293,6 +353,7 @@ class MemoryStore:
             metadata_payload["memory_layer"] = commit.memory_layer
         if commit.replay_class and "replay_class" not in metadata_payload:
             metadata_payload["replay_class"] = commit.replay_class
+        metadata_payload["tier"] = tier
         metadata_json = _json_dumps(metadata_payload)
         evidence_state_ids_json = _json_dumps(commit.evidence_state_ids)
         reusable_steps_json = _json_dumps(commit.reusable_steps)
@@ -401,9 +462,13 @@ class MemoryStore:
                     updated_at_ns,
                 ),
             )
+            for tier_table in MEMORY_TIERS:
+                self.conn.execute(
+                    f"DELETE FROM {tier_table} WHERE memory_id = ?",
+                    (commit.memory_id,),
+                )
             if (
-                (commit.memory_layer or str(metadata_payload.get("memory_layer", ""))) == "episode"
-                or (commit.memory_purpose or str(metadata_payload.get("memory_purpose", ""))) == "replay"
+                tier == "replay_episodes"
             ):
                 self.conn.execute(
                     """
@@ -460,6 +525,61 @@ class MemoryStore:
                         updated_at_ns,
                     ),
                 )
+            elif tier == "working_memories":
+                self.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO working_memories (
+                        memory_id,
+                        embedding_id,
+                        session_id,
+                        metadata_json,
+                        created_at_ns
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        commit.memory_id,
+                        embedding_id,
+                        commit.source_session_id,
+                        metadata_json,
+                        created_at_ns,
+                    ),
+                )
+            elif tier == "long_term_memories":
+                self.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO long_term_memories (
+                        memory_id,
+                        embedding_id,
+                        metadata_json,
+                        created_at_ns
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        commit.memory_id,
+                        embedding_id,
+                        metadata_json,
+                        created_at_ns,
+                    ),
+                )
+            elif tier == "task_commits":
+                self.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO task_commits (
+                        memory_id,
+                        task_theme,
+                        commit_ref,
+                        metadata_json,
+                        created_at_ns
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        commit.memory_id,
+                        commit.task_theme,
+                        commit.commit_ref,
+                        metadata_json,
+                        created_at_ns,
+                    ),
+                )
             if self._fts_enabled:
                 self.conn.execute(
                     """
@@ -489,12 +609,66 @@ class MemoryStore:
         self._flush_outbox()
 
     def search(self, query: MemoryQuery) -> list[MemoryHit]:
+        normalized_tier = _normalize_query_tier(query.tier)
+        if normalized_tier == "replay_episodes":
+            return self._search_specialized_tier(
+                query,
+                tier_table="replay_episodes",
+                loader=lambda: self.replay_candidates(
+                    task_theme=query.task_theme,
+                    encoder_id=query.encoder_id or self.embedder.encoder_id,
+                    required_metadata=query.required_metadata,
+                ),
+            )
+        if normalized_tier == "task_commits":
+            return self._search_specialized_tier(
+                query,
+                tier_table="task_commits",
+                loader=lambda: self.task_commit_candidates(
+                    task_theme=query.task_theme,
+                    required_metadata=query.required_metadata,
+                ),
+            )
+        if normalized_tier == "working_memories":
+            return self.search_working_memories(query)
+        if normalized_tier == "long_term_memories":
+            return self.search_long_term_memories(query)
         encoder_id = query.encoder_id or self.embedder.encoder_id
         query_vector = self._embed_query_text(query.query_text, encoder_id)
         candidate_hits = self._search_semantic(query, query_vector, encoder_id)
         if candidate_hits:
             return candidate_hits
         return self._search_keyword(query)
+
+    def search_working_memories(self, query: MemoryQuery) -> list[MemoryHit]:
+        return self._search_tiered_semantic_or_keyword(query, tier_table="working_memories")
+
+    def search_long_term_memories(self, query: MemoryQuery) -> list[MemoryHit]:
+        return self._search_tiered_semantic_or_keyword(query, tier_table="long_term_memories")
+
+    def search_replay_episodes(
+        self,
+        *,
+        task_theme: str,
+        encoder_id: str | None = None,
+        required_metadata: dict[str, object] | None = None,
+    ) -> list[MemoryHit]:
+        return self.replay_candidates(
+            task_theme=task_theme,
+            encoder_id=encoder_id,
+            required_metadata=required_metadata,
+        )
+
+    def search_task_commits(
+        self,
+        *,
+        task_theme: str,
+        required_metadata: dict[str, object] | None = None,
+    ) -> list[MemoryHit]:
+        return self.task_commit_candidates(
+            task_theme=task_theme,
+            required_metadata=required_metadata,
+        )
 
     def replay_candidates(
         self,
@@ -555,6 +729,42 @@ class MemoryStore:
                     tool_name=str(row["tool_name"]),
                     source_session_id=str(row["source_session_id"]),
                     metadata=metadata,
+                )
+            )
+        return hits
+
+    def task_commit_candidates(
+        self,
+        *,
+        task_theme: str,
+        required_metadata: dict[str, object] | None = None,
+    ) -> list[MemoryHit]:
+        rows = self.conn.execute(
+            """
+            SELECT tc.memory_id, tc.task_theme, tc.commit_ref, tc.metadata_json, tc.created_at_ns,
+                   m.summary, m.tags_json, m.confidence
+            FROM task_commits tc
+            JOIN memories m USING(memory_id)
+            WHERE tc.task_theme = ?
+            ORDER BY tc.created_at_ns DESC
+            """,
+            (task_theme,),
+        ).fetchall()
+        hits: list[MemoryHit] = []
+        for row in rows:
+            metadata = json.loads(row["metadata_json"])
+            if not _metadata_matches(metadata, required_metadata or {}):
+                continue
+            hits.append(
+                MemoryHit(
+                    memory_id=row["memory_id"],
+                    confidence=float(row["confidence"]),
+                    reuse_source="task_commit_memory",
+                    summary=str(row["summary"]),
+                    tags=json.loads(row["tags_json"]),
+                    task_theme=str(row["task_theme"]),
+                    created_at_ns=int(row["created_at_ns"]),
+                    metadata={**metadata, "commit_ref": str(row["commit_ref"])},
                 )
             )
         return hits
@@ -688,6 +898,8 @@ class MemoryStore:
         query: MemoryQuery,
         query_vector: np.ndarray,
         encoder_id: str,
+        *,
+        required_tier: str | None = None,
     ) -> list[MemoryHit]:
         if self._index.ntotal == 0:
             return []
@@ -741,6 +953,8 @@ class MemoryStore:
             if query.source_agent_id and row["source_agent_id"] != query.source_agent_id:
                 continue
             if not _metadata_matches(metadata, query.required_metadata):
+                continue
+            if required_tier is not None and str(metadata.get("tier", "")) != required_tier:
                 continue
             session_bonus = _env_optional_float("STATEBUS_MEM_WORKING_TIER", 1.5)
             # These weights are heuristics, not benchmark-validated constants.
@@ -798,8 +1012,54 @@ class MemoryStore:
         )
         return ordered_hits[: query.top_k]
 
-    def _search_keyword(self, query: MemoryQuery) -> list[MemoryHit]:
+    def _search_tiered_semantic_or_keyword(
+        self,
+        query: MemoryQuery,
+        *,
+        tier_table: str,
+    ) -> list[MemoryHit]:
+        encoder_id = query.encoder_id or self.embedder.encoder_id
+        query_vector = self._embed_query_text(query.query_text, encoder_id)
+        candidate_hits = self._search_semantic(
+            query,
+            query_vector,
+            encoder_id,
+            required_tier=tier_table,
+        )
+        if candidate_hits:
+            return candidate_hits[: query.top_k]
+        keyword_hits = self._search_keyword(query, required_tier=tier_table)
+        return keyword_hits[: query.top_k]
+
+    def _search_specialized_tier(
+        self,
+        query: MemoryQuery,
+        *,
+        tier_table: str,
+        loader: Callable[[], list[MemoryHit]],
+    ) -> list[MemoryHit]:
+        ranked_hits = self._search_tiered_semantic_or_keyword(query, tier_table=tier_table)
+        if not ranked_hits:
+            return []
+        loaded_by_id = {hit.memory_id: hit for hit in loader()}
+        merged_hits: list[MemoryHit] = []
+        for hit in ranked_hits:
+            loaded = loaded_by_id.get(hit.memory_id)
+            if loaded is None:
+                continue
+            loaded.faiss_score = hit.faiss_score
+            loaded.combined_score = hit.combined_score
+            loaded.reuse_source = hit.reuse_source
+            merged_hits.append(loaded)
+        return merged_hits[: query.top_k]
+
+    def _search_keyword(
+        self,
+        query: MemoryQuery,
+        required_tier: str | None = None,
+    ) -> list[MemoryHit]:
         rows = []
+        sql_limit = -1 if required_tier is not None else query.top_k
         if self._fts_enabled:
             try:
                 rows = self.conn.execute(
@@ -820,7 +1080,7 @@ class MemoryStore:
                     (
                         self._fts_query(query),
                         query.encoder_id or self.embedder.encoder_id,
-                        query.top_k,
+                        sql_limit,
                     ),
                 ).fetchall()
             except sqlite3.OperationalError:
@@ -849,7 +1109,7 @@ class MemoryStore:
                     like_text,
                     like_text,
                     like_text,
-                    query.top_k,
+                    sql_limit,
                 ),
             ).fetchall()
         hits: list[MemoryHit] = []
@@ -870,6 +1130,8 @@ class MemoryStore:
             if query.source_agent_id and row["source_agent_id"] != query.source_agent_id:
                 continue
             if not _metadata_matches(metadata, query.required_metadata):
+                continue
+            if required_tier is not None and str(metadata.get("tier", "")) != required_tier:
                 continue
             session_bonus = _env_optional_float("STATEBUS_MEM_WORKING_TIER", 1.5)
             tag_weight = _env_optional_float("STATEBUS_MEM_TAG_WEIGHT", 0.20)
@@ -913,7 +1175,7 @@ class MemoryStore:
                 hit.memory_id,
             )
         )
-        return hits
+        return hits[: query.top_k]
 
     def _replace_index_vector(self, embedding_id: int, vector: np.ndarray) -> None:
         existing = self._index_vectors.get(embedding_id)
@@ -1021,3 +1283,31 @@ def _row_session_id(row: sqlite3.Row) -> str:
         return str(meta.get("session_id", ""))
     except (json.JSONDecodeError, TypeError):
         return ""
+
+
+def _normalize_memory_tier(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    mapping = {
+        "": "long_term_memories",
+        "assist": "working_memories",
+        "summary": "long_term_memories",
+        "working": "working_memories",
+        "working_memories": "working_memories",
+        "long_term": "long_term_memories",
+        "long_term_memories": "long_term_memories",
+        "replay": "replay_episodes",
+        "episode": "replay_episodes",
+        "replay_episodes": "replay_episodes",
+        "task_commit": "task_commits",
+        "task_commits": "task_commits",
+    }
+    if text == "" and value is not None:
+        text = str(value).strip().lower()
+    normalized = mapping.get(text, text)
+    if normalized not in MEMORY_TIERS:
+        raise ValueError(f"unsupported memory tier: {value!r}")
+    return normalized
+
+
+def _normalize_query_tier(value: str | None) -> str:
+    return _normalize_memory_tier(value)

@@ -12,21 +12,87 @@ from protocol import statebus_pb2
 class StateRef:
     state_id: str
     kind: str
-    storage: str
-    handle: str
     length: int
-    checksum: str | None = None
+    blob_hash: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    storage: str = ""
+    handle: str = ""
+    checksum: str | None = None
+    channel: str = ""
+    compatibility: dict[str, Any] = field(default_factory=dict)
+    fetch_uri: str = ""
+    local_only: bool = False
+    exact_replay_ready: bool = False
+    created_at_ns: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.blob_hash and self.checksum:
+            self.blob_hash = self.checksum
+        if self.blob_hash and not self.checksum:
+            self.checksum = self.blob_hash
+        if not self.channel:
+            self.channel = str(self.metadata.get("channel_name", ""))
 
     @property
-    def blob_hash(self) -> str:
-        """Content-addressed blob hash (alias for checksum)."""
-        return self.checksum or ""
+    def canonical_hash(self) -> str:
+        return self.blob_hash or self.checksum or ""
+
+    @property
+    def checksum_or_hash(self) -> str:
+        return self.canonical_hash
+
+    @property
+    def payload_key(self) -> str:
+        return self.canonical_hash or self.state_id
+
+    @property
+    def casf_dict(self) -> dict[str, Any]:
+        return {
+            "state_id": self.state_id,
+            "blob_hash": self.canonical_hash,
+            "kind": self.kind,
+            "length": self.length,
+            "metadata": dict(self.metadata),
+            "channel": self.channel,
+            "compatibility": dict(self.compatibility),
+        }
+
+    @property
+    def legacy_dict(self) -> dict[str, Any]:
+        return {
+            "state_id": self.state_id,
+            "kind": self.kind,
+            "storage": self.storage,
+            "handle": self.handle,
+            "length": self.length,
+            "checksum": self.checksum,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_casf(
+        cls,
+        *,
+        state_id: str,
+        blob_hash: str,
+        kind: str,
+        length: int,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> "StateRef":
+        return cls(
+            state_id=state_id,
+            kind=kind,
+            length=length,
+            blob_hash=blob_hash,
+            checksum=blob_hash,
+            metadata=dict(metadata or {}),
+            **kwargs,
+        )
 
     @property
     def is_cas(self) -> bool:
-        """Whether this ref uses content-addressed storage."""
-        return self.storage == "CAS_BLOB"
+        return bool(self.canonical_hash) and self.storage == "CAS_BLOB"
 
 
 @dataclass
@@ -83,11 +149,14 @@ class PlanStep:
 
 @dataclass
 class DeltaPlanStep:
-    """增量PlanStep：同chain连续task间只传变更字段"""
     step_id: str
     base_step_id: str
+    owner_agent: str = ""
+    action: str = ""
     delta_params: dict[str, Any] = field(default_factory=dict)
     delta_depends_on: list[str] = field(default_factory=list)
+    delta_input_state_refs: list[str] = field(default_factory=list)
+    input_patch_mode: str = "replace"
     delta_version: int = 1
 
 
@@ -96,6 +165,16 @@ class Plan:
     task_id: str
     goal: str
     steps: list[PlanStep]
+
+
+@dataclass
+class PlanDelta:
+    task_id: str
+    base_task_id: str
+    goal: str
+    steps: list[DeltaPlanStep]
+    full_plan_fallback: Plan | None = None
+    frame_preference: str = "delta"
 
 
 @dataclass
@@ -126,6 +205,8 @@ class MemoryQuery:
     limit_active_only: bool = True
     required_metadata: dict[str, Any] = field(default_factory=dict)
     session_id: str = ""
+    tier: str = "working_memories"
+    route_target: str = ""
 
 
 @dataclass
@@ -192,6 +273,45 @@ class MemoryCommit:
     step_output_state_refs: list[StateRef] = field(default_factory=list)
     tool_name: str = ""
     source_session_id: str = ""
+    tier: str = ""
+    commit_ref: str = ""
+
+
+@dataclass
+class FetchRequest:
+    blob_hash: str
+    requester_id: str
+    state_id: str = ""
+    accepted_kinds: list[str] = field(default_factory=list)
+    prefer_local_short_circuit: bool = True
+
+
+@dataclass
+class FetchResponse:
+    blob_hash: str
+    found: bool
+    payload_ref: StateRef | None = None
+    bytes_sent: int = 0
+    cache_hit: bool = False
+    responder_id: str = ""
+
+
+@dataclass
+class ChannelPatch:
+    channel_name: str
+    ops: dict[str, Any] = field(default_factory=dict)
+    patch_id: str = ""
+    schema_version: str = "statebus.channel_patch.v2"
+
+
+@dataclass
+class ChannelSnapshot:
+    channel_name: str
+    kind: str
+    values: dict[str, Any] = field(default_factory=dict)
+    snapshot_hash: str = ""
+    state_ref_ids: list[str] = field(default_factory=list)
+    schema_version: str = "statebus.channel_snapshot.v2"
 
 
 @dataclass
@@ -243,7 +363,13 @@ def protocol_bytes(message: Any) -> bytes:
 
 
 def state_ref_lite_wire_bytes(ref: StateRef) -> int:
-    return _to_proto_state_ref(ref).ByteSize()
+    # Keep the benchmark wire-size helper stable as a pointer-only counter even
+    # though the formal protobuf path now carries CASF metadata.
+    return statebus_pb2.StateRefLite(
+        state_id=ref.state_id,
+        kind=ref.kind,
+        length=ref.length,
+    ).ByteSize()
 
 
 def total_state_ref_lite_wire_bytes(refs: list[StateRef]) -> int:
@@ -304,6 +430,24 @@ def parse_protocol_bytes(payload: bytes) -> Any:
             goal=message.goal,
             steps=[_from_proto_plan_step(item) for item in message.steps],
         )
+    if body == "plan_delta":
+        message = envelope.plan_delta
+        return PlanDelta(
+            task_id=message.task_id,
+            base_task_id=message.base_task_id,
+            goal=message.goal,
+            steps=[_from_proto_delta_plan_step(item) for item in message.steps],
+            full_plan_fallback=(
+                Plan(
+                    task_id=message.full_plan_fallback.task_id,
+                    goal=message.full_plan_fallback.goal,
+                    steps=[_from_proto_plan_step(item) for item in message.full_plan_fallback.steps],
+                )
+                if message.HasField("full_plan_fallback")
+                else None
+            ),
+            frame_preference=message.frame_preference or "delta",
+        )
     if body == "plan_step":
         return _from_proto_plan_step(envelope.plan_step)
     if body == "step_result":
@@ -332,6 +476,47 @@ def parse_protocol_bytes(payload: bytes) -> Any:
     if body == "remote_step_response":
         message = envelope.remote_step_response
         return RemoteStepResponse(result=_from_proto_remote_step_result(message.result))
+    if body == "fetch_request":
+        message = envelope.fetch_request
+        return FetchRequest(
+            blob_hash=message.blob_hash,
+            requester_id=message.requester_id,
+            state_id=message.state_id,
+            accepted_kinds=list(message.accepted_kinds),
+            prefer_local_short_circuit=message.prefer_local_short_circuit,
+        )
+    if body == "fetch_response":
+        message = envelope.fetch_response
+        return FetchResponse(
+            blob_hash=message.blob_hash,
+            found=message.found,
+            payload_ref=(
+                _from_proto_state_ref_full(message.payload_ref)
+                if message.HasField("payload_ref")
+                else None
+            ),
+            bytes_sent=int(message.bytes_sent),
+            cache_hit=message.cache_hit,
+            responder_id=message.responder_id,
+        )
+    if body == "channel_patch":
+        message = envelope.channel_patch
+        return ChannelPatch(
+            channel_name=message.channel_name,
+            ops=_parse_json_object(message.ops_json),
+            patch_id=message.patch_id,
+            schema_version=message.schema_version or "statebus.channel_patch.v2",
+        )
+    if body == "channel_snapshot":
+        message = envelope.channel_snapshot
+        return ChannelSnapshot(
+            channel_name=message.channel_name,
+            kind=message.kind,
+            values=_parse_json_object(message.values_json),
+            snapshot_hash=message.snapshot_hash,
+            state_ref_ids=list(message.state_ref_ids),
+            schema_version=message.schema_version or "statebus.channel_snapshot.v2",
+        )
     if body == "memory_query":
         message = envelope.memory_query
         return MemoryQuery(
@@ -388,6 +573,11 @@ def text_frame(message: Any) -> str:
             f"Plan for task {message.task_id}: {message.goal}\n"
             + "\n".join(steps)
         )
+    if isinstance(message, PlanDelta):
+        return (
+            f"PlanDelta for task {message.task_id} from {message.base_task_id}: "
+            f"{len(message.steps)} step patches."
+        )
     if isinstance(message, PlanStep):
         depends = ", ".join(message.depends_on) or "none"
         refs = ", ".join(message.input_state_refs) or "none"
@@ -426,6 +616,20 @@ def text_frame(message: Any) -> str:
             f"{message.source_agent_id}. Tags: {tags}. Confidence: {message.confidence:.2f}. "
             f"Embedding state: {message.embedding_state_id or 'none'}. Evidence ids: {evidence}. "
             f"Reusable steps: {reusable}. Required metadata: {metadata}. Summary: {message.summary}"
+        )
+    if isinstance(message, FetchRequest):
+        return f"Fetch blob {message.blob_hash} for state {message.state_id or 'unknown'}."
+    if isinstance(message, FetchResponse):
+        return (
+            f"Fetch response for {message.blob_hash}: "
+            f"{'hit' if message.found else 'miss'}, bytes={message.bytes_sent}."
+        )
+    if isinstance(message, ChannelPatch):
+        return f"ChannelPatch {message.channel_name}: {sorted(message.ops)}."
+    if isinstance(message, ChannelSnapshot):
+        return (
+            f"ChannelSnapshot {message.channel_name} ({message.kind}) "
+            f"hash={message.snapshot_hash or 'pending'}."
         )
     payload = json.dumps(to_wire(message), ensure_ascii=False, sort_keys=True)
     return f"{message_type(message)} {payload}"
@@ -484,6 +688,23 @@ def to_protocol_envelope(message: Any) -> statebus_pb2.WireEnvelope | None:
                 steps=[_to_proto_plan_step(step) for step in message.steps],
             )
         )
+    if isinstance(message, PlanDelta):
+        proto = statebus_pb2.PlanDelta(
+            task_id=message.task_id,
+            base_task_id=message.base_task_id,
+            goal=message.goal,
+            steps=[_to_proto_delta_plan_step(step) for step in message.steps],
+            frame_preference=message.frame_preference,
+        )
+        if message.full_plan_fallback is not None:
+            proto.full_plan_fallback.CopyFrom(
+                statebus_pb2.Plan(
+                    task_id=message.full_plan_fallback.task_id,
+                    goal=message.full_plan_fallback.goal,
+                    steps=[_to_proto_plan_step(step) for step in message.full_plan_fallback.steps],
+                )
+            )
+        return statebus_pb2.WireEnvelope(plan_delta=proto)
     if isinstance(message, PlanStep):
         return statebus_pb2.WireEnvelope(plan_step=_to_proto_plan_step(message))
     if isinstance(message, StepResult):
@@ -517,6 +738,47 @@ def to_protocol_envelope(message: Any) -> statebus_pb2.WireEnvelope | None:
                 result=_to_proto_remote_step_result(message.result),
             )
         )
+    if isinstance(message, FetchRequest):
+        return statebus_pb2.WireEnvelope(
+            fetch_request=statebus_pb2.FetchRequest(
+                blob_hash=message.blob_hash,
+                requester_id=message.requester_id,
+                state_id=message.state_id,
+                accepted_kinds=message.accepted_kinds,
+                prefer_local_short_circuit=message.prefer_local_short_circuit,
+            )
+        )
+    if isinstance(message, FetchResponse):
+        proto = statebus_pb2.FetchResponse(
+            blob_hash=message.blob_hash,
+            found=message.found,
+            bytes_sent=message.bytes_sent,
+            cache_hit=message.cache_hit,
+            responder_id=message.responder_id,
+        )
+        if message.payload_ref is not None:
+            proto.payload_ref.CopyFrom(_to_proto_state_ref_full(message.payload_ref))
+        return statebus_pb2.WireEnvelope(fetch_response=proto)
+    if isinstance(message, ChannelPatch):
+        return statebus_pb2.WireEnvelope(
+            channel_patch=statebus_pb2.ChannelPatch(
+                channel_name=message.channel_name,
+                ops_json=_compact_json(message.ops),
+                patch_id=message.patch_id,
+                schema_version=message.schema_version,
+            )
+        )
+    if isinstance(message, ChannelSnapshot):
+        return statebus_pb2.WireEnvelope(
+            channel_snapshot=statebus_pb2.ChannelSnapshot(
+                channel_name=message.channel_name,
+                kind=message.kind,
+                values_json=_compact_json(message.values),
+                snapshot_hash=message.snapshot_hash,
+                state_ref_ids=message.state_ref_ids,
+                schema_version=message.schema_version,
+            )
+        )
     if isinstance(message, MemoryQuery):
         return statebus_pb2.WireEnvelope(
             memory_query=statebus_pb2.MemoryQuery(
@@ -546,6 +808,9 @@ def _to_proto_state_ref(ref: StateRef) -> statebus_pb2.StateRefLite:
         state_id=ref.state_id,
         kind=ref.kind,
         length=ref.length,
+        blob_hash=ref.canonical_hash,
+        channel=ref.channel,
+        exact_replay_ready=ref.exact_replay_ready,
     )
 
 
@@ -558,6 +823,27 @@ def _to_proto_state_ref_full(ref: StateRef) -> statebus_pb2.StateRefFull:
         length=ref.length,
         checksum=ref.checksum or "",
         metadata_json=_compact_json(ref.metadata),
+        blob_hash=ref.canonical_hash,
+        channel=ref.channel,
+        compatibility_json=_compact_json(ref.compatibility),
+        fetch_uri=ref.fetch_uri,
+        local_only=ref.local_only,
+        exact_replay_ready=ref.exact_replay_ready,
+        created_at_ns=ref.created_at_ns or 0,
+    )
+
+
+def _to_proto_delta_plan_step(step: DeltaPlanStep) -> statebus_pb2.DeltaPlanStep:
+    return statebus_pb2.DeltaPlanStep(
+        step_id=step.step_id,
+        base_step_id=step.base_step_id,
+        owner_agent=step.owner_agent,
+        action=step.action,
+        delta_params_json=_compact_json(step.delta_params),
+        delta_depends_on=step.delta_depends_on,
+        delta_input_state_refs=step.delta_input_state_refs,
+        input_patch_mode=step.input_patch_mode,
+        delta_version=step.delta_version,
     )
 
 
@@ -624,6 +910,9 @@ def _from_proto_state_ref(ref: statebus_pb2.StateRefLite) -> StateRef:
         storage="",
         handle="",
         length=int(ref.length),
+        blob_hash=ref.blob_hash,
+        channel=ref.channel,
+        exact_replay_ready=ref.exact_replay_ready,
     )
 
 
@@ -636,6 +925,27 @@ def _from_proto_state_ref_full(ref: statebus_pb2.StateRefFull) -> StateRef:
         length=int(ref.length),
         checksum=ref.checksum or None,
         metadata=_parse_json_object(ref.metadata_json),
+        blob_hash=ref.blob_hash or ref.checksum,
+        channel=ref.channel,
+        compatibility=_parse_json_object(ref.compatibility_json),
+        fetch_uri=ref.fetch_uri,
+        local_only=ref.local_only,
+        exact_replay_ready=ref.exact_replay_ready,
+        created_at_ns=ref.created_at_ns or None,
+    )
+
+
+def _from_proto_delta_plan_step(step: statebus_pb2.DeltaPlanStep) -> DeltaPlanStep:
+    return DeltaPlanStep(
+        step_id=step.step_id,
+        base_step_id=step.base_step_id,
+        owner_agent=step.owner_agent,
+        action=step.action,
+        delta_params=_parse_json_object(step.delta_params_json),
+        delta_depends_on=list(step.delta_depends_on),
+        delta_input_state_refs=list(step.delta_input_state_refs),
+        input_patch_mode=step.input_patch_mode or "replace",
+        delta_version=int(step.delta_version or 1),
     )
 
 
@@ -769,6 +1079,34 @@ def _message_from_wire_frame(message_name: str, payload: dict[str, Any]) -> Any:
                 if isinstance(item, dict)
             ],
         )
+    if message_name == "PlanDelta":
+        fallback_payload = payload.get("full_plan_fallback")
+        return PlanDelta(
+            task_id=str(payload.get("task_id", "")),
+            base_task_id=str(payload.get("base_task_id", "")),
+            goal=str(payload.get("goal", "")),
+            steps=[
+                DeltaPlanStep(
+                    step_id=str(item.get("step_id", "")),
+                    base_step_id=str(item.get("base_step_id", "")),
+                    owner_agent=str(item.get("owner_agent", "")),
+                    action=str(item.get("action", "")),
+                    delta_params=dict(item.get("delta_params", {}) or {}),
+                    delta_depends_on=[str(value) for value in item.get("delta_depends_on", [])],
+                    delta_input_state_refs=[str(value) for value in item.get("delta_input_state_refs", [])],
+                    input_patch_mode=str(item.get("input_patch_mode", "replace")),
+                    delta_version=int(item.get("delta_version", 1)),
+                )
+                for item in payload.get("steps", [])
+                if isinstance(item, dict)
+            ],
+            full_plan_fallback=(
+                _message_from_wire_frame("Plan", fallback_payload)
+                if isinstance(fallback_payload, dict)
+                else None
+            ),
+            frame_preference=str(payload.get("frame_preference", "delta")),
+        )
     if message_name == "StateRef":
         return _state_ref_from_payload(payload)
     if message_name == "StepResult":
@@ -856,6 +1194,60 @@ def _message_from_wire_frame(message_name: str, payload: dict[str, Any]) -> Any:
                 if payload.get("created_at_ns") in (None, 0)
                 else int(payload.get("created_at_ns"))
             ),
+            memory_purpose=str(payload.get("memory_purpose", "")),
+            memory_layer=str(payload.get("memory_layer", "")),
+            replay_class=str(payload.get("replay_class", "")),
+            route=str(payload.get("route", "")),
+            route_source=str(payload.get("route_source", "")),
+            route_provenance=[str(value) for value in payload.get("route_provenance", [])],
+            route_confidence=float(payload.get("route_confidence", 0.0)),
+            retrieved_doc_ids=[str(value) for value in payload.get("retrieved_doc_ids", [])],
+            fresh_evidence_sha256=str(payload.get("fresh_evidence_sha256", "")),
+            reuse_signature=str(payload.get("reuse_signature", "")),
+            step_output_state_ids=[str(value) for value in payload.get("step_output_state_ids", [])],
+            step_output_state_refs=[
+                _state_ref_from_payload(item)
+                for item in payload.get("step_output_state_refs", [])
+                if isinstance(item, dict)
+            ],
+            tool_name=str(payload.get("tool_name", "")),
+            source_session_id=str(payload.get("source_session_id", "")),
+            tier=str(payload.get("tier", "")),
+            commit_ref=str(payload.get("commit_ref", "")),
+        )
+    if message_name == "FetchRequest":
+        return FetchRequest(
+            blob_hash=str(payload.get("blob_hash", "")),
+            requester_id=str(payload.get("requester_id", "")),
+            state_id=str(payload.get("state_id", "")),
+            accepted_kinds=[str(value) for value in payload.get("accepted_kinds", [])],
+            prefer_local_short_circuit=bool(payload.get("prefer_local_short_circuit", True)),
+        )
+    if message_name == "FetchResponse":
+        payload_ref = payload.get("payload_ref")
+        return FetchResponse(
+            blob_hash=str(payload.get("blob_hash", "")),
+            found=bool(payload.get("found", False)),
+            payload_ref=_state_ref_from_payload(payload_ref) if isinstance(payload_ref, dict) else None,
+            bytes_sent=int(payload.get("bytes_sent", 0)),
+            cache_hit=bool(payload.get("cache_hit", False)),
+            responder_id=str(payload.get("responder_id", "")),
+        )
+    if message_name == "ChannelPatch":
+        return ChannelPatch(
+            channel_name=str(payload.get("channel_name", "")),
+            ops=dict(payload.get("ops", {}) or {}),
+            patch_id=str(payload.get("patch_id", "")),
+            schema_version=str(payload.get("schema_version", "statebus.channel_patch.v2")),
+        )
+    if message_name == "ChannelSnapshot":
+        return ChannelSnapshot(
+            channel_name=str(payload.get("channel_name", "")),
+            kind=str(payload.get("kind", "")),
+            values=dict(payload.get("values", {}) or {}),
+            snapshot_hash=str(payload.get("snapshot_hash", "")),
+            state_ref_ids=[str(value) for value in payload.get("state_ref_ids", [])],
+            schema_version=str(payload.get("schema_version", "statebus.channel_snapshot.v2")),
         )
     if message_name == "RemoteStepRequest":
         return RemoteStepRequest(
@@ -884,11 +1276,20 @@ def _state_ref_from_payload(payload: dict[str, Any]) -> StateRef:
     return StateRef(
         state_id=str(payload.get("state_id", "")),
         kind=str(payload.get("kind", "")),
+        length=int(payload.get("length", 0)),
+        blob_hash=str(payload.get("blob_hash", payload.get("checksum", "") or "")),
+        metadata=dict(payload.get("metadata", {}) or {}),
         storage=str(payload.get("storage", "")),
         handle=str(payload.get("handle", "")),
-        length=int(payload.get("length", 0)),
         checksum=None if payload.get("checksum") in (None, "") else str(payload.get("checksum")),
-        metadata=dict(payload.get("metadata", {}) or {}),
+        channel=str(payload.get("channel", "")),
+        compatibility=dict(payload.get("compatibility", {}) or {}),
+        fetch_uri=str(payload.get("fetch_uri", "")),
+        local_only=bool(payload.get("local_only", False)),
+        exact_replay_ready=bool(payload.get("exact_replay_ready", False)),
+        created_at_ns=(
+            None if payload.get("created_at_ns") in (None, 0) else int(payload.get("created_at_ns"))
+        ),
     )
 
 
@@ -901,17 +1302,8 @@ def _parse_json_object(payload: str) -> dict[str, Any]:
     return value
 
 
-# Experimental CASF structures. They are not wired into the current host
-# mainline and should be treated as reserved design-only data shapes.
-
-
 @dataclass
 class StepTree:
-    """一个PlanStep的完整状态快照 — CASF Merkle DAG的叶子节点。
-
-    记录一个step消费了哪些StateBlob、产出了哪些StateBlob。
-    tree_hash = SHA-256(input_blobs + output_blobs + step_metadata)
-    """
     step_id: str
     agent_id: str
     action: str
@@ -920,6 +1312,8 @@ class StepTree:
     started_at: float = 0.0
     finished_at: float = 0.0
     phase_timing: dict[str, float] = field(default_factory=dict)
+    channel_snapshots: dict[str, str] = field(default_factory=dict)
+    invariants: dict[str, bool] = field(default_factory=dict)
 
     def compute_tree_hash(self) -> str:
         import hashlib, msgpack
@@ -929,17 +1323,14 @@ class StepTree:
             "action": self.action,
             "input_blobs": sorted(self.input_blobs.items()),
             "output_blobs": sorted(self.output_blobs.items()),
+            "channel_snapshots": sorted(self.channel_snapshots.items()),
+            "invariants": sorted(self.invariants.items()),
         })
         return hashlib.sha256(payload).hexdigest()
 
 
 @dataclass
 class TaskCommit:
-    """一个task的完整执行快照 — CASF Merkle DAG的节点。
-
-    commit_hash = SHA-256(step_tree_hashes + parent_hash + metadata)
-    通过parent_hash链接到同task_group内的前一个TaskCommit。
-    """
     task_id: str
     task_group: str
     task_theme: str
@@ -950,6 +1341,8 @@ class TaskCommit:
     created_at: float = 0.0
     task_metrics: dict[str, Any] = field(default_factory=dict)
     memory_queries: list[dict[str, Any]] = field(default_factory=list)
+    channel_snapshot_hash: str = ""
+    invariant_summary: dict[str, int] = field(default_factory=dict)
 
     def compute_commit_hash(self) -> str:
         import hashlib, msgpack
@@ -960,6 +1353,8 @@ class TaskCommit:
             "step_hashes": [st.compute_tree_hash() for st in self.step_trees],
             "parent_hash": self.parent_hash,
             "mode": self.mode,
+            "channel_snapshot_hash": self.channel_snapshot_hash,
+            "invariant_summary": sorted(self.invariant_summary.items()),
         })
         return hashlib.sha256(payload).hexdigest()
 
@@ -970,14 +1365,9 @@ class TaskCommit:
 
 @dataclass
 class ExecutionDAG:
-    """一个benchmark run的完整执行轨迹DAG。
-
-    包含所有TaskCommit。通过root_hashes定位起点。
-    通过verify_integrity()做Merkle完整性验证。
-    通过find_similar_subtree()做结构相似记忆检索。
-    """
     dag_id: str
     task_commits: dict[str, TaskCommit] = field(default_factory=dict)
+    task_order: list[str] = field(default_factory=list)
 
     @property
     def root_hashes(self) -> list[str]:
@@ -992,6 +1382,12 @@ class ExecutionDAG:
                 if tc.parent_hash not in self.task_commits:
                     return False
         return True
+
+    def add_commit(self, commit: TaskCommit) -> None:
+        if not commit.commit_hash:
+            commit.seal()
+        self.task_commits[commit.commit_hash] = commit
+        self.task_order.append(commit.commit_hash)
 
     def find_similar_subtree(
         self, task_theme: str, query_terms: set[str], min_similarity: float = 0.5

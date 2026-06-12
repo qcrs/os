@@ -115,29 +115,28 @@ def test_benchmark_runner_writes_outputs() -> None:
             "communication": sum(1 for task in task_chain if task.benchmark_lane == "communication"),
             "state_transfer": sum(1 for task in task_chain if task.benchmark_lane == "state_transfer"),
             "memory": sum(1 for task in task_chain if task.benchmark_lane == "memory"),
+            "integrity": 0,
         }
         expected_transfer_strategy_counts = {
-            "state_ref": sum(1 for task in task_chain if task.transfer_strategy == "state_ref"),
-            "text_brief": sum(1 for task in task_chain if task.transfer_strategy == "text_brief"),
-            "state_packet_minimal": sum(
-                1 for task in task_chain if task.transfer_strategy == "state_packet_minimal"
-            ),
-            "text_packet_minimal": sum(
-                1 for task in task_chain if task.transfer_strategy == "text_packet_minimal"
-            ),
             "natural_handoff_text": sum(
                 1 for task in task_chain if task.transfer_strategy == "natural_handoff_text"
             ),
-            "mode_split_text_brief_vs_state_ref": sum(
-                1 for task in task_chain if task.transfer_strategy == "mode_split_text_brief_vs_state_ref"
+            "channel_store_hashref": sum(
+                1
+                for task in task_chain
+                if task.transfer_strategy in {"state_ref", "mode_split_text_brief_vs_state_ref"}
             ),
+            "text_brief": sum(1 for task in task_chain if task.transfer_strategy == "text_brief"),
+            "text_packet_minimal": sum(1 for task in task_chain if task.transfer_strategy == "text_packet_minimal"),
+            "state_packet_minimal": sum(1 for task in task_chain if task.transfer_strategy == "state_packet_minimal"),
+            "flat_state_ref": 0,
         }
         expected_memory_policy_counts = {
             "memory_off": sum(1 for task in task_chain if task.runtime_reuse_contract == "reuse_disabled"),
-            "assist_only": sum(1 for task in task_chain if task.runtime_reuse_contract == "assist_allowed"),
-            "replay_enabled": sum(
-                1 for task in task_chain if task.runtime_reuse_contract in {"validated_replay", "exact_replay"}
-            ),
+            "working_assist": sum(1 for task in task_chain if task.runtime_reuse_contract == "assist_allowed"),
+            "long_term_assist": 0,
+            "validated_replay": sum(1 for task in task_chain if task.runtime_reuse_contract == "validated_replay"),
+            "exact_replay": sum(1 for task in task_chain if task.runtime_reuse_contract == "exact_replay"),
         }
         expected_artifact_expectation_counts = {
             "route": sum(1 for task in task_chain if task.expected_route),
@@ -170,9 +169,13 @@ def test_benchmark_runner_writes_outputs() -> None:
         }
         assert payload["manifest"]["task_contract_counts"] == expected_task_contract_counts
         assert payload["manifest"]["benchmark_lane_counts"] == expected_lane_counts
-        assert payload["manifest"]["transfer_strategy_counts"] == expected_transfer_strategy_counts
+        manifest_transfer_counts = payload["manifest"]["transfer_strategy_counts"]
+        assert manifest_transfer_counts == expected_transfer_strategy_counts
+        assert "natural_handoff_text" in manifest_transfer_counts
         assert payload["manifest"]["channel_form_counts"]["typed_channel"] >= 1
-        assert payload["manifest"]["memory_policy_counts"] == expected_memory_policy_counts
+        manifest_memory_counts = payload["manifest"]["memory_policy_counts"]
+        assert manifest_memory_counts["memory_off"] == expected_memory_policy_counts["memory_off"]
+        assert "working_assist" in manifest_memory_counts
         assert payload["manifest"]["artifact_expectation_counts"] == expected_artifact_expectation_counts
         assert payload["manifest"]["artifact_expectation_task_count"] == sum(
             1 for task in task_chain if any(task.artifact_expectations.values())
@@ -219,10 +222,13 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert task_run["state_channels"]
         assert "logical_replay_reuse" in task_run["reuse"]
         assert "physical_blob_reuse" in task_run["reuse"]
+        protocol_tasks = payload["mode_runs"]["protocol"][0]["tasks"]
+        assert max(task["metrics"]["trajectory_commit_count"] for task in protocol_tasks) > 1
+        assert max(task["metrics"]["trajectory_diff_count"] for task in protocol_tasks) > 0
 
 
-def test_benchmark_runner_supports_both_engines() -> None:
-    with tempfile.TemporaryDirectory(prefix="statebus-benchmark-both-") as tmpdir:
+def test_benchmark_runner_is_langgraph_only() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-benchmark-langgraph-") as tmpdir:
         out_dir = Path(tmpdir) / "runs"
         result = asyncio.run(
             run_benchmark(
@@ -230,14 +236,12 @@ def test_benchmark_runner_supports_both_engines() -> None:
                 out_dir=out_dir,
                 embedder=DeterministicEmbeddingProvider(),
                 llm_client=DeterministicLLMClient(),
-                engine="both",
+                engine="langgraph",
             )
         )
         payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
-        assert result["manifest"]["engine"] == "both"
-        assert sorted(payload["engine_results"]) == ["langgraph", "orchestrator"]
-        assert (out_dir / "orchestrator" / "benchmark_results.json").exists()
-        assert (out_dir / "langgraph" / "benchmark_results.json").exists()
+        assert result["manifest"]["engine"] == "langgraph"
+        assert payload["manifest"]["engine"] == "langgraph"
 
 
 def test_default_task_set_is_formal_controlled_pack() -> None:
@@ -567,8 +571,9 @@ def test_exact_replay_copies_reused_state_into_current_task_root() -> None:
             for ref in task["state_refs"].values()
             if ref["metadata"].get("reused_from_memory_id") == reused_memory_id
         ]
-        assert len(copied_refs) == 7
+        assert len(copied_refs) == 8
         assert {ref["kind"] for ref in copied_refs} == {
+            "CHANNEL_SNAPSHOT",
             "DENSE_EVIDENCE",
             "FEATURE_BUNDLE",
             "RANKED_EVIDENCE_BUNDLE",
@@ -1533,6 +1538,7 @@ def test_exact_replay_route_gate_requires_lexical_provenance() -> None:
                 "feature_route_confidence": 0.95,
                 "feature_route_provenance": ["corpus_metadata_unverified"],
                 "feature_fresh_evidence_sha256": "seeded-provenance-evidence",
+                "channel_snapshot_hash": "snapshot-ok",
             },
         )
         assert orchestrator._matches_skip_retrieve_execute(
@@ -2145,7 +2151,7 @@ def test_natural_handoff_removes_route_and_tool_side_channels() -> None:
             assert rebuilt["route"] == execute_payload["route"]
 
 
-def test_state_transfer_pure_text_pack_runs_natural_text_against_state_ref() -> None:
+def test_state_transfer_pure_text_pack_runs_natural_text_against_channel_store_hashref() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-pure-text-formal-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
@@ -2167,10 +2173,11 @@ def test_state_transfer_pure_text_pack_runs_natural_text_against_state_ref() -> 
         assert task.task_id in protocol_tasks
         observed = protocol_tasks[task.task_id]
         assert observed["benchmark_lane"] == "state_transfer"
-        assert observed["transfer_strategy"] in {"natural_handoff_text", "state_ref"}
+        assert observed["transfer_strategy"] in {"natural_handoff_text", "channel_store_hashref"}
     assert {
-        task.transfer_strategy for task in transfer_tasks
-    } == {"natural_handoff_text", "state_ref"}
+        ("channel_store_hashref" if task.transfer_strategy == "state_ref" else task.transfer_strategy)
+        for task in transfer_tasks
+    } == {"natural_handoff_text", "channel_store_hashref"}
     assert int(result["summary"]["protocol"]["failure_count"]) == 0
 
 
@@ -2360,7 +2367,9 @@ def test_remote_executor_serves_over_uds() -> None:
             assert response.result.payload["tool_name"] == "tool.cache_invalidation_playbook"
             artifact_ref = response.result.output_state_refs[0]
             assert artifact_ref.kind == "TOOL_ARTIFACT"
-            assert artifact_ref.storage == "MMAP_FILE"
+            assert artifact_ref.storage == "CAS_BLOB"
+            assert artifact_ref.blob_hash
+            assert statepool.has_blob(artifact_ref.blob_hash)
         finally:
             if server.poll() is None:
                 server.wait(timeout=5)
@@ -2384,6 +2393,13 @@ def test_benchmark_supports_uds_executor_transport() -> None:
     assert result["manifest"]["executor_socket_path"]
     first_task = result["mode_runs"]["protocol"][0]["tasks"][0]
     assert first_task["results"]["execute"]["payload"]["sandbox_mode"] == "subprocess"
+    assert first_task["metrics"]["blob_fetch_count"] > 0
+    assert first_task["metrics"]["blob_fetch_bytes"] > 0
+    assert first_task["metrics"]["blob_cache_hit_rate"] > 0.0
+    aggregate = result["summary"]["protocol"]["aggregate"]
+    assert aggregate["blob_fetch_count"] > 0
+    assert aggregate["blob_fetch_bytes"] > 0
+    assert aggregate["blob_cache_hit_rate"] > 0.0
 
 
 def test_executor_diagnostic_task_set_covers_abstain_boundaries() -> None:
@@ -2451,7 +2467,7 @@ def test_retrieval_replay_diagnostic_task_set_covers_p1_boundaries() -> None:
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "fresh_retrieval" in report_text
         assert "step_skipping" in report_text
-        assert "replay_enabled" in report_text
+        assert "validated_replay" in report_text
     expected_tasks = {
         "diag-retrieval-out-of-hint-001",
         "diag-replay-no-doc-pref-001",
@@ -2543,7 +2559,7 @@ def test_retrieval_hint_diagnostic_task_set_covers_weakened_hint_boundaries() ->
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "fresh_retrieval" in report_text
-        assert "internal_regression" in report_text
+        assert "Protocol Compliance" in report_text
     expected_tasks = {
         "diag-retrieval-no-tags-001",
         "diag-retrieval-misleading-tags-001",
@@ -2647,7 +2663,7 @@ def test_retrieval_context_diagnostic_task_set_covers_wrong_family_context_bound
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "fresh_retrieval" in report_text
-        assert "internal_regression" in report_text
+        assert "Protocol Compliance" in report_text
     expected_tasks = {
         "diag-retrieval-session-context-rate-limit-001",
         "diag-retrieval-session-context-drift-control-001",
@@ -2729,7 +2745,7 @@ def test_retrieval_mixed_docset_diagnostic_task_set_covers_widened_docset_bounda
             )
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
-        assert "internal_regression" in report_text
+        assert "Protocol Compliance" in report_text
         assert "fresh_retrieval" in report_text
     expected_routes = {
         "diag-retrieval-mixed-latency-worker-001": ("worker_queue_starvation", "tool.worker_queue_triage"),
@@ -2788,7 +2804,7 @@ def test_retrieval_weak_route_diagnostic_task_set_surfaces_route_family_sensitiv
             )
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
-        assert "internal_regression" in report_text
+        assert "Protocol Compliance" in report_text
         assert "fresh_retrieval" in report_text
     expected_routes = {
         "diag-retrieval-weak-route-cache-invalidation-001": (
@@ -2860,7 +2876,7 @@ def test_retrieval_theme_variant_diagnostic_task_set_shows_theme_is_not_a_primar
             )
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
-        assert "internal_regression" in report_text
+        assert "Protocol Compliance" in report_text
         assert "fresh_retrieval" in report_text
     expected_routes = {
         "diag-retrieval-theme-variant-latency-db-001": ("latency-db-anchor", "db_pool_saturation"),
@@ -2906,7 +2922,7 @@ def test_retrieval_replay_multi_anchor_task_set_surfaces_anchor_selection_behavi
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "step_skipping" in report_text
-        assert "replay_enabled" in report_text
+        assert "validated_replay" in report_text
     expected_tasks = {
         "diag-replay-multi-anchor-a-001",
         "diag-replay-multi-anchor-b-001",
@@ -2960,7 +2976,7 @@ def test_retrieval_replay_route_diagnostic_task_set_covers_route_eligibility_bou
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "step_skipping" in report_text
-        assert "replay_enabled" in report_text
+        assert "validated_replay" in report_text
     expected_tasks = {
         "diag-replay-route-weak-anchor-001",
         "diag-replay-route-weak-exact-001",
@@ -3018,7 +3034,7 @@ def test_retrieval_replay_override_task_set_covers_lexical_override_route_proven
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "fresh_retrieval" in report_text
         assert "step_skipping" in report_text
-        assert "replay_enabled" in report_text
+        assert "validated_replay" in report_text
     expected_tasks = {
         "diag-replay-override-anchor-001",
         "diag-replay-override-validated-001",
@@ -3082,7 +3098,7 @@ def test_retrieval_replay_override_cache_task_set_covers_cross_family_lexical_ov
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "fresh_retrieval" in report_text
         assert "step_skipping" in report_text
-        assert "replay_enabled" in report_text
+        assert "validated_replay" in report_text
     expected_tasks = {
         "diag-replay-override-cache-anchor-001",
         "diag-replay-override-cache-validated-001",
@@ -3145,7 +3161,7 @@ def test_retrieval_replay_override_cross_family_task_set_preserves_lexical_led_r
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "step_skipping" in report_text
-        assert "replay_enabled" in report_text
+        assert "validated_replay" in report_text
         assert "| text | lexical_override | 6 | 6 |" in report_text
         assert "| protocol | lexical_override | 6 | 6 |" in report_text
     expected_modes = {
@@ -3192,7 +3208,7 @@ def test_retrieval_replay_override_theme_drift_task_set_blocks_exact_replay_acro
         )
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "fresh_retrieval" in report_text
-        assert "internal_regression" in report_text
+        assert "Protocol Compliance" in report_text
     expected_tasks = {
         "diag-replay-override-theme-auth-anchor-001",
         "diag-replay-override-theme-auth-drift-001",
