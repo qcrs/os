@@ -484,6 +484,24 @@ def default_state_contract_registry() -> StateContractRegistry:
     )
     registry.register_state_contract(
         StateContract(
+            name="inline_text_execution_artifact",
+            kind="TOOL_ARTIFACT",
+            producer_agents=("executor",),
+            consumer_agents=("summarizer",),
+            required_metadata=(
+                "channel_name",
+                "channel_kind",
+                "tool_name",
+                "route",
+                "sandbox_mode",
+                "transfer_strategy",
+            ),
+            lifecycle="task_scoped",
+            replay_compatible=True,
+        )
+    )
+    registry.register_state_contract(
+        StateContract(
             name="execution_artifact",
             kind="TOOL_ARTIFACT",
             producer_agents=("executor",),
@@ -629,6 +647,14 @@ def default_state_contract_registry() -> StateContractRegistry:
                     ),
                 ),
             ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="EXECUTE_PLAYBOOK",
+            variant="inline_text_handoff",
+            sources=(),
         )
     )
     registry.register_step_input_contract(

@@ -11,17 +11,25 @@
 
 | pack | 类型 | task数 | mode | 测什么 | headline | 不对外推什么 |
 |------|------|--------|------|--------|----------|-------------|
-| `formal_controlled` | formal | 24 | text+proto | 系统总门面 | 整体趋势 | 不替代单项最干净证据 |
+| `formal_controlled` | formal-overview | 24 | text+proto | 系统总门面 | 总览/回归 | 不替代单项最干净证据 |
 | `communication` | formal | 2 | text+proto | 纯text vs proto通信 | `communication` | 不证明handoff真实性 |
 | `memory` | formal | 3 | proto-only | 三种记忆策略 | `memory replay` | 不证明text vs proto |
 | `state_transfer_authenticity` | formal | 6 | proto-only | text_brief vs state_ref | `typed handoff真实性` | 不证明战胜纯文本 |
-| `state_transfer_pure_text` | formal | 6 | proto-only | natural_text vs state_ref | `pure text vs state` | 不支持state更轻 |
-| `state_transfer_carrier` | support | 6 | proto-only | 载体编码格式对比 | 载体诊断 | 不做headline |
+| `state_transfer_pure_text` | formal | 40 | proto-only | natural_text vs state_ref | `pure text fairness` | 不支持state更轻 |
+| `state_transfer_carrier` | formal | 40 | proto-only | 载体编码格式对比 | `carrier headline` | 不混读真实性/公平性 |
+| `state_transfer_inline_text_support` | support | 6 | proto-only | 严格内联纯文本 vs 最小状态包 | inline-text support | 不做headline |
 | `open_validation` | support | 15 | text+proto | Planner/歧义/边界 | 开放能力证明 | 不进入正式claim |
 
 ---
 
 ## 二、Task 定义
+
+当前 contest-release `state_transfer` packs 采用统一骨架：
+
+- `5 family x 4 case`
+- family: `checkout / auth / cache / billing / deploy`
+- case: `clean / distractor / ambiguous / replay-reusable`
+- 每个 case 在各 pack 中都做成严格 paired task，除了 `transfer_strategy` 与 pack contract 外不允许改 `goal / query / corpus_doc_ids / task_group / task_theme / summary_hint`
 
 每个 task 是一次 Agent 协作诊断。用户给问题 → 系统检索 corpus → 判 route → 执行 → 总结。
 
@@ -140,7 +148,7 @@ memory-cache-003    replay_enabled  命中匹配→跳过步骤
 | `text_brief vs state_ref` | hybrid handoff 真实性 | `typed_handoff_authenticity` |
 | `pure_text vs state_ref` | 真纯文本 vs 结构化 | `pure_text_vs_state` |
 
-`text_brief` 不是"纯文本 baseline"——它把结构化信息格式化为 Key-Value 文本，然后走 StatePool 传指针。和 state_ref 走的是相同的通信路径（StatePool→指针→mmap）。真正的"纯文本"应该是把自然语言内联在消息里，不经过 StatePool。
+`text_brief` 不是"纯文本 baseline"——它把结构化信息格式化为 Key-Value 文本，然后走 StatePool 传指针。和 state_ref 走的是相同的通信路径（StatePool→指针→mmap）。真正的"纯文本"应该是把自然语言内联在消息里，不经过 StatePool；当前这条严格合同放在 `state_transfer_inline_text_support`，只作为 support-only。
 
 ---
 
@@ -150,6 +158,7 @@ memory-cache-003    replay_enabled  命中匹配→跳过步骤
 |---------|---------|
 | 通信效率（纯text vs proto） | `communication` 专用包 |
 | 记忆复用效果 | `memory` 专用包 |
+| protocol-only carrier headline | `state_transfer_carrier` |
 | 状态传递真实性（handoff） | `state_transfer_authenticity` |
 | 纯文本 vs 结构化 | `state_transfer_pure_text` |
 | 整体门面 | `formal_controlled` |

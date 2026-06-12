@@ -229,3 +229,200 @@ docs:
       affected. The safest validation is to force inventory aggregate
       invalidation in that region, rerun the post-sync hook, and verify cache
       freshness before touching replica routing.
+
+  - doc_id: rr-checkout-ambiguous
+    task_group: checkout_release_chain
+    task_theme: contest_release_checkout_regression
+    title: Mixed signal note shows queue pressure without overturning the db path
+    tags: [release, checkout, latency, ambiguous, worker, database]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      A later review noted some queue pressure on a subset of workers, but the
+      slow orders query and pool wait pattern still aligned much more tightly
+      with the failures. The note warns not to switch to the worker path unless
+      the database signals clear.
+
+  - doc_id: rr-auth-ambiguous
+    task_group: auth_rotation_chain
+    task_theme: contest_release_auth_rotation
+    title: Mixed signal note shows mild throttling but keeps session drift primary
+    tags: [release, auth, ambiguous, session, rate-limit, jwks]
+    route_hint: auth_session_drift
+    tool_name: tool.auth_session_repair
+    text: >
+      A later auth review recorded a small backoff rise, but stale jwks hits
+      and issuer mismatch still lined up far better with the callback failures.
+      The note says not to route to pure rate-limit triage unless the drift
+      signals fall away.
+
+  - doc_id: rr-billing-incident
+    task_group: billing_queue_chain
+    task_theme: contest_release_billing_queue_backlog
+    title: Billing release introduced invoice queue backlog after worker reload
+    tags: [release, billing, queue, worker, canary]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      Release 9.2 hit the billing workers and invoice processing delay rose
+      quickly on the canary. The incident note says most failed requests sat in
+      worker queues behind retry storms rather than blocking on a database write
+      path.
+
+  - doc_id: rr-billing-metrics
+    task_group: billing_queue_chain
+    task_theme: contest_release_billing_queue_backlog
+    title: Metrics snapshot shows queue depth surge and retry pressure
+    tags: [release, billing, queue, worker, metrics]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      The metrics snapshot shows worker queue depth climbing, retry counts
+      spiking, and invoice processing threads staying pinned during the reload
+      window. Database pool wait stayed close to baseline.
+
+  - doc_id: rr-billing-logs
+    task_group: billing_queue_chain
+    task_theme: contest_release_billing_queue_backlog
+    title: Log excerpt points to retry storms after tls reload
+    tags: [release, billing, queue, worker, logs]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      The worker logs show repeated retry scheduling after tls reload together
+      with queue starvation warnings. Invoice rows eventually commit, but they
+      wait behind a growing worker backlog.
+
+  - doc_id: rr-billing-runbook
+    task_group: billing_queue_chain
+    task_theme: contest_release_billing_queue_backlog
+    title: Runbook says to drain retry storms and rebalance invoice workers
+    tags: [release, billing, queue, runbook, worker]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      The billing runbook says to pause the retry storm trigger, drain the
+      affected worker slice, and rebalance invoice consumers before widening
+      rollback. It distinguishes this path from database pool incidents.
+
+  - doc_id: rr-billing-db-false
+    task_group: billing_queue_chain
+    task_theme: contest_release_billing_queue_backlog
+    title: Earlier invoice delay incident was driven by database saturation
+    tags: [release, billing, queue, database, distractor]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      A previous invoice delay incident in the same service came from a
+      database pool collapse. That case had obvious sql wait growth and no retry
+      storm or worker queue starvation pattern.
+
+  - doc_id: rr-billing-ambiguous
+    task_group: billing_queue_chain
+    task_theme: contest_release_billing_queue_backlog
+    title: Mixed signal note shows some sql wait without overturning queue backlog
+    tags: [release, billing, ambiguous, queue, database, worker]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      A later billing review noted a modest sql wait increase, but queue depth,
+      retry storms, and worker starvation still explained the dominant delay.
+      The note says to stay on the worker path unless the queue signals clear.
+
+  - doc_id: rr-billing-scope
+    task_group: billing_queue_chain
+    task_theme: contest_release_billing_queue_backlog
+    title: Scope note narrows backlog to canary invoice workers
+    tags: [release, billing, scope, queue, worker]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      The later scope update shows the invoice backlog is limited to the canary
+      worker slice after reload. The safest validation is to drain retries and
+      rebalance that slice, then verify queue depth returns to baseline.
+
+  - doc_id: rr-deploy-incident
+    task_group: deployment_config_chain
+    task_theme: contest_release_deployment_config_drift
+    title: Deployment config drift introduced pool exhaustion on the canary
+    tags: [release, deployment, config, database, canary]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      A deployment config drift reached the canary and the first symptoms were
+      pool exhaustion and slow request completion. The incident note points to
+      changed connection caps and query-path settings rather than an edge
+      worker outage.
+
+  - doc_id: rr-deploy-metrics
+    task_group: deployment_config_chain
+    task_theme: contest_release_deployment_config_drift
+    title: Metrics snapshot shows connection wait growth after config drift
+    tags: [release, deployment, config, database, metrics]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The metrics view shows connection wait growth, sql latency increase, and
+      lower pool headroom immediately after the drifted config landed. Worker
+      queue depth stayed near the usual range.
+
+  - doc_id: rr-deploy-logs
+    task_group: deployment_config_chain
+    task_theme: contest_release_deployment_config_drift
+    title: Log excerpt shows pool cap mismatch and slow query path activation
+    tags: [release, deployment, config, database, logs]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The deployment logs show the canary loading mismatched pool caps and
+      activating a slower query path at the same time. Multiple traces show
+      pool wait warnings before the request completes.
+
+  - doc_id: rr-deploy-config
+    task_group: deployment_config_chain
+    task_theme: contest_release_deployment_config_drift
+    title: Drift diff changed pool caps and enabled the slower query path
+    tags: [release, deployment, config, database, rollout]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The diff shows the canary received lower pool caps plus a flag that turns
+      on the slower query path. The rollout note says these should be reverted
+      together if sql wait and pool exhaustion appear together.
+
+  - doc_id: rr-deploy-worker-false
+    task_group: deployment_config_chain
+    task_theme: contest_release_deployment_config_drift
+    title: Earlier deployment incident came from worker jitter during reload
+    tags: [release, deployment, config, worker, distractor]
+    route_hint: worker_queue_starvation
+    tool_name: tool.worker_queue_triage
+    text: >
+      A previous deployment incident looked similar at first, but the root
+      cause there was worker jitter during a reload. That case had healthy pool
+      metrics and no slower query path activation.
+
+  - doc_id: rr-deploy-ambiguous
+    task_group: deployment_config_chain
+    task_theme: contest_release_deployment_config_drift
+    title: Mixed signal note shows some worker jitter without overturning pool drift
+    tags: [release, deployment, ambiguous, config, worker, database]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      A later review noted mild worker jitter on the canary, but pool wait and
+      the slower query path still matched the dominant failures. The note says
+      to keep the database route primary unless the pool signals clear.
+
+  - doc_id: rr-deploy-scope
+    task_group: deployment_config_chain
+    task_theme: contest_release_deployment_config_drift
+    title: Scope note narrows config drift to the canary shard only
+    tags: [release, deployment, scope, config, database]
+    route_hint: db_pool_saturation
+    tool_name: tool.db_pool_triage
+    text: >
+      The scope update shows only the canary shard loaded the drifted config.
+      The safest validation is to restore the old pool caps on that shard,
+      disable the slower query path, and recheck sql wait before widening
+      action.

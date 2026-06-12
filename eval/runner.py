@@ -128,6 +128,7 @@ BENCHMARK_LANE_ORDER = (
 )
 
 TRANSFER_STRATEGY_ORDER = (
+    "inline_text_handoff",
     "natural_handoff_text",
     "channel_store_hashref",
     "text_brief",
@@ -163,6 +164,8 @@ def _public_transfer_strategy(value: str, mode: str | None = None) -> str:
     normalized = str(value or "").strip()
     if normalized == "state_ref":
         return "channel_store_hashref"
+    if normalized == "inline_text_handoff":
+        return "inline_text_handoff"
     if normalized == "text_brief":
         return "text_brief"
     if normalized == "mode_split_text_brief_vs_state_ref":
@@ -353,39 +356,74 @@ def _runtime_integrity_payload(ctx: RunContext) -> dict[str, Any]:
 
 
 def _pure_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> dict[str, Any]:
-    if transfer_strategy != "natural_handoff_text":
+    if transfer_strategy not in {"natural_handoff_text", "inline_text_handoff"}:
         return {"pure_text_guard": {"enabled": False}}
     execute_refs = ctx.step_input_refs("execute")
     input_kinds = [ref.kind for ref in execute_refs]
-    forbidden_kinds = {
-        "DENSE_EVIDENCE",
-        "FEATURE_BUNDLE",
-        "TOOL_CANDIDATE_SET",
-        "EXECUTOR_DECISION_PACKET",
-        "CHANNEL_PATCH",
-        "CHANNEL_SNAPSHOT",
-        "RANKED_EVIDENCE_BUNDLE",
-        "REPLAY_ELIGIBILITY_BUNDLE",
-        "EMBEDDING",
-    }
+    forbidden_kinds = (
+        {
+            "DENSE_EVIDENCE",
+            "FEATURE_BUNDLE",
+            "TOOL_CANDIDATE_SET",
+            "EXECUTOR_DECISION_PACKET",
+            "CHANNEL_PATCH",
+            "CHANNEL_SNAPSHOT",
+            "RANKED_EVIDENCE_BUNDLE",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EMBEDDING",
+        }
+        if transfer_strategy == "natural_handoff_text"
+        else {
+            "DENSE_EVIDENCE",
+            "FEATURE_BUNDLE",
+            "TOOL_CANDIDATE_SET",
+            "EXECUTOR_DECISION_PACKET",
+            "CHANNEL_PATCH",
+            "CHANNEL_SNAPSHOT",
+            "RANKED_EVIDENCE_BUNDLE",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EMBEDDING",
+            "TOOL_ARTIFACT",
+        }
+    )
     leaked_kinds = sorted({kind for kind in input_kinds if kind in forbidden_kinds})
     handoff_text = ""
-    handoff_ref = next((ref for ref in execute_refs if ref.kind == "TOOL_ARTIFACT"), None)
+    handoff_ref = (
+        next((ref for ref in execute_refs if ref.kind == "TOOL_ARTIFACT"), None)
+        if transfer_strategy == "natural_handoff_text"
+        else None
+    )
     if handoff_ref is not None:
         try:
             handoff_text = ctx.get_text_state(handoff_ref)
         except Exception:
             handoff_text = ""
+    elif transfer_strategy == "inline_text_handoff":
+        retrieve_result = ctx.results.get("retrieve")
+        handoff_text = (
+            str(retrieve_result.payload.get("inline_handoff_text", ""))
+            if retrieve_result is not None
+            else ""
+        )
     structured_shadow_markers = ("Route:", "Tool:", "Suggested route:", "Suggested tool:")
     structured_text_shadow = any(marker in handoff_text for marker in structured_shadow_markers)
+    failed_reasons: list[str] = []
+    if leaked_kinds:
+        failed_reasons.append(f"forbidden_ref_kinds={','.join(leaked_kinds)}")
+    if structured_text_shadow:
+        failed_reasons.append("structured_text_shadow")
+    if not handoff_text.strip():
+        failed_reasons.append("empty_handoff_text")
     return {
         "pure_text_guard": {
             "enabled": True,
+            "transfer_strategy": transfer_strategy,
             "executor_input_kinds": input_kinds,
             "forbidden_ref_kinds": leaked_kinds,
             "structured_text_shadow": structured_text_shadow,
             "handoff_text_bytes": len(handoff_text.encode("utf-8")),
-            "passed": not leaked_kinds and not structured_text_shadow and bool(handoff_text.strip()),
+            "failed_reasons": failed_reasons,
+            "passed": not failed_reasons,
         }
     }
 
@@ -2681,6 +2719,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
         )
         return "\n".join(lines) + "\n"
     if pack_type == "state_transfer_pure_text":
+        lines.append("- Fairness note: `read this pack as a pure-text fairness comparison; do not translate it into a carrier-efficiency headline.`")
         _append_protocol_only_handoff_table(
             lines,
             result=result,
@@ -2690,15 +2729,15 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             scope_note="this table fixes control mode at protocol and compares natural free-text handoff against the real channel-store hashref typed handoff.",
         )
         return "\n".join(lines) + "\n"
-    if pack_type == "state_transfer_natural_support":
-        lines.append("- Support note: `this pack is support-only by design; use it to contextualize natural free-text handoff, not as the carrier headline.`")
+    if pack_type == "state_transfer_inline_text_support":
+        lines.append("- Support note: `this pack is support-only by design; use it to validate the strict inline pure-text contract, not as the carrier headline.`")
         _append_protocol_only_handoff_table(
             lines,
             result=result,
-            left_strategy="natural_handoff_text",
+            left_strategy="inline_text_handoff",
             right_strategy="state_packet_minimal",
-            title="Protocol-Only Natural-Text Support",
-            scope_note="this support table compares free-text retriever handoff against the same minimal state packet baseline.",
+            title="Protocol-Only Inline-Text Support",
+            scope_note="this support table compares strict inline message-body text against the same minimal state packet baseline.",
         )
         return "\n".join(lines) + "\n"
     if pack_type == "communication":
@@ -3137,42 +3176,42 @@ def _build_report(result: dict[str, object]) -> str:
                     f"{protocol_transfer_state_packet['task_ms'] - protocol_transfer_text_packet['task_ms']:.2f} |",
                 ]
             )
-        protocol_transfer_natural_handoff = _aggregate_filtered_mode_task_runs(
+        protocol_transfer_inline_handoff = _aggregate_filtered_mode_task_runs(
             result,
             "protocol",
             benchmark_lane="state_transfer",
-            transfer_strategy="natural_handoff_text",
+            transfer_strategy="inline_text_handoff",
         )
         if (
-            protocol_transfer_natural_handoff is not None
+            protocol_transfer_inline_handoff is not None
             and protocol_transfer_state_packet is not None
         ):
             lines.extend(
                 [
                     "",
-                    "### Protocol-Only Natural-Text Support",
+                    "### Protocol-Only Inline-Text Support",
                     "",
-                    "- Scope note: `this support table compares free-text retriever handoff against the same minimal state packet baseline. Read it as natural-text support evidence, not the main carrier headline.`",
+                    "- Scope note: `this support table compares strict inline message-body text against the same minimal state packet baseline. Read it as inline-text support evidence, not the main carrier headline.`",
                     "",
                     "| handoff_strategy | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
                     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-                    f"| natural_handoff_text | {protocol_transfer_natural_handoff['task_count']} | {protocol_transfer_natural_handoff['protocol_bytes']:.2f} | "
-                    f"{protocol_transfer_natural_handoff.get('handoff_wire_bytes', 0.0):.2f} | "
-                    f"{protocol_transfer_natural_handoff.get('handoff_payload_bytes', protocol_transfer_natural_handoff['handoff_bytes']):.2f} | "
-                    f"{protocol_transfer_natural_handoff['handoff_textual_bytes']:.2f} | {protocol_transfer_natural_handoff['handoff_nontext_bytes']:.2f} | "
-                    f"{protocol_transfer_natural_handoff['llm_total_tokens']:.2f} | {protocol_transfer_natural_handoff['task_ms']:.2f} |",
+                    f"| inline_text_handoff | {protocol_transfer_inline_handoff['task_count']} | {protocol_transfer_inline_handoff['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_inline_handoff.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_inline_handoff.get('handoff_payload_bytes', protocol_transfer_inline_handoff['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_inline_handoff['handoff_textual_bytes']:.2f} | {protocol_transfer_inline_handoff['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_inline_handoff['llm_total_tokens']:.2f} | {protocol_transfer_inline_handoff['task_ms']:.2f} |",
                     f"| state_packet_minimal | {protocol_transfer_state_packet['task_count']} | {protocol_transfer_state_packet['protocol_bytes']:.2f} | "
                     f"{protocol_transfer_state_packet.get('handoff_wire_bytes', 0.0):.2f} | "
                     f"{protocol_transfer_state_packet.get('handoff_payload_bytes', protocol_transfer_state_packet['handoff_bytes']):.2f} | "
                     f"{protocol_transfer_state_packet['handoff_textual_bytes']:.2f} | {protocol_transfer_state_packet['handoff_nontext_bytes']:.2f} | "
                     f"{protocol_transfer_state_packet['llm_total_tokens']:.2f} | {protocol_transfer_state_packet['task_ms']:.2f} |",
-                    f"| delta(state_packet_minimal - natural_handoff_text) | n/a | {protocol_transfer_state_packet['protocol_bytes'] - protocol_transfer_natural_handoff['protocol_bytes']:.2f} | "
-                    f"{protocol_transfer_state_packet.get('handoff_wire_bytes', 0.0) - protocol_transfer_natural_handoff.get('handoff_wire_bytes', 0.0):.2f} | "
-                    f"{protocol_transfer_state_packet.get('handoff_payload_bytes', protocol_transfer_state_packet['handoff_bytes']) - protocol_transfer_natural_handoff.get('handoff_payload_bytes', protocol_transfer_natural_handoff['handoff_bytes']):.2f} | "
-                    f"{protocol_transfer_state_packet['handoff_textual_bytes'] - protocol_transfer_natural_handoff['handoff_textual_bytes']:.2f} | "
-                    f"{protocol_transfer_state_packet['handoff_nontext_bytes'] - protocol_transfer_natural_handoff['handoff_nontext_bytes']:.2f} | "
-                    f"{protocol_transfer_state_packet['llm_total_tokens'] - protocol_transfer_natural_handoff['llm_total_tokens']:.2f} | "
-                    f"{protocol_transfer_state_packet['task_ms'] - protocol_transfer_natural_handoff['task_ms']:.2f} |",
+                    f"| delta(state_packet_minimal - inline_text_handoff) | n/a | {protocol_transfer_state_packet['protocol_bytes'] - protocol_transfer_inline_handoff['protocol_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_wire_bytes', 0.0) - protocol_transfer_inline_handoff.get('handoff_wire_bytes', 0.0):.2f} | "
+                    f"{protocol_transfer_state_packet.get('handoff_payload_bytes', protocol_transfer_state_packet['handoff_bytes']) - protocol_transfer_inline_handoff.get('handoff_payload_bytes', protocol_transfer_inline_handoff['handoff_bytes']):.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_textual_bytes'] - protocol_transfer_inline_handoff['handoff_textual_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['handoff_nontext_bytes'] - protocol_transfer_inline_handoff['handoff_nontext_bytes']:.2f} | "
+                    f"{protocol_transfer_state_packet['llm_total_tokens'] - protocol_transfer_inline_handoff['llm_total_tokens']:.2f} | "
+                    f"{protocol_transfer_state_packet['task_ms'] - protocol_transfer_inline_handoff['task_ms']:.2f} |",
                 ]
             )
         lines.extend(

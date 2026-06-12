@@ -523,6 +523,8 @@ class RetrieverAgent(BaseAgent):
                     "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
                 },
             )
+        elif transfer_strategy == "inline_text_handoff":
+            pass
         elif transfer_strategy == "state_packet_minimal":
             decision_packet_ref = ctx.put_executor_decision_state(
                 state_id=f"{ctx.task_id}-{step.step_id}-decision-packet",
@@ -581,6 +583,14 @@ class RetrieverAgent(BaseAgent):
                 "transfer_brief_state_id": (
                     transfer_brief_ref.state_id if transfer_brief_ref is not None else ""
                 ),
+                "inline_handoff_text": (
+                    _build_natural_handoff_text(
+                        query=str(step.params["query"]),
+                        evidence_text=evidence_text,
+                    )
+                    if transfer_strategy == "inline_text_handoff"
+                    else ""
+                ),
                 "feature_route": feature_bundle["route"],
                 "feature_route_source": feature_bundle["route_source"],
                 "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
@@ -625,7 +635,7 @@ class ExecutorAgent(BaseAgent):
         transfer_strategy = ctx.transfer_strategy()
         input_refs = ctx.step_input_refs(step.step_id)
         ctx.record_transfer_inputs(input_refs)
-        if transfer_strategy != "natural_handoff_text" and self._should_use_uds(step):
+        if transfer_strategy not in {"natural_handoff_text", "inline_text_handoff"} and self._should_use_uds(step):
             self._record_hash_first_fetches(
                 ctx=ctx,
                 refs=input_refs,
@@ -640,6 +650,11 @@ class ExecutorAgent(BaseAgent):
             statepool=ctx.statepool,
             input_state_refs=input_refs,
             transfer_strategy=transfer_strategy,
+            inline_handoff_text=(
+                str(ctx.results.get("retrieve").payload.get("inline_handoff_text", ""))
+                if transfer_strategy == "inline_text_handoff" and ctx.results.get("retrieve") is not None
+                else ""
+            ),
         )
 
     def _should_use_uds(self, step: PlanStep) -> bool:
@@ -665,7 +680,15 @@ class ExecutorAgent(BaseAgent):
             owner_agent=step.owner_agent,
             action=step.action,
             input_state_refs=list(step.input_state_refs),
-            params={**step.params, "transfer_strategy": ctx.transfer_strategy()},
+            params={
+                **step.params,
+                "transfer_strategy": ctx.transfer_strategy(),
+                "inline_handoff_text": (
+                    str(ctx.results.get("retrieve").payload.get("inline_handoff_text", ""))
+                    if ctx.transfer_strategy() == "inline_text_handoff" and ctx.results.get("retrieve") is not None
+                    else ""
+                ),
+            },
             depends_on=list(step.depends_on),
         )
         message = RemoteStepRequest(
