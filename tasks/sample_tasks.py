@@ -42,6 +42,10 @@ TASK_SET_ALIASES = {
     "contest_release_regression_pure_text_pack": "state_transfer_pure_text_benchmark.yaml",
     "state_transfer_inline_text_support": "state_transfer_inline_text_support_benchmark.yaml",
     "state_transfer_inline_text_support_pack": "state_transfer_inline_text_support_benchmark.yaml",
+    "state_transfer_strict_pure_text": "state_transfer_strict_pure_text_benchmark.yaml",
+    "state_transfer_strict_pure_text_pack": "state_transfer_strict_pure_text_benchmark.yaml",
+    "contest_release_regression_strict_pure_text": "state_transfer_strict_pure_text_benchmark.yaml",
+    "contest_release_regression_strict_pure_text_pack": "state_transfer_strict_pure_text_benchmark.yaml",
     "contest_release_regression_inline_text_support": "contest_release_regression_natural_support_benchmark.yaml",
     "contest_release_regression_inline_text_support_pack": "contest_release_regression_natural_support_benchmark.yaml",
     "state_transfer_natural_support": "state_transfer_inline_text_support_benchmark.yaml",
@@ -56,6 +60,47 @@ TASK_SET_ALIASES = {
     "internal_regression_pack": "internal_regression_benchmark.yaml",
     "open_validation": "open_validation_benchmark.yaml",
     "open_validation_pack": "open_validation_benchmark.yaml",
+    "open_planner_support": "open_planner_support_benchmark.yaml",
+    "open_planner_support_pack": "open_planner_support_benchmark.yaml",
+    "carrier_controlled_v2": "carrier_controlled_v2_benchmark.yaml",
+    "carrier_controlled_v2_pack": "carrier_controlled_v2_benchmark.yaml",
+    "semantic_retention_v2": "semantic_retention_v2_benchmark.yaml",
+    "semantic_retention_v2_pack": "semantic_retention_v2_benchmark.yaml",
+    "strict_pure_text_boundary_v2": "strict_pure_text_boundary_v2_benchmark.yaml",
+    "strict_pure_text_boundary_v2_pack": "strict_pure_text_boundary_v2_benchmark.yaml",
+    "memory_reuse_v2": "memory_reuse_v2_benchmark.yaml",
+    "memory_reuse_v2_pack": "memory_reuse_v2_benchmark.yaml",
+    "planner_support_v2": "planner_support_v2_benchmark.yaml",
+    "planner_support_v2_pack": "planner_support_v2_benchmark.yaml",
+    "langgraph_native_text_support_v2": "langgraph_native_text_support_v2_benchmark.yaml",
+    "langgraph_native_text_support_v2_pack": "langgraph_native_text_support_v2_benchmark.yaml",
+}
+
+STATE_TRANSFER_THEME_EXPECTATIONS = {
+    "contest_release_checkout_regression": {
+        "expected_route": "db_pool_saturation",
+        "expected_tool_name": "tool.db_pool_triage",
+    },
+    "contest_release_auth_rotation": {
+        "expected_route": "auth_session_drift",
+        "expected_tool_name": "tool.auth_session_repair",
+    },
+    "contest_release_inventory_rollout": {
+        "expected_route": "cache_invalidation",
+        "expected_tool_name": "tool.cache_invalidation_playbook",
+    },
+    "contest_release_billing_queue": {
+        "expected_route": "worker_queue_starvation",
+        "expected_tool_name": "tool.worker_queue_triage",
+    },
+    "contest_release_billing_queue_backlog": {
+        "expected_route": "worker_queue_starvation",
+        "expected_tool_name": "tool.worker_queue_triage",
+    },
+    "contest_release_deployment_config_drift": {
+        "expected_route": "db_pool_saturation",
+        "expected_tool_name": "tool.db_pool_triage",
+    },
 }
 
 TASK_PACK_TYPES = (
@@ -64,10 +109,18 @@ TASK_PACK_TYPES = (
     "state_transfer_authenticity",
     "state_transfer_pure_text",
     "state_transfer_inline_text_support",
+    "state_transfer_strict_pure_text",
     "communication",
     "memory",
     "internal_regression",
     "open_validation",
+    "open_planner_support",
+    "carrier_controlled_v2",
+    "semantic_retention_v2",
+    "strict_pure_text_boundary_v2",
+    "memory_reuse_v2",
+    "planner_support_v2",
+    "langgraph_native_text_support_v2",
     "ad_hoc",
 )
 
@@ -79,6 +132,12 @@ TASK_MODES = (
 PLAN_SOURCES = (
     "yaml",
     "llm",
+)
+
+CASE_TYPES = (
+    "exact_single_solution",
+    "bounded_alternative",
+    "abstention_allowed",
 )
 
 
@@ -93,11 +152,20 @@ def normalize_task_pack_type(value: object) -> str:
         "state_transfer_pure_text": "state_transfer_pure_text",
         "state_transfer_inline_text_support": "state_transfer_inline_text_support",
         "state_transfer_natural_support": "state_transfer_inline_text_support",
+        "state_transfer_strict_pure_text": "state_transfer_strict_pure_text",
+        "strict_pure_text": "state_transfer_strict_pure_text",
         "communication": "communication",
         "memory": "memory",
         "internal_regression": "internal_regression",
         "open": "open_validation",
         "open_validation": "open_validation",
+        "open_planner_support": "open_planner_support",
+        "carrier_controlled_v2": "carrier_controlled_v2",
+        "semantic_retention_v2": "semantic_retention_v2",
+        "strict_pure_text_boundary_v2": "strict_pure_text_boundary_v2",
+        "memory_reuse_v2": "memory_reuse_v2",
+        "planner_support_v2": "planner_support_v2",
+        "langgraph_native_text_support_v2": "langgraph_native_text_support_v2",
         "support_only": "open_validation",
         "adhoc": "ad_hoc",
         "ad_hoc": "ad_hoc",
@@ -113,6 +181,14 @@ def normalize_plan_source(value: object) -> str:
     normalized = "yaml" if not text else text
     if normalized not in PLAN_SOURCES:
         raise ValueError(f"unsupported plan_source: {value!r}")
+    return normalized
+
+
+def normalize_case_type(value: object) -> str:
+    text = str(value or "").strip().lower()
+    normalized = text or "exact_single_solution"
+    if normalized not in CASE_TYPES:
+        raise ValueError(f"unsupported case_type: {value!r}")
     return normalized
 
 
@@ -145,10 +221,29 @@ class TaskSetMetadata:
     description: str = ""
     reading_contract: str = ""
     claim_lanes: tuple[str, ...] = ()
+    evidence_tier: str = "historical_v1"
+    benchmark_version: str = "v1"
 
     @property
     def support_only(self) -> bool:
-        return self.pack_type in {"state_transfer_inline_text_support", "open_validation"}
+        return self.evidence_tier == "support_only" or self.pack_type in {
+            "state_transfer_inline_text_support",
+            "open_validation",
+            "open_planner_support",
+            "planner_support_v2",
+            "langgraph_native_text_support_v2",
+        }
+
+    @property
+    def formal_secondary(self) -> bool:
+        return self.evidence_tier == "formal_secondary" or self.pack_type in {
+            "state_transfer_strict_pure_text",
+            "strict_pure_text_boundary_v2",
+        }
+
+    @property
+    def historical_v1(self) -> bool:
+        return self.evidence_tier == "historical_v1"
 
 
 @dataclass(frozen=True)
@@ -184,6 +279,18 @@ class SampleTask:
     expected_route_source: str = ""
     expected_tool_name: str = ""
     expected_top_doc_id: str = ""
+    case_id: str = ""
+    case_type: str = "exact_single_solution"
+    eval_scope: str = "family_level"
+    expected_family: str = ""
+    primary_expected_route: str = ""
+    primary_expected_tool: str = ""
+    acceptable_routes: tuple[str, ...] = ()
+    acceptable_tools: tuple[str, ...] = ()
+    disallowed_families: tuple[str, ...] = ()
+    abstention_allowed: bool = False
+    allowed_abstain_tool: str = ""
+    abstain_only_when: str = ""
     allowed_modes: tuple[str, ...] = TASK_MODES
     plan_source: str = "yaml"
 
@@ -198,6 +305,23 @@ class SampleTask:
             "route_source": self.expected_route_source,
             "tool_name": self.expected_tool_name,
             "top_doc_id": self.expected_top_doc_id,
+        }
+
+    @property
+    def case_contract(self) -> dict[str, object]:
+        return {
+            "case_id": self.case_id or self.task_id,
+            "case_type": self.case_type,
+            "eval_scope": self.eval_scope,
+            "expected_family": self.expected_family,
+            "primary_expected_route": self.primary_expected_route,
+            "primary_expected_tool": self.primary_expected_tool,
+            "acceptable_routes": list(self.acceptable_routes),
+            "acceptable_tools": list(self.acceptable_tools),
+            "disallowed_families": list(self.disallowed_families),
+            "abstention_allowed": self.abstention_allowed,
+            "allowed_abstain_tool": self.allowed_abstain_tool,
+            "abstain_only_when": self.abstain_only_when,
         }
 
     @property
@@ -367,15 +491,68 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
         description=str(raw.get("description", "")).strip(),
         reading_contract=str(raw.get("reading_contract", "")).strip(),
         claim_lanes=claim_lanes,
+        evidence_tier=str(raw.get("evidence_tier", "historical_v1")).strip() or "historical_v1",
+        benchmark_version=str(raw.get("benchmark_version", "v1")).strip() or "v1",
     )
 
 
+def _default_state_transfer_expectations(
+    *,
+    task_theme: str,
+    benchmark_lane: str,
+    expected_route: str,
+    expected_tool_name: str,
+) -> dict[str, str]:
+    if benchmark_lane != "state_transfer":
+        return {
+            "expected_route": expected_route,
+            "expected_tool_name": expected_tool_name,
+        }
+    defaults = STATE_TRANSFER_THEME_EXPECTATIONS.get(task_theme, {})
+    return {
+        "expected_route": expected_route or str(defaults.get("expected_route", "")).strip(),
+        "expected_tool_name": expected_tool_name or str(defaults.get("expected_tool_name", "")).strip(),
+    }
+
+
 def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
+    task_theme = str(item["task_theme"]).strip()
+    benchmark_lane = normalize_benchmark_lane(item.get("benchmark_lane", "internal_regression"))
+    expected_route = str(item.get("expected_route", "")).strip()
+    expected_tool_name = str(item.get("expected_tool_name", "")).strip()
+    default_expectations = _default_state_transfer_expectations(
+        task_theme=task_theme,
+        benchmark_lane=benchmark_lane,
+        expected_route=expected_route,
+        expected_tool_name=expected_tool_name,
+    )
+    case_id = str(item.get("case_id", "")).strip() or str(item["task_id"]).strip()
+    expected_family = str(item.get("expected_family", "")).strip() or default_expectations["expected_route"]
+    primary_expected_route = (
+        str(item.get("primary_expected_route", "")).strip() or default_expectations["expected_route"]
+    )
+    primary_expected_tool = (
+        str(item.get("primary_expected_tool", "")).strip() or default_expectations["expected_tool_name"]
+    )
+    acceptable_routes = tuple(
+        str(value).strip()
+        for value in item.get("acceptable_routes", [primary_expected_route])
+        if str(value).strip()
+    )
+    acceptable_tools = tuple(
+        str(value).strip()
+        for value in item.get("acceptable_tools", [primary_expected_tool] if primary_expected_tool else [])
+        if str(value).strip()
+    )
+    disallowed_families = tuple(
+        str(value).strip() for value in item.get("disallowed_families", []) if str(value).strip()
+    )
+    abstention_allowed = bool(item.get("abstention_allowed", False))
     return SampleTask(
         task_id=str(item["task_id"]).strip(),
         task_group=str(item.get("task_group", "default")).strip(),
         task_order=int(item.get("task_order", 0)),
-        task_theme=str(item["task_theme"]).strip(),
+        task_theme=task_theme,
         goal=str(item["goal"]).strip(),
         query=str(item["query"]).strip(),
         tags=tuple(str(tag) for tag in item.get("tags", [])),
@@ -388,7 +565,7 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
                 "assist" if bool(item.get("expected_reuse", False)) else "none",
             )
         ).strip(),
-        benchmark_lane=normalize_benchmark_lane(item.get("benchmark_lane", "internal_regression")),
+        benchmark_lane=benchmark_lane,
         transfer_strategy=normalize_transfer_strategy(item.get("transfer_strategy", "state_ref")),
         runtime_reuse_contract_override=str(item.get("runtime_reuse_contract", "")).strip(),
         replay_source_task_id=str(item.get("replay_source_task_id", "")).strip(),
@@ -396,10 +573,22 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
         allow_execute_prune_contract=_coerce_optional_bool(item.get("allow_execute_prune")),
         allow_exact_replay_contract=_coerce_optional_bool(item.get("allow_exact_replay")),
         evidence_text=str(item.get("evidence_text", "")).strip(),
-        expected_route=str(item.get("expected_route", "")).strip(),
+        expected_route=default_expectations["expected_route"],
         expected_route_source=str(item.get("expected_route_source", "")).strip(),
-        expected_tool_name=str(item.get("expected_tool_name", "")).strip(),
+        expected_tool_name=default_expectations["expected_tool_name"],
         expected_top_doc_id=str(item.get("expected_top_doc_id", "")).strip(),
+        case_id=case_id,
+        case_type=normalize_case_type(item.get("case_type", "exact_single_solution")),
+        eval_scope=str(item.get("eval_scope", "family_level")).strip() or "family_level",
+        expected_family=expected_family,
+        primary_expected_route=primary_expected_route,
+        primary_expected_tool=primary_expected_tool,
+        acceptable_routes=acceptable_routes,
+        acceptable_tools=acceptable_tools,
+        disallowed_families=disallowed_families,
+        abstention_allowed=abstention_allowed,
+        allowed_abstain_tool=str(item.get("allowed_abstain_tool", "")).strip(),
+        abstain_only_when=str(item.get("abstain_only_when", "")).strip(),
         summary_hint=str(item["summary_hint"]).strip(),
         allowed_modes=normalize_task_modes(item.get("allowed_modes", TASK_MODES)),
         plan_source=normalize_plan_source(item.get("plan_source", "yaml")),

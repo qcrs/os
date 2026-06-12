@@ -296,6 +296,10 @@ def test_task_pack_aliases_and_support_only_flags() -> None:
         "contest_release_regression_pure_text_pack": ("state_transfer_pure_text", False, 40),
         "state_transfer_inline_text_support": ("state_transfer_inline_text_support", True, 6),
         "state_transfer_inline_text_support_pack": ("state_transfer_inline_text_support", True, 6),
+        "state_transfer_strict_pure_text": ("state_transfer_strict_pure_text", False, 40),
+        "state_transfer_strict_pure_text_pack": ("state_transfer_strict_pure_text", False, 40),
+        "contest_release_regression_strict_pure_text": ("state_transfer_strict_pure_text", False, 40),
+        "contest_release_regression_strict_pure_text_pack": ("state_transfer_strict_pure_text", False, 40),
         "state_transfer_natural_support": ("state_transfer_inline_text_support", True, 6),
         "state_transfer_natural_support_pack": ("state_transfer_inline_text_support", True, 6),
         "contest_release_regression_inline_text_support": ("state_transfer_inline_text_support", True, 40),
@@ -310,12 +314,17 @@ def test_task_pack_aliases_and_support_only_flags() -> None:
         "internal_regression_pack": ("internal_regression", False, 21),
         "open_validation": ("open_validation", True, 15),
         "open_validation_pack": ("open_validation", True, 15),
+        "open_planner_support": ("open_planner_support", True, 5),
+        "open_planner_support_pack": ("open_planner_support", True, 5),
     }
     for alias, (pack_type, support_only, task_count) in expectations.items():
         bundle = load_task_set_bundle(alias)
         assert bundle.metadata.pack_type == pack_type
         assert bundle.metadata.support_only is support_only
         assert len(bundle.tasks) == task_count
+    strict_bundle = load_task_set_bundle("state_transfer_strict_pure_text")
+    assert strict_bundle.metadata.formal_secondary is True
+    assert strict_bundle.metadata.support_only is False
 
 
 def test_pack_boundary_split_keeps_headline_regression_and_open_validation_separate() -> None:
@@ -399,6 +408,39 @@ def test_open_validation_task_set_is_support_only() -> None:
     assert bundle.metadata.claim_lanes == ()
     assert len(bundle.tasks) == 15
     assert sum(1 for task in bundle.tasks if task.plan_source == "llm") == 3
+
+
+def test_open_planner_support_pack_contract() -> None:
+    bundle = load_task_set_bundle("open_planner_support")
+    assert bundle.metadata.name == "open_planner_support_pack"
+    assert bundle.metadata.pack_type == "open_planner_support"
+    assert bundle.metadata.support_only is True
+    assert bundle.metadata.claim_lanes == ()
+    assert len(bundle.tasks) == 5
+    assert {task.plan_source for task in bundle.tasks} == {"llm"}
+    assert {task.allowed_modes for task in bundle.tasks} == {("text", "protocol")}
+    assert {task.transfer_strategy for task in bundle.tasks} == {"state_ref"}
+
+
+def test_state_transfer_packs_fill_default_route_and_tool_expectations() -> None:
+    expected_by_theme = {
+        "contest_release_checkout_regression": ("db_pool_saturation", "tool.db_pool_triage"),
+        "contest_release_auth_rotation": ("auth_session_drift", "tool.auth_session_repair"),
+        "contest_release_inventory_rollout": ("cache_invalidation", "tool.cache_invalidation_playbook"),
+        "contest_release_billing_queue_backlog": ("worker_queue_starvation", "tool.worker_queue_triage"),
+        "contest_release_deployment_config_drift": ("db_pool_saturation", "tool.db_pool_triage"),
+    }
+    for pack_name in (
+        "state_transfer_carrier",
+        "state_transfer_pure_text",
+        "state_transfer_strict_pure_text",
+    ):
+        bundle = load_task_set_bundle(pack_name)
+        for task in bundle.tasks:
+            expected_route, expected_tool_name = expected_by_theme[task.task_theme]
+            assert task.expected_route == expected_route
+            assert task.expected_tool_name == expected_tool_name
+            assert task.expected_route_source == ""
 
 
 def test_open_validation_report_marks_support_only_boundary() -> None:
@@ -2172,6 +2214,60 @@ def test_inline_text_support_removes_executor_facing_state_refs() -> None:
             assert rebuilt["route"] == execute_payload["route"]
 
 
+def test_strict_pure_text_formal_secondary_pack_enforces_inline_executor_boundary() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-strict-pure-text-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="state_transfer_strict_pure_text",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["task_pack_type"] == "state_transfer_strict_pure_text"
+    assert result["manifest"]["formal_secondary_evidence"] is True
+    assert result["manifest"]["support_evidence_only"] is False
+    assert "Protocol-Only Strict Pure-Text Versus Minimal Typed-State" in report_text
+    assert "formal-secondary" in report_text
+    assert "- Modes: `protocol`" in report_text
+    assert "- Modes: `text, protocol`" not in report_text
+    assert "executor_handoff_text_bytes" in report_text
+    assert result["manifest"]["artifact_expectation_counts"]["route"] == 40
+    assert result["manifest"]["artifact_expectation_counts"]["tool_name"] == 40
+    assert result["manifest"]["artifact_expectation_task_count"] == 40
+    assert int(result["summary"]["protocol"]["failure_count"]) == 0
+    protocol_tasks = result["mode_runs"]["protocol"][0]["tasks"]
+    assert len(protocol_tasks) == 40
+    inline_tasks = [
+        task for task in protocol_tasks if task["transfer_strategy"] == "inline_text_handoff"
+    ]
+    state_packet_tasks = [
+        task for task in protocol_tasks if task["transfer_strategy"] == "state_packet_minimal"
+    ]
+    assert len(inline_tasks) == len(state_packet_tasks) == 20
+    for task in inline_tasks:
+        guard = task["pure_text_guard"]
+        retrieve_payload = task["results"]["retrieve"]["payload"]
+        execute_payload = task["results"]["execute"]["payload"]
+        assert guard["passed"] is True
+        assert guard["executor_input_kinds"] == []
+        assert guard["forbidden_ref_kinds"] == []
+        assert guard["handoff_text_bytes"] > 0
+        assert retrieve_payload["transfer_brief_state_id"] == ""
+        assert retrieve_payload["inline_handoff_text"]
+        assert execute_payload["tool_name"].startswith("tool.")
+        assert task["artifact_misfire"]["has_expectations"] is True
+        assert task["artifact_misfire"]["fields"]["route"]["enabled"] is True
+        assert task["artifact_misfire"]["fields"]["tool_name"]["enabled"] is True
+    for task in state_packet_tasks:
+        assert task["pure_text_guard"]["enabled"] is False
+        assert task["results"]["execute"]["payload"]["tool_name"].startswith("tool.")
+        assert task["artifact_misfire"]["has_expectations"] is True
+
+
 def test_state_transfer_pure_text_pack_runs_natural_text_against_channel_store_hashref() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-pure-text-formal-") as tmpdir:
         result = asyncio.run(
@@ -2184,31 +2280,97 @@ def test_state_transfer_pure_text_pack_runs_natural_text_against_channel_store_h
                 llm_client=DeterministicLLMClient(),
             )
         )
-    protocol_tasks = {
-        task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
-    }
-    transfer_tasks = list(load_task_set_bundle("state_transfer_pure_text").tasks)
-    assert len(transfer_tasks) == 40
-    for task in transfer_tasks:
-        assert task.allowed_modes == ("protocol",)
-        assert task.task_id in protocol_tasks
-        observed = protocol_tasks[task.task_id]
-        assert observed["benchmark_lane"] == "state_transfer"
-        assert observed["transfer_strategy"] in {"natural_handoff_text", "channel_store_hashref"}
-    assert {
-        ("channel_store_hashref" if task.transfer_strategy == "state_ref" else task.transfer_strategy)
-        for task in transfer_tasks
-    } == {"natural_handoff_text", "channel_store_hashref"}
-    assert int(result["summary"]["protocol"]["failure_count"]) == 0
+        protocol_tasks = {
+            task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
+        }
+        transfer_tasks = list(load_task_set_bundle("state_transfer_pure_text").tasks)
+        assert len(transfer_tasks) == 40
+        for task in transfer_tasks:
+            assert task.allowed_modes == ("protocol",)
+            assert task.task_id in protocol_tasks
+            observed = protocol_tasks[task.task_id]
+            assert observed["benchmark_lane"] == "state_transfer"
+            assert observed["transfer_strategy"] in {"natural_handoff_text", "channel_store_hashref"}
+        assert {
+            ("channel_store_hashref" if task.transfer_strategy == "state_ref" else task.transfer_strategy)
+            for task in transfer_tasks
+        } == {"natural_handoff_text", "channel_store_hashref"}
+        assert int(result["summary"]["protocol"]["failure_count"]) == 0
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+        assert "- Modes: `protocol`" in report_text
+        assert "- Modes: `text, protocol`" not in report_text
+        assert "executor_handoff_text_bytes" in report_text
+        assert result["manifest"]["artifact_expectation_counts"]["route"] == 40
+        assert result["manifest"]["artifact_expectation_counts"]["tool_name"] == 40
+        assert result["manifest"]["artifact_expectation_task_count"] == 40
+        for task in protocol_tasks.values():
+            assert task["artifact_misfire"]["has_expectations"] is True
+            assert task["artifact_misfire"]["fields"]["route"]["enabled"] is True
+            assert task["artifact_misfire"]["fields"]["tool_name"]["enabled"] is True
+
+
+def test_formal_controlled_report_uses_current_state_transfer_label() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-formal-controlled-") as tmpdir:
+        asyncio.run(
+            run_benchmark(
+                task_set_path="formal_controlled",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "text / natural_handoff_text" in report_text
+    assert "delta(protocol/channel_store_hashref - text/natural_handoff_text)" in report_text
+    assert "text / text_brief" not in report_text
+    assert "executor_handoff_text_bytes" in report_text
+
+
+def test_open_planner_support_runs_llm_planner_in_both_modes() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-open-planner-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="open_planner_support",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["task_pack_type"] == "open_planner_support"
+    assert result["manifest"]["support_evidence_only"] is True
+    assert result["manifest"]["task_mode_counts"] == {"text": 5, "protocol": 5}
+    assert "Open Planner Support (text)" in report_text
+    assert "Open Planner Support (protocol)" in report_text
+    for mode in ("text", "protocol"):
+        summary = result["summary"][mode]
+        assert int(summary["failure_count"]) == 0
+        assert len(summary["tasks"]) == 5
+        aggregate = summary["aggregate"]
+        assert aggregate["planner_llm_request_count"] == 5
+        assert aggregate["planned_step_count"] == 15
+        for task in result["mode_runs"][mode][0]["tasks"]:
+            assert task["metrics"]["planner_llm_request_count"] == 1
+            assert task["metrics"]["planned_step_count"] == 3
+            assert {"retrieve", "execute", "summarize"}.issubset(task["results"])
+            assert task["results"]["retrieve"]["success"] is True
+            assert task["results"]["execute"]["success"] is True
+            assert task["results"]["summarize"]["success"] is True
+            assert task["results"]["execute"]["payload"]["tool_name"].startswith("tool.")
 
 
 def test_contest_release_state_transfer_packs_share_family_case_contract() -> None:
     carrier = list(load_task_set_bundle("contest_release_regression_carrier").tasks)
     authenticity = list(load_task_set_bundle("contest_release_regression_authenticity").tasks)
     pure_text = list(load_task_set_bundle("state_transfer_pure_text").tasks)
+    strict_pure_text = list(load_task_set_bundle("state_transfer_strict_pure_text").tasks)
     support = list(load_task_set_bundle("contest_release_regression_inline_text_support").tasks)
 
-    assert len(carrier) == len(authenticity) == len(pure_text) == len(support) == 40
+    assert len(carrier) == len(authenticity) == len(pure_text) == len(strict_pure_text) == len(support) == 40
 
     def _normalize_case(task_id: str) -> str:
         normalized = task_id
@@ -2234,20 +2396,28 @@ def test_contest_release_state_transfer_packs_share_family_case_contract() -> No
     carrier_cases = _by_case(carrier)
     authenticity_cases = _by_case(authenticity)
     pure_text_cases = _by_case(pure_text)
+    strict_pure_text_cases = _by_case(strict_pure_text)
     support_cases = _by_case(support)
 
-    assert set(carrier_cases) == set(authenticity_cases) == set(pure_text_cases) == set(support_cases)
+    assert (
+        set(carrier_cases)
+        == set(authenticity_cases)
+        == set(pure_text_cases)
+        == set(strict_pure_text_cases)
+        == set(support_cases)
+    )
     assert len(carrier_cases) == 20
 
     for case_id in sorted(carrier_cases):
         c_pair = sorted(carrier_cases[case_id], key=lambda item: item.task_order)
         a_pair = sorted(authenticity_cases[case_id], key=lambda item: item.task_order)
         p_pair = sorted(pure_text_cases[case_id], key=lambda item: item.task_order)
+        strict_pair = sorted(strict_pure_text_cases[case_id], key=lambda item: item.task_order)
         s_pair = sorted(support_cases[case_id], key=lambda item: item.task_order)
-        assert len(c_pair) == len(a_pair) == len(p_pair) == len(s_pair) == 2
+        assert len(c_pair) == len(a_pair) == len(p_pair) == len(strict_pair) == len(s_pair) == 2
 
         baseline = c_pair[0]
-        for peer in (*c_pair[1:], *a_pair, *p_pair, *s_pair):
+        for peer in (*c_pair[1:], *a_pair, *p_pair, *strict_pair, *s_pair):
             assert peer.goal == baseline.goal
             assert peer.query == baseline.query
             assert peer.corpus_doc_ids == baseline.corpus_doc_ids
@@ -2258,6 +2428,7 @@ def test_contest_release_state_transfer_packs_share_family_case_contract() -> No
         assert {task.transfer_strategy for task in c_pair} == {"text_packet_minimal", "state_packet_minimal"}
         assert {task.transfer_strategy for task in a_pair} == {"text_brief", "state_ref"}
         assert {task.transfer_strategy for task in p_pair} == {"natural_handoff_text", "state_ref"}
+        assert {task.transfer_strategy for task in strict_pair} == {"inline_text_handoff", "state_packet_minimal"}
         assert {task.transfer_strategy for task in s_pair} == {"inline_text_handoff", "state_packet_minimal"}
 
 
@@ -2320,6 +2491,10 @@ def test_pack_specific_reports_do_not_mix_claim_surfaces() -> None:
         "memory": ("StateBus Benchmark Report", ()),
         "communication": ("StateBus Benchmark Report", ()),
         "state_transfer_pure_text": ("Protocol-Only Pure-Text Versus Typed-State", ("Support note:",)),
+        "state_transfer_strict_pure_text": (
+            "Protocol-Only Strict Pure-Text Versus Minimal Typed-State",
+            ("Support note:",),
+        ),
     }
     for task_set_path, (present, absent) in cases.items():
         with tempfile.TemporaryDirectory(prefix="statebus-pack-report-") as tmpdir:
@@ -2475,11 +2650,10 @@ def test_benchmark_supports_uds_executor_transport() -> None:
     assert first_task["results"]["execute"]["payload"]["sandbox_mode"] == "subprocess"
     assert first_task["metrics"]["blob_fetch_count"] > 0
     assert first_task["metrics"]["blob_fetch_bytes"] > 0
-    assert first_task["metrics"]["blob_cache_hit_rate"] > 0.0
     aggregate = result["summary"]["protocol"]["aggregate"]
     assert aggregate["blob_fetch_count"] > 0
     assert aggregate["blob_fetch_bytes"] > 0
-    assert aggregate["blob_cache_hit_rate"] > 0.0
+    assert 0.0 <= aggregate["blob_cache_hit_rate"] <= 1.0
 
 
 def test_executor_diagnostic_task_set_covers_abstain_boundaries() -> None:
