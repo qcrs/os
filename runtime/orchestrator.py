@@ -24,14 +24,22 @@ from runtime.reuse_contract import runtime_reuse_contract_gates
 from runtime.task_profile import RuntimeTaskProfile, build_reuse_signature
 from protocol.messages import (
     Ack,
+    ChannelPatch,
+    ChannelSnapshot,
+    ExecutionDAG,
     Error,
+    FetchRequest,
+    FetchResponse,
     Hello,
     MemoryCommit,
     MemoryHit,
     Plan,
+    PlanDelta,
     PlanStep,
     StateRef,
+    StepTree,
     StepResult,
+    TaskCommit,
     message_type,
     protocol_bytes,
     total_state_ref_lite_wire_bytes,
@@ -47,11 +55,67 @@ from statepool.store import (
 )
 
 
+def _stable_json_hash(value: object) -> str:
+    import hashlib
+    import json
+
+    payload = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+_ROUTE_SNAPSHOT_REPLAY_KEYS = frozenset(
+    {
+        "route",
+        "tool_name",
+        "route_source",
+        "route_confidence",
+        "route_provenance",
+        "matched_signals",
+        "matched_tags",
+        "match_score",
+        "hint_doc_ids",
+        "hint_route",
+        "hint_tool_name",
+        "tool_candidates",
+        "retrieved_doc_ids",
+        "feature_evidence_sha256",
+        "feature_fresh_evidence_sha256",
+    }
+)
+
+
+def _channel_snapshot_hash(channel_name: str, values: dict[str, Any]) -> str:
+    if channel_name == "route":
+        replay_core = {
+            key: values[key]
+            for key in sorted(_ROUTE_SNAPSHOT_REPLAY_KEYS)
+            if key in values
+        }
+        candidates = values.get("tool_candidates")
+        if isinstance(candidates, list):
+            route = str(values.get("route", "")).strip()
+            tool_name = str(values.get("tool_name", "")).strip()
+            selected_candidates = [
+                dict(item)
+                for item in candidates
+                if isinstance(item, dict)
+                and str(item.get("route", "")).strip() == route
+                and str(item.get("tool_name", "")).strip() == tool_name
+            ]
+            if selected_candidates:
+                replay_core["tool_candidates"] = selected_candidates
+        return _stable_json_hash(replay_core)
+    return _stable_json_hash(values)
+
+
 @dataclass
 class RunSession:
     mode: str
     handshake_complete: bool = False
     capability_table: CapabilityTable = field(default_factory=CapabilityTable)
+    execution_dag: ExecutionDAG = field(
+        default_factory=lambda: ExecutionDAG(dag_id=f"dag-{uuid4().hex[:8]}")
+    )
     setup_message_count: int = 0
     setup_text_chars: int = 0
     setup_text_bytes: int = 0
@@ -139,6 +203,27 @@ class RunContext:
     reuse_mode: str = "none"
     rejected_memory_hit: MemoryHit | None = None
     runtime_profile: RuntimeTaskProfile = field(default_factory=RuntimeTaskProfile)
+    channel_store: dict[str, dict[str, Any]] = field(default_factory=dict)
+    channel_snapshots: dict[str, ChannelSnapshot] = field(default_factory=dict)
+    trajectory_steps: list[StepTree] = field(default_factory=list)
+    execution_dag: ExecutionDAG = field(default_factory=lambda: ExecutionDAG(dag_id=f"dag-{uuid4().hex[:8]}"))
+    memory_tiers: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "working_memories": [],
+            "long_term_memories": [],
+            "replay_episodes": [],
+            "task_commits": [],
+        }
+    )
+    replay_decision: dict[str, Any] = field(default_factory=dict)
+    sealed_task_commit_hash: str = ""
+    blob_fetch_metrics: dict[str, Any] = field(
+        default_factory=lambda: {
+            "blob_fetch_count": 0,
+            "blob_fetch_bytes": 0,
+            "blob_fetch_hits": 0,
+        }
+    )
 
     def emit(self, message: object) -> None:
         protocol_size, text_chars, text_size = self.session.record_message(message, phase="steady")
@@ -205,10 +290,10 @@ class RunContext:
         text: str,
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
-        ref = self.statepool.put_text(
-            state_id,
-            kind,
-            text,
+        ref = self.statepool.put_replay_restorable_bytes(
+            state_id=state_id,
+            kind=kind,
+            payload=text.encode("utf-8"),
             metadata=attach_channel_metadata(metadata, state_kind=kind),
         )
         self.register_state(ref)
@@ -242,8 +327,9 @@ class RunContext:
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
         vector = self.memory_store.embedder.embed_text(text)
-        ref = self.statepool.put_embedding(
+        ref = self.statepool.put_replay_restorable_bytes(
             state_id=state_id,
+            kind="EMBEDDING",
             payload=vector.astype("float32").tobytes(),
             metadata={
                 "encoder_id": self.memory_store.embedder.encoder_id,
@@ -276,6 +362,136 @@ class RunContext:
 
     def get_feature_state(self, ref: StateRef) -> dict[str, object]:
         return self._get_msgpack_state(ref)
+
+    def get_channel_snapshot_state(self, ref: StateRef) -> ChannelSnapshot:
+        payload = self._get_msgpack_state(ref)
+        return ChannelSnapshot(
+            channel_name=str(payload.get("channel_name", "")),
+            kind=str(payload.get("kind", "")),
+            values=dict(payload.get("values", {}) or {}),
+            snapshot_hash=str(payload.get("snapshot_hash", "")),
+            state_ref_ids=[str(item) for item in payload.get("state_ref_ids", [])],
+            schema_version=str(
+                payload.get("schema", payload.get("schema_version", "statebus.channel_snapshot.v2"))
+            ),
+        )
+
+    def put_channel_patch(
+        self,
+        *,
+        state_id: str,
+        patch: ChannelPatch,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        ref = self._put_msgpack_state(
+            state_id=state_id,
+            kind="CHANNEL_PATCH",
+            schema=patch.schema_version,
+            payload={
+                "schema": patch.schema_version,
+                "channel_name": patch.channel_name,
+                "ops": dict(patch.ops),
+                "patch_id": patch.patch_id,
+            },
+            metadata=metadata,
+        )
+        self.apply_channel_patch(patch)
+        return ref
+
+    def put_channel_snapshot(
+        self,
+        *,
+        state_id: str,
+        snapshot: ChannelSnapshot,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        if not snapshot.snapshot_hash:
+            snapshot.snapshot_hash = _channel_snapshot_hash(
+                snapshot.channel_name,
+                snapshot.values,
+            )
+        self.channel_snapshots[snapshot.channel_name] = snapshot
+        return self._put_msgpack_state(
+            state_id=state_id,
+            kind="CHANNEL_SNAPSHOT",
+            schema=snapshot.schema_version,
+            payload={
+                "schema": snapshot.schema_version,
+                "channel_name": snapshot.channel_name,
+                "kind": snapshot.kind,
+                "values": dict(snapshot.values),
+                "snapshot_hash": snapshot.snapshot_hash,
+                "state_ref_ids": list(snapshot.state_ref_ids),
+            },
+            metadata=metadata,
+        )
+
+    def apply_channel_patch(self, patch: ChannelPatch) -> ChannelSnapshot:
+        current = dict(self.channel_store.get(patch.channel_name, {}))
+        current.update(dict(patch.ops))
+        self.channel_store[patch.channel_name] = current
+        snapshot = ChannelSnapshot(
+            channel_name=patch.channel_name,
+            kind="LAST_VALUE",
+            values=current,
+            snapshot_hash=_channel_snapshot_hash(patch.channel_name, current),
+        )
+        self.channel_snapshots[patch.channel_name] = snapshot
+        return snapshot
+
+    def get_channel_snapshot(self, channel_name: str) -> ChannelSnapshot | None:
+        return self.channel_snapshots.get(channel_name)
+
+    def resolve_channel_snapshot(self, refs: list[StateRef], channel_name: str) -> ChannelSnapshot | None:
+        snapshot = self.channel_snapshots.get(channel_name)
+        if snapshot is not None:
+            return snapshot
+        for ref in refs:
+            if ref.kind != "CHANNEL_SNAPSHOT":
+                continue
+            if str(ref.metadata.get("channel_name", ref.channel)).strip() != channel_name:
+                continue
+            snapshot = self.get_channel_snapshot_state(ref)
+            self.channel_snapshots[channel_name] = snapshot
+            self.channel_store[channel_name] = dict(snapshot.values)
+            return snapshot
+        return None
+
+    def fetch_blob(self, ref: StateRef, *, requester_id: str = "runtime") -> FetchResponse:
+        request = FetchRequest(
+            blob_hash=ref.canonical_hash,
+            requester_id=requester_id,
+            state_id=ref.state_id,
+            accepted_kinds=[ref.kind],
+        )
+        self.emit(request)
+        cache_hit = bool(ref.canonical_hash and self.statepool.has_blob(ref.canonical_hash))
+        if cache_hit:
+            bytes_sent = int(ref.length)
+        else:
+            payload = self.statepool.get_bytes(ref)
+            bytes_sent = len(payload)
+        self.record_blob_fetch(bytes_count=bytes_sent, cache_hit=cache_hit)
+        response = FetchResponse(
+            blob_hash=ref.canonical_hash,
+            found=True,
+            payload_ref=ref,
+            bytes_sent=bytes_sent,
+            cache_hit=cache_hit,
+            responder_id="local_statepool",
+        )
+        self.emit(response)
+        return response
+
+    def record_blob_fetch(self, *, bytes_count: int, cache_hit: bool) -> None:
+        self.blob_fetch_metrics["blob_fetch_count"] += 1
+        self.blob_fetch_metrics["blob_fetch_bytes"] += int(bytes_count)
+        if cache_hit:
+            self.blob_fetch_metrics["blob_fetch_hits"] += 1
+        self.metrics.blob_fetch_count += 1
+        self.metrics.blob_fetch_bytes += int(bytes_count)
+        if cache_hit:
+            self.metrics.blob_fetch_hits += 1
 
     def put_ranked_evidence_state(
         self,
@@ -358,7 +574,7 @@ class RunContext:
         payload: dict[str, object],
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
-        ref = self.statepool.put_bytes(
+        ref = self.statepool.put_replay_restorable_bytes(
             state_id=state_id,
             kind=kind,
             payload=msgpack.packb(payload, use_bin_type=True),
@@ -459,6 +675,15 @@ class RunContext:
     def commit_memory(self, commit: MemoryCommit) -> None:
         self.emit(commit)
         self.memory_store.commit_memory(commit)
+        tier = _normalize_runtime_memory_tier(
+            commit.tier
+            or commit.memory_purpose
+            or commit.memory_layer
+            or str(commit.metadata.get("memory_purpose", ""))
+            or str(commit.metadata.get("memory_layer", ""))
+        )
+        if tier in self.memory_tiers:
+            self.memory_tiers[tier].append(commit.memory_id)
 
     def record_llm_result(
         self,
@@ -610,6 +835,7 @@ class Orchestrator:
                 if isinstance(runtime_profile, RuntimeTaskProfile)
                 else RuntimeTaskProfile.from_mapping(runtime_profile)
             ),
+            execution_dag=active_session.execution_dag,
         )
 
     async def run_task(self, task: object, ctx: RunContext) -> dict[str, StepResult]:
@@ -617,6 +843,7 @@ class Orchestrator:
         plan = await self.compile_task_plan(task, ctx)
         results = await self._execute_plan(plan, ctx)
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
+        self.seal_task_commit(ctx)
         return results
 
     async def run_plan(self, plan: Plan, ctx: RunContext) -> dict[str, StepResult]:
@@ -624,6 +851,7 @@ class Orchestrator:
         self.prepare_plan(plan, ctx)
         results = await self._execute_plan(plan, ctx)
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
+        self.seal_task_commit(ctx)
         return results
 
     async def compile_task_plan(self, task: object, ctx: RunContext) -> Plan:
@@ -748,6 +976,131 @@ class Orchestrator:
             statepool=ctx.statepool,
         )
         self.register_result(result, ctx)
+        self.register_step_tree(step=step, result=result, ctx=ctx)
+
+    @staticmethod
+    def register_step_tree(
+        *,
+        step: PlanStep,
+        result: StepResult,
+        ctx: RunContext,
+    ) -> None:
+        input_refs = ctx.step_input_refs(step.step_id)
+        input_blobs = {
+            ref.kind: ref.canonical_hash or ref.state_id
+            for ref in input_refs
+            if ref.canonical_hash or ref.state_id
+        }
+        output_blobs = {
+            ref.kind: ref.canonical_hash or ref.state_id
+            for ref in result.output_state_refs
+            if ref.canonical_hash or ref.state_id
+        }
+        channel_snapshots = {
+            name: snapshot.snapshot_hash
+            for name, snapshot in ctx.channel_snapshots.items()
+            if snapshot.snapshot_hash
+        }
+        invariants = {
+            "step_success": bool(result.success),
+            "output_refs_registered": all(ref.state_id in ctx.state_refs for ref in result.output_state_refs),
+            "channel_route_snapshot_present": bool(
+                step.step_id != "execute"
+                or ctx.transfer_strategy() != "state_ref"
+                or ctx.get_channel_snapshot("route") is not None
+            ),
+        }
+        ctx.trajectory_steps.append(
+            StepTree(
+                step_id=step.step_id,
+                agent_id=step.owner_agent,
+                action=step.action,
+                input_blobs=input_blobs,
+                output_blobs=output_blobs,
+                channel_snapshots=channel_snapshots,
+                invariants=invariants,
+            )
+        )
+        ctx.metrics.trajectory_step_count = len(ctx.trajectory_steps)
+        ctx.metrics.invariant_check_count += len(invariants)
+        ctx.metrics.invariant_violation_count += sum(1 for ok in invariants.values() if not ok)
+
+    @staticmethod
+    def seal_task_commit(ctx: RunContext) -> TaskCommit:
+        if ctx.sealed_task_commit_hash:
+            existing = ctx.execution_dag.task_commits[ctx.sealed_task_commit_hash]
+            ctx.metrics.dag_integrity_check_count += 1
+            ctx.metrics.dag_integrity_violation_count += int(not ctx.execution_dag.verify_integrity())
+            return existing
+        channel_hashes = {
+            name: snapshot.snapshot_hash
+            for name, snapshot in sorted(ctx.channel_snapshots.items())
+            if snapshot.snapshot_hash
+        }
+        invariant_total = sum(len(step.invariants) for step in ctx.trajectory_steps)
+        invariant_violations = sum(
+            1
+            for step in ctx.trajectory_steps
+            for ok in step.invariants.values()
+            if not ok
+        )
+        commit = TaskCommit(
+            task_id=ctx.task_id,
+            task_group=ctx.task_group,
+            task_theme=ctx.task_theme,
+            step_trees=list(ctx.trajectory_steps),
+            mode=ctx.mode,
+            created_at=time.time(),
+            task_metrics=ctx.metrics.to_dict(),
+            channel_snapshot_hash=_stable_json_hash(channel_hashes),
+            invariant_summary={
+                "checks": invariant_total,
+                "violations": invariant_violations,
+            },
+        )
+        commit.seal()
+        previous_hashes = list(ctx.execution_dag.task_order)
+        ctx.execution_dag.add_commit(commit)
+        ctx.sealed_task_commit_hash = commit.commit_hash
+        ctx.metrics.trajectory_commit_count = len(ctx.execution_dag.task_commits)
+        ctx.metrics.trajectory_diff_count = sum(
+            1 for prior in previous_hashes if prior != commit.commit_hash
+        )
+        ctx.metrics.dag_integrity_check_count += 1
+        ctx.metrics.dag_integrity_violation_count += int(not ctx.execution_dag.verify_integrity())
+        ctx.commit_memory(
+            MemoryCommit(
+                memory_id=f"commit-{ctx.task_id}-{commit.commit_hash[:12]}",
+                source_agent_id="runtime",
+                source_task_id=ctx.task_id,
+                task_theme=ctx.task_theme,
+                summary=f"TaskCommit {commit.commit_hash} for {ctx.task_id}",
+                tags=[ctx.task_group, "task_commit"],
+                evidence_state_ids=sorted(ctx.state_refs),
+                reusable_steps=[],
+                confidence=1.0,
+                embedding_text=(
+                    f"task_commit {ctx.task_theme} {ctx.task_id} "
+                    f"{commit.commit_hash} {commit.channel_snapshot_hash}"
+                ),
+                encoder_id=ctx.memory_store.embedder.encoder_id,
+                metadata={
+                    "memory_purpose": "task_commit",
+                    "memory_layer": "task_commit",
+                    "tier": "task_commits",
+                    "trajectory_commit_hash": commit.commit_hash,
+                    "channel_snapshot_hash": commit.channel_snapshot_hash,
+                    "dag_integrity_ok": ctx.execution_dag.verify_integrity(),
+                },
+                evidence_state_refs=list(ctx.state_refs.values()),
+                memory_purpose="task_commit",
+                memory_layer="task_commit",
+                source_session_id=ctx.trace_id,
+                tier="task_commits",
+                commit_ref=commit.commit_hash,
+            )
+        )
+        return commit
 
     def resolve_skip_retrieve_execute(
         self,
@@ -1090,6 +1443,13 @@ class Orchestrator:
             "route_provenance",
             fallback=retrieve_result.payload.get("feature_route_provenance", []),
         )
+        stored_channel_snapshot_hash = str(hit.metadata.get("channel_snapshot_hash", "")).strip()
+        fresh_channel_snapshot_hash = str(retrieve_result.payload.get("channel_snapshot_hash", "")).strip()
+        stored_replay_blob_hash = _ref_hash_for_kind(hit.evidence_state_refs, "REPLAY_ELIGIBILITY_BUNDLE")
+        fresh_replay_blob_hash = _ref_hash_for_kind(
+            retrieve_result.output_state_refs,
+            "REPLAY_ELIGIBILITY_BUNDLE",
+        )
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
         return (
             feature_route
@@ -1111,6 +1471,9 @@ class Orchestrator:
                 route_provenance=fresh_route_provenance,
                 minimum_confidence=0.70,
             )
+            and _optional_hash_match(stored_channel_snapshot_hash, fresh_channel_snapshot_hash)
+            and bool(stored_replay_blob_hash)
+            and bool(fresh_replay_blob_hash)
         )
 
     def _matches_skip_retrieve_execute(
@@ -1166,6 +1529,8 @@ class Orchestrator:
                 hit.metadata.get("feature_evidence_sha256", ""),
             )
         )
+        channel_snapshot_hash = str(hit.metadata.get("channel_snapshot_hash", "")).strip()
+        replay_blob_hash = _ref_hash_for_kind(hit.evidence_state_refs, "REPLAY_ELIGIBILITY_BUNDLE")
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
         inferred_source_match = (
             bool(normalized_query)
@@ -1185,6 +1550,8 @@ class Orchestrator:
                 route_provenance=route_provenance,
                 minimum_confidence=0.80,
             )
+            and bool(channel_snapshot_hash)
+            and bool(replay_blob_hash)
         )
 
     def _build_skip_execute_result(
@@ -1196,6 +1563,7 @@ class Orchestrator:
     ) -> StepResult:
         retrieve_result = ctx.results.get("retrieve")
         feature_state_id = ""
+        channel_snapshot_state_id = ""
         tool_candidate_state_id = ""
         if retrieve_result is not None:
             feature_state_id = next(
@@ -1203,6 +1571,15 @@ class Orchestrator:
                     ref.state_id
                     for ref in retrieve_result.output_state_refs
                     if ref.kind == "FEATURE_BUNDLE"
+                ),
+                "",
+            )
+            channel_snapshot_state_id = next(
+                (
+                    ref.state_id
+                    for ref in retrieve_result.output_state_refs
+                    if ref.kind == "CHANNEL_SNAPSHOT"
+                    and str(ref.metadata.get("channel_name", ref.channel)).strip() == "route"
                 ),
                 "",
             )
@@ -1259,6 +1636,7 @@ class Orchestrator:
                 "sandbox_mode": artifact_ref.metadata.get("sandbox_mode", "reused"),
                 "matched_signals": [],
                 "feature_state_id": feature_state_id,
+                "channel_snapshot_state_id": channel_snapshot_state_id,
                 "tool_candidate_state_id": tool_candidate_state_id,
                 "reused_memory": True,
                 "reuse_mode": "skip_execute",
@@ -1287,6 +1665,21 @@ class Orchestrator:
             source_kind="FEATURE_BUNDLE",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-features",
         )
+        channel_snapshot_ref = self._maybe_copy_memory_ref(
+            ctx=ctx,
+            hit=hit,
+            source_kind="CHANNEL_SNAPSHOT",
+            target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-route-snapshot",
+        )
+        channel_snapshot_hash = ""
+        if channel_snapshot_ref is not None:
+            try:
+                snapshot = ctx.get_channel_snapshot_state(channel_snapshot_ref)
+                ctx.channel_snapshots[snapshot.channel_name] = snapshot
+                ctx.channel_store[snapshot.channel_name] = dict(snapshot.values)
+                channel_snapshot_hash = snapshot.snapshot_hash
+            except Exception:
+                channel_snapshot_hash = str(hit.metadata.get("channel_snapshot_hash", "")).strip()
         ranked_evidence_ref = self._maybe_copy_memory_ref(
             ctx=ctx,
             hit=hit,
@@ -1346,6 +1739,8 @@ class Orchestrator:
             fallback=hit.metadata.get("retrieved_doc_ids", []),
         )
         retrieve_refs = [evidence_ref, feature_ref]
+        if channel_snapshot_ref is not None:
+            retrieve_refs.append(channel_snapshot_ref)
         if ranked_evidence_ref is not None:
             retrieve_refs.append(ranked_evidence_ref)
         if tool_candidate_ref is not None:
@@ -1378,6 +1773,10 @@ class Orchestrator:
                 "retrieved_doc_ids": retrieved_doc_ids,
                 "corpus_doc_count": len(retrieved_doc_ids),
                 "memory_hint_route": route,
+                "channel_snapshot_state_id": (
+                    "" if channel_snapshot_ref is None else channel_snapshot_ref.state_id
+                ),
+                "channel_snapshot_hash": channel_snapshot_hash,
                 "ranked_evidence_state_id": (
                     "" if ranked_evidence_ref is None else ranked_evidence_ref.state_id
                 ),
@@ -1407,6 +1806,9 @@ class Orchestrator:
                 "sandbox_mode": artifact_ref.metadata.get("sandbox_mode", "reused"),
                 "matched_signals": [],
                 "feature_state_id": feature_ref.state_id,
+                "channel_snapshot_state_id": (
+                    "" if channel_snapshot_ref is None else channel_snapshot_ref.state_id
+                ),
                 "tool_candidate_state_id": (
                     "" if tool_candidate_ref is None else tool_candidate_ref.state_id
                 ),
@@ -1480,13 +1882,14 @@ class Orchestrator:
         target_state_id: str,
         metadata: dict[str, Any],
     ) -> StateRef:
-        payload = ctx.statepool.get_bytes(source_ref)
         if source_ref.storage == CAS_BLOB_STORAGE and source_ref.blob_hash:
+            ctx.fetch_blob(source_ref, requester_id="replay_restore")
             return ctx.statepool.link_cas_ref(
                 state_id=target_state_id,
                 source_ref=source_ref,
                 metadata=metadata,
             )
+        payload = ctx.statepool.get_bytes(source_ref)
         return ctx.statepool.put_replay_restorable_bytes(
             state_id=target_state_id,
             kind=source_ref.kind,
@@ -1588,6 +1991,40 @@ def _normalize_string_list(value: object) -> list[str]:
     if not text:
         return []
     return [text]
+
+
+def _ref_hash_for_kind(refs: list[StateRef], kind: str) -> str:
+    for ref in refs:
+        if ref.kind == kind and ref.canonical_hash:
+            return ref.canonical_hash
+    return ""
+
+
+def _optional_hash_match(left: str, right: str) -> bool:
+    left_hash = str(left or "").strip()
+    right_hash = str(right or "").strip()
+    if not left_hash or not right_hash:
+        return True
+    return left_hash == right_hash
+
+
+def _normalize_runtime_memory_tier(value: object) -> str:
+    text = str(value or "").strip().lower()
+    mapping = {
+        "": "long_term_memories",
+        "assist": "working_memories",
+        "summary": "long_term_memories",
+        "working": "working_memories",
+        "working_memories": "working_memories",
+        "long_term": "long_term_memories",
+        "long_term_memories": "long_term_memories",
+        "replay": "replay_episodes",
+        "episode": "replay_episodes",
+        "replay_episodes": "replay_episodes",
+        "task_commit": "task_commits",
+        "task_commits": "task_commits",
+    }
+    return mapping.get(text, text)
 
 
 def _route_is_replay_eligible(

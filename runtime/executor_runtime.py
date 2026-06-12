@@ -830,6 +830,15 @@ def execute_playbook_step(
     transfer_strategy: str = "state_ref",
 ) -> StepResult:
     evidence_ref = next((ref for ref in input_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
+    channel_snapshot_ref = next(
+        (
+            ref
+            for ref in input_state_refs
+            if ref.kind == "CHANNEL_SNAPSHOT"
+            and str(ref.metadata.get("channel_name", ref.channel)).strip() == "route"
+        ),
+        None,
+    )
     feature_ref = next((ref for ref in input_state_refs if ref.kind == "FEATURE_BUNDLE"), None)
     tool_candidate_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_CANDIDATE_SET"), None)
     decision_packet_ref = next(
@@ -837,7 +846,7 @@ def execute_playbook_step(
         None,
     )
     transfer_brief_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
-    if evidence_ref is None:
+    if evidence_ref is None and transfer_strategy != "natural_handoff_text":
         raise ValueError(f"step {step.step_id} missing DENSE_EVIDENCE input")
     if transfer_strategy == "text_brief":
         if transfer_brief_ref is None:
@@ -862,10 +871,11 @@ def execute_playbook_step(
     elif transfer_strategy == "natural_handoff_text":
         if transfer_brief_ref is None:
             raise ValueError(f"step {step.step_id} missing natural handoff input")
+        handoff_text = statepool.get_text(transfer_brief_ref)
         feature_bundle = _feature_bundle_from_natural_handoff(
             query_text=step.params.get("query", ""),
-            evidence_text=statepool.get_text(evidence_ref),
-            handoff_text=statepool.get_text(transfer_brief_ref),
+            evidence_text=handoff_text,
+            handoff_text=handoff_text,
             registry=registry or default_tool_registry(),
         )
         feature_state_id = transfer_brief_ref.state_id
@@ -880,23 +890,33 @@ def execute_playbook_step(
         )
         feature_state_id = decision_packet_ref.state_id
     else:
-        if feature_ref is None and tool_candidate_ref is None:
+        if channel_snapshot_ref is not None:
+            feature_bundle = _feature_bundle_from_channel_snapshot(
+                statepool=statepool,
+                snapshot_ref=channel_snapshot_ref,
+                query_text=step.params.get("query", ""),
+                evidence_text=statepool.get_text(evidence_ref),
+                registry=registry or default_tool_registry(),
+            )
+            feature_state_id = channel_snapshot_ref.state_id
+        elif feature_ref is None and tool_candidate_ref is None:
             raise ValueError(
                 f"step {step.step_id} missing FEATURE_BUNDLE and TOOL_CANDIDATE_SET inputs"
             )
-        feature_bundle = (
-            _load_feature_bundle(statepool, feature_ref) if feature_ref is not None else {}
-        )
-        if tool_candidate_ref is not None:
-            feature_bundle = _merge_feature_bundle_with_tool_candidates(
-                feature_bundle=feature_bundle,
-                tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
+        else:
+            feature_bundle = (
+                _load_feature_bundle(statepool, feature_ref) if feature_ref is not None else {}
             )
-        feature_state_id = (
-            feature_ref.state_id
-            if feature_ref is not None
-            else tool_candidate_ref.state_id
-        )
+            if tool_candidate_ref is not None:
+                feature_bundle = _merge_feature_bundle_with_tool_candidates(
+                    feature_bundle=feature_bundle,
+                    tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
+                )
+            feature_state_id = (
+                feature_ref.state_id
+                if feature_ref is not None
+                else tool_candidate_ref.state_id
+            )
     active_registry = registry or default_tool_registry()
     tool_name = select_tool_name(feature_bundle, registry=active_registry)
     tool_spec = active_registry.get(tool_name)
@@ -908,7 +928,11 @@ def execute_playbook_step(
             "task_theme": task_theme,
             "step_id": step.step_id,
             "feature_bundle": feature_bundle,
-            "evidence_text": statepool.get_text(evidence_ref),
+            "evidence_text": (
+                statepool.get_text(evidence_ref)
+                if evidence_ref is not None
+                else statepool.get_text(transfer_brief_ref)
+            ),
         },
         timeout_s=tool_spec.timeout_s,
     )
@@ -917,18 +941,23 @@ def execute_playbook_step(
         output_storage
         or (
         evidence_ref.storage
-        if evidence_ref.storage in {MMAP_FILE_STORAGE, PY_SHARED_MEMORY_STORAGE}
+        if evidence_ref is not None and evidence_ref.storage in {MMAP_FILE_STORAGE, PY_SHARED_MEMORY_STORAGE}
+        else transfer_brief_ref.storage
+        if transfer_brief_ref is not None and transfer_brief_ref.storage in {MMAP_FILE_STORAGE, PY_SHARED_MEMORY_STORAGE}
         else None
         )
     )
-    artifact_ref = statepool.put_bytes(
+    artifact_ref = statepool.put_replay_restorable_bytes(
         state_id=f"{task_id}-{step.step_id}-artifact",
         kind="TOOL_ARTIFACT",
         payload=artifact_text.encode("utf-8"),
         metadata=attach_channel_metadata(
             {
-                "source_evidence": evidence_ref.state_id,
+                "source_evidence": evidence_ref.state_id if evidence_ref is not None else "",
                 "source_features": feature_state_id,
+                "source_channel_snapshot": (
+                    channel_snapshot_ref.state_id if channel_snapshot_ref is not None else ""
+                ),
                 "source_tool_candidates": (
                     tool_candidate_ref.state_id if tool_candidate_ref is not None else ""
                 ),
@@ -953,6 +982,9 @@ def execute_playbook_step(
             "sandbox_mode": execution.sandbox_mode,
             "matched_signals": list(execution.diagnostics.get("matched_signals", [])),
             "feature_state_id": feature_state_id,
+            "channel_snapshot_state_id": (
+                channel_snapshot_ref.state_id if channel_snapshot_ref is not None else ""
+            ),
             "transfer_strategy": transfer_strategy,
         },
     )
@@ -968,6 +1000,48 @@ def _load_tool_candidate_set(statepool: StatePool, ref: StateRef) -> dict[str, A
 
 def _load_executor_decision_packet(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
     return _load_structured_bundle(statepool, ref, expected_kind="EXECUTOR_DECISION_PACKET")
+
+
+def _feature_bundle_from_channel_snapshot(
+    *,
+    statepool: StatePool,
+    snapshot_ref: StateRef,
+    query_text: object,
+    evidence_text: str,
+    registry: ToolRegistry,
+) -> dict[str, Any]:
+    snapshot = _load_structured_bundle(statepool, snapshot_ref, expected_kind="CHANNEL_SNAPSHOT")
+    values = dict(snapshot.get("values", {}) or {})
+    bundle = build_feature_bundle(
+        query=str(values.get("query", query_text or "")).strip(),
+        evidence_text=evidence_text,
+        tags=[],
+        reuse_signature=str(values.get("reuse_signature", "channel_snapshot_transfer")),
+        reused_memory=bool(values.get("reused_memory", False)),
+        registry=registry,
+    )
+    for key in (
+        "route",
+        "tool_name",
+        "route_source",
+        "route_confidence",
+        "route_provenance",
+        "matched_signals",
+        "matched_tags",
+        "match_score",
+        "hint_doc_ids",
+        "hint_route",
+        "hint_tool_name",
+        "tool_candidates",
+        "retrieved_doc_ids",
+        "feature_evidence_sha256",
+        "feature_fresh_evidence_sha256",
+    ):
+        if key in values:
+            bundle[key] = values[key]
+    bundle["transfer_strategy"] = "channel_store_hashref"
+    bundle["channel_snapshot_hash"] = str(snapshot.get("snapshot_hash", "")).strip()
+    return bundle
 
 
 def _load_structured_bundle(
@@ -1469,14 +1543,12 @@ def _build_natural_handoff_text(
     query: str,
     evidence_text: str,
 ) -> str:
-    evidence_preview = " ".join(
-        line.strip() for line in evidence_text.splitlines()[:3] if line.strip()
-    )[:220]
     return (
-        "Retriever handoff.\n"
-        f"Request: {query.strip()}.\n"
-        "Use only the cited evidence to decide the most likely issue, rule out the strongest competing explanation, and choose the first action.\n"
-        f"Evidence snapshot: {evidence_preview}\n"
+        "Retriever handoff in plain language.\n"
+        f"The downstream agent needs to answer this request: {query.strip()}.\n"
+        "Use only the cited evidence below to decide the most likely issue, rule out the strongest competing explanation, and choose the first action.\n"
+        "Evidence follows:\n"
+        f"{evidence_text.strip()}\n"
     )
 
 

@@ -19,6 +19,8 @@ DEFAULT_STATEPOOL_BACKEND = "mmap"
 DEFAULT_EMBED_STATE_BACKEND = "mmap"
 CAS_REPLAY_RESTORABLE_KINDS = frozenset(
     {
+        "CHANNEL_PATCH",
+        "CHANNEL_SNAPSHOT",
         "FEATURE_BUNDLE",
         "RANKED_EVIDENCE_BUNDLE",
         "TOOL_CANDIDATE_SET",
@@ -106,11 +108,12 @@ class FileBackedStatePool:
         ref = StateRef(
             state_id=state_id,
             kind=kind,
+            length=len(payload),
+            metadata=dict(metadata or {}),
             storage=MMAP_FILE_STORAGE,
             handle=str(path),
-            length=len(payload),
+            blob_hash=checksum,
             checksum=checksum,
-            metadata=dict(metadata or {}),
         )
         _write_ref_meta(meta_path, ref)
         return ref
@@ -163,11 +166,12 @@ class SharedMemoryStatePool:
         ref = StateRef(
             state_id=state_id,
             kind=kind,
+            length=len(payload),
+            metadata=dict(metadata or {}),
             storage=PY_SHARED_MEMORY_STORAGE,
             handle=segment.name,
-            length=len(payload),
+            blob_hash=checksum,
             checksum=checksum,
-            metadata=dict(metadata or {}),
         )
         self.owned_handles.add(segment.name)
         _write_ref_meta(self.meta_dir / f"{state_id}.json", ref)
@@ -340,7 +344,7 @@ class StatePool:
 
     def get_bytes(self, ref: StateRef) -> bytes:
         if ref.storage == CAS_BLOB_STORAGE:
-            payload = self.cas_blobs.get_bytes_by_hash(ref.blob_hash)
+            payload = self.cas_blobs.get_bytes_by_hash(ref.canonical_hash)
             if payload is not None:
                 return payload
             handle_path = Path(ref.handle)
@@ -348,7 +352,7 @@ class StatePool:
                 with handle_path.open("rb") as handle:
                     with mmap.mmap(handle.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
                         return mm[:]
-            raise FileNotFoundError(f"missing CAS blob: {ref.blob_hash}")
+            raise FileNotFoundError(f"missing CAS blob: {ref.canonical_hash}")
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_bytes(ref)
         return self.file_pool.get_bytes(ref)
@@ -454,16 +458,18 @@ class ContentAddressedBlobStore:
         ref = StateRef(
             state_id=state_id,
             kind=kind,
-            storage=CAS_BLOB_STORAGE,
-            handle=str(blob_path),
             length=len(payload),
-            checksum=blob_hash,
             metadata={
                 **meta,
                 "blob_hash": blob_hash,
                 "blob_refcount": refcount,
                 "dedup_hit": dedup_hit,
             },
+            storage=CAS_BLOB_STORAGE,
+            handle=str(blob_path),
+            blob_hash=blob_hash,
+            checksum=blob_hash,
+            exact_replay_ready=True,
         )
         _write_ref_meta(self._blob_meta_path(blob_hash), ref)
         _write_ref_meta(self.ref_meta_path(state_id), ref)
@@ -476,7 +482,7 @@ class ContentAddressedBlobStore:
         source_ref: StateRef,
         metadata: dict[str, object] | None = None,
     ) -> StateRef:
-        blob_hash = source_ref.blob_hash
+        blob_hash = source_ref.canonical_hash
         if not blob_hash:
             raise ValueError(f"source ref {source_ref.state_id} is missing a CAS blob hash")
         blob_path = self._blob_path(blob_hash)
@@ -503,11 +509,13 @@ class ContentAddressedBlobStore:
         ref = StateRef(
             state_id=state_id,
             kind=source_ref.kind,
+            length=source_ref.length,
+            metadata=meta,
             storage=CAS_BLOB_STORAGE,
             handle=str(blob_path),
-            length=source_ref.length,
+            blob_hash=blob_hash,
             checksum=blob_hash,
-            metadata=meta,
+            exact_replay_ready=True,
         )
         _write_ref_meta(self.ref_meta_path(state_id), ref)
         return ref
@@ -534,7 +542,7 @@ class ContentAddressedBlobStore:
                 ref = _read_ref_meta(path)
             except Exception:
                 continue
-            if ref.blob_hash == blob_hash:
+            if ref.canonical_hash == blob_hash:
                 count += 1
         self._refcount[blob_hash] = count
         return count
@@ -579,11 +587,18 @@ def _write_ref_meta(path: Path, ref: StateRef) -> None:
             {
                 "state_id": ref.state_id,
                 "kind": ref.kind,
+                "length": ref.length,
+                "blob_hash": ref.canonical_hash,
+                "metadata": ref.metadata,
                 "storage": ref.storage,
                 "handle": ref.handle,
-                "length": ref.length,
                 "checksum": ref.checksum,
-                "metadata": ref.metadata,
+                "channel": ref.channel,
+                "compatibility": ref.compatibility,
+                "fetch_uri": ref.fetch_uri,
+                "local_only": ref.local_only,
+                "exact_replay_ready": ref.exact_replay_ready,
+                "created_at_ns": ref.created_at_ns,
             },
             ensure_ascii=True,
             sort_keys=True,

@@ -6,6 +6,9 @@ message StateRefLite {
   string state_id = 1;
   string kind = 2;
   uint64 length = 3;
+  string blob_hash = 4;
+  string channel = 5;
+  bool exact_replay_ready = 6;
 }
 
 message StateRefFull {
@@ -16,6 +19,13 @@ message StateRefFull {
   uint64 length = 5;
   string checksum = 6;
   string metadata_json = 7;
+  string blob_hash = 8;
+  string channel = 9;
+  string compatibility_json = 10;
+  string fetch_uri = 11;
+  bool local_only = 12;
+  bool exact_replay_ready = 13;
+  int64 created_at_ns = 14;
 }
 
 message Hello {
@@ -69,6 +79,27 @@ message Plan {
   repeated PlanStep steps = 3;
 }
 
+message DeltaPlanStep {
+  string step_id = 1;
+  string base_step_id = 2;
+  string owner_agent = 3;
+  string action = 4;
+  string delta_params_json = 5;
+  repeated string delta_depends_on = 6;
+  repeated string delta_input_state_refs = 7;
+  string input_patch_mode = 8;
+  int32 delta_version = 9;
+}
+
+message PlanDelta {
+  string task_id = 1;
+  string base_task_id = 2;
+  string goal = 3;
+  repeated DeltaPlanStep steps = 4;
+  Plan full_plan_fallback = 5;
+  string frame_preference = 6;
+}
+
 message StepResult {
   string step_id = 1;
   bool success = 2;
@@ -110,6 +141,39 @@ message MemoryCommit {
   int64 created_at_ns = 13;
 }
 
+message FetchRequest {
+  string blob_hash = 1;
+  string requester_id = 2;
+  string state_id = 3;
+  repeated string accepted_kinds = 4;
+  bool prefer_local_short_circuit = 5;
+}
+
+message FetchResponse {
+  string blob_hash = 1;
+  bool found = 2;
+  StateRefFull payload_ref = 3;
+  uint64 bytes_sent = 4;
+  bool cache_hit = 5;
+  string responder_id = 6;
+}
+
+message ChannelPatch {
+  string channel_name = 1;
+  string ops_json = 2;
+  string patch_id = 3;
+  string schema_version = 4;
+}
+
+message ChannelSnapshot {
+  string channel_name = 1;
+  string kind = 2;
+  string values_json = 3;
+  string snapshot_hash = 4;
+  repeated string state_ref_ids = 5;
+  string schema_version = 6;
+}
+
 message RemoteStepResult {
   string step_id = 1;
   bool success = 2;
@@ -148,5 +212,10 @@ message WireEnvelope {
     MemoryCommit memory_commit = 10;
     RemoteStepRequest remote_step_request = 11;
     RemoteStepResponse remote_step_response = 12;
+    PlanDelta plan_delta = 13;
+    FetchRequest fetch_request = 14;
+    FetchResponse fetch_response = 15;
+    ChannelPatch channel_patch = 16;
+    ChannelSnapshot channel_snapshot = 17;
   }
 }
