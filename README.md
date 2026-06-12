@@ -116,6 +116,12 @@ benchmark 运行主入口在：
 
 - `eval/runner.py`
 
+默认 benchmark 入口当前指向：
+
+- `state_transfer_carrier`
+  - 只读 protocol-only carrier headline
+  - `formal_controlled` 保留为总览/回归包，不再作为默认 headline 入口
+
 任务与 pack 定义在：
 
 - `tasks/`

@@ -828,6 +828,7 @@ def execute_playbook_step(
     registry: ToolRegistry | None = None,
     output_storage: str | None = None,
     transfer_strategy: str = "state_ref",
+    inline_handoff_text: str = "",
 ) -> StepResult:
     evidence_ref = next((ref for ref in input_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
     channel_snapshot_ref = next(
@@ -846,7 +847,8 @@ def execute_playbook_step(
         None,
     )
     transfer_brief_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
-    if evidence_ref is None and transfer_strategy != "natural_handoff_text":
+    execution_evidence_text = ""
+    if evidence_ref is None and transfer_strategy not in {"natural_handoff_text", "inline_text_handoff"}:
         raise ValueError(f"step {step.step_id} missing DENSE_EVIDENCE input")
     if transfer_strategy == "text_brief":
         if transfer_brief_ref is None:
@@ -858,6 +860,7 @@ def execute_playbook_step(
             registry=registry or default_tool_registry(),
         )
         feature_state_id = transfer_brief_ref.state_id
+        execution_evidence_text = statepool.get_text(evidence_ref)
     elif transfer_strategy == "text_packet_minimal":
         if transfer_brief_ref is None:
             raise ValueError(f"step {step.step_id} missing text packet input")
@@ -868,6 +871,7 @@ def execute_playbook_step(
             registry=registry or default_tool_registry(),
         )
         feature_state_id = transfer_brief_ref.state_id
+        execution_evidence_text = statepool.get_text(evidence_ref)
     elif transfer_strategy == "natural_handoff_text":
         if transfer_brief_ref is None:
             raise ValueError(f"step {step.step_id} missing natural handoff input")
@@ -879,6 +883,21 @@ def execute_playbook_step(
             registry=registry or default_tool_registry(),
         )
         feature_state_id = transfer_brief_ref.state_id
+        execution_evidence_text = handoff_text
+    elif transfer_strategy == "inline_text_handoff":
+        handoff_text = str(inline_handoff_text).strip()
+        if not handoff_text:
+            handoff_text = str(step.params.get("inline_handoff_text", "")).strip()
+        if not handoff_text:
+            raise ValueError(f"step {step.step_id} missing inline handoff text")
+        feature_bundle = _feature_bundle_from_natural_handoff(
+            query_text=step.params.get("query", ""),
+            evidence_text=handoff_text,
+            handoff_text=handoff_text,
+            registry=registry or default_tool_registry(),
+        )
+        feature_state_id = ""
+        execution_evidence_text = handoff_text
     elif transfer_strategy == "state_packet_minimal":
         if decision_packet_ref is None:
             raise ValueError(f"step {step.step_id} missing executor decision packet input")
@@ -889,6 +908,7 @@ def execute_playbook_step(
             registry=registry or default_tool_registry(),
         )
         feature_state_id = decision_packet_ref.state_id
+        execution_evidence_text = statepool.get_text(evidence_ref)
     else:
         if channel_snapshot_ref is not None:
             feature_bundle = _feature_bundle_from_channel_snapshot(
@@ -911,12 +931,13 @@ def execute_playbook_step(
                 feature_bundle = _merge_feature_bundle_with_tool_candidates(
                     feature_bundle=feature_bundle,
                     tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
-                )
+            )
             feature_state_id = (
                 feature_ref.state_id
                 if feature_ref is not None
                 else tool_candidate_ref.state_id
             )
+        execution_evidence_text = statepool.get_text(evidence_ref)
     active_registry = registry or default_tool_registry()
     tool_name = select_tool_name(feature_bundle, registry=active_registry)
     tool_spec = active_registry.get(tool_name)
@@ -928,11 +949,7 @@ def execute_playbook_step(
             "task_theme": task_theme,
             "step_id": step.step_id,
             "feature_bundle": feature_bundle,
-            "evidence_text": (
-                statepool.get_text(evidence_ref)
-                if evidence_ref is not None
-                else statepool.get_text(transfer_brief_ref)
-            ),
+            "evidence_text": execution_evidence_text,
         },
         timeout_s=tool_spec.timeout_s,
     )

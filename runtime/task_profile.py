@@ -18,6 +18,7 @@ TRANSFER_STRATEGIES = (
     "text_packet_minimal",
     "state_packet_minimal",
     "natural_handoff_text",
+    "inline_text_handoff",
     "mode_split_text_brief_vs_state_ref",
 )
 
@@ -41,6 +42,7 @@ def normalize_transfer_strategy(value: object) -> str:
         "text_packet_minimal": "text_packet_minimal",
         "state_packet_minimal": "state_packet_minimal",
         "natural_handoff_text": "natural_handoff_text",
+        "inline_text_handoff": "inline_text_handoff",
         "mode_split": "mode_split_text_brief_vs_state_ref",
         "mode_split_text_brief_vs_state_ref": "mode_split_text_brief_vs_state_ref",
     }

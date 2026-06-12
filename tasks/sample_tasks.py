@@ -23,7 +23,7 @@ DEFAULT_TASKS_DIR = Path(__file__).resolve().parent
 DEFAULT_TASK_SET = DEFAULT_TASKS_DIR / "sample_benchmark.yaml"
 
 TASK_SET_ALIASES = {
-    "default": "sample_benchmark.yaml",
+    "default": "contest_release_regression_carrier_benchmark.yaml",
     "formal_controlled": "sample_benchmark.yaml",
     "formal_controlled_pack": "sample_benchmark.yaml",
     "sample_benchmark": "sample_benchmark.yaml",
@@ -37,8 +37,14 @@ TASK_SET_ALIASES = {
     "contest_release_regression_authenticity_pack": "contest_release_regression_authenticity_benchmark.yaml",
     "state_transfer_pure_text": "state_transfer_pure_text_benchmark.yaml",
     "state_transfer_pure_text_pack": "state_transfer_pure_text_benchmark.yaml",
-    "state_transfer_natural_support": "state_transfer_natural_support_benchmark.yaml",
-    "state_transfer_natural_support_pack": "state_transfer_natural_support_benchmark.yaml",
+    "contest_release_regression_pure_text": "state_transfer_pure_text_benchmark.yaml",
+    "contest_release_regression_pure_text_pack": "state_transfer_pure_text_benchmark.yaml",
+    "state_transfer_inline_text_support": "state_transfer_inline_text_support_benchmark.yaml",
+    "state_transfer_inline_text_support_pack": "state_transfer_inline_text_support_benchmark.yaml",
+    "contest_release_regression_inline_text_support": "contest_release_regression_natural_support_benchmark.yaml",
+    "contest_release_regression_inline_text_support_pack": "contest_release_regression_natural_support_benchmark.yaml",
+    "state_transfer_natural_support": "state_transfer_inline_text_support_benchmark.yaml",
+    "state_transfer_natural_support_pack": "state_transfer_inline_text_support_benchmark.yaml",
     "contest_release_regression_natural_support": "contest_release_regression_natural_support_benchmark.yaml",
     "contest_release_regression_natural_support_pack": "contest_release_regression_natural_support_benchmark.yaml",
     "communication": "communication_benchmark.yaml",
@@ -56,7 +62,7 @@ TASK_PACK_TYPES = (
     "state_transfer_carrier",
     "state_transfer_authenticity",
     "state_transfer_pure_text",
-    "state_transfer_natural_support",
+    "state_transfer_inline_text_support",
     "communication",
     "memory",
     "internal_regression",
@@ -84,7 +90,8 @@ def normalize_task_pack_type(value: object) -> str:
         "state_transfer_carrier": "state_transfer_carrier",
         "state_transfer_authenticity": "state_transfer_authenticity",
         "state_transfer_pure_text": "state_transfer_pure_text",
-        "state_transfer_natural_support": "state_transfer_natural_support",
+        "state_transfer_inline_text_support": "state_transfer_inline_text_support",
+        "state_transfer_natural_support": "state_transfer_inline_text_support",
         "communication": "communication",
         "memory": "memory",
         "internal_regression": "internal_regression",
@@ -140,7 +147,7 @@ class TaskSetMetadata:
 
     @property
     def support_only(self) -> bool:
-        return self.pack_type in {"state_transfer_natural_support", "open_validation"}
+        return self.pack_type in {"state_transfer_inline_text_support", "open_validation"}
 
 
 @dataclass(frozen=True)

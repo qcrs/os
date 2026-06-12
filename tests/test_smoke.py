@@ -98,6 +98,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         out_dir = Path(tmpdir) / "runs"
         result = asyncio.run(
             run_benchmark(
+                task_set_path="formal_controlled",
                 repeat=1,
                 out_dir=out_dir,
                 embedder=DeterministicEmbeddingProvider(),
@@ -109,7 +110,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert (out_dir / "benchmark_report.md").exists()
         payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
         compare_csv = (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
-        task_chain = default_task_chain()
+        task_chain = list(load_task_set_bundle("formal_controlled").tasks)
         expected_lane_counts = {
             "internal_regression": sum(1 for task in task_chain if task.benchmark_lane == "internal_regression"),
             "communication": sum(1 for task in task_chain if task.benchmark_lane == "communication"),
@@ -118,6 +119,9 @@ def test_benchmark_runner_writes_outputs() -> None:
             "integrity": 0,
         }
         expected_transfer_strategy_counts = {
+            "inline_text_handoff": sum(
+                1 for task in task_chain if task.transfer_strategy == "inline_text_handoff"
+            ),
             "natural_handoff_text": sum(
                 1 for task in task_chain if task.transfer_strategy == "natural_handoff_text"
             ),
@@ -249,32 +253,37 @@ def test_default_task_set_is_formal_controlled_pack() -> None:
     assert bundle.metadata.name == "formal_controlled_pack"
     assert bundle.metadata.pack_type == "formal_controlled"
     assert bundle.metadata.support_only is False
-    assert "communication" in bundle.metadata.claim_lanes
+    assert bundle.metadata.claim_lanes == ("communication", "state_transfer", "memory")
     assert len(bundle.tasks) == 24
     task_ids = {task.task_id for task in bundle.tasks}
-    assert not any(task_id.startswith("open-plan-") for task_id in task_ids)
-    assert not any("lexical-override" in task_id for task_id in task_ids)
+    assert any(task_id.startswith("sample-") for task_id in task_ids)
 
 
 def test_task_pack_aliases_and_support_only_flags() -> None:
     expectations = {
-        "default": ("formal_controlled", False, 24),
+        "default": ("state_transfer_carrier", False, 40),
         "formal_controlled": ("formal_controlled", False, 24),
         "formal_controlled_pack": ("formal_controlled", False, 24),
-        "state_transfer_carrier": ("state_transfer_carrier", False, 18),
-        "state_transfer_carrier_pack": ("state_transfer_carrier", False, 18),
-        "contest_release_regression_carrier": ("state_transfer_carrier", False, 18),
-        "contest_release_regression_carrier_pack": ("state_transfer_carrier", False, 18),
+        "state_transfer_carrier": ("state_transfer_carrier", False, 40),
+        "state_transfer_carrier_pack": ("state_transfer_carrier", False, 40),
+        "contest_release_regression_carrier": ("state_transfer_carrier", False, 40),
+        "contest_release_regression_carrier_pack": ("state_transfer_carrier", False, 40),
         "state_transfer_authenticity": ("state_transfer_authenticity", False, 6),
         "state_transfer_authenticity_pack": ("state_transfer_authenticity", False, 6),
-        "contest_release_regression_authenticity": ("state_transfer_authenticity", False, 18),
-        "contest_release_regression_authenticity_pack": ("state_transfer_authenticity", False, 18),
-        "state_transfer_pure_text": ("state_transfer_pure_text", False, 6),
-        "state_transfer_pure_text_pack": ("state_transfer_pure_text", False, 6),
-        "state_transfer_natural_support": ("state_transfer_natural_support", True, 6),
-        "state_transfer_natural_support_pack": ("state_transfer_natural_support", True, 6),
-        "contest_release_regression_natural_support": ("state_transfer_natural_support", True, 18),
-        "contest_release_regression_natural_support_pack": ("state_transfer_natural_support", True, 18),
+        "contest_release_regression_authenticity": ("state_transfer_authenticity", False, 40),
+        "contest_release_regression_authenticity_pack": ("state_transfer_authenticity", False, 40),
+        "state_transfer_pure_text": ("state_transfer_pure_text", False, 40),
+        "state_transfer_pure_text_pack": ("state_transfer_pure_text", False, 40),
+        "contest_release_regression_pure_text": ("state_transfer_pure_text", False, 40),
+        "contest_release_regression_pure_text_pack": ("state_transfer_pure_text", False, 40),
+        "state_transfer_inline_text_support": ("state_transfer_inline_text_support", True, 6),
+        "state_transfer_inline_text_support_pack": ("state_transfer_inline_text_support", True, 6),
+        "state_transfer_natural_support": ("state_transfer_inline_text_support", True, 6),
+        "state_transfer_natural_support_pack": ("state_transfer_inline_text_support", True, 6),
+        "contest_release_regression_inline_text_support": ("state_transfer_inline_text_support", True, 40),
+        "contest_release_regression_inline_text_support_pack": ("state_transfer_inline_text_support", True, 40),
+        "contest_release_regression_natural_support": ("state_transfer_inline_text_support", True, 40),
+        "contest_release_regression_natural_support_pack": ("state_transfer_inline_text_support", True, 40),
         "communication": ("communication", False, 2),
         "communication_pack": ("communication", False, 2),
         "memory": ("memory", False, 3),
@@ -320,7 +329,7 @@ def test_pack_boundary_split_keeps_headline_regression_and_open_validation_separ
 def test_orchestrator_respects_yaml_vs_llm_plan_source() -> None:
     agents = build_sample_agents_with_executor(llm_client=DeterministicLLMClient())
     orchestrator = Orchestrator(agents)
-    base_task = default_task_chain()[0]
+    base_task = load_task_set_bundle("formal_controlled").tasks[0]
     llm_task = replace(base_task, task_id="open-plan-probe-001", plan_source="llm")
 
     with tempfile.TemporaryDirectory(prefix="statebus-plan-source-") as tmpdir:
@@ -705,7 +714,7 @@ def test_exact_replay_no_longer_requires_preferred_corpus_doc_ids() -> None:
 def test_validated_replay_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
-        for task in default_task_chain()
+        for task in load_task_set_bundle("formal_controlled").tasks
         if task.task_group == "cache_chain" and task.task_order <= 4
     ]
     validated_replay_without_contract = SampleTask(
@@ -771,7 +780,7 @@ def test_validated_replay_respects_runtime_reuse_contract_gate() -> None:
 def test_memory_assist_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
-        for task in default_task_chain()
+        for task in load_task_set_bundle("formal_controlled").tasks
         if task.task_group == "cache_chain" and task.task_order <= 1
     ]
     assist_without_contract = SampleTask(
@@ -2096,7 +2105,7 @@ def test_state_transfer_text_brief_preserves_retriever_executor_snapshot() -> No
             assert rebuilt["tool_candidates"][0]["tool_name"] == execute_payload["tool_name"]
 
 
-def test_natural_handoff_removes_route_and_tool_side_channels() -> None:
+def test_inline_text_support_removes_executor_facing_state_refs() -> None:
     forbidden_tokens = (
         "Route:",
         "Tool:",
@@ -2105,10 +2114,10 @@ def test_natural_handoff_removes_route_and_tool_side_channels() -> None:
         "matched_signals",
         "matched_tags",
     )
-    with tempfile.TemporaryDirectory(prefix="statebus-natural-support-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="statebus-inline-support-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="state_transfer_natural_support",
+                task_set_path="state_transfer_inline_text_support",
                 repeat=1,
                 modes=("protocol",),
                 out_dir=Path(tmpdir),
@@ -2118,30 +2127,24 @@ def test_natural_handoff_removes_route_and_tool_side_channels() -> None:
         )
         tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
         for task_id in (
-            "transfer-cache-natural-001",
-            "transfer-latency-natural-001",
-            "transfer-session-natural-001",
+            "transfer-cache-inline-text-001",
+            "transfer-latency-inline-text-001",
+            "transfer-session-inline-text-001",
         ):
             task = tasks[task_id]
             retrieve_payload = task["results"]["retrieve"]["payload"]
             execute_payload = task["results"]["execute"]["payload"]
-            brief_state_id = retrieve_payload["transfer_brief_state_id"]
-            assert brief_state_id
-            brief_ref = task["state_refs"][brief_state_id]
-            assert {"query", "retrieved_doc_ids", "transfer_strategy"}.issubset(
-                set(brief_ref["metadata"])
-            )
-            assert brief_ref["metadata"]["channel_name"] == "artifact"
-            assert "feature_route" not in brief_ref["metadata"]
-            assert "feature_route_source" not in brief_ref["metadata"]
-            brief_text = Path(brief_ref["handle"]).read_bytes().decode("utf-8")
+            assert retrieve_payload["transfer_brief_state_id"] == ""
+            assert retrieve_payload["inline_handoff_text"]
+            assert task["pure_text_guard"]["passed"] is True
+            assert "TOOL_ARTIFACT" not in task["pure_text_guard"]["executor_input_kinds"]
+            assert task["pure_text_guard"]["forbidden_ref_kinds"] == []
+            brief_text = retrieve_payload["inline_handoff_text"]
             for token in forbidden_tokens:
                 assert token not in brief_text
-            evidence_ref = next(ref for ref in task["state_refs"].values() if ref["kind"] == "DENSE_EVIDENCE")
-            evidence_text = Path(evidence_ref["handle"]).read_text(encoding="utf-8")
             rebuilt = build_feature_bundle(
                 query=retrieve_payload["query"],
-                evidence_text=f"{evidence_text}\n{brief_text}",
+                evidence_text=brief_text,
                 tags=[],
                 reuse_signature="natural_handoff_transfer",
                 reused_memory=False,
@@ -2167,7 +2170,7 @@ def test_state_transfer_pure_text_pack_runs_natural_text_against_channel_store_h
         task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
     }
     transfer_tasks = list(load_task_set_bundle("state_transfer_pure_text").tasks)
-    assert len(transfer_tasks) == 6
+    assert len(transfer_tasks) == 40
     for task in transfer_tasks:
         assert task.allowed_modes == ("protocol",)
         assert task.task_id in protocol_tasks
@@ -2179,6 +2182,65 @@ def test_state_transfer_pure_text_pack_runs_natural_text_against_channel_store_h
         for task in transfer_tasks
     } == {"natural_handoff_text", "channel_store_hashref"}
     assert int(result["summary"]["protocol"]["failure_count"]) == 0
+
+
+def test_contest_release_state_transfer_packs_share_family_case_contract() -> None:
+    carrier = list(load_task_set_bundle("contest_release_regression_carrier").tasks)
+    authenticity = list(load_task_set_bundle("contest_release_regression_authenticity").tasks)
+    pure_text = list(load_task_set_bundle("state_transfer_pure_text").tasks)
+    support = list(load_task_set_bundle("contest_release_regression_inline_text_support").tasks)
+
+    assert len(carrier) == len(authenticity) == len(pure_text) == len(support) == 40
+
+    def _normalize_case(task_id: str) -> str:
+        normalized = task_id
+        for suffix in (
+            "-text-packet-001",
+            "-state-packet-001",
+            "-text-brief-001",
+            "-state-ref-001",
+            "-pure-text-001",
+            "-inline-text-001",
+            "-state-packet-002",
+        ):
+            if normalized.endswith(suffix):
+                return normalized[: -len(suffix)]
+        raise AssertionError(f"unexpected contest task id: {task_id}")
+
+    def _by_case(tasks: list[SampleTask]) -> dict[str, list[SampleTask]]:
+        grouped: dict[str, list[SampleTask]] = {}
+        for task in tasks:
+            grouped.setdefault(_normalize_case(task.task_id), []).append(task)
+        return grouped
+
+    carrier_cases = _by_case(carrier)
+    authenticity_cases = _by_case(authenticity)
+    pure_text_cases = _by_case(pure_text)
+    support_cases = _by_case(support)
+
+    assert set(carrier_cases) == set(authenticity_cases) == set(pure_text_cases) == set(support_cases)
+    assert len(carrier_cases) == 20
+
+    for case_id in sorted(carrier_cases):
+        c_pair = sorted(carrier_cases[case_id], key=lambda item: item.task_order)
+        a_pair = sorted(authenticity_cases[case_id], key=lambda item: item.task_order)
+        p_pair = sorted(pure_text_cases[case_id], key=lambda item: item.task_order)
+        s_pair = sorted(support_cases[case_id], key=lambda item: item.task_order)
+        assert len(c_pair) == len(a_pair) == len(p_pair) == len(s_pair) == 2
+
+        baseline = c_pair[0]
+        for peer in (*c_pair[1:], *a_pair, *p_pair, *s_pair):
+            assert peer.goal == baseline.goal
+            assert peer.query == baseline.query
+            assert peer.corpus_doc_ids == baseline.corpus_doc_ids
+            assert peer.task_group == baseline.task_group
+            assert peer.task_theme == baseline.task_theme
+            assert peer.summary_hint == baseline.summary_hint
+
+        assert {task.transfer_strategy for task in c_pair} == {"text_packet_minimal", "state_packet_minimal"}
+        assert {task.transfer_strategy for task in a_pair} == {"text_brief", "state_ref"}
+        assert {task.transfer_strategy for task in p_pair} == {"natural_handoff_text", "state_ref"}
+        assert {task.transfer_strategy for task in s_pair} == {"inline_text_handoff", "state_packet_minimal"}
 
 
 def test_communication_lane_keeps_memory_disabled_in_both_modes() -> None:

@@ -1,121 +1,727 @@
 task_set:
   name: state_transfer_pure_text_pack
   pack_type: state_transfer_pure_text
-  description: Controlled protocol-only formal pack for pure-text handoff versus rich state-ref typed handoff comparisons.
-  reading_contract: Read this pack as the formal pure-text versus typed-state state-transfer pack only; it compares natural free-text handoff against the real state_ref typed handoff under the same controlled tasks.
+  description: Contest-oriented protocol-only formal pure-text fairness pack with 5 families x 4 paired cases.
+  reading_contract: Read this pack as the formal pure-text-versus-typed-state fairness pack only; it keeps protocol mode and memory-off fixed, uses 5 families x 4 paired cases, and compares natural free-text handoff against typed state_ref handoff under the same controlled tasks.
   claim_lanes: [state_transfer]
 
 tasks:
-  - task_id: transfer-cache-pure-text-001
-    task_group: transfer_lane
+  - task_group: checkout_release_chain
     task_order: 1
-    task_theme: repo_local_cache_staleness
+    task_theme: contest_release_checkout_regression
     benchmark_lane: state_transfer
-    transfer_strategy: natural_handoff_text
     allowed_modes: [protocol]
-    goal: Use the cited cache docs to triage the incident and recommend the first action.
-    query: inventory counts stay stale after a batch sync and mismatch across views
-    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false]
-    evidence_text: Use only the referenced corpus docs; ignore memory reuse and compare pure-text versus typed-state executor handoff only.
-    tags: [cache, inventory, sync-window, transfer, pure-text]
-    reuse_tags: [cache, inventory, invalidation]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+    query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, clean, pure-text]
+    reuse_tags: [release, checkout, database]
     expected_reuse_mode: none
     runtime_reuse_contract: reuse_disabled
-    summary_hint: >
-      Return three concise points only: the most likely cause, the competing
-      explanation ruled out by the cited docs, and the first action.
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-checkout-clean-pure-text-001
+    transfer_strategy: natural_handoff_text
 
-  - task_id: transfer-cache-state-ref-001
-    task_group: transfer_lane
+  - task_group: checkout_release_chain
     task_order: 2
-    task_theme: repo_local_cache_staleness
+    task_theme: contest_release_checkout_regression
     benchmark_lane: state_transfer
-    transfer_strategy: state_ref
     allowed_modes: [protocol]
-    goal: Use the cited cache docs to triage the incident and recommend the first action.
-    query: inventory counts stay stale after a batch sync and mismatch across views
-    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false]
-    evidence_text: Use only the referenced corpus docs; ignore memory reuse and compare pure-text versus typed-state executor handoff only.
-    tags: [cache, inventory, sync-window, transfer, typed-state]
-    reuse_tags: [cache, inventory, invalidation]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+    query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, clean, typed-state]
+    reuse_tags: [release, checkout, database]
     expected_reuse_mode: none
     runtime_reuse_contract: reuse_disabled
-    summary_hint: >
-      Return three concise points only: the most likely cause, the competing
-      explanation ruled out by the cited docs, and the first action.
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-checkout-clean-state-ref-001
+    transfer_strategy: state_ref
 
-  - task_id: transfer-latency-pure-text-001
-    task_group: transfer_lane
+  - task_group: checkout_release_chain
     task_order: 3
-    task_theme: repo_local_latency_triage
+    task_theme: contest_release_checkout_regression
     benchmark_lane: state_transfer
-    transfer_strategy: natural_handoff_text
     allowed_modes: [protocol]
-    goal: Use the cited latency docs to triage the incident and recommend the first action.
-    query: release-17 orders latency spike with connection waits and a slow checkout path
-    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false]
-    evidence_text: Use only the referenced corpus docs; ignore memory reuse and compare pure-text versus typed-state executor handoff only.
-    tags: [latency, release-17, orders, transfer, pure-text]
-    reuse_tags: [latency, database, orders]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the checkout regression under a strong competing queue hypothesis and recommend the next action.
+    query: checkout canary still shows slow orders confirmation while a prior tls reload queue incident is being cited as the likely cause
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-worker-false, rr-checkout-metrics, rr-checkout-config]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, distractor, pure-text]
+    reuse_tags: [release, checkout, database]
     expected_reuse_mode: none
     runtime_reuse_contract: reuse_disabled
-    summary_hint: >
-      Return three concise points only: the most likely cause, the competing
-      explanation ruled out by the cited docs, and the first action.
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-checkout-distractor-pure-text-001
+    transfer_strategy: natural_handoff_text
 
-  - task_id: transfer-latency-state-ref-001
-    task_group: transfer_lane
+  - task_group: checkout_release_chain
     task_order: 4
-    task_theme: repo_local_latency_triage
+    task_theme: contest_release_checkout_regression
     benchmark_lane: state_transfer
-    transfer_strategy: state_ref
     allowed_modes: [protocol]
-    goal: Use the cited latency docs to triage the incident and recommend the first action.
-    query: release-17 orders latency spike with connection waits and a slow checkout path
-    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false]
-    evidence_text: Use only the referenced corpus docs; ignore memory reuse and compare pure-text versus typed-state executor handoff only.
-    tags: [latency, release-17, orders, transfer, typed-state]
-    reuse_tags: [latency, database, orders]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the checkout regression under a strong competing queue hypothesis and recommend the next action.
+    query: checkout canary still shows slow orders confirmation while a prior tls reload queue incident is being cited as the likely cause
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-worker-false, rr-checkout-metrics, rr-checkout-config]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, distractor, typed-state]
+    reuse_tags: [release, checkout, database]
     expected_reuse_mode: none
     runtime_reuse_contract: reuse_disabled
-    summary_hint: >
-      Return three concise points only: the most likely cause, the competing
-      explanation ruled out by the cited docs, and the first action.
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-checkout-distractor-state-ref-001
+    transfer_strategy: state_ref
 
-  - task_id: transfer-session-pure-text-001
-    task_group: transfer_lane
+  - task_group: checkout_release_chain
     task_order: 5
-    task_theme: repo_local_auth_session_drift
+    task_theme: contest_release_checkout_regression
     benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the checkout regression under mixed queue-versus-db signals and recommend the safest next action.
+    query: checkout canary shows both sql wait growth and queue pressure after rollout, but orders filter changes still line up with the failures
+    corpus_doc_ids: [rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false, rr-checkout-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, ambiguous, pure-text]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-checkout-ambiguous-pure-text-001
     transfer_strategy: natural_handoff_text
-    allowed_modes: [protocol]
-    goal: Use the cited session docs to triage the incident and recommend the first action.
-    query: sso callback failures after auth changes with repeated logouts and cookie drift
-    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false]
-    evidence_text: Use only the referenced corpus docs; ignore memory reuse and compare pure-text versus typed-state executor handoff only.
-    tags: [auth, session, sso, transfer, pure-text]
-    reuse_tags: [auth, session, jwks]
-    expected_reuse_mode: none
-    runtime_reuse_contract: reuse_disabled
-    summary_hint: >
-      Return three concise points only: the most likely cause, the competing
-      explanation ruled out by the cited docs, and the first action.
 
-  - task_id: transfer-session-state-ref-001
-    task_group: transfer_lane
+  - task_group: checkout_release_chain
     task_order: 6
-    task_theme: repo_local_auth_session_drift
+    task_theme: contest_release_checkout_regression
     benchmark_lane: state_transfer
-    transfer_strategy: state_ref
     allowed_modes: [protocol]
-    goal: Use the cited session docs to triage the incident and recommend the first action.
-    query: sso callback failures after auth changes with repeated logouts and cookie drift
-    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false]
-    evidence_text: Use only the referenced corpus docs; ignore memory reuse and compare pure-text versus typed-state executor handoff only.
-    tags: [auth, session, sso, transfer, typed-state]
-    reuse_tags: [auth, session, jwks]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the checkout regression under mixed queue-versus-db signals and recommend the safest next action.
+    query: checkout canary shows both sql wait growth and queue pressure after rollout, but orders filter changes still line up with the failures
+    corpus_doc_ids: [rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false, rr-checkout-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, ambiguous, typed-state]
+    reuse_tags: [release, checkout, database]
     expected_reuse_mode: none
     runtime_reuse_contract: reuse_disabled
-    summary_hint: >
-      Return three concise points only: the most likely cause, the competing
-      explanation ruled out by the cited docs, and the first action.
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-checkout-ambiguous-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: checkout_release_chain
+    task_order: 7
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable checkout follow-up and recommend the safest scoped validation action.
+    query: checkout canary blast radius stays on the new shard with the same connection wait and slow orders pattern
+    corpus_doc_ids: [rr-checkout-metrics, rr-checkout-config, rr-checkout-scope, rr-checkout-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, replay-reusable, pure-text]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-checkout-replay_reusable-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: checkout_release_chain
+    task_order: 8
+    task_theme: contest_release_checkout_regression
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable checkout follow-up and recommend the safest scoped validation action.
+    query: checkout canary blast radius stays on the new shard with the same connection wait and slow orders pattern
+    corpus_doc_ids: [rr-checkout-metrics, rr-checkout-config, rr-checkout-scope, rr-checkout-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, checkout, latency, database, replay-reusable, typed-state]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-checkout-replay_reusable-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: auth_rotation_chain
+    task_order: 1
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the auth callback regression and recommend the first action.
+    query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated callback verification failures
+    corpus_doc_ids: [rr-auth-incident, rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, clean, pure-text]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-auth-clean-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: auth_rotation_chain
+    task_order: 2
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the auth callback regression and recommend the first action.
+    query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated callback verification failures
+    corpus_doc_ids: [rr-auth-incident, rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, clean, typed-state]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-auth-clean-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: auth_rotation_chain
+    task_order: 3
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the auth regression under a strong rate-limit explanation and recommend the next action.
+    query: auth canary still shows callback failures while operators keep citing the earlier rate-limit incident after rotation
+    corpus_doc_ids: [rr-auth-incident, rr-auth-rate-limit-false, rr-auth-metrics, rr-auth-rotation]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, distractor, pure-text]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-auth-distractor-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: auth_rotation_chain
+    task_order: 4
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the auth regression under a strong rate-limit explanation and recommend the next action.
+    query: auth canary still shows callback failures while operators keep citing the earlier rate-limit incident after rotation
+    corpus_doc_ids: [rr-auth-incident, rr-auth-rate-limit-false, rr-auth-metrics, rr-auth-rotation]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, distractor, typed-state]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-auth-distractor-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: auth_rotation_chain
+    task_order: 5
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the auth callback regression under mixed session-versus-rate-limit signals and recommend the safest next action.
+    query: auth canary shows stale jwks, issuer mismatch, and a small backoff rise at the same time after rotation
+    corpus_doc_ids: [rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false, rr-auth-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, ambiguous, pure-text]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-auth-ambiguous-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: auth_rotation_chain
+    task_order: 6
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the auth callback regression under mixed session-versus-rate-limit signals and recommend the safest next action.
+    query: auth canary shows stale jwks, issuer mismatch, and a small backoff rise at the same time after rotation
+    corpus_doc_ids: [rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false, rr-auth-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, ambiguous, typed-state]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-auth-ambiguous-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: auth_rotation_chain
+    task_order: 7
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable auth follow-up and recommend the safest scoped validation action.
+    query: auth callback failures stay limited to pre rotation sessions with the same stale jwks and issuer mismatch pattern
+    corpus_doc_ids: [rr-auth-metrics, rr-auth-rotation, rr-auth-scope, rr-auth-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, replay-reusable, pure-text]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-auth-replay_reusable-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: auth_rotation_chain
+    task_order: 8
+    task_theme: contest_release_auth_rotation
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable auth follow-up and recommend the safest scoped validation action.
+    query: auth callback failures stay limited to pre rotation sessions with the same stale jwks and issuer mismatch pattern
+    corpus_doc_ids: [rr-auth-metrics, rr-auth-rotation, rr-auth-scope, rr-auth-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, auth, session, jwks, replay-reusable, typed-state]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-auth-replay_reusable-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: inventory_rollout_chain
+    task_order: 1
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the stale inventory rollout regression and recommend the first action.
+    query: inventory rollout region shows stale inventory after batch sync with dropped aggregate invalidation rate
+    corpus_doc_ids: [rr-cache-incident, rr-cache-metrics, rr-cache-logs, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, clean, pure-text]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-cache-clean-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: inventory_rollout_chain
+    task_order: 2
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the stale inventory rollout regression and recommend the first action.
+    query: inventory rollout region shows stale inventory after batch sync with dropped aggregate invalidation rate
+    corpus_doc_ids: [rr-cache-incident, rr-cache-metrics, rr-cache-logs, rr-cache-replica-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, clean, typed-state]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-cache-clean-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: inventory_rollout_chain
+    task_order: 3
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the stale inventory regression under a strong replica-lag explanation and recommend the next action.
+    query: inventory rollout still looks stale after batch sync while responders keep citing the previous replica lag incident
+    corpus_doc_ids: [rr-cache-incident, rr-cache-replica-false, rr-cache-metrics, rr-cache-flag-diff]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, distractor, pure-text]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-cache-distractor-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: inventory_rollout_chain
+    task_order: 4
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the stale inventory regression under a strong replica-lag explanation and recommend the next action.
+    query: inventory rollout still looks stale after batch sync while responders keep citing the previous replica lag incident
+    corpus_doc_ids: [rr-cache-incident, rr-cache-replica-false, rr-cache-metrics, rr-cache-flag-diff]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, distractor, typed-state]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-cache-distractor-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: inventory_rollout_chain
+    task_order: 5
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the stale inventory regression under mixed invalidation-versus-replica signals and recommend the safest next action.
+    query: inventory rollout shows dropped invalidation rate plus a mild replica wobble after batch sync on the new path
+    corpus_doc_ids: [rr-cache-metrics, rr-cache-logs, rr-cache-replica-false, rr-cache-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, ambiguous, pure-text]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-cache-ambiguous-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: inventory_rollout_chain
+    task_order: 6
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the stale inventory regression under mixed invalidation-versus-replica signals and recommend the safest next action.
+    query: inventory rollout shows dropped invalidation rate plus a mild replica wobble after batch sync on the new path
+    corpus_doc_ids: [rr-cache-metrics, rr-cache-logs, rr-cache-replica-false, rr-cache-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, ambiguous, typed-state]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-cache-ambiguous-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: inventory_rollout_chain
+    task_order: 7
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable stale inventory follow-up and recommend the safest scoped validation action.
+    query: stale inventory stays limited to the rollout region with the same skipped aggregate invalidation pattern
+    corpus_doc_ids: [rr-cache-metrics, rr-cache-flag-diff, rr-cache-scope, rr-cache-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, replay-reusable, pure-text]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-cache-replay_reusable-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: inventory_rollout_chain
+    task_order: 8
+    task_theme: contest_release_inventory_rollout
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable stale inventory follow-up and recommend the safest scoped validation action.
+    query: stale inventory stays limited to the rollout region with the same skipped aggregate invalidation pattern
+    corpus_doc_ids: [rr-cache-metrics, rr-cache-flag-diff, rr-cache-scope, rr-cache-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, inventory, cache, invalidation, replay-reusable, typed-state]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-cache-replay_reusable-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: billing_queue_chain
+    task_order: 1
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the billing queue regression and recommend the first action.
+    query: billing invoice workers show growing queue depth after release 9.2 with tls reload retries and delayed processing
+    corpus_doc_ids: [rr-billing-incident, rr-billing-metrics, rr-billing-logs, rr-billing-db-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, clean, pure-text]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-billing-clean-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: billing_queue_chain
+    task_order: 2
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the billing queue regression and recommend the first action.
+    query: billing invoice workers show growing queue depth after release 9.2 with tls reload retries and delayed processing
+    corpus_doc_ids: [rr-billing-incident, rr-billing-metrics, rr-billing-logs, rr-billing-db-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, clean, typed-state]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-billing-clean-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: billing_queue_chain
+    task_order: 3
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the billing queue regression under a strong database explanation and recommend the next action.
+    query: billing queue remains delayed after release 9.2 while responders keep citing a previous database saturation incident
+    corpus_doc_ids: [rr-billing-incident, rr-billing-db-false, rr-billing-metrics, rr-billing-runbook]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, distractor, pure-text]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-billing-distractor-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: billing_queue_chain
+    task_order: 4
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the billing queue regression under a strong database explanation and recommend the next action.
+    query: billing queue remains delayed after release 9.2 while responders keep citing a previous database saturation incident
+    corpus_doc_ids: [rr-billing-incident, rr-billing-db-false, rr-billing-metrics, rr-billing-runbook]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, distractor, typed-state]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-billing-distractor-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: billing_queue_chain
+    task_order: 5
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the billing regression under mixed queue-versus-db signals and recommend the safest next action.
+    query: billing release shows queue backlog, retry storms, and some sql wait increase at the same time during invoice processing
+    corpus_doc_ids: [rr-billing-metrics, rr-billing-logs, rr-billing-db-false, rr-billing-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, ambiguous, pure-text]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-billing-ambiguous-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: billing_queue_chain
+    task_order: 6
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the billing regression under mixed queue-versus-db signals and recommend the safest next action.
+    query: billing release shows queue backlog, retry storms, and some sql wait increase at the same time during invoice processing
+    corpus_doc_ids: [rr-billing-metrics, rr-billing-logs, rr-billing-db-false, rr-billing-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, ambiguous, typed-state]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-billing-ambiguous-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: billing_queue_chain
+    task_order: 7
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable billing follow-up and recommend the safest scoped validation action.
+    query: billing backlog stays on the canary workers with the same retry storm and queue depth pattern after reload
+    corpus_doc_ids: [rr-billing-metrics, rr-billing-runbook, rr-billing-scope, rr-billing-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, replay-reusable, pure-text]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-billing-replay_reusable-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: billing_queue_chain
+    task_order: 8
+    task_theme: contest_release_billing_queue_backlog
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable billing follow-up and recommend the safest scoped validation action.
+    query: billing backlog stays on the canary workers with the same retry storm and queue depth pattern after reload
+    corpus_doc_ids: [rr-billing-metrics, rr-billing-runbook, rr-billing-scope, rr-billing-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, billing, queue, worker, replay-reusable, typed-state]
+    reuse_tags: [release, billing, queue]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-billing-replay_reusable-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: deployment_config_chain
+    task_order: 1
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the deployment config drift regression and recommend the first action.
+    query: deployment canary shows pool exhaustion after config drift changed connection caps and query path settings
+    corpus_doc_ids: [rr-deploy-incident, rr-deploy-metrics, rr-deploy-logs, rr-deploy-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, clean, pure-text]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-deploy-clean-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: deployment_config_chain
+    task_order: 2
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use the cited release artifacts to triage the deployment config drift regression and recommend the first action.
+    query: deployment canary shows pool exhaustion after config drift changed connection caps and query path settings
+    corpus_doc_ids: [rr-deploy-incident, rr-deploy-metrics, rr-deploy-logs, rr-deploy-worker-false]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, clean, typed-state]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check."
+    task_id: rr-deploy-clean-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: deployment_config_chain
+    task_order: 3
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the deployment config drift regression under a strong worker explanation and recommend the next action.
+    query: deployment canary still shows pool exhaustion while responders keep citing the earlier queue incident during reload
+    corpus_doc_ids: [rr-deploy-incident, rr-deploy-worker-false, rr-deploy-metrics, rr-deploy-config]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, distractor, pure-text]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-deploy-distractor-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: deployment_config_chain
+    task_order: 4
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Re-evaluate the deployment config drift regression under a strong worker explanation and recommend the next action.
+    query: deployment canary still shows pool exhaustion while responders keep citing the earlier queue incident during reload
+    corpus_doc_ids: [rr-deploy-incident, rr-deploy-worker-false, rr-deploy-metrics, rr-deploy-config]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, distractor, typed-state]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch."
+    task_id: rr-deploy-distractor-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: deployment_config_chain
+    task_order: 5
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the deployment config drift regression under mixed queue-versus-db signals and recommend the safest next action.
+    query: deployment canary shows both sql wait growth and some worker jitter after config drift changed pool caps and routing
+    corpus_doc_ids: [rr-deploy-metrics, rr-deploy-logs, rr-deploy-worker-false, rr-deploy-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, ambiguous, pure-text]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-deploy-ambiguous-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: deployment_config_chain
+    task_order: 6
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Resolve the deployment config drift regression under mixed queue-versus-db signals and recommend the safest next action.
+    query: deployment canary shows both sql wait growth and some worker jitter after config drift changed pool caps and routing
+    corpus_doc_ids: [rr-deploy-metrics, rr-deploy-logs, rr-deploy-worker-false, rr-deploy-ambiguous]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, ambiguous, typed-state]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check."
+    task_id: rr-deploy-ambiguous-state-ref-001
+    transfer_strategy: state_ref
+
+  - task_group: deployment_config_chain
+    task_order: 7
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable deployment drift follow-up and recommend the safest scoped validation action.
+    query: deployment drift stays isolated to the canary shard with the same pool cap mismatch and sql wait pattern
+    corpus_doc_ids: [rr-deploy-metrics, rr-deploy-config, rr-deploy-scope, rr-deploy-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, replay-reusable, pure-text]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-deploy-replay_reusable-pure-text-001
+    transfer_strategy: natural_handoff_text
+
+  - task_group: deployment_config_chain
+    task_order: 8
+    task_theme: contest_release_deployment_config_drift
+    benchmark_lane: state_transfer
+    allowed_modes: [protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Run the reusable deployment drift follow-up and recommend the safest scoped validation action.
+    query: deployment drift stays isolated to the canary shard with the same pool cap mismatch and sql wait pattern
+    corpus_doc_ids: [rr-deploy-metrics, rr-deploy-config, rr-deploy-scope, rr-deploy-logs]
+    evidence_text: Use only the referenced release artifacts; compare natural free-text handoff against typed state handoff only and ignore memory reuse.
+    tags: [release, deployment, config, database, replay-reusable, typed-state]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: "Return four concise points only: reused cause pattern, competing explanation ruled out, safest scoped action, and post-action validation check."
+    task_id: rr-deploy-replay_reusable-state-ref-001
+    transfer_strategy: state_ref

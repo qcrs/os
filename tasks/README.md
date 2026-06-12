@@ -7,15 +7,16 @@ real host service diagnostics.
 
 Default benchmark input:
 
-- `sample_benchmark.yaml`
-  - unique frozen `formal_controlled` headline pack
-  - contains only the controlled replay chains plus dedicated `communication` / `state_transfer` / `memory` headline lanes
-  - does not carry planner-open validation or route-regression diagnostics
+- `contest_release_regression_carrier_benchmark.yaml`
+  - default `state_transfer_carrier` formal entry pack
+  - protocol-only carrier headline for contest-style release-regression collaboration
+  - formal `aggregate` interpretation is intentionally suppressed; read the lane-local carrier table only
 
-Formal headline pack:
+Overview pack:
 
 - `sample_benchmark.yaml`
-  - default `formal_controlled` headline object
+  - `formal_controlled` frozen overview pack
+  - keeps aggregate, replay-axis, and legacy dedicated-lane overview in one place
 
 Formal dedicated packs:
 
@@ -29,14 +30,17 @@ Formal dedicated packs:
 - `state_transfer_pure_text_benchmark.yaml`
   - `state_transfer_pure_text` formal pack
   - use for protocol-only `natural_handoff_text` versus `state_ref` pure-text-versus-typed-state comparison
+  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
 - `contest_release_regression_carrier_benchmark.yaml`
   - `state_transfer_carrier` formal pack
   - use for protocol-only carrier efficiency only
+  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
+- `state_transfer_inline_text_support_benchmark.yaml`
+  - `state_transfer_inline_text_support` support-only pack
+  - use for strict inline message-body pure-text versus minimal state-packet support validation
 
 Support-only packs:
 
-- `state_transfer_natural_support_benchmark.yaml`
-  - `state_transfer_natural_support` support-only pack
 - `open_validation_benchmark.yaml`
   - support-only open validation pack
   - use for retrieval / executor / replay / planner pre-pass boundary checks after controlled changes
@@ -51,5 +55,8 @@ Additional contest-draft packs:
 
 - `contest_release_regression_authenticity_benchmark.yaml`
   - draft contest-oriented `state_transfer_authenticity` pack
+  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
 - `contest_release_regression_natural_support_benchmark.yaml`
-  - draft contest-oriented `state_transfer_natural_support` support-only pack
+  - legacy contest-oriented natural-text support draft
+  - still accepted through the `state_transfer_inline_text_support` alias path for compatibility
+  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
