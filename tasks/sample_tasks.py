@@ -21,6 +21,7 @@ from runtime.task_profile import (
 
 DEFAULT_TASKS_DIR = Path(__file__).resolve().parent
 DEFAULT_TASK_SET = DEFAULT_TASKS_DIR / "sample_benchmark.yaml"
+DEFAULT_BENCHMARK_TASK_SET = DEFAULT_TASKS_DIR / "contest_release_regression_carrier_benchmark.yaml"
 
 TASK_SET_ALIASES = {
     "default": "contest_release_regression_carrier_benchmark.yaml",

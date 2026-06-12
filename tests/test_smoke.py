@@ -23,7 +23,7 @@ from agents.sample_agents import (
     _build_transfer_brief,
     build_sample_agents_with_executor,
 )
-from eval.runner import _mode_order_for_run, run_benchmark
+from eval.runner import DEFAULT_BENCHMARK_TASK_SET, _mode_order_for_run, run_benchmark
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
 from protocol.messages import MemoryHit
 from protocol.messages import (
@@ -36,6 +36,7 @@ from protocol.messages import (
     text_frame,
 )
 from runtime.contracts import SchemaValidationError
+from runtime.langgraph_adapter import StateBusGraphRunner, langgraph_available
 from runtime.llm import DeterministicLLMClient
 from runtime.orchestrator import Orchestrator, RunSession, _route_is_replay_eligible
 from runtime.uds_transport import request_response
@@ -246,6 +247,23 @@ def test_benchmark_runner_is_langgraph_only() -> None:
         payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
         assert result["manifest"]["engine"] == "langgraph"
         assert payload["manifest"]["engine"] == "langgraph"
+
+
+def test_benchmark_runner_default_task_set_is_carrier_pack() -> None:
+    assert DEFAULT_BENCHMARK_TASK_SET.name == "contest_release_regression_carrier_benchmark.yaml"
+
+
+def test_langgraph_runner_requires_real_langgraph_dependency(monkeypatch) -> None:
+    if not langgraph_available():
+        pytest.skip("host env already lacks langgraph")
+    task = load_task_set_bundle("formal_controlled").tasks[0]
+    runner = StateBusGraphRunner(
+        llm_client=DeterministicLLMClient(),
+        embedder=DeterministicEmbeddingProvider(),
+    )
+    monkeypatch.setattr("runtime.langgraph_adapter.langgraph_available", lambda: False)
+    with pytest.raises(RuntimeError, match="langgraph is not installed"):
+        asyncio.run(runner.run_task(task, mode="protocol"))
 
 
 def test_default_task_set_is_formal_controlled_pack() -> None:
