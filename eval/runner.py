@@ -34,7 +34,12 @@ from runtime.llm import LLMClient, LLMConfig, build_llm_client
 from runtime.langgraph_adapter import StateBusGraphRunner, langgraph_available
 from runtime.orchestrator import Orchestrator, RunContext, RunSession
 from statepool.store import StatePoolConfig
-from tasks.sample_tasks import DEFAULT_TASK_SET, SampleTask, load_task_set_bundle
+from tasks.sample_tasks import (
+    DEFAULT_BENCHMARK_TASK_SET,
+    DEFAULT_TASK_SET,
+    SampleTask,
+    load_task_set_bundle,
+)
 
 METRIC_FIELDS = (
     "message_count",
@@ -1897,7 +1902,7 @@ def _build_result(
 
 async def run_benchmark(
     *,
-    task_set_path: str | Path = DEFAULT_TASK_SET,
+    task_set_path: str | Path = DEFAULT_BENCHMARK_TASK_SET,
     modes: tuple[str, ...] = ("text", "protocol"),
     repeat: int = 10,
     seed: int = 42,
@@ -3706,7 +3711,7 @@ def _default_out_dir() -> str:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the StateBus benchmark.")
-    parser.add_argument("--task-set", default=str(DEFAULT_TASK_SET))
+    parser.add_argument("--task-set", default=str(DEFAULT_BENCHMARK_TASK_SET))
     parser.add_argument("--modes", default="text,protocol")
     parser.add_argument("--repeat", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)

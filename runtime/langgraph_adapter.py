@@ -157,8 +157,8 @@ class StateBusGraphRunner:
     def build_langgraph(self) -> Any:
         """Return a compiled LangGraph StateGraph when langgraph is installed.
 
-        Tests and host benchmark paths can still use the graph-native fallback
-        when the optional dependency is absent.
+        Host benchmark paths require the real LangGraph dependency so engine
+        reporting stays truthful.
         """
         try:
             from langgraph.graph import END, StateGraph
@@ -209,17 +209,12 @@ class StateBusGraphRunner:
             "metrics": ctx.metrics.to_dict(),
             "status": "running",
         }
-        if langgraph_available():
-            graph = self.build_langgraph()
-            return await graph.ainvoke(state)
-        for node in (
-            self._planner_node,
-            self._retriever_node,
-            self._executor_node,
-            self._summarizer_node,
-        ):
-            state = await node(state)
-        return state
+        if not langgraph_available():
+            raise RuntimeError(
+                "langgraph is not installed in this host env; cannot run engine='langgraph'"
+            )
+        graph = self.build_langgraph()
+        return await graph.ainvoke(state)
 
     async def _planner_node(self, state: dict[str, Any]) -> dict[str, Any]:
         ctx: RunContext = state["ctx"]
