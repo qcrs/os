@@ -50,6 +50,27 @@ PROTOCOL_SUMMARIZER_TAG = "sb-summary-v1"
 MAX_MEMORY_ASSIST_HINT_CHARS = 160
 MAX_PROTOCOL_SUMMARY_DOC_IDS = 3
 MAX_PROTOCOL_SUMMARY_SIGNALS = 4
+TEXT_WHOLE_LANE_HIDDEN_FIELDS = (
+    "route",
+    "tool_name",
+    "route_source",
+    "tool_candidates",
+    "matched_signals",
+    "matched_tags",
+    "decision_packet",
+    "channel_snapshot",
+    "ranked_evidence_bundle",
+    "replay_eligibility_bundle",
+    "benchmark_note",
+)
+
+AUDIT_TYPED_STATE_KINDS = (
+    "FEATURE_BUNDLE",
+    "CHANNEL_SNAPSHOT",
+    "TOOL_CANDIDATE_SET",
+    "RANKED_EVIDENCE_BUNDLE",
+    "REPLAY_ELIGIBILITY_BUNDLE",
+)
 
 
 def _build_memory_assist_lookup_text(
@@ -109,6 +130,75 @@ def _build_memory_commit_embedding_text(
             f"tags: {', '.join(tags) if tags else 'none'}",
             f"evidence_state_ids: {', '.join(evidence_state_ids) if evidence_state_ids else 'none'}",
         ]
+    )
+
+
+def _strip_text_whole_lane_evidence_text(value: str) -> str:
+    filtered_lines: list[str] = []
+    for line in str(value).splitlines():
+        upper = line.strip().upper()
+        if upper.startswith("BENCHMARK_NOTE "):
+            continue
+        filtered_lines.append(line)
+    return "\n".join(filtered_lines).strip()
+
+
+def _build_text_whole_lane_retriever_handoff(
+    *,
+    goal: str,
+    query: str,
+    evidence_text: str,
+    upstream_text: str = "",
+) -> str:
+    parts = [
+        "Retriever handoff in plain language.",
+        f"User goal: {goal.strip()}",
+        f"Query: {query.strip()}",
+        "Evidence:",
+        evidence_text.strip(),
+    ]
+    if upstream_text.strip():
+        parts.extend(["Prior natural-language context:", upstream_text.strip()])
+    return "\n".join(part for part in parts if part.strip()) + "\n"
+
+
+def _build_text_strict_pure_lane_retriever_handoff(
+    *,
+    goal: str,
+    query: str,
+    evidence_text: str,
+    upstream_text: str = "",
+) -> str:
+    parts = [
+        "Retriever handoff in plain language.",
+        f"User goal: {goal.strip()}",
+        f"Query: {query.strip()}",
+        "Use only the cited evidence below. Do not assume any hidden route, tool, memory hint, or structured packet exists.",
+        "Evidence:",
+        evidence_text.strip(),
+    ]
+    if upstream_text.strip():
+        parts.extend(["Prior natural-language context:", upstream_text.strip()])
+    return "\n".join(part for part in parts if part.strip()) + "\n"
+
+
+def _build_text_whole_lane_executor_handoff(
+    *,
+    query: str,
+    route: str,
+    tool_name: str,
+    actions: list[str],
+) -> str:
+    route_text = route.replace("_", " ").strip()
+    tool_text = tool_name.split(".")[-1].replace("_", " ").strip() if tool_name else "unknown tool"
+    action_lines = "\n".join(f"- {action}" for action in actions if str(action).strip())
+    return (
+        "Executor handoff in plain language.\n"
+        f"Request: {query.strip()}\n"
+        f"Most likely issue: {route_text or 'generic triage'}.\n"
+        f"Chosen playbook: {tool_text}.\n"
+        "Actions taken:\n"
+        f"{action_lines}\n"
     )
 
 
@@ -187,6 +277,7 @@ class RetrieverAgent(BaseAgent):
         preferred_doc_ids = ctx.preferred_corpus_doc_ids(step)
         reuse_signature = ctx.reuse_signature(step)
         transfer_strategy = ctx.transfer_strategy()
+        handoff_profile = ctx.handoff_profile()
         corpus_docs = retrieve_corpus_docs(
             query=str(step.params["query"]),
             tags=list(step.params.get("tags", [])),
@@ -204,27 +295,30 @@ class RetrieverAgent(BaseAgent):
         memory_hint_route = ""
         memory_prior = None
         if step.params.get("allow_memory_reuse") and ctx.runtime_gates["allow_memory_assist"]:
-            assist_lookup_text = _build_memory_assist_lookup_text(
-                query=str(step.params["query"]),
-                task_theme=str(getattr(ctx, "task_theme", "")),
-                tags=list(step.params.get("tags", [])),
-                reuse_signature=reuse_signature,
-                retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
-                retrieved_hints=retrieved_hints,
-            )
-            hits = ctx.search_memory(
-                task_theme=ctx.task_theme,
-                query_text=assist_lookup_text,
-                top_k=3,
-                tags=[],
-                tags_any=[],
-                tags_all=[],
-                min_confidence=0.6,
-                encoder_id=ctx.memory_store.embedder.encoder_id,
-                required_metadata={"memory_purpose": "assist"},
-            )
-            if hits:
-                memory_prior = _build_memory_prior(hits[0])
+            if transfer_strategy == "text_strict_pure_lane":
+                hits = []
+            else:
+                assist_lookup_text = _build_memory_assist_lookup_text(
+                    query=str(step.params["query"]),
+                    task_theme=str(getattr(ctx, "task_theme", "")),
+                    tags=list(step.params.get("tags", [])),
+                    reuse_signature=reuse_signature,
+                    retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
+                    retrieved_hints=retrieved_hints,
+                )
+                hits = ctx.search_memory(
+                    task_theme=ctx.task_theme,
+                    query_text=assist_lookup_text,
+                    top_k=3,
+                    tags=[],
+                    tags_any=[],
+                    tags_all=[],
+                    min_confidence=0.6,
+                    encoder_id=ctx.memory_store.embedder.encoder_id,
+                    required_metadata={"memory_purpose": "assist"},
+                )
+                if hits:
+                    memory_prior = _build_memory_prior(hits[0])
 
         fresh_bundle = build_feature_bundle(
             query=str(step.params["query"]),
@@ -259,9 +353,10 @@ class RetrieverAgent(BaseAgent):
             assist_hint = _build_memory_assist_hint(accepted_hit)
             evidence_sections.append(assist_hint)
         benchmark_note = str(step.params.get("evidence_text", "")).strip()
-        if benchmark_note:
+        if benchmark_note and transfer_strategy != "text_whole_lane":
             evidence_sections.append(f"BENCHMARK_NOTE {benchmark_note}")
         evidence_text = "\n\n".join(section for section in evidence_sections if section.strip())
+        text_whole_lane_evidence_text = _strip_text_whole_lane_evidence_text(evidence_text)
 
         evidence_ref = ctx.put_text_state(
             state_id=f"{ctx.task_id}-{step.step_id}-evidence",
@@ -296,6 +391,7 @@ class RetrieverAgent(BaseAgent):
         feature_bundle["memory_assist_ids"] = memory_assist_ids
         feature_bundle["memory_assist_hint"] = assist_hint
         feature_bundle["memory_hint_route"] = memory_hint_route
+        feature_bundle["handoff_profile"] = handoff_profile
         if memory_prior is not None:
             feature_bundle["memory_prior_id"] = memory_prior["memory_id"]
             feature_bundle["memory_prior_source_task_id"] = memory_prior["source_task_id"]
@@ -345,6 +441,11 @@ class RetrieverAgent(BaseAgent):
         ranked_evidence_ref = None
         tool_candidate_ref = None
         replay_eligibility_ref = None
+        disabled_state_kinds = {
+            str(value).strip()
+            for value in step.params.get("audit_disable_state_kinds", [])
+            if str(value).strip()
+        }
         if transfer_strategy == "state_ref":
             channel_values = {
                 "query": str(step.params["query"]),
@@ -458,6 +559,34 @@ class RetrieverAgent(BaseAgent):
                     "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
                 },
             )
+            if "FEATURE_BUNDLE" in disabled_state_kinds:
+                feature_ref = None
+            if "CHANNEL_SNAPSHOT" in disabled_state_kinds:
+                channel_snapshot_ref = None
+            if "TOOL_CANDIDATE_SET" in disabled_state_kinds:
+                tool_candidate_ref = None
+            if "RANKED_EVIDENCE_BUNDLE" in disabled_state_kinds:
+                ranked_evidence_ref = None
+            if "REPLAY_ELIGIBILITY_BUNDLE" in disabled_state_kinds:
+                replay_eligibility_ref = None
+        elif transfer_strategy == "text_whole_lane":
+            replay_eligibility_ref = ctx.put_replay_eligibility_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-replay-eligibility",
+                replay_eligibility_bundle=replay_eligibility_bundle,
+                metadata={
+                    "query": step.params["query"],
+                    "feature_route": feature_bundle["route"],
+                    "feature_route_source": feature_bundle["route_source"],
+                    "feature_route_confidence": feature_bundle["route_confidence"],
+                    "feature_route_provenance": feature_bundle["route_provenance"],
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                    "feature_evidence_sha256": feature_bundle["evidence_sha256"],
+                    "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                    "proof_only": True,
+                },
+            )
+            if "REPLAY_ELIGIBILITY_BUNDLE" in disabled_state_kinds:
+                replay_eligibility_ref = None
         transfer_brief_ref = None
         decision_packet_ref = None
         decision_packet = build_executor_decision_packet(
@@ -523,6 +652,38 @@ class RetrieverAgent(BaseAgent):
                     "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
                 },
             )
+        elif transfer_strategy == "text_strict_pure_lane":
+            transfer_brief_ref = ctx.put_text_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-text-strict-pure-lane",
+                kind="TOOL_ARTIFACT",
+                text=_build_text_strict_pure_lane_retriever_handoff(
+                    goal=str(getattr(ctx.task, "goal", "")),
+                    query=str(step.params["query"]),
+                    evidence_text=text_whole_lane_evidence_text,
+                ),
+                metadata={
+                    "query": step.params["query"],
+                    "transfer_strategy": transfer_strategy,
+                    "handoff_profile": handoff_profile,
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                },
+            )
+        elif transfer_strategy == "text_whole_lane":
+            transfer_brief_ref = ctx.put_text_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-text-whole-lane",
+                kind="TOOL_ARTIFACT",
+                text=_build_text_whole_lane_retriever_handoff(
+                    goal=str(getattr(ctx.task, "goal", "")),
+                    query=str(step.params["query"]),
+                    evidence_text=text_whole_lane_evidence_text,
+                ),
+                metadata={
+                    "query": step.params["query"],
+                    "transfer_strategy": transfer_strategy,
+                    "handoff_profile": handoff_profile,
+                    "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                },
+            )
         elif transfer_strategy == "inline_text_handoff":
             pass
         elif transfer_strategy == "state_packet_minimal":
@@ -539,6 +700,32 @@ class RetrieverAgent(BaseAgent):
                     "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
                 },
             )
+            if getattr(ctx.runtime_profile, "resolved_benchmark_lane", "") == "memory":
+                replay_eligibility_ref = ctx.put_replay_eligibility_state(
+                    state_id=f"{ctx.task_id}-{step.step_id}-replay-certificate",
+                    replay_eligibility_bundle={
+                        **replay_eligibility_bundle,
+                        "certificate_scope": "minimal_state_packet_replay_gate",
+                        "mode_compatible_restore_kinds": [
+                            "DENSE_EVIDENCE",
+                            "EXECUTOR_DECISION_PACKET",
+                            "TOOL_ARTIFACT",
+                        ],
+                        "executor_decision_packet_hash": decision_packet_ref.canonical_hash,
+                    },
+                    metadata={
+                        "query": step.params["query"],
+                        "feature_route": feature_bundle["route"],
+                        "feature_route_source": feature_bundle["route_source"],
+                        "feature_route_confidence": feature_bundle["route_confidence"],
+                        "feature_route_provenance": feature_bundle["route_provenance"],
+                        "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                        "feature_evidence_sha256": feature_bundle["evidence_sha256"],
+                        "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                        "certificate_scope": "minimal_state_packet_replay_gate",
+                        "proof_only": True,
+                    },
+                )
         embedding_ref = None
         if transfer_strategy == "state_ref":
             embedding_ref = ctx.put_embedding_state(
@@ -584,11 +771,20 @@ class RetrieverAgent(BaseAgent):
                     transfer_brief_ref.state_id if transfer_brief_ref is not None else ""
                 ),
                 "inline_handoff_text": (
-                    _build_natural_handoff_text(
-                        query=str(step.params["query"]),
-                        evidence_text=evidence_text,
+                    (
+                        _build_text_strict_pure_lane_retriever_handoff(
+                            goal=str(getattr(ctx.task, "goal", "")),
+                            query=str(step.params["query"]),
+                            evidence_text=text_whole_lane_evidence_text,
+                        )
+                        if transfer_strategy == "text_strict_pure_lane"
+                        else _build_text_whole_lane_retriever_handoff(
+                            goal=str(getattr(ctx.task, "goal", "")),
+                            query=str(step.params["query"]),
+                            evidence_text=text_whole_lane_evidence_text,
+                        )
                     )
-                    if transfer_strategy == "inline_text_handoff"
+                    if transfer_strategy in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"}
                     else ""
                 ),
                 "feature_route": feature_bundle["route"],
@@ -622,6 +818,15 @@ class RetrieverAgent(BaseAgent):
                 "replay_eligibility_state_id": (
                     "" if replay_eligibility_ref is None else replay_eligibility_ref.state_id
                 ),
+                "replay_certificate_state_id": (
+                    "" if replay_eligibility_ref is None else replay_eligibility_ref.state_id
+                ),
+                "replay_certificate_hash": (
+                    "" if replay_eligibility_ref is None else replay_eligibility_ref.canonical_hash
+                ),
+                "audit_disabled_state_kinds": sorted(
+                    kind for kind in disabled_state_kinds if kind in AUDIT_TYPED_STATE_KINDS
+                ),
             },
         )
 
@@ -650,9 +855,10 @@ class ExecutorAgent(BaseAgent):
             statepool=ctx.statepool,
             input_state_refs=input_refs,
             transfer_strategy=transfer_strategy,
+            handoff_profile=ctx.handoff_profile(),
             inline_handoff_text=(
                 str(ctx.results.get("retrieve").payload.get("inline_handoff_text", ""))
-                if transfer_strategy == "inline_text_handoff" and ctx.results.get("retrieve") is not None
+                if transfer_strategy in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.results.get("retrieve") is not None
                 else ""
             ),
         )
@@ -683,9 +889,10 @@ class ExecutorAgent(BaseAgent):
             params={
                 **step.params,
                 "transfer_strategy": ctx.transfer_strategy(),
+                "handoff_profile": ctx.handoff_profile(),
                 "inline_handoff_text": (
                     str(ctx.results.get("retrieve").payload.get("inline_handoff_text", ""))
-                    if ctx.transfer_strategy() == "inline_text_handoff" and ctx.results.get("retrieve") is not None
+                    if ctx.transfer_strategy() in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.results.get("retrieve") is not None
                     else ""
                 ),
             },
@@ -713,7 +920,9 @@ class SummarizerAgent(BaseAgent):
         retrieve_result = ctx.results["retrieve"]
         execute_result = ctx.results["execute"]
         input_refs = ctx.step_input_refs(step.step_id)
-        evidence_ref = next(ref for ref in input_refs if ref.kind == "DENSE_EVIDENCE")
+        transfer_strategy = ctx.transfer_strategy()
+        retrieve_output_refs = list(retrieve_result.output_state_refs)
+        evidence_ref = next((ref for ref in input_refs if ref.kind == "DENSE_EVIDENCE"), None)
         feature_ref = next(
             (ref for ref in input_refs if ref.kind == "FEATURE_BUNDLE"),
             None,
@@ -721,36 +930,43 @@ class SummarizerAgent(BaseAgent):
         route_channel_snapshot_ref = next(
             (
                 ref
-                for ref in input_refs
+                for ref in retrieve_output_refs
                 if ref.kind == "CHANNEL_SNAPSHOT"
                 and str(ref.metadata.get("channel_name", ref.channel)).strip() == "route"
             ),
             None,
         )
         ranked_evidence_ref = next(
-            (ref for ref in input_refs if ref.kind == "RANKED_EVIDENCE_BUNDLE"),
+            (ref for ref in retrieve_output_refs if ref.kind == "RANKED_EVIDENCE_BUNDLE"),
             None,
         )
         tool_candidate_ref = next(
-            (ref for ref in input_refs if ref.kind == "TOOL_CANDIDATE_SET"),
+            (ref for ref in retrieve_output_refs if ref.kind == "TOOL_CANDIDATE_SET"),
             None,
         )
         replay_eligibility_ref = next(
-            (ref for ref in input_refs if ref.kind == "REPLAY_ELIGIBILITY_BUNDLE"),
+            (ref for ref in retrieve_output_refs if ref.kind == "REPLAY_ELIGIBILITY_BUNDLE"),
+            None,
+        )
+        decision_packet_ref = next(
+            (ref for ref in retrieve_output_refs if ref.kind == "EXECUTOR_DECISION_PACKET"),
             None,
         )
         embedding_ref = next(
-            (ref for ref in input_refs if ref.kind == "EMBEDDING"),
+            (ref for ref in retrieve_output_refs if ref.kind == "EMBEDDING"),
             None,
         )
         artifact_ref = next(ref for ref in input_refs if ref.kind == "TOOL_ARTIFACT")
-        evidence_text = ctx.get_text_state(evidence_ref)
+        evidence_text = "" if evidence_ref is None else ctx.get_text_state(evidence_ref)
         feature_bundle = _load_feature_bundle_from_ref(ctx, feature_ref)
         actions_text = ctx.get_text_state(artifact_ref)
         reusable_steps = list(execute_result.payload.get("reusable_steps", ["retrieve", "execute"]))
         mode = str(getattr(ctx, "mode", "protocol"))
+        summary_contract = str(getattr(ctx, "summary_contract", "actions_plus_evidence")).strip().lower()
         summary_evidence_text = evidence_text
-        if mode != "text":
+        if transfer_strategy == "text_whole_lane":
+            summary_evidence_text = actions_text
+        elif mode != "text" and transfer_strategy != "text_whole_lane" and summary_contract == "protocol_handoff_audit":
             summary_evidence_text = _build_protocol_summary_handoff(
                 query=str(retrieve_result.payload.get("query", "")),
                 route=str(execute_result.payload.get("route", "")),
@@ -815,6 +1031,8 @@ class SummarizerAgent(BaseAgent):
             "feature_query": retrieve_result.payload.get("query", ""),
             "retrieved_doc_ids": retrieve_result.payload.get("retrieved_doc_ids", []),
             "channel_snapshot_hash": retrieve_result.payload.get("channel_snapshot_hash", ""),
+            "replay_certificate_hash": retrieve_result.payload.get("replay_certificate_hash", ""),
+            "replay_certificate_state_id": retrieve_result.payload.get("replay_certificate_state_id", ""),
             "cas_blob_hashes": sorted(
                 {
                     ref.canonical_hash
@@ -824,21 +1042,36 @@ class SummarizerAgent(BaseAgent):
             ),
             "trace_id": ctx.trace_id,
             "llm_model": result_model,
+            "handoff_profile": ctx.handoff_profile(),
         }
         assist_refs = [
-            evidence_ref,
+            *([evidence_ref] if evidence_ref is not None else []),
             *([route_channel_snapshot_ref] if route_channel_snapshot_ref is not None else []),
             *([feature_ref] if feature_ref is not None else []),
             *([ranked_evidence_ref] if ranked_evidence_ref is not None else []),
             *([tool_candidate_ref] if tool_candidate_ref is not None else []),
-            *([replay_eligibility_ref] if replay_eligibility_ref is not None else []),
+            *(
+                [replay_eligibility_ref]
+                if replay_eligibility_ref is not None and transfer_strategy != "state_packet_minimal"
+                else []
+            ),
             *([embedding_ref] if embedding_ref is not None else []),
             summary_ref,
         ]
+        if transfer_strategy == "text_whole_lane":
+            assist_refs = [summary_ref]
         replay_refs = [
             *assist_refs,
+            *([decision_packet_ref] if decision_packet_ref is not None else []),
+            *([replay_eligibility_ref] if replay_eligibility_ref is not None else []),
             artifact_ref,
         ]
+        if transfer_strategy == "text_whole_lane":
+            replay_refs = [
+                summary_ref,
+                *([replay_eligibility_ref] if replay_eligibility_ref is not None else []),
+                artifact_ref,
+            ]
         assist_embedding_text = _build_memory_commit_embedding_text(
             memory_purpose="assist",
             task_theme=ctx.task_theme,
@@ -1025,12 +1258,7 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                 action="SUMMARIZE_AND_COMMIT",
                 accepted_state_kinds=[
                     "DENSE_EVIDENCE",
-                    "CHANNEL_SNAPSHOT",
                     "FEATURE_BUNDLE",
-                    "RANKED_EVIDENCE_BUNDLE",
-                    "TOOL_CANDIDATE_SET",
-                    "REPLAY_ELIGIBILITY_BUNDLE",
-                    "EMBEDDING",
                     "TOOL_ARTIFACT",
                 ],
                 produced_state_kinds=["TOOL_ARTIFACT"],
@@ -1143,6 +1371,7 @@ def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
                 "evidence_text": task.evidence_text,
                 "tags": list(task.tags),
                 "allow_memory_reuse": True,
+                "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
             },
             "depends_on": [],
         },

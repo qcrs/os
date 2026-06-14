@@ -44,6 +44,7 @@ def serve(
                         input_state_refs=message.input_state_refs,
                         output_storage=MMAP_FILE_STORAGE,
                         transfer_strategy=str(message.step.params.get("transfer_strategy", "state_ref")),
+                        handoff_profile=str(message.step.params.get("handoff_profile", "")),
                         inline_handoff_text=str(message.step.params.get("inline_handoff_text", "")),
                     )
                     send_message(conn, RemoteStepResponse(result=result))

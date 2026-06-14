@@ -828,6 +828,7 @@ def execute_playbook_step(
     registry: ToolRegistry | None = None,
     output_storage: str | None = None,
     transfer_strategy: str = "state_ref",
+    handoff_profile: str = "",
     inline_handoff_text: str = "",
 ) -> StepResult:
     evidence_ref = next((ref for ref in input_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
@@ -848,7 +849,7 @@ def execute_playbook_step(
     )
     transfer_brief_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
     execution_evidence_text = ""
-    if evidence_ref is None and transfer_strategy not in {"natural_handoff_text", "inline_text_handoff"}:
+    if evidence_ref is None and transfer_strategy not in {"natural_handoff_text", "inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"}:
         raise ValueError(f"step {step.step_id} missing DENSE_EVIDENCE input")
     if transfer_strategy == "text_brief":
         if transfer_brief_ref is None:
@@ -898,6 +899,34 @@ def execute_playbook_step(
         )
         feature_state_id = ""
         execution_evidence_text = handoff_text
+    elif transfer_strategy == "text_strict_pure_lane":
+        handoff_text = str(inline_handoff_text).strip()
+        if not handoff_text:
+            handoff_text = str(step.params.get("inline_handoff_text", "")).strip()
+        if not handoff_text:
+            raise ValueError(f"step {step.step_id} missing strict pure-text handoff")
+        feature_bundle = _feature_bundle_from_strict_pure_text_handoff(
+            query_text=step.params.get("query", ""),
+            handoff_text=handoff_text,
+            registry=registry or default_tool_registry(),
+        )
+        feature_state_id = ""
+        execution_evidence_text = handoff_text
+    elif transfer_strategy == "text_whole_lane":
+        handoff_text = str(inline_handoff_text).strip()
+        if not handoff_text:
+            handoff_text = str(step.params.get("inline_handoff_text", "")).strip()
+        if not handoff_text:
+            raise ValueError(f"step {step.step_id} missing whole-lane text handoff")
+        feature_bundle = _feature_bundle_from_natural_handoff(
+            query_text=step.params.get("query", ""),
+            evidence_text=handoff_text,
+            handoff_text=handoff_text,
+            registry=registry or default_tool_registry(),
+        )
+        feature_bundle["transfer_strategy"] = "text_whole_lane"
+        feature_state_id = ""
+        execution_evidence_text = handoff_text
     elif transfer_strategy == "state_packet_minimal":
         if decision_packet_ref is None:
             raise ValueError(f"step {step.step_id} missing executor decision packet input")
@@ -910,7 +939,11 @@ def execute_playbook_step(
         feature_state_id = decision_packet_ref.state_id
         execution_evidence_text = statepool.get_text(evidence_ref)
     else:
-        if channel_snapshot_ref is not None:
+        use_full_rich_audit = str(handoff_profile).strip() == "protocol_full_rich_audit"
+        if feature_ref is not None:
+            feature_bundle = _load_feature_bundle(statepool, feature_ref)
+            feature_state_id = feature_ref.state_id
+        elif use_full_rich_audit and channel_snapshot_ref is not None:
             feature_bundle = _feature_bundle_from_channel_snapshot(
                 statepool=statepool,
                 snapshot_ref=channel_snapshot_ref,
@@ -919,23 +952,20 @@ def execute_playbook_step(
                 registry=registry or default_tool_registry(),
             )
             feature_state_id = channel_snapshot_ref.state_id
-        elif feature_ref is None and tool_candidate_ref is None:
-            raise ValueError(
-                f"step {step.step_id} missing FEATURE_BUNDLE and TOOL_CANDIDATE_SET inputs"
+        elif use_full_rich_audit and tool_candidate_ref is not None:
+            feature_bundle = _merge_feature_bundle_with_tool_candidates(
+                feature_bundle={},
+                tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
             )
+            feature_state_id = tool_candidate_ref.state_id
         else:
-            feature_bundle = (
-                _load_feature_bundle(statepool, feature_ref) if feature_ref is not None else {}
+            raise ValueError(
+                f"step {step.step_id} missing FEATURE_BUNDLE input"
             )
-            if tool_candidate_ref is not None:
-                feature_bundle = _merge_feature_bundle_with_tool_candidates(
-                    feature_bundle=feature_bundle,
-                    tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
-            )
-            feature_state_id = (
-                feature_ref.state_id
-                if feature_ref is not None
-                else tool_candidate_ref.state_id
+        if use_full_rich_audit and tool_candidate_ref is not None:
+            feature_bundle = _merge_feature_bundle_with_tool_candidates(
+                feature_bundle=feature_bundle,
+                tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
             )
         execution_evidence_text = statepool.get_text(evidence_ref)
     active_registry = registry or default_tool_registry()
@@ -953,7 +983,16 @@ def execute_playbook_step(
         },
         timeout_s=tool_spec.timeout_s,
     )
-    artifact_text = "\n".join(execution.actions)
+    artifact_text = (
+        _build_executor_plaintext_handoff(
+            query=str(step.params.get("query", "")),
+            route=execution.route,
+            tool_name=execution.tool_name,
+            actions=execution.actions,
+        )
+        if transfer_strategy == "text_whole_lane"
+        else "\n".join(execution.actions)
+    )
     preferred_storage = (
         output_storage
         or (
@@ -976,7 +1015,10 @@ def execute_playbook_step(
                     channel_snapshot_ref.state_id if channel_snapshot_ref is not None else ""
                 ),
                 "source_tool_candidates": (
-                    tool_candidate_ref.state_id if tool_candidate_ref is not None else ""
+                    tool_candidate_ref.state_id
+                    if str(handoff_profile).strip() == "protocol_full_rich_audit"
+                    and tool_candidate_ref is not None
+                    else ""
                 ),
                 "tool_name": execution.tool_name,
                 "route": execution.route,
@@ -1000,15 +1042,39 @@ def execute_playbook_step(
             "matched_signals": list(execution.diagnostics.get("matched_signals", [])),
             "feature_state_id": feature_state_id,
             "channel_snapshot_state_id": (
-                channel_snapshot_ref.state_id if channel_snapshot_ref is not None else ""
+                channel_snapshot_ref.state_id
+                if str(handoff_profile).strip() == "protocol_full_rich_audit"
+                and channel_snapshot_ref is not None
+                else ""
             ),
             "transfer_strategy": transfer_strategy,
+            "handoff_profile": handoff_profile,
         },
     )
 
 
 def _load_feature_bundle(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
     return _load_structured_bundle(statepool, ref, expected_kind="FEATURE_BUNDLE")
+
+
+def _build_executor_plaintext_handoff(
+    *,
+    query: str,
+    route: str,
+    tool_name: str,
+    actions: list[str],
+) -> str:
+    normalized_route = route.replace("_", " ").strip() or "generic triage"
+    normalized_tool = tool_name.split(".")[-1].replace("_", " ").strip() if tool_name else "unknown tool"
+    action_lines = "\n".join(f"- {action}" for action in actions if str(action).strip())
+    return (
+        "Executor handoff in plain language.\n"
+        f"Request: {query.strip()}\n"
+        f"Most likely issue: {normalized_route}.\n"
+        f"Chosen playbook: {normalized_tool}.\n"
+        "Actions taken:\n"
+        f"{action_lines}\n"
+    )
 
 
 def _load_tool_candidate_set(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
@@ -1586,6 +1652,38 @@ def _feature_bundle_from_natural_handoff(
     )
     bundle["transfer_strategy"] = "natural_handoff_text"
     return bundle
+
+
+def _feature_bundle_from_strict_pure_text_handoff(
+    *,
+    query_text: object,
+    handoff_text: str,
+    registry: ToolRegistry,
+) -> dict[str, Any]:
+    query = str(query_text).strip()
+    evidence_text = handoff_text.strip()
+    lexical_match = registry.retrieve_candidates(
+        query_text=query.lower(),
+        primary_evidence_text=evidence_text.lower(),
+        evidence_text=evidence_text.lower(),
+        tags=[],
+        limit=1,
+    )
+    selected = lexical_match[0] if lexical_match else registry.fallback_match()
+    route = selected.route or "generic_triage"
+    tool_name = selected.tool_name or registry.get_for_route(route).name
+    route_source = "strict_pure_text_lexical" if lexical_match else "strict_pure_text_fallback"
+    route_provenance = ["pure_text_lexical"] if lexical_match else ["pure_text_fallback"]
+    return {
+        "route": route,
+        "tool_name": tool_name,
+        "query": query,
+        "route_source": route_source,
+        "route_provenance": route_provenance,
+        "route_confidence": _route_confidence_from_match(selected) if lexical_match else 0.0,
+        "matched_signals": list(selected.matched_signals),
+        "transfer_strategy": "text_strict_pure_lane",
+    }
 
 
 def _feature_bundle_from_executor_decision_packet(

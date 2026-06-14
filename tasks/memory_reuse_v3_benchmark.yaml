@@ -1,0 +1,196 @@
+task_set:
+  name: memory_reuse_v3_pack
+  pack_type: memory_reuse_v3
+  description: V3 formal-secondary memory-reuse pack for replay-aware protocol runs
+    under a fixed state_packet_minimal handoff path.
+  reading_contract: Read this pack only as a protocol-only replay proof surface. It
+    does not answer text-vs-protocol fairness.
+  claim_lanes:
+  - memory
+  evidence_tier: formal_secondary
+  benchmark_version: v3
+tasks:
+- task_id: memory-cache-001
+  task_group: memory_lane
+  task_order: 1
+  task_theme: repo_local_cache_staleness
+  benchmark_lane: memory
+  transfer_strategy: state_packet_minimal
+  allowed_modes:
+  - protocol
+  goal: Use the cited cache docs to triage the incident and recommend the first action.
+  query: validated replay inventory counts stay stale after a sync burst
+  corpus_doc_ids:
+  - cache-invalid-anchor
+  - cache-invalid-replay
+  - cache-replica-false
+  evidence_text: Use only the referenced corpus docs; this pack compares memory policies
+    under fixed protocol execution.
+  tags:
+  - cache
+  - inventory
+  - sync-window
+  - memory
+  - cold-start
+  reuse_tags:
+  - cache
+  - inventory
+  - invalidation
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return three concise points only: the most likely cause, the competing
+    explanation ruled out by the cited docs, and the first action.
+
+    '
+  case_id: memory-cache-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: cache_invalidation
+  primary_expected_route: cache_invalidation
+  primary_expected_tool: tool.cache_invalidation_playbook
+  acceptable_routes:
+  - cache_invalidation
+  acceptable_tools:
+  - tool.cache_invalidation_playbook
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  complexity_bucket: reusable
+  summary_contract: actions_plus_evidence
+- task_id: memory-cache-002
+  task_group: memory_lane
+  task_order: 2
+  task_theme: repo_local_cache_staleness
+  benchmark_lane: memory
+  transfer_strategy: state_packet_minimal
+  allowed_modes:
+  - protocol
+  goal: Use the cited cache docs to triage the incident and recommend the first action.
+  query: validated replay inventory counts stay stale after a sync burst
+  corpus_doc_ids:
+  - cache-invalid-anchor
+  - cache-invalid-replay
+  - cache-replica-false
+  evidence_text: Use only the referenced corpus docs; this pack compares memory policies
+    under fixed protocol execution.
+  tags:
+  - cache
+  - inventory
+  - sync-window
+  - memory
+  - assist-only
+  reuse_tags:
+  - cache
+  - inventory
+  - invalidation
+  expected_reuse_mode: assist
+  runtime_reuse_contract: assist_allowed
+  summary_hint: 'Return three concise points only: the most likely cause, the competing
+    explanation ruled out by the cited docs, and the first action.
+
+    '
+  case_id: memory-cache-002
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: cache_invalidation
+  primary_expected_route: cache_invalidation
+  primary_expected_tool: tool.cache_invalidation_playbook
+  acceptable_routes:
+  - cache_invalidation
+  acceptable_tools:
+  - tool.cache_invalidation_playbook
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  complexity_bucket: reusable
+  summary_contract: actions_plus_evidence
+- task_id: memory-cache-003
+  task_group: memory_lane
+  task_order: 3
+  task_theme: repo_local_cache_staleness
+  benchmark_lane: memory
+  transfer_strategy: state_packet_minimal
+  allowed_modes: &id001
+  - protocol
+  goal: Use the cited cache docs to triage the incident and recommend the first action.
+  query: validated replay inventory counts stay stale after a sync burst
+  corpus_doc_ids: &id002
+  - cache-invalid-anchor
+  - cache-invalid-replay
+  - cache-replica-false
+  evidence_text: Use only the referenced corpus docs; this pack compares memory policies
+    under fixed protocol execution.
+  tags:
+  - cache
+  - inventory
+  - sync-window
+  - memory
+  - validated-replay
+  reuse_tags: &id003
+  - cache
+  - inventory
+  - invalidation
+  expected_reuse_mode: skip_execute
+  runtime_reuse_contract: validated_replay
+  summary_hint: 'Return three concise points only: the most likely cause, the competing
+    explanation ruled out by the cited docs, and the first action.
+
+    '
+  case_id: memory-cache-003
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: cache_invalidation
+  primary_expected_route: cache_invalidation
+  primary_expected_tool: tool.cache_invalidation_playbook
+  acceptable_routes:
+  - cache_invalidation
+  acceptable_tools:
+  - tool.cache_invalidation_playbook
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  complexity_bucket: reusable
+  summary_contract: actions_plus_evidence
+- task_id: memory-cache-004
+  task_group: memory_lane
+  task_order: 4
+  task_theme: repo_local_cache_staleness
+  benchmark_lane: memory
+  transfer_strategy: state_packet_minimal
+  allowed_modes: *id001
+  goal: Reuse the same validated replay context and skip retrieve plus execute only
+    when the replay contract matches exactly.
+  query: validated replay inventory counts stay stale after a sync burst
+  corpus_doc_ids: *id002
+  evidence_text: Use only the referenced corpus docs; this pack compares memory policies
+    under fixed protocol execution.
+  tags:
+  - cache
+  - inventory
+  - sync-window
+  - memory
+  - exact-replay
+  reuse_tags: *id003
+  expected_reuse_mode: skip_retrieve_execute
+  runtime_reuse_contract: exact_replay
+  summary_hint: 'Return three concise points only: confirmed reused pattern, reused
+    action, and the current validation check.'
+  case_id: memory-cache-004
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: cache_invalidation
+  primary_expected_route: cache_invalidation
+  primary_expected_tool: tool.cache_invalidation_playbook
+  acceptable_routes:
+  - cache_invalidation
+  acceptable_tools:
+  - tool.cache_invalidation_playbook
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  complexity_bucket: reusable
+  summary_contract: actions_plus_evidence

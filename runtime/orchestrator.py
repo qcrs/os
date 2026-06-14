@@ -188,6 +188,7 @@ class RunContext:
     session: RunSession
     statepool: StatePool
     memory_store: MemoryStore
+    summary_contract: str = "actions_plus_evidence"
     task_corpus_doc_ids: tuple[str, ...] = ()
     task_corpus_path: str = ""
     task: object | None = None
@@ -778,6 +779,9 @@ class RunContext:
     def transfer_strategy(self) -> str:
         return self.runtime_profile.effective_transfer_strategy(self.mode)
 
+    def handoff_profile(self) -> str:
+        return self.runtime_profile.resolved_handoff_profile
+
 
 class Orchestrator:
     """Host-side orchestrator for planner-driven benchmark tasks."""
@@ -807,6 +811,7 @@ class Orchestrator:
         statepool_config: StatePoolConfig | None = None,
         task_corpus_doc_ids: list[str] | tuple[str, ...] | None = None,
         task_corpus_path: str = "",
+        summary_contract: str = "actions_plus_evidence",
         runtime_profile: RuntimeTaskProfile | dict[str, Any] | None = None,
     ) -> RunContext:
         active_session = session or RunSession(mode=mode)
@@ -823,6 +828,7 @@ class Orchestrator:
             task_id=task_id,
             task_group=task_group,
             task_theme=task_theme,
+            summary_contract=str(summary_contract).strip() or "actions_plus_evidence",
             session=active_session,
             statepool=statepool,
             memory_store=memory_store,
@@ -1126,12 +1132,15 @@ class Orchestrator:
             ):
                 continue
             ctx.note_reuse(hit, reuse_mode="skip_retrieve_execute")
-            retrieve_result, execute_result = self._build_skip_retrieve_execute_results(
-                hit=hit,
-                retrieve_step=retrieve_step,
-                execute_step=execute_step,
-                ctx=ctx,
-            )
+            try:
+                retrieve_result, execute_result = self._build_skip_retrieve_execute_results(
+                    hit=hit,
+                    retrieve_step=retrieve_step,
+                    execute_step=execute_step,
+                    ctx=ctx,
+                )
+            except ValueError:
+                continue
             self._prepare_step_input_refs(
                 plan,
                 execute_step,
@@ -1187,7 +1196,10 @@ class Orchestrator:
             ):
                 continue
             ctx.note_reuse(hit, reuse_mode="skip_execute")
-            result = self._build_skip_execute_result(hit=hit, execute_step=execute_step, ctx=ctx)
+            try:
+                result = self._build_skip_execute_result(hit=hit, execute_step=execute_step, ctx=ctx)
+            except ValueError:
+                continue
             try:
                 summarize_step = self._find_step(plan, "summarize")
             except KeyError:
@@ -1354,6 +1366,12 @@ class Orchestrator:
     @staticmethod
     def _step_input_contract_variant(step: PlanStep, ctx: RunContext) -> str:
         if step.owner_agent == "executor" and step.action == "EXECUTE_PLAYBOOK":
+            if ctx.transfer_strategy() == "state_ref":
+                return ctx.handoff_profile()
+            return ctx.transfer_strategy()
+        if step.owner_agent == "summarizer" and step.action == "SUMMARIZE_AND_COMMIT":
+            if ctx.transfer_strategy() == "state_ref":
+                return ctx.handoff_profile()
             return ctx.transfer_strategy()
         return "default"
 
@@ -1450,6 +1468,10 @@ class Orchestrator:
             retrieve_result.output_state_refs,
             "REPLAY_ELIGIBILITY_BUNDLE",
         )
+        stored_replay_certificate_hash = str(hit.metadata.get("replay_certificate_hash", "")).strip()
+        fresh_replay_certificate_hash = str(retrieve_result.payload.get("replay_certificate_hash", "")).strip()
+        stored_proof_hash = stored_replay_blob_hash or stored_replay_certificate_hash
+        fresh_proof_hash = fresh_replay_blob_hash or fresh_replay_certificate_hash
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
         return (
             feature_route
@@ -1472,8 +1494,8 @@ class Orchestrator:
                 minimum_confidence=0.70,
             )
             and _optional_hash_match(stored_channel_snapshot_hash, fresh_channel_snapshot_hash)
-            and bool(stored_replay_blob_hash)
-            and bool(fresh_replay_blob_hash)
+            and bool(stored_proof_hash)
+            and bool(fresh_proof_hash)
         )
 
     def _matches_skip_retrieve_execute(
@@ -1531,6 +1553,8 @@ class Orchestrator:
         )
         channel_snapshot_hash = str(hit.metadata.get("channel_snapshot_hash", "")).strip()
         replay_blob_hash = _ref_hash_for_kind(hit.evidence_state_refs, "REPLAY_ELIGIBILITY_BUNDLE")
+        replay_certificate_hash = str(hit.metadata.get("replay_certificate_hash", "")).strip()
+        replay_proof_hash = replay_blob_hash or replay_certificate_hash
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
         inferred_source_match = (
             bool(normalized_query)
@@ -1550,8 +1574,8 @@ class Orchestrator:
                 route_provenance=route_provenance,
                 minimum_confidence=0.80,
             )
-            and bool(channel_snapshot_hash)
-            and bool(replay_blob_hash)
+            and bool(channel_snapshot_hash or replay_certificate_hash)
+            and bool(replay_proof_hash)
         )
 
     def _build_skip_execute_result(
@@ -1596,6 +1620,8 @@ class Orchestrator:
             hit=hit,
             source_kind="TOOL_ARTIFACT",
             target_state_id=f"{ctx.task_id}-{execute_step.step_id}-artifact",
+            replay_mode="skip_execute",
+            replay_step_id="execute",
         )
         replay_bundle = _find_state_bundle(
             ctx=ctx,
@@ -1653,23 +1679,37 @@ class Orchestrator:
         execute_step: PlanStep,
         ctx: RunContext,
     ) -> tuple[StepResult, StepResult]:
-        evidence_ref = self._copy_memory_ref(
+        evidence_ref = self._maybe_copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="DENSE_EVIDENCE",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-evidence",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
         )
-        feature_ref = self._copy_memory_ref(
+        decision_ref = self._maybe_copy_memory_ref(
+            ctx=ctx,
+            hit=hit,
+            source_kind="EXECUTOR_DECISION_PACKET",
+            target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-decision",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
+        )
+        feature_ref = self._maybe_copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="FEATURE_BUNDLE",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-features",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
         )
         channel_snapshot_ref = self._maybe_copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="CHANNEL_SNAPSHOT",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-route-snapshot",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
         )
         channel_snapshot_hash = ""
         if channel_snapshot_ref is not None:
@@ -1685,30 +1725,40 @@ class Orchestrator:
             hit=hit,
             source_kind="RANKED_EVIDENCE_BUNDLE",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-ranked-evidence",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
         )
         tool_candidate_ref = self._maybe_copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="TOOL_CANDIDATE_SET",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-tool-candidates",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
         )
         replay_eligibility_ref = self._maybe_copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="REPLAY_ELIGIBILITY_BUNDLE",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-replay-eligibility",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
         )
-        embedding_ref = self._copy_memory_ref(
+        embedding_ref = self._maybe_copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="EMBEDDING",
             target_state_id=f"{ctx.task_id}-{retrieve_step.step_id}-embedding",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
         )
         artifact_ref = self._copy_memory_ref(
             ctx=ctx,
             hit=hit,
             source_kind="TOOL_ARTIFACT",
             target_state_id=f"{ctx.task_id}-{execute_step.step_id}-artifact",
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="execute",
         )
         replay_bundle = _find_state_bundle(
             ctx=ctx,
@@ -1738,7 +1788,13 @@ class Orchestrator:
             "retrieved_doc_ids",
             fallback=hit.metadata.get("retrieved_doc_ids", []),
         )
-        retrieve_refs = [evidence_ref, feature_ref]
+        retrieve_refs: list[StateRef] = []
+        if evidence_ref is not None:
+            retrieve_refs.append(evidence_ref)
+        if decision_ref is not None:
+            retrieve_refs.append(decision_ref)
+        if feature_ref is not None:
+            retrieve_refs.append(feature_ref)
         if channel_snapshot_ref is not None:
             retrieve_refs.append(channel_snapshot_ref)
         if ranked_evidence_ref is not None:
@@ -1747,7 +1803,14 @@ class Orchestrator:
             retrieve_refs.append(tool_candidate_ref)
         if replay_eligibility_ref is not None:
             retrieve_refs.append(replay_eligibility_ref)
-        retrieve_refs.append(embedding_ref)
+        if embedding_ref is not None:
+            retrieve_refs.append(embedding_ref)
+        if ctx.transfer_strategy() == "state_packet_minimal" and (
+            evidence_ref is None or decision_ref is None
+        ):
+            raise ValueError(
+                f"memory {hit.memory_id} missing mode-compatible minimal replay refs"
+            )
         retrieve_result = StepResult(
             step_id=retrieve_step.step_id,
             success=True,
@@ -1773,6 +1836,12 @@ class Orchestrator:
                 "retrieved_doc_ids": retrieved_doc_ids,
                 "corpus_doc_count": len(retrieved_doc_ids),
                 "memory_hint_route": route,
+                "feature_state_id": (
+                    "" if feature_ref is None else feature_ref.state_id
+                ),
+                "executor_decision_state_id": (
+                    "" if decision_ref is None else decision_ref.state_id
+                ),
                 "channel_snapshot_state_id": (
                     "" if channel_snapshot_ref is None else channel_snapshot_ref.state_id
                 ),
@@ -1805,7 +1874,8 @@ class Orchestrator:
                 "hint_doc_ids": hint_doc_ids,
                 "sandbox_mode": artifact_ref.metadata.get("sandbox_mode", "reused"),
                 "matched_signals": [],
-                "feature_state_id": feature_ref.state_id,
+                "feature_state_id": "" if feature_ref is None else feature_ref.state_id,
+                "executor_decision_state_id": "" if decision_ref is None else decision_ref.state_id,
                 "channel_snapshot_state_id": (
                     "" if channel_snapshot_ref is None else channel_snapshot_ref.state_id
                 ),
@@ -1827,16 +1897,22 @@ class Orchestrator:
         hit: MemoryHit,
         source_kind: str,
         target_state_id: str,
+        replay_mode: str,
+        replay_step_id: str,
     ) -> StateRef:
         source_ref = self._select_replay_source_ref(
             ctx=ctx,
             hit=hit,
             source_kind=source_kind,
             required=True,
+            replay_mode=replay_mode,
+            replay_step_id=replay_step_id,
         )
         metadata: dict[str, Any] = dict(source_ref.metadata)
         metadata["reused_from_memory_id"] = hit.memory_id
         metadata["reused_from_source_task_id"] = hit.source_task_id or ""
+        metadata["replay_restore_mode"] = replay_mode
+        metadata["replay_restore_step_id"] = replay_step_id
         ref = self._restore_replay_ref(
             ctx=ctx,
             source_ref=source_ref,
@@ -1853,18 +1929,24 @@ class Orchestrator:
         hit: MemoryHit,
         source_kind: str,
         target_state_id: str,
+        replay_mode: str,
+        replay_step_id: str,
     ) -> StateRef | None:
         source_ref = self._select_replay_source_ref(
             ctx=ctx,
             hit=hit,
             source_kind=source_kind,
             required=False,
+            replay_mode=replay_mode,
+            replay_step_id=replay_step_id,
         )
         if source_ref is None:
             return None
         metadata: dict[str, Any] = dict(source_ref.metadata)
         metadata["reused_from_memory_id"] = hit.memory_id
         metadata["reused_from_source_task_id"] = hit.source_task_id or ""
+        metadata["replay_restore_mode"] = replay_mode
+        metadata["replay_restore_step_id"] = replay_step_id
         ref = self._restore_replay_ref(
             ctx=ctx,
             source_ref=source_ref,
@@ -1905,7 +1987,21 @@ class Orchestrator:
         hit: MemoryHit,
         source_kind: str,
         required: bool,
+        replay_mode: str,
+        replay_step_id: str,
     ) -> StateRef | None:
+        if not self._replay_restore_kind_allowed(
+            ctx=ctx,
+            replay_mode=replay_mode,
+            replay_step_id=replay_step_id,
+            source_kind=source_kind,
+        ):
+            if required:
+                raise ValueError(
+                    f"memory {hit.memory_id} restore kind {source_kind} is incompatible with "
+                    f"{ctx.mode}/{ctx.transfer_strategy()}/{replay_mode}/{replay_step_id}"
+                )
+            return None
         candidates = [ref for ref in hit.evidence_state_refs if ref.kind == source_kind]
         if not candidates:
             if required:
@@ -1928,6 +2024,27 @@ class Orchestrator:
                 f"memory {hit.memory_id} missing replay-compatible state kind {source_kind}"
             )
         return None
+
+    @staticmethod
+    def _replay_restore_kind_allowed(
+        *,
+        ctx: RunContext,
+        replay_mode: str,
+        replay_step_id: str,
+        source_kind: str,
+    ) -> bool:
+        strategy = ctx.transfer_strategy()
+        if strategy == "text_strict_pure_lane":
+            return replay_step_id == "execute" and source_kind == "TOOL_ARTIFACT"
+        if strategy == "text_whole_lane":
+            return replay_step_id == "execute" and source_kind == "TOOL_ARTIFACT"
+        if strategy == "state_packet_minimal":
+            if replay_step_id == "execute":
+                return source_kind == "TOOL_ARTIFACT"
+            if replay_step_id == "retrieve" and replay_mode == "skip_retrieve_execute":
+                return source_kind in {"DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET"}
+            return False
+        return True
 
 def _normalize_replay_query(text: str) -> str:
     return " ".join(text.lower().split())

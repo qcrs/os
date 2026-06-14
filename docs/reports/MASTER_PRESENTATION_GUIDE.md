@@ -10,7 +10,7 @@
 
 |-----------|--------|------|
 | 系统跑出什么结果？ | `benchmark_results_interpretation` | 完整数据 + 每指标含义 + 公平性边界 |
-| 系统怎么设计的？测了什么？ | `task_design_and_mode_comparison` | 24 task 设计 + 三层差异矩阵 + pack 分工 |
+| 系统怎么设计的？测了什么？ | `task_design_and_mode_comparison` | v3 pack 设计 + 三层差异矩阵 + pack 分工 |
 | 系统内部怎么工作的？ | `architecture_and_data_flow` | 代码架构 + 数据流图 + Agent职责：谁调LLM、谁不调 |
 
 ---
@@ -20,18 +20,26 @@
 ```
 主张              状态        最强证据                         关键数据
 ──────────────────────────────────────────────────────────────────────
-通信效率           ✅ 成立     communication 专用包              ↓15.9% control_bytes
-                              formal_controlled fresh_retrieval ↓15.1%
-                              (排除replay污染)
+通信效率           ⚠️ scoped  contest_dual_mode_controlled_v3   当前 formal surface
+                              communication 专用包              repeat/API 正式证据另跑
 
-状态传递创新        ✅ 成立     text_brief→state_ref             文本握手 ↓59%
-                              非文本 0→3671 bytes               真实性成立
+状态传递机制        ⚠️ scoped  typed_state_mechanism_v3          protocol-only mechanism surface
+                              state_packet_minimal              DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET
 
-记忆复用           ⚠️ 部分    replay_enabled                    ↓12.3% task_ms
-                              assist_only                       ❌ 不work
+external text审计   ⚠️ audit   external_text_baseline_audit_v3   external text-only audit surface
+                              不并入正式headline                不与 typed-state 机制混读
 
-系统完整性          ✅ 成立     24 task repeat-3                 0 failure
-                              open_validation                   1.00 expectation
+记忆公平性         ⚠️ audit    memory_dual_mode_fairness_v3     dual-mode fairness/object-parity surface
+                              restore 兼容性显式受限            不承担 replay proof
+
+记忆复用           ⚠️ scoped  memory_reuse_v3                   protocol-only replay proof
+                              memory_policy_controlled_v3       carrier-fixed policy attribution
+
+记忆策略归因        ⚠️ scoped  memory_policy_controlled_v3      protocol carrier-fixed policy surface
+                              单变量只改 policy                replay gate 只在这里读
+
+系统完整性          ⚠️ scoped  planner_support_v3               planner support surface
+                              多 Agent 主链路已运行，但正式结论需按 pack gate 独立解读
 ```
 
 ---
@@ -54,14 +62,14 @@
    - Summarizer 调 LLM：text 下收到原材料（原始 evidence），proto 下收到加工品（上游提取的结构化结论）——token 差异的来源
 
 3. **三层差异矩阵**（`task_design_and_mode_comparison` §四）
-   - 21 个 task：只有消息格式+prompt 不同（握手相同）
-   - 3 个 task：多了握手策略不同（text_brief vs state_ref）
+   - v3 pack 需要按各自合同读取；不要把不同 pack 的模式、carrier、memory policy 混成一个变量
+   - typed-state mechanism 单独用 `natural_handoff_text` vs `state_packet_minimal` 读，不和 carrier microbench 或 external text baseline 混读
 
 ### 第3步：结果
 
-1. **通信**→ 见 `benchmark_results_interpretation` §三：protocol 省 15.9% 控制面、21.4% token
-2. **状态传递**→ 见 §五：文本握手↓59%，非文本从无到有，wire 仅差81字节
-3. **记忆**→ 见 §四：replay 跳过步骤省 12.3%，assist 不 work（诚实标注）
+1. **通信**→ 当前只读 v3 surface 和本地 deterministic gates；历史百分比不能直接替代当前 v3 formal rerun
+2. **状态传递**→ 只读 `typed_state_mechanism_v3`：`DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 是否被 executor 真实消费
+3. **记忆**→ 见 §四：replay 只按 `memory_reuse_v3` / `memory_policy_controlled_v3` 的 gate 读取；历史百分比不能替代当前 v3 正式 rerun
 
 ### 第5步：诚实边界（加分项）
 
@@ -74,7 +82,10 @@
 | 概念 | 含义 | 在哪讲 |
 |------|------|--------|
 | `text vs protocol` | 控制面消息格式+LLM prompt | communication主张 |
-| `text_brief vs state_ref` | hybrid握手真实性 | typed_handoff_authenticity |
-| `pure_text vs state_ref` | 真纯文本vs结构化 | pure_text_vs_state |
+| `memory_dual_mode_fairness_v3` | `text_whole_lane` vs `state_packet_minimal` 的 dual-mode memory fairness | audit fairness |
+| `typed_state_mechanism_v3` | 固定 `protocol + reuse_disabled` 后只改 `natural_handoff_text` vs `state_packet_minimal` | protocol-only typed-state mechanism |
+| `external_text_baseline_audit_v3` | 独立 external text 侧 surface | audit only |
+| `memory_policy_controlled_v3` | 固定 `protocol + state_packet_minimal` 后只改 memory policy | protocol-only policy attribution |
+| `memory_reuse_v3` | protocol replay proof | protocol-only reuse |
 
-`text_brief` 不是"纯文本baseline"——它把结构化信息写成Key-Value，然后走StatePool传指针。和state_ref共享同一套通信基础设施。
+`memory_dual_mode_fairness_v3` 不回答 typed-state mechanism，也不单独回答 replay proof；`typed_state_mechanism_v3` 不回答 external text baseline；`memory_reuse_v3` 和 `memory_policy_controlled_v3` 都不回答 text-vs-protocol。

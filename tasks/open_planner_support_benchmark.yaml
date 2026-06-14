@@ -1,11 +1,8 @@
 task_set:
   name: open_planner_support_pack
   pack_type: open_planner_support
-  description: Support-only 5-family pack that runs real Planner LLM pre-pass compilation
-    through the LangGraph mainline in both text and protocol modes.
-  reading_contract: Read this pack only as support evidence for "Planner can really
-    compile a plan inside the LangGraph StateBus path." It must not be mixed into
-    communication, state_transfer, or memory formal headline aggregates.
+  description: Archived historical support surface for the earlier open-planner-only regression pack.
+  reading_contract: Read this pack only as archived historical support material for the earlier open-planner surface. It must not be mixed into the current v3 communication, state_transfer, memory, or planner-control claims.
   claim_lanes: []
 
 tasks:

@@ -133,6 +133,8 @@ BENCHMARK_LANE_ORDER = (
 )
 
 TRANSFER_STRATEGY_ORDER = (
+    "text_strict_pure_lane",
+    "text_whole_lane",
     "inline_text_handoff",
     "natural_handoff_text",
     "channel_store_hashref",
@@ -172,17 +174,108 @@ CASE_CORRECTNESS_LABELS = (
     "mismatch",
 )
 
+CASE_CONTRACT_PRIMARY_RATE_FIELDS = (
+    "route_exact_rate",
+    "tool_exact_rate",
+    "exact_match_rate",
+    "admissible_match_rate",
+    "abstention_rate",
+    "wrong_family_rate",
+)
+
+TRANSFER_TRUTH_SUMMARY_FIELDS = (
+    "task_count",
+    "executor_input_kind_sets",
+    "retrieve_output_kind_sets",
+    "summarizer_input_kind_sets",
+    "typed_executor_any_consumption_rate",
+    "typed_executor_minimal_expected_consumption_rate",
+    "typed_executor_feature_bundle_consumption_rate",
+    "typed_executor_full_rich_audit_consumption_rate",
+    "executor_expected_kind_match_rate",
+    "executor_unexpected_kind_seen_rate",
+    "summarizer_visibility_extra_typed_rate",
+    "summarizer_visibility_asymmetry_rate",
+    "executor_text_backed_statepool_rate",
+    "executor_inline_text_rate",
+)
+
+FORMAL_DUAL_MODE_TEXT_TRANSFER_STRATEGIES = (
+    "text_strict_pure_lane",
+    "text_whole_lane",
+)
+
+FORMAL_DUAL_MODE_PROTOCOL_EXECUTOR_KINDS = (
+    "DENSE_EVIDENCE",
+    "EXECUTOR_DECISION_PACKET",
+)
+
+MINIMAL_TYPED_EXECUTOR_KINDS = {"DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET"}
+FEATURE_ONLY_TYPED_EXECUTOR_KINDS = {"DENSE_EVIDENCE", "FEATURE_BUNDLE"}
+FULL_RICH_AUDIT_EXECUTOR_KINDS = {
+    "DENSE_EVIDENCE",
+    "CHANNEL_SNAPSHOT",
+    "FEATURE_BUNDLE",
+    "TOOL_CANDIDATE_SET",
+}
+NON_TEXT_EXECUTOR_STATE_KINDS = {
+    "EXECUTOR_DECISION_PACKET",
+    "FEATURE_BUNDLE",
+    "TOOL_CANDIDATE_SET",
+    "CHANNEL_SNAPSHOT",
+    "RANKED_EVIDENCE_BUNDLE",
+    "REPLAY_ELIGIBILITY_BUNDLE",
+    "EMBEDDING",
+}
+RICH_TYPED_EXECUTOR_KINDS = {
+    "FEATURE_BUNDLE",
+    "TOOL_CANDIDATE_SET",
+    "CHANNEL_SNAPSHOT",
+    "RANKED_EVIDENCE_BUNDLE",
+    "REPLAY_ELIGIBILITY_BUNDLE",
+    "EMBEDDING",
+}
+
+WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS = {
+    "DENSE_EVIDENCE",
+    "FEATURE_BUNDLE",
+    "TOOL_CANDIDATE_SET",
+    "EXECUTOR_DECISION_PACKET",
+    "CHANNEL_PATCH",
+    "CHANNEL_SNAPSHOT",
+    "RANKED_EVIDENCE_BUNDLE",
+    "REPLAY_ELIGIBILITY_BUNDLE",
+    "EMBEDDING",
+}
+
+WHOLE_LANE_TEXT_HIDDEN_FIELD_MARKERS = (
+    "Suggested route:",
+    "Suggested tool:",
+    "Route source:",
+    "Route confidence:",
+    "Tool candidates:",
+    "Matched signals:",
+    "Matched tags:",
+    "Hint docs:",
+    "Hint route:",
+    "Hint tool:",
+    "BENCHMARK_NOTE ",
+    "MEMORY_ASSIST_HINT ",
+)
+
 
 def _public_transfer_strategy(value: str, mode: str | None = None) -> str:
     normalized = str(value or "").strip()
+    if normalized == "text_strict_pure_lane":
+        return "text_strict_pure_lane"
+    if normalized == "text_whole_lane":
+        return "text_whole_lane"
     if normalized == "state_ref":
         return "channel_store_hashref"
     if normalized == "inline_text_handoff":
         return "inline_text_handoff"
     if normalized == "text_brief":
         return "text_brief"
-    if normalized == "mode_split_text_brief_vs_state_ref":
-        return "natural_handoff_text" if str(mode or "").strip().lower() == "text" else "channel_store_hashref"
     return normalized
 
 
@@ -313,6 +406,65 @@ def _restored_replay_refs(ctx: RunContext) -> list[Any]:
     ]
 
 
+def _memory_restore_visibility_payload(ctx: RunContext) -> dict[str, object]:
+    restored_refs = _restored_replay_refs(ctx)
+    restored_kinds = sorted(
+        {
+            str(ref.kind).strip()
+            for ref in restored_refs
+            if str(ref.kind).strip()
+        }
+    )
+    strategy = ctx.transfer_strategy()
+    forbidden_by_strategy = {
+        "text_strict_pure_lane": {
+            "DENSE_EVIDENCE",
+            "FEATURE_BUNDLE",
+            "CHANNEL_SNAPSHOT",
+            "TOOL_CANDIDATE_SET",
+            "RANKED_EVIDENCE_BUNDLE",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EXECUTOR_DECISION_PACKET",
+            "EMBEDDING",
+        },
+        "text_whole_lane": {
+            "DENSE_EVIDENCE",
+            "FEATURE_BUNDLE",
+            "CHANNEL_SNAPSHOT",
+            "TOOL_CANDIDATE_SET",
+            "RANKED_EVIDENCE_BUNDLE",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EXECUTOR_DECISION_PACKET",
+            "EMBEDDING",
+        },
+        "state_packet_minimal": {
+            "FEATURE_BUNDLE",
+            "CHANNEL_SNAPSHOT",
+            "TOOL_CANDIDATE_SET",
+            "RANKED_EVIDENCE_BUNDLE",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EMBEDDING",
+        },
+    }
+    forbidden_restored_kinds = sorted(
+        kind for kind in restored_kinds if kind in forbidden_by_strategy.get(strategy, set())
+    )
+    typed_restore_visible = any(kind != "TOOL_ARTIFACT" for kind in restored_kinds)
+    if strategy in {"text_whole_lane", "text_strict_pure_lane"}:
+        typed_restore_visible = any(kind != "TOOL_ARTIFACT" for kind in restored_kinds)
+    elif strategy == "state_packet_minimal":
+        typed_restore_visible = any(
+            kind not in {"DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET", "TOOL_ARTIFACT"}
+            for kind in restored_kinds
+        )
+    return {
+        "restored_kinds": restored_kinds,
+        "typed_restore_visible": typed_restore_visible,
+        "restore_compatible_with_mode": not forbidden_restored_kinds,
+        "forbidden_restored_kinds": forbidden_restored_kinds,
+    }
+
+
 def _reuse_artifact_payload(ctx: RunContext, actual_reuse_mode: str) -> dict[str, Any]:
     restored_refs = _restored_replay_refs(ctx)
     cas_summary = ctx.statepool.cas_summary()
@@ -368,77 +520,116 @@ def _runtime_integrity_payload(ctx: RunContext) -> dict[str, Any]:
     }
 
 
-def _pure_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> dict[str, Any]:
-    if transfer_strategy not in {"natural_handoff_text", "inline_text_handoff"}:
-        return {"pure_text_guard": {"enabled": False}}
+def _whole_lane_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> dict[str, Any]:
+    if transfer_strategy not in {"text_whole_lane", "text_strict_pure_lane"}:
+        return {"whole_lane_text_guard": {"enabled": False}}
     execute_refs = ctx.step_input_refs("execute")
-    input_kinds = [ref.kind for ref in execute_refs]
-    forbidden_kinds = (
-        {
-            "DENSE_EVIDENCE",
-            "FEATURE_BUNDLE",
-            "TOOL_CANDIDATE_SET",
-            "EXECUTOR_DECISION_PACKET",
-            "CHANNEL_PATCH",
-            "CHANNEL_SNAPSHOT",
-            "RANKED_EVIDENCE_BUNDLE",
-            "REPLAY_ELIGIBILITY_BUNDLE",
-            "EMBEDDING",
-        }
-        if transfer_strategy == "natural_handoff_text"
-        else {
-            "DENSE_EVIDENCE",
-            "FEATURE_BUNDLE",
-            "TOOL_CANDIDATE_SET",
-            "EXECUTOR_DECISION_PACKET",
-            "CHANNEL_PATCH",
-            "CHANNEL_SNAPSHOT",
-            "RANKED_EVIDENCE_BUNDLE",
-            "REPLAY_ELIGIBILITY_BUNDLE",
-            "EMBEDDING",
-            "TOOL_ARTIFACT",
-        }
+    summarize_refs = ctx.step_input_refs("summarize")
+    execute_input_kinds = [ref.kind for ref in execute_refs]
+    summarize_input_kinds = [ref.kind for ref in summarize_refs]
+    forbidden_ref_kinds = sorted(
+        {kind for kind in execute_input_kinds + summarize_input_kinds if kind in WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS}
     )
-    leaked_kinds = sorted({kind for kind in input_kinds if kind in forbidden_kinds})
-    handoff_text = ""
-    handoff_ref = (
-        next((ref for ref in execute_refs if ref.kind == "TOOL_ARTIFACT"), None)
-        if transfer_strategy == "natural_handoff_text"
-        else None
+    retrieve_result = ctx.results.get("retrieve")
+    execute_result = ctx.results.get("execute")
+    retrieve_handoff_text = ""
+    execute_handoff_text = ""
+    if retrieve_result is not None:
+        retrieve_handoff_text = str(retrieve_result.payload.get("inline_handoff_text", "")).strip()
+    if execute_result is not None:
+        artifact_ref = next((ref for ref in execute_result.output_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
+        if artifact_ref is not None:
+            try:
+                execute_handoff_text = ctx.get_text_state(artifact_ref)
+            except Exception:
+                execute_handoff_text = ""
+    hidden_field_leak = any(marker in retrieve_handoff_text for marker in WHOLE_LANE_TEXT_HIDDEN_FIELD_MARKERS) or any(
+        marker in execute_handoff_text for marker in WHOLE_LANE_TEXT_HIDDEN_FIELD_MARKERS
     )
-    if handoff_ref is not None:
-        try:
-            handoff_text = ctx.get_text_state(handoff_ref)
-        except Exception:
-            handoff_text = ""
-    elif transfer_strategy == "inline_text_handoff":
-        retrieve_result = ctx.results.get("retrieve")
-        handoff_text = (
-            str(retrieve_result.payload.get("inline_handoff_text", ""))
-            if retrieve_result is not None
-            else ""
-        )
-    structured_shadow_markers = ("Route:", "Tool:", "Suggested route:", "Suggested tool:")
-    structured_text_shadow = any(marker in handoff_text for marker in structured_shadow_markers)
+    summarizer_typed_visibility = any(kind in WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS for kind in summarize_input_kinds)
     failed_reasons: list[str] = []
-    if leaked_kinds:
-        failed_reasons.append(f"forbidden_ref_kinds={','.join(leaked_kinds)}")
-    if structured_text_shadow:
-        failed_reasons.append("structured_text_shadow")
-    if not handoff_text.strip():
-        failed_reasons.append("empty_handoff_text")
-    return {
-        "pure_text_guard": {
-            "enabled": True,
-            "transfer_strategy": transfer_strategy,
-            "executor_input_kinds": input_kinds,
-            "forbidden_ref_kinds": leaked_kinds,
-            "structured_text_shadow": structured_text_shadow,
-            "handoff_text_bytes": len(handoff_text.encode("utf-8")),
-            "failed_reasons": failed_reasons,
-            "passed": not failed_reasons,
-        }
+    if forbidden_ref_kinds:
+        failed_reasons.append(f"forbidden_ref_kinds={','.join(forbidden_ref_kinds)}")
+    if hidden_field_leak:
+        failed_reasons.append("hidden_field_leak")
+    if summarizer_typed_visibility:
+        failed_reasons.append("summarizer_typed_visibility")
+    if not retrieve_handoff_text:
+        failed_reasons.append("missing_retrieve_handoff_text")
+    if not execute_handoff_text:
+        failed_reasons.append("missing_execute_handoff_text")
+    payload = {
+        "enabled": True,
+        "guard_scope": "whole_lane",
+        "transfer_strategy": transfer_strategy,
+        "executor_input_kinds": execute_input_kinds,
+        "summarizer_input_kinds": summarize_input_kinds,
+        "forbidden_ref_kinds": forbidden_ref_kinds,
+        "hidden_field_leak": hidden_field_leak,
+        "summarizer_typed_visibility": summarizer_typed_visibility,
+        "retrieve_handoff_text_bytes": len(retrieve_handoff_text.encode("utf-8")),
+        "execute_handoff_text_bytes": len(execute_handoff_text.encode("utf-8")),
+        "failed_reasons": failed_reasons,
+        "passed": not failed_reasons,
     }
+    return {"whole_lane_text_guard": payload}
+
+
+def _inline_text_boundary_guard_payload(ctx: RunContext, transfer_strategy: str) -> dict[str, Any]:
+    if transfer_strategy != "inline_text_handoff":
+        return {"inline_text_boundary_guard": {"enabled": False}}
+    execute_refs = ctx.step_input_refs("execute")
+    summarize_refs = ctx.step_input_refs("summarize")
+    execute_input_kinds = [ref.kind for ref in execute_refs]
+    summarize_input_kinds = [ref.kind for ref in summarize_refs]
+    retrieve_result = ctx.results.get("retrieve")
+    inline_handoff_text = ""
+    if retrieve_result is not None:
+        inline_handoff_text = str(retrieve_result.payload.get("inline_handoff_text", "")).strip()
+    forbidden_ref_kinds = sorted(
+        {
+            kind
+            for kind in execute_input_kinds
+            if kind in WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS
+        }
+    )
+    hidden_field_leak = any(marker in inline_handoff_text for marker in WHOLE_LANE_TEXT_HIDDEN_FIELD_MARKERS)
+    summarizer_typed_visibility = any(kind in WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS for kind in summarize_input_kinds)
+    failed_reasons: list[str] = []
+    if execute_input_kinds:
+        failed_reasons.append("executor_input_refs_present")
+    if forbidden_ref_kinds:
+        failed_reasons.append(f"forbidden_ref_kinds={','.join(forbidden_ref_kinds)}")
+    if hidden_field_leak:
+        failed_reasons.append("hidden_field_leak")
+    if not inline_handoff_text:
+        failed_reasons.append("missing_inline_handoff_text")
+    payload = {
+        "enabled": True,
+        "guard_scope": "executor_boundary",
+        "transfer_strategy": transfer_strategy,
+        "executor_input_kinds": execute_input_kinds,
+        "summarizer_input_kinds": summarize_input_kinds,
+        "forbidden_ref_kinds": forbidden_ref_kinds,
+        "hidden_field_leak": hidden_field_leak,
+        "summarizer_typed_visibility": summarizer_typed_visibility,
+        "inline_handoff_text_bytes": len(inline_handoff_text.encode("utf-8")),
+        "failed_reasons": failed_reasons,
+        "passed": not failed_reasons,
+    }
+    return {"inline_text_boundary_guard": payload}
+
+
+def _pure_text_guard_compat_payload(
+    *,
+    whole_lane_guard: dict[str, Any] | None,
+    inline_boundary_guard: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if whole_lane_guard and bool(whole_lane_guard.get("enabled")):
+        return {"pure_text_guard": dict(whole_lane_guard)}
+    if inline_boundary_guard and bool(inline_boundary_guard.get("enabled")):
+        return {"pure_text_guard": dict(inline_boundary_guard)}
+    return {"pure_text_guard": {"enabled": False}}
 
 
 def _task_sort_key(task: SampleTask) -> tuple[str, int, str]:
@@ -471,6 +662,10 @@ def _task_benchmark_lane(task_run: dict[str, object]) -> str:
 
 def _task_transfer_strategy(task_run: dict[str, object]) -> str:
     return str(task_run.get("transfer_strategy", "flat_state_ref")).strip() or "flat_state_ref"
+
+
+def _task_handoff_profile(task_run: dict[str, object]) -> str:
+    return str(task_run.get("handoff_profile", "")).strip()
 
 
 def _task_memory_policy(task_run: dict[str, object]) -> str:
@@ -576,6 +771,150 @@ def _build_artifact_misfire(task_run: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _normalize_route_family(route: str, expected_family: str, task_theme: str) -> str:
+    normalized_route = str(route or "").strip()
+    if not normalized_route:
+        return ""
+    explicit_family = str(expected_family or "").strip()
+    if explicit_family:
+        family_hints = {
+            "cache_invalidation": {"cache_invalidation", "cache_replica_stale_read"},
+            "db_pool_saturation": {"db_pool_saturation"},
+            "worker_queue_starvation": {"worker_queue_starvation"},
+            "auth_session_drift": {"auth_session_drift"},
+        }
+        for family_name, members in family_hints.items():
+            if normalized_route in members:
+                return family_name if explicit_family == family_name else normalized_route
+    theme_hints = {
+        "repo_local_cache_staleness": {
+            "cache_invalidation": "cache_invalidation",
+            "cache_replica_stale_read": "cache_replica_stale_read",
+        },
+        "repo_local_latency_triage": {
+            "db_pool_saturation": "db_pool_saturation",
+            "worker_queue_starvation": "worker_queue_starvation",
+        },
+        "repo_local_auth_session_drift": {
+            "auth_session_drift": "auth_session_drift",
+        },
+        "executor_low_confidence": {
+            "db_pool_saturation": "db_pool_saturation",
+        },
+        "executor_metadata_only": {
+            "db_pool_saturation": "db_pool_saturation",
+        },
+        "executor_ambiguous": {
+            "db_pool_saturation": "db_pool_saturation",
+            "worker_queue_starvation": "worker_queue_starvation",
+        },
+        "executor_clear_worker": {
+            "worker_queue_starvation": "worker_queue_starvation",
+        },
+    }
+    return theme_hints.get(str(task_theme or "").strip(), {}).get(normalized_route, normalized_route)
+
+
+def _build_case_contract_audit(task_run: dict[str, object]) -> dict[str, object]:
+    contract = task_run.get("case_contract", {})
+    if not isinstance(contract, dict):
+        contract = {}
+    actual = _task_artifact_actuals(task_run)
+    observed_route = str(actual.get("route", "")).strip()
+    observed_tool = str(actual.get("tool_name", "")).strip()
+    expected_family = str(contract.get("expected_family", "")).strip()
+    primary_expected_route = str(contract.get("primary_expected_route", "")).strip()
+    primary_expected_tool = str(contract.get("primary_expected_tool", "")).strip()
+    acceptable_routes = [
+        str(item).strip()
+        for item in contract.get("acceptable_routes", [])
+        if str(item).strip()
+    ]
+    acceptable_tools = [
+        str(item).strip()
+        for item in contract.get("acceptable_tools", [])
+        if str(item).strip()
+    ]
+    disallowed_families = [
+        str(item).strip()
+        for item in contract.get("disallowed_families", [])
+        if str(item).strip()
+    ]
+    abstention_allowed = bool(contract.get("abstention_allowed", False))
+    allowed_abstain_tool = str(contract.get("allowed_abstain_tool", "")).strip()
+    case_type = str(contract.get("case_type", "exact_single_solution")).strip() or "exact_single_solution"
+    observed_family = _normalize_route_family(
+        observed_route,
+        expected_family,
+        str(task_run.get("task_theme", "")),
+    )
+    route_exact = bool(observed_route and observed_route == primary_expected_route)
+    tool_exact = bool(observed_tool and observed_tool == primary_expected_tool)
+    exact_match = route_exact and tool_exact
+    abstention_match = abstention_allowed and bool(observed_tool) and observed_tool == allowed_abstain_tool
+    acceptable_route_match = bool(observed_route) and observed_route in acceptable_routes
+    acceptable_tool_match = bool(observed_tool) and observed_tool in acceptable_tools
+    alternate_pair_admissible = (
+        bool(acceptable_routes)
+        and bool(acceptable_tools)
+        and acceptable_route_match
+        and acceptable_tool_match
+    )
+    if case_type == "exact_single_solution":
+        route_tool_admissible = exact_match
+    elif case_type in {"bounded_alternative", "abstention_allowed"}:
+        route_tool_admissible = exact_match or alternate_pair_admissible
+    else:
+        route_tool_admissible = exact_match
+    admissible_match = (
+        (route_tool_admissible or abstention_match)
+        and (not observed_family or observed_family not in disallowed_families)
+    )
+    wrong_family = (
+        bool(expected_family)
+        and bool(observed_family)
+        and observed_family != expected_family
+        and not admissible_match
+        and not abstention_match
+    )
+    correctness_label = "mismatch"
+    if exact_match:
+        correctness_label = "exact_match"
+    elif abstention_match:
+        correctness_label = "abstention_match"
+    elif admissible_match:
+        correctness_label = "admissible_match"
+    elif wrong_family:
+        correctness_label = "wrong_family"
+    return {
+        "case_id": str(contract.get("case_id", task_run.get("task_id", ""))).strip(),
+        "case_type": case_type,
+        "eval_scope": str(contract.get("eval_scope", "")).strip(),
+        "observed_route": observed_route,
+        "observed_tool": observed_tool,
+        "observed_family": observed_family,
+        "expected_family": expected_family,
+        "primary_expected_route": primary_expected_route,
+        "primary_expected_tool": primary_expected_tool,
+        "acceptable_routes": acceptable_routes,
+        "acceptable_tools": acceptable_tools,
+        "acceptable_route_match": acceptable_route_match,
+        "acceptable_tool_match": acceptable_tool_match,
+        "alternate_pair_admissible": alternate_pair_admissible,
+        "abstention_allowed": abstention_allowed,
+        "allowed_abstain_tool": allowed_abstain_tool,
+        "abstain_only_when": str(contract.get("abstain_only_when", "")).strip(),
+        "disallowed_families": disallowed_families,
+        "correctness_label": correctness_label,
+        "route_exact": route_exact,
+        "tool_exact": tool_exact,
+        "exact_match": exact_match,
+        "admissible_match": admissible_match,
+        "abstention_match": abstention_match,
+        "wrong_family": wrong_family,
+    }
+
+
 def _mean_pure_text_guard_bytes(rows: list[dict[str, object]]) -> float:
     values: list[float] = []
     for row in rows:
@@ -586,9 +925,786 @@ def _mean_pure_text_guard_bytes(rows: list[dict[str, object]]) -> float:
     return float(mean(values)) if values else 0.0
 
 
+def _sorted_unique_kinds(refs: list[dict[str, object]]) -> list[str]:
+    return sorted(
+        {
+            str(ref.get("kind", "")).strip()
+            for ref in refs
+            if isinstance(ref, dict) and str(ref.get("kind", "")).strip()
+        }
+    )
+
+
+def _expected_executor_kinds_for_transfer(
+    *,
+    transfer_strategy: str,
+    handoff_profile: str,
+) -> set[str]:
+    if transfer_strategy in {"text_strict_pure_lane", "text_whole_lane", "inline_text_handoff"}:
+        return set()
+    if transfer_strategy in {"text_brief", "text_packet_minimal", "natural_handoff_text"}:
+        return {"TOOL_ARTIFACT"}
+    if transfer_strategy == "state_packet_minimal":
+        return set(MINIMAL_TYPED_EXECUTOR_KINDS)
+    if transfer_strategy == "channel_store_hashref":
+        if handoff_profile == "protocol_full_rich_audit":
+            return set(FULL_RICH_AUDIT_EXECUTOR_KINDS)
+        return set(FEATURE_ONLY_TYPED_EXECUTOR_KINDS)
+    return set()
+
+
+def _forbidden_executor_kinds_for_transfer(
+    *,
+    transfer_strategy: str,
+    handoff_profile: str,
+) -> set[str]:
+    if transfer_strategy in {"text_strict_pure_lane", "text_whole_lane", "inline_text_handoff"}:
+        return set(WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS)
+    if transfer_strategy in {"text_brief", "text_packet_minimal", "natural_handoff_text"}:
+        return NON_TEXT_EXECUTOR_STATE_KINDS | {"DENSE_EVIDENCE", "CHANNEL_PATCH"}
+    if transfer_strategy == "state_packet_minimal":
+        return RICH_TYPED_EXECUTOR_KINDS | {"FEATURE_BUNDLE", "TOOL_CANDIDATE_SET", "CHANNEL_PATCH", "TOOL_ARTIFACT"}
+    if transfer_strategy == "channel_store_hashref" and handoff_profile == "protocol_full_rich_audit":
+        return set()
+    if transfer_strategy == "channel_store_hashref":
+        return {
+            "EXECUTOR_DECISION_PACKET",
+            "TOOL_CANDIDATE_SET",
+            "CHANNEL_PATCH",
+            "CHANNEL_SNAPSHOT",
+            "RANKED_EVIDENCE_BUNDLE",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+            "EMBEDDING",
+            "TOOL_ARTIFACT",
+        }
+    return set()
+
+
+def _contains_all_kinds(kinds: object, expected: set[str]) -> bool:
+    observed = {str(kind).strip() for kind in kinds if str(kind).strip()} if isinstance(kinds, list) else set()
+    return expected.issubset(observed)
+
+
+def _step_ref_truth_payload(step_id: str, refs: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "step_id": step_id,
+        "ref_count": len(refs),
+        "kinds": _sorted_unique_kinds(refs),
+        "refs": refs,
+    }
+
+
+def _step_input_truth(ctx: RunContext, step_id: str) -> list[dict[str, object]]:
+    return [
+        {
+            "state_id": ref.state_id,
+            "kind": ref.kind,
+            "length": ref.length,
+            "storage": ref.storage,
+            "channel_name": str(ref.metadata.get("channel_name", "")).strip(),
+            "transfer_strategy": str(ref.metadata.get("transfer_strategy", "")).strip(),
+            "source_features": str(ref.metadata.get("source_features", "")).strip(),
+            "source_channel_snapshot": str(ref.metadata.get("source_channel_snapshot", "")).strip(),
+            "source_tool_candidates": str(ref.metadata.get("source_tool_candidates", "")).strip(),
+            "source_evidence": str(ref.metadata.get("source_evidence", "")).strip(),
+        }
+        for ref in ctx.step_input_refs(step_id)
+    ]
+
+
+def _step_output_truth(result: Any) -> list[dict[str, object]]:
+    return [
+        {
+            "state_id": ref.state_id,
+            "kind": ref.kind,
+            "length": ref.length,
+            "storage": ref.storage,
+            "channel_name": str(ref.metadata.get("channel_name", "")).strip(),
+            "transfer_strategy": str(ref.metadata.get("transfer_strategy", "")).strip(),
+        }
+        for ref in result.output_state_refs
+    ]
+
+
+def _build_transfer_truth_audit(task_run: dict[str, object]) -> dict[str, object]:
+    transfer_strategy = str(task_run.get("transfer_strategy", "")).strip()
+    handoff_profile = _task_handoff_profile(task_run)
+    step_truth = task_run.get("step_truth", {})
+    if not isinstance(step_truth, dict):
+        step_truth = {}
+    retrieve_truth = step_truth.get("retrieve", {})
+    execute_truth = step_truth.get("execute", {})
+    summarize_truth = step_truth.get("summarize", {})
+    if not isinstance(retrieve_truth, dict):
+        retrieve_truth = {}
+    if not isinstance(execute_truth, dict):
+        execute_truth = {}
+    if not isinstance(summarize_truth, dict):
+        summarize_truth = {}
+    retrieve_output_refs = retrieve_truth.get("output_refs", [])
+    execute_input_refs = execute_truth.get("input_refs", [])
+    summarize_input_refs = summarize_truth.get("input_refs", [])
+    if not isinstance(retrieve_output_refs, list):
+        retrieve_output_refs = []
+    if not isinstance(execute_input_refs, list):
+        execute_input_refs = []
+    if not isinstance(summarize_input_refs, list):
+        summarize_input_refs = []
+    executor_input_kinds = _sorted_unique_kinds(execute_input_refs)
+    retrieve_output_kinds = _sorted_unique_kinds(retrieve_output_refs)
+    summarizer_input_kinds = _sorted_unique_kinds(summarize_input_refs)
+    expected_executor_kinds = _expected_executor_kinds_for_transfer(
+        transfer_strategy=transfer_strategy,
+        handoff_profile=handoff_profile,
+    )
+    forbidden_executor_kinds = _forbidden_executor_kinds_for_transfer(
+        transfer_strategy=transfer_strategy,
+        handoff_profile=handoff_profile,
+    )
+    executor_unexpected_kinds = sorted(
+        kind for kind in executor_input_kinds if kind not in expected_executor_kinds
+    )
+    executor_forbidden_kinds = sorted(
+        kind for kind in executor_input_kinds if kind in forbidden_executor_kinds
+    )
+    summarizer_extra_typed_kinds = sorted(
+        {
+            kind
+            for kind in summarizer_input_kinds
+            if kind
+            in {
+                "FEATURE_BUNDLE",
+                "TOOL_CANDIDATE_SET",
+                "CHANNEL_SNAPSHOT",
+                "RANKED_EVIDENCE_BUNDLE",
+                "REPLAY_ELIGIBILITY_BUNDLE",
+                "EMBEDDING",
+            }
+        }
+    )
+    summarizer_extra_typed_beyond_executor = sorted(
+        {kind for kind in summarizer_extra_typed_kinds if kind not in executor_input_kinds}
+    )
+    executor_tool_artifact_ref = next(
+        (
+            ref
+            for ref in execute_input_refs
+            if isinstance(ref, dict) and str(ref.get("kind", "")).strip() == "TOOL_ARTIFACT"
+        ),
+        None,
+    )
+    executor_text_backed_statepool = bool(
+        executor_tool_artifact_ref is not None
+        and str(executor_tool_artifact_ref.get("storage", "")).strip()
+    )
+    executor_inline_text = transfer_strategy == "inline_text_handoff" and not execute_input_refs
+    return {
+        "transfer_strategy": transfer_strategy,
+        "handoff_profile": handoff_profile,
+        "retrieve_output_truth": _step_ref_truth_payload("retrieve", retrieve_output_refs),
+        "executor_input_truth": _step_ref_truth_payload("execute", execute_input_refs),
+        "summarizer_input_truth": _step_ref_truth_payload("summarize", summarize_input_refs),
+        "executor_input_kinds": executor_input_kinds,
+        "retrieve_output_kinds": retrieve_output_kinds,
+        "summarizer_input_kinds": summarizer_input_kinds,
+        "executor_expected_kinds": sorted(expected_executor_kinds),
+        "executor_expected_kind_match": _contains_all_kinds(
+            executor_input_kinds,
+            expected_executor_kinds,
+        ),
+        "executor_unexpected_kinds": executor_unexpected_kinds,
+        "executor_forbidden_kinds": executor_forbidden_kinds,
+        "summarizer_extra_typed_kinds": summarizer_extra_typed_kinds,
+        "summarizer_extra_typed_beyond_executor": summarizer_extra_typed_beyond_executor,
+        "executor_text_backed_statepool": executor_text_backed_statepool,
+        "executor_inline_text": executor_inline_text,
+        "summarizer_visibility_asymmetry": bool(summarizer_extra_typed_beyond_executor),
+        "question_answered": "",
+        "actual_compared_object": "",
+        "executor_input_truth_label": "",
+        "summarizer_visibility_truth_label": "",
+        "headline_status": "",
+        "common_misread_to_forbid": "",
+    }
+
+
+def _finalize_transfer_truth_audit(task_run: dict[str, object]) -> dict[str, object]:
+    audit = _build_transfer_truth_audit(task_run)
+    strategy = str(audit.get("transfer_strategy", "")).strip()
+    handoff_profile = str(audit.get("handoff_profile", "")).strip()
+    if strategy == "text_packet_minimal":
+        audit["question_answered"] = "same minimal packet semantics under different carriers"
+        audit["actual_compared_object"] = "minimal text packet handoff"
+        audit["executor_input_truth_label"] = "executor sees DENSE_EVIDENCE plus TOOL_ARTIFACT text packet"
+        audit["summarizer_visibility_truth_label"] = "summarizer reads retrieve outputs and execute artifact; no rich typed-state lane"
+        audit["headline_status"] = "can_headline"
+        audit["common_misread_to_forbid"] = "do not read this as natural-text fairness"
+    elif strategy == "state_packet_minimal":
+        audit["question_answered"] = "same minimal packet semantics under different carriers"
+        audit["actual_compared_object"] = "minimal typed packet handoff"
+        audit["executor_input_truth_label"] = "executor sees DENSE_EVIDENCE plus EXECUTOR_DECISION_PACKET"
+        audit["summarizer_visibility_truth_label"] = "summarizer reads retrieve evidence and execute artifact only"
+        audit["headline_status"] = "can_headline"
+        audit["common_misread_to_forbid"] = "do not read this as richer typed-state visibility"
+    elif strategy == "natural_handoff_text":
+        audit["question_answered"] = "natural free-text handoff versus richer typed state handoff"
+        audit["actual_compared_object"] = "TOOL_ARTIFACT natural handoff text backed by StatePool handle"
+        audit["executor_input_truth_label"] = "executor sees TOOL_ARTIFACT only"
+        audit["summarizer_visibility_truth_label"] = "summarizer still sees retrieve typed refs, so this is not whole-lane pure text"
+        audit["headline_status"] = "narrow_headline_only"
+        audit["common_misread_to_forbid"] = "do not read this as end-to-end pure text versus structured state"
+    elif strategy == "inline_text_handoff":
+        audit["question_answered"] = "strict executor-facing pure-text boundary"
+        audit["actual_compared_object"] = "inline message-body text with empty executor input refs"
+        audit["executor_input_truth_label"] = "executor sees no input refs; handoff is inline payload"
+        audit["summarizer_visibility_truth_label"] = "summarizer may still see retrieve typed refs, so this proves executor boundary only"
+        audit["headline_status"] = "formal_secondary_only"
+        audit["common_misread_to_forbid"] = "do not read this as whole-lane purity proof"
+    elif strategy == "channel_store_hashref":
+        audit["question_answered"] = "richer typed-state handoff against narrower text lanes"
+        if handoff_profile == "protocol_full_rich_audit":
+            audit["actual_compared_object"] = "DENSE_EVIDENCE + CHANNEL_SNAPSHOT + FEATURE_BUNDLE + TOOL_CANDIDATE_SET"
+            audit["executor_input_truth_label"] = "executor consumes full-rich audit typed-state refs"
+            audit["summarizer_visibility_truth_label"] = "summarizer prompt still reads feature-only live inputs; richer refs remain archival/audit only"
+            audit["headline_status"] = "support_audit_only"
+            audit["common_misread_to_forbid"] = "do not read full-rich audit as the production default typed-state path"
+        else:
+            audit["actual_compared_object"] = "DENSE_EVIDENCE + FEATURE_BUNDLE"
+            audit["executor_input_truth_label"] = "executor consumes feature-only typed-state refs on the mainline path"
+            audit["summarizer_visibility_truth_label"] = "summarizer prompt reads DENSE_EVIDENCE + FEATURE_BUNDLE + TOOL_ARTIFACT only; richer refs are archival"
+            audit["headline_status"] = "depends_on_pack"
+            audit["common_misread_to_forbid"] = "do not inflate mainline typed-state cost with full-rich audit-only objects"
+    return audit
+
+
+def _empty_transfer_truth_summary() -> dict[str, object]:
+    return {
+        "task_count": 0,
+        "executor_input_kind_sets": [],
+        "retrieve_output_kind_sets": [],
+        "summarizer_input_kind_sets": [],
+        "typed_executor_any_consumption_rate": 0.0,
+        "typed_executor_minimal_expected_consumption_rate": 0.0,
+        "typed_executor_feature_bundle_consumption_rate": 0.0,
+        "typed_executor_full_rich_audit_consumption_rate": 0.0,
+        "executor_expected_kind_match_rate": 0.0,
+        "executor_unexpected_kind_seen_rate": 0.0,
+        "summarizer_visibility_extra_typed_rate": 0.0,
+        "summarizer_visibility_asymmetry_rate": 0.0,
+        "executor_text_backed_statepool_rate": 0.0,
+        "executor_inline_text_rate": 0.0,
+        "feature_bundle_executor_visibility_rate": 0.0,
+        "channel_snapshot_executor_visibility_rate": 0.0,
+        "tool_candidate_executor_visibility_rate": 0.0,
+        "ranked_evidence_executor_visibility_rate": 0.0,
+        "replay_eligibility_executor_visibility_rate": 0.0,
+    }
+
+
+def _empty_mechanism_audit_summary() -> dict[str, object]:
+    return {
+        "observed_task_runs": 0,
+        "disabled_kind_variants": {},
+        "slimming_variants": {},
+    }
+
+
+def _empty_guard_audit_summary() -> dict[str, object]:
+    return {
+        "whole_lane_text_guard_pass_rate": 0.0,
+        "inline_text_boundary_guard_pass_rate": 0.0,
+        "forbidden_ref_kind_seen_rate": 0.0,
+        "hidden_field_leak_rate": 0.0,
+        "summarizer_typed_visibility_rate": 0.0,
+    }
+
+
+def _summarize_guard_rows(rows: list[dict[str, object]]) -> dict[str, object]:
+    whole_lane_rows = [
+        row.get("whole_lane_text_guard", {})
+        for row in rows
+        if isinstance(row.get("whole_lane_text_guard"), dict)
+        and bool(row.get("whole_lane_text_guard", {}).get("enabled"))
+    ]
+    inline_rows = [
+        row.get("inline_text_boundary_guard", {})
+        for row in rows
+        if isinstance(row.get("inline_text_boundary_guard"), dict)
+        and bool(row.get("inline_text_boundary_guard", {}).get("enabled"))
+    ]
+    all_rows = [row for row in (*whole_lane_rows, *inline_rows) if isinstance(row, dict)]
+    if not all_rows:
+        return _empty_guard_audit_summary()
+    return {
+        "whole_lane_text_guard_pass_rate": (
+            sum(1 for row in whole_lane_rows if bool(row.get("passed"))) / len(whole_lane_rows)
+            if whole_lane_rows
+            else 0.0
+        ),
+        "inline_text_boundary_guard_pass_rate": (
+            sum(1 for row in inline_rows if bool(row.get("passed"))) / len(inline_rows)
+            if inline_rows
+            else 0.0
+        ),
+        "forbidden_ref_kind_seen_rate": (
+            sum(1 for row in all_rows if bool(row.get("forbidden_ref_kinds"))) / len(all_rows)
+        ),
+        "hidden_field_leak_rate": (
+            sum(1 for row in all_rows if bool(row.get("hidden_field_leak"))) / len(all_rows)
+        ),
+        "summarizer_typed_visibility_rate": (
+            sum(1 for row in all_rows if bool(row.get("summarizer_typed_visibility"))) / len(all_rows)
+        ),
+    }
+
+
+def _sorted_kind_tuple(values: list[str]) -> tuple[str, ...]:
+    return tuple(sorted(str(value).strip() for value in values if str(value).strip()))
+
+
+def _object_parity_gate(
+    *,
+    pack_type: str,
+    task_rows_by_mode: dict[str, list[dict[str, object]]],
+    text_guard_audit: dict[str, object],
+) -> dict[str, object]:
+    gate = {
+        "applicable": pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"},
+        "executor_mainline_object_ok": True,
+        "summarizer_mainline_object_ok": True,
+        "text_hidden_field_leak_zero": float(text_guard_audit.get("hidden_field_leak_rate", 0.0)) == 0.0,
+        "text_typed_visibility_zero": float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) == 0.0,
+        "text_memory_restore_compat_ok": True,
+        "failing_task_ids": [],
+        "passed": True,
+    }
+    if not gate["applicable"]:
+        return gate
+    failing: set[str] = set()
+    for row in task_rows_by_mode.get("protocol", []):
+        if row.get("status") != "completed":
+            continue
+        if str(row.get("summary_contract", "")).strip() != "actions_plus_evidence":
+            gate["summarizer_mainline_object_ok"] = False
+            failing.add(str(row.get("task_id", "")))
+        audit = row.get("transfer_truth_audit", {})
+        executor_kinds = _sorted_kind_tuple(
+            audit.get("executor_input_kinds", []) if isinstance(audit, dict) else []
+        )
+        if executor_kinds != FORMAL_DUAL_MODE_PROTOCOL_EXECUTOR_KINDS:
+            gate["executor_mainline_object_ok"] = False
+            failing.add(str(row.get("task_id", "")))
+    for row in task_rows_by_mode.get("text", []):
+        if row.get("status") != "completed":
+            continue
+        if str(row.get("summary_contract", "")).strip() != "actions_plus_evidence":
+            gate["summarizer_mainline_object_ok"] = False
+            failing.add(str(row.get("task_id", "")))
+        visibility = row.get("memory_restore_visibility", {})
+        restore_visible = bool(
+            visibility.get("typed_restore_visible")
+            if isinstance(visibility, dict)
+            else False
+        )
+        restore_compatible = bool(
+            visibility.get("restore_compatible_with_mode")
+            if isinstance(visibility, dict)
+            else True
+        )
+        if restore_visible or not restore_compatible:
+            gate["text_memory_restore_compat_ok"] = False
+            failing.add(str(row.get("task_id", "")))
+    gate["failing_task_ids"] = sorted(task_id for task_id in failing if task_id)
+    gate["passed"] = all(
+        bool(gate[key])
+        for key in (
+            "executor_mainline_object_ok",
+            "summarizer_mainline_object_ok",
+            "text_hidden_field_leak_zero",
+            "text_typed_visibility_zero",
+            "text_memory_restore_compat_ok",
+        )
+    )
+    return gate
+
+
+def _memory_replay_evidence_gate(
+    *,
+    pack_type: str,
+    task_rows_by_mode: dict[str, list[dict[str, object]]],
+) -> dict[str, object]:
+    gate = {
+        "applicable": pack_type in {"memory_reuse_v3", "memory_policy_controlled_v3"},
+        "passed": True,
+        "failing_task_ids": [],
+        "expected_rows": 0,
+        "matched_rows": 0,
+    }
+    if not gate["applicable"]:
+        return gate
+    failing: list[str] = []
+    expected_rows = 0
+    matched_rows = 0
+    for mode_rows in task_rows_by_mode.values():
+        for row in mode_rows:
+            expected_mode = str(row.get("expected_reuse_mode", "")).strip()
+            if expected_mode not in {"skip_execute", "skip_retrieve_execute"}:
+                continue
+            expected_rows += 1
+            reuse = row.get("reuse", {})
+            actual_mode = str(reuse.get("mode", "")).strip() if isinstance(reuse, dict) else ""
+            if actual_mode == expected_mode:
+                matched_rows += 1
+            else:
+                failing.append(str(row.get("task_id", "")))
+    gate["expected_rows"] = expected_rows
+    gate["matched_rows"] = matched_rows
+    gate["failing_task_ids"] = sorted(task_id for task_id in failing if task_id)
+    gate["passed"] = not failing
+    return gate
+
+
+def _build_headline_gates(
+    *,
+    pack_type: str,
+    withheld_reasons: list[str],
+    formal_stability_gate: dict[str, object],
+    object_parity_gate: dict[str, object],
+    memory_replay_evidence_gate: dict[str, object],
+    contest_formal_coverage_gate: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    communication_reasons = (
+        list(withheld_reasons) if pack_type == "contest_dual_mode_controlled_v3" else []
+    )
+    state_authenticity_reasons = []
+    if pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}:
+        if "typed_state_not_consumed" in withheld_reasons:
+            state_authenticity_reasons.append("typed_state_not_consumed")
+        if "typed_state_unexpected_executor_kind_seen" in withheld_reasons:
+            state_authenticity_reasons.append("typed_state_unexpected_executor_kind_seen")
+    memory_replay_reasons = []
+    if pack_type in {"memory_reuse_v3", "memory_policy_controlled_v3"}:
+        if "memory_replay_expectation_failed" in withheld_reasons:
+            memory_replay_reasons.append("memory_replay_expectation_failed")
+    object_parity_reasons = []
+    if pack_type == "memory_dual_mode_fairness_v3":
+        for reason in (
+            "dual_mode_object_parity_failed",
+            "executor_mainline_object_failed",
+            "summarizer_mainline_object_failed",
+            "text_hidden_field_leak_detected",
+            "text_typed_visibility_detected",
+            "text_memory_restore_compat_failed",
+        ):
+            if reason in withheld_reasons:
+                object_parity_reasons.append(reason)
+        if not bool(formal_stability_gate.get("passed")):
+            object_parity_reasons.append("formal_stability_gate_failed")
+    communication_allowed = pack_type == "contest_dual_mode_controlled_v3" and not communication_reasons
+    state_authenticity_allowed = (
+        pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}
+        and not state_authenticity_reasons
+    )
+    memory_replay_allowed = (
+        pack_type in {"memory_reuse_v3", "memory_policy_controlled_v3"}
+        and bool(memory_replay_evidence_gate.get("passed"))
+        and not memory_replay_reasons
+    )
+    object_parity_allowed = (
+        pack_type == "memory_dual_mode_fairness_v3"
+        and bool(object_parity_gate.get("passed"))
+        and bool(formal_stability_gate.get("passed"))
+        and not object_parity_reasons
+    )
+    return {
+        "communication_gate": {
+            "applicable": pack_type == "contest_dual_mode_controlled_v3",
+            "allowed": communication_allowed,
+            "withheld_reasons": communication_reasons,
+            "formal_stability_gate": formal_stability_gate,
+            "object_parity_gate": object_parity_gate,
+            "contest_formal_coverage_gate": contest_formal_coverage_gate,
+        },
+        "state_authenticity_gate": {
+            "applicable": pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"},
+            "allowed": state_authenticity_allowed,
+            "withheld_reasons": state_authenticity_reasons,
+        },
+        "memory_replay_gate": {
+            "applicable": pack_type in {"memory_reuse_v3", "memory_policy_controlled_v3"},
+            "allowed": memory_replay_allowed,
+            "withheld_reasons": memory_replay_reasons,
+            "memory_replay_evidence_gate": memory_replay_evidence_gate,
+        },
+        "object_parity_gate": {
+            "applicable": pack_type == "memory_dual_mode_fairness_v3",
+            "allowed": object_parity_allowed,
+            "withheld_reasons": object_parity_reasons,
+            "object_parity_gate": object_parity_gate,
+            "formal_stability_gate": formal_stability_gate,
+        },
+        "formal_stability_gate": {
+            "applicable": pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"},
+            "allowed": bool(formal_stability_gate.get("passed")),
+            "withheld_reasons": list(withheld_reasons) if pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"} else [],
+            "formal_stability_gate": formal_stability_gate,
+        },
+    }
+
+
+def _contest_formal_coverage_gate(tasks: list[SampleTask], repeat: int) -> dict[str, object]:
+    state_transfer_tasks = [task for task in tasks if task.benchmark_lane == "state_transfer"]
+    case_ids = sorted({task.case_id or task.task_id for task in state_transfer_tasks})
+    families = sorted({task.task_theme for task in state_transfer_tasks})
+    buckets = sorted({task.complexity_bucket for task in state_transfer_tasks})
+    text_case_ids = {
+        task.case_id or task.task_id
+        for task in state_transfer_tasks
+        if task.supports_mode("text")
+    }
+    protocol_case_ids = {
+        task.case_id or task.task_id
+        for task in state_transfer_tasks
+        if task.supports_mode("protocol")
+    }
+    matched_pair_count = len(text_case_ids & protocol_case_ids)
+    required_buckets = {"simple", "distractor", "ambiguous", "reusable"}
+    return {
+        "family_coverage": len(families),
+        "complexity_bucket_coverage": buckets,
+        "matched_pair_count": matched_pair_count,
+        "repeat": repeat,
+        "text_case_count": len(text_case_ids),
+        "protocol_case_count": len(protocol_case_ids),
+        "passed": (
+            len(families) >= 5
+            and set(buckets) == required_buckets
+            and matched_pair_count == 20
+            and repeat >= 10
+        ),
+    }
+
+
+def _summarize_transfer_truth_rows(rows: list[dict[str, object]]) -> dict[str, object]:
+    audits: list[dict[str, object]] = []
+    for row in rows:
+        audit = row.get("transfer_truth_audit")
+        if not isinstance(audit, dict):
+            audit = _finalize_transfer_truth_audit(row)
+        audits.append(audit)
+    if not audits:
+        return _empty_transfer_truth_summary()
+    typed_executor_any_consumption_flags = [
+        1.0 if any(kind in NON_TEXT_EXECUTOR_STATE_KINDS for kind in audit.get("executor_input_kinds", [])) else 0.0
+        for audit in audits
+    ]
+    typed_executor_minimal_consumption_flags = [
+        1.0 if _contains_all_kinds(audit.get("executor_input_kinds", []), MINIMAL_TYPED_EXECUTOR_KINDS) else 0.0
+        for audit in audits
+    ]
+    typed_executor_feature_bundle_consumption_flags = [
+        1.0 if _contains_all_kinds(audit.get("executor_input_kinds", []), FEATURE_ONLY_TYPED_EXECUTOR_KINDS) else 0.0
+        for audit in audits
+    ]
+    typed_executor_full_rich_consumption_flags = [
+        1.0 if _contains_all_kinds(audit.get("executor_input_kinds", []), FULL_RICH_AUDIT_EXECUTOR_KINDS) else 0.0
+        for audit in audits
+    ]
+    return {
+        "task_count": len(audits),
+        "executor_input_kind_sets": sorted(
+            {" + ".join(audit.get("executor_input_kinds", [])) for audit in audits}
+        ),
+        "retrieve_output_kind_sets": sorted(
+            {" + ".join(audit.get("retrieve_output_kinds", [])) for audit in audits}
+        ),
+        "summarizer_input_kind_sets": sorted(
+            {" + ".join(audit.get("summarizer_input_kinds", [])) for audit in audits}
+        ),
+        "typed_executor_any_consumption_rate": mean(typed_executor_any_consumption_flags),
+        "typed_executor_minimal_expected_consumption_rate": mean(typed_executor_minimal_consumption_flags),
+        "typed_executor_feature_bundle_consumption_rate": mean(typed_executor_feature_bundle_consumption_flags),
+        "typed_executor_full_rich_audit_consumption_rate": mean(typed_executor_full_rich_consumption_flags),
+        "executor_expected_kind_match_rate": mean(
+            1.0 if bool(audit.get("executor_expected_kind_match")) else 0.0 for audit in audits
+        ),
+        "executor_unexpected_kind_seen_rate": mean(
+            1.0 if audit.get("executor_unexpected_kinds") else 0.0 for audit in audits
+        ),
+        "feature_bundle_executor_visibility_rate": mean(
+            1.0 if "FEATURE_BUNDLE" in audit.get("executor_input_kinds", []) else 0.0
+            for audit in audits
+        ),
+        "channel_snapshot_executor_visibility_rate": mean(
+            1.0 if "CHANNEL_SNAPSHOT" in audit.get("executor_input_kinds", []) else 0.0
+            for audit in audits
+        ),
+        "tool_candidate_executor_visibility_rate": mean(
+            1.0 if "TOOL_CANDIDATE_SET" in audit.get("executor_input_kinds", []) else 0.0
+            for audit in audits
+        ),
+        "ranked_evidence_executor_visibility_rate": mean(
+            1.0 if "RANKED_EVIDENCE_BUNDLE" in audit.get("executor_input_kinds", []) else 0.0
+            for audit in audits
+        ),
+        "replay_eligibility_executor_visibility_rate": mean(
+            1.0 if "REPLAY_ELIGIBILITY_BUNDLE" in audit.get("executor_input_kinds", []) else 0.0
+            for audit in audits
+        ),
+        "summarizer_visibility_extra_typed_rate": mean(
+            1.0 if audit.get("summarizer_extra_typed_kinds") else 0.0 for audit in audits
+        ),
+        "summarizer_visibility_asymmetry_rate": mean(
+            1.0 if audit.get("summarizer_visibility_asymmetry") else 0.0 for audit in audits
+        ),
+        "executor_text_backed_statepool_rate": mean(
+            1.0 if bool(audit.get("executor_text_backed_statepool")) else 0.0 for audit in audits
+        ),
+        "executor_inline_text_rate": mean(
+            1.0 if bool(audit.get("executor_inline_text")) else 0.0 for audit in audits
+        ),
+    }
+
+
+def _task_mechanism_variant(row: dict[str, object]) -> str:
+    strategy = str(row.get("transfer_strategy", "")).strip()
+    handoff_profile = _task_handoff_profile(row)
+    disabled = {
+        str(value).strip()
+        for value in row.get("audit_disable_state_kinds", [])
+        if str(value).strip()
+    }
+    if strategy == "state_packet_minimal":
+        return "state_packet_minimal"
+    if strategy == "channel_store_hashref":
+        if handoff_profile == "protocol_full_rich_audit":
+            if not disabled:
+                return "full_rich_audit"
+            if len(disabled) == 1:
+                return f"disable_{next(iter(disabled)).lower()}"
+            return ""
+        if not disabled:
+            return "feature_bundle_only"
+        if disabled == {
+            "CHANNEL_SNAPSHOT",
+            "TOOL_CANDIDATE_SET",
+            "RANKED_EVIDENCE_BUNDLE",
+            "REPLAY_ELIGIBILITY_BUNDLE",
+        }:
+            return "feature_bundle_only"
+        if len(disabled) == 1 and "FEATURE_BUNDLE" in disabled:
+            return f"disable_{next(iter(disabled)).lower()}"
+    return ""
+
+
+def _mechanism_variant_summary(rows: list[dict[str, object]], *, expected_kind: str | None = None) -> dict[str, object]:
+    if not rows:
+        return {
+            "task_count": 0,
+            "admissible_match_rate": 0.0,
+            "acceptable_route_match_rate": 0.0,
+            "acceptable_tool_match_rate": 0.0,
+            "llm_total_tokens": 0.0,
+            "task_ms": 0.0,
+            "message_count": 0.0,
+            "control_bytes": 0.0,
+            "memory_hit_rate": 0.0,
+            "state_transfer_count": 0.0,
+            "expected_kind_executor_visibility_rate": 0.0,
+            "expected_kind_retrieve_presence_rate": 0.0,
+        }
+    mode = str(rows[0].get("mode", "protocol"))
+    control_key = _control_metric_key(mode)
+    expected_executor = 0.0
+    expected_retrieve = 0.0
+    for row in rows:
+        truth = row.get("transfer_truth_audit", {})
+        retrieve_payload = row.get("results", {}).get("retrieve", {}).get("payload", {})
+        executor_kinds = truth.get("executor_input_kinds", []) if isinstance(truth, dict) else []
+        if expected_kind:
+            expected_executor += 1.0 if expected_kind in executor_kinds else 0.0
+            retrieve_field = {
+                "FEATURE_BUNDLE": "feature_state_id",
+                "CHANNEL_SNAPSHOT": "channel_snapshot_state_id",
+                "TOOL_CANDIDATE_SET": "tool_candidate_state_id",
+                "RANKED_EVIDENCE_BUNDLE": "ranked_evidence_state_id",
+                "REPLAY_ELIGIBILITY_BUNDLE": "replay_eligibility_state_id",
+            }.get(expected_kind, "")
+            expected_retrieve += (
+                1.0 if retrieve_field and str(retrieve_payload.get(retrieve_field, "")).strip() else 0.0
+            )
+    return {
+        "task_count": len(rows),
+        "admissible_match_rate": mean(
+            1.0 if bool(row.get("case_contract_audit", {}).get("admissible_match")) else 0.0
+            for row in rows
+        ),
+        "acceptable_route_match_rate": mean(
+            1.0 if bool(row.get("case_contract_audit", {}).get("acceptable_route_match")) else 0.0
+            for row in rows
+        ),
+        "acceptable_tool_match_rate": mean(
+            1.0 if bool(row.get("case_contract_audit", {}).get("acceptable_tool_match")) else 0.0
+            for row in rows
+        ),
+        "llm_total_tokens": mean(float(row.get("metrics", {}).get("llm_total_tokens", 0.0)) for row in rows),
+        "task_ms": mean(float(row.get("metrics", {}).get("task_ms", 0.0)) for row in rows),
+        "message_count": mean(float(row.get("metrics", {}).get("message_count", 0.0)) for row in rows),
+        "control_bytes": mean(float(row.get("metrics", {}).get(control_key, 0.0)) for row in rows),
+        "memory_hit_rate": mean(float(row.get("metrics", {}).get("memory_hit_rate", 0.0)) for row in rows),
+        "state_transfer_count": mean(
+            float(row.get("metrics", {}).get("handoff_nontext_ref_count", 0.0)) for row in rows
+        ),
+        "expected_kind_executor_visibility_rate": (
+            expected_executor / len(rows) if expected_kind else 0.0
+        ),
+        "expected_kind_retrieve_presence_rate": (
+            expected_retrieve / len(rows) if expected_kind else 0.0
+        ),
+    }
+
+
+def _summarize_mechanism_audit_rows(rows: list[dict[str, object]]) -> dict[str, object]:
+    mechanism_rows = [row for row in rows if str(row.get("mode", "")).strip() == "protocol"]
+    if not mechanism_rows:
+        return _empty_mechanism_audit_summary()
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for row in mechanism_rows:
+        variant = _task_mechanism_variant(row)
+        if variant:
+            grouped.setdefault(variant, []).append(row)
+    if not grouped:
+        return _empty_mechanism_audit_summary()
+    disabled_kind_variants: dict[str, object] = {}
+    disabled_expectations = {
+        "disable_feature_bundle": "FEATURE_BUNDLE",
+        "disable_channel_snapshot": "CHANNEL_SNAPSHOT",
+        "disable_tool_candidate_set": "TOOL_CANDIDATE_SET",
+        "disable_ranked_evidence_bundle": "RANKED_EVIDENCE_BUNDLE",
+        "disable_replay_eligibility_bundle": "REPLAY_ELIGIBILITY_BUNDLE",
+    }
+    for variant, expected_kind in disabled_expectations.items():
+        if variant in grouped:
+            disabled_kind_variants[variant] = _mechanism_variant_summary(
+                grouped[variant],
+                expected_kind=expected_kind,
+            )
+    slimming_variants: dict[str, object] = {}
+    for variant in ("state_packet_minimal", "feature_bundle_only", "full_rich_audit"):
+        if variant in grouped:
+            slimming_variants[variant] = _mechanism_variant_summary(grouped[variant])
+    return {
+        "observed_task_runs": len(mechanism_rows),
+        "disabled_kind_variants": disabled_kind_variants,
+        "slimming_variants": slimming_variants,
+    }
+
+
 def _annotate_artifact_misfires(task_runs: list[dict[str, object]]) -> None:
     for task_run in task_runs:
         task_run["artifact_misfire"] = _build_artifact_misfire(task_run)
+        task_run["case_contract_audit"] = _build_case_contract_audit(task_run)
+        task_run["transfer_truth_audit"] = _finalize_transfer_truth_audit(task_run)
 
 
 def _relative_reduction(current: float, baseline: float) -> float:
@@ -792,6 +1908,7 @@ async def _run_mode_once(
     statepool_config: StatePoolConfig,
     executor_transport: str,
     executor_socket_path: str | None,
+    continue_on_task_failure: bool = False,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     session = _build_run_session(mode)
@@ -824,6 +1941,7 @@ async def _run_mode_once(
             task_id=task.task_id,
             task_group=task.task_group,
             task_theme=task.task_theme,
+            summary_contract=task.summary_contract,
             state_root=root / task.task_group / task.task_id,
             memory_db_path=group_db_paths[task.task_group],
             embedder=embedder,
@@ -846,6 +1964,21 @@ async def _run_mode_once(
                 )
                 actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
                 task_payload = {
+                    **(
+                        lambda transfer_strategy: (
+                            (lambda whole_lane, inline_boundary: {
+                                **_pure_text_guard_compat_payload(
+                                    whole_lane_guard=whole_lane.get("whole_lane_text_guard"),
+                                    inline_boundary_guard=inline_boundary.get("inline_text_boundary_guard"),
+                                ),
+                                **whole_lane,
+                                **inline_boundary,
+                            })(
+                                _whole_lane_text_guard_payload(ctx, transfer_strategy),
+                                _inline_text_boundary_guard_payload(ctx, transfer_strategy),
+                            )
+                        )
+                    )(task.runtime_profile.effective_transfer_strategy(mode)),
                     "task_id": task.task_id,
                     "task_group": task.task_group,
                     "task_order": task.task_order,
@@ -860,7 +1993,13 @@ async def _run_mode_once(
                     "artifact_expectations": dict(task.artifact_expectations),
                     "case_contract": dict(task.case_contract),
                     "expected_reuse_mode": task.expected_reuse_mode,
+                    "plan_source": task.plan_source,
+                    "complexity_bucket": task.complexity_bucket,
+                    "summary_contract": task.summary_contract,
                     "benchmark_lane": task.benchmark_lane,
+                    "mode": mode,
+                    "handoff_profile": task.runtime_profile.resolved_handoff_profile,
+                    "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
                     "transfer_strategy": _public_transfer_strategy(
                         task.runtime_profile.effective_transfer_strategy(mode),
                         mode,
@@ -876,10 +2015,6 @@ async def _run_mode_once(
                     "error": None,
                     "metrics": graph_result.metrics,
                     **_runtime_integrity_payload(ctx),
-                    **_pure_text_guard_payload(
-                        ctx,
-                        task.runtime_profile.effective_transfer_strategy(mode),
-                    ),
                     "memory_hits": graph_result.memory_hits,
                     "reuse": _reuse_artifact_payload(ctx, actual_reuse_mode),
                     "reuse_validation": {
@@ -890,8 +2025,16 @@ async def _run_mode_once(
                             actual_mode=actual_reuse_mode,
                         ),
                     },
+                    "memory_restore_visibility": _memory_restore_visibility_payload(ctx),
                     "state_refs": graph_result.state_refs,
                     "state_channels": graph_result.state_channels,
+                    "step_truth": {
+                        step_id: {
+                            "input_refs": _step_input_truth(ctx, step_id),
+                            "output_refs": _step_output_truth(result),
+                        }
+                        for step_id, result in graph_result.results.items()
+                    },
                     "cas_summary": ctx.statepool.cas_summary(),
                     "graph_state": graph_result.graph_state,
                     "results": {
@@ -916,6 +2059,21 @@ async def _run_mode_once(
                 await orchestrator.run_task(task, ctx)
                 actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
                 task_payload = {
+                    **(
+                        lambda transfer_strategy: (
+                            (lambda whole_lane, inline_boundary: {
+                                **_pure_text_guard_compat_payload(
+                                    whole_lane_guard=whole_lane.get("whole_lane_text_guard"),
+                                    inline_boundary_guard=inline_boundary.get("inline_text_boundary_guard"),
+                                ),
+                                **whole_lane,
+                                **inline_boundary,
+                            })(
+                                _whole_lane_text_guard_payload(ctx, transfer_strategy),
+                                _inline_text_boundary_guard_payload(ctx, transfer_strategy),
+                            )
+                        )
+                    )(task.runtime_profile.effective_transfer_strategy(mode)),
                     "task_id": task.task_id,
                     "task_group": task.task_group,
                     "task_order": task.task_order,
@@ -930,7 +2088,13 @@ async def _run_mode_once(
                     "artifact_expectations": dict(task.artifact_expectations),
                     "case_contract": dict(task.case_contract),
                     "expected_reuse_mode": task.expected_reuse_mode,
+                    "plan_source": task.plan_source,
+                    "complexity_bucket": task.complexity_bucket,
+                    "summary_contract": task.summary_contract,
                     "benchmark_lane": task.benchmark_lane,
+                    "mode": mode,
+                    "handoff_profile": task.runtime_profile.resolved_handoff_profile,
+                    "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
                     "transfer_strategy": _public_transfer_strategy(
                         task.runtime_profile.effective_transfer_strategy(mode),
                         mode,
@@ -946,10 +2110,6 @@ async def _run_mode_once(
                     "error": None,
                     "metrics": ctx.metrics.to_dict(),
                     **_runtime_integrity_payload(ctx),
-                    **_pure_text_guard_payload(
-                        ctx,
-                        task.runtime_profile.effective_transfer_strategy(mode),
-                    ),
                     "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                     "reuse": _reuse_artifact_payload(ctx, actual_reuse_mode),
                     "reuse_validation": {
@@ -960,6 +2120,7 @@ async def _run_mode_once(
                             actual_mode=actual_reuse_mode,
                         ),
                     },
+                    "memory_restore_visibility": _memory_restore_visibility_payload(ctx),
                     "state_refs": {
                         state_id: {
                             "kind": ref.kind,
@@ -969,6 +2130,13 @@ async def _run_mode_once(
                             "metadata": dict(ref.metadata),
                         }
                         for state_id, ref in ctx.state_refs.items()
+                    },
+                    "step_truth": {
+                        step_id: {
+                            "input_refs": _step_input_truth(ctx, step_id),
+                            "output_refs": _step_output_truth(result),
+                        }
+                        for step_id, result in ctx.results.items()
                     },
                     "cas_summary": ctx.statepool.cas_summary(),
                     "results": {
@@ -1008,6 +2176,21 @@ async def _run_mode_once(
             run_error = f"{type(exc).__name__}: {exc}"
             actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
             task_payload = {
+                **(
+                    lambda transfer_strategy: (
+                        (lambda whole_lane, inline_boundary: {
+                            **_pure_text_guard_compat_payload(
+                                whole_lane_guard=whole_lane.get("whole_lane_text_guard"),
+                                inline_boundary_guard=inline_boundary.get("inline_text_boundary_guard"),
+                            ),
+                            **whole_lane,
+                            **inline_boundary,
+                        })(
+                            _whole_lane_text_guard_payload(ctx, transfer_strategy),
+                            _inline_text_boundary_guard_payload(ctx, transfer_strategy),
+                        )
+                    )
+                )(task.runtime_profile.effective_transfer_strategy(mode)),
                 "task_id": task.task_id,
                 "task_group": task.task_group,
                 "task_order": task.task_order,
@@ -1022,7 +2205,13 @@ async def _run_mode_once(
                 "artifact_expectations": dict(task.artifact_expectations),
                 "case_contract": dict(task.case_contract),
                 "expected_reuse_mode": task.expected_reuse_mode,
+                "plan_source": task.plan_source,
+                "complexity_bucket": task.complexity_bucket,
+                "summary_contract": task.summary_contract,
                 "benchmark_lane": task.benchmark_lane,
+                "mode": mode,
+                "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
+                "handoff_profile": task.runtime_profile.resolved_handoff_profile,
                 "transfer_strategy": _public_transfer_strategy(
                     task.runtime_profile.effective_transfer_strategy(mode),
                     mode,
@@ -1038,10 +2227,6 @@ async def _run_mode_once(
                 "error": run_error,
                 "metrics": ctx.metrics.to_dict(),
                 **_runtime_integrity_payload(ctx),
-                **_pure_text_guard_payload(
-                    ctx,
-                    task.runtime_profile.effective_transfer_strategy(mode),
-                ),
                 "memory_hits": [hit.memory_id for hit in ctx.memory_hits],
                 "reuse": {
                     "applied": ctx.reuse_hit is not None,
@@ -1068,6 +2253,7 @@ async def _run_mode_once(
                     "actual_reuse_mode": actual_reuse_mode,
                     "matched_expectation": False,
                 },
+                "memory_restore_visibility": _memory_restore_visibility_payload(ctx),
                 "state_refs": {
                     state_id: {
                         "kind": ref.kind,
@@ -1077,6 +2263,13 @@ async def _run_mode_once(
                         "metadata": dict(ref.metadata),
                     }
                     for state_id, ref in ctx.state_refs.items()
+                },
+                "step_truth": {
+                    step_id: {
+                        "input_refs": _step_input_truth(ctx, step_id),
+                        "output_refs": _step_output_truth(result),
+                    }
+                    for step_id, result in ctx.results.items()
                 },
                 "cas_summary": ctx.statepool.cas_summary(),
                 "results": {},
@@ -1098,7 +2291,8 @@ async def _run_mode_once(
                 )
             task_runs.append(task_payload)
             ctx.memory_store.close()
-            break
+            if not continue_on_task_failure:
+                break
         finally:
             if not ctx.memory_store.conn is None:
                 try:
@@ -1225,6 +2419,54 @@ def _summarize_reuse_rows(
     }
 
 
+def _empty_case_contract_summary() -> dict[str, object]:
+    return {
+        "task_count": 0,
+        "observed_task_runs": 0,
+        "case_type_counts": {},
+        "label_counts": {label: 0 for label in CASE_CORRECTNESS_LABELS},
+        **{field: 0.0 for field in CASE_CONTRACT_PRIMARY_RATE_FIELDS},
+    }
+
+
+def _summarize_case_contract_rows(rows: list[dict[str, object]]) -> dict[str, object]:
+    audits: list[dict[str, object]] = []
+    for row in rows:
+        audit = row.get("case_contract_audit")
+        if not isinstance(audit, dict):
+            audit = _build_case_contract_audit(row)
+        audits.append(audit)
+    if not audits:
+        return _empty_case_contract_summary()
+    count = len(audits)
+    label_counts = {
+        label: sum(1 for audit in audits if str(audit.get("correctness_label", "")) == label)
+        for label in CASE_CORRECTNESS_LABELS
+    }
+    case_type_counts: dict[str, int] = {}
+    for audit in audits:
+        case_type = str(audit.get("case_type", "")).strip() or "unknown"
+        case_type_counts[case_type] = case_type_counts.get(case_type, 0) + 1
+    return {
+        "task_count": len({str(audit.get("case_id", "")).strip() for audit in audits if str(audit.get("case_id", "")).strip()}),
+        "observed_task_runs": count,
+        "case_type_counts": case_type_counts,
+        "label_counts": label_counts,
+        "route_exact_rate": mean(1.0 if bool(audit.get("route_exact")) else 0.0 for audit in audits),
+        "tool_exact_rate": mean(1.0 if bool(audit.get("tool_exact")) else 0.0 for audit in audits),
+        "exact_match_rate": mean(1.0 if bool(audit.get("exact_match")) else 0.0 for audit in audits),
+        "admissible_match_rate": mean(
+            1.0 if bool(audit.get("admissible_match")) else 0.0 for audit in audits
+        ),
+        "abstention_rate": mean(
+            1.0 if bool(audit.get("abstention_match")) else 0.0 for audit in audits
+        ),
+        "wrong_family_rate": mean(
+            1.0 if bool(audit.get("wrong_family")) else 0.0 for audit in audits
+        ),
+    }
+
+
 def _empty_artifact_misfire_summary() -> dict[str, object]:
     return {
         "task_count": 0,
@@ -1233,7 +2475,7 @@ def _empty_artifact_misfire_summary() -> dict[str, object]:
         "matched_field_runs": 0,
         "mismatched_task_runs": 0,
         "field_match_rate": 0.0,
-        "task_match_rate": 0.0,
+        "exact_match_rate": 0.0,
         "fields": {
             field_name: {
                 "expected_count": 0,
@@ -1273,7 +2515,7 @@ def _summarize_artifact_misfire_rows(rows: list[dict[str, object]]) -> dict[str,
         "matched_field_runs": matched_field_runs,
         "mismatched_task_runs": sum(1 for _, audit in audits if not bool(audit["all_matched"])),
         "field_match_rate": (matched_field_runs / expected_field_runs) if expected_field_runs else 0.0,
-        "task_match_rate": mean(1.0 if bool(audit["all_matched"]) else 0.0 for _, audit in audits),
+        "exact_match_rate": mean(1.0 if bool(audit["all_matched"]) else 0.0 for _, audit in audits),
         "fields": field_rows,
     }
 
@@ -1395,6 +2637,7 @@ def _aggregate_message_breakdown(runs: list[dict[str, object]]) -> list[dict[str
 
 def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
     completed_runs = [run for run in runs if run["status"] == "completed"]
+    usable_runs = [run for run in runs if run.get("tasks")]
     failures = [
         {
             "run_index": run["run_index"],
@@ -1403,7 +2646,7 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         for run in runs
         if run["status"] != "completed"
     ]
-    if not completed_runs:
+    if not usable_runs:
         return {
             "run_count": 0,
             "failure_count": len(failures),
@@ -1421,22 +2664,26 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
             "message_breakdown": [],
             "stability": {},
             "misfire_audit": {
+                "case_contract": _empty_case_contract_summary(),
                 "artifact": _empty_artifact_misfire_summary(),
                 "reuse": _summarize_reuse_misfire_rows([]),
             },
+            "transfer_truth": _empty_transfer_truth_summary(),
+            "mechanism_audit": _empty_mechanism_audit_summary(),
+            "guard_audit": _empty_guard_audit_summary(),
         }
 
     task_order_lookup = [
         (str(task["task_id"]), str(task["task_group"]), int(task["task_order"]))
-        for task in completed_runs[0]["tasks"]
+        for task in usable_runs[0]["tasks"]
         if task["status"] == "completed"
     ]
-    group_lookup = [str(group["task_group"]) for group in completed_runs[0]["task_groups"]]
+    group_lookup = [str(group["task_group"]) for group in usable_runs[0]["task_groups"]]
     task_summaries = []
     for task_id, task_group, task_order in task_order_lookup:
         matching = [
             task_run
-            for run in completed_runs
+            for run in usable_runs
             for task_run in run["tasks"]
             if task_run["task_id"] == task_id and task_run["status"] == "completed"
         ]
@@ -1446,7 +2693,7 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
                 "task_group": task_group,
                 "task_order": task_order,
                 **_average_metric_rows([item["metrics"] for item in matching]),
-                **_summarize_reuse_rows(matching, str(completed_runs[0]["mode"])),
+                **_summarize_reuse_rows(matching, str(usable_runs[0]["mode"])),
                 "baseline_task_id": str(matching[0]["reuse_effect"]["baseline_task_id"]),
             }
         )
@@ -1454,13 +2701,13 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
     for task_group in group_lookup:
         matching = [
             group_summary
-            for run in completed_runs
+            for run in usable_runs
             for group_summary in run["task_groups"]
             if group_summary["task_group"] == task_group
         ]
         task_rows = [
             task_run
-            for run in completed_runs
+            for run in usable_runs
             for task_run in run["tasks"]
             if task_run["task_group"] == task_group and task_run["status"] == "completed"
         ]
@@ -1469,56 +2716,56 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
                 "task_group": task_group,
                 "task_ids": list(matching[0]["task_ids"]),
                 **_average_metric_rows([item["aggregate"] for item in matching]),
-                **_summarize_reuse_rows(task_rows, str(completed_runs[0]["mode"])),
+                **_summarize_reuse_rows(task_rows, str(usable_runs[0]["mode"])),
                 "baseline_task_id": str(matching[0]["task_ids"][0]),
             }
         )
-    task_rows = [task_run for run in completed_runs for task_run in run["tasks"]]
+    task_rows = [task_run for run in usable_runs for task_run in run["tasks"]]
     reuse_slices = _aggregate_named_task_summaries(
         task_runs=task_rows,
-        mode=str(completed_runs[0]["mode"]),
+        mode=str(usable_runs[0]["mode"]),
         classifier=_task_reuse_slice,
         order=REUSE_SLICE_ORDER,
         key_name="reuse_slice",
     )
     reuse_axes = _aggregate_named_task_summaries(
         task_runs=task_rows,
-        mode=str(completed_runs[0]["mode"]),
+        mode=str(usable_runs[0]["mode"]),
         classifier=_task_reuse_axis,
         order=REUSE_AXIS_ORDER,
         key_name="reuse_axis",
     )
     benchmark_lanes = _aggregate_named_task_summaries(
         task_runs=task_rows,
-        mode=str(completed_runs[0]["mode"]),
+        mode=str(usable_runs[0]["mode"]),
         classifier=_task_benchmark_lane,
         order=BENCHMARK_LANE_ORDER,
         key_name="benchmark_lane",
     )
     transfer_strategies = _aggregate_named_task_summaries(
         task_runs=task_rows,
-        mode=str(completed_runs[0]["mode"]),
+        mode=str(usable_runs[0]["mode"]),
         classifier=_task_transfer_strategy,
         order=TRANSFER_STRATEGY_ORDER,
         key_name="transfer_strategy",
     )
     memory_policies = _aggregate_named_task_summaries(
         task_runs=task_rows,
-        mode=str(completed_runs[0]["mode"]),
+        mode=str(usable_runs[0]["mode"]),
         classifier=_task_memory_policy,
         order=MEMORY_POLICY_ORDER,
         key_name="memory_policy",
     )
-    setup = _average_counter_rows([run["setup_metrics"] for run in completed_runs])
+    setup = _average_counter_rows([run["setup_metrics"] for run in usable_runs])
     steady_state = _merge_reuse_summary(
-        _average_metric_rows([run["steady_state_aggregate"] for run in completed_runs]),
+        _average_metric_rows([run["steady_state_aggregate"] for run in usable_runs]),
         task_rows,
-        str(completed_runs[0]["mode"]),
+        str(usable_runs[0]["mode"]),
     )
     aggregate = _merge_reuse_summary(
         _combine_setup_and_steady(setup, steady_state),
         task_rows,
-        str(completed_runs[0]["mode"]),
+        str(usable_runs[0]["mode"]),
     )
     return {
         "run_count": len(completed_runs),
@@ -1534,12 +2781,16 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         "transfer_strategies": transfer_strategies,
         "memory_policies": memory_policies,
         "tasks": task_summaries,
-        "message_breakdown": _aggregate_message_breakdown(completed_runs),
-        "stability": _build_stability_summary(completed_runs),
+        "message_breakdown": _aggregate_message_breakdown(usable_runs),
+        "stability": _build_stability_summary(usable_runs),
         "misfire_audit": {
+            "case_contract": _summarize_case_contract_rows(task_rows),
             "artifact": _summarize_artifact_misfire_rows(task_rows),
             "reuse": _summarize_reuse_misfire_rows(task_rows),
         },
+        "transfer_truth": _summarize_transfer_truth_rows(task_rows),
+        "mechanism_audit": _summarize_mechanism_audit_rows(task_rows),
+        "guard_audit": _summarize_guard_rows(task_rows),
     }
 
 
@@ -1613,6 +2864,8 @@ def _build_stability_summary(runs: list[dict[str, object]]) -> dict[str, dict[st
         "planner_total_tokens": [float(run["aggregate"]["planner_total_tokens"]) for run in runs],
         "summarizer_total_tokens": [float(run["aggregate"]["summarizer_total_tokens"]) for run in runs],
         "memory_hit_rate": [float(run["aggregate"]["memory_hit_rate"]) for run in runs],
+        "state_transfer_count": [float(run["aggregate"]["handoff_nontext_ref_count"]) for run in runs],
+        "state_transfer_bytes": [float(run["aggregate"]["handoff_nontext_bytes"]) for run in runs],
         "skipped_step_count": [float(run["aggregate"]["skipped_step_count"]) for run in runs],
         "reuse_gain": [float(run["aggregate"]["reuse_gain"]) for run in runs],
         "planner_ms": [float(run["aggregate"]["planner_ms"]) for run in runs],
@@ -1805,6 +3058,124 @@ def _build_result(
     mode_runs: dict[str, list[dict[str, object]]],
 ) -> dict[str, object]:
     summary = {mode: _aggregate_mode_runs(runs) for mode, runs in mode_runs.items()}
+    task_rows_by_mode = {
+        mode: [
+            task_row
+            for run in runs
+            for task_row in run.get("tasks", [])
+            if isinstance(task_row, dict)
+        ]
+        for mode, runs in mode_runs.items()
+    }
+    text_guard_audit = (
+        summary.get("text", {}).get("guard_audit", {})
+        if isinstance(summary.get("text", {}), dict)
+        else {}
+    )
+    protocol_transfer_truth = (
+        summary.get("protocol", {}).get("transfer_truth", {})
+        if isinstance(summary.get("protocol", {}), dict)
+        else {}
+    )
+    protocol_stability = (
+        summary.get("protocol", {}).get("stability", {})
+        if isinstance(summary.get("protocol", {}), dict)
+        else {}
+    )
+    text_stability = (
+        summary.get("text", {}).get("stability", {})
+        if isinstance(summary.get("text", {}), dict)
+        else {}
+    )
+    withheld_reasons: list[str] = []
+    object_parity_gate = _object_parity_gate(
+        pack_type=str(task_set_metadata.get("pack_type", "ad_hoc")),
+        task_rows_by_mode=task_rows_by_mode,
+        text_guard_audit=text_guard_audit,
+    )
+    memory_replay_evidence_gate = _memory_replay_evidence_gate(
+        pack_type=str(task_set_metadata.get("pack_type", "ad_hoc")),
+        task_rows_by_mode=task_rows_by_mode,
+    )
+    if float(text_guard_audit.get("whole_lane_text_guard_pass_rate", 0.0)) < 1.0:
+        withheld_reasons.append("whole_lane_text_guard_incomplete")
+    if float(text_guard_audit.get("hidden_field_leak_rate", 0.0)) > 0.0:
+        withheld_reasons.append("text_hidden_field_leak_detected")
+    if float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) > 0.0:
+        withheld_reasons.append("text_summarizer_typed_visibility_detected")
+    pack_type = str(task_set_metadata.get("pack_type", "ad_hoc"))
+    contest_coverage_gate = _contest_formal_coverage_gate(tasks, repeat)
+    if pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}:
+        if float(protocol_transfer_truth.get("typed_executor_minimal_expected_consumption_rate", 0.0)) <= 0.0:
+            withheld_reasons.append("typed_state_not_consumed")
+        if float(protocol_transfer_truth.get("executor_unexpected_kind_seen_rate", 0.0)) > 0.0:
+            withheld_reasons.append("typed_state_unexpected_executor_kind_seen")
+    if pack_type == "typed_state_full_rich_audit_v3":
+        if float(protocol_transfer_truth.get("typed_executor_full_rich_audit_consumption_rate", 0.0)) <= 0.0:
+            withheld_reasons.append("full_rich_audit_state_not_consumed")
+    if pack_type == "contest_dual_mode_controlled_v3":
+        if not bool(contest_coverage_gate.get("passed")):
+            withheld_reasons.append("contest_formal_coverage_incomplete")
+    if pack_type == "memory_dual_mode_fairness_v3" and not bool(object_parity_gate.get("passed")):
+        withheld_reasons.append("dual_mode_object_parity_failed")
+    if memory_replay_evidence_gate["applicable"] and not bool(memory_replay_evidence_gate.get("passed")):
+        withheld_reasons.append("memory_replay_expectation_failed")
+    if object_parity_gate["applicable"] and not bool(object_parity_gate.get("passed")):
+        if not bool(object_parity_gate.get("executor_mainline_object_ok")):
+            withheld_reasons.append("executor_mainline_object_failed")
+        if not bool(object_parity_gate.get("summarizer_mainline_object_ok")):
+            withheld_reasons.append("summarizer_mainline_object_failed")
+        if not bool(object_parity_gate.get("text_hidden_field_leak_zero")):
+            withheld_reasons.append("text_hidden_field_leak_detected")
+        if not bool(object_parity_gate.get("text_typed_visibility_zero")):
+            withheld_reasons.append("text_typed_visibility_detected")
+        if not bool(object_parity_gate.get("text_memory_restore_compat_ok")):
+            withheld_reasons.append("text_memory_restore_compat_failed")
+    formal_stability_gate = {
+        "required_repeat": 10,
+        "repeat_satisfied": repeat >= 10,
+        "passed": False,
+        "mode_checks": {},
+    }
+    if pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"}:
+        mode_checks: dict[str, object] = {}
+        for mode_name, mode_summary, mode_stability in (
+            ("text", summary.get("text", {}), text_stability),
+            ("protocol", summary.get("protocol", {}), protocol_stability),
+        ):
+            if not isinstance(mode_summary, dict) or not mode_summary:
+                continue
+            aggregate = mode_summary.get("aggregate", {})
+            check = {
+                "run_count": int(mode_summary.get("run_count", 0)),
+                "failure_count": int(mode_summary.get("failure_count", 0)),
+                "message_count_mean": float(mode_stability.get("message_count", {}).get("mean", 0.0)),
+                "control_bytes_mean": float(mode_stability.get("control_bytes", {}).get("mean", 0.0)),
+                "state_transfer_count_mean": float(mode_stability.get("state_transfer_count", {}).get("mean", 0.0)),
+                "memory_hit_rate_mean": float(mode_stability.get("memory_hit_rate", {}).get("mean", 0.0)),
+                "task_ms_mean": float(mode_stability.get("task_ms", {}).get("mean", 0.0)),
+                "expectation_match_rate": float(aggregate.get("expectation_match_rate", 0.0)),
+                "has_memory_hit_metric": "memory_hit_rate" in mode_stability,
+                "passed": False,
+            }
+            check["passed"] = (
+                formal_stability_gate["repeat_satisfied"]
+                and check["run_count"] >= 10
+                and check["failure_count"] == 0
+                and check["message_count_mean"] > 0.0
+                and check["control_bytes_mean"] > 0.0
+                and check["task_ms_mean"] > 0.0
+                and check["has_memory_hit_metric"]
+                and (
+                    mode_name != "protocol"
+                    or check["state_transfer_count_mean"] > 0.0
+                )
+            )
+            mode_checks[mode_name] = check
+        formal_stability_gate["mode_checks"] = mode_checks
+        formal_stability_gate["passed"] = bool(mode_checks) and all(
+            bool(check.get("passed")) for check in mode_checks.values()
+        )
     expected_reuse_mode_counts = {
         expected_mode: sum(1 for task in tasks if task.expected_reuse_mode == expected_mode)
         for expected_mode in ("none", "assist", "skip_execute", "skip_retrieve_execute")
@@ -1858,6 +3229,14 @@ def _build_result(
         field_name: sum(1 for task in tasks if task.artifact_expectations[field_name])
         for field_name in MISFIRE_FIELD_ORDER
     }
+    headline_gates = _build_headline_gates(
+        pack_type=pack_type,
+        withheld_reasons=withheld_reasons,
+        formal_stability_gate=formal_stability_gate,
+        object_parity_gate=object_parity_gate,
+        memory_replay_evidence_gate=memory_replay_evidence_gate,
+        contest_formal_coverage_gate=contest_coverage_gate,
+    )
     return {
         "manifest": {
             "task_set_path": str(Path(task_set_path)),
@@ -1866,10 +3245,23 @@ def _build_result(
             "task_set_description": str(task_set_metadata.get("description", "")),
             "task_set_reading_contract": str(task_set_metadata.get("reading_contract", "")),
             "task_set_claim_lanes": list(task_set_metadata.get("claim_lanes", [])),
+            "task_set_single_variable": bool(task_set_metadata.get("single_variable", False)),
+            "task_set_variable_axes": list(task_set_metadata.get("variable_axes", [])),
+            "task_set_public_surface": str(task_set_metadata.get("public_surface", "")),
             "support_evidence_only": bool(task_set_metadata.get("support_only", False)),
+            "audit_evidence_only": bool(task_set_metadata.get("audit_only", False)),
             "formal_secondary_evidence": bool(
                 task_set_metadata.get("formal_secondary", False)
             ),
+            "benchmark_version": str(task_set_metadata.get("benchmark_version", "v3")),
+            "historical_pack_type": str(task_set_metadata.get("historical_pack_type", "")),
+            "state_transfer_headline_allowed": not withheld_reasons,
+            "withheld_headline_reason": ",".join(withheld_reasons),
+            "headline_gates": headline_gates,
+            "formal_stability_gate": formal_stability_gate,
+            "object_parity_gate": object_parity_gate,
+            "memory_replay_evidence_gate": memory_replay_evidence_gate,
+            "contest_formal_coverage_gate": contest_coverage_gate,
             "task_count": len(tasks),
             "continuous_task_count": len(tasks),
             "task_mode_counts": task_mode_counts,
@@ -1877,6 +3269,14 @@ def _build_result(
             "reuse_expectation_policy": "benchmark_label_only",
             "expected_reuse_mode_counts": expected_reuse_mode_counts,
             "benchmark_lane_counts": benchmark_lane_counts,
+            "complexity_bucket_counts": {
+                bucket: sum(1 for task in tasks if task.complexity_bucket == bucket)
+                for bucket in ("simple", "distractor", "ambiguous", "reusable")
+            },
+            "summary_contract_counts": {
+                contract: sum(1 for task in tasks if task.summary_contract == contract)
+                for contract in ("actions_plus_evidence", "protocol_handoff_audit")
+            },
             "transfer_strategy_counts": transfer_strategy_counts,
             "channel_form_counts": channel_form_counts,
             "memory_policy_counts": memory_policy_counts,
@@ -1951,7 +3351,11 @@ async def run_benchmark(
         "description": task_bundle.metadata.description,
         "reading_contract": task_bundle.metadata.reading_contract,
         "claim_lanes": list(task_bundle.metadata.claim_lanes),
+        "single_variable": task_bundle.metadata.single_variable,
+        "variable_axes": list(task_bundle.metadata.variable_axes),
+        "public_surface": task_bundle.metadata.public_surface,
         "support_only": task_bundle.metadata.support_only,
+        "audit_only": task_bundle.metadata.audit_only,
         "formal_secondary": task_bundle.metadata.formal_secondary,
     }
     active_embedder = embedder or SentenceTransformerEmbeddingProvider(embedder_model_path)
@@ -1988,6 +3392,7 @@ async def run_benchmark(
                             statepool_config=active_statepool_config,
                             executor_transport=executor_transport,
                             executor_socket_path=active_socket_path,
+                            continue_on_task_failure=task_bundle.metadata.audit_only,
                             progress_callback=progress_callback,
                         )
                     )
@@ -2194,7 +3599,11 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         "task_ms_delta",
     ]
     rows = []
-    for task_id in sorted(text_tasks, key=lambda item: (text_tasks[item]["task_group"], text_tasks[item]["task_order"], item)):
+    shared_task_ids = sorted(
+        set(text_tasks).intersection(protocol_tasks),
+        key=lambda item: (text_tasks[item]["task_group"], text_tasks[item]["task_order"], item),
+    )
+    for task_id in shared_task_ids:
         rows.append(_compare_row("task", task_id, text_tasks[task_id], protocol_tasks[task_id], summary["text"], summary["protocol"]))
     for task_group in sorted(text_groups):
         rows.append(_compare_row("task_group", task_group, text_groups[task_group], protocol_groups[task_group], summary["text"], summary["protocol"]))
@@ -2486,6 +3895,7 @@ def _aggregate_filtered_mode_task_runs(
     *,
     benchmark_lane: str | None = None,
     transfer_strategy: str | None = None,
+    plan_source: str | None = None,
 ) -> dict[str, object] | None:
     matched_rows: list[dict[str, object]] = []
     task_ids: list[str] = []
@@ -2497,6 +3907,8 @@ def _aggregate_filtered_mode_task_runs(
                 continue
             if transfer_strategy is not None and str(task_run.get("transfer_strategy", "")) != transfer_strategy:
                 continue
+            if plan_source is not None and str(task_run.get("plan_source", "")) != plan_source:
+                continue
             matched_rows.append(task_run)
             task_id = str(task_run.get("task_id", "")).strip()
             if task_id and task_id not in task_ids:
@@ -2507,6 +3919,8 @@ def _aggregate_filtered_mode_task_runs(
         "task_count": len(task_ids),
         "task_ids": task_ids,
         "executor_handoff_text_bytes": _mean_pure_text_guard_bytes(matched_rows),
+        "case_contract_audit": _summarize_case_contract_rows(matched_rows),
+        "transfer_truth": _summarize_transfer_truth_rows(matched_rows),
         **_merge_reuse_summary(
             _average_metric_rows([row["metrics"] for row in matched_rows]),
             matched_rows,
@@ -2553,9 +3967,30 @@ def _report_header_lines(result: dict[str, object]) -> list[str]:
     reading_contract = str(manifest.get("task_set_reading_contract", "")).strip()
     if reading_contract:
         lines.append(f"- Task set reading contract: `{reading_contract}`")
+    public_surface = str(manifest.get("task_set_public_surface", "")).strip()
+    if public_surface:
+        lines.append(f"- Public surface: `{public_surface}`")
+    lines.append(
+        f"- Single-variable contract: `{'yes' if bool(manifest.get('task_set_single_variable', False)) else 'no'}`"
+    )
+    variable_axes = [
+        str(item) for item in manifest.get("task_set_variable_axes", []) if str(item).strip()
+    ]
+    if variable_axes:
+        lines.append(f"- Variable axes: `{', '.join(variable_axes)}`")
+    benchmark_version = str(manifest.get("benchmark_version", "")).strip()
+    if benchmark_version:
+        lines.append(f"- Benchmark version: `{benchmark_version}`")
+    historical_pack_type = str(manifest.get("historical_pack_type", "")).strip()
+    if historical_pack_type:
+        lines.append(f"- Historical source pack type: `{historical_pack_type}`")
     if bool(manifest.get("support_evidence_only", False)):
         lines.append(
             "- Pack boundary: `support evidence only; do not promote this pack into formal headline claims without a separate controlled rerun`"
+        )
+    if bool(manifest.get("audit_evidence_only", False)):
+        lines.append(
+            "- Pack boundary: `audit-only evidence; use this pack to locate contamination, visibility asymmetry, or metric-readout issues before changing formal wording`"
         )
     if bool(manifest.get("formal_secondary_evidence", False)):
         lines.append(
@@ -2620,6 +4055,241 @@ def _append_protocol_only_handoff_table(
     )
 
 
+def _append_case_contract_primary_metrics(
+    lines: list[str],
+    *,
+    audit: dict[str, object],
+    include_wrong_family: bool = True,
+) -> None:
+    lines.extend(
+        [
+            "",
+            "## Primary Metrics",
+            "",
+            "| metric | value |",
+            "| --- | ---: |",
+            f"| route_exact_rate | {float(audit.get('route_exact_rate', 0.0)):.2f} |",
+            f"| tool_exact_rate | {float(audit.get('tool_exact_rate', 0.0)):.2f} |",
+            f"| exact_match_rate | {float(audit.get('exact_match_rate', 0.0)):.2f} |",
+            f"| admissible_match_rate | {float(audit.get('admissible_match_rate', 0.0)):.2f} |",
+            f"| abstention_rate | {float(audit.get('abstention_rate', 0.0)):.2f} |",
+        ]
+    )
+    if include_wrong_family:
+        lines.append(f"| wrong_family_rate | {float(audit.get('wrong_family_rate', 0.0)):.2f} |")
+
+
+def _append_case_type_breakdown(lines: list[str], *, audit: dict[str, object]) -> None:
+    lines.extend(
+        [
+            "",
+            "## Case-Type Breakdown",
+            "",
+            "| case_type | task_runs |",
+            "| --- | ---: |",
+        ]
+    )
+    case_type_counts = audit.get("case_type_counts", {})
+    if isinstance(case_type_counts, dict) and case_type_counts:
+        for case_type, count in sorted(case_type_counts.items()):
+            lines.append(f"| {case_type} | {int(count)} |")
+    else:
+        lines.append("| none | 0 |")
+
+
+def _append_pack_contract_section(
+    lines: list[str],
+    *,
+    contract: str,
+    single_variable: str,
+) -> None:
+    lines.extend(
+        [
+            "",
+            "## Pack Contract",
+            "",
+            f"- {contract}",
+            "",
+            "## Single Variable",
+            "",
+            f"- {single_variable}",
+        ]
+    )
+
+
+def _append_secondary_diagnostics(
+    lines: list[str],
+    *,
+    aggregate: dict[str, object],
+    extra_metrics: tuple[str, ...],
+) -> None:
+    lines.extend(
+        [
+            "",
+            "## Secondary Diagnostics",
+            "",
+            "| metric | value |",
+            "| --- | ---: |",
+        ]
+    )
+    for metric_name in extra_metrics:
+        lines.append(f"| {metric_name} | {float(aggregate.get(metric_name, 0.0)):.2f} |")
+
+
+def _append_metric_reading_table(lines: list[str]) -> None:
+    lines.extend(
+        [
+            "",
+            "## Metric Reading Contract",
+            "",
+            "| metric | what it measures | read as | do not read as |",
+            "| --- | --- | --- | --- |",
+            "| handoff_wire_bytes | serialized StateRefLite pointer bytes on the wire | real carrier wire cost | local payload size or whole-task cost |",
+            "| handoff_payload_bytes | local StatePool payload bytes reachable by the executor | local accessible payload size | protocol wire transfer size |",
+            "| protocol_bytes | total protocol control-plane bytes across the run | whole-task protocol control cost | executor handoff-only cost |",
+            "| control_bytes | total control-plane bytes across the run | whole-task control cost | pure handoff-only cost |",
+            "| llm_total_tokens | planner plus summarizer token cost under current visibility | end-to-end token cost | isolated executor handoff cost |",
+            "| task_ms | whole-task elapsed time | end-to-end runtime | pure carrier overhead |",
+            "| executor_handoff_text_bytes | executor-facing text bytes for pure-text lanes | executor text exposure | whole-lane text purity |",
+        ]
+    )
+
+
+def _append_audit_lane_metric_table(
+    lines: list[str],
+    *,
+    result: dict[str, object],
+    strategies: tuple[str, ...],
+    title: str = "Per-Lane Diagnostic Metrics",
+) -> None:
+    rows: list[tuple[str, dict[str, object]]] = []
+    for strategy in strategies:
+        aggregate = _aggregate_filtered_mode_task_runs(
+            result,
+            "protocol",
+            benchmark_lane="state_transfer",
+            transfer_strategy=strategy,
+        )
+        if aggregate is not None:
+            rows.append((strategy, aggregate))
+    if not rows:
+        return
+    lines.extend(
+        [
+            "",
+            f"## {title}",
+            "",
+            "| handoff_strategy | task_count | protocol_bytes | handoff_wire_bytes | handoff_payload_bytes | executor_handoff_text_bytes | task_ms |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for strategy, aggregate in rows:
+        lines.append(
+            f"| {strategy} | {int(aggregate['task_count'])} | {float(aggregate.get('protocol_bytes', 0.0)):.2f} | "
+            f"{float(aggregate.get('handoff_wire_bytes', 0.0)):.2f} | "
+            f"{float(aggregate.get('handoff_payload_bytes', aggregate['handoff_bytes'])):.2f} | "
+            f"{float(aggregate.get('executor_handoff_text_bytes', 0.0)):.2f} | "
+            f"{float(aggregate.get('task_ms', 0.0)):.2f} |"
+        )
+
+
+def _append_transfer_truth_summary(lines: list[str], *, truth: dict[str, object]) -> None:
+    lines.extend(
+        [
+            "",
+            "## Transfer Truth Summary",
+            "",
+            "- Primary object note: `state_packet_minimal` means executor input contains `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET`.",
+            "- Audit object note: `FEATURE_BUNDLE`, `CHANNEL_SNAPSHOT`, `TOOL_CANDIDATE_SET`, `RANKED_EVIDENCE_BUNDLE`, and `REPLAY_ELIGIBILITY_BUNDLE` are support/audit visibility unless the pack explicitly says otherwise.",
+            "",
+            "| metric | value |",
+            "| --- | ---: |",
+            f"| typed_executor_any_consumption_rate | {float(truth.get('typed_executor_any_consumption_rate', 0.0)):.2f} |",
+            f"| typed_executor_minimal_expected_consumption_rate | {float(truth.get('typed_executor_minimal_expected_consumption_rate', 0.0)):.2f} |",
+            f"| typed_executor_feature_bundle_consumption_rate | {float(truth.get('typed_executor_feature_bundle_consumption_rate', 0.0)):.2f} |",
+            f"| typed_executor_full_rich_audit_consumption_rate | {float(truth.get('typed_executor_full_rich_audit_consumption_rate', 0.0)):.2f} |",
+            f"| executor_expected_kind_match_rate | {float(truth.get('executor_expected_kind_match_rate', 0.0)):.2f} |",
+            f"| executor_unexpected_kind_seen_rate | {float(truth.get('executor_unexpected_kind_seen_rate', 0.0)):.2f} |",
+            f"| feature_bundle_executor_visibility_rate | {float(truth.get('feature_bundle_executor_visibility_rate', 0.0)):.2f} |",
+            f"| channel_snapshot_executor_visibility_rate | {float(truth.get('channel_snapshot_executor_visibility_rate', 0.0)):.2f} |",
+            f"| tool_candidate_executor_visibility_rate | {float(truth.get('tool_candidate_executor_visibility_rate', 0.0)):.2f} |",
+            f"| ranked_evidence_executor_visibility_rate | {float(truth.get('ranked_evidence_executor_visibility_rate', 0.0)):.2f} |",
+            f"| replay_eligibility_executor_visibility_rate | {float(truth.get('replay_eligibility_executor_visibility_rate', 0.0)):.2f} |",
+            f"| summarizer_visibility_extra_typed_rate | {float(truth.get('summarizer_visibility_extra_typed_rate', 0.0)):.2f} |",
+            f"| summarizer_visibility_asymmetry_rate | {float(truth.get('summarizer_visibility_asymmetry_rate', 0.0)):.2f} |",
+            f"| executor_text_backed_statepool_rate | {float(truth.get('executor_text_backed_statepool_rate', 0.0)):.2f} |",
+            f"| executor_inline_text_rate | {float(truth.get('executor_inline_text_rate', 0.0)):.2f} |",
+        ]
+    )
+
+
+def _first_matching_task_run(
+    result: dict[str, object],
+    *,
+    mode: str,
+    benchmark_lane: str | None = None,
+    transfer_strategy: str | None = None,
+) -> dict[str, object] | None:
+    for run in result["mode_runs"].get(mode, []):
+        for task_run in run.get("tasks", []):
+            if task_run.get("status") != "completed":
+                continue
+            if benchmark_lane is not None and str(task_run.get("benchmark_lane", "")) != benchmark_lane:
+                continue
+            if transfer_strategy is not None and str(task_run.get("transfer_strategy", "")) != transfer_strategy:
+                continue
+            return task_run
+    return None
+
+
+def _append_transfer_truth_rows(
+    lines: list[str],
+    *,
+    entries: list[tuple[str, dict[str, object]]],
+) -> None:
+    def _join(values: object) -> str:
+        if isinstance(values, list):
+            cleaned = [str(item).strip() for item in values if str(item).strip()]
+            return ", ".join(cleaned) if cleaned else "none"
+        text = str(values or "").strip()
+        return text or "none"
+
+    lines.extend(
+        [
+            "",
+            "## Transfer Truth Audit",
+            "",
+            "| lane | question answered | actual compared object | executor input truth | summarizer visibility truth | can headline? | common misread to forbid |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for label, audit in entries:
+        lines.append(
+            f"| {label} | {str(audit.get('question_answered', '')).strip()} | "
+            f"{str(audit.get('actual_compared_object', '')).strip()} | "
+            f"{str(audit.get('executor_input_truth_label', '')).strip()} | "
+            f"{str(audit.get('summarizer_visibility_truth_label', '')).strip()} | "
+            f"{str(audit.get('headline_status', '')).strip()} | "
+            f"{str(audit.get('common_misread_to_forbid', '')).strip()} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Kind Truth",
+            "",
+            "| lane | retrieve outputs | executor inputs | summarizer inputs | summarizer extra typed beyond executor |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for label, audit in entries:
+        lines.append(
+            f"| {label} | {_join(audit.get('retrieve_output_kinds'))} | "
+            f"{_join(audit.get('executor_input_kinds'))} | "
+            f"{_join(audit.get('summarizer_input_kinds'))} | "
+            f"{_join(audit.get('summarizer_extra_typed_beyond_executor'))} |"
+        )
+
+
 def _append_headline_claim_sections(
     lines: list[str],
     *,
@@ -2630,6 +4300,13 @@ def _append_headline_claim_sections(
     if len(available_modes) != 2:
         return
     manifest = result["manifest"]
+    communication_gate = (
+        manifest.get("headline_gates", {}).get("communication_gate", {})
+        if isinstance(manifest.get("headline_gates"), dict)
+        else {}
+    )
+    if communication_gate and not bool(communication_gate.get("applicable")):
+        return
     text_reuse_axes = _named_summary_lookup(summary["text"]["reuse_axes"], "reuse_axis")
     protocol_reuse_axes = _named_summary_lookup(summary["protocol"]["reuse_axes"], "reuse_axis")
     text_lanes = _named_summary_lookup(summary["text"]["benchmark_lanes"], "benchmark_lane")
@@ -2706,26 +4383,26 @@ def _append_headline_claim_sections(
         lines.extend(
             [
                 "",
-                "## Typed-Handoff State-Transfer Headline",
+                "## State-Transfer Headline",
                 "",
-                "- Scope note: `this formal_controlled state_transfer read compares natural_handoff_text against typed hash-first state handoff on the same controlled tasks; use the dedicated pure-text packs for strict inline or protocol-only fairness baselines.`",
+                "- Scope note: `this v3 state-transfer read compares the strict pure-text formal lane against protocol minimal state packets on the same controlled tasks.`",
                 "- Metric note: `handoff_wire_bytes counts serialized StateRefLite pointers on the wire; handoff_payload_bytes counts local StatePool payload bytes available to the executor.`",
                 "",
                 "| mode / handoff | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | executor_handoff_text_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-                f"| text / natural_handoff_text | {text_state_transfer['task_count']} | {text_state_transfer['text_bytes']:.2f} | "
+                f"| text / text_strict_pure_lane | {text_state_transfer['task_count']} | {text_state_transfer['text_bytes']:.2f} | "
                 f"{text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
                 f"{text_state_transfer.get('executor_handoff_text_bytes', 0.0):.2f} | "
                 f"{text_state_transfer['handoff_textual_bytes']:.2f} | {text_state_transfer['handoff_nontext_bytes']:.2f} | "
                 f"{text_state_transfer['llm_total_tokens']:.2f} | {text_state_transfer['task_ms']:.2f} |",
-                f"| protocol / channel_store_hashref | {protocol_state_transfer['task_count']} | {protocol_state_transfer['protocol_bytes']:.2f} | "
+                f"| protocol / state_packet_minimal | {protocol_state_transfer['task_count']} | {protocol_state_transfer['protocol_bytes']:.2f} | "
                 f"{protocol_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{protocol_state_transfer.get('handoff_payload_bytes', protocol_state_transfer['handoff_bytes']):.2f} | "
                 f"{protocol_state_transfer.get('executor_handoff_text_bytes', 0.0):.2f} | "
                 f"{protocol_state_transfer['handoff_textual_bytes']:.2f} | {protocol_state_transfer['handoff_nontext_bytes']:.2f} | "
                 f"{protocol_state_transfer['llm_total_tokens']:.2f} | {protocol_state_transfer['task_ms']:.2f} |",
-                f"| delta(protocol/channel_store_hashref - text/natural_handoff_text) | n/a | {protocol_state_transfer['protocol_bytes'] - text_state_transfer['text_bytes']:.2f} | "
+                f"| delta(protocol/state_packet_minimal - text/text_strict_pure_lane) | n/a | {protocol_state_transfer['protocol_bytes'] - text_state_transfer['text_bytes']:.2f} | "
                 f"{protocol_state_transfer.get('handoff_wire_bytes', 0.0) - text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{protocol_state_transfer.get('handoff_payload_bytes', protocol_state_transfer['handoff_bytes']) - text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
                 f"{protocol_state_transfer.get('executor_handoff_text_bytes', 0.0) - text_state_transfer.get('executor_handoff_text_bytes', 0.0):.2f} | "
@@ -2741,99 +4418,362 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
     pack_type = str(result["manifest"].get("task_pack_type", "ad_hoc"))
     available_modes = _pack_available_modes(result)
     lines = _report_header_lines(result)
-    if pack_type == "state_transfer_carrier":
+    manifest = result["manifest"]
+    protocol_summary = result["summary"].get("protocol", {})
+    protocol_aggregate = protocol_summary.get("aggregate", {})
+    protocol_case_audit = protocol_summary.get("misfire_audit", {}).get("case_contract", {})
+    protocol_transfer_truth = protocol_summary.get("transfer_truth", {})
+    protocol_mechanism_audit = protocol_summary.get("mechanism_audit", {})
+    text_summary = result["summary"].get("text", {})
+    text_case_audit = text_summary.get("misfire_audit", {}).get("case_contract", {})
+    text_guard_audit = text_summary.get("guard_audit", {})
+    if pack_type == "contest_dual_mode_controlled_v3":
+        _append_pack_contract_section(
+            lines,
+            contract="formal v3 dual-mode controlled pack; keep task object, evidence universe, summary contract, and plan source fixed, then change only mode plus mainline handoff object.",
+            single_variable="text_strict_pure_lane vs state_packet_minimal on the same contest-release cases.",
+        )
+        lines.extend(
+            [
+                "",
+                "## Contest Dual-Mode Controlled V3",
+                "",
+                f"- Whole-lane text guard pass rate: `{float(text_guard_audit.get('whole_lane_text_guard_pass_rate', 0.0)):.2f}`",
+                f"- Hidden field leak rate: `{float(text_guard_audit.get('hidden_field_leak_rate', 0.0)):.2f}`",
+                f"- Summarizer typed visibility rate: `{float(text_guard_audit.get('summarizer_typed_visibility_rate', 0.0)):.2f}`",
+                f"- Object parity gate: `{'pass' if bool(manifest.get('object_parity_gate', {}).get('passed')) else 'not_yet'}`",
+                f"- Formal stability gate: `{'pass' if bool(manifest.get('formal_stability_gate', {}).get('passed')) else 'not_yet'}`",
+            ]
+        )
+        communication_gate = manifest.get("headline_gates", {}).get("communication_gate", {})
+        if not bool(communication_gate.get("allowed", manifest.get("state_transfer_headline_allowed", True))):
+            lines.append(
+                f"- Formal state-transfer headline withheld: `{','.join(communication_gate.get('withheld_reasons', [])) or str(manifest.get('withheld_headline_reason', '')).strip() or 'guard_not_met'}`"
+            )
+        stability_gate = manifest.get("formal_stability_gate", {})
+        if isinstance(stability_gate, dict) and stability_gate.get("mode_checks"):
+            lines.extend(
+                [
+                    "",
+                    "## Formal Stability Gate",
+                    "",
+                    "| mode | required_repeat | run_count | message_count_mean | state_transfer_count_mean | memory_hit_rate_mean | task_ms_mean | failure_count | passed |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+                ]
+            )
+            for mode_name in ("text", "protocol"):
+                check = stability_gate.get("mode_checks", {}).get(mode_name)
+                if not isinstance(check, dict):
+                    continue
+                lines.append(
+                    f"| {mode_name} | {int(stability_gate.get('required_repeat', 10))} | {int(check.get('run_count', 0))} | "
+                    f"{float(check.get('message_count_mean', 0.0)):.2f} | {float(check.get('state_transfer_count_mean', 0.0)):.2f} | "
+                    f"{float(check.get('memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
+                    f"{int(check.get('failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
+                )
+        _append_headline_claim_sections(lines, result=result, summary=result["summary"])
+        _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This is the v3 formal dual-mode surface.",
+                "- Formal headline reads `text_strict_pure_lane` vs `state_packet_minimal` only.",
+                "- `text_whole_lane` remains an internal StateBus text-carrier audit object, not the contest-facing headline baseline.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "memory_dual_mode_fairness_v3":
+        family_coverage = len(
+            {
+                str(task_run.get("task_theme", "")).strip()
+                for mode_name in ("text", "protocol")
+                for run in result["mode_runs"].get(mode_name, [])
+                for task_run in run.get("tasks", [])
+                if str(task_run.get("task_theme", "")).strip()
+            }
+        )
+        _append_pack_contract_section(
+            lines,
+            contract="audit-only v3 dual-mode memory fairness pack; keep task families, summary contract, and task semantics fixed, then compare text_whole_lane against state_packet_minimal for object parity and restore compatibility only.",
+            single_variable="text_whole_lane vs state_packet_minimal under matched task objects, without reading this pack as replay proof.",
+        )
+        object_gate = manifest.get("object_parity_gate", {})
+        lines.extend(
+            [
+                "",
+                "## Memory Dual-Mode Fairness V3",
+                "",
+                f"- Object parity gate: `{'pass' if bool(object_gate.get('passed')) else 'not_yet'}`",
+                f"- Text restore compatibility: `{'pass' if bool(object_gate.get('text_memory_restore_compat_ok')) else 'not_yet'}`",
+                f"- Formal stability gate: `{'pass' if bool(manifest.get('formal_stability_gate', {}).get('passed')) else 'not_yet'}`",
+            ]
+        )
+        fairness_gate = manifest.get("headline_gates", {}).get("object_parity_gate", {})
+        if not bool(fairness_gate.get("allowed", manifest.get("state_transfer_headline_allowed", True))):
+            lines.append(
+                f"- Formal memory fairness headline withheld: `{','.join(fairness_gate.get('withheld_reasons', [])) or str(manifest.get('withheld_headline_reason', '')).strip() or 'guard_not_met'}`"
+            )
+        for mode_name in ("text", "protocol"):
+            mode_summary = result["summary"].get(mode_name, {})
+            memory_policies = _named_summary_lookup(
+                mode_summary.get("memory_policies", []),
+                "memory_policy",
+            )
+            lines.extend(
+                [
+                    "",
+                    f"## Memory Policy Table ({mode_name})",
+                    "",
+                    "| memory_policy | task_count | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for memory_policy in MEMORY_POLICY_ORDER:
+                row = memory_policies.get(memory_policy)
+                if row is None:
+                    continue
+                lines.append(
+                    f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row['memory_hit_rate']:.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
+                )
+        lines.extend(
+            [
+                "",
+                "## Coverage",
+                "",
+                f"- Family coverage: `{family_coverage}`",
+                f"- Memory policy buckets: `{json.dumps(manifest.get('memory_policy_counts', {}), sort_keys=True)}`",
+                f"- Mode task counts: `{json.dumps(manifest.get('task_mode_counts', {}), sort_keys=True)}`",
+                "",
+                "## Stopline",
+                "",
+                "- This is the dual-mode fairness/object-parity surface.",
+                "- It is not protocol replay proof and not the contest-facing formal headline.",
+                "- `memory_reuse_v3` remains the protocol-only replay proof surface.",
+                "- `memory_policy_controlled_v3` is the single-variable memory policy attribution surface.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "text_definition_audit_v3":
+        left_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="inline_text_handoff")
+        right_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="state_packet_minimal")
+        _append_pack_contract_section(
+            lines,
+            contract="formal v3 text-definition audit; keep protocol tasks fixed and separate whole-lane pure text from executor-boundary inline text.",
+            single_variable="inline_text_handoff vs state_packet_minimal under boundary audit semantics only.",
+        )
         _append_protocol_only_handoff_table(
             lines,
             result=result,
-            left_strategy="text_packet_minimal",
+            left_strategy="inline_text_handoff",
             right_strategy="state_packet_minimal",
-            title="Protocol-Only Carrier Efficiency",
-            scope_note="this table holds executor decision semantics fixed as a minimal packet and changes only the carrier: text packet versus non-text state packet.",
+            title="Text Definition Audit V3",
+            scope_note="this v3 audit defines inline_text_handoff as a protocol-side executor-boundary object only; it is not the whole-lane pure-text baseline.",
+        )
+        if left_task is not None and right_task is not None:
+            _append_transfer_truth_rows(
+                lines,
+                entries=[
+                    ("protocol_inline_text_handoff", dict(left_task.get("transfer_truth_audit", {}))),
+                    ("protocol_minimal_state_packet", dict(right_task.get("transfer_truth_audit", {}))),
+                ],
+            )
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack defines the executor-boundary audit only.",
+                "- Do not read it as proof that the entire lane is whole-lane pure text.",
+            ]
         )
         return "\n".join(lines) + "\n"
-    if pack_type == "state_transfer_authenticity":
+    if pack_type == "typed_state_mechanism_v3":
+        left_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="natural_handoff_text")
+        right_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="state_packet_minimal")
+        _append_pack_contract_section(
+            lines,
+            contract="formal-secondary v3 typed-state mechanism pack; keep protocol mode fixed, runtime_reuse_contract=reuse_disabled, and the same task object, then compare natural_handoff_text against the minimal typed-state packet.",
+            single_variable="natural_handoff_text vs state_packet_minimal under protocol-only mechanism semantics.",
+        )
         _append_protocol_only_handoff_table(
             lines,
             result=result,
-            left_strategy="text_brief",
-            right_strategy="channel_store_hashref",
-            title="Protocol-Only Typed-Handoff Authenticity",
-            scope_note="this table fixes control mode at protocol and compares the legacy text_brief handoff against the rich channel-store hashref handoff.",
+            left_strategy="natural_handoff_text",
+            right_strategy="state_packet_minimal",
+            title="Typed State Mechanism V3",
+            scope_note="this v3 section asks whether the minimal non-text state packet is really produced, transferred, and consumed under protocol-only mechanism semantics; it is not a dual-mode headline or a replay claim.",
+        )
+        _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
+        if left_task is not None and right_task is not None:
+            _append_transfer_truth_rows(
+                lines,
+                entries=[
+                    ("protocol_natural_handoff_text", dict(left_task.get("transfer_truth_audit", {}))),
+                    ("protocol_minimal_state_packet", dict(right_task.get("transfer_truth_audit", {}))),
+                ],
+            )
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        if isinstance(protocol_mechanism_audit, dict) and protocol_mechanism_audit.get("slimming_variants"):
+            lines.extend(
+                [
+                    "",
+                    "## Mechanism Audit",
+                    "",
+                    "| variant | task_count | admissible_match_rate | state_transfer_count | llm_total_tokens | task_ms |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for variant_name in ("state_packet_minimal", "feature_bundle_only", "full_rich_audit"):
+                variant = protocol_mechanism_audit.get("slimming_variants", {}).get(variant_name)
+                if not isinstance(variant, dict):
+                    continue
+                lines.append(
+                    f"| {variant_name} | {int(variant.get('task_count', 0))} | {float(variant.get('admissible_match_rate', 0.0)):.2f} | "
+                    f"{float(variant.get('state_transfer_count', 0.0)):.2f} | {float(variant.get('llm_total_tokens', 0.0)):.2f} | "
+                    f"{float(variant.get('task_ms', 0.0)):.2f} |"
+                )
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- Read this pack only for minimal typed-state authenticity: executor consumption of `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET`.",
+                "- Do not collapse this mechanism proof into carrier efficiency, external text baseline fairness, feature-bundle richness, or replay proof.",
+            ]
         )
         return "\n".join(lines) + "\n"
-    if pack_type == "state_transfer_pure_text":
-        lines.append("- Fairness note: `read this pack as a pure-text fairness comparison; do not translate it into a carrier-efficiency headline.`")
+    if pack_type == "external_text_baseline_audit_v3":
+        text_case_audit = text_summary.get("misfire_audit", {}).get("case_contract", {})
+        _append_pack_contract_section(
+            lines,
+            contract="audit-only v3 external text baseline pack; keep a separate text-side surface and do not mix it into the contest headline or the protocol-only typed-state mechanism claim.",
+            single_variable="external text surface only; no protocol row is part of this pack.",
+        )
+        _append_case_contract_primary_metrics(lines, audit=text_case_audit, include_wrong_family=True)
+        lines.extend(
+            [
+                "",
+                "## External Text Baseline Audit V3",
+                "",
+                f"- Whole-lane text guard pass rate: `{float(text_guard_audit.get('whole_lane_text_guard_pass_rate', 0.0)):.2f}`",
+                f"- Hidden field leak rate: `{float(text_guard_audit.get('hidden_field_leak_rate', 0.0)):.2f}`",
+                f"- Summarizer typed visibility rate: `{float(text_guard_audit.get('summarizer_typed_visibility_rate', 0.0)):.2f}`",
+                "",
+                "## Stopline",
+                "",
+                "- This pack is an audit-only external text baseline surface.",
+                "- Do not merge it into `contest_dual_mode_controlled_v3`, `typed_state_mechanism_v3`, or the replay packs.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "typed_state_authenticity_v3":
+        left_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="natural_handoff_text")
+        right_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="state_packet_minimal")
+        _append_pack_contract_section(
+            lines,
+            contract="legacy-compatibility typed-state authenticity pack; keep protocol mode fixed and compare natural protocol text against the minimal typed-state packet under matched retrieval inputs.",
+            single_variable="protocol_natural_handoff_text vs protocol_minimal_state_packet.",
+        )
+        _append_protocol_only_handoff_table(
+            lines,
+            result=result,
+            left_strategy="natural_handoff_text",
+            right_strategy="state_packet_minimal",
+            title="Typed State Authenticity V3 (Legacy Compatibility)",
+            scope_note="this older surface remains for compatibility, but the active formal mechanism claim should read from typed_state_mechanism_v3.",
+        )
+        if left_task is not None and right_task is not None:
+            _append_transfer_truth_rows(
+                lines,
+                entries=[
+                    ("protocol_natural_handoff_text", dict(left_task.get("transfer_truth_audit", {}))),
+                    ("protocol_minimal_state_packet", dict(right_task.get("transfer_truth_audit", {}))),
+                ],
+            )
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack is kept for compatibility with earlier v3 references.",
+                "- Prefer `typed_state_mechanism_v3` for the active formal mechanism claim.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "typed_state_full_rich_audit_v3":
+        left_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="natural_handoff_text")
+        right_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="channel_store_hashref")
+        _append_pack_contract_section(
+            lines,
+            contract="support-only v3 full-rich audit pack; keep protocol mode fixed and compare natural protocol text against explicit full-rich audit typed-state handoff.",
+            single_variable="protocol_natural_handoff_text vs protocol_full_rich_audit.",
+        )
         _append_protocol_only_handoff_table(
             lines,
             result=result,
             left_strategy="natural_handoff_text",
             right_strategy="channel_store_hashref",
-            title="Protocol-Only Pure-Text Versus Typed-State",
-            scope_note="this table fixes control mode at protocol and compares natural free-text handoff against the real channel-store hashref typed handoff.",
+            title="Typed State Full-Rich Audit V3",
+            scope_note="this v3 section keeps the richer typed objects only as support/audit evidence for provenance and recoverability; it is not the production mainline path.",
         )
-        return "\n".join(lines) + "\n"
-    if pack_type == "state_transfer_strict_pure_text":
-        lines.append("- Formal-secondary note: `this pack validates the strict executor-facing pure-text baseline; the inline-text side must not pass StateRef or artifact refs into Executor.`")
-        _append_protocol_only_handoff_table(
-            lines,
-            result=result,
-            left_strategy="inline_text_handoff",
-            right_strategy="state_packet_minimal",
-            title="Protocol-Only Strict Pure-Text Versus Minimal Typed-State",
-            scope_note="this table fixes control mode at protocol and compares strict inline message-body text against the same minimal typed state-packet baseline.",
-        )
-        return "\n".join(lines) + "\n"
-    if pack_type == "state_transfer_inline_text_support":
-        lines.append("- Support note: `this pack is support-only by design; use it to validate the strict inline pure-text contract, not as the carrier headline.`")
-        _append_protocol_only_handoff_table(
-            lines,
-            result=result,
-            left_strategy="inline_text_handoff",
-            right_strategy="state_packet_minimal",
-            title="Protocol-Only Inline-Text Support",
-            scope_note="this support table compares strict inline message-body text against the same minimal state packet baseline.",
-        )
-        return "\n".join(lines) + "\n"
-    if pack_type == "open_planner_support":
-        task_mode_counts = dict(result["manifest"].get("task_mode_counts", {}))
-        for mode in available_modes:
-            aggregate = result["summary"][mode]["aggregate"]
-            lines.extend(
-                [
-                    "",
-                    f"## Open Planner Support ({mode})",
-                    "",
-                    "| metric | value |",
-                    "| --- | ---: |",
-                    f"| task_count | {int(task_mode_counts.get(mode, 0))} |",
-                    f"| failure_count | {int(result['summary'][mode]['failure_count'])} |",
-                    f"| planner_llm_request_count | {aggregate['planner_llm_request_count']:.2f} |",
-                    f"| planned_step_count | {aggregate['planned_step_count']:.2f} |",
-                    f"| task_ms | {aggregate['task_ms']:.2f} |",
-                ]
+        if left_task is not None and right_task is not None:
+            _append_transfer_truth_rows(
+                lines,
+                entries=[
+                    ("protocol_natural_handoff_text", dict(left_task.get("transfer_truth_audit", {}))),
+                    ("protocol_full_rich_audit", dict(right_task.get("transfer_truth_audit", {}))),
+                ],
             )
-        lines.append("")
-        lines.append("- Support note: `planner_llm_request_count must be non-zero in both modes for this pack to answer the fixed-workflow challenge.`")
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack is support/audit only.",
+                "- Do not read full-rich audit rows as the mainline typed-state contract or formal headline.",
+            ]
+        )
         return "\n".join(lines) + "\n"
-    if pack_type == "communication":
-        if len(available_modes) == 2:
-            text_lane = _aggregate_filtered_mode_task_runs(result, "text", benchmark_lane="communication")
-            protocol_lane = _aggregate_filtered_mode_task_runs(result, "protocol", benchmark_lane="communication")
-            if text_lane is not None and protocol_lane is not None:
-                lines.extend(
-                    [
-                        "",
-                        "## Communication Claim Surface",
-                        "",
-                        "| mode | task_count | control_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
-                        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-                        f"| text | {text_lane['task_count']} | {text_lane['text_bytes']:.2f} | {text_lane['handoff_textual_bytes']:.2f} | {text_lane['handoff_nontext_bytes']:.2f} | {text_lane['llm_total_tokens']:.2f} | {text_lane['task_ms']:.2f} |",
-                        f"| protocol | {protocol_lane['task_count']} | {protocol_lane['protocol_bytes']:.2f} | {protocol_lane['handoff_textual_bytes']:.2f} | {protocol_lane['handoff_nontext_bytes']:.2f} | {protocol_lane['llm_total_tokens']:.2f} | {protocol_lane['task_ms']:.2f} |",
-                        f"| delta(protocol - text) | n/a | {protocol_lane['protocol_bytes'] - text_lane['text_bytes']:.2f} | {protocol_lane['handoff_textual_bytes'] - text_lane['handoff_textual_bytes']:.2f} | {protocol_lane['handoff_nontext_bytes'] - text_lane['handoff_nontext_bytes']:.2f} | {protocol_lane['llm_total_tokens'] - text_lane['llm_total_tokens']:.2f} | {protocol_lane['task_ms'] - text_lane['task_ms']:.2f} |",
-                    ]
-                )
+    if pack_type == "carrier_microbench_v3":
+        left_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="text_packet_minimal")
+        right_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="state_packet_minimal")
+        _append_pack_contract_section(
+            lines,
+            contract="audit-only v3 carrier microbench; hold protocol mode and executor semantics fixed, then compare minimal text packet against minimal state packet.",
+            single_variable="protocol_minimal_text_packet vs protocol_minimal_state_packet.",
+        )
+        _append_protocol_only_handoff_table(
+            lines,
+            result=result,
+            left_strategy="text_packet_minimal",
+            right_strategy="state_packet_minimal",
+            title="Carrier Microbench V3 (Audit Only)",
+            scope_note="this v3 table is engineering audit only and does not carry the formal text-vs-structured headline.",
+        )
+        if left_task is not None and right_task is not None:
+            _append_transfer_truth_rows(
+                lines,
+                entries=[
+                    ("protocol_minimal_text_packet", dict(left_task.get("transfer_truth_audit", {}))),
+                    ("protocol_minimal_state_packet", dict(right_task.get("transfer_truth_audit", {}))),
+                ],
+            )
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(["", "## Stopline", "", "- Audit only: use this pack for engineering carrier inspection, not for the formal v3 headline."])
         return "\n".join(lines) + "\n"
-    if pack_type == "memory":
+    if pack_type == "memory_reuse_v3":
+        _append_pack_contract_section(
+            lines,
+            contract="formal-secondary v3 memory-reuse pack; keep protocol state_packet_minimal execution fixed and separate assist diagnostics from replay claims.",
+            single_variable="memory policy and replay policy under protocol_minimal_state_packet.",
+        )
+        _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=False)
         protocol_memory_policies = _named_summary_lookup(
             result["summary"]["protocol"]["memory_policies"],
             "memory_policy",
@@ -2841,9 +4781,9 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
         lines.extend(
             [
                 "",
-                "## Memory Claim Surface",
+                "## Memory Reuse V3",
                 "",
-                "- Boundary note: `working_assist and long_term_assist are diagnostic assist rows; validated_replay and exact_replay are the memory-reuse claim rows.`",
+                "- Boundary note: `assist rows stay diagnostic; validated_replay and exact_replay are the formal v3 reuse rows.`",
                 "",
                 "| memory_policy | task_count | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -2856,6 +4796,93 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             lines.append(
                 f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row['memory_hit_rate']:.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
             )
+        lines.extend(["", "## Stopline", "", "- This pack is the v3 memory-reuse surface; assist-only prompting remains diagnostic."])
+        return "\n".join(lines) + "\n"
+    if pack_type == "memory_policy_controlled_v3":
+        _append_pack_contract_section(
+            lines,
+            contract="formal-secondary v3 memory policy pack; keep protocol mode and state_packet_minimal fixed, then change only runtime_reuse_contract.",
+            single_variable="reuse_disabled vs assist_allowed vs validated_replay vs exact_replay under protocol state_packet_minimal.",
+        )
+        _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=False)
+        protocol_memory_policies = _named_summary_lookup(
+            result["summary"]["protocol"]["memory_policies"],
+            "memory_policy",
+        )
+        replay_gate = (
+            manifest.get("headline_gates", {}).get("memory_replay_gate", {}).get("memory_replay_evidence_gate", {})
+            if isinstance(manifest.get("headline_gates"), dict)
+            else manifest.get("memory_replay_evidence_gate", {})
+        )
+        lines.extend(
+            [
+                "",
+                "## Memory Policy Controlled V3",
+                "",
+                f"- Replay evidence gate: `{'pass' if bool(replay_gate.get('passed')) else 'withheld'}`",
+                f"- Replay headline gate: `{'pass' if bool(manifest.get('headline_gates', {}).get('memory_replay_gate', {}).get('allowed')) else 'withheld'}`",
+                "",
+                "| memory_policy | task_count | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for memory_policy in MEMORY_POLICY_ORDER:
+            row = protocol_memory_policies.get(memory_policy)
+            if row is None:
+                continue
+            lines.append(
+                f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row['memory_hit_rate']:.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
+            )
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack is the single-variable memory policy attribution surface.",
+                "- Replay proof here is protocol-only and carrier-fixed.",
+                "- Do not read it as text-vs-protocol fairness.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "planner_support_v3":
+        _append_pack_contract_section(
+            lines,
+            contract="formal v3 planner-support pack; compare yaml control rows against llm-generated plans without collapsing planner openness into communication-medium claims.",
+            single_variable="plan_source = yaml vs llm under matched runtime surfaces.",
+        )
+        combined_admissible = mean(
+            [
+                float(text_case_audit.get("admissible_match_rate", 0.0)),
+                float(protocol_case_audit.get("admissible_match_rate", 0.0)),
+            ]
+        )
+        lines.extend(
+            [
+                "",
+                "## Planner Support V3",
+                "",
+                "| metric | value |",
+                "| --- | ---: |",
+                f"| text_admissible_match_rate | {float(text_case_audit.get('admissible_match_rate', 0.0)):.2f} |",
+                f"| protocol_admissible_match_rate | {float(protocol_case_audit.get('admissible_match_rate', 0.0)):.2f} |",
+                f"| combined_admissible_match_rate | {combined_admissible:.2f} |",
+            ]
+        )
+        for mode in available_modes:
+            aggregate = result["summary"][mode]["aggregate"]
+            lines.extend(
+                [
+                    "",
+                    f"## Planner Support V3 ({mode})",
+                    "",
+                    "| metric | value |",
+                    "| --- | ---: |",
+                    f"| planner_llm_request_count | {aggregate['planner_llm_request_count']:.2f} |",
+                    f"| planned_step_count | {aggregate['planned_step_count']:.2f} |",
+                    f"| task_ms | {aggregate['task_ms']:.2f} |",
+                ]
+            )
+        lines.extend(["", "## Stopline", "", "- Planner openness is its own v3 claim; do not merge it into text-vs-protocol or typed-state authenticity."])
         return "\n".join(lines) + "\n"
     return None
 
@@ -2905,15 +4932,6 @@ def _build_report(result: dict[str, object]) -> str:
         f"- Summarizer model: `{manifest['summarizer_model']}`",
         "- Reuse query policy: `memory assist stays runtime-contract gated; step-skipping now requires runtime evidence; expected_reuse_mode stays in benchmark validation`",
     ]
-    if str(manifest.get("task_pack_type", "")) == "formal_controlled":
-        lines.extend(
-            [
-                "- Headline note: `this frozen formal_controlled pack is lane-first; read the reuse-axis, lane-delta, and dedicated state_transfer sections before the aggregate.`",
-                "- Interpretation note: `aggregate mixes the two controlled replay chains with the dedicated communication/state_transfer/memory lanes and now serves only as a secondary overview.`",
-                "- State-transfer note: `read state_transfer with two layers: handoff_wire_bytes for communication overhead, handoff_payload_bytes for executor-visible local payload size; do not use raw state_bytes as the transfer headline.`",
-                "- State-transfer baseline note: `the frozen headline pack compares text_brief against channel_store_hashref as typed-handoff authenticity evidence; strict pure text is isolated in state_transfer_strict_pure_text`",
-            ]
-        )
     task_set_description = str(manifest.get("task_set_description", "")).strip()
     if task_set_description:
         lines.append(f"- Task set description: `{task_set_description}`")
@@ -2927,9 +4945,9 @@ def _build_report(result: dict[str, object]) -> str:
         lines.append(
             "- Pack boundary: `support evidence only; do not promote this pack into formal communication/state_transfer/memory headline claims without a separate controlled rerun`"
         )
-    elif str(manifest.get("task_pack_type", "")) == "state_transfer_carrier":
+    if not bool(manifest.get("state_transfer_headline_allowed", True)):
         lines.append(
-            "- Pack boundary: `formal carrier pack; use this pack only for the protocol-only carrier headline and keep other lanes in their dedicated packs`"
+            f"- Headline status: `withheld` ({str(manifest.get('withheld_headline_reason', '')).strip() or 'guard_not_met'})"
         )
     task_mode_counts = manifest.get("task_mode_counts", {})
     text_tasks = int(task_mode_counts.get("text", 0))
@@ -2945,14 +4963,12 @@ def _build_report(result: dict[str, object]) -> str:
                 "apples-to-apples comparison.**",
             ]
         )
-    if str(manifest.get("task_pack_type", "")) == "formal_controlled":
-        _append_headline_claim_sections(lines, result=result, summary=summary)
     lines.extend(
         [
             "",
             "## Aggregate",
             "",
-            "- Secondary view note: `this table remains useful for whole-pack smoke checks, but the headline read now lives in the three sections above.`",
+            "- Secondary view note: `this table is a pack-local aggregate summary; read the pack-specific v3 section above for the formal claim surface.`",
             "",
             "| mode | message_count | control_bytes | state_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -3348,11 +5364,33 @@ def _build_report(result: dict[str, object]) -> str:
     lines.extend(
         [
             "",
-            "## Misfire Audit",
+            "## Case Contract Audit",
             "",
-            "- Artifact-only note: `task expectations are declared in the task YAML and checked against archived route/tool/doc outputs only`",
+            "- Formal correctness note: `case-level contract is the primary correctness surface; admissible_match includes exact matches, bounded alternatives, and explicit abstention when declared.`",
             "",
-            "| mode | expected_tasks | observed_task_runs | expected_field_runs | field_match_rate | task_match_rate | route_match_rate | route_source_match_rate | tool_match_rate | top_doc_match_rate | reuse_match_rate |",
+            "| mode | expected_tasks | observed_task_runs | route_exact_rate | tool_exact_rate | exact_match_rate | admissible_match_rate | abstention_rate | wrong_family_rate |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode in available_modes:
+        case_audit = summary[mode]["misfire_audit"]["case_contract"]
+        lines.append(
+            f"| {mode} | {case_audit['task_count']} | {case_audit['observed_task_runs']} | "
+            f"{float(case_audit['route_exact_rate']):.2f} | "
+            f"{float(case_audit['tool_exact_rate']):.2f} | "
+            f"{float(case_audit['exact_match_rate']):.2f} | "
+            f"{float(case_audit['admissible_match_rate']):.2f} | "
+            f"{float(case_audit['abstention_rate']):.2f} | "
+            f"{float(case_audit['wrong_family_rate']):.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Artifact Diagnostic",
+            "",
+            "- Appendix diagnostic note: `artifact route/tool/doc expectations are kept as appendix diagnostics only and are not the formal correctness headline.`",
+            "",
+            "| mode | expected_tasks | observed_task_runs | expected_field_runs | field_match_rate | exact_match_rate | route_exact_rate | route_source_match_rate | tool_exact_rate | top_doc_match_rate | reuse_match_rate |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -3362,7 +5400,7 @@ def _build_report(result: dict[str, object]) -> str:
         lines.append(
             f"| {mode} | {artifact_audit['task_count']} | {artifact_audit['observed_task_runs']} | "
             f"{artifact_audit['expected_field_runs']} | {artifact_audit['field_match_rate']:.2f} | "
-            f"{artifact_audit['task_match_rate']:.2f} | "
+            f"{artifact_audit['exact_match_rate']:.2f} | "
             f"{_format_artifact_match_rate(artifact_audit['fields']['route'])} | "
             f"{_format_artifact_match_rate(artifact_audit['fields']['route_source'])} | "
             f"{_format_artifact_match_rate(artifact_audit['fields']['tool_name'])} | "

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import msgpack
 
 from memory.store import DeterministicEmbeddingProvider
 from protocol.channels import ChannelKind, default_state_channel_registry
+from agents.sample_agents import build_sample_agents
 from runtime.contracts import default_state_contract_registry
 from runtime.langgraph_adapter import STATEBUS_GRAPH_NODES, StateBusGraphRunner
 from runtime.llm import DeterministicLLMClient
@@ -90,7 +92,7 @@ def test_statepool_cas_deduplicates_and_loads_refs_by_state_id() -> None:
 
 
 def test_langgraph_adapter_runs_existing_statebus_graph_path() -> None:
-    task = default_task_chain()[0]
+    task = next(task for task in default_task_chain() if task.supports_mode("protocol"))
     runner = StateBusGraphRunner(
         llm_client=DeterministicLLMClient(),
         embedder=DeterministicEmbeddingProvider(),
@@ -103,5 +105,94 @@ def test_langgraph_adapter_runs_existing_statebus_graph_path() -> None:
     assert result.metrics["planned_step_count"] == 3
     assert result.channel_store or result.state_channels
     assert result.state_channels["artifact"]["state_ref_count"] >= 1
-    assert "route" in result.channel_snapshots or "legacy_features" in result.state_channels
+    assert "artifact" in result.state_channels
+    assert "evidence" in result.state_channels
+    assert result.results["retrieve"].success is True
     assert "task_id" in result.graph_state
+
+
+def test_text_whole_lane_contract_keeps_executor_and_summarizer_typed_inputs_empty() -> None:
+    task = default_task_chain()[0]
+    task = task.__class__(**{**task.__dict__, "transfer_strategy": "text_whole_lane", "handoff_profile": "text_whole_lane"})
+    orchestrator = Orchestrator(
+        build_sample_agents(llm_client=DeterministicLLMClient()),
+        state_contract_registry=default_state_contract_registry(),
+    )
+    with tempfile.TemporaryDirectory(prefix="statebus-text-whole-lane-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="text",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+        )
+        asyncio.run(orchestrator.run_task(task, ctx))
+        assert ctx.step_input_refs("execute") == []
+        summarize_kinds = [ref.kind for ref in ctx.step_input_refs("summarize")]
+        assert summarize_kinds == ["TOOL_ARTIFACT"]
+
+
+def test_text_whole_lane_replay_commit_keeps_proof_refs() -> None:
+    task = default_task_chain()[0]
+    task = task.__class__(**{**task.__dict__, "transfer_strategy": "text_whole_lane", "handoff_profile": "text_whole_lane"})
+    orchestrator = Orchestrator(
+        build_sample_agents(llm_client=DeterministicLLMClient()),
+        state_contract_registry=default_state_contract_registry(),
+    )
+    with tempfile.TemporaryDirectory(prefix="statebus-text-whole-lane-proof-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="text",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+        )
+        asyncio.run(orchestrator.run_task(task, ctx))
+        row = ctx.memory_store.conn.execute(
+            """
+            SELECT me.state_ref_json
+            FROM memories m
+            JOIN memory_embeddings me USING(embedding_id)
+            WHERE m.memory_id = ?
+            """,
+            (f"mem-{task.task_id}-replay",),
+        ).fetchone()
+        assert row is not None
+        state_refs = json.loads(row["state_ref_json"])
+        state_ref_kinds = {str(ref["kind"]) for ref in state_refs}
+        assert "REPLAY_ELIGIBILITY_BUNDLE" in state_ref_kinds
+        assert "TOOL_ARTIFACT" in state_ref_kinds
+        assert all(kind not in {"FEATURE_BUNDLE", "TOOL_CANDIDATE_SET"} for kind in state_ref_kinds)
+
+
+def test_text_strict_pure_lane_contract_keeps_executor_and_summarizer_typed_inputs_empty() -> None:
+    task = default_task_chain()[0]
+    task = task.__class__(**{**task.__dict__, "transfer_strategy": "text_strict_pure_lane", "handoff_profile": "text_strict_pure_lane"})
+    orchestrator = Orchestrator(
+        build_sample_agents(llm_client=DeterministicLLMClient()),
+        state_contract_registry=default_state_contract_registry(),
+    )
+    with tempfile.TemporaryDirectory(prefix="statebus-text-strict-pure-lane-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="text",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+        )
+        asyncio.run(orchestrator.run_task(task, ctx))
+        assert ctx.step_input_refs("execute") == []
+        summarize_kinds = [ref.kind for ref in ctx.step_input_refs("summarize")]
+        assert summarize_kinds == ["TOOL_ARTIFACT"]

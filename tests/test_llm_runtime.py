@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import asyncio
+import pytest
 
 from agents.sample_agents import (
     _plan_from_llm_output,
@@ -12,6 +13,8 @@ from agents.sample_agents import (
     _summary_from_llm_output,
 )
 from runtime.llm import DeterministicLLMClient, LLMConfig
+from runtime.task_profile import RuntimeTaskProfile
+from runtime import executor_runtime
 from tasks.sample_tasks import SampleTask, build_plan, default_task_chain
 
 
@@ -115,7 +118,7 @@ def test_plan_parser_accepts_nested_deepseek_shape() -> None:
 
 
 def test_plan_parser_accepts_numeric_step_ids_from_text_llm() -> None:
-    task = default_task_chain()[5]
+    task = default_task_chain()[0]
     output_text = json.dumps(
         {
             "steps": [
@@ -202,12 +205,57 @@ def test_plan_builder_keeps_runtime_profile_out_of_live_plan_steps() -> None:
         "runtime_reuse_contract": "exact_replay",
         "benchmark_lane": "internal_regression",
         "transfer_strategy": "state_ref",
+        "handoff_profile": "protocol_feature_only_typed_state",
     }
     assert task.runtime_gates == {
         "allow_memory_assist": False,
         "allow_execute_prune": False,
         "allow_exact_replay": True,
     }
+
+
+def test_runtime_profile_keeps_natural_and_inline_protocol_profiles_distinct() -> None:
+    natural = RuntimeTaskProfile.from_mapping({"transfer_strategy": "natural_handoff_text"})
+    inline = RuntimeTaskProfile.from_mapping({"transfer_strategy": "inline_text_handoff"})
+
+    assert natural.resolved_handoff_profile == "protocol_natural_handoff_text"
+    assert natural.effective_transfer_strategy("protocol") == "natural_handoff_text"
+    assert inline.resolved_handoff_profile == "protocol_inline_text_handoff"
+    assert inline.effective_transfer_strategy("protocol") == "inline_text_handoff"
+
+
+def test_runtime_profile_rejects_legacy_mode_split_strategy() -> None:
+    with pytest.raises(ValueError, match="unsupported transfer_strategy"):
+        RuntimeTaskProfile.from_mapping({"transfer_strategy": "mode_split_text_brief_vs_state_ref"})
+
+
+def test_runtime_profile_rejects_text_whole_lane_in_protocol_mode() -> None:
+    profile = RuntimeTaskProfile.from_mapping({"handoff_profile": "text_whole_lane"})
+
+    try:
+        profile.effective_transfer_strategy("protocol")
+    except ValueError as exc:
+        assert "only valid in mode=text" in str(exc)
+    else:
+        raise AssertionError("expected protocol mode to reject text_whole_lane")
+
+
+def test_strict_pure_text_handoff_does_not_call_build_feature_bundle(monkeypatch) -> None:
+    def _boom(**_: object) -> dict[str, object]:
+        raise AssertionError("build_feature_bundle should not run for text_strict_pure_lane")
+
+    monkeypatch.setattr(executor_runtime, "build_feature_bundle", _boom)
+    bundle = executor_runtime._feature_bundle_from_strict_pure_text_handoff(
+        query_text="checkout release has pool waits",
+        handoff_text="Use release notes and logs only. Connection pool waits increased.",
+        registry=executor_runtime.default_tool_registry(),
+    )
+    assert bundle["transfer_strategy"] == "text_strict_pure_lane"
+    assert "tool_candidates" not in bundle
+    assert "hint_route" not in bundle
+    assert "hint_tool_name" not in bundle
+    assert "hint_doc_ids" not in bundle
+    assert "matched_tags" not in bundle
 
 
 def test_summary_parser_normalizes_scalar_reusable_steps() -> None:

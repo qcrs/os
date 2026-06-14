@@ -1,169 +1,79 @@
-# StateBus 任务设计与模式对比
+# StateBus V3 Benchmark Surface
 
-日期：`2026-06-11`
-执行数据：`runs/benchmark_suite_20260611_124126_api_repeat3/`
+日期：`2026-06-13`
 
----
+## 一、正式 Pack 地图
 
-## 一、Pack 地图
+当前正式 benchmark surface 只保留 11 个 v3 对象：
 
-不同 pack 负责不同主张，不能混读：
+| pack | 类型 | task数 | mode | 只回答什么 | 不回答什么 |
+| --- | --- | ---: | --- | --- | --- |
+| `contest_dual_mode_controlled_v3` | formal-headline | 40 | text+protocol | text_strict_pure_lane vs state_packet_minimal 的同任务对照 | 不回答 inline boundary 或 carrier microbench；当前 coverage 仍不足时必须 withheld |
+| `memory_dual_mode_fairness_v3` | audit-only | 40 | text+protocol | text_whole_lane vs state_packet_minimal 的 dual-mode fairness/object parity | 不回答 typed-state authenticity，也不单独证明 replay |
+| `typed_state_mechanism_v3` | formal-secondary | 8 | protocol-only | natural_handoff_text vs state_packet_minimal 的 protocol-only 机制真实性 | 不回答 dual-mode headline、external text baseline 或 replay |
+| `external_text_baseline_audit_v3` | audit-only | 4 | text-only | 独立 external text baseline surface | 不并入 contest headline 或 typed-state mechanism |
+| `text_definition_audit_v3` | formal-audit | 40 | protocol-only | inline boundary 与 whole-lane pure text 的定义分离 | 不进正式 dual-mode headline |
+| `typed_state_authenticity_v3` | legacy-compat | 40 | protocol-only | 兼容旧引用的自然文本 vs minimal state packet surface | 正式机制 claim 不再优先读它 |
+| `typed_state_full_rich_audit_v3` | support-only | 40 | protocol-only | full-rich audit 对象是否仍可显式恢复 | 不进 formal headline |
+| `carrier_microbench_v3` | audit-only | 40 | protocol-only | minimal text/state packet 的 engineering 差异 | 不回答纯文本 vs structured 正式 headline |
+| `memory_reuse_v3` | formal-secondary | 4 | protocol-only | 固定 state_packet_minimal 后 replay-aware memory reuse 是否真实减少重复工作 | 不回答 text vs protocol |
+| `memory_policy_controlled_v3` | formal-secondary | 4 | protocol-only | 固定 `state_packet_minimal` 后 memory policy 单变量归因 | 不回答 text vs protocol |
+| `planner_support_v3` | formal-secondary | 10 | protocol-only | yaml vs llm plan source 的独立 planner 支撑面 | 不与 medium/state claim 混读；不作为赛题主 headline |
 
-| pack | 类型 | task数 | mode | 测什么 | headline | 不对外推什么 |
-|------|------|--------|------|--------|----------|-------------|
-| `formal_controlled` | formal-overview | 24 | text+proto | 系统总门面 | 总览/回归 | 不替代单项最干净证据 |
-| `communication` | formal | 2 | text+proto | 纯text vs proto通信 | `communication` | 不证明handoff真实性 |
-| `memory` | formal | 3 | proto-only | 三种记忆策略 | `memory replay` | 不证明text vs proto |
-| `state_transfer_authenticity` | formal | 6 | proto-only | text_brief vs state_ref | `typed handoff真实性` | 不证明战胜纯文本 |
-| `state_transfer_pure_text` | formal | 40 | proto-only | natural_text vs state_ref | `pure text fairness` | 不支持state更轻 |
-| `state_transfer_strict_pure_text` | formal-secondary | 40 | proto-only | strict inline text vs minimal state packet | `strict executor-facing pure text` | 不进正式headline aggregate |
-| `state_transfer_carrier` | formal | 40 | proto-only | 载体编码格式对比 | `carrier headline` | 不混读真实性/公平性 |
-| `state_transfer_inline_text_support` | support | 6 | proto-only | 严格内联纯文本 vs 最小状态包 | inline-text smoke support | 不做headline |
-| `open_validation` | support | 15 | text+proto | Planner/歧义/边界 | 开放能力证明 | 不进入正式claim |
-| `open_planner_support` | support | 5 | text+proto | 5-family `plan_source=llm` | Planner真实生成plan | 不进入正式claim |
+## 二、state-transfer 读法边界
 
----
+- `contest_dual_mode_controlled_v3`：formal dual-mode headline。`text` 的正式定义是 `text_strict_pure_lane`。
+- `memory_dual_mode_fairness_v3`：kept pack；只读 dual-mode fairness/object parity，不承担 replay proof。
+- `typed_state_mechanism_v3`：只读 protocol-side `natural_handoff_text` vs `state_packet_minimal` 机制真实性，不读成 dual-mode headline、external text baseline 或 replay。
+- `external_text_baseline_audit_v3`：只读独立 external text baseline 审计，不并入当前正式 headline。
+- `text_definition_audit_v3`：只读 protocol-side `inline_text_handoff` 的 executor boundary，不读成 formal contest pure-text headline。
+- `typed_state_authenticity_v3`：legacy compatibility only；正式机制 claim 优先读 `typed_state_mechanism_v3`。
+- `typed_state_full_rich_audit_v3`：只读 full-rich support/audit，不读成生产默认路径。
+- `carrier_microbench_v3`：只读 minimal packet engineering audit，不读成 formal benchmark headline。
+- `memory_policy_controlled_v3`：只读 protocol + state_packet_minimal 固定后的 memory policy 单变量归因。
+- `planner_support_v3`：只读 planner openness/support，不读成 `text vs protocol`、state-transfer 或 memory-reuse 证据。
 
-## 二、Task 定义
+## 三、当前 stopline
 
-当前 contest-release `state_transfer` packs 采用统一骨架：
+- formal v3 surface 已切干净，但机制真实性仍在审计中。
+- `typed_state_mechanism_v3` 只有在 `state_packet_minimal` 的 `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 被 executor 真实消费且未出现非预期 kind 时才能保留机制真实性结论。
+- `contest_dual_mode_controlled_v3` 只有在 contest pair coverage 不再只是 seed pack 时才能保留正式赛题 headline。
+- `memory_dual_mode_fairness_v3` 只有在 text restore 兼容性与 object parity gate 同时通过时才能保留 audit fairness surface。
+- `carrier_microbench_v3`、`text_definition_audit_v3` 与 `external_text_baseline_audit_v3` 都不得被 aggregate 文本包装成“纯文本 vs structured”总结论。
 
-- `5 family x 4 case`
-- family: `checkout / auth / cache / billing / deploy`
-- case: `clean / distractor / ambiguous / replay-reusable`
-- 每个 case 在各 pack 中都做成严格 paired task，除了 `transfer_strategy` 与 pack contract 外不允许改 `goal / query / corpus_doc_ids / task_group / task_theme / summary_hint`
+## 四、V3 Contract
 
-每个 task 是一次 Agent 协作诊断。用户给问题 → 系统检索 corpus → 判 route → 执行 → 总结。
+所有正式 v3 task 都显式写 case-level contract：
 
-| 字段 | 示例 | 作用 |
-|------|------|------|
-| `task_id` | `sample-cache-001` | 唯一标识 |
-| `task_group` | `cache_chain` | 同链 task 共享记忆（同一个 SQLite） |
-| `task_theme` | `repo_local_cache_staleness` | 主题标签；记忆检索过滤条件 |
-| `goal` | 自然语言 | 要解决的问题 |
-| `query` | 英文关键词 | corpus 检索查询 |
-| `corpus_doc_ids` | `[cache-invalid-anchor, ...]` | 指定要检索的文档 |
-| `transfer_strategy` | `state_ref` / `mode_split_*` | 决定 Retriever→Executor 握手方式 |
-| `runtime_reuse_contract` | `reuse_disabled` / `assist_allowed` / `validated_replay` / `exact_replay` | 记忆复用合同——控制能否查记忆、能否跳步 |
-| `expected_reuse_mode` | `none` / `assist` / `skip_execute` / `skip_retrieve_execute` | benchmark 验证——预期复用行为 |
-| `plan_source` | `yaml` / `llm` | Plan 来源：固定模板 or LLM 生成 |
+- `case_id`
+- `case_type`
+- `eval_scope`
+- `expected_family`
+- `primary_expected_route`
+- `primary_expected_tool`
+- `acceptable_routes`
+- `acceptable_tools`
+- `disallowed_families`
+- `abstention_allowed`
+- `allowed_abstain_tool`
+- `abstain_only_when`
 
-**记忆跨 task 共享**：同 `task_group` 的 task 共享一个 SQLite+FAISS。跨 run 不共享（每次跑全新实例）。
+正式主表读法固定为：
 
----
+- `route_exact_rate`
+- `tool_exact_rate`
+- `exact_match_rate`
+- `admissible_match_rate`
+- `abstention_rate`
+- `wrong_family_rate`
 
-## 三、`formal_controlled` 的 24 个 task
+`task_match_rate` 不再是正式 headline 指标。
 
-```
-cache_chain ×6         内部回归——验证 replay 稳定性
-latency_chain ×6       内部回归——同上，换 domain
-transfer_lane ×3       状态传递对比
-communication_lane ×6  通信开销对比
-memory_lane ×3         记忆策略对比
-```
+## 五、Archive 边界
 
-### 3.1 cache_chain + latency_chain（12 task，内部回归）
+旧 benchmark pack 仍可通过显式文件路径读取，用于历史回放或归档对照：
 
-**目的**：验证 replay scaffold 完整性和稳定性。`claim_lanes=[]`——不参与赛题主张，但支撑"系统能稳定跑"的可信度。
-
-每个 chain 6 个 task，结构同构：
-
-| 序号 | 复用模式 | 在测什么 |
-|------|---------|---------|
-| 1 | none | **冷启动基线**——无记忆，首次诊断 |
-| 2 | assist | **记忆辅助**——查记忆当参考，不跳步 |
-| 3 | none | **误导拒绝**——查记忆但不符合，拒绝复用 |
-| 4 | assist | **控制回放**——再跑一次积累记忆 |
-| 5 | skip_execute | **验证回放**——匹配？→跳过执行步骤 |
-| 6 | skip_retrieve_execute | **精确回放**——完全匹配？→两层都跳过 |
-
-**text/proto 差异**：只有控制面消息格式 + LLM prompt 不同。握手固定 `state_ref`。
-
-### 3.2 transfer_lane（3 task，状态传递）
-
-**目的**：验证 text_brief vs state_ref 握手。**这是 typed handoff 的真实性证明。** `transfer_strategy: mode_split_text_brief_vs_state_ref`——text 下走 text_brief，proto 下走 state_ref。
-
-```
-transfer-cache-001    text→text_brief, proto→state_ref
-transfer-latency-001  同上
-transfer-session-001  同上
-```
-
-**这 3 个 task 有全部三层差异**：控制面消息格式 + LLM prompt + 握手策略。
-
-### 3.3 communication_lane（6 task，最干净通信对比）
-
-**目的**：纯 text vs proto 通信对比。**单一变量——只有控制面消息格式和 LLM prompt 不同。**
-
-```
-通信对比: memory全部禁用 | 握手全部固定state_ref | 3 domain × 2 类型
-communication-cache-001   冷启动  communication-cache-002   拒绝控制
-communication-latency-001 冷启动  communication-latency-002 拒绝控制
-communication-session-001 冷启动  communication-session-002 拒绝控制
-```
-
-### 3.4 memory_lane（3 task，记忆策略）
-
-**目的**：对比三种记忆策略。**protocol-only——不参与 text vs proto。**
-
-```
-memory-cache-001    memory_off      冷启动基线
-memory-cache-002    assist_only     有命中但不跳步
-memory-cache-003    replay_enabled  命中匹配→跳过步骤
-```
-
----
-
-## 四、text 和 protocol 差异的三个层面
-
-```
-层面1: 控制面消息格式          ← 所有24 task都有
-  text:    自然语言字符串序列化    → control_bytes 大
-  protocol: protobuf二进制帧      → control_bytes 小
-
-层面2: LLM Prompt 格式          ← 所有24 task都有
-  text:    自然语言prompt         → llm_total_tokens 高
-  protocol: 紧凑协议prompt         → llm_total_tokens 低
-
-层面3: Retriever→Executor 握手   ← 只有 transfer_lane 的 3 task 有
-  text:    text_brief (Key-Value文本 → StatePool → 指针)
-  proto:   state_ref (msgpack结构化 → StatePool → 指针)
-```
-
-### 层面差异矩阵
-
-| task 组 | 层面1(消息格式) | 层面2(prompt) | 层面3(握手) |
-|---------|:---:|:---:|:---:|
-| cache_chain ×6 | ✅ | ✅ | 固定state_ref |
-| latency_chain ×6 | ✅ | ✅ | 固定state_ref |
-| transfer_lane ×3 | ✅ | ✅ | text_brief vs state_ref |
-| communication_lane ×6 | ✅ | ✅ | 固定state_ref |
-| memory_lane ×3 | N/A | N/A | protocol-only |
-
----
-
-## 五、三种 handoff 对比不要混
-
-| 对比 | 主要对象 | 对应 headline |
-|------|----------|---------------|
-| `text vs protocol` | 控制面消息 + LLM prompt | `communication` |
-| `text_brief vs state_ref` | hybrid handoff 真实性 | `typed_handoff_authenticity` |
-| `pure_text vs state_ref` | 真纯文本 vs 结构化 | `pure_text_vs_state` |
-
-`text_brief` 不是"纯文本 baseline"——它把结构化信息格式化为 Key-Value 文本，然后走 StatePool 传指针。和 state_ref 走的是相同的通信路径（StatePool→指针→mmap）。真正的"纯文本"应该是把自然语言内联在消息里，不经过 StatePool；当前这条严格合同放在 `state_transfer_inline_text_support`，只作为 support-only。
-
----
-
-## 六、各 Pack 对应的主张
-
-| 想看什么 | 看哪个包 |
-|---------|---------|
-| 通信效率（纯text vs proto） | `communication` 专用包 |
-| 记忆复用效果 | `memory` 专用包 |
-| protocol-only carrier headline | `state_transfer_carrier` |
-| 状态传递真实性（handoff） | `state_transfer_authenticity` |
-| 纯文本 vs 结构化 | `state_transfer_pure_text` |
-| 整体门面 | `formal_controlled` |
-| Planner能力/边界行为 | `open_validation`（support-only） |
-| 固定工作流质疑 | `open_planner_support`（support-only，text/protocol 都跑 `plan_source=llm`） |
-| 最严格纯文本 baseline | `state_transfer_strict_pure_text`（formal-secondary，executor-facing 输入只允许消息体文本） |
+- 不再有默认 alias
+- 不再进入默认 CLI
+- 不再进入正式 README
+- 不再进入正式 v3 smoke / report surface

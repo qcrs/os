@@ -2,6 +2,8 @@
 
 日期：`2026-06-11`
 
+> 当前定位：架构参考 / 历史工作流说明。本文仍包含旧 `sample_benchmark.yaml`、`formal_controlled`、24-task 等历史名称时，只能作为数据流背景，不能作为当前 v3 active benchmark surface 或 formal claim 依据。当前入口与 pack 合同请以 `README.md`、`tasks/README.md` 和 `docs/reports/task_design_and_mode_comparison.md` 为准。
+
 ---
 
 ## 一、系统对象定义
