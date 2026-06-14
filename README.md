@@ -116,11 +116,23 @@ benchmark 运行主入口在：
 
 - `eval/runner.py`
 
-默认 benchmark 入口当前指向：
+默认 CLI task-set 当前指向：
 
-- `state_transfer_carrier`
-  - 只读 protocol-only carrier headline
-  - `formal_controlled` 保留为总览/回归包，不再作为默认 headline 入口
+- `contest_dual_mode_controlled_v3`
+  - 当前正式 dual-mode headline
+  - 同任务双模式对照：`text_strict_pure_lane` vs `state_packet_minimal`
+
+v3 deterministic/local 综合检查入口会覆盖 11 个 active v3 pack；其中重点支持入口包括：
+
+- `memory_dual_mode_fairness_v3`
+  - dual-mode fairness/object-parity surface
+  - 同任务双模式对照：`text_whole_lane` vs `state_packet_minimal`
+- `typed_state_mechanism_v3`
+  - protocol-only typed-state 机制包
+  - 固定 `mode=protocol`、`runtime_reuse_contract=reuse_disabled`，同一 task object 下只比 `natural_handoff_text` vs `state_packet_minimal`
+- `memory_policy_controlled_v3`
+  - protocol-only memory policy attribution surface
+  - 固定 `mode=protocol` 与 `transfer_strategy=state_packet_minimal`，只改变 `runtime_reuse_contract`
 
 任务与 pack 定义在：
 
@@ -128,12 +140,48 @@ benchmark 运行主入口在：
 
 ## 6. 实验结果
 
-当前正式报告与总览在：
+当前 v3 active surface 与读法边界在：
 
 - `docs/reports/MASTER_PRESENTATION_GUIDE.md`
-- `docs/reports/architecture_and_data_flow.md`
 - `docs/reports/task_design_and_mode_comparison.md`
+
+历史结果/架构参考在：
+
+- `docs/reports/architecture_and_data_flow.md`
 - `docs/reports/benchmark_results_interpretation_20260610.md`
+
+这些历史报告保留了 v1/v2 pack 名称、旧任务数或旧运行包数据时，只能作为背景材料；当前 v3 formal 结论以 active v3 pack 的 manifest/report/gate 为准。
+
+当前 active benchmark surface 使用 11 个 v3 pack：
+
+- `contest_dual_mode_controlled_v3`
+- `memory_dual_mode_fairness_v3`
+- `typed_state_mechanism_v3`
+- `external_text_baseline_audit_v3`
+- `text_definition_audit_v3`
+- `typed_state_authenticity_v3`
+- `typed_state_full_rich_audit_v3`
+- `carrier_microbench_v3`
+- `memory_reuse_v3`
+- `memory_policy_controlled_v3`
+- `planner_support_v3`
+
+读法边界：
+
+- `contest_dual_mode_controlled_v3` 是当前正式双模式 headline。`text` 的正式定义是 `text_strict_pure_lane`。
+- `memory_dual_mode_fairness_v3` 是保留的 dual-mode fairness/object-parity surface；不承担 replay proof。
+- `typed_state_mechanism_v3` 只回答 `natural_handoff_text` vs `state_packet_minimal(DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET)` 是否真实生产、传递、消费；不读成 dual-mode headline，也不读成 replay 结论。
+- `external_text_baseline_audit_v3` 是独立 external text baseline audit surface；先做 audit-only，不并入 contest headline 或 typed-state 机制 claim。
+- `text_definition_audit_v3` 只负责 executor-boundary inline text 审计，不负责 formal headline。
+- `typed_state_authenticity_v3` 只保留 legacy compatibility surface；正式机制 claim 优先读 `typed_state_mechanism_v3`。
+- `typed_state_full_rich_audit_v3` 只保留 full-rich support/audit，不进 formal headline。
+- `carrier_microbench_v3` 是 engineering audit only，不读成 “纯文本 vs structured” 正式 headline。
+- `memory_policy_controlled_v3` 负责 replay proof / memory policy 单变量归因；`memory_reuse_v3` 保留 protocol-only replay proof surface。
+
+当前脚本入口：
+
+- `scripts/run_v3_comprehensive_check.py` 是 v3 deterministic/local 综合检查入口。
+- `scripts/run_v2_comprehensive_check.py` 和 `scripts/run_v2_api_repeat3_suite.py` 是 archived v2 入口，默认不应作为交付主入口。
 
 当前环境、benchmark 设计与结果边界相关的详细材料在：
 

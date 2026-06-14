@@ -443,7 +443,7 @@ def default_state_contract_registry() -> StateContractRegistry:
                 "feature_fresh_evidence_sha256",
             ),
             lifecycle="task_scoped",
-            replay_compatible=False,
+            replay_compatible=True,
         )
     )
     registry.register_state_contract(
@@ -564,7 +564,63 @@ def default_state_contract_registry() -> StateContractRegistry:
         StepInputContract(
             agent_id="executor",
             action="EXECUTE_PLAYBOOK",
+            variant="text_strict_pure_lane",
+            sources=(),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="EXECUTE_PLAYBOOK",
+            variant="text_whole_lane",
+            sources=(),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="EXECUTE_PLAYBOOK",
             variant="state_ref",
+            sources=(
+                StepInputSource(
+                    step_id="retrieve",
+                    include_kinds=(
+                        "DENSE_EVIDENCE",
+                        "FEATURE_BUNDLE",
+                    ),
+                    required_kind_groups=(
+                        ("DENSE_EVIDENCE",),
+                        ("FEATURE_BUNDLE",),
+                    ),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="EXECUTE_PLAYBOOK",
+            variant="protocol_feature_only_typed_state",
+            sources=(
+                StepInputSource(
+                    step_id="retrieve",
+                    include_kinds=(
+                        "DENSE_EVIDENCE",
+                        "FEATURE_BUNDLE",
+                    ),
+                    required_kind_groups=(
+                        ("DENSE_EVIDENCE",),
+                        ("FEATURE_BUNDLE",),
+                    ),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="EXECUTE_PLAYBOOK",
+            variant="protocol_full_rich_audit",
             sources=(
                 StepInputSource(
                     step_id="retrieve",
@@ -576,7 +632,7 @@ def default_state_contract_registry() -> StateContractRegistry:
                     ),
                     required_kind_groups=(
                         ("DENSE_EVIDENCE",),
-                        ("CHANNEL_SNAPSHOT", "FEATURE_BUNDLE", "TOOL_CANDIDATE_SET"),
+                        ("FEATURE_BUNDLE",),
                     ),
                 ),
             ),
@@ -661,19 +717,130 @@ def default_state_contract_registry() -> StateContractRegistry:
         StepInputContract(
             agent_id="summarizer",
             action="SUMMARIZE_AND_COMMIT",
+            variant="text_strict_pure_lane",
+            sources=(
+                StepInputSource(
+                    step_id="execute",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="summarizer",
+            action="SUMMARIZE_AND_COMMIT",
+            variant="text_whole_lane",
+            sources=(
+                StepInputSource(
+                    step_id="execute",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="summarizer",
+            action="SUMMARIZE_AND_COMMIT",
+            variant="natural_handoff_text",
+            sources=(
+                StepInputSource(
+                    step_id="execute",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="summarizer",
+            action="SUMMARIZE_AND_COMMIT",
+            variant="inline_text_handoff",
+            sources=(
+                StepInputSource(
+                    step_id="execute",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="summarizer",
+            action="SUMMARIZE_AND_COMMIT",
+            variant="state_packet_minimal",
+            sources=(
+                StepInputSource(
+                    step_id="retrieve",
+                    include_kinds=("DENSE_EVIDENCE",),
+                    required_kind_groups=(("DENSE_EVIDENCE",),),
+                ),
+                StepInputSource(
+                    step_id="execute",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="summarizer",
+            action="SUMMARIZE_AND_COMMIT",
+            variant="text_packet_minimal",
+            sources=(
+                StepInputSource(
+                    step_id="retrieve",
+                    include_kinds=("DENSE_EVIDENCE",),
+                    required_kind_groups=(("DENSE_EVIDENCE",),),
+                ),
+                StepInputSource(
+                    step_id="execute",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="summarizer",
+            action="SUMMARIZE_AND_COMMIT",
+            variant="text_brief",
+            sources=(
+                StepInputSource(
+                    step_id="retrieve",
+                    include_kinds=("DENSE_EVIDENCE",),
+                    required_kind_groups=(("DENSE_EVIDENCE",),),
+                ),
+                StepInputSource(
+                    step_id="execute",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="summarizer",
+            action="SUMMARIZE_AND_COMMIT",
             sources=(
                 StepInputSource(
                     step_id="retrieve",
                     include_kinds=(
                         "DENSE_EVIDENCE",
-                        "CHANNEL_SNAPSHOT",
                         "FEATURE_BUNDLE",
-                        "RANKED_EVIDENCE_BUNDLE",
-                        "TOOL_CANDIDATE_SET",
-                        "REPLAY_ELIGIBILITY_BUNDLE",
-                        "EMBEDDING",
                     ),
-                    required_kind_groups=(("DENSE_EVIDENCE",),),
+                    required_kind_groups=(
+                        ("DENSE_EVIDENCE",),
+                        ("FEATURE_BUNDLE",),
+                    ),
                 ),
                 StepInputSource(
                     step_id="execute",

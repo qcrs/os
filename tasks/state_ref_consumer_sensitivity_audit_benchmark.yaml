@@ -1,0 +1,169 @@
+task_set:
+  name: state_ref_consumer_sensitivity_audit_pack
+  pack_type: ad_hoc
+  description: Audit-only pack that disables selected rich typed-state refs one family at a time to measure executor visibility sensitivity.
+  reading_contract: Read this pack only as mechanism audit evidence. It holds the task fixed, runs explicit protocol full-rich audit typed-state, and disables one typed-state class at a time.
+  claim_lanes:
+  - state_transfer
+  evidence_tier: audit_only
+  benchmark_version: v3
+tasks:
+- task_id: audit-sensitivity-rich-full-001
+  task_group: audit_state_ref_consumer_sensitivity
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  handoff_profile: protocol_full_rich_audit
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Mechanism audit baseline. Hold task semantics fixed and keep the explicit full-rich audit typed-state lane.
+  tags: [release, checkout, latency, database, audit-sensitivity]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  summary_contract: protocol_handoff_audit
+  case_id: audit-sensitivity-rich-full-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-sensitivity-no-channel-snapshot-001
+  task_group: audit_state_ref_consumer_sensitivity
+  task_order: 2
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  handoff_profile: protocol_full_rich_audit
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  audit_disable_state_kinds: [CHANNEL_SNAPSHOT]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Mechanism audit. Disable CHANNEL_SNAPSHOT only.
+  tags: [release, checkout, latency, database, audit-sensitivity]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  summary_contract: protocol_handoff_audit
+  case_id: audit-sensitivity-no-channel-snapshot-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-sensitivity-no-tool-candidates-001
+  task_group: audit_state_ref_consumer_sensitivity
+  task_order: 3
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  handoff_profile: protocol_full_rich_audit
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  audit_disable_state_kinds: [TOOL_CANDIDATE_SET]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Mechanism audit. Disable TOOL_CANDIDATE_SET only.
+  tags: [release, checkout, latency, database, audit-sensitivity]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  summary_contract: protocol_handoff_audit
+  case_id: audit-sensitivity-no-tool-candidates-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-sensitivity-no-ranked-evidence-001
+  task_group: audit_state_ref_consumer_sensitivity
+  task_order: 4
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  handoff_profile: protocol_full_rich_audit
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  audit_disable_state_kinds: [RANKED_EVIDENCE_BUNDLE]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Mechanism audit. Disable RANKED_EVIDENCE_BUNDLE only.
+  tags: [release, checkout, latency, database, audit-sensitivity]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  summary_contract: protocol_handoff_audit
+  case_id: audit-sensitivity-no-ranked-evidence-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-sensitivity-no-replay-eligibility-001
+  task_group: audit_state_ref_consumer_sensitivity
+  task_order: 5
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  handoff_profile: protocol_full_rich_audit
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  audit_disable_state_kinds: [REPLAY_ELIGIBILITY_BUNDLE]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Mechanism audit. Disable REPLAY_ELIGIBILITY_BUNDLE only.
+  tags: [release, checkout, latency, database, audit-sensitivity]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  summary_contract: protocol_handoff_audit
+  case_id: audit-sensitivity-no-replay-eligibility-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""

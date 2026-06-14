@@ -1,62 +1,73 @@
 # Tasks
 
-Put reproducible sample tasks here.
+当前正式 benchmark 入口只保留 v3 pack。
 
-The first runnable benchmark should prefer repo-local task samples rather than
-real host service diagnostics.
+默认 CLI pack：
 
-Default benchmark input:
+- `contest_dual_mode_controlled_v3_benchmark.yaml`
+  - `contest_dual_mode_controlled_v3`
+  - 默认 formal surface
+  - 同任务对象下只改 `mode + handoff_profile`
 
-- `contest_release_regression_carrier_benchmark.yaml`
-  - default `state_transfer_carrier` formal entry pack
-  - protocol-only carrier headline for contest-style release-regression collaboration
-  - formal `aggregate` interpretation is intentionally suppressed; read the lane-local carrier table only
+重点支持/audit pack：
 
-Overview pack:
+- `memory_dual_mode_fairness_v3_benchmark.yaml`
+  - `memory_dual_mode_fairness_v3`
+  - dual-mode fairness/object-parity audit surface，不承担 replay proof
+  - 同任务对象下只改 `mode + memory policy + compatible restore object class`
+- `typed_state_mechanism_v3_benchmark.yaml`
+  - `typed_state_mechanism_v3`
+  - protocol-only 机制包
+  - 同任务对象下固定 `mode=protocol` 与 `runtime_reuse_contract=reuse_disabled`，只改 `natural_handoff_text` vs `state_packet_minimal`
+- `external_text_baseline_audit_v3_benchmark.yaml`
+  - `external_text_baseline_audit_v3`
+  - 独立 external text baseline audit surface
+  - 不并入 formal headline
 
-- `sample_benchmark.yaml`
-  - `formal_controlled` frozen overview pack
-  - keeps aggregate, replay-axis, and legacy dedicated-lane overview in one place
+正式 v3 packs：
 
-Formal dedicated packs:
+- `contest_dual_mode_controlled_v3_benchmark.yaml`
+  - `contest_dual_mode_controlled_v3`
+- `memory_dual_mode_fairness_v3_benchmark.yaml`
+  - `memory_dual_mode_fairness_v3`
+- `typed_state_mechanism_v3_benchmark.yaml`
+  - `typed_state_mechanism_v3`
+- `external_text_baseline_audit_v3_benchmark.yaml`
+  - `external_text_baseline_audit_v3`
+- `text_definition_audit_v3_benchmark.yaml`
+  - `text_definition_audit_v3`
+  - strict pure-text boundary 与 protocol inline boundary 分离审计
+- `typed_state_authenticity_v3_benchmark.yaml`
+  - `typed_state_authenticity_v3`
+  - protocol natural text vs `state_packet_minimal` 真实性
+- `typed_state_full_rich_audit_v3_benchmark.yaml`
+  - `typed_state_full_rich_audit_v3`
+  - protocol natural text vs explicit full-rich audit typed state support/audit
+- `carrier_microbench_v3_benchmark.yaml`
+  - `carrier_microbench_v3`
+  - minimal text/state packet engineering audit
+- `memory_reuse_v3_benchmark.yaml`
+  - `memory_reuse_v3`
+- `memory_policy_controlled_v3_benchmark.yaml`
+  - `memory_policy_controlled_v3`
+  - protocol carrier-fixed memory policy 单变量归因
+- `planner_support_v3_benchmark.yaml`
+  - `planner_support_v3`
 
-- `communication_benchmark.yaml`
-  - `communication` formal pack
-- `memory_benchmark.yaml`
-  - `memory` formal pack
-- `state_transfer_authenticity_benchmark.yaml`
-  - `state_transfer_authenticity` formal pack
-  - use for protocol-only `text_brief` versus `state_ref` typed-handoff authenticity
-- `state_transfer_pure_text_benchmark.yaml`
-  - `state_transfer_pure_text` formal pack
-  - use for protocol-only `natural_handoff_text` versus `state_ref` pure-text-versus-typed-state comparison
-  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
-- `contest_release_regression_carrier_benchmark.yaml`
-  - `state_transfer_carrier` formal pack
-  - use for protocol-only carrier efficiency only
-  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
-- `state_transfer_inline_text_support_benchmark.yaml`
-  - `state_transfer_inline_text_support` support-only pack
-  - use for strict inline message-body pure-text versus minimal state-packet support validation
+说明：
 
-Support-only packs:
-
-- `open_validation_benchmark.yaml`
-  - support-only open validation pack
-  - use for retrieval / executor / replay / planner pre-pass boundary checks after controlled changes
-
-Engineering packs:
-
-- `internal_regression_benchmark.yaml`
-  - `internal_regression` engineering pack
-  - includes route-diagnostic `lexical_override` tasks
-
-Additional contest-draft packs:
-
-- `contest_release_regression_authenticity_benchmark.yaml`
-  - draft contest-oriented `state_transfer_authenticity` pack
-  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
-- `contest_release_regression_natural_support_benchmark.yaml`
-  - legacy contest-oriented natural-text support draft
-  - still accepted through the `state_transfer_inline_text_support` alias path for compatibility
-  - current contest-release object is `5 family x 4 case x 2 strategy = 40 tasks`
+- 正式 README、默认 CLI、正式 smoke、正式 report 只认以上 11 个 v3 对象。
+- 主动脚本入口是 `scripts/run_v3_comprehensive_check.py`；`scripts/run_v2_*` 只保留归档/考古用途，默认拒绝运行。
+- `contest_dual_mode_controlled_v3` 是当前 formal dual-mode surface，headline baseline 为 `text_strict_pure_lane` vs `state_packet_minimal`。
+- `memory_dual_mode_fairness_v3` 是保留 pack；当前只读 dual-mode fairness/object parity，不承担 replay proof。
+- `typed_state_mechanism_v3` 只读 protocol-only `natural_handoff_text` vs `state_packet_minimal` 机制真实性；不读成 dual-mode headline。
+- `external_text_baseline_audit_v3` 只读独立 external text baseline 审计；不并入当前正式 headline。
+- `memory_policy_controlled_v3` 只读 protocol + state_packet_minimal 固定后的 memory policy 单变量归因。
+- `typed_state_authenticity_v3` 只保留 legacy compatibility；正式机制 claim 读 `typed_state_mechanism_v3`。
+- `text_definition_audit_v3` 只读 boundary 定义，不读成 formal headline。
+- `carrier_microbench_v3` 只读 engineering audit。
+- 当前 formal v3 已切 surface，但系统机制真实性仍在审计中。
+- 若 `state_packet_minimal` 的 `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 未被 executor 真实消费，`typed_state_mechanism_v3` 必须 withheld。
+- 若 `contest_dual_mode_controlled_v3` 仍只是 seed pair coverage，不得输出正式赛题 headline。
+- 若 `memory_dual_mode_fairness_v3` 的 text restore 兼容性或 object parity gate 未过，不得输出 audit fairness 通过结论。
+- `tasks/state_ref_consumer_sensitivity_audit_benchmark.yaml` 是 mechanism audit pack，用来逐类关闭 rich typed-state ref，定位 executor 真消费与纯开销。

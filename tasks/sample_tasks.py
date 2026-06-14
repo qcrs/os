@@ -15,66 +15,45 @@ from runtime.task_profile import (
     RuntimeTaskProfile,
     build_reuse_signature,
     normalize_benchmark_lane,
+    normalize_handoff_profile,
     normalize_transfer_strategy,
 )
 
 
 DEFAULT_TASKS_DIR = Path(__file__).resolve().parent
-DEFAULT_TASK_SET = DEFAULT_TASKS_DIR / "sample_benchmark.yaml"
-DEFAULT_BENCHMARK_TASK_SET = DEFAULT_TASKS_DIR / "contest_release_regression_carrier_benchmark.yaml"
+DEFAULT_TASK_SET = DEFAULT_TASKS_DIR / "contest_dual_mode_controlled_v3_benchmark.yaml"
+DEFAULT_BENCHMARK_TASK_SET = DEFAULT_TASKS_DIR / "contest_dual_mode_controlled_v3_benchmark.yaml"
 
 TASK_SET_ALIASES = {
-    "default": "contest_release_regression_carrier_benchmark.yaml",
-    "formal_controlled": "sample_benchmark.yaml",
-    "formal_controlled_pack": "sample_benchmark.yaml",
-    "sample_benchmark": "sample_benchmark.yaml",
-    "state_transfer_carrier": "contest_release_regression_carrier_benchmark.yaml",
-    "state_transfer_carrier_pack": "contest_release_regression_carrier_benchmark.yaml",
-    "contest_release_regression_carrier": "contest_release_regression_carrier_benchmark.yaml",
-    "contest_release_regression_carrier_pack": "contest_release_regression_carrier_benchmark.yaml",
-    "state_transfer_authenticity": "state_transfer_authenticity_benchmark.yaml",
-    "state_transfer_authenticity_pack": "state_transfer_authenticity_benchmark.yaml",
-    "contest_release_regression_authenticity": "contest_release_regression_authenticity_benchmark.yaml",
-    "contest_release_regression_authenticity_pack": "contest_release_regression_authenticity_benchmark.yaml",
-    "state_transfer_pure_text": "state_transfer_pure_text_benchmark.yaml",
-    "state_transfer_pure_text_pack": "state_transfer_pure_text_benchmark.yaml",
-    "contest_release_regression_pure_text": "state_transfer_pure_text_benchmark.yaml",
-    "contest_release_regression_pure_text_pack": "state_transfer_pure_text_benchmark.yaml",
-    "state_transfer_inline_text_support": "state_transfer_inline_text_support_benchmark.yaml",
-    "state_transfer_inline_text_support_pack": "state_transfer_inline_text_support_benchmark.yaml",
-    "state_transfer_strict_pure_text": "state_transfer_strict_pure_text_benchmark.yaml",
-    "state_transfer_strict_pure_text_pack": "state_transfer_strict_pure_text_benchmark.yaml",
-    "contest_release_regression_strict_pure_text": "state_transfer_strict_pure_text_benchmark.yaml",
-    "contest_release_regression_strict_pure_text_pack": "state_transfer_strict_pure_text_benchmark.yaml",
-    "contest_release_regression_inline_text_support": "contest_release_regression_natural_support_benchmark.yaml",
-    "contest_release_regression_inline_text_support_pack": "contest_release_regression_natural_support_benchmark.yaml",
-    "state_transfer_natural_support": "state_transfer_inline_text_support_benchmark.yaml",
-    "state_transfer_natural_support_pack": "state_transfer_inline_text_support_benchmark.yaml",
-    "contest_release_regression_natural_support": "contest_release_regression_natural_support_benchmark.yaml",
-    "contest_release_regression_natural_support_pack": "contest_release_regression_natural_support_benchmark.yaml",
-    "communication": "communication_benchmark.yaml",
-    "communication_pack": "communication_benchmark.yaml",
-    "memory": "memory_benchmark.yaml",
-    "memory_pack": "memory_benchmark.yaml",
-    "internal_regression": "internal_regression_benchmark.yaml",
-    "internal_regression_pack": "internal_regression_benchmark.yaml",
-    "open_validation": "open_validation_benchmark.yaml",
-    "open_validation_pack": "open_validation_benchmark.yaml",
-    "open_planner_support": "open_planner_support_benchmark.yaml",
-    "open_planner_support_pack": "open_planner_support_benchmark.yaml",
-    "carrier_controlled_v2": "carrier_controlled_v2_benchmark.yaml",
-    "carrier_controlled_v2_pack": "carrier_controlled_v2_benchmark.yaml",
-    "semantic_retention_v2": "semantic_retention_v2_benchmark.yaml",
-    "semantic_retention_v2_pack": "semantic_retention_v2_benchmark.yaml",
-    "strict_pure_text_boundary_v2": "strict_pure_text_boundary_v2_benchmark.yaml",
-    "strict_pure_text_boundary_v2_pack": "strict_pure_text_boundary_v2_benchmark.yaml",
-    "memory_reuse_v2": "memory_reuse_v2_benchmark.yaml",
-    "memory_reuse_v2_pack": "memory_reuse_v2_benchmark.yaml",
-    "planner_support_v2": "planner_support_v2_benchmark.yaml",
-    "planner_support_v2_pack": "planner_support_v2_benchmark.yaml",
-    "langgraph_native_text_support_v2": "langgraph_native_text_support_v2_benchmark.yaml",
-    "langgraph_native_text_support_v2_pack": "langgraph_native_text_support_v2_benchmark.yaml",
+    "default": "contest_dual_mode_controlled_v3_benchmark.yaml",
+    "contest_dual_mode_controlled_v3": "contest_dual_mode_controlled_v3_benchmark.yaml",
+    "memory_dual_mode_fairness_v3": "memory_dual_mode_fairness_v3_benchmark.yaml",
+    "typed_state_mechanism_v3": "typed_state_mechanism_v3_benchmark.yaml",
+    "external_text_baseline_audit_v3": "external_text_baseline_audit_v3_benchmark.yaml",
+    "text_definition_audit_v3": "text_definition_audit_v3_benchmark.yaml",
+    "typed_state_authenticity_v3": "typed_state_authenticity_v3_benchmark.yaml",
+    "typed_state_full_rich_audit_v3": "typed_state_full_rich_audit_v3_benchmark.yaml",
+    "carrier_microbench_v3": "carrier_microbench_v3_benchmark.yaml",
+    "memory_reuse_v3": "memory_reuse_v3_benchmark.yaml",
+    "memory_policy_controlled_v3": "memory_policy_controlled_v3_benchmark.yaml",
+    "planner_support_v3": "planner_support_v3_benchmark.yaml",
 }
+
+V3_FORMAL_TASK_PACK_TYPES = (
+    "contest_dual_mode_controlled_v3",
+    "memory_dual_mode_fairness_v3",
+    "typed_state_mechanism_v3",
+    "external_text_baseline_audit_v3",
+    "text_definition_audit_v3",
+    "typed_state_authenticity_v3",
+    "typed_state_full_rich_audit_v3",
+    "carrier_microbench_v3",
+    "memory_reuse_v3",
+    "memory_policy_controlled_v3",
+    "planner_support_v3",
+)
+
+TASK_PACK_TYPES = (*V3_FORMAL_TASK_PACK_TYPES, "ad_hoc")
 
 STATE_TRANSFER_THEME_EXPECTATIONS = {
     "contest_release_checkout_regression": {
@@ -103,27 +82,6 @@ STATE_TRANSFER_THEME_EXPECTATIONS = {
     },
 }
 
-TASK_PACK_TYPES = (
-    "formal_controlled",
-    "state_transfer_carrier",
-    "state_transfer_authenticity",
-    "state_transfer_pure_text",
-    "state_transfer_inline_text_support",
-    "state_transfer_strict_pure_text",
-    "communication",
-    "memory",
-    "internal_regression",
-    "open_validation",
-    "open_planner_support",
-    "carrier_controlled_v2",
-    "semantic_retention_v2",
-    "strict_pure_text_boundary_v2",
-    "memory_reuse_v2",
-    "planner_support_v2",
-    "langgraph_native_text_support_v2",
-    "ad_hoc",
-)
-
 TASK_MODES = (
     "text",
     "protocol",
@@ -132,6 +90,18 @@ TASK_MODES = (
 PLAN_SOURCES = (
     "yaml",
     "llm",
+)
+
+COMPLEXITY_BUCKETS = (
+    "simple",
+    "distractor",
+    "ambiguous",
+    "reusable",
+)
+
+SUMMARY_CONTRACTS = (
+    "actions_plus_evidence",
+    "protocol_handoff_audit",
 )
 
 CASE_TYPES = (
@@ -145,28 +115,17 @@ def normalize_task_pack_type(value: object) -> str:
     text = str(value or "").strip().lower().replace("-", "_")
     alias_map = {
         "": "ad_hoc",
-        "formal": "formal_controlled",
-        "formal_controlled": "formal_controlled",
-        "state_transfer_carrier": "state_transfer_carrier",
-        "state_transfer_authenticity": "state_transfer_authenticity",
-        "state_transfer_pure_text": "state_transfer_pure_text",
-        "state_transfer_inline_text_support": "state_transfer_inline_text_support",
-        "state_transfer_natural_support": "state_transfer_inline_text_support",
-        "state_transfer_strict_pure_text": "state_transfer_strict_pure_text",
-        "strict_pure_text": "state_transfer_strict_pure_text",
-        "communication": "communication",
-        "memory": "memory",
-        "internal_regression": "internal_regression",
-        "open": "open_validation",
-        "open_validation": "open_validation",
-        "open_planner_support": "open_planner_support",
-        "carrier_controlled_v2": "carrier_controlled_v2",
-        "semantic_retention_v2": "semantic_retention_v2",
-        "strict_pure_text_boundary_v2": "strict_pure_text_boundary_v2",
-        "memory_reuse_v2": "memory_reuse_v2",
-        "planner_support_v2": "planner_support_v2",
-        "langgraph_native_text_support_v2": "langgraph_native_text_support_v2",
-        "support_only": "open_validation",
+        "contest_dual_mode_controlled_v3": "contest_dual_mode_controlled_v3",
+        "memory_dual_mode_fairness_v3": "memory_dual_mode_fairness_v3",
+        "typed_state_mechanism_v3": "typed_state_mechanism_v3",
+        "external_text_baseline_audit_v3": "external_text_baseline_audit_v3",
+        "text_definition_audit_v3": "text_definition_audit_v3",
+        "typed_state_authenticity_v3": "typed_state_authenticity_v3",
+        "typed_state_full_rich_audit_v3": "typed_state_full_rich_audit_v3",
+        "carrier_microbench_v3": "carrier_microbench_v3",
+        "memory_reuse_v3": "memory_reuse_v3",
+        "memory_policy_controlled_v3": "memory_policy_controlled_v3",
+        "planner_support_v3": "planner_support_v3",
         "adhoc": "ad_hoc",
         "ad_hoc": "ad_hoc",
     }
@@ -174,6 +133,16 @@ def normalize_task_pack_type(value: object) -> str:
     if normalized not in TASK_PACK_TYPES:
         raise ValueError(f"unsupported task pack type: {value!r}")
     return normalized
+
+
+def _normalize_task_pack_type_for_metadata(value: object) -> tuple[str, str]:
+    text = str(value or "").strip().lower().replace("-", "_")
+    if not text:
+        return ("ad_hoc", "")
+    try:
+        return (normalize_task_pack_type(text), "")
+    except ValueError:
+        return ("ad_hoc", text)
 
 
 def normalize_plan_source(value: object) -> str:
@@ -189,6 +158,22 @@ def normalize_case_type(value: object) -> str:
     normalized = text or "exact_single_solution"
     if normalized not in CASE_TYPES:
         raise ValueError(f"unsupported case_type: {value!r}")
+    return normalized
+
+
+def normalize_complexity_bucket(value: object) -> str:
+    text = str(value or "").strip().lower()
+    normalized = text or "simple"
+    if normalized not in COMPLEXITY_BUCKETS:
+        raise ValueError(f"unsupported complexity_bucket: {value!r}")
+    return normalized
+
+
+def normalize_summary_contract(value: object) -> str:
+    text = str(value or "").strip().lower()
+    normalized = text or "actions_plus_evidence"
+    if normalized not in SUMMARY_CONTRACTS:
+        raise ValueError(f"unsupported summary_contract: {value!r}")
     return normalized
 
 
@@ -221,29 +206,28 @@ class TaskSetMetadata:
     description: str = ""
     reading_contract: str = ""
     claim_lanes: tuple[str, ...] = ()
-    evidence_tier: str = "historical_v1"
-    benchmark_version: str = "v1"
+    single_variable: bool = False
+    variable_axes: tuple[str, ...] = ()
+    public_surface: str = ""
+    evidence_tier: str = "formal_headline"
+    benchmark_version: str = "v3"
+    historical_pack_type: str = ""
 
     @property
     def support_only(self) -> bool:
-        return self.evidence_tier == "support_only" or self.pack_type in {
-            "state_transfer_inline_text_support",
-            "open_validation",
-            "open_planner_support",
-            "planner_support_v2",
-            "langgraph_native_text_support_v2",
-        }
+        return self.evidence_tier == "support_only"
+
+    @property
+    def audit_only(self) -> bool:
+        return self.evidence_tier == "audit_only"
 
     @property
     def formal_secondary(self) -> bool:
-        return self.evidence_tier == "formal_secondary" or self.pack_type in {
-            "state_transfer_strict_pure_text",
-            "strict_pure_text_boundary_v2",
-        }
+        return self.evidence_tier == "formal_secondary"
 
     @property
-    def historical_v1(self) -> bool:
-        return self.evidence_tier == "historical_v1"
+    def historical(self) -> bool:
+        return self.evidence_tier in {"historical", "archived"}
 
 
 @dataclass(frozen=True)
@@ -269,6 +253,7 @@ class SampleTask:
     expected_reuse_mode: str = "none"
     benchmark_lane: str = "internal_regression"
     transfer_strategy: str = "state_ref"
+    handoff_profile: str = "protocol_feature_only_typed_state"
     runtime_reuse_contract_override: str = ""
     replay_source_task_id: str = ""
     allow_memory_assist_contract: bool | None = None
@@ -293,6 +278,36 @@ class SampleTask:
     abstain_only_when: str = ""
     allowed_modes: tuple[str, ...] = TASK_MODES
     plan_source: str = "yaml"
+    complexity_bucket: str = "simple"
+    summary_contract: str = "actions_plus_evidence"
+    audit_disable_state_kinds: tuple[str, ...] = ()
+
+    @property
+    def agent_visible(self) -> dict[str, object]:
+        return {
+            "goal": self.goal,
+            "query": self.query,
+            "summary_hint": self.summary_hint,
+            "evidence_text": self.evidence_text,
+            "tags": list(self.tags),
+        }
+
+    @property
+    def eval_only(self) -> dict[str, object]:
+        return {
+            "corpus_doc_ids": list(self.corpus_doc_ids),
+            "expected_route": self.expected_route,
+            "expected_route_source": self.expected_route_source,
+            "expected_tool_name": self.expected_tool_name,
+            "expected_top_doc_id": self.expected_top_doc_id,
+            "acceptable_routes": list(self.acceptable_routes),
+            "acceptable_tools": list(self.acceptable_tools),
+            "case_contract": self.case_contract,
+            "reuse_tags": list(self.reuse_tags),
+            "benchmark_lane": self.benchmark_lane,
+            "runtime_reuse_contract": self.runtime_reuse_contract,
+            "audit_disable_state_kinds": list(self.audit_disable_state_kinds),
+        }
 
     @property
     def expected_reuse(self) -> bool:
@@ -363,6 +378,7 @@ class SampleTask:
             runtime_reuse_contract=self.runtime_reuse_contract,
             benchmark_lane=self.benchmark_lane,
             transfer_strategy=self.transfer_strategy,
+            handoff_profile=self.handoff_profile,
         )
 
     def supports_mode(self, mode: str) -> bool:
@@ -430,6 +446,7 @@ def build_plan(task: SampleTask) -> Plan:
                     "evidence_text": task.evidence_text,
                     "tags": list(task.tags),
                     "allow_memory_reuse": True,
+                    "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
                 },
                 depends_on=[],
             ),
@@ -480,19 +497,38 @@ def _resolve_optional_path(task_path: Path, raw_value: object) -> str:
 
 
 def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetMetadata:
+    pack_type, historical_pack_type = _normalize_task_pack_type_for_metadata(
+        raw.get("pack_type", "ad_hoc")
+    )
     claim_lanes = tuple(
         normalize_benchmark_lane(item)
         for item in raw.get("claim_lanes", [])
         if str(item).strip()
     )
+    single_variable = bool(raw.get("single_variable", False))
+    variable_axes = tuple(
+        str(item).strip()
+        for item in raw.get("variable_axes", [])
+        if str(item).strip()
+    )
+    public_surface = str(raw.get("public_surface", "")).strip()
+    evidence_tier = str(raw.get("evidence_tier", "formal_headline")).strip() or "formal_headline"
+    benchmark_version = str(raw.get("benchmark_version", "v3")).strip() or "v3"
+    if historical_pack_type:
+        evidence_tier = "historical"
+        benchmark_version = "historical_v1"
     return TaskSetMetadata(
         name=str(raw.get("name", task_path.stem)).strip() or task_path.stem,
-        pack_type=normalize_task_pack_type(raw.get("pack_type", "ad_hoc")),
+        pack_type=pack_type,
         description=str(raw.get("description", "")).strip(),
         reading_contract=str(raw.get("reading_contract", "")).strip(),
         claim_lanes=claim_lanes,
-        evidence_tier=str(raw.get("evidence_tier", "historical_v1")).strip() or "historical_v1",
-        benchmark_version=str(raw.get("benchmark_version", "v1")).strip() or "v1",
+        single_variable=single_variable,
+        variable_axes=variable_axes,
+        public_surface=public_surface,
+        evidence_tier=evidence_tier,
+        benchmark_version=benchmark_version,
+        historical_pack_type=historical_pack_type,
     )
 
 
@@ -548,7 +584,19 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
         str(value).strip() for value in item.get("disallowed_families", []) if str(value).strip()
     )
     abstention_allowed = bool(item.get("abstention_allowed", False))
-    return SampleTask(
+    raw_transfer_strategy = str(item.get("transfer_strategy", "")).strip()
+    raw_handoff_profile = str(item.get("handoff_profile", "")).strip()
+    transfer_strategy = normalize_transfer_strategy(raw_transfer_strategy or "state_ref")
+    if raw_handoff_profile:
+        handoff_profile = normalize_handoff_profile(raw_handoff_profile)
+    elif raw_transfer_strategy:
+        transfer_strategy = normalize_transfer_strategy(raw_transfer_strategy)
+        handoff_profile = RuntimeTaskProfile(
+            transfer_strategy=transfer_strategy
+        ).resolved_handoff_profile
+    else:
+        handoff_profile = "protocol_feature_only_typed_state"
+    task = SampleTask(
         task_id=str(item["task_id"]).strip(),
         task_group=str(item.get("task_group", "default")).strip(),
         task_order=int(item.get("task_order", 0)),
@@ -566,7 +614,8 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
             )
         ).strip(),
         benchmark_lane=benchmark_lane,
-        transfer_strategy=normalize_transfer_strategy(item.get("transfer_strategy", "state_ref")),
+        transfer_strategy=transfer_strategy,
+        handoff_profile=handoff_profile,
         runtime_reuse_contract_override=str(item.get("runtime_reuse_contract", "")).strip(),
         replay_source_task_id=str(item.get("replay_source_task_id", "")).strip(),
         allow_memory_assist_contract=_coerce_optional_bool(item.get("allow_memory_assist")),
@@ -592,4 +641,45 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
         summary_hint=str(item["summary_hint"]).strip(),
         allowed_modes=normalize_task_modes(item.get("allowed_modes", TASK_MODES)),
         plan_source=normalize_plan_source(item.get("plan_source", "yaml")),
+        complexity_bucket=normalize_complexity_bucket(item.get("complexity_bucket", "simple")),
+        summary_contract=normalize_summary_contract(
+            item.get("summary_contract", "actions_plus_evidence")
+        ),
+        audit_disable_state_kinds=tuple(
+            str(value).strip()
+            for value in item.get("audit_disable_state_kinds", [])
+            if str(value).strip()
+        ),
     )
+    _validate_task_profile_contract(task, raw_transfer_strategy=raw_transfer_strategy, raw_handoff_profile=raw_handoff_profile)
+    return task
+
+
+def _validate_task_profile_contract(
+    task: SampleTask,
+    *,
+    raw_transfer_strategy: str,
+    raw_handoff_profile: str,
+) -> None:
+    if "text" in task.allowed_modes and task.handoff_profile != "text_whole_lane" and task.transfer_strategy == "text_whole_lane":
+        raise ValueError(f"{task.task_id}: transfer_strategy=text_whole_lane requires handoff_profile=text_whole_lane")
+    if task.handoff_profile == "text_whole_lane" and "protocol" in task.allowed_modes:
+        raise ValueError(f"{task.task_id}: handoff_profile=text_whole_lane cannot be used in protocol mode")
+    if raw_transfer_strategy and not raw_handoff_profile:
+        if task.transfer_strategy == "natural_handoff_text" and task.handoff_profile != "protocol_natural_handoff_text":
+            raise ValueError(f"{task.task_id}: natural_handoff_text compatibility mapping lost semantic fidelity")
+        if task.transfer_strategy == "inline_text_handoff" and task.handoff_profile != "protocol_inline_text_handoff":
+            raise ValueError(f"{task.task_id}: inline_text_handoff compatibility mapping lost semantic fidelity")
+    if task.transfer_strategy == "state_ref" and task.handoff_profile not in {
+        "protocol_feature_only_typed_state",
+        "protocol_full_rich_audit",
+    }:
+        raise ValueError(
+            f"{task.task_id}: state_ref must map to protocol_feature_only_typed_state or protocol_full_rich_audit"
+        )
+    if task.transfer_strategy == "text_whole_lane" and task.handoff_profile != "text_whole_lane":
+        raise ValueError(f"{task.task_id}: text_whole_lane must stay on the whole-lane text profile")
+    if task.summary_contract == "actions_plus_evidence" and task.handoff_profile == "protocol_full_rich_audit":
+        raise ValueError(
+            f"{task.task_id}: protocol_full_rich_audit rows must use summary_contract=protocol_handoff_audit"
+        )

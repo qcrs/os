@@ -14,7 +14,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run matched StateBus benchmarks for mmap and shared_memory backends.",
     )
-    parser.add_argument("--task-set", default="tasks/sample_benchmark.yaml")
+    parser.add_argument("--task-set", default="contest_dual_mode_controlled_v3")
     parser.add_argument("--modes", default="text,protocol")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)

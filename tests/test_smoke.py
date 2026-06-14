@@ -23,7 +23,13 @@ from agents.sample_agents import (
     _build_transfer_brief,
     build_sample_agents_with_executor,
 )
-from eval.runner import DEFAULT_BENCHMARK_TASK_SET, _mode_order_for_run, run_benchmark
+from eval.runner import (
+    DEFAULT_BENCHMARK_TASK_SET,
+    _build_case_contract_audit,
+    _mode_order_for_run,
+    _whole_lane_text_guard_payload,
+    run_benchmark,
+)
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
 from protocol.messages import MemoryHit
 from protocol.messages import (
@@ -35,7 +41,7 @@ from protocol.messages import (
     StepResult,
     text_frame,
 )
-from runtime.contracts import SchemaValidationError
+from runtime.contracts import SchemaValidationError, default_state_contract_registry
 from runtime.langgraph_adapter import StateBusGraphRunner, langgraph_available
 from runtime.llm import DeterministicLLMClient
 from runtime.orchestrator import Orchestrator, RunSession, _route_is_replay_eligible
@@ -99,7 +105,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         out_dir = Path(tmpdir) / "runs"
         result = asyncio.run(
             run_benchmark(
-                task_set_path="formal_controlled",
+                task_set_path="contest_dual_mode_controlled_v3",
                 repeat=1,
                 out_dir=out_dir,
                 embedder=DeterministicEmbeddingProvider(),
@@ -111,7 +117,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert (out_dir / "benchmark_report.md").exists()
         payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
         compare_csv = (out_dir / "benchmark_compare.csv").read_text(encoding="utf-8")
-        task_chain = list(load_task_set_bundle("formal_controlled").tasks)
+        task_chain = list(load_task_set_bundle("contest_dual_mode_controlled_v3").tasks)
         expected_lane_counts = {
             "internal_regression": sum(1 for task in task_chain if task.benchmark_lane == "internal_regression"),
             "communication": sum(1 for task in task_chain if task.benchmark_lane == "communication"),
@@ -120,6 +126,12 @@ def test_benchmark_runner_writes_outputs() -> None:
             "integrity": 0,
         }
         expected_transfer_strategy_counts = {
+            "text_strict_pure_lane": sum(
+                1 for task in task_chain if task.transfer_strategy == "text_strict_pure_lane"
+            ),
+            "text_whole_lane": sum(
+                1 for task in task_chain if task.transfer_strategy == "text_whole_lane"
+            ),
             "inline_text_handoff": sum(
                 1 for task in task_chain if task.transfer_strategy == "inline_text_handoff"
             ),
@@ -127,9 +139,7 @@ def test_benchmark_runner_writes_outputs() -> None:
                 1 for task in task_chain if task.transfer_strategy == "natural_handoff_text"
             ),
             "channel_store_hashref": sum(
-                1
-                for task in task_chain
-                if task.transfer_strategy in {"state_ref", "mode_split_text_brief_vs_state_ref"}
+                1 for task in task_chain if task.transfer_strategy == "state_ref"
             ),
             "text_brief": sum(1 for task in task_chain if task.transfer_strategy == "text_brief"),
             "text_packet_minimal": sum(1 for task in task_chain if task.transfer_strategy == "text_packet_minimal"),
@@ -176,7 +186,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert payload["manifest"]["benchmark_lane_counts"] == expected_lane_counts
         manifest_transfer_counts = payload["manifest"]["transfer_strategy_counts"]
         assert manifest_transfer_counts == expected_transfer_strategy_counts
-        assert "natural_handoff_text" in manifest_transfer_counts
+        assert "text_strict_pure_lane" in manifest_transfer_counts
         assert payload["manifest"]["channel_form_counts"]["typed_channel"] >= 1
         manifest_memory_counts = payload["manifest"]["memory_policy_counts"]
         assert manifest_memory_counts["memory_off"] == expected_memory_policy_counts["memory_off"]
@@ -186,7 +196,7 @@ def test_benchmark_runner_writes_outputs() -> None:
             1 for task in task_chain if any(task.artifact_expectations.values())
         )
         assert payload["manifest"]["task_groups"] == sorted({task.task_group for task in task_chain})
-        assert payload["manifest"]["task_pack_type"] == "formal_controlled"
+        assert payload["manifest"]["task_pack_type"] == "contest_dual_mode_controlled_v3"
         assert result["summary"]["text"]["run_count"] == 1
         if expected_task_mode_counts["text"] == 0:
             assert result["mode_runs"]["text"][0]["tasks"] == []
@@ -200,26 +210,10 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert "phase_overhead_ms" in compare_csv
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "StateBus Benchmark Report" in report_text
-        assert "## Structured-vs-Text By Reuse Axis" in report_text
-        assert "## Contest Claim Lane Deltas" in report_text
-        assert "## Typed-Handoff State-Transfer Headline" in report_text
-        assert "## Aggregate" in report_text
-        assert "## Diagnostic Appendix" in report_text
-        assert "## Benchmark Lane Diagnostics" in report_text
+        assert "## Contest Dual-Mode Controlled V3" in report_text
         assert "handoff_wire_bytes" in report_text
         assert "handoff_payload_bytes" in report_text
-        assert "serialized StateRefLite pointers on the wire" in report_text
-        assert "## Contest Benchmark Lanes" not in report_text
-        assert report_text.index("## Structured-vs-Text By Reuse Axis") < report_text.index(
-            "## Contest Claim Lane Deltas"
-        )
-        assert report_text.index("## Contest Claim Lane Deltas") < report_text.index(
-            "## Typed-Handoff State-Transfer Headline"
-        )
-        assert report_text.index("## Typed-Handoff State-Transfer Headline") < report_text.index(
-            "## Aggregate"
-        )
-        assert report_text.index("## Aggregate") < report_text.index("## Diagnostic Appendix")
+        assert "whole-lane text guard pass rate" in report_text.lower()
         task_run = payload["mode_runs"]["protocol"][0]["tasks"][0]
         assert task_run["engine"] == "langgraph"
         assert task_run["graph_state"]["metrics"] == task_run["metrics"]
@@ -250,13 +244,13 @@ def test_benchmark_runner_is_langgraph_only() -> None:
 
 
 def test_benchmark_runner_default_task_set_is_carrier_pack() -> None:
-    assert DEFAULT_BENCHMARK_TASK_SET.name == "contest_release_regression_carrier_benchmark.yaml"
+    assert DEFAULT_BENCHMARK_TASK_SET.name == "contest_dual_mode_controlled_v3_benchmark.yaml"
 
 
 def test_langgraph_runner_requires_real_langgraph_dependency(monkeypatch) -> None:
     if not langgraph_available():
         pytest.skip("host env already lacks langgraph")
-    task = load_task_set_bundle("formal_controlled").tasks[0]
+    task = load_task_set_bundle("contest_dual_mode_controlled_v3").tasks[1]
     runner = StateBusGraphRunner(
         llm_client=DeterministicLLMClient(),
         embedder=DeterministicEmbeddingProvider(),
@@ -266,97 +260,121 @@ def test_langgraph_runner_requires_real_langgraph_dependency(monkeypatch) -> Non
         asyncio.run(runner.run_task(task, mode="protocol"))
 
 
-def test_default_task_set_is_formal_controlled_pack() -> None:
+def test_default_task_set_is_contest_dual_mode_controlled_v3_pack() -> None:
     bundle = load_task_set_bundle()
-    assert bundle.metadata.name == "formal_controlled_pack"
-    assert bundle.metadata.pack_type == "formal_controlled"
+    assert bundle.metadata.name == "contest_dual_mode_controlled_v3_pack"
+    assert bundle.metadata.pack_type == "contest_dual_mode_controlled_v3"
     assert bundle.metadata.support_only is False
-    assert bundle.metadata.claim_lanes == ("communication", "state_transfer", "memory")
-    assert len(bundle.tasks) == 24
+    assert bundle.metadata.claim_lanes == ("communication", "state_transfer")
+    assert len(bundle.tasks) == 40
+    assert bundle.metadata.formal_secondary is False
     task_ids = {task.task_id for task in bundle.tasks}
-    assert any(task_id.startswith("sample-") for task_id in task_ids)
+    assert "rr-checkout-clean-text-001" in task_ids
+    assert "rr-checkout-clean-protocol-001" in task_ids
+    assert {task.transfer_strategy for task in bundle.tasks} == {"text_strict_pure_lane", "state_packet_minimal"}
+    assert {task.summary_contract for task in bundle.tasks} == {"actions_plus_evidence"}
 
 
 def test_task_pack_aliases_and_support_only_flags() -> None:
     expectations = {
-        "default": ("state_transfer_carrier", False, 40),
-        "formal_controlled": ("formal_controlled", False, 24),
-        "formal_controlled_pack": ("formal_controlled", False, 24),
-        "state_transfer_carrier": ("state_transfer_carrier", False, 40),
-        "state_transfer_carrier_pack": ("state_transfer_carrier", False, 40),
-        "contest_release_regression_carrier": ("state_transfer_carrier", False, 40),
-        "contest_release_regression_carrier_pack": ("state_transfer_carrier", False, 40),
-        "state_transfer_authenticity": ("state_transfer_authenticity", False, 6),
-        "state_transfer_authenticity_pack": ("state_transfer_authenticity", False, 6),
-        "contest_release_regression_authenticity": ("state_transfer_authenticity", False, 40),
-        "contest_release_regression_authenticity_pack": ("state_transfer_authenticity", False, 40),
-        "state_transfer_pure_text": ("state_transfer_pure_text", False, 40),
-        "state_transfer_pure_text_pack": ("state_transfer_pure_text", False, 40),
-        "contest_release_regression_pure_text": ("state_transfer_pure_text", False, 40),
-        "contest_release_regression_pure_text_pack": ("state_transfer_pure_text", False, 40),
-        "state_transfer_inline_text_support": ("state_transfer_inline_text_support", True, 6),
-        "state_transfer_inline_text_support_pack": ("state_transfer_inline_text_support", True, 6),
-        "state_transfer_strict_pure_text": ("state_transfer_strict_pure_text", False, 40),
-        "state_transfer_strict_pure_text_pack": ("state_transfer_strict_pure_text", False, 40),
-        "contest_release_regression_strict_pure_text": ("state_transfer_strict_pure_text", False, 40),
-        "contest_release_regression_strict_pure_text_pack": ("state_transfer_strict_pure_text", False, 40),
-        "state_transfer_natural_support": ("state_transfer_inline_text_support", True, 6),
-        "state_transfer_natural_support_pack": ("state_transfer_inline_text_support", True, 6),
-        "contest_release_regression_inline_text_support": ("state_transfer_inline_text_support", True, 40),
-        "contest_release_regression_inline_text_support_pack": ("state_transfer_inline_text_support", True, 40),
-        "contest_release_regression_natural_support": ("state_transfer_inline_text_support", True, 40),
-        "contest_release_regression_natural_support_pack": ("state_transfer_inline_text_support", True, 40),
-        "communication": ("communication", False, 2),
-        "communication_pack": ("communication", False, 2),
-        "memory": ("memory", False, 3),
-        "memory_pack": ("memory", False, 3),
-        "internal_regression": ("internal_regression", False, 21),
-        "internal_regression_pack": ("internal_regression", False, 21),
-        "open_validation": ("open_validation", True, 15),
-        "open_validation_pack": ("open_validation", True, 15),
-        "open_planner_support": ("open_planner_support", True, 5),
-        "open_planner_support_pack": ("open_planner_support", True, 5),
+        "default": ("contest_dual_mode_controlled_v3", False, False, False, 40),
+        "contest_dual_mode_controlled_v3": ("contest_dual_mode_controlled_v3", False, False, False, 40),
+        "memory_dual_mode_fairness_v3": ("memory_dual_mode_fairness_v3", False, True, False, 40),
+        "typed_state_mechanism_v3": ("typed_state_mechanism_v3", False, False, True, 8),
+        "external_text_baseline_audit_v3": ("external_text_baseline_audit_v3", False, True, False, 4),
+        "text_definition_audit_v3": ("text_definition_audit_v3", False, True, False, 40),
+        "typed_state_authenticity_v3": ("typed_state_authenticity_v3", False, False, True, 40),
+        "carrier_microbench_v3": ("carrier_microbench_v3", False, True, False, 40),
+        "memory_reuse_v3": ("memory_reuse_v3", False, False, True, 4),
+        "memory_policy_controlled_v3": ("memory_policy_controlled_v3", False, False, True, 4),
+        "planner_support_v3": ("planner_support_v3", False, False, True, 10),
     }
-    for alias, (pack_type, support_only, task_count) in expectations.items():
+    for alias, (pack_type, support_only, audit_only, formal_secondary, task_count) in expectations.items():
         bundle = load_task_set_bundle(alias)
         assert bundle.metadata.pack_type == pack_type
         assert bundle.metadata.support_only is support_only
+        assert bundle.metadata.audit_only is audit_only
+        assert bundle.metadata.formal_secondary is formal_secondary
         assert len(bundle.tasks) == task_count
-    strict_bundle = load_task_set_bundle("state_transfer_strict_pure_text")
-    assert strict_bundle.metadata.formal_secondary is True
-    assert strict_bundle.metadata.support_only is False
 
 
-def test_pack_boundary_split_keeps_headline_regression_and_open_validation_separate() -> None:
-    formal_bundle = load_task_set_bundle("formal_controlled")
-    internal_bundle = load_task_set_bundle("internal_regression")
-    open_bundle = load_task_set_bundle("open_validation")
+def test_pack_metadata_exposes_single_variable_and_variable_axes() -> None:
+    fairness = load_task_set_bundle("memory_dual_mode_fairness_v3").metadata
+    contest = load_task_set_bundle("contest_dual_mode_controlled_v3").metadata
+    mechanism = load_task_set_bundle("typed_state_mechanism_v3").metadata
+    external_text = load_task_set_bundle("external_text_baseline_audit_v3").metadata
+    planner = load_task_set_bundle("planner_support_v3").metadata
+
+    assert fairness.single_variable is False
+    assert fairness.variable_axes == ("mode", "runtime_reuse_contract", "restore_object_class")
+    assert fairness.public_surface == "audit_only_object_parity_restore_boundary"
+
+    assert contest.single_variable is True
+    assert contest.variable_axes == ("mode", "handoff_object")
+    assert contest.public_surface == "formal_dual_mode_headline"
+
+    assert mechanism.single_variable is True
+    assert mechanism.variable_axes == ("handoff_object",)
+    assert mechanism.public_surface == "formal_secondary_typed_state_mechanism"
+
+    assert external_text.single_variable is True
+    assert external_text.variable_axes == ("external_text_surface",)
+    assert external_text.public_surface == "audit_only_external_text_baseline"
+
+    assert planner.single_variable is True
+    assert planner.variable_axes == ("plan_source",)
+    assert planner.public_surface == "formal_secondary_planner_support"
+
+
+def test_legacy_task_pack_aliases_fail() -> None:
+    for alias in (
+        "carrier_controlled_v2",
+        "semantic_retention_v2",
+        "strict_pure_text_boundary_v2",
+        "memory_reuse_v2",
+        "planner_support_v2",
+        "langgraph_native_text_support_v2",
+        "formal_controlled",
+    ):
+        with pytest.raises((FileNotFoundError, ValueError)):
+            load_task_set_bundle(alias)
+
+
+def test_archived_benchmark_files_remain_loadable_by_explicit_path() -> None:
+    for relpath, task_count in (
+        ("tasks/communication_benchmark.yaml", 2),
+        ("tasks/internal_regression_benchmark.yaml", 21),
+        ("tasks/state_transfer_inline_text_support_benchmark.yaml", 6),
+    ):
+        bundle = load_task_set_bundle(relpath)
+        assert len(bundle.tasks) == task_count
+        assert bundle.metadata.pack_type == "ad_hoc"
+        assert bundle.metadata.benchmark_version == "historical_v1"
+        assert bundle.metadata.historical_pack_type != ""
+
+
+def test_pack_boundary_split_keeps_v3_formal_surface_separate_from_internal_regression() -> None:
+    formal_bundle = load_task_set_bundle("contest_dual_mode_controlled_v3")
+    internal_bundle = load_task_set_bundle("tasks/internal_regression_benchmark.yaml")
 
     formal_ids = {task.task_id for task in formal_bundle.tasks}
     internal_ids = {task.task_id for task in internal_bundle.tasks}
-    open_ids = {task.task_id for task in open_bundle.tasks}
 
-    assert "open-plan-cache-001" not in formal_ids
-    assert "open-plan-latency-001" not in formal_ids
-    assert "open-plan-session-001" not in formal_ids
-    assert not any("lexical-override" in task_id for task_id in formal_ids)
+    assert "rr-checkout-clean-text-001" in formal_ids
+    assert "rr-checkout-clean-protocol-001" in formal_ids
+    assert not any(task_id.startswith("regr-") for task_id in formal_ids)
 
     assert {
         "regr-lexical-override-cache-001",
         "regr-lexical-override-latency-001",
         "regr-lexical-override-session-001",
     }.issubset(internal_ids)
-    assert {
-        "open-plan-cache-001",
-        "open-plan-latency-001",
-        "open-plan-session-001",
-    }.issubset(open_ids)
 
 
 def test_orchestrator_respects_yaml_vs_llm_plan_source() -> None:
     agents = build_sample_agents_with_executor(llm_client=DeterministicLLMClient())
     orchestrator = Orchestrator(agents)
-    base_task = load_task_set_bundle("formal_controlled").tasks[0]
+    base_task = load_task_set_bundle("contest_dual_mode_controlled_v3").tasks[1]
     llm_task = replace(base_task, task_id="open-plan-probe-001", plan_source="llm")
 
     with tempfile.TemporaryDirectory(prefix="statebus-plan-source-") as tmpdir:
@@ -400,26 +418,18 @@ def test_orchestrator_respects_yaml_vs_llm_plan_source() -> None:
         llm_ctx.session.cleanup()
 
 
-def test_open_validation_task_set_is_support_only() -> None:
-    bundle = load_task_set_bundle("open_validation")
-    assert bundle.metadata.name == "open_validation_pack"
-    assert bundle.metadata.pack_type == "open_validation"
-    assert bundle.metadata.support_only is True
-    assert bundle.metadata.claim_lanes == ()
-    assert len(bundle.tasks) == 15
-    assert sum(1 for task in bundle.tasks if task.plan_source == "llm") == 3
-
-
-def test_open_planner_support_pack_contract() -> None:
-    bundle = load_task_set_bundle("open_planner_support")
-    assert bundle.metadata.name == "open_planner_support_pack"
-    assert bundle.metadata.pack_type == "open_planner_support"
-    assert bundle.metadata.support_only is True
-    assert bundle.metadata.claim_lanes == ()
-    assert len(bundle.tasks) == 5
-    assert {task.plan_source for task in bundle.tasks} == {"llm"}
-    assert {task.allowed_modes for task in bundle.tasks} == {("text", "protocol")}
-    assert {task.transfer_strategy for task in bundle.tasks} == {"state_ref"}
+def test_planner_support_v3_pack_contract() -> None:
+    bundle = load_task_set_bundle("planner_support_v3")
+    assert bundle.metadata.name == "planner_support_v3_pack"
+    assert bundle.metadata.pack_type == "planner_support_v3"
+    assert bundle.metadata.support_only is False
+    assert bundle.metadata.formal_secondary is True
+    assert bundle.metadata.claim_lanes == ("communication",)
+    assert len(bundle.tasks) == 10
+    assert {task.plan_source for task in bundle.tasks} == {"yaml", "llm"}
+    assert {task.allowed_modes for task in bundle.tasks} == {("protocol",)}
+    assert {task.transfer_strategy for task in bundle.tasks} == {"state_packet_minimal"}
+    assert {task.summary_contract for task in bundle.tasks} == {"actions_plus_evidence"}
 
 
 def test_state_transfer_packs_fill_default_route_and_tool_expectations() -> None:
@@ -431,9 +441,11 @@ def test_state_transfer_packs_fill_default_route_and_tool_expectations() -> None
         "contest_release_deployment_config_drift": ("db_pool_saturation", "tool.db_pool_triage"),
     }
     for pack_name in (
-        "state_transfer_carrier",
-        "state_transfer_pure_text",
-        "state_transfer_strict_pure_text",
+        "contest_dual_mode_controlled_v3",
+        "text_definition_audit_v3",
+        "typed_state_authenticity_v3",
+        "typed_state_mechanism_v3",
+        "external_text_baseline_audit_v3",
     ):
         bundle = load_task_set_bundle(pack_name)
         for task in bundle.tasks:
@@ -443,40 +455,200 @@ def test_state_transfer_packs_fill_default_route_and_tool_expectations() -> None
             assert task.expected_route_source == ""
 
 
-def test_open_validation_report_marks_support_only_boundary() -> None:
-    with tempfile.TemporaryDirectory(prefix="statebus-open-pack-") as tmpdir:
-        out_dir = Path(tmpdir) / "runs"
+def test_typed_state_authenticity_v3_emits_step_truth_and_transfer_truth_audit() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-transfer-truth-v3-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="open_validation",
-                repeat=1,
-                out_dir=out_dir,
-                embedder=DeterministicEmbeddingProvider(),
-                llm_client=DeterministicLLMClient(),
-            )
-        )
-        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
-        payload = json.loads((out_dir / "benchmark_results.json").read_text(encoding="utf-8"))
-        assert payload["manifest"]["task_set_name"] == "open_validation_pack"
-        assert payload["manifest"]["task_pack_type"] == "open_validation"
-        assert payload["manifest"]["support_evidence_only"] is True
-        assert "support evidence only" in report_text
-        assert "Task pack type: `open_validation`" in report_text
-        assert "Task set name: `open_validation_pack`" in report_text
-        assert "this frozen formal_controlled pack is lane-first" not in report_text
-
-def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
-    with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
-        result = asyncio.run(
-            run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="typed_state_authenticity_v3",
                 repeat=1,
                 out_dir=Path(tmpdir),
                 embedder=DeterministicEmbeddingProvider(),
                 llm_client=DeterministicLLMClient(),
             )
         )
-    task_specs = {task.task_id: task for task in load_task_set_bundle("internal_regression").tasks}
+    task_rows = result["mode_runs"]["protocol"][0]["tasks"]
+    typed_task = next(task for task in task_rows if task["transfer_strategy"] == "state_packet_minimal")
+    for task in task_rows[:2]:
+        assert {"retrieve", "execute", "summarize"} <= set(task["step_truth"])
+        assert "input_refs" in task["step_truth"]["execute"]
+        assert "output_refs" in task["step_truth"]["retrieve"]
+        truth = task["transfer_truth_audit"]
+        assert "question_answered" in truth
+        assert "actual_compared_object" in truth
+        assert "executor_input_kinds" in truth
+        assert "summarizer_input_kinds" in truth
+    assert "DENSE_EVIDENCE" in typed_task["transfer_truth_audit"]["executor_input_kinds"]
+    assert "EXECUTOR_DECISION_PACKET" in typed_task["transfer_truth_audit"]["executor_input_kinds"]
+    assert result["summary"]["protocol"]["transfer_truth"]["summarizer_visibility_asymmetry_rate"] >= 0.0
+    assert result["summary"]["protocol"]["transfer_truth"]["typed_executor_minimal_expected_consumption_rate"] > 0.0
+    assert result["summary"]["protocol"]["transfer_truth"]["executor_unexpected_kind_seen_rate"] == 0.0
+
+
+def test_typed_state_authenticity_v3_uses_natural_text_vs_minimal_state_packet_pairs() -> None:
+    tasks = list(load_task_set_bundle("typed_state_authenticity_v3").tasks)
+    assert len(tasks) == 40
+
+    def _normalize_case(task_id: str) -> str:
+        for suffix in ("-pure-text-001", "-state-packet-001"):
+            if task_id.endswith(suffix):
+                return task_id[: -len(suffix)]
+        raise AssertionError(f"unexpected authenticity task id: {task_id}")
+
+    grouped: dict[str, list[SampleTask]] = {}
+    for task in tasks:
+        grouped.setdefault(_normalize_case(task.task_id), []).append(task)
+
+    assert len(grouped) == 20
+    for pair in grouped.values():
+        assert len(pair) == 2
+        assert {task.transfer_strategy for task in pair} == {"natural_handoff_text", "state_packet_minimal"}
+        assert {task.handoff_profile for task in pair} == {
+            "protocol_natural_handoff_text",
+            "protocol_minimal_state_packet",
+        }
+        assert all(task.supports_mode("protocol") for task in pair)
+        assert all(not task.supports_mode("text") for task in pair)
+
+
+def test_typed_state_mechanism_v3_uses_protocol_only_natural_text_vs_minimal_pairs() -> None:
+    tasks = list(load_task_set_bundle("typed_state_mechanism_v3").tasks)
+    assert len(tasks) == 8
+    assert {task.runtime_reuse_contract for task in tasks} == {"reuse_disabled"}
+    grouped: dict[str, list[SampleTask]] = {}
+    for task in tasks:
+        grouped.setdefault(task.case_id, []).append(task)
+    assert len(grouped) == 4
+    for pair in grouped.values():
+        assert len(pair) == 2
+        assert {task.transfer_strategy for task in pair} == {"natural_handoff_text", "state_packet_minimal"}
+        assert {task.handoff_profile for task in pair} == {
+            "protocol_natural_handoff_text",
+            "protocol_minimal_state_packet",
+        }
+        assert all(task.supports_mode("protocol") for task in pair)
+        assert all(not task.supports_mode("text") for task in pair)
+
+
+def test_external_text_baseline_audit_v3_is_text_only_and_reuse_disabled() -> None:
+    tasks = list(load_task_set_bundle("external_text_baseline_audit_v3").tasks)
+    assert len(tasks) == 4
+    assert {task.transfer_strategy for task in tasks} == {"text_strict_pure_lane"}
+    assert {task.runtime_reuse_contract for task in tasks} == {"reuse_disabled"}
+    assert all(task.supports_mode("text") for task in tasks)
+    assert all(not task.supports_mode("protocol") for task in tasks)
+
+
+def test_audit_handoff_carrier_truth_report_marks_audit_only_boundary() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-audit-carrier-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/audit_handoff_carrier_truth_benchmark.yaml",
+                repeat=1,
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["task_pack_type"] == "ad_hoc"
+    assert result["manifest"]["benchmark_version"] == "v3"
+    assert "Task pack type: `ad_hoc`" in report_text
+    assert "State Transfer Strategies" in report_text
+    assert "inline_text_handoff" in report_text
+    assert "natural_handoff_text" in report_text
+    assert "text_packet_minimal" in report_text
+    assert "state_packet_minimal" in report_text
+    assert "Case Contract Audit" in report_text
+
+
+def test_audit_state_visibility_truth_report_marks_audit_only_boundary() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-audit-visibility-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/audit_state_visibility_truth_benchmark.yaml",
+                repeat=1,
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["task_pack_type"] == "ad_hoc"
+    assert result["manifest"]["benchmark_version"] == "v3"
+    assert "Task pack type: `ad_hoc`" in report_text
+    assert "state_packet_minimal" in report_text
+    assert "channel_store_hashref" in report_text
+    assert "State Transfer Strategies" in report_text
+    assert "Case Contract Audit" in report_text
+
+
+def test_case_contract_audit_requires_route_tool_pair_for_admissible_match() -> None:
+    bounded_task = {
+        "task_id": "bounded-case-001",
+        "task_theme": "contest_release_checkout_regression",
+        "results": {
+            "retrieve": {"payload": {"feature_route": "db_pool_saturation", "feature_route_source": "hint_consensus"}},
+            "execute": {"payload": {"tool_name": "tool.worker_queue_triage"}},
+        },
+        "case_contract": {
+            "case_id": "bounded-case-001",
+            "case_type": "bounded_alternative",
+            "expected_family": "db_pool_saturation",
+            "primary_expected_route": "db_pool_saturation",
+            "primary_expected_tool": "tool.db_pool_triage",
+            "acceptable_routes": ["db_pool_saturation"],
+            "acceptable_tools": ["tool.db_pool_triage"],
+            "disallowed_families": [],
+            "abstention_allowed": False,
+            "allowed_abstain_tool": "",
+        },
+    }
+    route_only = _build_case_contract_audit(bounded_task)
+    assert route_only["acceptable_route_match"] is True
+    assert route_only["acceptable_tool_match"] is False
+    assert route_only["alternate_pair_admissible"] is False
+    assert route_only["admissible_match"] is False
+    tool_only_task = {
+        **bounded_task,
+        "results": {
+            "retrieve": {"payload": {"feature_route": "worker_queue_starvation", "feature_route_source": "hint_consensus"}},
+            "execute": {"payload": {"tool_name": "tool.db_pool_triage"}},
+        },
+    }
+    tool_only = _build_case_contract_audit(tool_only_task)
+    assert tool_only["acceptable_route_match"] is False
+    assert tool_only["acceptable_tool_match"] is True
+    assert tool_only["alternate_pair_admissible"] is False
+    assert tool_only["admissible_match"] is False
+    abstain_task = {
+        **bounded_task,
+        "case_contract": {
+            **bounded_task["case_contract"],
+            "case_type": "abstention_allowed",
+            "abstention_allowed": True,
+            "allowed_abstain_tool": "tool.collect_more_evidence",
+        },
+        "results": {
+            "retrieve": {"payload": {"feature_route": "worker_queue_starvation", "feature_route_source": "hint_consensus"}},
+            "execute": {"payload": {"tool_name": "tool.collect_more_evidence"}},
+        },
+    }
+    abstain = _build_case_contract_audit(abstain_task)
+    assert abstain["abstention_match"] is True
+    assert abstain["admissible_match"] is True
+
+def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/internal_regression_benchmark.yaml",
+                repeat=1,
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    task_specs = {task.task_id: task for task in load_task_set_bundle("tasks/internal_regression_benchmark.yaml").tasks}
     expected_assists = {task_id for task_id, task in task_specs.items() if task.expected_reuse_mode == "assist"}
     expected_skip_execute = {
         task_id for task_id, task in task_specs.items() if task.expected_reuse_mode == "skip_execute"
@@ -583,7 +755,7 @@ def test_exact_replay_copies_reused_state_into_current_task_root() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="tasks/internal_regression_benchmark.yaml",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -675,7 +847,7 @@ def test_exact_replay_copies_reused_state_into_current_task_root() -> None:
 def test_exact_replay_no_longer_requires_explicit_source_task_id() -> None:
     exact_replay_tasks = [
         task
-        for task in load_task_set_bundle("internal_regression").tasks
+        for task in load_task_set_bundle("tasks/internal_regression_benchmark.yaml").tasks
         if task.expected_reuse_mode == "skip_retrieve_execute"
     ]
     assert exact_replay_tasks
@@ -684,7 +856,7 @@ def test_exact_replay_no_longer_requires_explicit_source_task_id() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="tasks/internal_regression_benchmark.yaml",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -704,7 +876,7 @@ def test_exact_replay_no_longer_requires_explicit_source_task_id() -> None:
 def test_exact_replay_no_longer_requires_preferred_corpus_doc_ids() -> None:
     cache_prefix = [
         task
-        for task in load_task_set_bundle("internal_regression").tasks
+        for task in load_task_set_bundle("tasks/internal_regression_benchmark.yaml").tasks
         if task.task_group == "cache_chain" and task.task_order <= 5
     ]
     exact_replay_without_doc_pref = SampleTask(
@@ -774,7 +946,7 @@ def test_exact_replay_no_longer_requires_preferred_corpus_doc_ids() -> None:
 def test_validated_replay_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
-        for task in load_task_set_bundle("formal_controlled").tasks
+        for task in load_task_set_bundle("tasks/internal_regression_benchmark.yaml").tasks
         if task.task_group == "cache_chain" and task.task_order <= 4
     ]
     validated_replay_without_contract = SampleTask(
@@ -840,7 +1012,7 @@ def test_validated_replay_respects_runtime_reuse_contract_gate() -> None:
 def test_memory_assist_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
-        for task in load_task_set_bundle("formal_controlled").tasks
+        for task in load_task_set_bundle("tasks/internal_regression_benchmark.yaml").tasks
         if task.task_group == "cache_chain" and task.task_order <= 1
     ]
     assist_without_contract = SampleTask(
@@ -925,7 +1097,7 @@ def test_memory_assist_hint_is_compact() -> None:
 def test_memory_assist_uses_compact_hint_and_keeps_feature_bundle_fresh() -> None:
     cache_prefix = [
         task
-        for task in load_task_set_bundle("internal_regression").tasks
+        for task in load_task_set_bundle("tasks/internal_regression_benchmark.yaml").tasks
         if task.task_group == "cache_chain" and task.task_order <= 2
     ]
     orchestrator = Orchestrator(
@@ -1026,7 +1198,7 @@ def test_protocol_summarizer_uses_compact_evidence_handoff() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-protocol-summary-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="memory",
+                task_set_path="memory_reuse_v3",
                 repeat=1,
                 modes=("protocol",),
                 out_dir=Path(tmpdir),
@@ -1049,7 +1221,7 @@ def test_protocol_summarizer_uses_compact_evidence_handoff() -> None:
 def test_exact_replay_respects_runtime_reuse_contract_gate() -> None:
     cache_prefix = [
         task
-        for task in load_task_set_bundle("internal_regression").tasks
+        for task in load_task_set_bundle("tasks/internal_regression_benchmark.yaml").tasks
         if task.task_group == "cache_chain" and task.task_order <= 5
     ]
     exact_replay_without_contract = SampleTask(
@@ -1117,7 +1289,7 @@ def test_statepool_writes_file_backed_artifacts() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="communication",
+                task_set_path="tasks/communication_benchmark.yaml",
                 repeat=1,
                 out_dir=Path(tmpdir),
                 embedder=DeterministicEmbeddingProvider(),
@@ -1141,7 +1313,7 @@ def test_embedding_state_is_real_float32_vector() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="communication",
+                task_set_path="tasks/communication_benchmark.yaml",
                 repeat=1,
                 out_dir=Path(tmpdir),
                 embedder=embedder,
@@ -1166,7 +1338,7 @@ def test_embedding_state_is_real_float32_vector() -> None:
         vector = pool.get_embedding(ref)
         assert vector.dtype == np.float32
         assert vector.shape == (embedder.vector_dim,)
-        expected = embedder.embed_text(load_task_set_bundle("communication").tasks[0].query)
+        expected = embedder.embed_text(load_task_set_bundle("tasks/communication_benchmark.yaml").tasks[0].query)
         assert np.allclose(vector, expected)
 
 
@@ -1174,7 +1346,7 @@ def test_feature_bundle_state_is_real_msgpack_payload() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="tasks/internal_regression_benchmark.yaml",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -1219,7 +1391,7 @@ def test_protocol_state_ref_path_writes_split_feature_family_states() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-feature-family-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="tasks/internal_regression_benchmark.yaml",
                 repeat=1,
                 modes=("protocol",),
                 out_dir=Path(tmpdir),
@@ -1871,7 +2043,7 @@ def test_memory_commits_drop_runtime_contract_and_doc_hint_metadata() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-memory-metadata-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="tasks/internal_regression_benchmark.yaml",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -1913,7 +2085,7 @@ def test_select_tool_name_prefers_ranked_tool_candidates() -> None:
     assert select_tool_name(payload) == "tool.db_pool_triage"
 
 
-def test_execute_playbook_step_prefers_tool_candidate_state_when_present() -> None:
+def test_execute_playbook_step_ignores_tool_candidate_state_on_feature_only_mainline() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-tool-candidate-state-") as tmpdir:
         statepool = StatePool(Path(tmpdir), config=StatePoolConfig.from_env())
         evidence_ref = statepool.put_text(
@@ -1986,6 +2158,86 @@ def test_execute_playbook_step_prefers_tool_candidate_state_when_present() -> No
             statepool=statepool,
             input_state_refs=[evidence_ref, feature_ref, tool_candidate_ref],
             transfer_strategy="state_ref",
+        )
+    assert result.payload["tool_name"] == "tool.collect_more_evidence"
+    assert result.payload["route"] == "generic_triage"
+    assert result.output_state_refs[0].metadata["source_tool_candidates"] == ""
+
+
+def test_execute_playbook_step_full_rich_audit_can_merge_tool_candidate_state() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-tool-candidate-state-audit-") as tmpdir:
+        statepool = StatePool(Path(tmpdir), config=StatePoolConfig.from_env())
+        evidence_ref = statepool.put_text(
+            state_id="case-1-evidence",
+            kind="DENSE_EVIDENCE",
+            text=(
+                "Release-17 orders latency shows database pool contention and the slow orders query. "
+                "Treat this as a DB pool saturation incident."
+            ),
+        )
+        feature_ref = statepool.put_bytes(
+            state_id="case-1-features",
+            kind="FEATURE_BUNDLE",
+            payload=msgpack.packb(
+                {
+                    "schema": "statebus.feature_bundle.v1",
+                    "route": "generic_triage",
+                    "tool_name": "tool.collect_more_evidence",
+                    "tool_candidates": [
+                        {
+                            "tool_name": "tool.collect_more_evidence",
+                            "route": "generic_triage",
+                            "score": 0,
+                            "source": "fallback",
+                        }
+                    ],
+                },
+                use_bin_type=True,
+            ),
+            metadata={"schema": "statebus.feature_bundle.v1", "encoding": "msgpack"},
+        )
+        tool_candidate_ref = statepool.put_bytes(
+            state_id="case-1-tool-candidates",
+            kind="TOOL_CANDIDATE_SET",
+            payload=msgpack.packb(
+                {
+                    "schema": "statebus.tool_candidate_set.v1",
+                    "route": "db_pool_saturation",
+                    "tool_name": "tool.db_pool_triage",
+                    "route_source": "hint_consensus",
+                    "route_confidence": 0.92,
+                    "route_provenance": ["corpus_metadata", "lexical"],
+                    "matched_signals": ["slow orders query", "connection pool"],
+                    "matched_tags": ["database", "orders"],
+                    "match_score": 18,
+                    "tool_candidates": [
+                        {
+                            "tool_name": "tool.db_pool_triage",
+                            "route": "db_pool_saturation",
+                            "score": 18,
+                            "source": "hint_consensus",
+                        }
+                    ],
+                },
+                use_bin_type=True,
+            ),
+            metadata={"schema": "statebus.tool_candidate_set.v1", "encoding": "msgpack"},
+        )
+        result = execute_playbook_step(
+            task_id="case-1",
+            task_theme="repo_local_latency_triage",
+            step=PlanStep(
+                step_id="execute",
+                owner_agent="executor",
+                action="EXECUTE_PLAYBOOK",
+                input_state_refs=[evidence_ref.state_id, feature_ref.state_id, tool_candidate_ref.state_id],
+                params={},
+                depends_on=["retrieve"],
+            ),
+            statepool=statepool,
+            input_state_refs=[evidence_ref, feature_ref, tool_candidate_ref],
+            transfer_strategy="state_ref",
+            handoff_profile="protocol_full_rich_audit",
         )
     assert result.payload["tool_name"] == "tool.db_pool_triage"
     assert result.payload["route"] == "db_pool_saturation"
@@ -2071,16 +2323,19 @@ def test_invalid_handoff_state_is_rejected_before_executor_runs() -> None:
                 ),
             ],
         )
-        with pytest.raises(SchemaValidationError, match="registered contract|schema mismatch"):
+        with pytest.raises(
+            SchemaValidationError,
+            match="missing required input kinds|registered contract|schema mismatch",
+        ):
             asyncio.run(orchestrator.run_plan(plan, ctx))
         assert exploding.called is False
 
 
-def test_state_transfer_carrier_pack_runs_mode_split_handoff_pairs() -> None:
+def test_contest_dual_mode_controlled_v3_runs_matched_text_and_protocol_pairs() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-transfer-lane-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="state_transfer_carrier",
+                task_set_path="contest_dual_mode_controlled_v3",
                 repeat=1,
                 modes=("text", "protocol"),
                 out_dir=Path(tmpdir),
@@ -2092,23 +2347,345 @@ def test_state_transfer_carrier_pack_runs_mode_split_handoff_pairs() -> None:
     protocol_tasks = {
         task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
     }
-    transfer_tasks = list(load_task_set_bundle("state_transfer_carrier").tasks)
+    transfer_tasks = list(load_task_set_bundle("contest_dual_mode_controlled_v3").tasks)
     assert transfer_tasks
-    transfer_ids = {task.task_id for task in transfer_tasks if task.benchmark_lane == "state_transfer"}
-    assert text_tasks == {}
+    protocol_transfer_ids = {
+        task.task_id
+        for task in transfer_tasks
+        if task.benchmark_lane == "state_transfer" and task.supports_mode("protocol")
+    }
     for task in transfer_tasks:
         if task.benchmark_lane != "state_transfer":
             continue
-        assert task.allowed_modes == ("protocol",)
-        assert task.task_id in protocol_tasks
-        proto_task = protocol_tasks[task.task_id]
-        assert proto_task["benchmark_lane"] == "state_transfer"
-        assert proto_task["transfer_strategy"] in {"text_packet_minimal", "state_packet_minimal"}
-    assert transfer_ids == set(protocol_tasks)
-    # Verify the benchmark ran without failures
+        if task.supports_mode("text"):
+            assert task.task_id in text_tasks
+            assert text_tasks[task.task_id]["transfer_strategy"] == "text_strict_pure_lane"
+        if task.supports_mode("protocol"):
+            assert task.task_id in protocol_tasks
+            assert protocol_tasks[task.task_id]["benchmark_lane"] == "state_transfer"
+            assert protocol_tasks[task.task_id]["transfer_strategy"] == "state_packet_minimal"
+    assert protocol_transfer_ids == set(protocol_tasks)
     summary = result["summary"]
     assert int(summary["text"]["failure_count"]) == 0
     assert int(summary["protocol"]["failure_count"]) == 0
+
+
+def test_contest_dual_mode_controlled_v3_pack_has_20_pairs_5_families_and_4_buckets() -> None:
+    tasks = list(load_task_set_bundle("contest_dual_mode_controlled_v3").tasks)
+    assert len(tasks) == 40
+    assert len({task.case_id for task in tasks}) == 20
+    assert len({task.task_theme for task in tasks}) == 5
+    assert {task.complexity_bucket for task in tasks} == {
+        "simple",
+        "distractor",
+        "ambiguous",
+        "reusable",
+    }
+    assert {task.summary_contract for task in tasks} == {"actions_plus_evidence"}
+
+
+def test_memory_dual_mode_fairness_v3_pack_has_40_rows_5_families_and_4_memory_buckets() -> None:
+    tasks = list(load_task_set_bundle("memory_dual_mode_fairness_v3").tasks)
+    assert len(tasks) == 40
+    assert len({task.case_id for task in tasks}) == 20
+    assert len({task.task_theme for task in tasks}) == 5
+    assert {task.summary_contract for task in tasks} == {"actions_plus_evidence"}
+    assert {task.transfer_strategy for task in tasks} == {"text_whole_lane", "state_packet_minimal"}
+    assert {task.runtime_reuse_contract for task in tasks} == {
+        "reuse_disabled",
+        "assist_allowed",
+        "validated_replay",
+        "exact_replay",
+    }
+
+
+def test_memory_dual_mode_fairness_v3_report_has_specialized_title_and_stopline() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-dual-fairness-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="memory_dual_mode_fairness_v3",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["task_pack_type"] == "memory_dual_mode_fairness_v3"
+    assert "Memory Dual-Mode Fairness V3" in report_text
+    assert "This is the dual-mode fairness/object-parity surface." in report_text
+    assert "protocol-only replay proof surface" in report_text
+    assert "formal_controlled" not in report_text
+    assert "open_validation" not in report_text
+    assert "feature-only typed state" not in report_text
+    assert result["manifest"]["memory_replay_evidence_gate"]["applicable"] is False
+    assert "memory_replay_expectation_failed" not in result["manifest"]["withheld_headline_reason"]
+
+
+def test_memory_dual_mode_fairness_v3_replay_restore_visibility_matches_mode_contract() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-dual-restore-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="memory_dual_mode_fairness_v3",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    text_tasks = result["mode_runs"]["text"][0]["tasks"]
+    protocol_tasks = result["mode_runs"]["protocol"][0]["tasks"]
+    text_replay_tasks = [
+        task for task in text_tasks if task["reuse"]["mode"] in {"skip_execute", "skip_retrieve_execute"}
+    ]
+    protocol_exact_tasks = [
+        task for task in protocol_tasks if task["reuse"]["mode"] == "skip_retrieve_execute"
+    ]
+    for task in text_replay_tasks:
+        visibility = task["memory_restore_visibility"]
+        assert visibility["typed_restore_visible"] is False
+        assert visibility["restore_compatible_with_mode"] is True
+        assert visibility["forbidden_restored_kinds"] == []
+        assert visibility["restored_kinds"] == ["TOOL_ARTIFACT"]
+    for task in protocol_exact_tasks:
+        visibility = task["memory_restore_visibility"]
+        assert visibility["restore_compatible_with_mode"] is True
+        assert visibility["forbidden_restored_kinds"] == []
+        assert set(visibility["restored_kinds"]) == {
+            "DENSE_EVIDENCE",
+            "EXECUTOR_DECISION_PACKET",
+            "TOOL_ARTIFACT",
+        }
+
+
+def test_replay_restore_allowlist_respects_text_and_protocol_minimal_contracts() -> None:
+    orchestrator = Orchestrator(build_sample_agents_with_executor(llm_client=DeterministicLLMClient()))
+    text_ctx = Orchestrator.create_context(
+        mode="text",
+        task_id="restore-text-001",
+        task_group="restore_group",
+        task_theme="contest_release_checkout_regression",
+        state_root=Path(tempfile.mkdtemp(prefix="statebus-restore-text-state-")),
+        memory_db_path=Path(tempfile.mkdtemp(prefix="statebus-restore-text-db-")) / "memory.sqlite3",
+        embedder=DeterministicEmbeddingProvider(),
+        runtime_profile={"transfer_strategy": "text_whole_lane", "handoff_profile": "text_whole_lane"},
+    )
+    protocol_ctx = Orchestrator.create_context(
+        mode="protocol",
+        task_id="restore-protocol-001",
+        task_group="restore_group",
+        task_theme="contest_release_checkout_regression",
+        state_root=Path(tempfile.mkdtemp(prefix="statebus-restore-proto-state-")),
+        memory_db_path=Path(tempfile.mkdtemp(prefix="statebus-restore-proto-db-")) / "memory.sqlite3",
+        embedder=DeterministicEmbeddingProvider(),
+        runtime_profile={
+            "transfer_strategy": "state_packet_minimal",
+            "handoff_profile": "protocol_minimal_state_packet",
+        },
+    )
+    try:
+        assert orchestrator._replay_restore_kind_allowed(
+            ctx=text_ctx,
+            replay_mode="skip_execute",
+            replay_step_id="execute",
+            source_kind="TOOL_ARTIFACT",
+        ) is True
+        assert orchestrator._replay_restore_kind_allowed(
+            ctx=text_ctx,
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
+            source_kind="FEATURE_BUNDLE",
+        ) is False
+        assert orchestrator._replay_restore_kind_allowed(
+            ctx=protocol_ctx,
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
+            source_kind="DENSE_EVIDENCE",
+        ) is True
+        assert orchestrator._replay_restore_kind_allowed(
+            ctx=protocol_ctx,
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
+            source_kind="EXECUTOR_DECISION_PACKET",
+        ) is True
+        assert orchestrator._replay_restore_kind_allowed(
+            ctx=protocol_ctx,
+            replay_mode="skip_retrieve_execute",
+            replay_step_id="retrieve",
+            source_kind="FEATURE_BUNDLE",
+        ) is False
+    finally:
+        text_ctx.memory_store.close()
+        text_ctx.session.cleanup()
+        protocol_ctx.memory_store.close()
+        protocol_ctx.session.cleanup()
+
+
+def test_executor_decision_packet_is_replay_compatible_for_state_packet_minimal_restore() -> None:
+    registry = default_state_contract_registry()
+    ctx = Orchestrator.create_context(
+        mode="protocol",
+        task_id="replay-contract-001",
+        task_group="restore_group",
+        task_theme="contest_release_checkout_regression",
+        state_root=Path(tempfile.mkdtemp(prefix="statebus-replay-contract-state-")),
+        memory_db_path=Path(tempfile.mkdtemp(prefix="statebus-replay-contract-db-")) / "memory.sqlite3",
+        embedder=DeterministicEmbeddingProvider(),
+        runtime_profile={
+            "transfer_strategy": "state_packet_minimal",
+            "handoff_profile": "protocol_minimal_state_packet",
+        },
+    )
+    try:
+        packet = {
+            "schema": "statebus.executor_decision_packet.v1",
+            "query": "checkout release 17.4 canary shows connection pool waits",
+            "route": "db_pool_saturation",
+            "tool_name": "tool.db_pool_triage",
+            "route_source": "hint_consensus",
+            "route_confidence": 0.91,
+            "route_provenance": ["corpus_metadata", "lexical"],
+            "matched_signals": ["connection pool"],
+            "matched_tags": ["database"],
+            "match_score": 9,
+            "hint_doc_ids": ["rr-checkout-incident"],
+            "hint_route": "db_pool_saturation",
+            "hint_tool_name": "tool.db_pool_triage",
+            "tool_candidates": [{"tool_name": "tool.db_pool_triage", "route": "db_pool_saturation", "score": 9}],
+            "retrieved_doc_ids": ["rr-checkout-incident"],
+            "feature_evidence_sha256": "a" * 64,
+            "feature_fresh_evidence_sha256": "b" * 64,
+        }
+        ref = ctx.put_executor_decision_state(
+            state_id="replay-contract-001-decision",
+            decision_packet=packet,
+            metadata={
+                "query": packet["query"],
+                "transfer_strategy": "state_packet_minimal",
+                "retrieved_doc_ids": packet["retrieved_doc_ids"],
+                "feature_route": packet["route"],
+                "feature_route_source": packet["route_source"],
+                "feature_route_confidence": packet["route_confidence"],
+                "feature_fresh_evidence_sha256": packet["feature_fresh_evidence_sha256"],
+            },
+        )
+        contract = registry.validate_state_ref(
+            ref,
+            producer_agent="retriever",
+            consumer_agent="executor",
+            require_replay_compatible=True,
+            statepool=ctx.statepool,
+        )
+        assert contract.kind == "EXECUTOR_DECISION_PACKET"
+        assert contract.replay_compatible is True
+    finally:
+        ctx.memory_store.close()
+        ctx.session.cleanup()
+
+
+def test_object_parity_gate_fails_when_text_restore_visibility_is_incompatible() -> None:
+    from eval.runner import _object_parity_gate
+
+    gate = _object_parity_gate(
+        pack_type="memory_dual_mode_fairness_v3",
+        task_rows_by_mode={
+            "text": [
+                {
+                    "task_id": "bad-text-restore-001",
+                    "status": "completed",
+                    "summary_contract": "actions_plus_evidence",
+                    "memory_restore_visibility": {
+                        "typed_restore_visible": True,
+                        "restore_compatible_with_mode": False,
+                        "forbidden_restored_kinds": ["FEATURE_BUNDLE"],
+                    },
+                }
+            ],
+            "protocol": [
+                {
+                    "task_id": "ok-protocol-001",
+                    "status": "completed",
+                    "summary_contract": "actions_plus_evidence",
+                    "transfer_truth_audit": {
+                        "executor_input_kinds": ["DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET"],
+                    },
+                }
+            ],
+        },
+        text_guard_audit={
+            "hidden_field_leak_rate": 0.0,
+            "summarizer_typed_visibility_rate": 0.0,
+        },
+    )
+    assert gate["text_memory_restore_compat_ok"] is False
+    assert gate["passed"] is False
+    assert "bad-text-restore-001" in gate["failing_task_ids"]
+
+
+def test_memory_replay_evidence_gate_fails_on_expected_replay_mismatch() -> None:
+    from eval.runner import _memory_replay_evidence_gate
+
+    gate = _memory_replay_evidence_gate(
+        pack_type="memory_policy_controlled_v3",
+        task_rows_by_mode={
+            "protocol": [
+                {
+                    "task_id": "memory-policy-bad-001",
+                    "expected_reuse_mode": "skip_execute",
+                    "reuse": {"mode": "assist"},
+                },
+                {
+                    "task_id": "memory-policy-ok-001",
+                    "expected_reuse_mode": "skip_retrieve_execute",
+                    "reuse": {"mode": "skip_retrieve_execute"},
+                },
+            ],
+        },
+    )
+    assert gate["applicable"] is True
+    assert gate["passed"] is False
+    assert gate["expected_rows"] == 2
+    assert gate["matched_rows"] == 1
+    assert gate["failing_task_ids"] == ["memory-policy-bad-001"]
+
+
+def test_headline_gates_split_memory_replay_from_generic_state_transfer_flag() -> None:
+    from eval.runner import _build_headline_gates
+
+    gates = _build_headline_gates(
+        pack_type="memory_policy_controlled_v3",
+        withheld_reasons=[],
+        formal_stability_gate={"passed": False},
+        object_parity_gate={"passed": False},
+        memory_replay_evidence_gate={"applicable": True, "passed": True, "expected_rows": 2, "matched_rows": 2},
+        contest_formal_coverage_gate={"passed": False},
+    )
+    assert gates["communication_gate"]["applicable"] is False
+    assert gates["memory_replay_gate"]["applicable"] is True
+    assert gates["memory_replay_gate"]["allowed"] is True
+    assert gates["memory_replay_gate"]["memory_replay_evidence_gate"]["passed"] is True
+
+
+def test_active_docs_reference_memory_dual_mode_fairness_v3_and_drop_old_formal_wording() -> None:
+    readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    tasks_readme_text = (REPO_ROOT / "tasks" / "README.md").read_text(encoding="utf-8")
+    master_text = (REPO_ROOT / "docs" / "reports" / "MASTER_PRESENTATION_GUIDE.md").read_text(encoding="utf-8")
+    task_design_text = (
+        REPO_ROOT / "docs" / "reports" / "task_design_and_mode_comparison.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (readme_text, tasks_readme_text, master_text, task_design_text):
+        assert "memory_dual_mode_fairness_v3" in text
+        assert "memory_policy_controlled_v3" in text
+        assert "typed_state_mechanism_v3" in text
+        assert "external_text_baseline_audit_v3" in text
+
+    assert "protocol_feature_only_typed_state" not in readme_text
+    assert "当前唯一正式 benchmark surface" not in readme_text
+    assert "当前正式 benchmark surface 只保留 6 个 v3 对象" not in task_design_text
+    assert "whole-lane pure text vs rich typed-state protocol" not in task_design_text
 
 
 def test_benchmark_supports_shared_memory_statepool_backend() -> None:
@@ -2117,52 +2694,6 @@ def test_benchmark_supports_shared_memory_statepool_backend() -> None:
         _shm.SharedMemory(name="statebus_test_probe", create=True, size=64).unlink()
     except Exception:
         pytest.skip("shared_memory not available")
-
-
-def test_state_transfer_text_brief_preserves_retriever_executor_snapshot() -> None:
-    with tempfile.TemporaryDirectory(prefix="statebus-transfer-brief-fidelity-") as tmpdir:
-        result = asyncio.run(
-            run_benchmark(
-                task_set_path="state_transfer_authenticity",
-                repeat=1,
-                modes=("protocol",),
-                out_dir=Path(tmpdir),
-                embedder=DeterministicEmbeddingProvider(),
-                llm_client=DeterministicLLMClient(),
-            )
-        )
-        tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
-        for task_id in (
-            "transfer-cache-text-001",
-            "transfer-latency-text-001",
-            "transfer-session-text-001",
-        ):
-            task = tasks[task_id]
-            retrieve_payload = task["results"]["retrieve"]["payload"]
-            execute_payload = task["results"]["execute"]["payload"]
-            brief_state_id = retrieve_payload["transfer_brief_state_id"]
-            assert brief_state_id
-            brief_ref = task["state_refs"][brief_state_id]
-            brief_text = Path(brief_ref["handle"]).read_text(encoding="utf-8")
-            assert "Suggested tool:" in brief_text
-            assert "Route confidence:" in brief_text
-            assert "Tool candidates:" in brief_text
-            evidence_ref = next(
-                ref for ref in task["state_refs"].values() if ref["kind"] == "DENSE_EVIDENCE"
-            )
-            evidence_text = Path(evidence_ref["handle"]).read_text(encoding="utf-8")
-            rebuilt = _feature_bundle_from_transfer_brief(
-                query_text=retrieve_payload["query"],
-                evidence_text=evidence_text,
-                brief_text=brief_text,
-                registry=default_tool_registry(),
-            )
-            assert rebuilt["route"] == retrieve_payload["feature_route"]
-            assert rebuilt["route_source"] == retrieve_payload["feature_route_source"]
-            assert rebuilt["route_confidence"] == retrieve_payload["feature_route_confidence"]
-            assert rebuilt["route_provenance"] == retrieve_payload["feature_route_provenance"]
-            assert select_tool_name(rebuilt) == execute_payload["tool_name"]
-            assert rebuilt["tool_candidates"][0]["tool_name"] == execute_payload["tool_name"]
 
 
 def test_inline_text_support_removes_executor_facing_state_refs() -> None:
@@ -2177,7 +2708,7 @@ def test_inline_text_support_removes_executor_facing_state_refs() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-inline-support-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="state_transfer_inline_text_support",
+                task_set_path="tasks/state_transfer_inline_text_support_benchmark.yaml",
                 repeat=1,
                 modes=("protocol",),
                 out_dir=Path(tmpdir),
@@ -2214,11 +2745,11 @@ def test_inline_text_support_removes_executor_facing_state_refs() -> None:
             assert rebuilt["route"] == execute_payload["route"]
 
 
-def test_strict_pure_text_formal_secondary_pack_enforces_inline_executor_boundary() -> None:
+def test_text_definition_audit_v3_enforces_inline_executor_boundary() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-strict-pure-text-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="state_transfer_strict_pure_text",
+                task_set_path="text_definition_audit_v3",
                 repeat=1,
                 modes=("protocol",),
                 out_dir=Path(tmpdir),
@@ -2227,11 +2758,9 @@ def test_strict_pure_text_formal_secondary_pack_enforces_inline_executor_boundar
             )
         )
         report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
-    assert result["manifest"]["task_pack_type"] == "state_transfer_strict_pure_text"
-    assert result["manifest"]["formal_secondary_evidence"] is True
+    assert result["manifest"]["task_pack_type"] == "text_definition_audit_v3"
     assert result["manifest"]["support_evidence_only"] is False
-    assert "Protocol-Only Strict Pure-Text Versus Minimal Typed-State" in report_text
-    assert "formal-secondary" in report_text
+    assert "Text Definition Audit V3" in report_text
     assert "- Modes: `protocol`" in report_text
     assert "- Modes: `text, protocol`" not in report_text
     assert "executor_handoff_text_bytes" in report_text
@@ -2252,10 +2781,8 @@ def test_strict_pure_text_formal_secondary_pack_enforces_inline_executor_boundar
         guard = task["pure_text_guard"]
         retrieve_payload = task["results"]["retrieve"]["payload"]
         execute_payload = task["results"]["execute"]["payload"]
-        assert guard["passed"] is True
-        assert guard["executor_input_kinds"] == []
-        assert guard["forbidden_ref_kinds"] == []
-        assert guard["handoff_text_bytes"] > 0
+        assert guard["enabled"] is True
+        assert guard["guard_scope"] == "executor_boundary"
         assert retrieve_payload["transfer_brief_state_id"] == ""
         assert retrieve_payload["inline_handoff_text"]
         assert execute_payload["tool_name"].startswith("tool.")
@@ -2268,11 +2795,55 @@ def test_strict_pure_text_formal_secondary_pack_enforces_inline_executor_boundar
         assert task["artifact_misfire"]["has_expectations"] is True
 
 
-def test_state_transfer_pure_text_pack_runs_natural_text_against_channel_store_hashref() -> None:
-    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-formal-") as tmpdir:
+def test_text_whole_lane_guard_passes_for_text_mode_task() -> None:
+    base_task = load_task_set_bundle("contest_dual_mode_controlled_v3").tasks[0]
+    task = replace(base_task, transfer_strategy="text_whole_lane", handoff_profile="text_whole_lane")
+    orchestrator = Orchestrator(build_sample_agents_with_executor(llm_client=DeterministicLLMClient()))
+    with tempfile.TemporaryDirectory(prefix="statebus-text-whole-lane-guard-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="text",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+        )
+        asyncio.run(orchestrator.run_task(task, ctx))
+        guard = _whole_lane_text_guard_payload(ctx, "text_whole_lane")["whole_lane_text_guard"]
+        assert guard["enabled"] is True
+        assert guard["forbidden_ref_kinds"] == []
+        assert guard["summarizer_input_kinds"] == ["TOOL_ARTIFACT"]
+        assert guard["hidden_field_leak"] is False
+        assert guard["summarizer_typed_visibility"] is False
+        assert guard["failed_reasons"] == []
+
+
+def test_contest_dual_mode_controlled_v3_report_uses_current_state_transfer_label() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-formal-controlled-") as tmpdir:
+        asyncio.run(
+            run_benchmark(
+                task_set_path="contest_dual_mode_controlled_v3",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+    )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "Contest Dual-Mode Controlled V3" in report_text
+    assert "text_strict_pure_lane" in report_text
+    assert "state_packet_minimal" in report_text
+
+
+def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-open-planner-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="state_transfer_pure_text",
+                task_set_path="planner_support_v3",
                 repeat=1,
                 modes=("protocol",),
                 out_dir=Path(tmpdir),
@@ -2280,95 +2851,43 @@ def test_state_transfer_pure_text_pack_runs_natural_text_against_channel_store_h
                 llm_client=DeterministicLLMClient(),
             )
         )
-        protocol_tasks = {
-            task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]
-        }
-        transfer_tasks = list(load_task_set_bundle("state_transfer_pure_text").tasks)
-        assert len(transfer_tasks) == 40
-        for task in transfer_tasks:
-            assert task.allowed_modes == ("protocol",)
-            assert task.task_id in protocol_tasks
-            observed = protocol_tasks[task.task_id]
-            assert observed["benchmark_lane"] == "state_transfer"
-            assert observed["transfer_strategy"] in {"natural_handoff_text", "channel_store_hashref"}
-        assert {
-            ("channel_store_hashref" if task.transfer_strategy == "state_ref" else task.transfer_strategy)
-            for task in transfer_tasks
-        } == {"natural_handoff_text", "channel_store_hashref"}
-        assert int(result["summary"]["protocol"]["failure_count"]) == 0
         report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
-        assert "- Modes: `protocol`" in report_text
-        assert "- Modes: `text, protocol`" not in report_text
-        assert "executor_handoff_text_bytes" in report_text
-        assert result["manifest"]["artifact_expectation_counts"]["route"] == 40
-        assert result["manifest"]["artifact_expectation_counts"]["tool_name"] == 40
-        assert result["manifest"]["artifact_expectation_task_count"] == 40
-        for task in protocol_tasks.values():
-            assert task["artifact_misfire"]["has_expectations"] is True
-            assert task["artifact_misfire"]["fields"]["route"]["enabled"] is True
-            assert task["artifact_misfire"]["fields"]["tool_name"]["enabled"] is True
-
-
-def test_formal_controlled_report_uses_current_state_transfer_label() -> None:
-    with tempfile.TemporaryDirectory(prefix="statebus-formal-controlled-") as tmpdir:
-        asyncio.run(
-            run_benchmark(
-                task_set_path="formal_controlled",
-                repeat=1,
-                modes=("text", "protocol"),
-                out_dir=Path(tmpdir),
-                embedder=DeterministicEmbeddingProvider(),
-                llm_client=DeterministicLLMClient(),
-            )
-        )
-        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
-    assert "text / natural_handoff_text" in report_text
-    assert "delta(protocol/channel_store_hashref - text/natural_handoff_text)" in report_text
-    assert "text / text_brief" not in report_text
-    assert "executor_handoff_text_bytes" in report_text
-
-
-def test_open_planner_support_runs_llm_planner_in_both_modes() -> None:
-    with tempfile.TemporaryDirectory(prefix="statebus-open-planner-") as tmpdir:
-        result = asyncio.run(
-            run_benchmark(
-                task_set_path="open_planner_support",
-                repeat=1,
-                modes=("text", "protocol"),
-                out_dir=Path(tmpdir),
-                embedder=DeterministicEmbeddingProvider(),
-                llm_client=DeterministicLLMClient(),
-            )
-        )
-        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
-    assert result["manifest"]["task_pack_type"] == "open_planner_support"
-    assert result["manifest"]["support_evidence_only"] is True
-    assert result["manifest"]["task_mode_counts"] == {"text": 5, "protocol": 5}
-    assert "Open Planner Support (text)" in report_text
-    assert "Open Planner Support (protocol)" in report_text
-    for mode in ("text", "protocol"):
-        summary = result["summary"][mode]
-        assert int(summary["failure_count"]) == 0
-        assert len(summary["tasks"]) == 5
-        aggregate = summary["aggregate"]
-        assert aggregate["planner_llm_request_count"] == 5
-        assert aggregate["planned_step_count"] == 15
-        for task in result["mode_runs"][mode][0]["tasks"]:
-            assert task["metrics"]["planner_llm_request_count"] == 1
-            assert task["metrics"]["planned_step_count"] == 3
-            assert {"retrieve", "execute", "summarize"}.issubset(task["results"])
-            assert task["results"]["retrieve"]["success"] is True
-            assert task["results"]["execute"]["success"] is True
-            assert task["results"]["summarize"]["success"] is True
-            assert task["results"]["execute"]["payload"]["tool_name"].startswith("tool.")
+    assert result["manifest"]["task_pack_type"] == "planner_support_v3"
+    assert result["manifest"]["support_evidence_only"] is False
+    assert result["manifest"]["formal_secondary_evidence"] is True
+    assert result["manifest"]["task_mode_counts"]["protocol"] == 10
+    assert result["manifest"]["modes"] == ["protocol"]
+    assert "Planner Support V3" in report_text
+    assert "Planner Support V3 (protocol)" in report_text
+    summary = result["summary"]["protocol"]
+    assert int(summary["failure_count"]) == 0
+    assert len(summary["tasks"]) == 10
+    aggregate = summary["aggregate"]
+    assert aggregate["planner_llm_request_count"] == 5
+    assert aggregate["planned_step_count"] == 30
+    yaml_tasks = [task for task in result["mode_runs"]["protocol"][0]["tasks"] if task["plan_source"] == "yaml"]
+    llm_tasks = [task for task in result["mode_runs"]["protocol"][0]["tasks"] if task["plan_source"] == "llm"]
+    assert len(yaml_tasks) == len(llm_tasks) == 5
+    assert all(task["metrics"]["planner_llm_request_count"] == 0 for task in yaml_tasks)
+    assert all(task["metrics"]["planned_step_count"] == 3 for task in yaml_tasks)
+    assert all(task["metrics"]["planner_llm_request_count"] == 1 for task in llm_tasks)
+    assert all(task["metrics"]["planned_step_count"] == 3 for task in llm_tasks)
+    for task in result["mode_runs"]["protocol"][0]["tasks"]:
+        assert task["transfer_strategy"] == "state_packet_minimal"
+        assert task["metrics"]["planned_step_count"] == 3
+        assert {"retrieve", "execute", "summarize"}.issubset(task["results"])
+        assert task["results"]["retrieve"]["success"] is True
+        assert task["results"]["execute"]["success"] is True
+        assert task["results"]["summarize"]["success"] is True
+        assert task["results"]["execute"]["payload"]["tool_name"].startswith("tool.")
 
 
 def test_contest_release_state_transfer_packs_share_family_case_contract() -> None:
-    carrier = list(load_task_set_bundle("contest_release_regression_carrier").tasks)
-    authenticity = list(load_task_set_bundle("contest_release_regression_authenticity").tasks)
-    pure_text = list(load_task_set_bundle("state_transfer_pure_text").tasks)
-    strict_pure_text = list(load_task_set_bundle("state_transfer_strict_pure_text").tasks)
-    support = list(load_task_set_bundle("contest_release_regression_inline_text_support").tasks)
+    carrier = list(load_task_set_bundle("tasks/contest_release_regression_carrier_benchmark.yaml").tasks)
+    authenticity = list(load_task_set_bundle("tasks/contest_release_regression_authenticity_benchmark.yaml").tasks)
+    pure_text = list(load_task_set_bundle("typed_state_authenticity_v3").tasks)
+    strict_pure_text = list(load_task_set_bundle("text_definition_audit_v3").tasks)
+    support = list(load_task_set_bundle("tasks/contest_release_regression_natural_support_benchmark.yaml").tasks)
 
     assert len(carrier) == len(authenticity) == len(pure_text) == len(strict_pure_text) == len(support) == 40
 
@@ -2432,11 +2951,297 @@ def test_contest_release_state_transfer_packs_share_family_case_contract() -> No
         assert {task.transfer_strategy for task in s_pair} == {"inline_text_handoff", "state_packet_minimal"}
 
 
+def test_contest_dual_mode_controlled_v3_withholds_headline_when_pair_coverage_is_seed_only() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-contest-v3-withheld-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="contest_dual_mode_controlled_v3",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+    )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["state_transfer_headline_allowed"] is False
+    assert "contest_formal_coverage_incomplete" in result["manifest"]["withheld_headline_reason"]
+    assert result["manifest"]["headline_gates"]["communication_gate"]["allowed"] is False
+    assert result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 20
+    assert result["manifest"]["contest_formal_coverage_gate"]["family_coverage"] == 5
+    assert "Formal state-transfer headline withheld" in report_text
+
+
+def test_memory_policy_controlled_v3_manifest_exposes_replay_headline_gate() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-policy-v3-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="memory_policy_controlled_v3",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    replay_gate = result["manifest"]["headline_gates"]["memory_replay_gate"]
+    assert replay_gate["applicable"] is True
+    assert replay_gate["memory_replay_evidence_gate"]["applicable"] is True
+    assert replay_gate["memory_replay_evidence_gate"]["passed"] is True
+    assert replay_gate["memory_replay_evidence_gate"]["expected_rows"] == 2
+    assert replay_gate["memory_replay_evidence_gate"]["matched_rows"] == 2
+    assert "Replay headline gate" in report_text
+
+
+def test_state_ref_consumer_sensitivity_audit_changes_executor_visibility_by_kind() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-consumer-sensitivity-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/state_ref_consumer_sensitivity_audit_benchmark.yaml",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
+    mechanism = result["summary"]["protocol"]["mechanism_audit"]["disabled_kind_variants"]
+    full = tasks["audit-sensitivity-rich-full-001"]
+    no_channel = tasks["audit-sensitivity-no-channel-snapshot-001"]
+    no_tool_candidates = tasks["audit-sensitivity-no-tool-candidates-001"]
+    no_ranked = tasks["audit-sensitivity-no-ranked-evidence-001"]
+    no_replay = tasks["audit-sensitivity-no-replay-eligibility-001"]
+
+    assert "FEATURE_BUNDLE" in full["transfer_truth_audit"]["executor_input_kinds"]
+    assert "CHANNEL_SNAPSHOT" in full["transfer_truth_audit"]["executor_input_kinds"]
+    assert "TOOL_CANDIDATE_SET" in full["transfer_truth_audit"]["executor_input_kinds"]
+
+    assert no_channel["status"] == "completed"
+    assert no_channel["mode"] == "protocol"
+    assert no_channel["audit_disable_state_kinds"] == ["CHANNEL_SNAPSHOT"]
+    assert "CHANNEL_SNAPSHOT" not in no_channel["transfer_truth_audit"]["executor_input_kinds"]
+    assert no_tool_candidates["audit_disable_state_kinds"] == ["TOOL_CANDIDATE_SET"]
+    assert "TOOL_CANDIDATE_SET" not in no_tool_candidates["transfer_truth_audit"]["executor_input_kinds"]
+    assert no_ranked["audit_disable_state_kinds"] == ["RANKED_EVIDENCE_BUNDLE"]
+    assert "RANKED_EVIDENCE_BUNDLE" not in no_ranked["transfer_truth_audit"]["executor_input_kinds"]
+    assert no_replay["audit_disable_state_kinds"] == ["REPLAY_ELIGIBILITY_BUNDLE"]
+    assert "REPLAY_ELIGIBILITY_BUNDLE" not in no_replay["transfer_truth_audit"]["executor_input_kinds"]
+    assert set(mechanism) == {
+        "disable_channel_snapshot",
+        "disable_tool_candidate_set",
+        "disable_ranked_evidence_bundle",
+        "disable_replay_eligibility_bundle",
+    }
+    assert "disable_feature_bundle" not in mechanism
+    assert full["artifact_misfire"]["fields"]["route"]["matched"] is True
+    assert full["artifact_misfire"]["fields"]["tool_name"]["matched"] is True
+
+
+def test_audit_only_pack_keeps_failed_row_metadata_and_continues_remaining_tasks() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-audit-failure-continue-") as tmpdir:
+        custom_pack = Path(tmpdir) / "audit_failure_pack.yaml"
+        corpus_path = Path("tasks/contest_release_regression_corpus.yaml").resolve()
+        custom_pack.write_text(
+            (
+                """
+task_set:
+  name: audit_failure_pack
+  pack_type: ad_hoc
+  description: Audit-only regression pack for failure-row metadata preservation.
+  reading_contract: Read only as a runner regression for failed audit rows.
+  claim_lanes: [state_transfer]
+  evidence_tier: audit_only
+  benchmark_version: v3
+tasks:
+- task_id: audit-failure-no-feature-001
+  task_group: audit_failure_group
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  handoff_profile: protocol_full_rich_audit
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  audit_disable_state_kinds: [FEATURE_BUNDLE]
+  corpus_path: {corpus_path}
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Force executor-side failure by deleting FEATURE_BUNDLE.
+  tags: [release, checkout, latency, database, audit-failure]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-failure-no-feature-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+  summary_contract: protocol_handoff_audit
+- task_id: audit-failure-followup-001
+  task_group: audit_failure_group
+  task_order: 2
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  handoff_profile: protocol_full_rich_audit
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  audit_disable_state_kinds: [CHANNEL_SNAPSHOT]
+  corpus_path: {corpus_path}
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: This row should still run after the failed audit row.
+  tags: [release, checkout, latency, database, audit-failure]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-failure-followup-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+  summary_contract: protocol_handoff_audit
+""".strip()
+            ).format(corpus_path=corpus_path),
+            encoding="utf-8",
+        )
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path=custom_pack,
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir) / "out",
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
+    failed = tasks["audit-failure-no-feature-001"]
+    followup = tasks["audit-failure-followup-001"]
+    mechanism = result["summary"]["protocol"]["mechanism_audit"]["disabled_kind_variants"]
+
+    assert failed["status"] == "failed"
+    assert failed["mode"] == "protocol"
+    assert failed["handoff_profile"] == "protocol_full_rich_audit"
+    assert failed["transfer_strategy"] == "channel_store_hashref"
+    assert failed["audit_disable_state_kinds"] == ["FEATURE_BUNDLE"]
+    assert "missing required input kinds" in str(failed["error"]) or "missing FEATURE_BUNDLE input" in str(failed["error"])
+    assert followup["status"] == "completed"
+    assert followup["audit_disable_state_kinds"] == ["CHANNEL_SNAPSHOT"]
+    assert set(mechanism) >= {"disable_feature_bundle", "disable_channel_snapshot"}
+
+
+def test_state_ref_minimal_slimming_audit_compares_minimal_feature_only_and_rich_variants() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-slimming-audit-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/state_ref_minimal_slimming_audit_benchmark.yaml",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    tasks = {task["task_id"]: task for task in result["mode_runs"]["protocol"][0]["tasks"]}
+    mechanism = result["summary"]["protocol"]["mechanism_audit"]["slimming_variants"]
+    minimal = tasks["audit-slim-state-packet-minimal-001"]
+    feature_only = tasks["audit-slim-feature-bundle-only-001"]
+    rich = tasks["audit-slim-rich-state-ref-001"]
+
+    assert minimal["transfer_strategy"] == "state_packet_minimal"
+    assert "EXECUTOR_DECISION_PACKET" in minimal["transfer_truth_audit"]["executor_input_kinds"]
+    assert "FEATURE_BUNDLE" in feature_only["transfer_truth_audit"]["executor_input_kinds"]
+    assert "CHANNEL_SNAPSHOT" not in feature_only["transfer_truth_audit"]["executor_input_kinds"]
+    assert "TOOL_CANDIDATE_SET" not in feature_only["transfer_truth_audit"]["executor_input_kinds"]
+    assert "FEATURE_BUNDLE" in rich["transfer_truth_audit"]["executor_input_kinds"]
+    assert "CHANNEL_SNAPSHOT" in rich["transfer_truth_audit"]["executor_input_kinds"]
+    assert "TOOL_CANDIDATE_SET" in rich["transfer_truth_audit"]["executor_input_kinds"]
+
+    assert mechanism["state_packet_minimal"]["admissible_match_rate"] == 1.0
+    assert mechanism["feature_bundle_only"]["admissible_match_rate"] == 1.0
+    assert mechanism["full_rich_audit"]["admissible_match_rate"] == 1.0
+    assert mechanism["state_packet_minimal"]["control_bytes"] < mechanism["feature_bundle_only"]["control_bytes"]
+    assert mechanism["feature_bundle_only"]["control_bytes"] < mechanism["full_rich_audit"]["control_bytes"]
+    assert mechanism["state_packet_minimal"]["state_transfer_count"] == mechanism["feature_bundle_only"]["state_transfer_count"]
+    assert mechanism["feature_bundle_only"]["state_transfer_count"] < mechanism["full_rich_audit"]["state_transfer_count"]
+
+
+def test_contest_dual_mode_controlled_v3_repeat_ten_exposes_formal_stability_metrics() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-contest-v3-repeat10-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="contest_dual_mode_controlled_v3",
+                repeat=10,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    for mode in ("text", "protocol"):
+        stability = result["summary"][mode]["stability"]
+        assert stability["message_count"]["mean"] > 0.0
+        assert stability["control_bytes"]["mean"] > 0.0
+        assert stability["task_ms"]["mean"] > 0.0
+        assert "memory_hit_rate" in stability
+    assert result["summary"]["protocol"]["stability"]["state_transfer_count"]["mean"] > 0.0
+    assert result["summary"]["text"]["failure_count"] == 0
+    assert result["summary"]["protocol"]["failure_count"] == 0
+    gate = result["manifest"]["formal_stability_gate"]
+    assert gate["required_repeat"] == 10
+    assert gate["repeat_satisfied"] is True
+    assert gate["passed"] is True
+    assert gate["mode_checks"]["text"]["passed"] is True
+    assert gate["mode_checks"]["protocol"]["passed"] is True
+    assert "Formal Stability Gate" in report_text
+
+
+def test_contest_dual_mode_controlled_v3_repeat_one_does_not_pass_formal_stability_gate() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-contest-v3-repeat1-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="contest_dual_mode_controlled_v3",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    gate = result["manifest"]["formal_stability_gate"]
+    assert gate["required_repeat"] == 10
+    assert gate["repeat_satisfied"] is False
+    assert gate["passed"] is False
+    assert result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 20
+    assert result["manifest"]["contest_formal_coverage_gate"]["passed"] is False
+    assert result["manifest"]["object_parity_gate"]["passed"] is True
+
+
 def test_communication_lane_keeps_memory_disabled_in_both_modes() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-communication-lane-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="communication",
+                task_set_path="tasks/communication_benchmark.yaml",
                 repeat=1,
                 modes=("text", "protocol"),
                 out_dir=Path(tmpdir),
@@ -2459,7 +3264,7 @@ def test_memory_lane_separates_memory_policies() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-memory-lane-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="memory",
+                task_set_path="memory_reuse_v3",
                 repeat=1,
                 modes=("text", "protocol"),
                 out_dir=Path(tmpdir),
@@ -2472,6 +3277,7 @@ def test_memory_lane_separates_memory_policies() -> None:
     memory_off = tasks["memory-cache-001"]
     assist_only = tasks["memory-cache-002"]
     replay_enabled = tasks["memory-cache-003"]
+    exact_replay = tasks["memory-cache-004"]
     assert memory_off["benchmark_lane"] == "memory"
     assert memory_off["runtime_reuse_contract"] == "reuse_disabled"
     assert memory_off["reuse"]["mode"] == "none"
@@ -2484,17 +3290,34 @@ def test_memory_lane_separates_memory_policies() -> None:
     assert replay_enabled["reuse"]["mode"] == "skip_execute"
     assert replay_enabled["results"]["retrieve"]["skipped"] is False
     assert replay_enabled["results"]["execute"]["skipped"] is True
+    assert exact_replay["runtime_reuse_contract"] == "exact_replay"
+    assert exact_replay["reuse"]["mode"] in {"skip_retrieve_execute", "skip_execute", "none"}
 
 
 def test_pack_specific_reports_do_not_mix_claim_surfaces() -> None:
     cases = {
-        "memory": ("StateBus Benchmark Report", ()),
-        "communication": ("StateBus Benchmark Report", ()),
-        "state_transfer_pure_text": ("Protocol-Only Pure-Text Versus Typed-State", ("Support note:",)),
-        "state_transfer_strict_pure_text": (
-            "Protocol-Only Strict Pure-Text Versus Minimal Typed-State",
-            ("Support note:",),
+        "memory_reuse_v3": ("Memory Reuse V3", ("task_match_rate", "formal_controlled", "open_validation")),
+        "memory_policy_controlled_v3": (
+            "Memory Policy Controlled V3",
+            ("task_match_rate", "formal_controlled", "open_validation"),
         ),
+        "typed_state_mechanism_v3": (
+            "Typed State Mechanism V3",
+            ("Support note:", "formal_controlled", "open_validation"),
+        ),
+        "external_text_baseline_audit_v3": (
+            "External Text Baseline Audit V3",
+            ("formal_controlled", "open_validation"),
+        ),
+        "typed_state_authenticity_v3": (
+            "Legacy Compatibility",
+            ("Support note:", "task_match_rate", "formal_controlled"),
+        ),
+        "text_definition_audit_v3": (
+            "Text Definition Audit V3",
+            ("Support note:", "task_match_rate", "formal_controlled"),
+        ),
+        "planner_support_v3": ("Planner Support V3", ("formal_controlled", "open_validation")),
     }
     for task_set_path, (present, absent) in cases.items():
         with tempfile.TemporaryDirectory(prefix="statebus-pack-report-") as tmpdir:
@@ -2515,11 +3338,31 @@ def test_pack_specific_reports_do_not_mix_claim_surfaces() -> None:
                 assert token not in report_text
 
 
+def test_memory_policy_controlled_v3_report_stays_protocol_fixed() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-policy-report-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="memory_policy_controlled_v3",
+                repeat=1,
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["task_pack_type"] == "memory_policy_controlled_v3"
+    assert "Memory Policy Controlled V3" in report_text
+    assert "state_packet_minimal" in report_text
+    assert "reuse_disabled" in report_text
+    assert "Replay proof" in report_text
+
+
 def test_benchmark_supports_shared_memory_statepool_backend() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-shm-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="communication",
+                task_set_path="tasks/communication_benchmark.yaml",
                 repeat=1,
                 modes=("text",),
                 out_dir=Path(tmpdir),
@@ -3566,7 +4409,7 @@ def test_benchmark_rerun_clears_old_group_memory() -> None:
         out_dir = Path(tmpdir) / "rerun"
         first = asyncio.run(
             run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="tasks/internal_regression_benchmark.yaml",
                 repeat=1,
                 out_dir=out_dir,
                 embedder=DeterministicEmbeddingProvider(),
@@ -3575,7 +4418,7 @@ def test_benchmark_rerun_clears_old_group_memory() -> None:
         )
         second = asyncio.run(
             run_benchmark(
-                task_set_path="internal_regression",
+                task_set_path="tasks/internal_regression_benchmark.yaml",
                 repeat=1,
                 out_dir=out_dir,
                 embedder=DeterministicEmbeddingProvider(),
@@ -3593,7 +4436,7 @@ def test_benchmark_repeat_ten_records_stability() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-repeat10-") as tmpdir:
         result = asyncio.run(
             run_benchmark(
-                task_set_path="communication",
+                task_set_path="tasks/communication_benchmark.yaml",
                 repeat=10,
                 modes=("text",),
                 out_dir=Path(tmpdir),

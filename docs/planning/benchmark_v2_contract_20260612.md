@@ -254,7 +254,7 @@ v2 需要显式区分：
 
 回答的问题：
 
-- 非文本 typed state 是否比自然语言 handoff 更能保留中间语义
+- matched retrieval input 下，rich typed state handoff 是否比自然语言 handoff 更能保留中间语义
 
 比较：
 
@@ -266,7 +266,8 @@ v2 需要显式区分：
 - `mode = protocol`
 - `memory = off`
 - `plan_source = yaml`
-- same task family / query / corpus_doc_ids / summary_hint
+- same task family / query / corpus_doc_ids / summary_hint / tags / reuse_tags
+- same retrieval input contract
 
 主指标：
 
@@ -279,12 +280,16 @@ v2 需要显式区分：
 次指标：
 
 - `control_bytes`
+- `handoff_payload_bytes`
 - `executor_handoff_text_bytes`
 - `task_ms`
 
 不能读出的结论：
 
+- 不能把它说成“端到端 pure text vs structured 公平对比”
+- 不能把它说成“只改 carrier 的比较”
 - 不能用它证明“state 比 text 更省通信”
+- 不能用它证明“structured 本来就该更便宜”
 
 ### 5.3 `strict_pure_text_boundary_v2`
 
@@ -320,6 +325,7 @@ v2 需要显式区分：
 
 不能读出的结论：
 
+- 不能把它说成“整条 lane 已经是纯文本”
 - 不进入正式 aggregate
 - 不作为通信效率主 headline
 
@@ -392,6 +398,11 @@ v2 需要显式区分：
 - success rate
 - route/tool admissibility
 
+当前正式 pack 形态：
+
+- `5 family x 2 plan_source control rows`
+- 每个 family 同时保留 `yaml` 与 `llm` 两条，其他 retrieval/runtime 条件保持一致
+
 不能读出的结论：
 
 - 不进入正式 headline aggregate
@@ -429,6 +440,7 @@ v2 需要显式区分：
 - 当前 `state_transfer_pure_text`
 - 当前 `state_transfer_strict_pure_text`
 - 当前 `state_transfer_carrier`
+- 当前 `open_planner_support`
 
 用途：
 

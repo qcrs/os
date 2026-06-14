@@ -88,6 +88,7 @@ class StateBusGraphRunner:
                 task_id=task.task_id,
                 task_group=task.task_group,
                 task_theme=task.task_theme,
+                summary_contract=task.summary_contract,
                 state_root=paths["state_root"],
                 memory_db_path=paths["memory_db_path"],
                 embedder=self.embedder,

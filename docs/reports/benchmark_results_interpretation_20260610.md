@@ -4,6 +4,8 @@
 数据来源：`runs/benchmark_suite_20260611_124126_api_repeat3/`
 执行方式：live API, repeat=`3`, serialized（时序串行，一次只跑一个 task）
 
+> 当前定位：历史结果解读 / v1-v2 背景材料。本文保留旧 pack 名称、`text_brief -> state_ref` 读法和历史 repeat=3 数据，不能替代当前 v3 active surface。当前 v3 结论请优先看 `README.md`、`tasks/README.md` 和 `docs/reports/task_design_and_mode_comparison.md`，并以 active v3 pack 的 manifest/report/gate 为准。
+
 ---
 
 ## 零、为什么要做这个实验
