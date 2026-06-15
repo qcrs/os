@@ -218,6 +218,9 @@ class RunContext:
     )
     replay_decision: dict[str, Any] = field(default_factory=dict)
     sealed_task_commit_hash: str = ""
+    planner_source: str = ""
+    planner_step_count: int = 0
+    planner_contract_valid: bool = False
     blob_fetch_metrics: dict[str, Any] = field(
         default_factory=lambda: {
             "blob_fetch_count": 0,
@@ -260,7 +263,6 @@ class RunContext:
         self.metrics.handoff_ref_count += len(refs)
         self.metrics.handoff_wire_bytes += total_state_ref_lite_wire_bytes(refs)
         for ref in refs:
-            self.metrics.handoff_bytes += ref.length
             self.metrics.handoff_payload_bytes += ref.length
             if ref.kind in nontext_kinds:
                 self.metrics.handoff_nontext_ref_count += 1
@@ -861,11 +863,14 @@ class Orchestrator:
         return results
 
     async def compile_task_plan(self, task: object, ctx: RunContext) -> Plan:
+        from tasks.sample_tasks import normalize_plan_source
+
         ctx.task = task
         if ctx.runtime_profile.is_empty and hasattr(task, "runtime_profile"):
             maybe_profile = getattr(task, "runtime_profile")
             if isinstance(maybe_profile, RuntimeTaskProfile):
                 ctx.runtime_profile = maybe_profile
+        ctx.planner_source = normalize_plan_source(getattr(task, "plan_source", "yaml"))
         self._ensure_handshake(ctx)
         plan_started = time.perf_counter()
         plan = await self._plan_task(task, ctx)
@@ -877,6 +882,8 @@ class Orchestrator:
         self._ensure_handshake(ctx)
         SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
         ctx.metrics.planned_step_count = len(plan.steps)
+        ctx.planner_step_count = len(plan.steps)
+        ctx.planner_contract_valid = True
         if getattr(ctx, "_statebus_plan_emitted", False):
             return
         ctx.emit(plan)

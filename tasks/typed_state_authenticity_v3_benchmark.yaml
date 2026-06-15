@@ -15,6 +15,7 @@ task_set:
   variable_axes:
   - handoff_object
   public_surface: formal_secondary_typed_state_authenticity
+  plan_source_default: yaml
   evidence_tier: formal_secondary
   benchmark_version: v3
 tasks:

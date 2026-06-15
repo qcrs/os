@@ -16,6 +16,7 @@ from statepool.store import StatePoolConfig
 from tasks.sample_tasks import SampleTask
 
 STATEBUS_GRAPH_NODES = ("planner", "retriever", "executor", "summarizer")
+STATEBUS_GRAPH_NODES_WITH_VALIDATE = ("planner", "retriever", "validate", "executor", "summarizer")
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,7 @@ class StateBusGraphRunner:
             task_id=task.task_id,
             mode=ctx.mode,
             engine="langgraph",
-            node_order=STATEBUS_GRAPH_NODES,
+            node_order=_node_order_for_plan(runtime_state.get("plan")),
             results=results,
             metrics=ctx.metrics.to_dict(),
             state_channels=_state_channel_summary(ctx),
@@ -175,17 +176,22 @@ class StateBusGraphRunner:
         async def executor_node(state: dict[str, Any]) -> dict[str, Any]:
             return await self._executor_node(state)
 
+        async def validate_node(state: dict[str, Any]) -> dict[str, Any]:
+            return await self._validate_node(state)
+
         async def summarizer_node(state: dict[str, Any]) -> dict[str, Any]:
             return await self._summarizer_node(state)
 
         graph = StateGraph(dict)
         graph.add_node("planner", planner_node)
         graph.add_node("retriever", retriever_node)
+        graph.add_node("validate", validate_node)
         graph.add_node("executor", executor_node)
         graph.add_node("summarizer", summarizer_node)
         graph.set_entry_point("planner")
         graph.add_edge("planner", "retriever")
-        graph.add_edge("retriever", "executor")
+        graph.add_conditional_edges("retriever", _next_after_retrieve)
+        graph.add_edge("validate", "executor")
         graph.add_edge("executor", "summarizer")
         graph.add_edge("summarizer", END)
         return graph.compile()
@@ -268,6 +274,17 @@ class StateBusGraphRunner:
                 ctx=ctx,
                 emit_step=True,
             )
+            self._refresh_state_snapshot(state)
+            return state
+        await self._invoke_normal_step(state, step)
+        return state
+
+    async def _validate_node(self, state: dict[str, Any]) -> dict[str, Any]:
+        plan = _require_plan(state)
+        if state.get("status") == "failed":
+            return state
+        step = _step_by_id(plan, "validate", required=False)
+        if step is None or "validate" in state["ctx"].results:
             self._refresh_state_snapshot(state)
             return state
         await self._invoke_normal_step(state, step)
@@ -428,8 +445,28 @@ def _require_plan(state: dict[str, Any]) -> Plan:
     return plan
 
 
-def _step_by_id(plan: Plan, step_id: str) -> Any:
+def _step_by_id(plan: Plan, step_id: str, *, required: bool = True) -> Any:
     for step in plan.steps:
         if step.step_id == step_id:
             return step
-    raise KeyError(f"missing step in graph plan: {step_id}")
+    if required:
+        raise KeyError(f"missing step in graph plan: {step_id}")
+    return None
+
+
+def _plan_has_validate_step(plan: Plan | None) -> bool:
+    if not isinstance(plan, Plan):
+        return False
+    return any(step.step_id == "validate" for step in plan.steps)
+
+
+def _node_order_for_plan(plan: Plan | None) -> tuple[str, ...]:
+    if _plan_has_validate_step(plan):
+        return STATEBUS_GRAPH_NODES_WITH_VALIDATE
+    return STATEBUS_GRAPH_NODES
+
+
+def _next_after_retrieve(state: dict[str, Any]) -> str:
+    if _plan_has_validate_step(state.get("plan")):
+        return "validate"
+    return "executor"

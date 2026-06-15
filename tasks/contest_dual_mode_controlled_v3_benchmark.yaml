@@ -14,7 +14,8 @@ task_set:
   variable_axes:
   - mode
   - handoff_object
-  public_surface: formal_dual_mode_headline
+  public_surface: formal_headline
+  plan_source_default: yaml
   evidence_tier: formal_headline
   benchmark_version: v3
 tasks:
@@ -61,6 +62,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -100,6 +102,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -145,8 +148,11 @@ tasks:
   primary_expected_tool: tool.db_pool_triage
   acceptable_routes:
   - db_pool_saturation
+  - worker_queue_starvation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.worker_queue_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -184,8 +190,11 @@ tasks:
   primary_expected_tool: tool.db_pool_triage
   acceptable_routes:
   - db_pool_saturation
+  - worker_queue_starvation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.worker_queue_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -232,8 +241,11 @@ tasks:
   primary_expected_tool: tool.db_pool_triage
   acceptable_routes:
   - db_pool_saturation
+  - worker_queue_starvation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.worker_queue_triage
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -272,8 +284,11 @@ tasks:
   primary_expected_tool: tool.db_pool_triage
   acceptable_routes:
   - db_pool_saturation
+  - worker_queue_starvation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.worker_queue_triage
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -321,6 +336,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -360,6 +376,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -410,6 +427,7 @@ tasks:
   - auth_session_drift
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -449,6 +467,7 @@ tasks:
   - auth_session_drift
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -494,8 +513,11 @@ tasks:
   primary_expected_tool: tool.auth_session_repair
   acceptable_routes:
   - auth_session_drift
+  - auth_rate_limit
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
+  - tool.auth_rate_limit_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -533,8 +555,11 @@ tasks:
   primary_expected_tool: tool.auth_session_repair
   acceptable_routes:
   - auth_session_drift
+  - auth_rate_limit
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
+  - tool.auth_rate_limit_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -581,8 +606,11 @@ tasks:
   primary_expected_tool: tool.auth_session_repair
   acceptable_routes:
   - auth_session_drift
+  - auth_rate_limit
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
+  - tool.auth_rate_limit_triage
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -621,8 +649,11 @@ tasks:
   primary_expected_tool: tool.auth_session_repair
   acceptable_routes:
   - auth_session_drift
+  - auth_rate_limit
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
+  - tool.auth_rate_limit_triage
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -670,6 +701,7 @@ tasks:
   - auth_session_drift
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -709,6 +741,7 @@ tasks:
   - auth_session_drift
   acceptable_tools:
   - tool.auth_session_repair
+  - tool.auth_jwks_refresh
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -759,6 +792,7 @@ tasks:
   - cache_invalidation
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -798,6 +832,7 @@ tasks:
   - cache_invalidation
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -843,8 +878,11 @@ tasks:
   primary_expected_tool: tool.cache_invalidation_playbook
   acceptable_routes:
   - cache_invalidation
+  - cache_replica_stale_read
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
+  - tool.replica_stale_read_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -882,8 +920,11 @@ tasks:
   primary_expected_tool: tool.cache_invalidation_playbook
   acceptable_routes:
   - cache_invalidation
+  - cache_replica_stale_read
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
+  - tool.replica_stale_read_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -932,6 +973,7 @@ tasks:
   - cache_invalidation
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -972,6 +1014,7 @@ tasks:
   - cache_invalidation
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1019,6 +1062,7 @@ tasks:
   - cache_invalidation
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1058,6 +1102,7 @@ tasks:
   - cache_invalidation
   acceptable_tools:
   - tool.cache_invalidation_playbook
+  - tool.cache_hook_repair
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1106,8 +1151,12 @@ tasks:
   primary_expected_tool: tool.worker_queue_triage
   acceptable_routes:
   - worker_queue_starvation
+  - db_pool_saturation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
+  - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1145,8 +1194,12 @@ tasks:
   primary_expected_tool: tool.worker_queue_triage
   acceptable_routes:
   - worker_queue_starvation
+  - db_pool_saturation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
+  - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1194,6 +1247,7 @@ tasks:
   - worker_queue_starvation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1233,6 +1287,7 @@ tasks:
   - worker_queue_starvation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1279,8 +1334,12 @@ tasks:
   primary_expected_tool: tool.worker_queue_triage
   acceptable_routes:
   - worker_queue_starvation
+  - db_pool_saturation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
+  - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1319,8 +1378,12 @@ tasks:
   primary_expected_tool: tool.worker_queue_triage
   acceptable_routes:
   - worker_queue_starvation
+  - db_pool_saturation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
+  - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1368,6 +1431,7 @@ tasks:
   - worker_queue_starvation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1407,6 +1471,7 @@ tasks:
   - worker_queue_starvation
   acceptable_tools:
   - tool.worker_queue_triage
+  - tool.retry_storm_relief
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1457,6 +1522,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1496,6 +1562,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1541,8 +1608,11 @@ tasks:
   primary_expected_tool: tool.db_pool_triage
   acceptable_routes:
   - db_pool_saturation
+  - worker_queue_starvation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.worker_queue_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1580,8 +1650,11 @@ tasks:
   primary_expected_tool: tool.db_pool_triage
   acceptable_routes:
   - db_pool_saturation
+  - worker_queue_starvation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.worker_queue_triage
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1630,6 +1703,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1670,6 +1744,7 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  - tool.db_query_hotfix
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence

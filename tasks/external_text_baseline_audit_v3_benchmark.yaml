@@ -8,7 +8,7 @@ task_set:
   single_variable: true
   variable_axes:
   - external_text_surface
-  public_surface: audit_only_external_text_baseline
+  public_surface: audit_only
   evidence_tier: audit_only
   benchmark_version: v3
 tasks:

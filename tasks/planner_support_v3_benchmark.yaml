@@ -5,13 +5,13 @@ task_set:
     planning under matched protocol state_packet_minimal rows.
   reading_contract: Read this pack only as the v3 planner-support surface. Planner
     openness is a separate protocol-only claim from communication medium and typed-state
-    authenticity.
+    authenticity. At least two llm rows must explicitly validate the route before execution.
   claim_lanes:
   - communication
   single_variable: true
   variable_axes:
   - plan_source
-  public_surface: formal_secondary_planner_support
+  public_surface: formal_secondary_planner
   evidence_tier: formal_secondary
   benchmark_version: v3
 tasks:
@@ -522,9 +522,9 @@ tasks:
   - protocol
   corpus_path: contest_release_regression_corpus.yaml
   goal: Use the same runtime path to diagnose deployment config drift with an llm-generated
-    plan row.
+    four-step plan row that explicitly validates the route before execution.
   query: deployment drift canary shard shows pool cap mismatch sql wait growth and
-    rollout config divergence
+    rollout config divergence; validate the route before execution and explain the strongest competing hypothesis you ruled out.
   corpus_doc_ids:
   - rr-deploy-incident
   - rr-deploy-metrics
@@ -546,8 +546,8 @@ tasks:
   expected_route: db_pool_saturation
   expected_tool_name: tool.db_pool_triage
   expected_top_doc_id: rr-deploy-incident
-  summary_hint: Return root cause, strongest competing explanation ruled out, first
-    action, and validation check.
+  summary_hint: Return validated route, strongest competing explanation ruled out,
+    first action, and validation check.
   case_id: planner-support-deploy-llm-001
   case_type: exact_single_solution
   eval_scope: case_level
@@ -558,6 +558,57 @@ tasks:
   - db_pool_saturation
   acceptable_tools:
   - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-auth-llm-002
+  task_group: planner_support_v3_lane
+  task_order: 11
+  task_theme: contest_release_auth_rotation
+  plan_source: llm
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose auth callback failures with an llm-generated four-step plan row that explicitly validates the route before execution.
+  query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated callback verification failures; validate the route before execution and explain the strongest competing hypothesis you ruled out.
+  corpus_doc_ids:
+  - rr-auth-incident
+  - rr-auth-metrics
+  - rr-auth-logs
+  - rr-auth-ambiguous
+  evidence_text: This support task compares fixed yaml control against Planner LLM plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - auth
+  - session
+  - jwks
+  - planner-support
+  reuse_tags:
+  - release
+  - auth
+  - session
+  expected_reuse_mode: none
+  expected_route: auth_session_drift
+  expected_tool_name: tool.auth_session_repair
+  expected_top_doc_id: rr-auth-incident
+  summary_hint: Return validated route, strongest competing explanation ruled out, first action, and validation check.
+  case_id: planner-support-auth-llm-002
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: auth_session_drift
+  primary_expected_route: auth_session_drift
+  primary_expected_tool: tool.auth_session_repair
+  acceptable_routes:
+  - auth_session_drift
+  acceptable_tools:
+  - tool.auth_session_repair
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''

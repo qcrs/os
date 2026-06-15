@@ -14,7 +14,7 @@ task_set:
   - mode
   - runtime_reuse_contract
   - restore_object_class
-  public_surface: audit_only_object_parity_restore_boundary
+  public_surface: audit_only
   evidence_tier: audit_only
   benchmark_version: v3
 tasks:

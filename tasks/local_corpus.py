@@ -20,8 +20,10 @@ class CorpusDoc:
     task_theme: str
     title: str
     tags: tuple[str, ...]
-    route_hint: str
-    tool_name: str
+    runtime_route_hint: str
+    runtime_tool_name: str
+    eval_route_label: str
+    eval_tool_label: str
     text: str
 
     @property
@@ -63,8 +65,10 @@ def load_corpus_docs(path: str | Path | None = None) -> dict[str, CorpusDoc]:
             task_theme=str(item["task_theme"]).strip(),
             title=str(item["title"]).strip(),
             tags=tuple(str(tag).strip() for tag in item.get("tags", [])),
-            route_hint=str(item.get("route_hint", "")).strip(),
-            tool_name=str(item.get("tool_name", "")).strip(),
+            runtime_route_hint=str(item.get("route_hint", "")).strip(),
+            runtime_tool_name=str(item.get("tool_name", "")).strip(),
+            eval_route_label=str(item.get("eval_route_label", item.get("route_hint", ""))).strip(),
+            eval_tool_label=str(item.get("eval_tool_label", item.get("tool_name", ""))).strip(),
             text=str(item["text"]).strip(),
         )
         loaded[doc.doc_id] = doc
@@ -81,6 +85,7 @@ def retrieve_corpus_docs(
     embedder: EmbeddingProvider,
     corpus_path: str | Path | None = None,
     top_k: int = 2,
+    allow_preferred_doc_bias: bool = True,
 ) -> list[CorpusDoc]:
     docs_by_id = load_corpus_docs(corpus_path)
     preferred_doc_ids = {
@@ -103,7 +108,7 @@ def retrieve_corpus_docs(
         # Keep corpus doc hints as a weak retrieval prior: strong enough to stabilize
         # close replay/control ties, but not strong enough to override clearly better
         # lexical/semantic evidence outside the hinted doc set.
-        preference_bonus = 0.20 if doc.doc_id in preferred_doc_ids else 0.0
+        preference_bonus = 0.20 if allow_preferred_doc_bias and doc.doc_id in preferred_doc_ids else 0.0
         scored.append(
             _CorpusDocScore(
                 doc=doc,
@@ -166,16 +171,29 @@ def render_corpus_evidence(docs: list[CorpusDoc]) -> str:
 def extract_corpus_feature_hints(docs: list[CorpusDoc]) -> list[dict[str, str]]:
     hints: list[dict[str, str]] = []
     for doc in docs:
-        if not doc.route_hint and not doc.tool_name:
+        if not doc.runtime_route_hint and not doc.runtime_tool_name:
             continue
         hints.append(
             {
                 "doc_id": doc.doc_id,
-                "route": doc.route_hint,
-                "tool_name": doc.tool_name,
+                "route": doc.runtime_route_hint,
+                "tool_name": doc.runtime_tool_name,
             }
         )
     return hints
+
+
+def extract_corpus_eval_labels(docs: list[CorpusDoc]) -> list[dict[str, str]]:
+    labels: list[dict[str, str]] = []
+    for doc in docs:
+        labels.append(
+            {
+                "doc_id": doc.doc_id,
+                "eval_route_label": doc.eval_route_label,
+                "eval_tool_label": doc.eval_tool_label,
+            }
+        )
+    return labels
 
 
 def resolve_corpus_feature_hint(
@@ -185,10 +203,10 @@ def resolve_corpus_feature_hint(
 ) -> dict[str, str] | None:
     docs_by_id = load_corpus_docs(corpus_path)
     distinct_hints = {
-        (doc.route_hint, doc.tool_name)
+        (doc.runtime_route_hint, doc.runtime_tool_name)
         for doc_id in doc_ids
         for doc in [docs_by_id.get(doc_id)]
-        if doc is not None and (doc.route_hint or doc.tool_name)
+        if doc is not None and (doc.runtime_route_hint or doc.runtime_tool_name)
     }
     if len(distinct_hints) != 1:
         return None

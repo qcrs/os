@@ -4,8 +4,8 @@ docs:
     task_theme: contest_release_checkout_regression
     title: Checkout release introduced order latency and connection waits
     tags: [release, checkout, latency, database, canary]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       Release 17.4 shipped to the checkout service canary and the first alerts
       showed order confirmation p95 rising from the normal band to a degraded
@@ -17,8 +17,8 @@ docs:
     task_theme: contest_release_checkout_regression
     title: Metrics snapshot shows connection pool pressure and slow orders query
     tags: [release, checkout, latency, database, metrics]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The metrics snapshot records repeated connection pool saturation, a rising
       sql wait band, and a slow orders query tied to the orders_created_at
@@ -30,8 +30,8 @@ docs:
     task_theme: contest_release_checkout_regression
     title: Log excerpt points to db wait profile after checkout canary rollout
     tags: [release, checkout, latency, database, logs]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The checkout logs show db wait profile spikes within minutes of the canary
       rollout. Multiple traces include connection pool exhaustion warnings and a
@@ -42,8 +42,8 @@ docs:
     task_theme: contest_release_checkout_regression
     title: Rollout diff reduced pool headroom while adding a new orders filter
     tags: [release, checkout, rollout, database, config]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The rollout diff changed the checkout read/write pool caps and added a new
       orders_created_at query filter in the confirmation path. The runbook note
@@ -55,8 +55,8 @@ docs:
     task_theme: contest_release_checkout_regression
     title: Similar release incident previously came from worker queue starvation
     tags: [release, checkout, latency, worker, distractor]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       A different checkout incident during a certificate rotation looked similar
       at first, but the root cause there was worker queue starvation during a
@@ -68,8 +68,8 @@ docs:
     task_theme: contest_release_checkout_regression
     title: Scope note narrows the blast radius to the release canary shard
     tags: [release, checkout, scope, canary, database]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The later scope update shows the latency spike is concentrated in the new
       canary shard and in tenants that hit the changed confirmation path. The
@@ -81,8 +81,8 @@ docs:
     task_theme: contest_release_auth_rotation
     title: SSO callback regression appeared after auth metadata rotation
     tags: [release, auth, sso, session, callback]
-    route_hint: auth_session_drift
-    tool_name: tool.auth_session_repair
+    eval_route_label: auth_session_drift
+    eval_tool_label: tool.auth_session_repair
     text: >
       After the auth metadata rotation, the incident report shows callback
       failures and repeated sign-outs for users who crossed the new canary.
@@ -94,8 +94,8 @@ docs:
     task_theme: contest_release_auth_rotation
     title: Metrics snapshot shows callback verification drift instead of edge throttling
     tags: [release, auth, session, jwks, metrics]
-    route_hint: auth_session_drift
-    tool_name: tool.auth_session_repair
+    eval_route_label: auth_session_drift
+    eval_tool_label: tool.auth_session_repair
     text: >
       The auth dashboard shows callback verification failures rising alongside
       stale jwks cache hits. Rate-limit counters stayed close to baseline and
@@ -106,8 +106,8 @@ docs:
     task_theme: contest_release_auth_rotation
     title: Log excerpt shows issuer mismatch and stale JWKS refresh lag
     tags: [release, auth, session, jwks, logs]
-    route_hint: auth_session_drift
-    tool_name: tool.auth_session_repair
+    eval_route_label: auth_session_drift
+    eval_tool_label: tool.auth_session_repair
     text: >
       The auth logs include repeated issuer mismatch lines followed by callback
       verification retries. Several traces also show stale jwks cache entries
@@ -118,8 +118,8 @@ docs:
     task_theme: contest_release_auth_rotation
     title: Runbook excerpt recommends JWKS refresh plus stale session cleanup
     tags: [release, auth, session, runbook, jwks]
-    route_hint: auth_session_drift
-    tool_name: tool.auth_session_repair
+    eval_route_label: auth_session_drift
+    eval_tool_label: tool.auth_session_repair
     text: >
       The runbook for post-rotation callback regressions says to refresh jwks,
       clear stale session cookies, and rerun callback verification before
@@ -131,8 +131,8 @@ docs:
     task_theme: contest_release_auth_rotation
     title: Earlier login failures were caused by aggressive auth rate limiting
     tags: [release, auth, session, rate-limit, distractor]
-    route_hint: auth_rate_limit
-    tool_name: tool.auth_rate_limit_triage
+    eval_route_label: auth_rate_limit
+    eval_tool_label: tool.auth_rate_limit_triage
     text: >
       A previous login incident in the same service came from an aggressive
       backoff window and auth rate limiter tuning mistake. In that case jwks and
@@ -144,8 +144,8 @@ docs:
     task_theme: contest_release_auth_rotation
     title: Scope note narrows failures to tenants with cached pre-rotation sessions
     tags: [release, auth, scope, session, jwks]
-    route_hint: auth_session_drift
-    tool_name: tool.auth_session_repair
+    eval_route_label: auth_session_drift
+    eval_tool_label: tool.auth_session_repair
     text: >
       The follow-up scope note shows most failures cluster in tenants whose
       users carried pre-rotation session cookies into the canary. The safest
@@ -157,8 +157,8 @@ docs:
     task_theme: contest_release_inventory_rollout
     title: Inventory rollout left stale counts after the new sync path shipped
     tags: [release, inventory, cache, invalidation, sync-window]
-    route_hint: cache_invalidation
-    tool_name: tool.cache_invalidation_playbook
+    eval_route_label: cache_invalidation
+    eval_tool_label: tool.cache_invalidation_playbook
     text: >
       The release incident report says inventory pages stayed stale after the
       new sync path shipped to one region. The first responder noted the issue
@@ -170,8 +170,8 @@ docs:
     task_theme: contest_release_inventory_rollout
     title: Metrics snapshot shows stale inventory after batch sync with healthy writes
     tags: [release, inventory, cache, invalidation, metrics]
-    route_hint: cache_invalidation
-    tool_name: tool.cache_invalidation_playbook
+    eval_route_label: cache_invalidation
+    eval_tool_label: tool.cache_invalidation_playbook
     text: >
       The metrics view shows healthy writer success but stale inventory counters
       on the read side immediately after batch sync. The aggregate invalidation
@@ -183,8 +183,8 @@ docs:
     task_theme: contest_release_inventory_rollout
     title: Log excerpt points to missing aggregate invalidation hook
     tags: [release, inventory, cache, invalidation, logs]
-    route_hint: cache_invalidation
-    tool_name: tool.cache_invalidation_playbook
+    eval_route_label: cache_invalidation
+    eval_tool_label: tool.cache_invalidation_playbook
     text: >
       The rollout logs include a repeated warning that the post-sync
       invalidation hook skipped the inventory aggregate key on the new path.
@@ -196,8 +196,8 @@ docs:
     task_theme: contest_release_inventory_rollout
     title: Feature-flag diff moved aggregate invalidation behind the new sync path
     tags: [release, inventory, cache, invalidation, config]
-    route_hint: cache_invalidation
-    tool_name: tool.cache_invalidation_playbook
+    eval_route_label: cache_invalidation
+    eval_tool_label: tool.cache_invalidation_playbook
     text: >
       The feature-flag diff moved the aggregate invalidation hook behind the new
       sync orchestration path. The rollout note says to force inventory
@@ -209,8 +209,8 @@ docs:
     task_theme: contest_release_inventory_rollout
     title: Another stale inventory incident was actually read replica lag
     tags: [release, inventory, cache, replica, distractor]
-    route_hint: cache_replica_stale_read
-    tool_name: tool.replica_stale_read_triage
+    eval_route_label: cache_replica_stale_read
+    eval_tool_label: tool.replica_stale_read_triage
     text: >
       A separate inventory incident after failover was caused by stale reads on
       the reporting replica path. That case had healthy invalidation hooks and a
@@ -222,8 +222,8 @@ docs:
     task_theme: contest_release_inventory_rollout
     title: Scope note isolates the stale inventory path to the rollout region
     tags: [release, inventory, cache, scope, invalidation]
-    route_hint: cache_invalidation
-    tool_name: tool.cache_invalidation_playbook
+    eval_route_label: cache_invalidation
+    eval_tool_label: tool.cache_invalidation_playbook
     text: >
       The scope update shows only the rollout region and the new sync path are
       affected. The safest validation is to force inventory aggregate
@@ -235,8 +235,8 @@ docs:
     task_theme: contest_release_checkout_regression
     title: Mixed signal note shows queue pressure without overturning the db path
     tags: [release, checkout, latency, ambiguous, worker, database]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       A later review noted some queue pressure on a subset of workers, but the
       slow orders query and pool wait pattern still aligned much more tightly
@@ -248,8 +248,8 @@ docs:
     task_theme: contest_release_auth_rotation
     title: Mixed signal note shows mild throttling but keeps session drift primary
     tags: [release, auth, ambiguous, session, rate-limit, jwks]
-    route_hint: auth_session_drift
-    tool_name: tool.auth_session_repair
+    eval_route_label: auth_session_drift
+    eval_tool_label: tool.auth_session_repair
     text: >
       A later auth review recorded a small backoff rise, but stale jwks hits
       and issuer mismatch still lined up far better with the callback failures.
@@ -261,8 +261,8 @@ docs:
     task_theme: contest_release_billing_queue_backlog
     title: Billing release introduced invoice queue backlog after worker reload
     tags: [release, billing, queue, worker, canary]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       Release 9.2 hit the billing workers and invoice processing delay rose
       quickly on the canary. The incident note says most failed requests sat in
@@ -274,8 +274,8 @@ docs:
     task_theme: contest_release_billing_queue_backlog
     title: Metrics snapshot shows queue depth surge and retry pressure
     tags: [release, billing, queue, worker, metrics]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       The metrics snapshot shows worker queue depth climbing, retry counts
       spiking, and invoice processing threads staying pinned during the reload
@@ -286,8 +286,8 @@ docs:
     task_theme: contest_release_billing_queue_backlog
     title: Log excerpt points to retry storms after tls reload
     tags: [release, billing, queue, worker, logs]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       The worker logs show repeated retry scheduling after tls reload together
       with queue starvation warnings. Invoice rows eventually commit, but they
@@ -298,8 +298,8 @@ docs:
     task_theme: contest_release_billing_queue_backlog
     title: Runbook says to drain retry storms and rebalance invoice workers
     tags: [release, billing, queue, runbook, worker]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       The billing runbook says to pause the retry storm trigger, drain the
       affected worker slice, and rebalance invoice consumers before widening
@@ -310,8 +310,8 @@ docs:
     task_theme: contest_release_billing_queue_backlog
     title: Earlier invoice delay incident was driven by database saturation
     tags: [release, billing, queue, database, distractor]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       A previous invoice delay incident in the same service came from a
       database pool collapse. That case had obvious sql wait growth and no retry
@@ -322,8 +322,8 @@ docs:
     task_theme: contest_release_billing_queue_backlog
     title: Mixed signal note shows some sql wait without overturning queue backlog
     tags: [release, billing, ambiguous, queue, database, worker]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       A later billing review noted a modest sql wait increase, but queue depth,
       retry storms, and worker starvation still explained the dominant delay.
@@ -334,8 +334,8 @@ docs:
     task_theme: contest_release_billing_queue_backlog
     title: Scope note narrows backlog to canary invoice workers
     tags: [release, billing, scope, queue, worker]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       The later scope update shows the invoice backlog is limited to the canary
       worker slice after reload. The safest validation is to drain retries and
@@ -346,8 +346,8 @@ docs:
     task_theme: contest_release_deployment_config_drift
     title: Deployment config drift introduced pool exhaustion on the canary
     tags: [release, deployment, config, database, canary]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       A deployment config drift reached the canary and the first symptoms were
       pool exhaustion and slow request completion. The incident note points to
@@ -359,8 +359,8 @@ docs:
     task_theme: contest_release_deployment_config_drift
     title: Metrics snapshot shows connection wait growth after config drift
     tags: [release, deployment, config, database, metrics]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The metrics view shows connection wait growth, sql latency increase, and
       lower pool headroom immediately after the drifted config landed. Worker
@@ -371,8 +371,8 @@ docs:
     task_theme: contest_release_deployment_config_drift
     title: Log excerpt shows pool cap mismatch and slow query path activation
     tags: [release, deployment, config, database, logs]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The deployment logs show the canary loading mismatched pool caps and
       activating a slower query path at the same time. Multiple traces show
@@ -383,8 +383,8 @@ docs:
     task_theme: contest_release_deployment_config_drift
     title: Drift diff changed pool caps and enabled the slower query path
     tags: [release, deployment, config, database, rollout]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The diff shows the canary received lower pool caps plus a flag that turns
       on the slower query path. The rollout note says these should be reverted
@@ -395,8 +395,8 @@ docs:
     task_theme: contest_release_deployment_config_drift
     title: Earlier deployment incident came from worker jitter during reload
     tags: [release, deployment, config, worker, distractor]
-    route_hint: worker_queue_starvation
-    tool_name: tool.worker_queue_triage
+    eval_route_label: worker_queue_starvation
+    eval_tool_label: tool.worker_queue_triage
     text: >
       A previous deployment incident looked similar at first, but the root
       cause there was worker jitter during a reload. That case had healthy pool
@@ -407,8 +407,8 @@ docs:
     task_theme: contest_release_deployment_config_drift
     title: Mixed signal note shows some worker jitter without overturning pool drift
     tags: [release, deployment, ambiguous, config, worker, database]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       A later review noted mild worker jitter on the canary, but pool wait and
       the slower query path still matched the dominant failures. The note says
@@ -419,8 +419,8 @@ docs:
     task_theme: contest_release_deployment_config_drift
     title: Scope note narrows config drift to the canary shard only
     tags: [release, deployment, scope, config, database]
-    route_hint: db_pool_saturation
-    tool_name: tool.db_pool_triage
+    eval_route_label: db_pool_saturation
+    eval_tool_label: tool.db_pool_triage
     text: >
       The scope update shows only the canary shard loaded the drifted config.
       The safest validation is to restore the old pool caps on that shard,

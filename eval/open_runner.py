@@ -301,6 +301,11 @@ def _run_open_pack(
         "task_count": len(tasks),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "contract": contract,
+        "public_surface": "audit_only",
+        "single_variable": False,
+        "variable_axes": ["runtime_arm", "open_memory_policy"],
+        "data_source": "deterministic_oracle",
+        "artifact_reuse": False,
     }
     if task_pack == PURE_TEXT_OPEN_BASELINE_PACK:
         manifest["surface_notes"] = [
@@ -335,6 +340,11 @@ def run_langgraph_native_text_open_smoke(*, out_dir: Path, repeat: int = 1) -> d
                 "Open engineering comparison only. Native reuse uses each arm's own "
                 "text/checkpoint/store semantics and does not inherit the StateBus replay contract."
             ),
+            "public_surface": "audit_only",
+            "single_variable": False,
+            "variable_axes": ["runtime_arm", "open_memory_policy"],
+            "data_source": "deterministic_oracle",
+            "artifact_reuse": False,
         },
         "summary": [
             _summarize_rows(
@@ -529,7 +539,7 @@ def _summarize_rows(*, arm: str, policy: str, rows: list[dict[str, object]]) -> 
         "handoff_wire_bytes",
         "handoff_payload_bytes",
         "task_ms",
-        "memory_hit_rate",
+        "assist_memory_hit_rate",
         "replay_hit_rate",
         "skipped_step_count",
         "reuse_gain",
@@ -583,18 +593,33 @@ def _report_md(result: dict[str, object]) -> str:
         f"- Runtime arms: `{', '.join(manifest['runtime_arms'])}`",
         f"- Memory policies: `{', '.join(manifest['open_memory_policies'])}`",
         f"- Contract: `{manifest.get('contract', '')}`",
+        f"- Public surface: `{manifest.get('public_surface', 'audit_only')}`",
+        f"- Single-variable contract: `{'yes' if bool(manifest.get('single_variable', False)) else 'no'}`",
+        f"- Variable axes: `{', '.join(str(item) for item in manifest.get('variable_axes', []))}`",
+        f"- Data source: `{manifest.get('data_source', '')}`",
+        f"- Artifact reuse: `{str(bool(manifest.get('artifact_reuse', False))).lower()}`",
         "",
         "## Summary",
         "",
-        "| runtime_arm | open_memory_policy | exact_match_rate | llm_total_tokens | message_count | handoff_wire_bytes | replay_hit_rate | skipped_step_count | reuse_gain | task_ms |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| runtime_arm | open_memory_policy | exact_match_rate | llm_total_tokens | message_count | handoff_wire_bytes | replay_hit_rate | skipped_step_count | reuse_gain | task_ms | data_source | artifact_reuse |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for row in result["summary"]:
         lines.append(
-            "| {runtime_arm} | {open_memory_policy} | {exact_match_rate:.2f} | {llm_total_tokens:.2f} | {message_count:.2f} | {handoff_wire_bytes:.2f} | {replay_hit_rate:.2f} | {skipped_step_count:.2f} | {reuse_gain:.2f} | {task_ms:.2f} |".format(
+            "| {runtime_arm} | {open_memory_policy} | {exact_match_rate:.2f} | {llm_total_tokens:.2f} | {message_count:.2f} | {handoff_wire_bytes:.2f} | {replay_hit_rate:.2f} | {skipped_step_count:.2f} | {reuse_gain:.2f} | {task_ms:.2f} | {data_source} | {artifact_reuse} |".format(
                 **row
             )
         )
+    lines.extend(
+        [
+            "",
+            "## Stopline",
+            "",
+            "- This surface is audit-only engineering simulation.",
+            "- `data_source=deterministic_oracle` or `lexical_stub` means these rows are not real-LLM headline evidence.",
+            "- Do not merge this output into `contest_dual_mode_controlled_v3`, `typed_state_mechanism_v3`, or `memory_policy_controlled_v3` claims.",
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -734,11 +759,13 @@ def _langgraph_row_from_state(
             "handoff_wire_bytes": float(handoff_wire_bytes),
             "handoff_payload_bytes": float(handoff_payload_bytes),
             "task_ms": task_ms,
-            "memory_hit_rate": 1.0 if replay_hit else 0.0,
+            "assist_memory_hit_rate": 0.0,
             "replay_hit_rate": 1.0 if replay_hit else 0.0,
             "skipped_step_count": float(skipped_step_count),
             "reuse_gain": float(skipped_step_count) / 4.0,
         },
+        "data_source": "deterministic_oracle",
+        "artifact_reuse": False,
         "native_replay": {
             "hit": replay_hit,
             "source": "langgraph_checkpointer_store" if replay_hit else "",
@@ -857,11 +884,13 @@ def _external_text_row_from_state(
             "handoff_wire_bytes": float(handoff_wire_bytes),
             "handoff_payload_bytes": float(handoff_payload_bytes),
             "task_ms": task_ms,
-            "memory_hit_rate": 1.0 if replay_hit else 0.0,
+            "assist_memory_hit_rate": 0.0,
             "replay_hit_rate": 1.0 if replay_hit else 0.0,
             "skipped_step_count": float(skipped_step_count),
             "reuse_gain": float(skipped_step_count) / 4.0,
         },
+        "data_source": "lexical_stub",
+        "artifact_reuse": False,
         "native_replay": {
             "hit": replay_hit,
             "source": "native_text_store" if replay_hit else "",

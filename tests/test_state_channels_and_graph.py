@@ -111,6 +111,26 @@ def test_langgraph_adapter_runs_existing_statebus_graph_path() -> None:
     assert "task_id" in result.graph_state
 
 
+def test_langgraph_adapter_supports_optional_validate_step() -> None:
+    from tasks.sample_tasks import load_task_set_bundle
+
+    task = next(
+        task
+        for task in load_task_set_bundle("planner_support_v3").tasks
+        if task.task_id == "planner-support-auth-llm-002"
+    )
+    runner = StateBusGraphRunner(
+        llm_client=DeterministicLLMClient(),
+        embedder=DeterministicEmbeddingProvider(),
+    )
+    result = asyncio.run(runner.run_task(task, mode="protocol"))
+    assert result.node_order == ("planner", "retriever", "validate", "executor", "summarizer")
+    assert {"retrieve", "validate", "execute", "summarize"} == set(result.results)
+    assert result.results["validate"].success is True
+    assert result.metrics["planned_step_count"] == 4
+    assert result.graph_state["plan_step_ids"] == ["retrieve", "validate", "execute", "summarize"]
+
+
 def test_text_whole_lane_contract_keeps_executor_and_summarizer_typed_inputs_empty() -> None:
     task = default_task_chain()[0]
     task = task.__class__(**{**task.__dict__, "transfer_strategy": "text_whole_lane", "handoff_profile": "text_whole_lane"})

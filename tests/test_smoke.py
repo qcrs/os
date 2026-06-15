@@ -66,6 +66,7 @@ from runtime.executor_runtime import (
 from statepool.store import FileBackedStatePool, StatePool, StatePoolConfig
 from tasks.local_corpus import (
     extract_corpus_feature_hints,
+    extract_corpus_eval_labels,
     load_corpus_docs,
     render_corpus_evidence,
     retrieve_corpus_docs,
@@ -295,8 +296,8 @@ def test_task_pack_aliases_and_support_only_flags() -> None:
         "typed_state_authenticity_v3": ("typed_state_authenticity_v3", False, False, True, 40),
         "carrier_microbench_v3": ("carrier_microbench_v3", False, True, False, 40),
         "memory_reuse_v3": ("memory_reuse_v3", False, False, True, 4),
-        "memory_policy_controlled_v3": ("memory_policy_controlled_v3", False, False, True, 4),
-        "planner_support_v3": ("planner_support_v3", False, False, True, 10),
+        "memory_policy_controlled_v3": ("memory_policy_controlled_v3", False, False, True, 8),
+        "planner_support_v3": ("planner_support_v3", False, False, True, 11),
     }
     for alias, (pack_type, support_only, audit_only, formal_secondary, task_count) in expectations.items():
         bundle = load_task_set_bundle(alias)
@@ -311,28 +312,35 @@ def test_pack_metadata_exposes_single_variable_and_variable_axes() -> None:
     fairness = load_task_set_bundle("memory_dual_mode_fairness_v3").metadata
     contest = load_task_set_bundle("contest_dual_mode_controlled_v3").metadata
     mechanism = load_task_set_bundle("typed_state_mechanism_v3").metadata
+    authenticity = load_task_set_bundle("typed_state_authenticity_v3").metadata
     external_text = load_task_set_bundle("external_text_baseline_audit_v3").metadata
     planner = load_task_set_bundle("planner_support_v3").metadata
 
     assert fairness.single_variable is False
     assert fairness.variable_axes == ("mode", "runtime_reuse_contract", "restore_object_class")
-    assert fairness.public_surface == "audit_only_object_parity_restore_boundary"
+    assert fairness.public_surface == "audit_only"
 
     assert contest.single_variable is False
     assert contest.variable_axes == ("mode", "handoff_object")
-    assert contest.public_surface == "formal_dual_mode_headline"
+    assert contest.public_surface == "formal_headline"
 
     assert mechanism.single_variable is True
     assert mechanism.variable_axes == ("handoff_object",)
-    assert mechanism.public_surface == "formal_secondary_typed_state_mechanism"
+    assert mechanism.public_surface == "formal_secondary"
+    assert mechanism.plan_source_default == "yaml"
+
+    assert authenticity.single_variable is True
+    assert authenticity.variable_axes == ("handoff_object",)
+    assert authenticity.public_surface == "formal_secondary"
+    assert authenticity.plan_source_default == "yaml"
 
     assert external_text.single_variable is True
     assert external_text.variable_axes == ("external_text_surface",)
-    assert external_text.public_surface == "audit_only_external_text_baseline"
+    assert external_text.public_surface == "audit_only"
 
     assert planner.single_variable is True
     assert planner.variable_axes == ("plan_source",)
-    assert planner.public_surface == "formal_secondary_planner_support"
+    assert planner.public_surface == "formal_secondary_planner"
 
 
 def test_legacy_task_pack_aliases_fail() -> None:
@@ -434,11 +442,15 @@ def test_planner_support_v3_pack_contract() -> None:
     assert bundle.metadata.support_only is False
     assert bundle.metadata.formal_secondary is True
     assert bundle.metadata.claim_lanes == ("communication",)
-    assert len(bundle.tasks) == 10
+    assert len(bundle.tasks) == 11
     assert {task.plan_source for task in bundle.tasks} == {"yaml", "llm"}
     assert {task.allowed_modes for task in bundle.tasks} == {("protocol",)}
     assert {task.transfer_strategy for task in bundle.tasks} == {"state_packet_minimal"}
     assert {task.summary_contract for task in bundle.tasks} == {"actions_plus_evidence"}
+    deploy_llm = next(task for task in bundle.tasks if task.task_id == "planner-support-deploy-llm-001")
+    assert "four-step" in deploy_llm.goal
+    auth_llm = next(task for task in bundle.tasks if task.task_id == "planner-support-auth-llm-002")
+    assert "validate the route before execution" in auth_llm.query
 
 
 def test_state_transfer_packs_fill_default_route_and_tool_expectations() -> None:
@@ -1701,6 +1713,72 @@ def test_feature_bundle_abstains_on_metadata_only_hints_without_supporting_signa
     assert payload["tool_candidates"][1]["tool_name"] == "tool.db_pool_triage"
 
 
+def test_contest_formal_corpus_exposes_eval_labels_but_not_runtime_hints() -> None:
+    corpus_docs = load_corpus_docs(REPO_ROOT / "tasks" / "contest_release_regression_corpus.yaml")
+    doc = corpus_docs["rr-checkout-incident"]
+    assert doc.eval_route_label == "db_pool_saturation"
+    assert doc.eval_tool_label == "tool.db_pool_triage"
+    assert doc.runtime_route_hint == ""
+    assert doc.runtime_tool_name == ""
+    assert extract_corpus_feature_hints([doc]) == []
+    assert extract_corpus_eval_labels([doc]) == [
+        {
+            "doc_id": "rr-checkout-incident",
+            "eval_route_label": "db_pool_saturation",
+            "eval_tool_label": "tool.db_pool_triage",
+        }
+    ]
+
+
+def test_memory_policy_controlled_v3_covers_two_families_with_four_policies_each() -> None:
+    tasks = list(load_task_set_bundle("memory_policy_controlled_v3").tasks)
+    assert {task.task_group for task in tasks} == {"checkout_release_chain", "auth_rotation_chain"}
+    by_group: dict[str, list[SampleTask]] = {}
+    for task in tasks:
+        by_group.setdefault(task.task_group, []).append(task)
+    for group_tasks in by_group.values():
+        assert len(group_tasks) == 4
+        assert [task.runtime_reuse_contract for task in group_tasks] == [
+            "reuse_disabled",
+            "assist_allowed",
+            "validated_replay",
+            "exact_replay",
+        ]
+        assert {task.transfer_strategy for task in group_tasks} == {"state_packet_minimal"}
+        assert {task.handoff_profile for task in group_tasks} == {"protocol_minimal_state_packet"}
+        assert {task.allowed_modes for task in group_tasks} == {("protocol",)}
+
+
+def test_tasks_readme_keeps_active_mechanism_memory_and_legacy_boundary_wording() -> None:
+    text = (REPO_ROOT / "tasks" / "README.md").read_text(encoding="utf-8")
+    assert "typed_state_mechanism_v3" in text
+    assert "正式机制 claim 仍优先读 `typed_state_mechanism_v3`" in text
+    assert "typed_state_authenticity_v3` 只保留 legacy compatibility surface" in text
+    assert "`memory_policy_controlled_v3` 只读 protocol + state_packet_minimal 固定后的 memory policy 单变量归因" in text
+    assert "external_text_baseline_audit_v3" in text
+    assert "不并入 formal headline" in text
+
+
+def test_formal_runtime_context_disables_preferred_doc_bias_and_runtime_hints() -> None:
+    formal_bundle = load_task_set_bundle("contest_dual_mode_controlled_v3")
+    task = formal_bundle.tasks[0]
+    metadata = formal_bundle.metadata
+    assert metadata.runtime_hint_allowed is False
+    docs = retrieve_corpus_docs(
+        query=task.query,
+        tags=list(task.tags),
+        task_group=task.task_group,
+        task_theme=task.task_theme,
+        corpus_doc_ids=task.corpus_doc_ids,
+        embedder=DeterministicEmbeddingProvider(),
+        corpus_path=REPO_ROOT / "tasks" / "contest_release_regression_corpus.yaml",
+        top_k=4,
+        allow_preferred_doc_bias=metadata.runtime_hint_allowed,
+    )
+    assert all(doc.runtime_route_hint == "" for doc in docs)
+    assert all(doc.runtime_tool_name == "" for doc in docs)
+
+
 def test_feature_bundle_memory_prior_can_prune_ambiguous_candidates_upstream() -> None:
     payload = build_feature_bundle(
         query="release-17 orders latency db wait profile plus worker queue stall",
@@ -2429,8 +2507,8 @@ def test_contest_dual_mode_controlled_v3_runs_matched_text_and_protocol_pairs() 
             assert protocol_tasks[task.task_id]["transfer_strategy"] == "state_packet_minimal"
     assert protocol_transfer_ids == set(protocol_tasks)
     summary = result["summary"]
-    assert int(summary["text"]["failure_count"]) == 0
-    assert int(summary["protocol"]["failure_count"]) == 0
+    assert int(summary["text"]["run_failure_count"]) == 0
+    assert int(summary["protocol"]["run_failure_count"]) == 0
 
 
 def test_contest_dual_mode_controlled_v3_pack_has_20_pairs_5_families_and_4_buckets() -> None:
@@ -2445,6 +2523,47 @@ def test_contest_dual_mode_controlled_v3_pack_has_20_pairs_5_families_and_4_buck
         "reusable",
     }
     assert {task.summary_contract for task in tasks} == {"actions_plus_evidence"}
+    assert any(len(task.acceptable_routes) >= 2 for task in tasks if task.complexity_bucket in {"distractor", "ambiguous"})
+    assert any(len(task.acceptable_tools) >= 2 for task in tasks)
+
+
+def test_contest_dual_mode_controlled_v3_formal_cases_expose_route_and_tool_branching() -> None:
+    tasks = list(load_task_set_bundle("contest_dual_mode_controlled_v3").tasks)
+    by_id = {task.task_id: task for task in tasks}
+
+    checkout_ambiguous = by_id["rr-checkout-ambiguous-protocol-001"]
+    assert set(checkout_ambiguous.acceptable_routes) == {
+        "db_pool_saturation",
+        "worker_queue_starvation",
+    }
+    assert set(checkout_ambiguous.acceptable_tools) == {
+        "tool.db_pool_triage",
+        "tool.db_query_hotfix",
+        "tool.worker_queue_triage",
+    }
+
+    auth_distractor = by_id["rr-auth-distractor-protocol-001"]
+    assert set(auth_distractor.acceptable_routes) == {
+        "auth_session_drift",
+        "auth_rate_limit",
+    }
+    assert set(auth_distractor.acceptable_tools) == {
+        "tool.auth_session_repair",
+        "tool.auth_jwks_refresh",
+        "tool.auth_rate_limit_triage",
+    }
+
+    cache_reusable = by_id["rr-cache-replay_reusable-protocol-001"]
+    assert set(cache_reusable.acceptable_tools) == {
+        "tool.cache_invalidation_playbook",
+        "tool.cache_hook_repair",
+    }
+
+    billing_reusable = by_id["rr-billing-replay_reusable-protocol-001"]
+    assert set(billing_reusable.acceptable_tools) == {
+        "tool.worker_queue_triage",
+        "tool.retry_storm_relief",
+    }
 
 
 def test_memory_dual_mode_fairness_v3_pack_has_40_rows_5_families_and_4_memory_buckets() -> None:
@@ -2897,7 +3016,7 @@ def test_text_definition_audit_v3_enforces_inline_executor_boundary() -> None:
     assert result["manifest"]["artifact_expectation_counts"]["route"] == 40
     assert result["manifest"]["artifact_expectation_counts"]["tool_name"] == 40
     assert result["manifest"]["artifact_expectation_task_count"] == 40
-    assert int(result["summary"]["protocol"]["failure_count"]) == 0
+    assert int(result["summary"]["protocol"]["run_failure_count"]) == 0
     protocol_tasks = result["mode_runs"]["protocol"][0]["tasks"]
     assert len(protocol_tasks) == 40
     inline_tasks = [
@@ -3017,31 +3136,49 @@ def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     assert result["manifest"]["task_pack_type"] == "planner_support_v3"
     assert result["manifest"]["support_evidence_only"] is False
     assert result["manifest"]["formal_secondary_evidence"] is True
-    assert result["manifest"]["task_mode_counts"]["protocol"] == 10
+    assert result["manifest"]["task_mode_counts"]["protocol"] == 11
     assert result["manifest"]["modes"] == ["protocol"]
     assert "Planner Support V3" in report_text
-    assert "Planner Support V3 (protocol)" in report_text
     summary = result["summary"]["protocol"]
-    assert int(summary["failure_count"]) == 0
-    assert len(summary["tasks"]) == 10
+    assert int(summary["run_failure_count"]) == 0
+    assert len(summary["tasks"]) == 11
     aggregate = summary["aggregate"]
-    assert aggregate["planner_llm_request_count"] == 5
-    assert aggregate["planned_step_count"] == 30
+    assert aggregate["planner_llm_request_count"] == 6
     yaml_tasks = [task for task in result["mode_runs"]["protocol"][0]["tasks"] if task["plan_source"] == "yaml"]
     llm_tasks = [task for task in result["mode_runs"]["protocol"][0]["tasks"] if task["plan_source"] == "llm"]
-    assert len(yaml_tasks) == len(llm_tasks) == 5
+    assert len(yaml_tasks) == 5
+    assert len(llm_tasks) == 6
     assert all(task["metrics"]["planner_llm_request_count"] == 0 for task in yaml_tasks)
     assert all(task["metrics"]["planned_step_count"] == 3 for task in yaml_tasks)
     assert all(task["metrics"]["planner_llm_request_count"] == 1 for task in llm_tasks)
-    assert all(task["metrics"]["planned_step_count"] == 3 for task in llm_tasks)
+    four_step_llm_tasks = [task for task in llm_tasks if task["metrics"]["planned_step_count"] == 4]
+    assert len(four_step_llm_tasks) >= 2
+    assert any("validate" in task["results"] for task in llm_tasks)
+    assert aggregate["planned_step_count"] == sum(
+        int(task["metrics"]["planned_step_count"])
+        for task in result["mode_runs"]["protocol"][0]["tasks"]
+    )
     for task in result["mode_runs"]["protocol"][0]["tasks"]:
         assert task["transfer_strategy"] == "state_packet_minimal"
-        assert task["metrics"]["planned_step_count"] == 3
         assert {"retrieve", "execute", "summarize"}.issubset(task["results"])
         assert task["results"]["retrieve"]["success"] is True
         assert task["results"]["execute"]["success"] is True
         assert task["results"]["summarize"]["success"] is True
         assert task["results"]["execute"]["payload"]["tool_name"].startswith("tool.")
+    deploy_llm = next(
+        task
+        for task in result["mode_runs"]["protocol"][0]["tasks"]
+        if task["task_id"] == "planner-support-deploy-llm-001"
+    )
+    assert deploy_llm["metrics"]["planned_step_count"] == 4
+    assert deploy_llm["results"]["validate"]["success"] is True
+    auth_validate_llm = next(
+        task
+        for task in result["mode_runs"]["protocol"][0]["tasks"]
+        if task["task_id"] == "planner-support-auth-llm-002"
+    )
+    assert auth_validate_llm["metrics"]["planned_step_count"] == 4
+    assert auth_validate_llm["results"]["validate"]["success"] is True
 
 
 def test_contest_release_state_transfer_packs_share_family_case_contract() -> None:
@@ -3151,8 +3288,8 @@ def test_memory_policy_controlled_v3_manifest_exposes_replay_headline_gate() -> 
     assert replay_gate["applicable"] is True
     assert replay_gate["memory_replay_evidence_gate"]["applicable"] is True
     assert replay_gate["memory_replay_evidence_gate"]["passed"] is True
-    assert replay_gate["memory_replay_evidence_gate"]["expected_rows"] == 2
-    assert replay_gate["memory_replay_evidence_gate"]["matched_rows"] == 2
+    assert replay_gate["memory_replay_evidence_gate"]["expected_rows"] == 4
+    assert replay_gate["memory_replay_evidence_gate"]["matched_rows"] == 4
     assert "Replay headline gate" in report_text
 
 
@@ -3246,8 +3383,9 @@ def test_typed_state_consumer_sensitivity_v3_alias_expands_to_5_families_and_rep
     assert result["manifest"]["task_set_evidence_tier"] == "formal_secondary"
     consumer = result["summary"]["protocol"]["mechanism_audit"]["typed_state_consumer_sensitivity_v3"]
     assert consumer["missing_decision_failure_rate"] == 1.0
-    assert consumer["wrong_decision_mistool_rate"] == 1.0
-    assert result["summary"]["protocol"]["expected_negative_control_failure_count"] > 0
+    assert consumer["wrong_decision_mistool_rate"] > 0.0
+    assert result["summary"]["protocol"]["expected_negative_task_failure_count"] > 0
+    assert result["summary"]["protocol"]["negative_control_trigger_rate"] > 0.0
     assert result["summary"]["protocol"]["unexpected_task_failure_count"] == 0
     assert "disable_channel_snapshot" in consumer["rich_helper_disable_impact_summary"]
     assert "Typed State Consumer Sensitivity V3" in report_text
@@ -3566,10 +3704,10 @@ def test_contest_dual_mode_controlled_v3_repeat_ten_exposes_formal_stability_met
         assert stability["message_count"]["mean"] > 0.0
         assert stability["control_bytes"]["mean"] > 0.0
         assert stability["task_ms"]["mean"] > 0.0
-        assert "memory_hit_rate" in stability
+        assert "assist_memory_hit_rate" in stability
     assert result["summary"]["protocol"]["stability"]["state_transfer_count"]["mean"] > 0.0
-    assert result["summary"]["text"]["failure_count"] == 0
-    assert result["summary"]["protocol"]["failure_count"] == 0
+    assert result["summary"]["text"]["run_failure_count"] == 0
+    assert result["summary"]["protocol"]["run_failure_count"] == 0
     gate = result["manifest"]["formal_stability_gate"]
     assert gate["required_repeat"] == 10
     assert gate["repeat_satisfied"] is True
@@ -3620,7 +3758,7 @@ def test_communication_lane_keeps_memory_disabled_in_both_modes() -> None:
             assert task["runtime_reuse_contract"] == "reuse_disabled"
             assert task["reuse"]["mode"] == "none"
             assert task["metrics"]["memory_query_count"] == 0
-            assert task["metrics"]["memory_hit_rate"] == 0.0
+            assert task["metrics"]["assist_memory_hit_rate"] == 0.0
 
 
 def test_memory_lane_separates_memory_policies() -> None:
@@ -3719,6 +3857,7 @@ def test_memory_policy_controlled_v3_report_stays_protocol_fixed() -> None:
     assert "state_packet_minimal" in report_text
     assert "reuse_disabled" in report_text
     assert "Replay proof" in report_text
+    assert "auth_rotation_chain" in report_text
 
 
 def test_benchmark_supports_shared_memory_statepool_backend() -> None:

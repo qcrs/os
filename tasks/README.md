@@ -16,8 +16,8 @@
   - dual-mode fairness/object-parity audit surface，不承担 replay proof
   - 同任务对象下只改 `mode + memory policy + compatible restore object class`
 - `typed_state_mechanism_v3_benchmark.yaml`
-  - `typed_state_mechanism_v3`
-  - protocol-only 机制包
+- `typed_state_mechanism_v3`
+  - protocol-only formal-secondary 机制包
   - 同任务对象下固定 `mode=protocol` 与 `runtime_reuse_contract=reuse_disabled`，只改 `natural_handoff_text` vs `state_packet_minimal`
 - `external_text_baseline_audit_v3_benchmark.yaml`
   - `external_text_baseline_audit_v3`
@@ -38,8 +38,8 @@
   - `text_definition_audit_v3`
   - strict pure-text boundary 与 protocol inline boundary 分离审计
 - `typed_state_authenticity_v3_benchmark.yaml`
-  - `typed_state_authenticity_v3`
-  - protocol natural text vs `state_packet_minimal` 真实性
+- `typed_state_authenticity_v3`
+  - protocol natural text vs `state_packet_minimal` 真实性，保留为 formal-secondary legacy compatibility surface
 - `typed_state_full_rich_audit_v3_benchmark.yaml`
   - `typed_state_full_rich_audit_v3`
   - protocol natural text vs explicit full-rich audit typed state support/audit
@@ -52,7 +52,7 @@
   - `memory_policy_controlled_v3`
   - protocol carrier-fixed memory policy 单变量归因
 - `planner_support_v3_benchmark.yaml`
-  - `planner_support_v3`
+- `planner_support_v3`
 
 说明：
 
@@ -63,7 +63,7 @@
 - `typed_state_mechanism_v3` 只读 protocol-only `natural_handoff_text` vs `state_packet_minimal` 机制真实性；不读成 dual-mode headline。
 - `external_text_baseline_audit_v3` 只读独立 external text baseline 审计；不并入当前正式 headline。
 - `memory_policy_controlled_v3` 只读 protocol + state_packet_minimal 固定后的 memory policy 单变量归因。
-- `typed_state_authenticity_v3` 只保留 legacy compatibility；正式机制 claim 读 `typed_state_mechanism_v3`。
+- `typed_state_authenticity_v3` 只保留 legacy compatibility surface，正式机制 claim 仍优先读 `typed_state_mechanism_v3`。
 - `text_definition_audit_v3` 只读 boundary 定义，不读成 formal headline。
 - `carrier_microbench_v3` 只读 engineering audit。
 - 当前 formal v3 已切 surface，但系统机制真实性仍在审计中。

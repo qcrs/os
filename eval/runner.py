@@ -1644,7 +1644,7 @@ def _mechanism_variant_summary(rows: list[dict[str, object]], *, expected_kind: 
             "task_ms": 0.0,
             "message_count": 0.0,
             "control_bytes": 0.0,
-            "memory_hit_rate": 0.0,
+            "assist_memory_hit_rate": 0.0,
             "state_transfer_count": 0.0,
             "expected_kind_executor_visibility_rate": 0.0,
             "expected_kind_retrieve_presence_rate": 0.0,
@@ -1687,7 +1687,7 @@ def _mechanism_variant_summary(rows: list[dict[str, object]], *, expected_kind: 
         "task_ms": mean(float(row.get("metrics", {}).get("task_ms", 0.0)) for row in rows),
         "message_count": mean(float(row.get("metrics", {}).get("message_count", 0.0)) for row in rows),
         "control_bytes": mean(float(row.get("metrics", {}).get(control_key, 0.0)) for row in rows),
-        "memory_hit_rate": mean(float(row.get("metrics", {}).get("memory_hit_rate", 0.0)) for row in rows),
+        "assist_memory_hit_rate": mean(float(row.get("metrics", {}).get("assist_memory_hit_rate", 0.0)) for row in rows),
         "state_transfer_count": mean(
             float(row.get("metrics", {}).get("handoff_nontext_ref_count", 0.0)) for row in rows
         ),
@@ -1823,7 +1823,7 @@ def _relative_reduction(current: float, baseline: float) -> float:
 
 def _zero_metric_row() -> dict[str, float]:
     payload = {field: 0.0 for field in METRIC_FIELDS}
-    payload["memory_hit_rate"] = 0.0
+    payload["assist_memory_hit_rate"] = 0.0
     payload["replay_probe_hit_rate"] = 0.0
     payload["reuse_gain"] = 0.0
     payload["memory_assist_rate"] = 0.0
@@ -1846,7 +1846,7 @@ def _sum_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, float]:
         field: float(sum(float(row.get(field, 0.0)) for row in metric_rows))
         for field in METRIC_FIELDS
     }
-    totals["memory_hit_rate"] = (
+    totals["assist_memory_hit_rate"] = (
         totals["memory_hit_task_count"] / totals["memory_query_count"]
         if totals["memory_query_count"] > 0.0
         else 0.0
@@ -1897,7 +1897,7 @@ def _average_metric_rows(metric_rows: list[dict[str, object]]) -> dict[str, floa
         field: float(mean(float(row.get(field, 0.0)) for row in metric_rows))
         for field in METRIC_FIELDS
     }
-    averaged["memory_hit_rate"] = (
+    averaged["assist_memory_hit_rate"] = (
         averaged["memory_hit_task_count"] / averaged["memory_query_count"]
         if averaged["memory_query_count"] > 0.0
         else 0.0
@@ -2103,6 +2103,9 @@ async def _run_mode_once(
                     "case_contract": dict(task.case_contract),
                     "expected_reuse_mode": task.expected_reuse_mode,
                     "plan_source": task.plan_source,
+                    "planner_source": ctx.planner_source,
+                    "planner_step_count": ctx.planner_step_count,
+                    "planner_contract_valid": ctx.planner_contract_valid,
                     "complexity_bucket": task.complexity_bucket,
                     "summary_contract": task.summary_contract,
                     "benchmark_lane": task.benchmark_lane,
@@ -2198,6 +2201,9 @@ async def _run_mode_once(
                     "case_contract": dict(task.case_contract),
                     "expected_reuse_mode": task.expected_reuse_mode,
                     "plan_source": task.plan_source,
+                    "planner_source": ctx.planner_source,
+                    "planner_step_count": ctx.planner_step_count,
+                    "planner_contract_valid": ctx.planner_contract_valid,
                     "complexity_bucket": task.complexity_bucket,
                     "summary_contract": task.summary_contract,
                     "benchmark_lane": task.benchmark_lane,
@@ -2315,6 +2321,9 @@ async def _run_mode_once(
                 "case_contract": dict(task.case_contract),
                 "expected_reuse_mode": task.expected_reuse_mode,
                 "plan_source": task.plan_source,
+                "planner_source": ctx.planner_source,
+                "planner_step_count": ctx.planner_step_count,
+                "planner_contract_valid": ctx.planner_contract_valid,
                 "complexity_bucket": task.complexity_bucket,
                 "summary_contract": task.summary_contract,
                 "benchmark_lane": task.benchmark_lane,
@@ -2651,20 +2660,23 @@ def _summarize_reuse_misfire_rows(rows: list[dict[str, object]]) -> dict[str, fl
 
 
 def _aggregate_task_groups(task_runs: list[dict[str, object]]) -> list[dict[str, object]]:
-    grouped: dict[str, list[dict[str, object]]] = {}
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
     for task_run in task_runs:
-        grouped.setdefault(str(task_run["task_group"]), []).append(task_run)
+        mode = str(task_run.get("mode", "")).strip() or "unknown"
+        task_group = str(task_run["task_group"])
+        grouped.setdefault((mode, task_group), []).append(task_run)
     summaries: list[dict[str, object]] = []
-    for task_group in sorted(grouped):
-        rows = sorted(grouped[task_group], key=lambda item: (int(item["task_order"]), str(item["task_id"])))
+    for mode, task_group in sorted(grouped):
+        rows = sorted(grouped[(mode, task_group)], key=lambda item: (int(item["task_order"]), str(item["task_id"])))
         summaries.append(
             {
+                "mode": mode,
                 "task_group": task_group,
                 "task_ids": [str(item["task_id"]) for item in rows],
                 "aggregate": _merge_reuse_summary(
                     _sum_metric_rows([item["metrics"] for item in rows]),
                     rows,
-                    "protocol",
+                    mode,
                 ),
             }
         )
@@ -2779,9 +2791,11 @@ def _aggregate_mode_runs(runs: list[dict[str, object]], *, pack_type: str = "") 
     if not usable_runs:
         return {
             "run_count": 0,
+            "run_failure_count": len(failures),
             "failure_count": len(failures),
             "failures": failures,
-            "expected_negative_control_failure_count": 0,
+            "expected_negative_task_failure_count": 0,
+            "negative_control_trigger_rate": 0.0,
             "unexpected_task_failure_count": 0,
             "expected_negative_control_failures": [],
             "unexpected_task_failures": [],
@@ -2903,9 +2917,15 @@ def _aggregate_mode_runs(runs: list[dict[str, object]], *, pack_type: str = "") 
     )
     return {
         "run_count": len(completed_runs),
+        "run_failure_count": len(failures) + len(unexpected_task_failures),
         "failure_count": len(failures) + len(unexpected_task_failures),
         "failures": failures,
-        "expected_negative_control_failure_count": len(expected_negative_control_failures),
+        "expected_negative_task_failure_count": len(expected_negative_control_failures),
+        "negative_control_trigger_rate": (
+            len(expected_negative_control_failures) / len(task_rows)
+            if task_rows
+            else 0.0
+        ),
         "unexpected_task_failure_count": len(unexpected_task_failures),
         "expected_negative_control_failures": expected_negative_control_failures,
         "unexpected_task_failures": unexpected_task_failures,
@@ -3001,7 +3021,7 @@ def _build_stability_summary(runs: list[dict[str, object]]) -> dict[str, dict[st
         "llm_total_tokens": [float(run["aggregate"]["llm_total_tokens"]) for run in runs],
         "planner_total_tokens": [float(run["aggregate"]["planner_total_tokens"]) for run in runs],
         "summarizer_total_tokens": [float(run["aggregate"]["summarizer_total_tokens"]) for run in runs],
-        "memory_hit_rate": [float(run["aggregate"]["memory_hit_rate"]) for run in runs],
+        "assist_memory_hit_rate": [float(run["aggregate"]["assist_memory_hit_rate"]) for run in runs],
         "state_transfer_count": [float(run["aggregate"]["handoff_nontext_ref_count"]) for run in runs],
         "state_transfer_bytes": [float(run["aggregate"]["handoff_nontext_bytes"]) for run in runs],
         "skipped_step_count": [float(run["aggregate"]["skipped_step_count"]) for run in runs],
@@ -3302,27 +3322,30 @@ def _build_result(
             aggregate = mode_summary.get("aggregate", {})
             check = {
                 "run_count": int(mode_summary.get("run_count", 0)),
-                "failure_count": int(mode_summary.get("failure_count", 0)),
-                "expected_negative_control_failure_count": int(
-                    mode_summary.get("expected_negative_control_failure_count", 0)
+                "run_failure_count": int(mode_summary.get("run_failure_count", mode_summary.get("failure_count", 0))),
+                "expected_negative_task_failure_count": int(
+                    mode_summary.get("expected_negative_task_failure_count", 0)
+                ),
+                "negative_control_trigger_rate": float(
+                    mode_summary.get("negative_control_trigger_rate", 0.0)
                 ),
                 "message_count_mean": float(mode_stability.get("message_count", {}).get("mean", 0.0)),
                 "control_bytes_mean": float(mode_stability.get("control_bytes", {}).get("mean", 0.0)),
                 "state_transfer_count_mean": float(mode_stability.get("state_transfer_count", {}).get("mean", 0.0)),
-                "memory_hit_rate_mean": float(mode_stability.get("memory_hit_rate", {}).get("mean", 0.0)),
+                "assist_memory_hit_rate_mean": float(mode_stability.get("assist_memory_hit_rate", {}).get("mean", 0.0)),
                 "task_ms_mean": float(mode_stability.get("task_ms", {}).get("mean", 0.0)),
                 "expectation_match_rate": float(aggregate.get("expectation_match_rate", 0.0)),
-                "has_memory_hit_metric": "memory_hit_rate" in mode_stability,
+                "has_assist_memory_hit_metric": "assist_memory_hit_rate" in mode_stability,
                 "passed": False,
             }
             check["passed"] = (
                 formal_stability_gate["repeat_satisfied"]
                 and check["run_count"] >= 10
-                and check["failure_count"] == 0
+                and check["run_failure_count"] == 0
                 and check["message_count_mean"] > 0.0
                 and check["control_bytes_mean"] > 0.0
                 and check["task_ms_mean"] > 0.0
-                and check["has_memory_hit_metric"]
+                and check["has_assist_memory_hit_metric"]
                 and (
                     mode_name != "protocol"
                     or check["state_transfer_count_mean"] > 0.0
@@ -3960,9 +3983,9 @@ def _compare_row(
         "text_memory_query_count": round(float(text_row["memory_query_count"]), 4),
         "protocol_memory_query_count": round(float(protocol_row["memory_query_count"]), 4),
         "memory_query_count_delta": round(float(protocol_row["memory_query_count"]) - float(text_row["memory_query_count"]), 4),
-        "text_memory_hit_rate": round(float(text_row["memory_hit_rate"]), 4),
-        "protocol_memory_hit_rate": round(float(protocol_row["memory_hit_rate"]), 4),
-        "memory_hit_rate_delta": round(float(protocol_row["memory_hit_rate"]) - float(text_row["memory_hit_rate"]), 4),
+        "text_memory_hit_rate": round(float(text_row["assist_memory_hit_rate"]), 4),
+        "protocol_memory_hit_rate": round(float(protocol_row["assist_memory_hit_rate"]), 4),
+        "memory_hit_rate_delta": round(float(protocol_row["assist_memory_hit_rate"]) - float(text_row["assist_memory_hit_rate"]), 4),
         "text_planned_step_count": round(float(text_row["planned_step_count"]), 4),
         "protocol_planned_step_count": round(float(protocol_row["planned_step_count"]), 4),
         "planned_step_count_delta": round(float(protocol_row["planned_step_count"]) - float(text_row["planned_step_count"]), 4),
@@ -4621,7 +4644,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                     "",
                     "## Formal Stability Gate",
                     "",
-                    "| mode | required_repeat | run_count | message_count_mean | state_transfer_count_mean | memory_hit_rate_mean | task_ms_mean | failure_count | expected_negative_control_failure_count | passed |",
+                    "| mode | required_repeat | run_count | message_count_mean | state_transfer_count_mean | assist_memory_hit_rate_mean | task_ms_mean | run_failure_count | expected_negative_task_failure_count | passed |",
                     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
                 ]
             )
@@ -4632,8 +4655,8 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 lines.append(
                     f"| {mode_name} | {int(stability_gate.get('required_repeat', 10))} | {int(check.get('run_count', 0))} | "
                     f"{float(check.get('message_count_mean', 0.0)):.2f} | {float(check.get('state_transfer_count_mean', 0.0)):.2f} | "
-                    f"{float(check.get('memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
-                    f"{int(check.get('failure_count', 0))} | {int(check.get('expected_negative_control_failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
+                    f"{float(check.get('assist_memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
+                    f"{int(check.get('run_failure_count', 0))} | {int(check.get('expected_negative_task_failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
                 )
         _append_headline_claim_sections(lines, result=result, summary=result["summary"])
         _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
@@ -4700,7 +4723,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 if row is None:
                     continue
                 lines.append(
-                    f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row['memory_hit_rate']:.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
+                    f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row.get('assist_memory_hit_rate', row.get('memory_hit_rate', 0.0)):.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
                 )
         lines.extend(
             [
@@ -4834,7 +4857,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 f"| missing_decision_failure_rate | {float(consumer.get('missing_decision_failure_rate', 0.0)):.2f} |",
                 f"| wrong_decision_misroute_rate | {float(consumer.get('wrong_decision_misroute_rate', 0.0)):.2f} |",
                 f"| wrong_decision_mistool_rate | {float(consumer.get('wrong_decision_mistool_rate', 0.0)):.2f} |",
-                f"| expected_negative_control_failure_count | {int(protocol_summary.get('expected_negative_control_failure_count', 0))} |",
+                f"| expected_negative_task_failure_count | {int(protocol_summary.get('expected_negative_task_failure_count', 0))} |",
                 f"| unexpected_task_failure_count | {int(protocol_summary.get('unexpected_task_failure_count', 0))} |",
             ]
         )
@@ -5019,7 +5042,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             if row is None:
                 continue
             lines.append(
-                f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row['memory_hit_rate']:.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
+                f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row.get('assist_memory_hit_rate', row.get('memory_hit_rate', 0.0)):.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
             )
         lines.extend(["", "## Stopline", "", "- This pack is the v3 memory-reuse surface; assist-only prompting remains diagnostic."])
         return "\n".join(lines) + "\n"
@@ -5056,7 +5079,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             if row is None:
                 continue
             lines.append(
-                f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row['memory_hit_rate']:.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
+                f"| {memory_policy} | {len(row['task_ids'])} | {row['llm_total_tokens']:.2f} | {row.get('assist_memory_hit_rate', row.get('memory_hit_rate', 0.0)):.2f} | {row['skipped_step_count']:.2f} | {row['reuse_gain']:.2f} | {row['task_ms']:.2f} |"
             )
         lines.extend(
             [
@@ -5195,7 +5218,7 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "- Secondary view note: `this table is a pack-local aggregate summary; read the pack-specific v3 section above for the formal claim surface.`",
             "",
-            "| mode | message_count | control_bytes | state_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| mode | message_count | control_bytes | state_bytes | llm_total_tokens | assist_memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -5205,7 +5228,7 @@ def _build_report(result: dict[str, object]) -> str:
         lines.append(
             f"| {mode} | {aggregate['message_count']:.2f} | {control_bytes:.2f} | "
             f"{aggregate['state_bytes']:.2f} | {aggregate['llm_total_tokens']:.2f} | "
-            f"{aggregate['memory_hit_rate']:.2f} | {aggregate['skipped_step_count']:.2f} | "
+            f"{aggregate['assist_memory_hit_rate']:.2f} | {aggregate['skipped_step_count']:.2f} | "
             f"{aggregate['reuse_gain']:.2f} | {aggregate['task_ms']:.2f} |"
         )
     lines.extend(
@@ -5270,7 +5293,7 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## Reuse Query Accounting",
             "",
-            "| mode | memory_query_count | memory_hit_task_count | memory_hit_rate |",
+            "| mode | memory_query_count | memory_hit_task_count | assist_memory_hit_rate |",
             "| --- | ---: | ---: | ---: |",
         ]
     )
@@ -5278,7 +5301,7 @@ def _build_report(result: dict[str, object]) -> str:
         aggregate = summary[mode]["aggregate"]
         lines.append(
             f"| {mode} | {aggregate['memory_query_count']:.2f} | "
-            f"{aggregate['memory_hit_task_count']:.2f} | {aggregate['memory_hit_rate']:.2f} |"
+            f"{aggregate['memory_hit_task_count']:.2f} | {aggregate['assist_memory_hit_rate']:.2f} |"
         )
     lines.extend(
         [
@@ -5304,7 +5327,7 @@ def _build_report(result: dict[str, object]) -> str:
                 "",
                 "## Stability Summary",
                 "",
-            "| mode | runs | control_bytes_mean | steady_state_control_bytes_mean | setup_control_bytes_mean | llm_total_tokens_mean | task_ms_mean | expectation_match_rate | failure_count | expected_negative_control_failure_count |",
+            "| mode | runs | control_bytes_mean | steady_state_control_bytes_mean | setup_control_bytes_mean | llm_total_tokens_mean | task_ms_mean | expectation_match_rate | run_failure_count | expected_negative_task_failure_count |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -5316,14 +5339,14 @@ def _build_report(result: dict[str, object]) -> str:
             f"{stability['steady_state_control_bytes']['mean']:.2f} | "
             f"{stability['setup_control_bytes']['mean']:.2f} | {stability['llm_total_tokens']['mean']:.2f} | "
             f"{stability['task_ms']['mean']:.2f} | {aggregate['expectation_match_rate']:.2f} | "
-            f"{summary[mode]['failure_count']} | {int(summary[mode].get('expected_negative_control_failure_count', 0))} |"
+            f"{summary[mode]['run_failure_count']} | {int(summary[mode].get('expected_negative_task_failure_count', 0))} |"
         )
     lines.extend(
         [
             "",
             "## Task Group Reuse Summary",
             "",
-            "| task_group | mode | control_bytes | memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | expectation_match_rate | task_ms |",
+            "| task_group | mode | control_bytes | assist_memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | expectation_match_rate | task_ms |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -5332,7 +5355,7 @@ def _build_report(result: dict[str, object]) -> str:
             control_bytes = group["text_bytes"] if mode == "text" else group["protocol_bytes"]
             lines.append(
                 f"| {group['task_group']} | {mode} | {control_bytes:.2f} | "
-                f"{group['memory_hit_rate']:.2f} | {group['skipped_step_count']:.2f} | "
+                f"{group['assist_memory_hit_rate']:.2f} | {group['skipped_step_count']:.2f} | "
                 f"{group['reuse_gain']:.2f} | {group['reuse_apply_rate']:.2f} | "
                 f"{group['expectation_match_rate']:.2f} | {group['task_ms']:.2f} |"
             )
@@ -5341,7 +5364,7 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## Replay Contract Slice Summary",
             "",
-            "| reuse_slice | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | task_ms |",
+            "| reuse_slice | mode | task_count | control_bytes | llm_total_tokens | assist_memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | task_ms |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -5350,7 +5373,7 @@ def _build_report(result: dict[str, object]) -> str:
             control_bytes = slice_summary["text_bytes"] if mode == "text" else slice_summary["protocol_bytes"]
             lines.append(
                 f"| {slice_summary['reuse_slice']} | {mode} | {len(slice_summary['task_ids'])} | "
-                f"{control_bytes:.2f} | {slice_summary['llm_total_tokens']:.2f} | {slice_summary['memory_hit_rate']:.2f} | "
+                f"{control_bytes:.2f} | {slice_summary['llm_total_tokens']:.2f} | {slice_summary['assist_memory_hit_rate']:.2f} | "
                 f"{slice_summary['skipped_step_count']:.2f} | {slice_summary['reuse_gain']:.2f} | "
                 f"{slice_summary['reuse_apply_rate']:.2f} | {slice_summary['task_ms']:.2f} |"
             )
@@ -5359,7 +5382,7 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## Communication Vs Replay Axes",
             "",
-            "| reuse_axis | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | task_ms |",
+            "| reuse_axis | mode | task_count | control_bytes | llm_total_tokens | assist_memory_hit_rate | skipped_step_count | reuse_gain | reuse_apply_rate | task_ms |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -5368,7 +5391,7 @@ def _build_report(result: dict[str, object]) -> str:
             control_bytes = axis_summary["text_bytes"] if mode == "text" else axis_summary["protocol_bytes"]
             lines.append(
                 f"| {axis_summary['reuse_axis']} | {mode} | {len(axis_summary['task_ids'])} | "
-                f"{control_bytes:.2f} | {axis_summary['llm_total_tokens']:.2f} | {axis_summary['memory_hit_rate']:.2f} | "
+                f"{control_bytes:.2f} | {axis_summary['llm_total_tokens']:.2f} | {axis_summary['assist_memory_hit_rate']:.2f} | "
                 f"{axis_summary['skipped_step_count']:.2f} | {axis_summary['reuse_gain']:.2f} | "
                 f"{axis_summary['reuse_apply_rate']:.2f} | {axis_summary['task_ms']:.2f} |"
             )
@@ -5377,7 +5400,7 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## Benchmark Lane Diagnostics",
             "",
-            "| benchmark_lane | mode | task_count | control_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| benchmark_lane | mode | task_count | control_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | assist_memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -5388,7 +5411,7 @@ def _build_report(result: dict[str, object]) -> str:
                 f"| {lane_summary['benchmark_lane']} | {mode} | {len(lane_summary['task_ids'])} | "
                 f"{control_bytes:.2f} | {lane_summary['handoff_textual_bytes']:.2f} | "
                 f"{lane_summary['handoff_nontext_bytes']:.2f} | {lane_summary['llm_total_tokens']:.2f} | "
-                f"{lane_summary['memory_hit_rate']:.2f} | {lane_summary['skipped_step_count']:.2f} | "
+                f"{lane_summary['assist_memory_hit_rate']:.2f} | {lane_summary['skipped_step_count']:.2f} | "
                 f"{lane_summary['reuse_gain']:.2f} | {lane_summary['task_ms']:.2f} |"
             )
     lines.extend(
@@ -5415,7 +5438,7 @@ def _build_report(result: dict[str, object]) -> str:
             "",
             "## Memory Policies",
             "",
-            "| memory_policy | mode | task_count | control_bytes | llm_total_tokens | memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
+            "| memory_policy | mode | task_count | control_bytes | llm_total_tokens | assist_memory_hit_rate | skipped_step_count | reuse_gain | task_ms |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -5424,7 +5447,7 @@ def _build_report(result: dict[str, object]) -> str:
             control_bytes = policy_summary["text_bytes"] if mode == "text" else policy_summary["protocol_bytes"]
             lines.append(
                 f"| {policy_summary['memory_policy']} | {mode} | {len(policy_summary['task_ids'])} | "
-                f"{control_bytes:.2f} | {policy_summary['llm_total_tokens']:.2f} | {policy_summary['memory_hit_rate']:.2f} | "
+                f"{control_bytes:.2f} | {policy_summary['llm_total_tokens']:.2f} | {policy_summary['assist_memory_hit_rate']:.2f} | "
                 f"{policy_summary['skipped_step_count']:.2f} | {policy_summary['reuse_gain']:.2f} | {policy_summary['task_ms']:.2f} |"
             )
     lines.extend(
@@ -5730,7 +5753,7 @@ def _build_report(result: dict[str, object]) -> str:
         lines.append("")
     lines.extend(["## Failure/Retry Summary", ""])
     lines.append("- none" if all(
-        int(summary[m]["failure_count"]) == 0 for m in available_modes
+        int(summary[m]["run_failure_count"]) == 0 for m in available_modes
     ) else "- see per-mode failure lists below")
     lines.append("")
     lines.extend(["## Protocol Compliance (Invariant Checks)", ""])
@@ -5776,7 +5799,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
         "planner_total_tokens",
         "summarizer_total_tokens",
         "memory_query_count",
-        "memory_hit_rate",
+        "assist_memory_hit_rate",
         "planned_step_count",
         "skipped_step_count",
         "reuse_gain",
@@ -5812,7 +5835,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "planner_total_tokens": round(float(task["planner_total_tokens"]), 4),
                     "summarizer_total_tokens": round(float(task["summarizer_total_tokens"]), 4),
                     "memory_query_count": round(float(task["memory_query_count"]), 4),
-                    "memory_hit_rate": round(float(task["memory_hit_rate"]), 4),
+                    "assist_memory_hit_rate": round(float(task["assist_memory_hit_rate"]), 4),
                     "planned_step_count": round(float(task["planned_step_count"]), 4),
                     "skipped_step_count": round(float(task["skipped_step_count"]), 4),
                     "reuse_gain": round(float(task["reuse_gain"]), 4),
@@ -5846,7 +5869,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "planner_total_tokens": round(float(slice_summary["planner_total_tokens"]), 4),
                     "summarizer_total_tokens": round(float(slice_summary["summarizer_total_tokens"]), 4),
                     "memory_query_count": round(float(slice_summary["memory_query_count"]), 4),
-                    "memory_hit_rate": round(float(slice_summary["memory_hit_rate"]), 4),
+                    "assist_memory_hit_rate": round(float(slice_summary["assist_memory_hit_rate"]), 4),
                     "planned_step_count": round(float(slice_summary["planned_step_count"]), 4),
                     "skipped_step_count": round(float(slice_summary["skipped_step_count"]), 4),
                     "reuse_gain": round(float(slice_summary["reuse_gain"]), 4),
@@ -5880,7 +5903,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "planner_total_tokens": round(float(axis_summary["planner_total_tokens"]), 4),
                     "summarizer_total_tokens": round(float(axis_summary["summarizer_total_tokens"]), 4),
                     "memory_query_count": round(float(axis_summary["memory_query_count"]), 4),
-                    "memory_hit_rate": round(float(axis_summary["memory_hit_rate"]), 4),
+                    "assist_memory_hit_rate": round(float(axis_summary["assist_memory_hit_rate"]), 4),
                     "planned_step_count": round(float(axis_summary["planned_step_count"]), 4),
                     "skipped_step_count": round(float(axis_summary["skipped_step_count"]), 4),
                     "reuse_gain": round(float(axis_summary["reuse_gain"]), 4),
@@ -5914,7 +5937,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "planner_total_tokens": round(float(lane_summary["planner_total_tokens"]), 4),
                     "summarizer_total_tokens": round(float(lane_summary["summarizer_total_tokens"]), 4),
                     "memory_query_count": round(float(lane_summary["memory_query_count"]), 4),
-                    "memory_hit_rate": round(float(lane_summary["memory_hit_rate"]), 4),
+                    "assist_memory_hit_rate": round(float(lane_summary["assist_memory_hit_rate"]), 4),
                     "planned_step_count": round(float(lane_summary["planned_step_count"]), 4),
                     "skipped_step_count": round(float(lane_summary["skipped_step_count"]), 4),
                     "reuse_gain": round(float(lane_summary["reuse_gain"]), 4),
@@ -5948,7 +5971,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "planner_total_tokens": round(float(transfer_summary["planner_total_tokens"]), 4),
                     "summarizer_total_tokens": round(float(transfer_summary["summarizer_total_tokens"]), 4),
                     "memory_query_count": round(float(transfer_summary["memory_query_count"]), 4),
-                    "memory_hit_rate": round(float(transfer_summary["memory_hit_rate"]), 4),
+                    "assist_memory_hit_rate": round(float(transfer_summary["assist_memory_hit_rate"]), 4),
                     "planned_step_count": round(float(transfer_summary["planned_step_count"]), 4),
                     "skipped_step_count": round(float(transfer_summary["skipped_step_count"]), 4),
                     "reuse_gain": round(float(transfer_summary["reuse_gain"]), 4),
@@ -5982,7 +6005,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                     "planner_total_tokens": round(float(policy_summary["planner_total_tokens"]), 4),
                     "summarizer_total_tokens": round(float(policy_summary["summarizer_total_tokens"]), 4),
                     "memory_query_count": round(float(policy_summary["memory_query_count"]), 4),
-                    "memory_hit_rate": round(float(policy_summary["memory_hit_rate"]), 4),
+                    "assist_memory_hit_rate": round(float(policy_summary["assist_memory_hit_rate"]), 4),
                     "planned_step_count": round(float(policy_summary["planned_step_count"]), 4),
                     "skipped_step_count": round(float(policy_summary["skipped_step_count"]), 4),
                     "reuse_gain": round(float(policy_summary["reuse_gain"]), 4),
@@ -6017,7 +6040,7 @@ def _write_single_mode_csv(path: Path, mode_summary: dict[str, object], mode: st
                 "planner_total_tokens": round(float(aggregate["planner_total_tokens"]), 4),
                 "summarizer_total_tokens": round(float(aggregate["summarizer_total_tokens"]), 4),
                 "memory_query_count": round(float(aggregate["memory_query_count"]), 4),
-                "memory_hit_rate": round(float(aggregate["memory_hit_rate"]), 4),
+                "assist_memory_hit_rate": round(float(aggregate["assist_memory_hit_rate"]), 4),
                 "planned_step_count": round(float(aggregate["planned_step_count"]), 4),
                 "skipped_step_count": round(float(aggregate["skipped_step_count"]), 4),
                 "reuse_gain": round(float(aggregate["reuse_gain"]), 4),

@@ -306,46 +306,105 @@ class DeterministicLLMClient:
         if purpose == "planner":
             if "<sb-plan-v1>" in user_content:
                 payload = parse_compact_protocol_planner_brief(user_content)
-                plan = {
-                    "r": {
-                        "q": payload["query"],
-                        "e": payload["evidence_text"],
-                        "t": payload.get("tags", []),
-                    },
-                    "x": {},
-                    "s": {
-                        "h": payload["summary_hint"],
-                        "t": payload.get("tags", []),
-                    },
-                }
+                if _requires_validation_step(payload):
+                    plan = {
+                        "steps": [
+                            {
+                                "step_id": "retrieve",
+                                "owner_agent": "retriever",
+                                "action": "RETRIEVE_EVIDENCE",
+                                "input_state_refs": [],
+                                "params": {
+                                    "query": payload["query"],
+                                    "evidence_text": payload["evidence_text"],
+                                    "tags": payload.get("tags", []),
+                                    "allow_memory_reuse": True,
+                                },
+                                "depends_on": [],
+                            },
+                            {
+                                "step_id": "validate",
+                                "owner_agent": "executor",
+                                "action": "VALIDATE_ROUTE",
+                                "input_state_refs": [],
+                                "params": {},
+                                "depends_on": ["retrieve"],
+                            },
+                            {
+                                "step_id": "execute",
+                                "owner_agent": "executor",
+                                "action": "EXECUTE_PLAYBOOK",
+                                "input_state_refs": [],
+                                "params": {},
+                                "depends_on": ["retrieve", "validate"],
+                            },
+                            {
+                                "step_id": "summarize",
+                                "owner_agent": "summarizer",
+                                "action": "SUMMARIZE_AND_COMMIT",
+                                "input_state_refs": [],
+                                "params": {
+                                    "summary_hint": payload["summary_hint"],
+                                    "tags": payload.get("tags", []),
+                                },
+                                "depends_on": ["retrieve", "execute"],
+                            },
+                        ]
+                    }
+                else:
+                    plan = {
+                        "r": {
+                            "q": payload["query"],
+                            "e": payload["evidence_text"],
+                            "t": payload.get("tags", []),
+                        },
+                        "x": {},
+                        "s": {
+                            "h": payload["summary_hint"],
+                            "t": payload.get("tags", []),
+                        },
+                    }
             else:
                 payload = (
                     parse_tagged_json(user_content, "statebus-planner-input")
                     if "<statebus-planner-input>" in user_content
                     else parse_text_planner_brief(user_content)
                 )
-                plan = {
-                    "steps": [
-                        {
-                            "step_id": "retrieve",
-                            "owner_agent": "retriever",
-                            "action": "RETRIEVE_EVIDENCE",
-                            "input_state_refs": [],
-                            "params": {
-                                "query": payload["query"],
-                                "evidence_text": payload["evidence_text"],
-                                "tags": payload.get("tags", []),
-                                "allow_memory_reuse": True,
-                            },
-                            "depends_on": [],
+                plan_steps = [
+                    {
+                        "step_id": "retrieve",
+                        "owner_agent": "retriever",
+                        "action": "RETRIEVE_EVIDENCE",
+                        "input_state_refs": [],
+                        "params": {
+                            "query": payload["query"],
+                            "evidence_text": payload["evidence_text"],
+                            "tags": payload.get("tags", []),
+                            "allow_memory_reuse": True,
                         },
+                        "depends_on": [],
+                    },
+                ]
+                if _requires_validation_step(payload):
+                    plan_steps.append(
+                        {
+                            "step_id": "validate",
+                            "owner_agent": "executor",
+                            "action": "VALIDATE_ROUTE",
+                            "input_state_refs": [],
+                            "params": {},
+                            "depends_on": ["retrieve"],
+                        }
+                    )
+                plan_steps.extend(
+                    [
                         {
                             "step_id": "execute",
                             "owner_agent": "executor",
                             "action": "EXECUTE_PLAYBOOK",
                             "input_state_refs": [],
                             "params": {},
-                            "depends_on": ["retrieve"],
+                            "depends_on": ["retrieve", "validate"] if _requires_validation_step(payload) else ["retrieve"],
                         },
                         {
                             "step_id": "summarize",
@@ -359,7 +418,8 @@ class DeterministicLLMClient:
                             "depends_on": ["retrieve", "execute"],
                         },
                     ]
-                }
+                )
+                plan = {"steps": plan_steps}
             return LLMResult(
                 text=json.dumps(plan, ensure_ascii=False, sort_keys=True),
                 model=self.config.role_config("planner").model,
@@ -482,6 +542,19 @@ def parse_compact_protocol_planner_brief(text: str) -> dict[str, Any]:
         "summary_hint": str(payload.get("h", "")),
         "tags": [str(tag) for tag in payload.get("t", [])],
     }
+
+
+def _requires_validation_step(payload: dict[str, Any]) -> bool:
+    joined = " ".join(
+        [
+            str(payload.get("goal", "")),
+            str(payload.get("query", "")),
+            str(payload.get("summary_hint", "")),
+            str(payload.get("evidence_text", "")),
+            " ".join(str(tag) for tag in payload.get("tags", [])),
+        ]
+    ).lower()
+    return "validate route" in joined or "four-step" in joined or "4-step" in joined
 
 
 def parse_text_summarizer_handoff(text: str) -> dict[str, Any]:

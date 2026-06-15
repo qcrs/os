@@ -850,6 +850,26 @@ def default_state_contract_registry() -> StateContractRegistry:
             ),
         )
     )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="VALIDATE_ROUTE",
+            variant="default",
+            sources=(
+                StepInputSource(
+                    step_id="retrieve",
+                    include_kinds=(
+                        "DENSE_EVIDENCE",
+                        "FEATURE_BUNDLE",
+                        "EXECUTOR_DECISION_PACKET",
+                    ),
+                    required_kind_groups=(
+                        ("DENSE_EVIDENCE",),
+                    ),
+                ),
+            ),
+        )
+    )
     return registry
 
 
