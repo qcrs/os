@@ -1,15 +1,16 @@
 task_set:
   name: contest_dual_mode_controlled_v3_pack
   pack_type: contest_dual_mode_controlled_v3
-  description: V3 formal dual-mode controlled pack with matched whole-lane text and
-    minimal typed-state protocol rows on the same 20 contest-release cases.
+  description: V3 formal dual-mode controlled pack with matched strict pure-text
+    and minimal typed-state protocol rows on the same 20 contest-release cases.
   reading_contract: Read this pack only as the formal v3 dual-mode controlled pack.
     Each pair keeps the same family, query, evidence universe, summary contract, and
-    plan source fixed; only mode and handoff object differ.
+    plan source fixed; mode and handoff object differ together, so this is a controlled
+    composite comparison rather than a single-variable external pure-text baseline.
   claim_lanes:
   - communication
   - state_transfer
-  single_variable: true
+  single_variable: false
   variable_axes:
   - mode
   - handoff_object

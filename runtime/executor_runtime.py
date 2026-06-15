@@ -1717,6 +1717,19 @@ def _feature_bundle_from_executor_decision_packet(
     ):
         if key in decision_packet:
             bundle[key] = decision_packet[key]
+    overridden_route = str(bundle.get("route", "")).strip()
+    overridden_tool_name = str(bundle.get("tool_name", "")).strip()
+    if overridden_route and overridden_tool_name:
+        bundle["tool_candidates"] = [
+            {
+                "tool_name": overridden_tool_name,
+                "route": overridden_route,
+                "score": int(bundle.get("match_score", 0)),
+                "matched_signals": [str(item) for item in bundle.get("matched_signals", [])],
+                "matched_tags": [str(item) for item in bundle.get("matched_tags", [])],
+                "source": str(bundle.get("route_source", "decision_packet")).strip() or "decision_packet",
+            }
+        ]
     bundle["transfer_strategy"] = "state_packet_minimal"
     return bundle
 

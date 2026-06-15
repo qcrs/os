@@ -5,6 +5,10 @@ task_set:
   reading_contract: Read this pack only as the protocol-side memory policy attribution surface. It fixes mode=protocol and transfer_strategy=state_packet_minimal, then changes only runtime_reuse_contract.
   claim_lanes:
   - memory
+  single_variable: true
+  variable_axes:
+  - runtime_reuse_contract
+  public_surface: formal_secondary_memory_policy_attribution
   evidence_tier: formal_secondary
   benchmark_version: v3
 tasks:

@@ -1,12 +1,14 @@
 task_set:
   name: typed_state_authenticity_v3_pack
   pack_type: typed_state_authenticity_v3
-  description: V3 formal-secondary typed-state authenticity pack for protocol-side
-    natural-text versus state_packet_minimal comparisons.
+  description: V3 legacy-compat formal-secondary typed-state authenticity pack for
+    protocol-side natural-text versus state_packet_minimal comparisons.
   reading_contract: Read this pack only as the v3 minimal typed-state authenticity
     pack. It compares natural handoff text against state_packet_minimal
     DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET under matched retrieval inputs and
     must not be read as a whole-lane text baseline or rich-state efficiency proof.
+    Keep this pack for legacy compatibility; active mechanism claims should read
+    typed_state_mechanism_v3 first.
   claim_lanes:
   - state_transfer
   single_variable: true

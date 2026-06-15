@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -37,6 +37,7 @@ TASK_SET_ALIASES = {
     "memory_reuse_v3": "memory_reuse_v3_benchmark.yaml",
     "memory_policy_controlled_v3": "memory_policy_controlled_v3_benchmark.yaml",
     "planner_support_v3": "planner_support_v3_benchmark.yaml",
+    "typed_state_consumer_sensitivity_v3": "state_ref_consumer_sensitivity_audit_benchmark.yaml",
 }
 
 V3_FORMAL_TASK_PACK_TYPES = (
@@ -51,6 +52,7 @@ V3_FORMAL_TASK_PACK_TYPES = (
     "memory_reuse_v3",
     "memory_policy_controlled_v3",
     "planner_support_v3",
+    "typed_state_consumer_sensitivity_v3",
 )
 
 TASK_PACK_TYPES = (*V3_FORMAL_TASK_PACK_TYPES, "ad_hoc")
@@ -126,6 +128,7 @@ def normalize_task_pack_type(value: object) -> str:
         "memory_reuse_v3": "memory_reuse_v3",
         "memory_policy_controlled_v3": "memory_policy_controlled_v3",
         "planner_support_v3": "planner_support_v3",
+        "typed_state_consumer_sensitivity_v3": "typed_state_consumer_sensitivity_v3",
         "adhoc": "ad_hoc",
         "ad_hoc": "ad_hoc",
     }
@@ -281,6 +284,8 @@ class SampleTask:
     complexity_bucket: str = "simple"
     summary_contract: str = "actions_plus_evidence"
     audit_disable_state_kinds: tuple[str, ...] = ()
+    audit_decision_packet_override_route: str = ""
+    audit_decision_packet_override_tool_name: str = ""
 
     @property
     def agent_visible(self) -> dict[str, object]:
@@ -307,6 +312,8 @@ class SampleTask:
             "benchmark_lane": self.benchmark_lane,
             "runtime_reuse_contract": self.runtime_reuse_contract,
             "audit_disable_state_kinds": list(self.audit_disable_state_kinds),
+            "audit_decision_packet_override_route": self.audit_decision_packet_override_route,
+            "audit_decision_packet_override_tool_name": self.audit_decision_packet_override_tool_name,
         }
 
     @property
@@ -409,6 +416,7 @@ def resolve_task_set_path(path: str | Path | None = None) -> Path:
 
 
 def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
+    requested_alias = str(path or "").strip().lower().replace("-", "_")
     task_path = resolve_task_set_path(path)
     payload = yaml.safe_load(task_path.read_text(encoding="utf-8"))
     metadata_raw: dict[str, object] = {}
@@ -420,7 +428,94 @@ def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
         raise ValueError(f"task set must contain a list of tasks: {task_path}")
     metadata = _load_task_set_metadata(task_path, metadata_raw)
     loaded_tasks = tuple(_load_sample_task(task_path, item) for item in tasks)
+    if requested_alias == "typed_state_consumer_sensitivity_v3":
+        return _build_typed_state_consumer_sensitivity_bundle(task_path, loaded_tasks)
     return TaskSetBundle(path=task_path, metadata=metadata, tasks=loaded_tasks)
+
+
+def _build_typed_state_consumer_sensitivity_bundle(
+    task_path: Path,
+    template_tasks: tuple[SampleTask, ...],
+) -> TaskSetBundle:
+    contest_tasks = [
+        task
+        for task in load_task_set_bundle("contest_dual_mode_controlled_v3").tasks
+        if task.supports_mode("protocol")
+        and task.transfer_strategy == "state_packet_minimal"
+        and task.complexity_bucket == "simple"
+    ]
+    by_theme: dict[str, SampleTask] = {}
+    for task in contest_tasks:
+        by_theme.setdefault(task.task_theme, task)
+    families = [by_theme[key] for key in sorted(by_theme)]
+    helper_templates = [task for task in template_tasks if task.transfer_strategy == "state_ref"]
+    destructive_templates = [task for task in template_tasks if task.transfer_strategy == "state_packet_minimal"]
+    expanded: list[SampleTask] = []
+    wrong_decisions = [
+        ("db_pool_saturation", "tool.db_pool_triage"),
+        ("auth_session_drift", "tool.auth_session_repair"),
+        ("cache_invalidation", "tool.cache_invalidation_playbook"),
+        ("worker_queue_starvation", "tool.worker_queue_triage"),
+    ]
+    for family_index, base in enumerate(families, start=1):
+        family_slug = base.task_theme.replace("contest_release_", "").replace("_", "-")
+        for order, template in enumerate((*helper_templates, *destructive_templates), start=1):
+            variant = template.task_id.replace("audit-sensitivity-", "").removesuffix("-001")
+            wrong_route = template.audit_decision_packet_override_route
+            wrong_tool = template.audit_decision_packet_override_tool_name
+            if variant == "minimal-wrong-decision":
+                for route, tool_name in wrong_decisions:
+                    if route != base.primary_expected_route:
+                        wrong_route = route
+                        wrong_tool = tool_name
+                        break
+            expanded.append(
+                replace(
+                    template,
+                    task_id=f"typed-consumer-{family_slug}-{variant}-001",
+                    task_group=f"typed_state_consumer_sensitivity_{family_slug}",
+                    task_order=order,
+                    task_theme=base.task_theme,
+                    goal=base.goal,
+                    query=base.query,
+                    tags=base.tags + ("typed-consumer-sensitivity",),
+                    reuse_tags=base.reuse_tags,
+                    corpus_doc_ids=base.corpus_doc_ids,
+                    corpus_path=base.corpus_path,
+                    expected_route=base.expected_route,
+                    expected_tool_name=base.expected_tool_name,
+                    expected_family=base.expected_family,
+                    primary_expected_route=base.primary_expected_route,
+                    primary_expected_tool=base.primary_expected_tool,
+                    acceptable_routes=base.acceptable_routes,
+                    acceptable_tools=base.acceptable_tools,
+                    case_id=f"typed-consumer-{family_index:02d}-{variant}",
+                    summary_hint=base.summary_hint,
+                    evidence_text=f"Typed-state consumer sensitivity {variant} row for {base.task_theme}.",
+                    complexity_bucket=base.complexity_bucket,
+                    audit_decision_packet_override_route=wrong_route,
+                    audit_decision_packet_override_tool_name=wrong_tool,
+                )
+            )
+    metadata = TaskSetMetadata(
+        name="typed_state_consumer_sensitivity_v3_pack",
+        pack_type="typed_state_consumer_sensitivity_v3",
+        description=(
+            "Formal-secondary typed-state consumer sensitivity pack. It expands the "
+            "destructive consumer audit across the contest families."
+        ),
+        reading_contract=(
+            "Read only as secondary mechanism evidence: minimal EXECUTOR_DECISION_PACKET "
+            "is produced, passed, consumed, and negative controls degrade behavior."
+        ),
+        claim_lanes=("state_transfer",),
+        single_variable=False,
+        variable_axes=("task_family", "audit_variant"),
+        public_surface="typed_state_consumer_sensitivity_v3",
+        evidence_tier="formal_secondary",
+        benchmark_version="v3",
+    )
+    return TaskSetBundle(path=task_path, metadata=metadata, tasks=tuple(expanded))
 
 
 def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
@@ -513,8 +608,13 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
     )
     public_surface = str(raw.get("public_surface", "")).strip()
     evidence_tier = str(raw.get("evidence_tier", "formal_headline")).strip() or "formal_headline"
+    explicit_benchmark_version = "benchmark_version" in raw
     benchmark_version = str(raw.get("benchmark_version", "v3")).strip() or "v3"
-    if historical_pack_type:
+    if historical_pack_type and not (
+        explicit_benchmark_version
+        and benchmark_version == "v3"
+        and evidence_tier == "audit_only"
+    ):
         evidence_tier = "historical"
         benchmark_version = "historical_v1"
     return TaskSetMetadata(
@@ -650,6 +750,12 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
             for value in item.get("audit_disable_state_kinds", [])
             if str(value).strip()
         ),
+        audit_decision_packet_override_route=str(
+            item.get("audit_decision_packet_override_route", "")
+        ).strip(),
+        audit_decision_packet_override_tool_name=str(
+            item.get("audit_decision_packet_override_tool_name", "")
+        ).strip(),
     )
     _validate_task_profile_contract(task, raw_transfer_strategy=raw_transfer_strategy, raw_handoff_profile=raw_handoff_profile)
     return task

@@ -20,6 +20,7 @@ from agents.base_agent import BaseAgent
 from agents.sample_agents import (
     _build_memory_assist_hint,
     _build_protocol_summary_handoff,
+    _strip_text_whole_lane_evidence_text,
     _build_transfer_brief,
     build_sample_agents_with_executor,
 )
@@ -29,6 +30,14 @@ from eval.runner import (
     _mode_order_for_run,
     _whole_lane_text_guard_payload,
     run_benchmark,
+)
+from eval.open_runner import (
+    OPEN_MEMORY_POLICIES,
+    PURE_TEXT_OPEN_BASELINE_PACK,
+    RUNTIME_ARMS,
+    run_langgraph_native_text_open_smoke,
+    run_open_comparison,
+    run_pure_text_open_baseline,
 )
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
 from protocol.messages import MemoryHit
@@ -309,7 +318,7 @@ def test_pack_metadata_exposes_single_variable_and_variable_axes() -> None:
     assert fairness.variable_axes == ("mode", "runtime_reuse_contract", "restore_object_class")
     assert fairness.public_surface == "audit_only_object_parity_restore_boundary"
 
-    assert contest.single_variable is True
+    assert contest.single_variable is False
     assert contest.variable_axes == ("mode", "handoff_object")
     assert contest.public_surface == "formal_dual_mode_headline"
 
@@ -1094,6 +1103,60 @@ def test_memory_assist_hint_is_compact() -> None:
     assert hint.startswith("MEMORY_ASSIST_HINT mem-sample-cache-001-assist:")
     assert len(hint) <= 240
     assert hint.endswith("...")
+
+
+def test_text_whole_lane_strips_memory_assist_hint_and_guard_detects_marker() -> None:
+    evidence = _strip_text_whole_lane_evidence_text(
+        "\n".join(
+            [
+                "[doc-1] Plain customer-visible evidence.",
+                "MEMORY_ASSIST_HINT mem-cache-001: hidden assist summary",
+                "BENCHMARK_NOTE hidden benchmark metadata",
+                "[doc-2] More visible evidence.",
+            ]
+        )
+    )
+    assert "Plain customer-visible evidence" in evidence
+    assert "More visible evidence" in evidence
+    assert "MEMORY_ASSIST_HINT" not in evidence
+    assert "BENCHMARK_NOTE" not in evidence
+
+    ctx = Orchestrator.create_context(
+        mode="text",
+        task_id="whole-lane-marker-001",
+        task_group="guard_group",
+        task_theme="guard_theme",
+        state_root=Path(tempfile.mkdtemp(prefix="statebus-whole-lane-marker-state-")),
+        memory_db_path=Path(tempfile.mkdtemp(prefix="statebus-whole-lane-marker-db-")) / "memory.sqlite3",
+        embedder=DeterministicEmbeddingProvider(),
+        runtime_profile={"transfer_strategy": "text_whole_lane", "handoff_profile": "text_whole_lane"},
+    )
+    try:
+        ctx.results["retrieve"] = StepResult(
+            step_id="retrieve",
+            success=True,
+            payload={"inline_handoff_text": "MEMORY_ASSIST_HINT mem-cache-001: hidden assist summary"},
+        )
+        ctx.results["execute"] = StepResult(
+            step_id="execute",
+            success=True,
+            payload={},
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="whole-lane-marker-001-artifact",
+                    kind="TOOL_ARTIFACT",
+                    text="Executor plain output.",
+                )
+            ],
+        )
+        guard = _whole_lane_text_guard_payload(ctx, "text_whole_lane")["whole_lane_text_guard"]
+        assert guard["hidden_field_leak"] is True
+        assert "hidden_field_leak" in guard["failed_reasons"]
+    finally:
+        ctx.memory_store.close()
+        ctx.session.cleanup()
+
+
 def test_memory_assist_uses_compact_hint_and_keeps_feature_bundle_fresh() -> None:
     cache_prefix = [
         task
@@ -2460,6 +2523,26 @@ def test_memory_dual_mode_fairness_v3_replay_restore_visibility_matches_mode_con
         }
 
 
+def test_memory_dual_mode_fairness_v3_skip_execute_replay_persists_executor_input_refs() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-dual-skip-execute-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="memory_dual_mode_fairness_v3",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    protocol_tasks = result["mode_runs"]["protocol"][0]["tasks"]
+    skip_execute_tasks = [task for task in protocol_tasks if task["reuse"]["mode"] == "skip_execute"]
+    assert skip_execute_tasks
+    for task in skip_execute_tasks:
+        kinds = task["transfer_truth_audit"]["executor_input_kinds"]
+        assert kinds == ["DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET"]
+
+
 def test_replay_restore_allowlist_respects_text_and_protocol_minimal_contracts() -> None:
     orchestrator = Orchestrator(build_sample_agents_with_executor(llm_client=DeterministicLLMClient()))
     text_ctx = Orchestrator.create_context(
@@ -2634,11 +2717,13 @@ def test_memory_replay_evidence_gate_fails_on_expected_replay_mismatch() -> None
                 {
                     "task_id": "memory-policy-bad-001",
                     "expected_reuse_mode": "skip_execute",
+                    "status": "completed",
                     "reuse": {"mode": "assist"},
                 },
                 {
                     "task_id": "memory-policy-ok-001",
                     "expected_reuse_mode": "skip_retrieve_execute",
+                    "status": "completed",
                     "reuse": {"mode": "skip_retrieve_execute"},
                 },
             ],
@@ -2649,6 +2734,48 @@ def test_memory_replay_evidence_gate_fails_on_expected_replay_mismatch() -> None
     assert gate["expected_rows"] == 2
     assert gate["matched_rows"] == 1
     assert gate["failing_task_ids"] == ["memory-policy-bad-001"]
+
+
+def test_memory_replay_evidence_gate_fails_on_incomplete_expected_replay_row() -> None:
+    from eval.runner import _memory_replay_evidence_gate
+
+    gate = _memory_replay_evidence_gate(
+        pack_type="memory_reuse_v3",
+        task_rows_by_mode={
+            "protocol": [
+                {
+                    "task_id": "memory-reuse-failed-001",
+                    "status": "failed",
+                    "expected_reuse_mode": "skip_retrieve_execute",
+                    "reuse": {"mode": "none"},
+                }
+            ],
+        },
+    )
+    assert gate["applicable"] is True
+    assert gate["passed"] is False
+    assert gate["expected_rows"] == 1
+    assert gate["matched_rows"] == 0
+    assert gate["failing_task_ids"] == ["memory-reuse-failed-001"]
+
+
+@pytest.mark.parametrize("task_set_path", ("memory_reuse_v3", "typed_state_mechanism_v3"))
+def test_protocol_only_packs_do_not_withhold_on_absent_text_guard(task_set_path: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-protocol-only-guard-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path=task_set_path,
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+
+    withheld = str(result["manifest"].get("withheld_headline_reason", ""))
+    assert "whole_lane_text_guard_incomplete" not in withheld
+    assert result["manifest"]["task_mode_counts"].get("text", 0) == 0
 
 
 def test_headline_gates_split_memory_replay_from_generic_state_transfer_flag() -> None:
@@ -2686,6 +2813,9 @@ def test_active_docs_reference_memory_dual_mode_fairness_v3_and_drop_old_formal_
     assert "当前唯一正式 benchmark surface" not in readme_text
     assert "当前正式 benchmark surface 只保留 6 个 v3 对象" not in task_design_text
     assert "whole-lane pure text vs rich typed-state protocol" not in task_design_text
+    assert "只让通信格式不同" not in master_text
+    assert "单一通信载体变量对照" in master_text
+    assert "external traditional baseline" not in readme_text
 
 
 def test_benchmark_supports_shared_memory_statepool_backend() -> None:
@@ -2839,6 +2969,38 @@ def test_contest_dual_mode_controlled_v3_report_uses_current_state_transfer_labe
     assert "state_packet_minimal" in report_text
 
 
+def test_text_strict_pure_lane_explicitly_reuses_internal_helper_path_without_memory_prior() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-text-strict-helper-path-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="contest_dual_mode_controlled_v3",
+                repeat=1,
+                modes=("text",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    task = result["mode_runs"]["text"][0]["tasks"][0]
+    retrieve_payload = task["results"]["retrieve"]["payload"]
+    observability = task["results"]["retrieve"]["feature_observability"]
+    execute_payload = task["results"]["execute"]["payload"]
+
+    assert task["transfer_strategy"] == "text_strict_pure_lane"
+    assert task["transfer_truth_audit"]["executor_input_kinds"] == []
+    assert retrieve_payload["transfer_brief_state_id"]
+    assert retrieve_payload["inline_handoff_text"]
+    assert retrieve_payload["feature_route_source"] == "hint_consensus"
+    assert retrieve_payload["memory_assist_ids"] == []
+    assert retrieve_payload["memory_prior_applied"] is False
+    assert observability["matched_signals"]
+    assert observability["tool_candidates"]
+    assert observability["tool_candidates"][0]["tool_name"] == execute_payload["tool_name"]
+    assert observability["tool_candidates"][0]["source"] == "text_brief"
+    assert execute_payload["tool_name"].startswith("tool.")
+    assert execute_payload["actions"]
+
+
 def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-open-planner-") as tmpdir:
         result = asyncio.run(
@@ -2946,7 +3108,7 @@ def test_contest_release_state_transfer_packs_share_family_case_contract() -> No
 
         assert {task.transfer_strategy for task in c_pair} == {"text_packet_minimal", "state_packet_minimal"}
         assert {task.transfer_strategy for task in a_pair} == {"text_brief", "state_ref"}
-        assert {task.transfer_strategy for task in p_pair} == {"natural_handoff_text", "state_ref"}
+        assert {task.transfer_strategy for task in p_pair} == {"natural_handoff_text", "state_packet_minimal"}
         assert {task.transfer_strategy for task in strict_pair} == {"inline_text_handoff", "state_packet_minimal"}
         assert {task.transfer_strategy for task in s_pair} == {"inline_text_handoff", "state_packet_minimal"}
 
@@ -3013,6 +3175,9 @@ def test_state_ref_consumer_sensitivity_audit_changes_executor_visibility_by_kin
     no_tool_candidates = tasks["audit-sensitivity-no-tool-candidates-001"]
     no_ranked = tasks["audit-sensitivity-no-ranked-evidence-001"]
     no_replay = tasks["audit-sensitivity-no-replay-eligibility-001"]
+    minimal = tasks["audit-sensitivity-minimal-baseline-001"]
+    missing_decision = tasks["audit-sensitivity-minimal-missing-decision-001"]
+    wrong_decision = tasks["audit-sensitivity-minimal-wrong-decision-001"]
 
     assert "FEATURE_BUNDLE" in full["transfer_truth_audit"]["executor_input_kinds"]
     assert "CHANNEL_SNAPSHOT" in full["transfer_truth_audit"]["executor_input_kinds"]
@@ -3033,10 +3198,208 @@ def test_state_ref_consumer_sensitivity_audit_changes_executor_visibility_by_kin
         "disable_tool_candidate_set",
         "disable_ranked_evidence_bundle",
         "disable_replay_eligibility_bundle",
+        "disable_executor_decision_packet",
+        "wrong_executor_decision_packet",
     }
     assert "disable_feature_bundle" not in mechanism
     assert full["artifact_misfire"]["fields"]["route"]["matched"] is True
     assert full["artifact_misfire"]["fields"]["tool_name"]["matched"] is True
+    assert minimal["status"] == "completed"
+    assert "EXECUTOR_DECISION_PACKET" in minimal["transfer_truth_audit"]["executor_input_kinds"]
+    assert minimal["artifact_misfire"]["fields"]["route"]["matched"] is True
+    assert minimal["artifact_misfire"]["fields"]["tool_name"]["matched"] is True
+    assert missing_decision["status"] == "failed"
+    assert missing_decision["audit_disable_state_kinds"] == ["EXECUTOR_DECISION_PACKET"]
+    assert "EXECUTOR_DECISION_PACKET" in str(missing_decision["error"])
+    assert wrong_decision["status"] == "completed"
+    assert wrong_decision["results"]["execute"]["payload"]["route"] == "worker_queue_starvation"
+    assert wrong_decision["results"]["execute"]["payload"]["tool_name"] == "tool.worker_queue_triage"
+    assert wrong_decision["artifact_misfire"]["fields"]["tool_name"]["matched"] is False
+
+
+def test_typed_state_consumer_sensitivity_v3_alias_expands_to_5_families_and_reports_secondary_metrics() -> None:
+    tasks = list(load_task_set_bundle("typed_state_consumer_sensitivity_v3").tasks)
+    assert len(tasks) == 40
+    assert len({task.task_theme for task in tasks}) == 5
+    assert {task.transfer_strategy for task in tasks} == {"state_ref", "state_packet_minimal"}
+    assert {
+        task.task_id
+        for task in tasks
+        if task.audit_disable_state_kinds == ("EXECUTOR_DECISION_PACKET",)
+    }
+
+    with tempfile.TemporaryDirectory(prefix="statebus-typed-consumer-v3-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="typed_state_consumer_sensitivity_v3",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+
+    assert result["manifest"]["task_pack_type"] == "typed_state_consumer_sensitivity_v3"
+    assert result["manifest"]["support_evidence_only"] is False
+    assert result["manifest"]["task_set_evidence_tier"] == "formal_secondary"
+    consumer = result["summary"]["protocol"]["mechanism_audit"]["typed_state_consumer_sensitivity_v3"]
+    assert consumer["missing_decision_failure_rate"] == 1.0
+    assert consumer["wrong_decision_mistool_rate"] == 1.0
+    assert result["summary"]["protocol"]["expected_negative_control_failure_count"] > 0
+    assert result["summary"]["protocol"]["unexpected_task_failure_count"] == 0
+    assert "disable_channel_snapshot" in consumer["rich_helper_disable_impact_summary"]
+    assert "Typed State Consumer Sensitivity V3" in report_text
+    assert "formal-secondary support" in report_text
+
+
+def test_open_system_comparison_v1_runs_three_arms_and_two_native_reuse_policies() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-open-system-v1-") as tmpdir:
+        result = run_open_comparison(out_dir=Path(tmpdir), repeat=1)
+        assert (Path(tmpdir) / "open_results.json").exists()
+        assert (Path(tmpdir) / "open_compare.csv").exists()
+        assert (Path(tmpdir) / "open_report.md").exists()
+
+    assert result["manifest"]["task_pack"] == "open_system_comparison_v1"
+    assert tuple(result["manifest"]["runtime_arms"]) == RUNTIME_ARMS
+    assert tuple(result["manifest"]["open_memory_policies"]) == OPEN_MEMORY_POLICIES
+    summary = {
+        (row["runtime_arm"], row["open_memory_policy"]): row
+        for row in result["summary"]
+    }
+    assert len(summary) == 6
+    assert "external_text_open" not in result["manifest"]["runtime_arms"]
+    for arm in RUNTIME_ARMS:
+        assert summary[(arm, "memory_off")]["replay_hit_rate"] == 0.0
+        assert summary[(arm, "native_reuse_on")]["replay_hit_rate"] > 0.0
+        assert summary[(arm, "native_reuse_on")]["skipped_step_count"] > 0.0
+    metric_keys = set(result["summary"][0])
+    for row in result["summary"]:
+        assert set(row) == metric_keys
+
+
+def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-open-") as tmpdir:
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=1)
+        assert (Path(tmpdir) / "open_results.json").exists()
+        assert (Path(tmpdir) / "open_compare.csv").exists()
+        assert (Path(tmpdir) / "open_report.md").exists()
+
+    assert result["manifest"]["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
+    assert tuple(result["manifest"]["runtime_arms"]) == ("external_text_open",)
+    assert "external pure-text baseline" in result["manifest"]["contract"].lower()
+    summary = {(row["runtime_arm"], row["open_memory_policy"]): row for row in result["summary"]}
+    assert len(summary) == 2
+    for policy in OPEN_MEMORY_POLICIES:
+        assert summary[("external_text_open", policy)]["runtime_arm"] == "external_text_open"
+    for row in result["tasks"]:
+        assert row["runtime_arm"] == "external_text_open"
+        assert row["statebus_contract_used"] is False
+        assert row["metadata_oracle_used"] is False
+        assert row["decision_source"] == "text_only_lexical_playbook"
+        assert all(isinstance(message, str) for message in row["message_log"])
+        assert all("StateRef" not in message for message in row["message_log"])
+        assert all("EXECUTOR_DECISION_PACKET" not in message for message in row["message_log"])
+
+
+def test_external_text_open_ignores_expected_metadata_oracle_fields() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-oracle-") as tmpdir:
+        custom_pack = Path(tmpdir) / "oracle_pack.yaml"
+        corpus_path = (REPO_ROOT / "tasks" / "contest_release_regression_corpus.yaml").resolve()
+        custom_pack.write_text(
+            f"""
+task_set:
+  name: oracle_pack
+  pack_type: ad_hoc
+  description: Oracle leakage test pack.
+  reading_contract: Use this pack only to test metadata leakage.
+  claim_lanes: [state_transfer]
+  evidence_tier: audit_only
+  benchmark_version: v3
+tasks:
+- task_id: oracle-leak-001
+  task_group: oracle_leak_group
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: internal_regression
+  allowed_modes: [text]
+  corpus_path: {corpus_path}
+  goal: Use the local corpus to diagnose the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs]
+  summary_hint: Return the first action only.
+  expected_route: wrong_expected_route
+  expected_tool_name: tool.wrong_expected_tool
+  primary_expected_route: wrong_primary_route
+  primary_expected_tool: tool.wrong_primary_tool
+""".strip(),
+            encoding="utf-8",
+        )
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir) / "out", repeat=1, task_set=custom_pack)
+    row = result["tasks"][0]
+    assert row["route"] == "db_pool_saturation"
+    assert row["tool_name"] == "tool.db_pool_triage"
+    assert row["metadata_oracle_used"] is False
+    assert row["correctness"]["route_exact"] is False
+    assert row["correctness"]["tool_exact"] is False
+
+
+def test_external_text_open_native_reuse_requires_same_retrieved_doc_set() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-reuse-") as tmpdir:
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=2)
+    second_run = [row for row in result["tasks"] if row["run_index"] == 1]
+    assert any(row["native_replay"]["hit"] for row in second_run)
+    assert any(row["metrics"]["skipped_step_count"] > 0 for row in second_run)
+
+
+def test_external_text_open_message_log_stays_text_only_and_without_markers() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-messages-") as tmpdir:
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=1)
+    forbidden_markers = (
+        "MEMORY_ASSIST_HINT",
+        "Suggested route:",
+        "Tool candidates:",
+        "StateRef",
+        "EXECUTOR_DECISION_PACKET",
+    )
+    for row in result["tasks"]:
+        for message in row["message_log"]:
+            assert isinstance(message, str)
+            assert all(marker not in message for marker in forbidden_markers)
+
+
+def test_external_text_open_source_stays_outside_statebus_runtime_and_structured_packets() -> None:
+    source_text = (REPO_ROOT / "eval" / "text_open_baseline.py").read_text(encoding="utf-8")
+    forbidden = (
+        "Orchestrator",
+        "StateRef",
+        "StatePool",
+        "EXECUTOR_DECISION_PACKET",
+        "from runtime",
+        "from protocol",
+        "from statepool",
+    )
+    for token in forbidden:
+        assert token not in source_text
+
+
+def test_langgraph_native_text_open_smoke_is_independent_from_statebus_replay_contract() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-langgraph-native-open-") as tmpdir:
+        result = run_langgraph_native_text_open_smoke(out_dir=Path(tmpdir), repeat=1)
+    assert result["manifest"]["runtime_arms"] == ["langgraph_native_text_open"]
+    assert result["summary"][0]["replay_hit_rate"] > 0.0
+    source_text = (REPO_ROOT / "eval" / "open_runner.py").read_text(encoding="utf-8")
+    assert "from runtime.orchestrator import" not in source_text
+    assert "Orchestrator" not in source_text
+    assert "StateRef" not in source_text
+    assert "StatePool" not in source_text
+    assert "EXECUTOR_DECISION_PACKET" not in source_text
+    for row in result["tasks"]:
+        assert row["runtime_arm"] == "langgraph_native_text_open"
+        assert row["statebus_contract_used"] is False
+        assert all(isinstance(message, str) for message in row["message_log"])
+        assert row["native_replay"]["backend"] == "langgraph.MemorySaver+InMemoryStore"
 
 
 def test_audit_only_pack_keeps_failed_row_metadata_and_continues_remaining_tasks() -> None:
