@@ -67,10 +67,14 @@ class TaskMetrics:
     invariant_violation_count: int = 0
 
     @property
-    def memory_hit_rate(self) -> float:
+    def assist_memory_hit_rate(self) -> float:
         if self.memory_query_count == 0:
             return 0.0
         return self.memory_hit_task_count / self.memory_query_count
+
+    @property
+    def memory_hit_rate(self) -> float:
+        return self.assist_memory_hit_rate
 
     @property
     def replay_probe_hit_rate(self) -> float:
@@ -83,6 +87,12 @@ class TaskMetrics:
         if self.planned_step_count == 0:
             return 0.0
         return self.skipped_step_count / self.planned_step_count
+
+    @property
+    def replay_apply_rate(self) -> float:
+        if self.replay_probe_count == 0:
+            return 0.0
+        return self.validated_reuse_task_count / self.replay_probe_count
 
     @property
     def phase_accounted_ms(self) -> float:
@@ -104,8 +114,9 @@ class TaskMetrics:
 
     def to_dict(self) -> dict[str, int | float]:
         payload = asdict(self)
-        payload["memory_hit_rate"] = self.memory_hit_rate
+        payload["assist_memory_hit_rate"] = self.assist_memory_hit_rate
         payload["replay_probe_hit_rate"] = self.replay_probe_hit_rate
+        payload["replay_apply_rate"] = self.replay_apply_rate
         payload["reuse_gain"] = self.reuse_gain
         payload["phase_accounted_ms"] = self.phase_accounted_ms
         payload["phase_overhead_ms"] = self.phase_overhead_ms

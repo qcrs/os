@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -43,6 +44,7 @@ from tasks.local_corpus import (
     render_corpus_evidence,
     retrieve_corpus_docs,
 )
+from tasks.sample_tasks import TaskSetMetadata
 from tasks.sample_tasks import SampleTask
 
 PROTOCOL_PLANNER_TAG = "sb-plan-v1"
@@ -50,6 +52,19 @@ PROTOCOL_SUMMARIZER_TAG = "sb-summary-v1"
 MAX_MEMORY_ASSIST_HINT_CHARS = 160
 MAX_PROTOCOL_SUMMARY_DOC_IDS = 3
 MAX_PROTOCOL_SUMMARY_SIGNALS = 4
+ALLOWED_PLANNER_OWNER_AGENTS = ("planner", "retriever", "executor", "summarizer")
+ALLOWED_PLANNER_ACTIONS = (
+    "RETRIEVE_EVIDENCE",
+    "EXECUTE_PLAYBOOK",
+    "SUMMARIZE_AND_COMMIT",
+    "VALIDATE_ROUTE",
+    "CHECK_MEMORY_REUSE",
+)
+CONTEST_REQUIRED_PLANNER_ACTIONS = (
+    "RETRIEVE_EVIDENCE",
+    "EXECUTE_PLAYBOOK",
+    "SUMMARIZE_AND_COMMIT",
+)
 TEXT_WHOLE_LANE_HIDDEN_FIELDS = (
     "route",
     "tool_name",
@@ -288,8 +303,9 @@ class RetrieverAgent(BaseAgent):
             corpus_doc_ids=preferred_doc_ids,
             embedder=ctx.memory_store.embedder,
             corpus_path=ctx.corpus_path(),
+            allow_preferred_doc_bias=_runtime_preferred_doc_bias_allowed(ctx),
         )
-        retrieved_hints = extract_corpus_feature_hints(corpus_docs)
+        retrieved_hints = _resolve_runtime_corpus_hints(ctx=ctx, corpus_docs=corpus_docs)
         fresh_evidence_text = render_corpus_evidence(corpus_docs)
 
         hits = []
@@ -322,7 +338,7 @@ class RetrieverAgent(BaseAgent):
                 if hits:
                     memory_prior = _build_memory_prior(hits[0])
 
-        fresh_bundle = build_feature_bundle(
+        feature_bundle = build_feature_bundle(
             query=str(step.params["query"]),
             evidence_text=fresh_evidence_text,
             tags=list(step.params.get("tags", [])),
@@ -337,7 +353,7 @@ class RetrieverAgent(BaseAgent):
                 candidate_route = str(candidate.metadata.get("feature_route", "")).strip()
                 if (
                     candidate_route
-                    and candidate_route == fresh_bundle["route"]
+                    and candidate_route == feature_bundle["route"]
                     and candidate_route != "generic_triage"
                 ):
                     accepted_hit = candidate
@@ -373,15 +389,7 @@ class RetrieverAgent(BaseAgent):
                 "memory_assist_hint": assist_hint,
             },
         )
-        feature_bundle = build_feature_bundle(
-            query=str(step.params["query"]),
-            evidence_text=fresh_evidence_text,
-            tags=list(step.params.get("tags", [])),
-            reuse_signature=reuse_signature,
-            reused_memory=reused,
-            retrieved_hints=retrieved_hints,
-            memory_prior=memory_prior,
-        )
+        feature_bundle["reused_memory"] = reused
         canonical_fresh_evidence = "\n\n".join(
             f"[{doc.doc_id}] {doc.title}\n{doc.text}".strip()
             for doc in sorted(corpus_docs, key=lambda item: item.doc_id)
@@ -403,8 +411,8 @@ class RetrieverAgent(BaseAgent):
                 "rank": index + 1,
                 "doc_id": doc.doc_id,
                 "title": doc.title,
-                "route_hint": doc.route_hint,
-                "tool_name": doc.tool_name,
+                "route_hint": doc.runtime_route_hint,
+                "tool_name": doc.runtime_tool_name,
                 "tags": list(doc.tags),
             }
             for index, doc in enumerate(corpus_docs)
@@ -851,6 +859,8 @@ class ExecutorAgent(BaseAgent):
     socket_path: str | None = None
 
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
+        if step.action == "VALIDATE_ROUTE":
+            return self._validate_route_step(step, ctx)
         transfer_strategy = ctx.transfer_strategy()
         input_refs = ctx.step_input_refs(step.step_id)
         ctx.record_transfer_inputs(input_refs)
@@ -875,6 +885,31 @@ class ExecutorAgent(BaseAgent):
                 if transfer_strategy in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.results.get("retrieve") is not None
                 else ""
             ),
+        )
+
+    @staticmethod
+    def _validate_route_step(step: PlanStep, ctx: object) -> StepResult:
+        input_refs = ctx.step_input_refs(step.step_id)
+        ctx.record_transfer_inputs(input_refs)
+        retrieve_result = ctx.results.get("retrieve")
+        retrieve_payload = {} if retrieve_result is None else dict(retrieve_result.payload)
+        validated_route = str(retrieve_payload.get("feature_route", "")).strip()
+        validated_tool = str(retrieve_payload.get("tool_name", "")).strip() or str(
+            retrieve_payload.get("feature_tool_name", "")
+        ).strip()
+        return StepResult(
+            step_id=step.step_id,
+            success=True,
+            output_state_refs=[],
+            payload={
+                "validated_route": validated_route,
+                "validated_tool_name": validated_tool,
+                "route_source": str(retrieve_payload.get("feature_route_source", "")).strip(),
+                "route_confidence": float(retrieve_payload.get("feature_route_confidence", 0.0)),
+                "retrieved_doc_ids": [
+                    str(item) for item in retrieve_payload.get("retrieved_doc_ids", [])
+                ],
+            },
         )
 
     def _should_use_uds(self, step: PlanStep) -> bool:
@@ -994,6 +1029,29 @@ class SummarizerAgent(BaseAgent):
                 evidence_preview=(
                     "" if feature_bundle is None else str(feature_bundle.get("evidence_preview", ""))
                 ),
+            )
+        elif mode != "text" and transfer_strategy != "text_whole_lane":
+            summary_evidence_text = json.dumps(
+                _build_protocol_summary_input_packet(
+                    query=str(retrieve_result.payload.get("query", "")),
+                    route=str(execute_result.payload.get("route", "")),
+                    route_source=str(retrieve_result.payload.get("feature_route_source", "")),
+                    route_confidence=float(
+                        retrieve_result.payload.get("feature_route_confidence", 0.0)
+                    ),
+                    retrieved_doc_ids=[
+                        str(item) for item in retrieve_result.payload.get("retrieved_doc_ids", [])
+                    ],
+                    matched_signals=(
+                        []
+                        if feature_bundle is None
+                        else [str(item) for item in feature_bundle.get("matched_signals", [])]
+                    ),
+                    actions_text=actions_text,
+                    summary_hint=str(step.params["summary_hint"]),
+                    memory_assist_hint=str(retrieve_result.payload.get("memory_assist_hint", "")),
+                ),
+                ensure_ascii=False,
             )
         summary_input = {
             "task_id": ctx.task_id,
@@ -1250,18 +1308,37 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
         ),
         "executor": ExecutorAgent(
             agent_id="executor",
-            capability=_build_capability(
-                "executor",
-                action="EXECUTE_PLAYBOOK",
-                accepted_state_kinds=[
-                    "DENSE_EVIDENCE",
-                    "CHANNEL_SNAPSHOT",
-                    "FEATURE_BUNDLE",
-                    "TOOL_CANDIDATE_SET",
-                    "EXECUTOR_DECISION_PACKET",
-                    "TOOL_ARTIFACT",
+            capability=Capability(
+                agent_id="executor",
+                items=[
+                    CapabilityItem(
+                        name="EXECUTE_PLAYBOOK",
+                        kind="TOOLCHAIN",
+                        input_schema="dict",
+                        output_schema="StepResult",
+                        accepted_state_kinds=[
+                            "DENSE_EVIDENCE",
+                            "CHANNEL_SNAPSHOT",
+                            "FEATURE_BUNDLE",
+                            "TOOL_CANDIDATE_SET",
+                            "EXECUTOR_DECISION_PACKET",
+                            "TOOL_ARTIFACT",
+                        ],
+                        produced_state_kinds=["TOOL_ARTIFACT"],
+                    ),
+                    CapabilityItem(
+                        name="VALIDATE_ROUTE",
+                        kind="TOOLCHAIN",
+                        input_schema="dict",
+                        output_schema="StepResult",
+                        accepted_state_kinds=[
+                            "DENSE_EVIDENCE",
+                            "FEATURE_BUNDLE",
+                            "EXECUTOR_DECISION_PACKET",
+                        ],
+                        produced_state_kinds=[],
+                    ),
                 ],
-                produced_state_kinds=["TOOL_ARTIFACT"],
             ),
             transport=executor_transport,
             socket_path=executor_socket_path,
@@ -1319,25 +1396,15 @@ def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
         steps = _compact_planner_output_to_steps(payload)
     if not isinstance(steps, list) or not steps:
         raise ValueError(f"planner output missing steps: {output_text!r}")
-    expected_contract = _expected_plan_contract(task)
-    if len(steps) != len(expected_contract):
-        raise ValueError(f"planner output must contain exactly 3 steps: {output_text!r}")
+    if not 3 <= len(steps) <= 5:
+        raise ValueError(f"planner output must contain 3-5 steps: {output_text!r}")
     plan_steps: list[PlanStep] = []
     seen_step_ids: set[str] = set()
-    for index, step in enumerate(steps):
-        normalized = _normalize_planner_step(step, expected_contract[index])
-        expected_step_id = normalized["expected_step_id"]
-        expected_owner = normalized["expected_owner"]
-        expected_action = normalized["expected_action"]
+    for step in steps:
+        normalized = _normalize_planner_step(step, task=task)
         step_id = normalized["step_id"]
         if step_id in seen_step_ids:
             raise ValueError(f"duplicate planner step_id: {step_id}")
-        if (
-            step_id != expected_step_id
-            or normalized["owner_agent"] != expected_owner
-            or normalized["action"] != expected_action
-        ):
-            raise ValueError(f"planner step contract mismatch at {step_id}: {output_text!r}")
         seen_step_ids.add(step_id)
         plan_steps.append(
             PlanStep(
@@ -1349,6 +1416,8 @@ def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
                 depends_on=normalized["depends_on"],
             )
         )
+    _validate_plan_dag(plan_steps)
+    _validate_planner_semantic_coverage(task=task, plan_steps=plan_steps)
     return Plan(task_id=task.task_id, goal=task.goal, steps=plan_steps)
 
 
@@ -1374,58 +1443,21 @@ def _summary_from_llm_output(output_text: str) -> dict[str, Any]:
     return payload
 
 
-def _expected_plan_contract(task: SampleTask) -> list[dict[str, Any]]:
-    return [
-        {
-            "step_id": "retrieve",
-            "owner_agent": "retriever",
-            "action": "RETRIEVE_EVIDENCE",
-            "input_state_refs": [],
-            "params": {
-                "query": task.query,
-                "evidence_text": task.evidence_text,
-                "tags": list(task.tags),
-                "allow_memory_reuse": True,
-                "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
-            },
-            "depends_on": [],
-        },
-        {
-            "step_id": "execute",
-            "owner_agent": "executor",
-            "action": "EXECUTE_PLAYBOOK",
-            "input_state_refs": [],
-            "params": {},
-            "depends_on": ["retrieve"],
-        },
-        {
-            "step_id": "summarize",
-            "owner_agent": "summarizer",
-            "action": "SUMMARIZE_AND_COMMIT",
-            "input_state_refs": [],
-            "params": {
-                "summary_hint": task.summary_hint,
-                "tags": list(task.tags),
-            },
-            "depends_on": ["retrieve", "execute"],
-        },
-    ]
-
-
 def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
     if mode == "text":
         system_prompt = (
             "You are the StateBus Planner. Output strict JSON only. "
             "Return an object with a single key named steps. "
-            "Use exactly three steps with these fixed contracts and exact field names: "
-            "step_id, owner_agent, action, input_state_refs, params, depends_on. "
-            "Step 1 must be retrieve -> owner_agent retriever action RETRIEVE_EVIDENCE. "
-            "Step 2 must be execute -> owner_agent executor action EXECUTE_PLAYBOOK. "
-            "Step 3 must be summarize -> owner_agent summarizer action SUMMARIZE_AND_COMMIT. "
-            "retrieve.params must include query, evidence_text, tags, and allow_memory_reuse=true. "
-            "execute.params must be {}. summarize.params must include summary_hint and tags. "
+            "Each step must include step_id, owner_agent, action, input_state_refs, params, depends_on. "
+            "Return an executable DAG with 3 to 5 steps. "
+            "Allowed owner_agent values: planner, retriever, executor, summarizer. "
+            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE, CHECK_MEMORY_REUSE. "
+            "The plan must include retrieve, execute, and summarize semantics, but step ids and wording do not need to be fixed. "
+            "For RETRIEVE_EVIDENCE include query, evidence_text, tags, allow_memory_reuse, and audit_disable_state_kinds in params. "
+            "For SUMMARIZE_AND_COMMIT include summary_hint and tags in params. "
+            "For EXECUTE_PLAYBOOK params may be {}. "
             "Do not infer replay eligibility, corpus filters, or tool routes from hidden benchmark hints. "
-            "Do not wrap each step inside a retrieve/execute/summarize key. "
+            "Use unique step_id values and valid depends_on edges only. "
             "Do not add prose or markdown."
         )
         system_prompt = (
@@ -1452,10 +1484,12 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
     else:
         system_prompt = (
             "You are the StateBus Planner. Output JSON only. "
-            "Return {\"r\":{...},\"x\":{},\"s\":{...}}. "
-            "r must contain q,e,t. "
-            "s must contain h,t. "
-            "Keep the plan skeleton minimal. "
+            "Return either {\"steps\":[...]} or the compact shape {\"r\":{...},\"x\":{},\"s\":{...}}. "
+            "If you use steps, emit a 3-5 step executable DAG. "
+            "Allowed owner_agent values: planner, retriever, executor, summarizer. "
+            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE, CHECK_MEMORY_REUSE. "
+            "The plan must cover retrieve, execute, and summarize semantics. "
+            "If you use the compact shape, r must contain q,e,t and optional sid/dep/action/owner. s must contain h,t and optional sid/dep/action/owner. "
             "Do not emit replay labels, corpus filters, or tool-route hints. "
             "No markdown."
         )
@@ -1539,62 +1573,151 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
         "summary_hint": summarize.get("h", ""),
         "tags": list(summarize.get("t", [])),
     }
-    return [
+    has_validate_step = any(key in execute for key in ("vsid", "vowner", "vaction", "vdep"))
+    steps = [
         {
-            "step_id": "retrieve",
+            "step_id": retrieve.get("sid", "retrieve"),
+            "owner_agent": retrieve.get("owner", "retriever"),
+            "action": retrieve.get("action", "RETRIEVE_EVIDENCE"),
+            "depends_on": retrieve.get("dep", []),
             "params": retrieve_params,
-        },
-        {
-            "step_id": "execute",
-            "params": execute,
-        },
-        {
-            "step_id": "summarize",
-            "params": summarize_params,
-        },
+        }
     ]
+    if has_validate_step:
+        steps.append(
+            {
+                "step_id": execute.get("vsid", "validate"),
+                "owner_agent": execute.get("vowner", "executor"),
+                "action": execute.get("vaction", "VALIDATE_ROUTE"),
+                "depends_on": execute.get("vdep", ["retrieve"]),
+                "params": {},
+            }
+        )
+    steps.extend(
+        [
+            {
+                "step_id": execute.get("sid", "execute"),
+                "owner_agent": execute.get("owner", "executor"),
+                "action": execute.get("action", "EXECUTE_PLAYBOOK"),
+                "depends_on": execute.get("dep", ["retrieve", "validate"] if has_validate_step else ["retrieve"]),
+                "params": execute,
+            },
+            {
+                "step_id": summarize.get("sid", "summarize"),
+                "owner_agent": summarize.get("owner", "summarizer"),
+                "action": summarize.get("action", "SUMMARIZE_AND_COMMIT"),
+                "depends_on": summarize.get("dep", ["retrieve", "execute"]),
+                "params": summarize_params,
+            },
+        ]
+    )
+    return steps
 
 
-def _normalize_planner_step(step: object, expected: dict[str, Any]) -> dict[str, Any]:
+def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]:
     if not isinstance(step, dict):
         raise ValueError(f"planner step must be an object: {step!r}")
     normalized = dict(step)
-    expected_step_id = str(expected["step_id"])
-    if "step_id" not in normalized:
-        nested = normalized.get(expected_step_id)
-        if nested is None and len(normalized) == 1:
-            nested_key = next(iter(normalized))
-            if nested_key in {"retrieve", "execute", "summarize"}:
-                nested = normalized[nested_key]
-                expected_step_id = str(nested_key)
-        if nested is not None:
+    nested_step_alias = ""
+    if "step_id" not in normalized and len(normalized) == 1:
+        nested_key = next(iter(normalized))
+        nested = normalized[nested_key]
+        if nested_key in {"retrieve", "execute", "summarize", "validate", "planner"}:
             if not isinstance(nested, dict):
                 raise ValueError(f"planner nested step must be an object: {step!r}")
-            normalized = {"step_id": expected_step_id, **dict(nested)}
+            normalized = {"step_id": nested_key, **dict(nested)}
+            nested_step_alias = nested_key
 
-    raw_step_id = str(normalized.get("step_id", "")).strip().lower()
-    step_id = {
+    raw_step_id = str(normalized.get("step_id", "")).strip()
+    if not raw_step_id:
+        raise ValueError(f"planner step missing step_id: {step!r}")
+    normalized_step_aliases = {
         "1": "retrieve",
         "2": "execute",
         "3": "summarize",
-    }.get(raw_step_id, str(normalized.get("step_id", "")))
-
-    params = dict(expected["params"])
-    raw_params = dict(normalized.get("params", {}) or {})
-    params.update({key: raw_params[key] for key in params if key in raw_params})
-    return {
-        "expected_step_id": str(expected["step_id"]),
-        "expected_owner": str(expected["owner_agent"]),
-        "expected_action": str(expected["action"]),
-        "step_id": step_id,
-        "owner_agent": str(
-            normalized.get("owner_agent", normalized.get("owner", expected["owner_agent"]))
-        ),
-        "action": str(normalized.get("action", expected["action"])),
-        "input_state_refs": [str(item) for item in expected["input_state_refs"] or []],
-        "params": params,
-        "depends_on": [str(item) for item in expected["depends_on"] or []],
+        "retrieve": "retrieve",
+        "execute": "execute",
+        "summarize": "summarize",
     }
+    step_id = normalized_step_aliases.get(raw_step_id.lower(), raw_step_id)
+    if nested_step_alias:
+        step_id = normalized_step_aliases.get(nested_step_alias, nested_step_alias)
+    owner_agent = str(normalized.get("owner_agent", normalized.get("owner", ""))).strip().lower()
+    action = str(normalized.get("action", "")).strip().upper()
+    if owner_agent not in ALLOWED_PLANNER_OWNER_AGENTS:
+        raise ValueError(f"planner step owner_agent unsupported: {owner_agent!r}")
+    if action not in ALLOWED_PLANNER_ACTIONS:
+        raise ValueError(f"planner step action unsupported: {action!r}")
+    raw_params = dict(normalized.get("params", {}) or {})
+    params = dict(raw_params)
+    if action == "RETRIEVE_EVIDENCE":
+        params = {
+            "query": raw_params.get("query", task.query),
+            "evidence_text": raw_params.get("evidence_text", task.evidence_text),
+            "tags": raw_params.get("tags", list(task.tags)),
+            "allow_memory_reuse": raw_params.get("allow_memory_reuse", True),
+            "audit_disable_state_kinds": raw_params.get(
+                "audit_disable_state_kinds",
+                list(task.audit_disable_state_kinds),
+            ),
+        }
+    elif action == "SUMMARIZE_AND_COMMIT":
+        params = {
+            "summary_hint": raw_params.get("summary_hint", task.summary_hint),
+            "tags": raw_params.get("tags", list(task.tags)),
+        }
+    raw_depends_on = [str(item) for item in normalized.get("depends_on", []) or []]
+    depends_on = [normalized_step_aliases.get(dep.lower(), dep) for dep in raw_depends_on]
+    if step_id == "summarize" and depends_on == ["execute"]:
+        depends_on = ["retrieve", "execute"]
+    if not depends_on:
+        if step_id == "execute":
+            depends_on = ["retrieve"]
+        elif step_id == "summarize":
+            depends_on = ["retrieve", "execute"]
+    return {
+        "step_id": step_id,
+        "owner_agent": owner_agent,
+        "action": action,
+        "input_state_refs": [str(item) for item in normalized.get("input_state_refs", []) or []],
+        "params": params,
+        "depends_on": depends_on,
+    }
+
+
+def _validate_plan_dag(plan_steps: list[PlanStep]) -> None:
+    step_ids = {step.step_id for step in plan_steps}
+    for step in plan_steps:
+        for dep in step.depends_on:
+            if dep not in step_ids:
+                raise ValueError(f"planner step depends_on unknown step_id: {dep}")
+            if dep == step.step_id:
+                raise ValueError(f"planner step cannot depend on itself: {dep}")
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    by_id = {step.step_id: step for step in plan_steps}
+
+    def _visit(step_id: str) -> None:
+        if step_id in visited:
+            return
+        if step_id in visiting:
+            raise ValueError(f"planner depends_on must form a DAG, cycle at {step_id}")
+        visiting.add(step_id)
+        for dep in by_id[step_id].depends_on:
+            _visit(dep)
+        visiting.remove(step_id)
+        visited.add(step_id)
+
+    for step_id in by_id:
+        _visit(step_id)
+
+
+def _validate_planner_semantic_coverage(task: SampleTask, plan_steps: list[PlanStep]) -> None:
+    del task
+    action_set = {step.action for step in plan_steps}
+    missing = [action for action in CONTEST_REQUIRED_PLANNER_ACTIONS if action not in action_set]
+    if missing:
+        raise ValueError(f"planner output missing required semantics: {', '.join(missing)}")
 
 
 def _normalize_confidence(value: object) -> float:
@@ -1726,3 +1849,46 @@ def _build_protocol_summary_handoff(
     if evidence_preview.strip():
         parts.append(f"Evidence preview: {evidence_preview.strip()}")
     return "\n".join(parts) + "\n"
+
+
+def _build_protocol_summary_input_packet(
+    *,
+    query: str,
+    route: str,
+    route_source: str,
+    route_confidence: float,
+    retrieved_doc_ids: list[str],
+    matched_signals: list[str],
+    actions_text: str,
+    summary_hint: str,
+    memory_assist_hint: str,
+) -> dict[str, Any]:
+    return {
+        "schema": "statebus.summary_input_packet.v1",
+        "query": query,
+        "route": route or "generic_triage",
+        "route_source": route_source or "protocol",
+        "route_confidence": route_confidence,
+        "retrieved_doc_ids": retrieved_doc_ids[:MAX_PROTOCOL_SUMMARY_DOC_IDS],
+        "matched_signals": matched_signals[:MAX_PROTOCOL_SUMMARY_SIGNALS],
+        "actions_text": actions_text.strip(),
+        "summary_hint": summary_hint.strip(),
+        "memory_assist_hint": memory_assist_hint.strip(),
+    }
+
+
+def _resolve_runtime_corpus_hints(*, ctx: object, corpus_docs: list[object]) -> list[dict[str, str]]:
+    task_metadata = getattr(getattr(ctx, "task", None), "task_set_metadata", None)
+    runtime_hint_allowed = True
+    if isinstance(task_metadata, TaskSetMetadata):
+        runtime_hint_allowed = task_metadata.runtime_hint_allowed
+    if not runtime_hint_allowed:
+        return []
+    return extract_corpus_feature_hints(corpus_docs)
+
+
+def _runtime_preferred_doc_bias_allowed(ctx: object) -> bool:
+    task_metadata = getattr(getattr(ctx, "task", None), "task_set_metadata", None)
+    if isinstance(task_metadata, TaskSetMetadata):
+        return task_metadata.runtime_hint_allowed
+    return True

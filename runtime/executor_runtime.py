@@ -18,6 +18,14 @@ from statepool.store import MMAP_FILE_STORAGE, PY_SHARED_MEMORY_STORAGE, StatePo
 
 MIN_DIRECT_ROUTE_CONFIDENCE = 0.70
 MIN_DIRECT_EVIDENCE_SIGNALS = 2
+DECISION_PACKET_REQUIRED_KEYS = (
+    "route",
+    "tool_name",
+    "route_source",
+    "route_confidence",
+    "retrieved_doc_ids",
+    "matched_signals",
+)
 CHANNEL_LAST_VALUE = "last_value"
 CHANNEL_TOPIC_ACCUMULATE = "topic_accumulate"
 CHANNEL_TOPIC_REPLACE = "topic_replace"
@@ -63,7 +71,7 @@ class ToolRegistry:
 
     def register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
-        self._routes[spec.route] = spec.name
+        self._routes.setdefault(spec.route, spec.name)
 
     def get(self, tool_name: str) -> ToolSpec:
         try:
@@ -205,6 +213,25 @@ def default_tool_registry() -> ToolRegistry:
     )
     registry.register(
         ToolSpec(
+            name="tool.db_query_hotfix",
+            description="Repo-local hotfix playbook for slow-query/index incidents inside the DB saturation route.",
+            route="db_pool_saturation",
+            match_patterns=(
+                "slow orders query",
+                "orders_created_at",
+                "missing index",
+                "slower query path",
+            ),
+            tag_hints=("latency", "database", "orders", "config"),
+            actions=(
+                "rollback the slower query path",
+                "create the missing query index",
+                "recheck the hot query latency before widening rollback",
+            ),
+        )
+    )
+    registry.register(
+        ToolSpec(
             name="tool.auth_session_repair",
             description="Repo-local playbook for stale JWKS and callback session drift incidents.",
             route="auth_session_drift",
@@ -221,6 +248,25 @@ def default_tool_registry() -> ToolRegistry:
                 "refresh JWKS cache",
                 "clear stale session cookies",
                 "rerun callback verification",
+            ),
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="tool.auth_jwks_refresh",
+            description="Repo-local focused playbook for JWKS refresh and callback verification drift.",
+            route="auth_session_drift",
+            match_patterns=(
+                "stale jwks",
+                "jwks refresh",
+                "callback verification",
+                "issuer mismatch",
+            ),
+            tag_hints=("auth", "jwks", "sso"),
+            actions=(
+                "force JWKS refresh on the canary slice",
+                "rerun callback verification with fresh metadata",
+                "verify issuer mismatch clears before broader session cleanup",
             ),
         )
     )
@@ -266,6 +312,25 @@ def default_tool_registry() -> ToolRegistry:
     )
     registry.register(
         ToolSpec(
+            name="tool.retry_storm_relief",
+            description="Repo-local focused playbook for retry-storm relief within the worker queue route.",
+            route="worker_queue_starvation",
+            match_patterns=(
+                "retry storm",
+                "retry scheduling",
+                "invoice queue backlog",
+                "rebalance invoice consumers",
+            ),
+            tag_hints=("billing", "queue", "worker"),
+            actions=(
+                "pause the retry storm trigger",
+                "drain the most affected worker slice",
+                "rebalance consumers before widening rollback",
+            ),
+        )
+    )
+    registry.register(
+        ToolSpec(
             name="tool.auth_rate_limit_triage",
             description="Repo-local playbook for overly aggressive auth rate limiting.",
             route="auth_rate_limit",
@@ -281,6 +346,25 @@ def default_tool_registry() -> ToolRegistry:
                 "lower auth rate-limiter aggressiveness",
                 "clear the affected backoff window",
                 "verify login recovery after rate-limit reset",
+            ),
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="tool.cache_hook_repair",
+            description="Repo-local focused playbook for missing aggregate invalidation hook regressions.",
+            route="cache_invalidation",
+            match_patterns=(
+                "aggregate invalidation",
+                "invalidation hook",
+                "inventory aggregate key",
+                "post-sync hook",
+            ),
+            tag_hints=("cache", "inventory", "invalidation", "config"),
+            actions=(
+                "repair the missing aggregate invalidation hook",
+                "force the skipped aggregate key refresh",
+                "rerun the post-sync validation window",
             ),
         )
     )
@@ -1082,7 +1166,9 @@ def _load_tool_candidate_set(statepool: StatePool, ref: StateRef) -> dict[str, A
 
 
 def _load_executor_decision_packet(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
-    return _load_structured_bundle(statepool, ref, expected_kind="EXECUTOR_DECISION_PACKET")
+    packet = _load_structured_bundle(statepool, ref, expected_kind="EXECUTOR_DECISION_PACKET")
+    _validate_executor_decision_packet(packet=packet, ref=ref)
+    return packet
 
 
 def _feature_bundle_from_channel_snapshot(
@@ -1693,45 +1779,81 @@ def _feature_bundle_from_executor_decision_packet(
     decision_packet: dict[str, Any],
     registry: ToolRegistry,
 ) -> dict[str, Any]:
-    bundle = build_feature_bundle(
-        query=query_text,
-        evidence_text=evidence_text,
-        tags=[],
-        reuse_signature="state_packet_transfer",
-        reused_memory=False,
-        registry=registry,
-    )
-    for key in (
-        "route",
-        "tool_name",
-        "route_source",
-        "route_confidence",
-        "route_provenance",
-        "matched_signals",
-        "matched_tags",
-        "match_score",
-        "hint_doc_ids",
-        "hint_route",
-        "hint_tool_name",
-        "tool_candidates",
-    ):
-        if key in decision_packet:
-            bundle[key] = decision_packet[key]
-    overridden_route = str(bundle.get("route", "")).strip()
-    overridden_tool_name = str(bundle.get("tool_name", "")).strip()
-    if overridden_route and overridden_tool_name:
-        bundle["tool_candidates"] = [
+    del registry
+    _validate_executor_decision_packet(packet=decision_packet)
+    route = str(decision_packet.get("route", "")).strip()
+    tool_name = str(decision_packet.get("tool_name", "")).strip()
+    route_source = str(decision_packet.get("route_source", "")).strip() or "decision_packet"
+    matched_signals = [str(item) for item in decision_packet.get("matched_signals", [])]
+    matched_tags = [str(item) for item in decision_packet.get("matched_tags", [])]
+    match_score = int(decision_packet.get("match_score", len(matched_signals)))
+    tool_candidates = [
+        dict(item)
+        for item in decision_packet.get("tool_candidates", [])
+        if isinstance(item, dict)
+    ]
+    if not tool_candidates and route and tool_name:
+        tool_candidates = [
             {
-                "tool_name": overridden_tool_name,
-                "route": overridden_route,
-                "score": int(bundle.get("match_score", 0)),
-                "matched_signals": [str(item) for item in bundle.get("matched_signals", [])],
-                "matched_tags": [str(item) for item in bundle.get("matched_tags", [])],
-                "source": str(bundle.get("route_source", "decision_packet")).strip() or "decision_packet",
+                "tool_name": tool_name,
+                "route": route,
+                "score": match_score,
+                "matched_signals": matched_signals,
+                "matched_tags": matched_tags,
+                "source": route_source,
             }
         ]
-    bundle["transfer_strategy"] = "state_packet_minimal"
-    return bundle
+    return {
+        "schema": "statebus.feature_bundle.v1",
+        "route": route,
+        "tool_name": tool_name,
+        "query": str(decision_packet.get("query", query_text or "")).strip(),
+        "query_terms": [],
+        "tags": [],
+        "matched_signals": matched_signals,
+        "matched_tags": matched_tags,
+        "match_score": match_score,
+        "route_source": route_source,
+        "route_confidence": float(decision_packet.get("route_confidence", 0.0)),
+        "route_provenance": [str(item) for item in decision_packet.get("route_provenance", [])],
+        "hint_doc_ids": [str(item) for item in decision_packet.get("hint_doc_ids", [])],
+        "hint_route": str(decision_packet.get("hint_route", "")).strip(),
+        "hint_tool_name": str(decision_packet.get("hint_tool_name", "")).strip(),
+        "tool_candidates": tool_candidates,
+        "retrieved_doc_ids": [str(item) for item in decision_packet.get("retrieved_doc_ids", [])],
+        "feature_evidence_sha256": str(decision_packet.get("feature_evidence_sha256", "")).strip(),
+        "feature_fresh_evidence_sha256": str(
+            decision_packet.get("feature_fresh_evidence_sha256", "")
+        ).strip(),
+        "evidence_sha256": hashlib.sha256(evidence_text.encode("utf-8")).hexdigest(),
+        "transfer_strategy": "state_packet_minimal",
+    }
+
+
+def _validate_executor_decision_packet(
+    *,
+    packet: dict[str, Any],
+    ref: StateRef | None = None,
+) -> None:
+    missing = [key for key in DECISION_PACKET_REQUIRED_KEYS if key not in packet]
+    if missing:
+        raise ValueError(f"executor decision packet missing fields: {', '.join(missing)}")
+    route = str(packet.get("route", "")).strip()
+    tool_name = str(packet.get("tool_name", "")).strip()
+    if not route or not tool_name:
+        raise ValueError("executor decision packet requires non-empty route and tool_name")
+    if not isinstance(packet.get("retrieved_doc_ids", []), list):
+        raise ValueError("executor decision packet retrieved_doc_ids must be a list")
+    if not isinstance(packet.get("matched_signals", []), list):
+        raise ValueError("executor decision packet matched_signals must be a list")
+    route_confidence = packet.get("route_confidence")
+    if not isinstance(route_confidence, (int, float)):
+        raise ValueError("executor decision packet route_confidence must be numeric")
+    if ref is not None:
+        metadata_sha = str(ref.metadata.get("feature_fresh_evidence_sha256", "")).strip()
+        payload_sha = str(packet.get("feature_fresh_evidence_sha256", "")).strip()
+        if metadata_sha and payload_sha and metadata_sha != payload_sha:
+            raise ValueError("executor decision packet fresh evidence hash mismatch")
 
 
 def _parse_transfer_tool_candidates(raw_value: str) -> list[dict[str, Any]]:

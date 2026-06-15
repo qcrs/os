@@ -94,6 +94,34 @@ PLAN_SOURCES = (
     "llm",
 )
 
+PUBLIC_SURFACES = (
+    "formal_headline",
+    "formal_secondary",
+    "formal_secondary_planner",
+    "formal_secondary_memory",
+    "audit_only",
+)
+
+PUBLIC_SURFACE_ALIASES = {
+    "formal_dual_mode_headline": "formal_headline",
+    "formal_secondary_planner_support": "formal_secondary_planner",
+    "formal_secondary_memory_policy_attribution": "formal_secondary_memory",
+    "formal_secondary_typed_state_mechanism": "formal_secondary",
+    "formal_secondary_typed_state_authenticity": "formal_secondary",
+    "audit_only_external_text_baseline": "audit_only",
+    "audit_only_object_parity_restore_boundary": "audit_only",
+    "typed_state_consumer_sensitivity_v3": "audit_only",
+}
+
+EVIDENCE_TIERS = (
+    "formal_headline",
+    "formal_secondary",
+    "support_only",
+    "audit_only",
+    "historical",
+    "archived",
+)
+
 COMPLEXITY_BUCKETS = (
     "simple",
     "distractor",
@@ -212,9 +240,15 @@ class TaskSetMetadata:
     single_variable: bool = False
     variable_axes: tuple[str, ...] = ()
     public_surface: str = ""
+    single_variable_label: str = ""
     evidence_tier: str = "formal_headline"
     benchmark_version: str = "v3"
     historical_pack_type: str = ""
+    plan_source_default: str = ""
+
+    @property
+    def runtime_hint_allowed(self) -> bool:
+        return self.public_surface == "audit_only"
 
     @property
     def support_only(self) -> bool:
@@ -286,6 +320,7 @@ class SampleTask:
     audit_disable_state_kinds: tuple[str, ...] = ()
     audit_decision_packet_override_route: str = ""
     audit_decision_packet_override_tool_name: str = ""
+    task_set_metadata: TaskSetMetadata | None = None
 
     @property
     def agent_visible(self) -> dict[str, object]:
@@ -427,7 +462,9 @@ def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
     if not isinstance(tasks, list):
         raise ValueError(f"task set must contain a list of tasks: {task_path}")
     metadata = _load_task_set_metadata(task_path, metadata_raw)
-    loaded_tasks = tuple(_load_sample_task(task_path, item) for item in tasks)
+    loaded_tasks = tuple(
+        _load_sample_task(task_path, item, task_set_metadata=metadata) for item in tasks
+    )
     if requested_alias == "typed_state_consumer_sensitivity_v3":
         return _build_typed_state_consumer_sensitivity_bundle(task_path, loaded_tasks)
     return TaskSetBundle(path=task_path, metadata=metadata, tasks=loaded_tasks)
@@ -511,7 +548,8 @@ def _build_typed_state_consumer_sensitivity_bundle(
         claim_lanes=("state_transfer",),
         single_variable=False,
         variable_axes=("task_family", "audit_variant"),
-        public_surface="typed_state_consumer_sensitivity_v3",
+        public_surface="audit_only",
+        single_variable_label="task_family x audit_variant",
         evidence_tier="formal_secondary",
         benchmark_version="v3",
     )
@@ -606,8 +644,13 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
         for item in raw.get("variable_axes", [])
         if str(item).strip()
     )
-    public_surface = str(raw.get("public_surface", "")).strip()
+    public_surface = PUBLIC_SURFACE_ALIASES.get(
+        str(raw.get("public_surface", "")).strip(),
+        str(raw.get("public_surface", "")).strip(),
+    )
+    single_variable_label = str(raw.get("single_variable_label", "")).strip()
     evidence_tier = str(raw.get("evidence_tier", "formal_headline")).strip() or "formal_headline"
+    plan_source_default = str(raw.get("plan_source_default", "")).strip()
     explicit_benchmark_version = "benchmark_version" in raw
     benchmark_version = str(raw.get("benchmark_version", "v3")).strip() or "v3"
     if historical_pack_type and not (
@@ -617,6 +660,15 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
     ):
         evidence_tier = "historical"
         benchmark_version = "historical_v1"
+    _validate_task_set_metadata_contract(
+        task_path=task_path,
+        pack_type=pack_type,
+        public_surface=public_surface,
+        single_variable=single_variable,
+        variable_axes=variable_axes,
+        evidence_tier=evidence_tier,
+        plan_source_default=plan_source_default,
+    )
     return TaskSetMetadata(
         name=str(raw.get("name", task_path.stem)).strip() or task_path.stem,
         pack_type=pack_type,
@@ -626,9 +678,11 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
         single_variable=single_variable,
         variable_axes=variable_axes,
         public_surface=public_surface,
+        single_variable_label=single_variable_label,
         evidence_tier=evidence_tier,
         benchmark_version=benchmark_version,
         historical_pack_type=historical_pack_type,
+        plan_source_default=normalize_plan_source(plan_source_default) if plan_source_default else "",
     )
 
 
@@ -651,7 +705,12 @@ def _default_state_transfer_expectations(
     }
 
 
-def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
+def _load_sample_task(
+    task_path: Path,
+    item: dict[str, object],
+    *,
+    task_set_metadata: TaskSetMetadata,
+) -> SampleTask:
     task_theme = str(item["task_theme"]).strip()
     benchmark_lane = normalize_benchmark_lane(item.get("benchmark_lane", "internal_regression"))
     expected_route = str(item.get("expected_route", "")).strip()
@@ -696,6 +755,12 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
         ).resolved_handoff_profile
     else:
         handoff_profile = "protocol_feature_only_typed_state"
+    explicit_plan_source = item.get("plan_source", "") not in {None, ""}
+    plan_source_raw = item.get("plan_source", "")
+    if plan_source_raw in {None, ""} and task_set_metadata.plan_source_default:
+        plan_source_raw = task_set_metadata.plan_source_default
+    elif plan_source_raw in {None, ""}:
+        plan_source_raw = "yaml"
     task = SampleTask(
         task_id=str(item["task_id"]).strip(),
         task_group=str(item.get("task_group", "default")).strip(),
@@ -740,7 +805,7 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
         abstain_only_when=str(item.get("abstain_only_when", "")).strip(),
         summary_hint=str(item["summary_hint"]).strip(),
         allowed_modes=normalize_task_modes(item.get("allowed_modes", TASK_MODES)),
-        plan_source=normalize_plan_source(item.get("plan_source", "yaml")),
+        plan_source=normalize_plan_source(plan_source_raw),
         complexity_bucket=normalize_complexity_bucket(item.get("complexity_bucket", "simple")),
         summary_contract=normalize_summary_contract(
             item.get("summary_contract", "actions_plus_evidence")
@@ -756,14 +821,23 @@ def _load_sample_task(task_path: Path, item: dict[str, object]) -> SampleTask:
         audit_decision_packet_override_tool_name=str(
             item.get("audit_decision_packet_override_tool_name", "")
         ).strip(),
+        task_set_metadata=task_set_metadata,
     )
-    _validate_task_profile_contract(task, raw_transfer_strategy=raw_transfer_strategy, raw_handoff_profile=raw_handoff_profile)
+    _validate_task_profile_contract(
+        task,
+        task_set_metadata=task_set_metadata,
+        explicit_plan_source=explicit_plan_source,
+        raw_transfer_strategy=raw_transfer_strategy,
+        raw_handoff_profile=raw_handoff_profile,
+    )
     return task
 
 
 def _validate_task_profile_contract(
     task: SampleTask,
     *,
+    task_set_metadata: TaskSetMetadata,
+    explicit_plan_source: bool,
     raw_transfer_strategy: str,
     raw_handoff_profile: str,
 ) -> None:
@@ -789,3 +863,44 @@ def _validate_task_profile_contract(
         raise ValueError(
             f"{task.task_id}: protocol_full_rich_audit rows must use summary_contract=protocol_handoff_audit"
         )
+    if (
+        task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
+        and task_set_metadata.public_surface != "audit_only"
+        and not task_set_metadata.plan_source_default
+        and not explicit_plan_source
+    ):
+        raise ValueError(f"{task.task_id}: formal packs must resolve plan_source explicitly")
+    if (
+        task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
+        and task_set_metadata.public_surface != "audit_only"
+        and task.plan_source not in PLAN_SOURCES
+    ):
+        raise ValueError(f"{task.task_id}: formal packs require explicit plan_source")
+
+
+def _validate_task_set_metadata_contract(
+    *,
+    task_path: Path,
+    pack_type: str,
+    public_surface: str,
+    single_variable: bool,
+    variable_axes: tuple[str, ...],
+    evidence_tier: str,
+    plan_source_default: str,
+) -> None:
+    if evidence_tier not in EVIDENCE_TIERS:
+        raise ValueError(f"{task_path}: unsupported evidence_tier={evidence_tier!r}")
+    if pack_type not in V3_FORMAL_TASK_PACK_TYPES:
+        return
+    if not public_surface:
+        raise ValueError(f"{task_path}: v3 pack metadata requires public_surface")
+    if public_surface not in PUBLIC_SURFACES:
+        raise ValueError(f"{task_path}: unsupported public_surface={public_surface!r}")
+    if not variable_axes:
+        raise ValueError(f"{task_path}: v3 pack metadata requires variable_axes")
+    if single_variable and len(variable_axes) != 1:
+        raise ValueError(f"{task_path}: single_variable pack must declare exactly one variable axis")
+    if public_surface != "audit_only" and evidence_tier == "audit_only":
+        raise ValueError(f"{task_path}: audit_only evidence_tier requires public_surface=audit_only")
+    if plan_source_default:
+        normalize_plan_source(plan_source_default)
