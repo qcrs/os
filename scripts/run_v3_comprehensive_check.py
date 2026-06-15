@@ -23,6 +23,7 @@ V3_PACKS = (
     "memory_reuse_v3",
     "memory_policy_controlled_v3",
     "planner_support_v3",
+    "typed_state_consumer_sensitivity_v3",
 )
 
 
@@ -74,7 +75,7 @@ def main() -> None:
                     "-q",
                     "tests/test_smoke.py",
                     "-k",
-                    "v3 or memory_policy_controlled or typed_state_mechanism or external_text_baseline or typed_state_authenticity or memory_dual_mode_fairness",
+                    "v3 or memory_policy_controlled or typed_state_mechanism or external_text_baseline or typed_state_authenticity or memory_dual_mode_fairness or typed_state_consumer_sensitivity",
                 ],
             )
         )

@@ -139,6 +139,8 @@ def _strip_text_whole_lane_evidence_text(value: str) -> str:
         upper = line.strip().upper()
         if upper.startswith("BENCHMARK_NOTE "):
             continue
+        if upper.startswith("MEMORY_ASSIST_HINT "):
+            continue
         filtered_lines.append(line)
     return "\n".join(filtered_lines).strip()
 
@@ -687,6 +689,16 @@ class RetrieverAgent(BaseAgent):
         elif transfer_strategy == "inline_text_handoff":
             pass
         elif transfer_strategy == "state_packet_minimal":
+            override_route = str(
+                getattr(getattr(ctx, "task", None), "audit_decision_packet_override_route", "")
+            ).strip()
+            override_tool_name = str(
+                getattr(getattr(ctx, "task", None), "audit_decision_packet_override_tool_name", "")
+            ).strip()
+            if override_route:
+                decision_packet["route"] = override_route
+            if override_tool_name:
+                decision_packet["tool_name"] = override_tool_name
             decision_packet_ref = ctx.put_executor_decision_state(
                 state_id=f"{ctx.task_id}-{step.step_id}-decision-packet",
                 decision_packet=decision_packet,
@@ -726,6 +738,8 @@ class RetrieverAgent(BaseAgent):
                         "proof_only": True,
                     },
                 )
+            if "EXECUTOR_DECISION_PACKET" in disabled_state_kinds:
+                decision_packet_ref = None
         embedding_ref = None
         if transfer_strategy == "state_ref":
             embedding_ref = ctx.put_embedding_state(
@@ -1029,6 +1043,7 @@ class SummarizerAgent(BaseAgent):
                 "",
             ),
             "feature_query": retrieve_result.payload.get("query", ""),
+            "retrieve_inline_handoff_text": retrieve_result.payload.get("inline_handoff_text", ""),
             "retrieved_doc_ids": retrieve_result.payload.get("retrieved_doc_ids", []),
             "channel_snapshot_hash": retrieve_result.payload.get("channel_snapshot_hash", ""),
             "replay_certificate_hash": retrieve_result.payload.get("replay_certificate_hash", ""),

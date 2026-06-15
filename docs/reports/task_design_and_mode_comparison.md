@@ -4,7 +4,7 @@
 
 ## 一、正式 Pack 地图
 
-当前正式 benchmark surface 只保留 11 个 v3 对象：
+当前 active benchmark surface 只保留 11 个 v3 对象：
 
 | pack | 类型 | task数 | mode | 只回答什么 | 不回答什么 |
 | --- | --- | ---: | --- | --- | --- |
@@ -24,7 +24,7 @@
 
 - `contest_dual_mode_controlled_v3`：formal dual-mode headline。`text` 的正式定义是 `text_strict_pure_lane`。
 - `memory_dual_mode_fairness_v3`：kept pack；只读 dual-mode fairness/object parity，不承担 replay proof。
-- `typed_state_mechanism_v3`：只读 protocol-side `natural_handoff_text` vs `state_packet_minimal` 机制真实性，不读成 dual-mode headline、external text baseline 或 replay。
+- `typed_state_mechanism_v3`：只读 protocol-side `natural_handoff_text` vs `state_packet_minimal` 机制真实性，不读成 dual-mode headline、external text baseline 或 replay efficiency。
 - `external_text_baseline_audit_v3`：只读独立 external text baseline 审计，不并入当前正式 headline。
 - `text_definition_audit_v3`：只读 protocol-side `inline_text_handoff` 的 executor boundary，不读成 formal contest pure-text headline。
 - `typed_state_authenticity_v3`：legacy compatibility only；正式机制 claim 优先读 `typed_state_mechanism_v3`。

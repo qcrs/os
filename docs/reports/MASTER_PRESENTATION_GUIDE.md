@@ -48,7 +48,7 @@ external text审计   ⚠️ audit   external_text_baseline_audit_v3   external 
 
 ### 第1步：定义
 
-> StateBus 是四个 Agent（Planner/Retriever/Executor/Summarizer）通过两种模式协作的运行时。text 模拟传统自然语言通信，protocol 用结构化协议通信。同一个任务各跑一遍，控制所有变量，只让通信格式不同——对比开销差异。
+> StateBus 是四个 Agent（Planner/Retriever/Executor/Summarizer）通过两种模式协作的运行时。当前 formal dual-mode surface 比较的是 `text_strict_pure_lane` vs `state_packet_minimal` 这两个受控 mainline handoff object；它不是 external traditional pure-text baseline，也不是单一通信载体变量对照。
 
 ### 第2步：架构
 

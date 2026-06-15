@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterator
 from agents.sample_agents import build_sample_agents_with_executor
 from memory.store import (
     DEFAULT_EMBEDDING_MODEL_PATH,
+    DeterministicEmbeddingProvider,
     EmbeddingProvider,
     SentenceTransformerEmbeddingProvider,
 )
@@ -40,6 +41,8 @@ from tasks.sample_tasks import (
     SampleTask,
     load_task_set_bundle,
 )
+
+API_SMOKE_MINIMAL_TASK_SET = Path("tasks/api_smoke_minimal_v1.yaml")
 
 METRIC_FIELDS = (
     "message_count",
@@ -259,8 +262,8 @@ WHOLE_LANE_TEXT_HIDDEN_FIELD_MARKERS = (
     "Hint docs:",
     "Hint route:",
     "Hint tool:",
-    "BENCHMARK_NOTE ",
     "MEMORY_ASSIST_HINT ",
+    "BENCHMARK_NOTE ",
 )
 
 
@@ -1206,6 +1209,12 @@ def _empty_mechanism_audit_summary() -> dict[str, object]:
         "observed_task_runs": 0,
         "disabled_kind_variants": {},
         "slimming_variants": {},
+        "typed_state_consumer_sensitivity_v3": {
+            "missing_decision_failure_rate": 0.0,
+            "wrong_decision_misroute_rate": 0.0,
+            "wrong_decision_mistool_rate": 0.0,
+            "rich_helper_disable_impact_summary": {},
+        },
     }
 
 
@@ -1349,6 +1358,10 @@ def _memory_replay_evidence_gate(
         for row in mode_rows:
             expected_mode = str(row.get("expected_reuse_mode", "")).strip()
             if expected_mode not in {"skip_execute", "skip_retrieve_execute"}:
+                continue
+            if str(row.get("status", "")).strip() != "completed":
+                failing.append(str(row.get("task_id", "")))
+                expected_rows += 1
                 continue
             expected_rows += 1
             reuse = row.get("reuse", {})
@@ -1575,6 +1588,17 @@ def _task_mechanism_variant(row: dict[str, object]) -> str:
         if str(value).strip()
     }
     if strategy == "state_packet_minimal":
+        if disabled == {"EXECUTOR_DECISION_PACKET"}:
+            return "disable_executor_decision_packet"
+        if str(row.get("task_id", "")).strip().endswith("wrong-decision-001"):
+            return "wrong_executor_decision_packet"
+        retrieve = row.get("results", {}).get("retrieve", {}) if isinstance(row.get("results"), dict) else {}
+        retrieve_payload = retrieve.get("payload", {}) if isinstance(retrieve, dict) else {}
+        if isinstance(retrieve_payload, dict) and (
+            str(retrieve_payload.get("audit_decision_packet_override_route", "")).strip()
+            or str(retrieve_payload.get("audit_decision_packet_override_tool_name", "")).strip()
+        ):
+            return "wrong_executor_decision_packet"
         return "state_packet_minimal"
     if strategy == "channel_store_hashref":
         if handoff_profile == "protocol_full_rich_audit":
@@ -1595,6 +1619,18 @@ def _task_mechanism_variant(row: dict[str, object]) -> str:
         if len(disabled) == 1 and "FEATURE_BUNDLE" in disabled:
             return f"disable_{next(iter(disabled)).lower()}"
     return ""
+
+
+def _is_expected_negative_control_failure(row: dict[str, object], *, pack_type: str) -> bool:
+    if str(row.get("status", "")).strip() != "failed":
+        return False
+    if pack_type != "typed_state_consumer_sensitivity_v3":
+        return False
+    variant = _task_mechanism_variant(row)
+    if variant != "disable_executor_decision_packet":
+        return False
+    error_text = str(row.get("error", ""))
+    return "missing required input kinds" in error_text and "EXECUTOR_DECISION_PACKET" in error_text
 
 
 def _mechanism_variant_summary(rows: list[dict[str, object]], *, expected_kind: str | None = None) -> dict[str, object]:
@@ -1682,6 +1718,8 @@ def _summarize_mechanism_audit_rows(rows: list[dict[str, object]]) -> dict[str, 
         "disable_tool_candidate_set": "TOOL_CANDIDATE_SET",
         "disable_ranked_evidence_bundle": "RANKED_EVIDENCE_BUNDLE",
         "disable_replay_eligibility_bundle": "REPLAY_ELIGIBILITY_BUNDLE",
+        "disable_executor_decision_packet": "EXECUTOR_DECISION_PACKET",
+        "wrong_executor_decision_packet": "",
     }
     for variant, expected_kind in disabled_expectations.items():
         if variant in grouped:
@@ -1693,10 +1731,80 @@ def _summarize_mechanism_audit_rows(rows: list[dict[str, object]]) -> dict[str, 
     for variant in ("state_packet_minimal", "feature_bundle_only", "full_rich_audit"):
         if variant in grouped:
             slimming_variants[variant] = _mechanism_variant_summary(grouped[variant])
+    consumer_summary = _summarize_typed_state_consumer_sensitivity_rows(mechanism_rows)
     return {
         "observed_task_runs": len(mechanism_rows),
         "disabled_kind_variants": disabled_kind_variants,
         "slimming_variants": slimming_variants,
+        "typed_state_consumer_sensitivity_v3": consumer_summary,
+    }
+
+
+def _summarize_typed_state_consumer_sensitivity_rows(
+    rows: list[dict[str, object]]
+) -> dict[str, object]:
+    missing_rows = [
+        row for row in rows if _task_mechanism_variant(row) == "disable_executor_decision_packet"
+    ]
+    wrong_rows = [
+        row for row in rows if _task_mechanism_variant(row) == "wrong_executor_decision_packet"
+    ]
+    helper_variants = {
+        "disable_channel_snapshot",
+        "disable_tool_candidate_set",
+        "disable_ranked_evidence_bundle",
+        "disable_replay_eligibility_bundle",
+    }
+    helper_rows = [row for row in rows if _task_mechanism_variant(row) in helper_variants]
+
+    def _artifact_field_matched(row: dict[str, object], field: str) -> bool:
+        audit = row.get("artifact_misfire")
+        if not isinstance(audit, dict):
+            audit = _build_artifact_misfire(row)
+        fields = audit.get("fields", {}) if isinstance(audit, dict) else {}
+        field_payload = fields.get(field, {}) if isinstance(fields, dict) else {}
+        return bool(field_payload.get("matched")) if isinstance(field_payload, dict) else False
+
+    helper_summary: dict[str, object] = {}
+    for variant in sorted(helper_variants):
+        variant_rows = [row for row in helper_rows if _task_mechanism_variant(row) == variant]
+        if not variant_rows:
+            continue
+        helper_summary[variant] = {
+            "task_count": len(variant_rows),
+            "failure_rate": mean(
+                1.0 if str(row.get("status", "")).strip() != "completed" else 0.0
+                for row in variant_rows
+            ),
+            "route_misfire_rate": mean(
+                0.0 if _artifact_field_matched(row, "route") else 1.0
+                for row in variant_rows
+            ),
+            "tool_misfire_rate": mean(
+                0.0 if _artifact_field_matched(row, "tool_name") else 1.0
+                for row in variant_rows
+            ),
+        }
+    return {
+        "missing_decision_failure_rate": (
+            mean(
+                1.0 if str(row.get("status", "")).strip() != "completed" else 0.0
+                for row in missing_rows
+            )
+            if missing_rows
+            else 0.0
+        ),
+        "wrong_decision_misroute_rate": (
+            mean(0.0 if _artifact_field_matched(row, "route") else 1.0 for row in wrong_rows)
+            if wrong_rows
+            else 0.0
+        ),
+        "wrong_decision_mistool_rate": (
+            mean(0.0 if _artifact_field_matched(row, "tool_name") else 1.0 for row in wrong_rows)
+            if wrong_rows
+            else 0.0
+        ),
+        "rich_helper_disable_impact_summary": helper_summary,
     }
 
 
@@ -1936,6 +2044,7 @@ async def _run_mode_once(
     run_status = "completed"
     run_error: str | None = None
     for task_index, task in enumerate(ordered_tasks, start=1):
+        stop_after_task = False
         ctx = Orchestrator.create_context(
             mode=mode,
             task_id=task.task_id,
@@ -2289,10 +2398,8 @@ async def _run_mode_once(
                         "task_ms": ctx.metrics.task_ms,
                     }
                 )
-            task_runs.append(task_payload)
-            ctx.memory_store.close()
             if not continue_on_task_failure:
-                break
+                stop_after_task = True
         finally:
             if not ctx.memory_store.conn is None:
                 try:
@@ -2300,6 +2407,8 @@ async def _run_mode_once(
                 except Exception:
                     pass
         task_runs.append(task_payload)
+        if stop_after_task:
+            break
 
     _annotate_artifact_misfires(task_runs)
     _annotate_reuse_effects(task_runs, mode)
@@ -2635,7 +2744,7 @@ def _aggregate_message_breakdown(runs: list[dict[str, object]]) -> list[dict[str
     return rows
 
 
-def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
+def _aggregate_mode_runs(runs: list[dict[str, object]], *, pack_type: str = "") -> dict[str, object]:
     completed_runs = [run for run in runs if run["status"] == "completed"]
     usable_runs = [run for run in runs if run.get("tasks")]
     failures = [
@@ -2646,11 +2755,36 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
         for run in runs
         if run["status"] != "completed"
     ]
+    expected_negative_control_failures = [
+        {
+            "task_id": str(task_run.get("task_id", "")),
+            "error": str(task_run.get("error", "")),
+            "audit_disable_state_kinds": list(task_run.get("audit_disable_state_kinds", [])),
+        }
+        for run in usable_runs
+        for task_run in run["tasks"]
+        if _is_expected_negative_control_failure(task_run, pack_type=pack_type)
+    ]
+    unexpected_task_failures = [
+        {
+            "task_id": str(task_run.get("task_id", "")),
+            "error": str(task_run.get("error", "")),
+            "audit_disable_state_kinds": list(task_run.get("audit_disable_state_kinds", [])),
+        }
+        for run in usable_runs
+        for task_run in run["tasks"]
+        if str(task_run.get("status", "")).strip() == "failed"
+        and not _is_expected_negative_control_failure(task_run, pack_type=pack_type)
+    ]
     if not usable_runs:
         return {
             "run_count": 0,
             "failure_count": len(failures),
             "failures": failures,
+            "expected_negative_control_failure_count": 0,
+            "unexpected_task_failure_count": 0,
+            "expected_negative_control_failures": [],
+            "unexpected_task_failures": [],
             "aggregate": _combine_setup_and_steady(_zero_counter_row(), _zero_metric_row()),
             "setup": _zero_counter_row(),
             "steady_state": _zero_metric_row(),
@@ -2769,8 +2903,12 @@ def _aggregate_mode_runs(runs: list[dict[str, object]]) -> dict[str, object]:
     )
     return {
         "run_count": len(completed_runs),
-        "failure_count": len(failures),
+        "failure_count": len(failures) + len(unexpected_task_failures),
         "failures": failures,
+        "expected_negative_control_failure_count": len(expected_negative_control_failures),
+        "unexpected_task_failure_count": len(unexpected_task_failures),
+        "expected_negative_control_failures": expected_negative_control_failures,
+        "unexpected_task_failures": unexpected_task_failures,
         "aggregate": aggregate,
         "setup": setup,
         "steady_state": steady_state,
@@ -3057,7 +3195,10 @@ def _build_result(
     engine: str,
     mode_runs: dict[str, list[dict[str, object]]],
 ) -> dict[str, object]:
-    summary = {mode: _aggregate_mode_runs(runs) for mode, runs in mode_runs.items()}
+    pack_type = str(task_set_metadata.get("pack_type", "ad_hoc"))
+    summary = {
+        mode: _aggregate_mode_runs(runs, pack_type=pack_type) for mode, runs in mode_runs.items()
+    }
     task_rows_by_mode = {
         mode: [
             task_row
@@ -3097,19 +3238,32 @@ def _build_result(
         pack_type=str(task_set_metadata.get("pack_type", "ad_hoc")),
         task_rows_by_mode=task_rows_by_mode,
     )
-    if float(text_guard_audit.get("whole_lane_text_guard_pass_rate", 0.0)) < 1.0:
-        withheld_reasons.append("whole_lane_text_guard_incomplete")
-    if float(text_guard_audit.get("hidden_field_leak_rate", 0.0)) > 0.0:
-        withheld_reasons.append("text_hidden_field_leak_detected")
-    if float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) > 0.0:
-        withheld_reasons.append("text_summarizer_typed_visibility_detected")
-    pack_type = str(task_set_metadata.get("pack_type", "ad_hoc"))
+    text_task_rows = task_rows_by_mode.get("text", [])
+    has_text_guard_observations = any(
+        isinstance(row.get("whole_lane_text_guard"), dict)
+        and bool(row.get("whole_lane_text_guard", {}).get("enabled"))
+        or isinstance(row.get("inline_text_boundary_guard"), dict)
+        and bool(row.get("inline_text_boundary_guard", {}).get("enabled"))
+        for row in text_task_rows
+    )
+    if text_task_rows or has_text_guard_observations:
+        if float(text_guard_audit.get("whole_lane_text_guard_pass_rate", 0.0)) < 1.0:
+            withheld_reasons.append("whole_lane_text_guard_incomplete")
+        if float(text_guard_audit.get("hidden_field_leak_rate", 0.0)) > 0.0:
+            withheld_reasons.append("text_hidden_field_leak_detected")
+        if float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) > 0.0:
+            withheld_reasons.append("text_summarizer_typed_visibility_detected")
     contest_coverage_gate = _contest_formal_coverage_gate(tasks, repeat)
     if pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}:
         if float(protocol_transfer_truth.get("typed_executor_minimal_expected_consumption_rate", 0.0)) <= 0.0:
             withheld_reasons.append("typed_state_not_consumed")
         if float(protocol_transfer_truth.get("executor_unexpected_kind_seen_rate", 0.0)) > 0.0:
             withheld_reasons.append("typed_state_unexpected_executor_kind_seen")
+    if pack_type == "memory_dual_mode_fairness_v3":
+        if bool(memory_replay_evidence_gate.get("applicable")):
+            withheld_reasons = [
+                reason for reason in withheld_reasons if reason != "memory_replay_expectation_failed"
+            ]
     if pack_type == "typed_state_full_rich_audit_v3":
         if float(protocol_transfer_truth.get("typed_executor_full_rich_audit_consumption_rate", 0.0)) <= 0.0:
             withheld_reasons.append("full_rich_audit_state_not_consumed")
@@ -3149,6 +3303,9 @@ def _build_result(
             check = {
                 "run_count": int(mode_summary.get("run_count", 0)),
                 "failure_count": int(mode_summary.get("failure_count", 0)),
+                "expected_negative_control_failure_count": int(
+                    mode_summary.get("expected_negative_control_failure_count", 0)
+                ),
                 "message_count_mean": float(mode_stability.get("message_count", {}).get("mean", 0.0)),
                 "control_bytes_mean": float(mode_stability.get("control_bytes", {}).get("mean", 0.0)),
                 "state_transfer_count_mean": float(mode_stability.get("state_transfer_count", {}).get("mean", 0.0)),
@@ -3248,6 +3405,7 @@ def _build_result(
             "task_set_single_variable": bool(task_set_metadata.get("single_variable", False)),
             "task_set_variable_axes": list(task_set_metadata.get("variable_axes", [])),
             "task_set_public_surface": str(task_set_metadata.get("public_surface", "")),
+            "task_set_evidence_tier": str(task_set_metadata.get("evidence_tier", "")).strip(),
             "support_evidence_only": bool(task_set_metadata.get("support_only", False)),
             "audit_evidence_only": bool(task_set_metadata.get("audit_only", False)),
             "formal_secondary_evidence": bool(
@@ -3357,6 +3515,9 @@ async def run_benchmark(
         "support_only": task_bundle.metadata.support_only,
         "audit_only": task_bundle.metadata.audit_only,
         "formal_secondary": task_bundle.metadata.formal_secondary,
+        "evidence_tier": task_bundle.metadata.evidence_tier,
+        "benchmark_version": task_bundle.metadata.benchmark_version,
+        "historical_pack_type": task_bundle.metadata.historical_pack_type,
     }
     active_embedder = embedder or SentenceTransformerEmbeddingProvider(embedder_model_path)
     active_llm = llm_client or build_llm_client(llm_config)
@@ -3392,7 +3553,10 @@ async def run_benchmark(
                             statepool_config=active_statepool_config,
                             executor_transport=executor_transport,
                             executor_socket_path=active_socket_path,
-                            continue_on_task_failure=task_bundle.metadata.audit_only,
+                            continue_on_task_failure=(
+                                task_bundle.metadata.audit_only
+                                or task_bundle.metadata.formal_secondary
+                            ),
                             progress_callback=progress_callback,
                         )
                     )
@@ -4110,7 +4274,7 @@ def _append_pack_contract_section(
             "",
             f"- {contract}",
             "",
-            "## Single Variable",
+            "## Variable Surface",
             "",
             f"- {single_variable}",
         ]
@@ -4457,8 +4621,8 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                     "",
                     "## Formal Stability Gate",
                     "",
-                    "| mode | required_repeat | run_count | message_count_mean | state_transfer_count_mean | memory_hit_rate_mean | task_ms_mean | failure_count | passed |",
-                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+                    "| mode | required_repeat | run_count | message_count_mean | state_transfer_count_mean | memory_hit_rate_mean | task_ms_mean | failure_count | expected_negative_control_failure_count | passed |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
                 ]
             )
             for mode_name in ("text", "protocol"):
@@ -4469,7 +4633,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                     f"| {mode_name} | {int(stability_gate.get('required_repeat', 10))} | {int(check.get('run_count', 0))} | "
                     f"{float(check.get('message_count_mean', 0.0)):.2f} | {float(check.get('state_transfer_count_mean', 0.0)):.2f} | "
                     f"{float(check.get('memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
-                    f"{int(check.get('failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
+                    f"{int(check.get('failure_count', 0))} | {int(check.get('expected_negative_control_failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
                 )
         _append_headline_claim_sections(lines, result=result, summary=result["summary"])
         _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
@@ -4643,6 +4807,67 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "",
                 "- Read this pack only for minimal typed-state authenticity: executor consumption of `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET`.",
                 "- Do not collapse this mechanism proof into carrier efficiency, external text baseline fairness, feature-bundle richness, or replay proof.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "typed_state_consumer_sensitivity_v3":
+        consumer = {}
+        if isinstance(protocol_mechanism_audit, dict):
+            consumer = dict(protocol_mechanism_audit.get("typed_state_consumer_sensitivity_v3", {}) or {})
+        _append_pack_contract_section(
+            lines,
+            contract="formal-secondary v3 typed-state consumer sensitivity pack; keep protocol mode fixed and test whether the minimal EXECUTOR_DECISION_PACKET is really consumed by destructive controls.",
+            single_variable="baseline vs missing/wrong EXECUTOR_DECISION_PACKET plus full-rich helper visibility rows across the contest families.",
+        )
+        lines.extend(
+            [
+                "",
+                "## Typed State Consumer Sensitivity V3",
+                "",
+                "- Claim released: the minimal packet is produced, passed, and consumed by the protocol executor.",
+                "- Claim released: missing or wrong minimal packet degrades behavior through failure or route/tool misfire.",
+                "- Expected negative-control failures are reported separately from unexpected task failures.",
+                "- Stopline: rich helper objects are support/audit visibility only and are not the mainline mechanism claim.",
+                "",
+                "| metric | value |",
+                "| --- | ---: |",
+                f"| missing_decision_failure_rate | {float(consumer.get('missing_decision_failure_rate', 0.0)):.2f} |",
+                f"| wrong_decision_misroute_rate | {float(consumer.get('wrong_decision_misroute_rate', 0.0)):.2f} |",
+                f"| wrong_decision_mistool_rate | {float(consumer.get('wrong_decision_mistool_rate', 0.0)):.2f} |",
+                f"| expected_negative_control_failure_count | {int(protocol_summary.get('expected_negative_control_failure_count', 0))} |",
+                f"| unexpected_task_failure_count | {int(protocol_summary.get('unexpected_task_failure_count', 0))} |",
+            ]
+        )
+        helper_summary = consumer.get("rich_helper_disable_impact_summary", {})
+        if isinstance(helper_summary, dict) and helper_summary:
+            lines.extend(
+                [
+                    "",
+                    "## Rich Helper Disable Impact",
+                    "",
+                    "| variant | task_count | failure_rate | route_misfire_rate | tool_misfire_rate |",
+                    "| --- | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for variant_name in sorted(helper_summary):
+                row = helper_summary.get(variant_name, {})
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"| {variant_name} | {int(row.get('task_count', 0))} | "
+                    f"{float(row.get('failure_rate', 0.0)):.2f} | "
+                    f"{float(row.get('route_misfire_rate', 0.0)):.2f} | "
+                    f"{float(row.get('tool_misfire_rate', 0.0)):.2f} |"
+                )
+        _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack is formal-secondary support, not the contest dual-mode headline.",
+                "- Do not promote full-rich helper objects into the production mainline mechanism claim.",
             ]
         )
         return "\n".join(lines) + "\n"
@@ -5074,13 +5299,13 @@ def _build_report(result: dict[str, object]) -> str:
         lines.append(
             f"| {mode} | {setup_control:.2f} | {steady_control:.2f} | {total_control:.2f} |"
         )
-    lines.extend(
-        [
-            "",
-            "## Stability Summary",
-            "",
-            "| mode | runs | control_bytes_mean | steady_state_control_bytes_mean | setup_control_bytes_mean | llm_total_tokens_mean | task_ms_mean | expectation_match_rate | failure_count |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        lines.extend(
+            [
+                "",
+                "## Stability Summary",
+                "",
+            "| mode | runs | control_bytes_mean | steady_state_control_bytes_mean | setup_control_bytes_mean | llm_total_tokens_mean | task_ms_mean | expectation_match_rate | failure_count | expected_negative_control_failure_count |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for mode in available_modes:
@@ -5091,7 +5316,7 @@ def _build_report(result: dict[str, object]) -> str:
             f"{stability['steady_state_control_bytes']['mean']:.2f} | "
             f"{stability['setup_control_bytes']['mean']:.2f} | {stability['llm_total_tokens']['mean']:.2f} | "
             f"{stability['task_ms']['mean']:.2f} | {aggregate['expectation_match_rate']:.2f} | "
-            f"{summary[mode]['failure_count']} |"
+            f"{summary[mode]['failure_count']} | {int(summary[mode].get('expected_negative_control_failure_count', 0))} |"
         )
     lines.extend(
         [
@@ -5820,11 +6045,13 @@ def _default_out_dir() -> str:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the StateBus benchmark.")
     parser.add_argument("--task-set", default=str(DEFAULT_BENCHMARK_TASK_SET))
+    parser.add_argument("--api-smoke", action="store_true", help="Run the minimal API smoke pack.")
     parser.add_argument("--modes", default="text,protocol")
     parser.add_argument("--repeat", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", default=None)
     parser.add_argument("--embedding-model", default=str(DEFAULT_EMBEDDING_MODEL_PATH))
+    parser.add_argument("--embedding-mode", choices=("sentence_transformer", "deterministic"), default="sentence_transformer")
     parser.add_argument("--llm-config", default=None)
     parser.add_argument("--llm-mode", choices=("deterministic", "api"), default=None)
     parser.add_argument("--llm-base-url", default=None)
@@ -5841,6 +6068,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
+    if args.api_smoke:
+        args.task_set = str(API_SMOKE_MINIMAL_TASK_SET)
+        if args.repeat == 10:
+            args.repeat = 1
     modes = tuple(part.strip() for part in args.modes.split(",") if part.strip())
     llm_config = LLMConfig.from_runtime(args.llm_config)
     if args.llm_mode is not None:
@@ -5867,6 +6098,7 @@ def main() -> None:
             repeat=args.repeat,
             seed=args.seed,
             out_dir=out_dir,
+            embedder=DeterministicEmbeddingProvider() if args.embedding_mode == "deterministic" else None,
             embedder_model_path=args.embedding_model,
             llm_config=llm_config,
             statepool_config=statepool_config,

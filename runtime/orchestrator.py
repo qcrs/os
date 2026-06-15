@@ -1146,7 +1146,7 @@ class Orchestrator:
                 execute_step,
                 ctx,
                 result_overrides={"retrieve": retrieve_result},
-                persist=False,
+                persist=True,
             )
             try:
                 summarize_step = self._find_step(plan, "summarize")
@@ -1161,7 +1161,7 @@ class Orchestrator:
                         "retrieve": retrieve_result,
                         "execute": execute_result,
                     },
-                    persist=False,
+                    persist=True,
                 )
             hit.skipped_step_ids = ["retrieve", "execute"]
             ctx.pruned_step_ids = ["retrieve", "execute"]
@@ -1200,6 +1200,13 @@ class Orchestrator:
                 result = self._build_skip_execute_result(hit=hit, execute_step=execute_step, ctx=ctx)
             except ValueError:
                 continue
+            self._prepare_step_input_refs(
+                plan,
+                execute_step,
+                ctx,
+                result_overrides={"retrieve": retrieve_result},
+                persist=True,
+            )
             try:
                 summarize_step = self._find_step(plan, "summarize")
             except KeyError:
@@ -1210,7 +1217,7 @@ class Orchestrator:
                     summarize_step,
                     ctx,
                     result_overrides={"execute": result},
-                    persist=False,
+                    persist=True,
                 )
             hit.skipped_step_ids = ["execute"]
             ctx.pruned_step_ids = ["execute"]
@@ -1817,6 +1824,11 @@ class Orchestrator:
             output_state_refs=retrieve_refs,
             payload={
                 "query": retrieve_step.params.get("query", ""),
+                "inline_handoff_text": str(
+                    hit.metadata.get("retrieve_inline_handoff_text", "")
+                    or hit.metadata.get("inline_handoff_text", "")
+                    or ""
+                ).strip(),
                 "memory_hits": [hit.memory_id],
                 "memory_assist_ids": [hit.memory_id],
                 "reused_memory": True,

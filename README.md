@@ -122,7 +122,7 @@ benchmark 运行主入口在：
   - 当前正式 dual-mode headline
   - 同任务双模式对照：`text_strict_pure_lane` vs `state_packet_minimal`
 
-v3 deterministic/local 综合检查入口会覆盖 11 个 active v3 pack；其中重点支持入口包括：
+v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其中重点支持入口包括：
 
 - `memory_dual_mode_fairness_v3`
   - dual-mode fairness/object-parity surface
@@ -133,6 +133,9 @@ v3 deterministic/local 综合检查入口会覆盖 11 个 active v3 pack；其�
 - `memory_policy_controlled_v3`
   - protocol-only memory policy attribution surface
   - 固定 `mode=protocol` 与 `transfer_strategy=state_packet_minimal`，只改变 `runtime_reuse_contract`
+- `typed_state_consumer_sensitivity_v3`
+  - formal-secondary typed-state consumer sensitivity pack
+  - 固定 `mode=protocol`，验证 minimal `EXECUTOR_DECISION_PACKET` 被消费，且缺失/错误 packet 会导致 destructive-control 降级
 
 任务与 pack 定义在：
 
@@ -152,7 +155,7 @@ v3 deterministic/local 综合检查入口会覆盖 11 个 active v3 pack；其�
 
 这些历史报告保留了 v1/v2 pack 名称、旧任务数或旧运行包数据时，只能作为背景材料；当前 v3 formal 结论以 active v3 pack 的 manifest/report/gate 为准。
 
-当前 active benchmark surface 使用 11 个 v3 pack：
+当前 active benchmark surface 使用 12 个 v3 pack：
 
 - `contest_dual_mode_controlled_v3`
 - `memory_dual_mode_fairness_v3`
@@ -165,10 +168,13 @@ v3 deterministic/local 综合检查入口会覆盖 11 个 active v3 pack；其�
 - `memory_reuse_v3`
 - `memory_policy_controlled_v3`
 - `planner_support_v3`
+- `typed_state_consumer_sensitivity_v3`
 
 读法边界：
 
-- `contest_dual_mode_controlled_v3` 是当前正式双模式 headline。`text` 的正式定义是 `text_strict_pure_lane`。
+- `contest_dual_mode_controlled_v3` 是当前正式双模式 headline。`text` 的正式定义是 `text_strict_pure_lane`，读法固定为 `text_strict_pure_lane` vs `state_packet_minimal` 这组受控 mainline handoff object。
+- `text_strict_pure_lane` 仍是 StateBus runtime 内部的 strict text lane：executor 不接 typed state ref，但仍复用同一套 lexical route/tool helper path 与 playbook executor。
+- `text_whole_lane` 是内部 whole-lane text audit object；两者都不是 external traditional pure-text multi-agent baseline。
 - `memory_dual_mode_fairness_v3` 是保留的 dual-mode fairness/object-parity surface；不承担 replay proof。
 - `typed_state_mechanism_v3` 只回答 `natural_handoff_text` vs `state_packet_minimal(DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET)` 是否真实生产、传递、消费；不读成 dual-mode headline，也不读成 replay 结论。
 - `external_text_baseline_audit_v3` 是独立 external text baseline audit surface；先做 audit-only，不并入 contest headline 或 typed-state 机制 claim。
@@ -176,11 +182,15 @@ v3 deterministic/local 综合检查入口会覆盖 11 个 active v3 pack；其�
 - `typed_state_authenticity_v3` 只保留 legacy compatibility surface；正式机制 claim 优先读 `typed_state_mechanism_v3`。
 - `typed_state_full_rich_audit_v3` 只保留 full-rich support/audit，不进 formal headline。
 - `carrier_microbench_v3` 是 engineering audit only，不读成 “纯文本 vs structured” 正式 headline。
-- `memory_policy_controlled_v3` 负责 replay proof / memory policy 单变量归因；`memory_reuse_v3` 保留 protocol-only replay proof surface。
+- `memory_policy_controlled_v3` 负责 protocol-only replay policy 归因；`memory_reuse_v3` 保留 protocol-only replay proof surface。
+- `typed_state_consumer_sensitivity_v3` 是 formal-secondary support surface，只说明 minimal `EXECUTOR_DECISION_PACKET` 被生产、传递、消费，且缺失/错误 packet 会导致 destructive-control 降级；不升格为主 headline。
+- `open_system_comparison_v1` 是独立 open engineering comparison surface，由 `eval/open_runner.py` 生成，不并入 `eval.runner` 的 formal v3 headline。
 
 当前脚本入口：
 
 - `scripts/run_v3_comprehensive_check.py` 是 v3 deterministic/local 综合检查入口。
+- `scripts/run_v3_next_stage_repeat3_suite.py` 是下一阶段 post-gate repeat suite 入口；它会先跑 `memory_dual_mode_fairness_v3 repeat=1 deterministic` 和 `typed_state_consumer_sensitivity_v3 repeat=1 deterministic` gate，失败则退出。该入口在 gate 通过前只能读成 smoke-capable launcher，不是 formal repeat evidence 入口。
+- `scripts/nohup_v3_next_stage_repeat3_suite.sh` 是后台启动包装入口，会写入 `PID`、`COMMANDS.md`、`SUMMARY.md` 和 `logs/launcher.log`。
 - `scripts/run_v2_comprehensive_check.py` 和 `scripts/run_v2_api_repeat3_suite.py` 是 archived v2 入口，默认不应作为交付主入口。
 
 当前环境、benchmark 设计与结果边界相关的详细材料在：

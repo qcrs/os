@@ -6,7 +6,7 @@ task_set:
   claim_lanes:
   - state_transfer
   evidence_tier: audit_only
-  benchmark_version: historical_v1
+  benchmark_version: v3
 tasks:
 - task_id: audit-visibility-state-packet-001
   task_group: audit_state_visibility_truth_lane
