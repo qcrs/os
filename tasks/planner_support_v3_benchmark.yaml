@@ -68,6 +68,11 @@ tasks:
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
   handoff_profile: protocol_minimal_state_packet
   summary_contract: actions_plus_evidence
   complexity_bucket: simple
@@ -123,6 +128,11 @@ tasks:
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
   handoff_profile: protocol_minimal_state_packet
   summary_contract: actions_plus_evidence
   complexity_bucket: simple
@@ -508,6 +518,11 @@ tasks:
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
   handoff_profile: protocol_minimal_state_packet
   summary_contract: actions_plus_evidence
   complexity_bucket: simple
@@ -563,6 +578,11 @@ tasks:
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
   handoff_profile: protocol_minimal_state_packet
   summary_contract: actions_plus_evidence
   complexity_bucket: simple
@@ -614,6 +634,11 @@ tasks:
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
   handoff_profile: protocol_minimal_state_packet
   summary_contract: actions_plus_evidence
   complexity_bucket: simple

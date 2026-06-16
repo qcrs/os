@@ -52,6 +52,7 @@ PROTOCOL_SUMMARIZER_TAG = "sb-summary-v1"
 MAX_MEMORY_ASSIST_HINT_CHARS = 160
 MAX_PROTOCOL_SUMMARY_DOC_IDS = 3
 MAX_PROTOCOL_SUMMARY_SIGNALS = 4
+MAX_PLANNER_REPAIR_ATTEMPTS = 2
 ALLOWED_PLANNER_OWNER_AGENTS = ("planner", "retriever", "executor", "summarizer")
 ALLOWED_PLANNER_ACTIONS = (
     "RETRIEVE_EVIDENCE",
@@ -59,6 +60,12 @@ ALLOWED_PLANNER_ACTIONS = (
     "SUMMARIZE_AND_COMMIT",
     "VALIDATE_ROUTE",
 )
+PLANNER_ROLE_BINDINGS: dict[str, tuple[str, str]] = {
+    "retrieve": ("retriever", "RETRIEVE_EVIDENCE"),
+    "validate": ("executor", "VALIDATE_ROUTE"),
+    "execute": ("executor", "EXECUTE_PLAYBOOK"),
+    "summarize": ("summarizer", "SUMMARIZE_AND_COMMIT"),
+}
 CONTEST_REQUIRED_PLANNER_ACTIONS = (
     "RETRIEVE_EVIDENCE",
     "EXECUTE_PLAYBOOK",
@@ -280,11 +287,26 @@ class PlannerAgent(BaseAgent):
             "evidence_text": task.evidence_text,
             "tags": list(task.tags),
             "summary_hint": task.summary_hint,
+            "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
         }
         messages = _planner_messages(planner_input, mode=str(getattr(ctx, "mode", "protocol")))
-        result = await self.llm_client.complete(messages, purpose="planner")
-        ctx.record_llm_result(result, purpose="planner")
-        return _plan_from_llm_output(task, result.text)
+        last_error = ""
+        for attempt in range(MAX_PLANNER_REPAIR_ATTEMPTS + 1):
+            result = await self.llm_client.complete(messages, purpose="planner")
+            ctx.record_llm_result(result, purpose="planner")
+            try:
+                return _plan_from_llm_output(task, result.text)
+            except ValueError as exc:
+                last_error = str(exc)
+                if attempt >= MAX_PLANNER_REPAIR_ATTEMPTS:
+                    raise
+                messages = _planner_repair_messages(
+                    base_messages=messages,
+                    invalid_output=result.text,
+                    validation_error=last_error,
+                    required_plan_semantic_roles=list(task.required_plan_semantic_roles),
+                )
+        raise ValueError(last_error or f"planner failed to produce a valid plan for {task.task_id}")
 
 
 @dataclass
@@ -1494,6 +1516,12 @@ def _summary_from_llm_output(output_text: str) -> dict[str, Any]:
 
 
 def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
+    required_roles = [
+        str(role).strip().lower()
+        for role in payload.get("required_plan_semantic_roles", [])
+        if str(role).strip()
+    ]
+    required_roles_text = ", ".join(required_roles) if required_roles else "retrieve, execute, summarize"
     if mode == "text":
         system_prompt = (
             "You are the StateBus Planner. Output strict JSON only. "
@@ -1502,10 +1530,12 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "Return an executable DAG with 3 to 5 steps. "
             "Allowed owner_agent values: planner, retriever, executor, summarizer. "
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
-            "The plan must include retrieve, execute, and summarize semantics, but step ids and wording do not need to be fixed. "
+            f"The plan must include these semantic roles: {required_roles_text}. "
+            "Step ids and wording do not need to be fixed. "
             "For RETRIEVE_EVIDENCE include query, evidence_text, tags, allow_memory_reuse, and audit_disable_state_kinds in params. "
             "For SUMMARIZE_AND_COMMIT include summary_hint and tags in params. "
             "For EXECUTE_PLAYBOOK params may be {}. "
+            "For VALIDATE_ROUTE params may be {} and it should run before EXECUTE_PLAYBOOK when validate is required. "
             "Do not infer replay eligibility, corpus filters, or tool routes from hidden benchmark hints. "
             "Use unique step_id values and valid depends_on edges only. "
             "Do not add prose or markdown."
@@ -1526,6 +1556,8 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             f"{payload['goal']}\n\n"
             "Search query:\n"
             f"{payload['query']}\n\n"
+            "Required semantic roles:\n"
+            f"{required_roles_text}\n\n"
             "Summary hint:\n"
             f"{payload['summary_hint']}\n\n"
             "Evidence note:\n"
@@ -1536,10 +1568,13 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "You are the StateBus Planner. Output JSON only. "
             "Return either {\"steps\":[...]} or the compact shape {\"r\":{...},\"x\":{},\"s\":{...}}. "
             "If you use steps, emit a 3-5 step executable DAG. "
+            "Every explicit step object must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
             "Allowed owner_agent values: planner, retriever, executor, summarizer. "
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
-            "The plan must cover retrieve, execute, and summarize semantics. "
+            f"The plan must cover these semantic roles: {required_roles_text}. "
             "If you use the compact shape, r must contain q,e,t and optional sid/dep/action/owner/role. s must contain h,t and optional sid/dep/action/owner/role. "
+            "If validate is required, return only the explicit {\"steps\":[...]} form so the validate step is present. "
+            "Do not omit semantic_role on any step. Do not substitute description fields for params or semantic_role. "
             "Do not emit replay labels, corpus filters, or tool-route hints. "
             "No markdown."
         )
@@ -1551,11 +1586,43 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
                 "e": payload["evidence_text"],
                 "h": payload["summary_hint"],
                 "t": list(payload["tags"]),
+                "rr": required_roles,
             },
         )
     return [
         ChatMessage(role="system", content=system_prompt),
         ChatMessage(role="user", content=user_prompt),
+    ]
+
+
+def _planner_repair_messages(
+    *,
+    base_messages: list[ChatMessage],
+    invalid_output: str,
+    validation_error: str,
+    required_plan_semantic_roles: list[str],
+) -> list[ChatMessage]:
+    required_roles = [
+        str(role).strip().lower()
+        for role in required_plan_semantic_roles
+        if str(role).strip()
+    ]
+    required_roles_text = ", ".join(required_roles) if required_roles else "retrieve, execute, summarize"
+    repair_prompt = (
+        "The previous planner output failed contract validation. "
+        f"Validation error: {validation_error}. "
+        "Regenerate the full plan from scratch as JSON only. "
+        "Return exactly one top-level key named steps. "
+        "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
+        f"The plan must cover these semantic roles: {required_roles_text}. "
+        "Do not use the compact r/x/s shape on this retry. "
+        "Do not omit semantic_role. Do not use description-only steps. "
+        "No markdown."
+    )
+    return [
+        *base_messages,
+        ChatMessage(role="assistant", content=invalid_output),
+        ChatMessage(role="user", content=repair_prompt),
     ]
 
 
@@ -1686,14 +1753,12 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
     if not raw_step_id:
         raise ValueError(f"planner step missing step_id: {step!r}")
     normalized_step_aliases = {
-        "1": "retrieve",
-        "2": "execute",
-        "3": "summarize",
         "retrieve": "retrieve",
+        "validate": "validate",
         "execute": "execute",
         "summarize": "summarize",
     }
-    step_id = normalized_step_aliases.get(raw_step_id.lower(), raw_step_id)
+    step_id = raw_step_id.lower() if raw_step_id.lower() in normalized_step_aliases else raw_step_id
     if nested_step_alias:
         step_id = normalized_step_aliases.get(nested_step_alias, nested_step_alias)
     semantic_role = str(
@@ -1707,6 +1772,19 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
         raise ValueError(f"planner step action unsupported: {action!r}")
     if not semantic_role:
         raise ValueError(f"planner step missing semantic_role: {step!r}")
+    binding = PLANNER_ROLE_BINDINGS.get(semantic_role)
+    if binding is None:
+        raise ValueError(f"planner step semantic_role unsupported: {semantic_role!r}")
+    expected_owner_agent, expected_action = binding
+    if owner_agent != expected_owner_agent or action != expected_action:
+        raise ValueError(
+            "planner step binding mismatch: "
+            f"semantic_role={semantic_role!r} requires "
+            f"owner_agent={expected_owner_agent!r} action={expected_action!r}, "
+            f"got owner_agent={owner_agent!r} action={action!r}"
+        )
+    if raw_step_id.isdigit() and semantic_role in normalized_step_aliases:
+        step_id = semantic_role
     raw_params = dict(normalized.get("params", {}) or {})
     params = dict(raw_params)
     if action == "RETRIEVE_EVIDENCE":
@@ -1726,11 +1804,29 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
             "tags": raw_params.get("tags", list(task.tags)),
         }
     raw_depends_on = [str(item) for item in normalized.get("depends_on", []) or []]
-    depends_on = [normalized_step_aliases.get(dep.lower(), dep) for dep in raw_depends_on]
+    role_by_numeric_index = {
+        str(index): role
+        for index, role in enumerate(
+            [item for item in task.required_plan_semantic_roles if item],
+            start=1,
+        )
+    }
+    if not role_by_numeric_index:
+        role_by_numeric_index = {
+            "1": "retrieve",
+            "2": "execute",
+            "3": "summarize",
+        }
+    depends_on = [
+        normalized_step_aliases.get(dep.lower(), role_by_numeric_index.get(dep, dep))
+        for dep in raw_depends_on
+    ]
     if semantic_role == "summarize" and depends_on == ["execute"]:
         depends_on = ["retrieve", "execute"]
     if not depends_on:
         if semantic_role == "execute":
+            depends_on = ["retrieve", "validate"] if "validate" in task.required_plan_semantic_roles else ["retrieve"]
+        elif semantic_role == "validate":
             depends_on = ["retrieve"]
         elif semantic_role == "summarize":
             depends_on = ["retrieve", "execute"]
@@ -1773,9 +1869,9 @@ def _validate_plan_dag(plan_steps: list[PlanStep]) -> None:
 
 
 def _validate_planner_semantic_coverage(task: SampleTask, plan_steps: list[PlanStep]) -> None:
-    del task
     semantic_roles = {str(step.semantic_role or step.step_id).strip().lower() for step in plan_steps}
-    missing = [role for role in ("retrieve", "execute", "summarize") if role not in semantic_roles]
+    required_roles = task.required_plan_semantic_roles or ("retrieve", "execute", "summarize")
+    missing = [role for role in required_roles if role not in semantic_roles]
     if missing:
         raise ValueError(f"planner output missing required semantics: {', '.join(missing)}")
 

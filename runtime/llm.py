@@ -529,15 +529,31 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def parse_text_planner_brief(text: str) -> dict[str, Any]:
+    required_roles_block = _extract_optional_block(
+        text,
+        "Required semantic roles:\n",
+        "\n\nSummary hint:\n",
+    )
+    query_end_marker = (
+        "\n\nRequired semantic roles:\n" if required_roles_block else "\n\nSummary hint:\n"
+    )
+    summary_start_marker = (
+        "Summary hint:\n" if not required_roles_block else "\n\nSummary hint:\n"
+    )
     return {
         "task_id": _extract_line_value(text, "Task ID:"),
         "task_group": _extract_line_value(text, "Task group:"),
         "task_theme": _extract_line_value(text, "Task theme:"),
         "goal": _extract_block(text, "Goal:\n", "\n\nSearch query:\n"),
-        "query": _extract_block(text, "Search query:\n", "\n\nSummary hint:\n"),
-        "summary_hint": _extract_block(text, "Summary hint:\n", "\n\nEvidence note:\n"),
+        "query": _extract_block(text, "Search query:\n", query_end_marker),
+        "summary_hint": _extract_block(
+            text,
+            summary_start_marker,
+            "\n\nEvidence note:\n",
+        ),
         "evidence_text": _extract_after(text, "Evidence note:\n"),
         "tags": _split_csv(_extract_line_value(text, "Tags:")),
+        "required_plan_semantic_roles": _split_csv(required_roles_block),
     }
 
 
@@ -549,10 +565,18 @@ def parse_compact_protocol_planner_brief(text: str) -> dict[str, Any]:
         "evidence_text": str(payload.get("e", "")),
         "summary_hint": str(payload.get("h", "")),
         "tags": [str(tag) for tag in payload.get("t", [])],
+        "required_plan_semantic_roles": [str(role) for role in payload.get("rr", [])],
     }
 
 
 def _requires_validation_step(payload: dict[str, Any]) -> bool:
+    required_roles = {
+        str(role).strip().lower()
+        for role in payload.get("required_plan_semantic_roles", [])
+        if str(role).strip()
+    }
+    if "validate" in required_roles:
+        return True
     joined = " ".join(
         [
             str(payload.get("goal", "")),
@@ -563,6 +587,17 @@ def _requires_validation_step(payload: dict[str, Any]) -> bool:
         ]
     ).lower()
     return "validate route" in joined or "four-step" in joined or "4-step" in joined
+
+
+def _extract_optional_block(text: str, start_marker: str, end_marker: str) -> str:
+    start = text.find(start_marker)
+    if start == -1:
+        return ""
+    start += len(start_marker)
+    end = text.find(end_marker, start)
+    if end == -1:
+        return ""
+    return text[start:end].strip()
 
 
 def parse_text_summarizer_handoff(text: str) -> dict[str, Any]:

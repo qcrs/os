@@ -1667,6 +1667,25 @@ def _is_expected_negative_control_failure(row: dict[str, object], *, pack_type: 
     return "missing required input kinds" in error_text and "EXECUTOR_DECISION_PACKET" in error_text
 
 
+def _is_expected_negative_control_task(
+    task: object,
+    *,
+    pack_type: str,
+) -> bool:
+    if pack_type != "typed_state_consumer_sensitivity_v3":
+        return False
+    audit_disable_state_kinds = [
+        str(value).strip()
+        for value in getattr(task, "audit_disable_state_kinds", [])
+        if str(value).strip()
+    ]
+    if audit_disable_state_kinds == ["EXECUTOR_DECISION_PACKET"]:
+        return True
+    override_route = str(getattr(task, "audit_decision_packet_override_route", "")).strip()
+    override_tool_name = str(getattr(task, "audit_decision_packet_override_tool_name", "")).strip()
+    return bool(override_route and override_tool_name)
+
+
 def _mechanism_variant_summary(rows: list[dict[str, object]], *, expected_kind: str | None = None) -> dict[str, object]:
     if not rows:
         return {
@@ -2277,8 +2296,13 @@ async def _run_mode_once(
                     }
                 )
         except Exception as exc:
-            run_status = "failed"
             run_error = f"{type(exc).__name__}: {exc}"
+            expected_negative_failure = _is_expected_negative_control_task(
+                task,
+                pack_type=str(getattr(getattr(task, "task_set_metadata", None), "pack_type", "")),
+            )
+            if not expected_negative_failure:
+                run_status = "failed"
             actual_reuse_mode = ctx.reuse_mode if ctx.reuse_hit is not None else "none"
             task_payload = {
                 **(
@@ -2391,7 +2415,7 @@ async def _run_mode_once(
                         "task_ms": ctx.metrics.task_ms,
                     }
                 )
-            if not continue_on_task_failure:
+            if not continue_on_task_failure and not expected_negative_failure:
                 stop_after_task = True
         finally:
             if not ctx.memory_store.conn is None:
@@ -2901,7 +2925,7 @@ def _aggregate_mode_runs(runs: list[dict[str, object]], *, pack_type: str = "") 
     )
     return {
         "run_count": len(completed_runs),
-        "run_failure_count": len(failures) + len(unexpected_task_failures),
+        "run_failure_count": len(failures),
         "failure_count": len(failures) + len(unexpected_task_failures),
         "failures": failures,
         "expected_negative_task_failure_count": len(expected_negative_control_failures),

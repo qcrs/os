@@ -560,8 +560,20 @@ def test_planner_support_v3_pack_contract() -> None:
     assert {task.summary_contract for task in bundle.tasks} == {"actions_plus_evidence"}
     deploy_llm = next(task for task in bundle.tasks if task.task_id == "planner-support-deploy-llm-001")
     assert "four-step" in deploy_llm.goal
+    assert deploy_llm.required_plan_semantic_roles == (
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    )
     auth_llm = next(task for task in bundle.tasks if task.task_id == "planner-support-auth-llm-002")
     assert "validate the route before execution" in auth_llm.query
+    assert auth_llm.required_plan_semantic_roles == (
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    )
 
 
 def test_state_transfer_packs_fill_default_route_and_tool_expectations() -> None:
@@ -3720,6 +3732,7 @@ def test_typed_state_consumer_sensitivity_v3_alias_expands_to_5_families_and_rep
     assert result["summary"]["protocol"]["expected_negative_task_failure_count"] > 0
     assert result["summary"]["protocol"]["negative_control_trigger_rate"] > 0.0
     assert result["summary"]["protocol"]["unexpected_task_failure_count"] == 0
+    assert result["summary"]["protocol"]["run_failure_count"] == 0
     assert "disable_channel_snapshot" in consumer["rich_helper_disable_impact_summary"]
     assert "Typed State Consumer Sensitivity V3" in report_text
     assert "formal-secondary support" in report_text
