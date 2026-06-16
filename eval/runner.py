@@ -4147,6 +4147,29 @@ def _report_header_lines(result: dict[str, object]) -> list[str]:
     public_surface = str(manifest.get("task_set_public_surface", "")).strip()
     if public_surface:
         lines.append(f"- Public surface: `{public_surface}`")
+    evidence_tier = str(manifest.get("task_set_evidence_tier", "")).strip()
+    if evidence_tier:
+        lines.append(f"- Evidence tier: `{evidence_tier}`")
+    formal_structure_clean_retrieval = bool(
+        manifest.get("task_set_formal_structure_clean_retrieval", False)
+    )
+    lines.append(
+        f"- Formal structure clean retrieval: `{'yes' if formal_structure_clean_retrieval else 'no'}`"
+    )
+    plan_source_default = str(manifest.get("task_set_plan_source_default", "")).strip()
+    if plan_source_default:
+        lines.append(f"- Plan source default: `{plan_source_default}`")
+    planner_sources = sorted(
+        {
+            str(task.get("planner_source", "")).strip()
+            for mode_runs in result.get("mode_runs", {}).values()
+            for run in mode_runs
+            for task in run.get("tasks", [])
+            if str(task.get("planner_source", "")).strip()
+        }
+    )
+    if planner_sources:
+        lines.append(f"- Observed planner sources: `{', '.join(planner_sources)}`")
     lines.append(
         f"- Single-variable contract: `{'yes' if bool(manifest.get('task_set_single_variable', False)) else 'no'}`"
     )

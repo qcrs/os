@@ -222,6 +222,75 @@ def test_plan_parser_requires_explicit_semantic_role_for_non_compact_steps() -> 
         _plan_from_llm_output(task, output_text)
 
 
+def test_plan_parser_rejects_unsupported_memory_reuse_action() -> None:
+    task = default_task_chain()[0]
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "gather-001",
+                    "semantic_role": "retrieve",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "reuse-002",
+                    "semantic_role": "reuse_check",
+                    "owner_agent": "planner",
+                    "action": "CHECK_MEMORY_REUSE",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["gather-001"],
+                },
+                {
+                    "step_id": "wrap-003",
+                    "semantic_role": "summarize",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["gather-001", "reuse-002"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="unsupported"):
+        _plan_from_llm_output(task, output_text)
+
+
+def test_planner_prompt_does_not_advertise_unsupported_memory_reuse_action() -> None:
+    task = default_task_chain()[0]
+    payload = {
+        "task_id": task.task_id,
+        "task_group": task.task_group,
+        "task_theme": task.task_theme,
+        "tags": list(task.tags),
+        "goal": task.goal,
+        "query": task.query,
+        "summary_hint": task.summary_hint,
+        "evidence_text": task.evidence_text,
+    }
+
+    for mode in ("text", "protocol"):
+        messages = _planner_messages(payload, mode=mode)
+        system_prompt = messages[0].content
+        assert "CHECK_MEMORY_REUSE" not in system_prompt
+        assert "VALIDATE_ROUTE" in system_prompt
+
+
 def test_plan_parser_rejects_missing_required_semantic_coverage() -> None:
     task = default_task_chain()[0]
     output_text = json.dumps(

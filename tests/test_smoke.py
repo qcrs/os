@@ -55,6 +55,7 @@ from runtime.contracts import SchemaValidationError, default_state_contract_regi
 from runtime.langgraph_adapter import StateBusGraphRunner, langgraph_available
 from runtime.llm import DeterministicLLMClient
 from runtime.orchestrator import Orchestrator, RunSession, _route_is_replay_eligible
+from runtime import executor_runtime
 from runtime.uds_transport import request_response
 from runtime.smoke import main
 from runtime.executor_runtime import (
@@ -3020,6 +3021,90 @@ def test_executor_decision_packet_is_replay_compatible_for_state_packet_minimal_
         ctx.session.cleanup()
 
 
+def test_executor_decision_packet_requires_non_empty_route_provenance() -> None:
+    with pytest.raises(ValueError, match="non-empty route_provenance"):
+        executor_runtime._validate_executor_decision_packet(
+            packet={
+                "route": "db_pool_saturation",
+                "tool_name": "tool.db_pool_triage",
+                "route_source": "hint_consensus",
+                "route_confidence": 0.91,
+                "route_provenance": [],
+                "tool_candidates": [
+                    {
+                        "tool_name": "tool.db_pool_triage",
+                        "route": "db_pool_saturation",
+                        "score": 9,
+                        "matched_signals": ["connection pool"],
+                        "matched_tags": ["database"],
+                        "source": "hint_consensus",
+                    }
+                ],
+                "retrieved_doc_ids": ["rr-checkout-incident"],
+                "matched_signals": ["connection pool"],
+                "feature_fresh_evidence_sha256": "b" * 64,
+            }
+        )
+
+
+def test_executor_decision_packet_override_mode_requires_audit_override_provenance() -> None:
+    ctx = Orchestrator.create_context(
+        mode="protocol",
+        task_id="audit-override-contract-001",
+        task_group="typed_state_consumer_sensitivity_checkout",
+        task_theme="contest_release_checkout_regression",
+        state_root=Path(tempfile.mkdtemp(prefix="statebus-audit-override-state-")),
+        memory_db_path=Path(tempfile.mkdtemp(prefix="statebus-audit-override-db-")) / "memory.sqlite3",
+        embedder=DeterministicEmbeddingProvider(),
+        runtime_profile={
+            "transfer_strategy": "state_packet_minimal",
+            "handoff_profile": "protocol_minimal_state_packet",
+        },
+    )
+    try:
+        ref = ctx.put_executor_decision_state(
+            state_id="audit-override-contract-001-decision",
+            decision_packet={
+                "schema": "statebus.executor_decision_packet.v1",
+                "query": "checkout release canary shows slow p95 and queueing",
+                "route": "worker_queue_starvation",
+                "tool_name": "tool.worker_queue_triage",
+                "route_source": "hint_consensus",
+                "route_confidence": 0.62,
+                "route_provenance": ["corpus_metadata", "lexical"],
+                "matched_signals": ["worker backlog"],
+                "matched_tags": ["queue"],
+                "match_score": 7,
+                "tool_candidates": [
+                    {
+                        "tool_name": "tool.worker_queue_triage",
+                        "route": "worker_queue_starvation",
+                        "score": 7,
+                        "matched_signals": ["worker backlog"],
+                        "matched_tags": ["queue"],
+                        "source": "audit_override",
+                    }
+                ],
+                "retrieved_doc_ids": ["rr-billing-incident"],
+                "feature_fresh_evidence_sha256": "b" * 64,
+                "audit_mode": "override_mismatch_abstain",
+            },
+            metadata={
+                "feature_route": "db_pool_saturation",
+                "feature_route_source": "hint_consensus",
+                "feature_route_confidence": 0.91,
+                "feature_fresh_evidence_sha256": "b" * 64,
+                "audit_decision_packet_mode": "override_mismatch_abstain",
+            },
+        )
+        packet = ctx.get_executor_decision_state(ref)
+        with pytest.raises(ValueError, match="audit_override provenance"):
+            executor_runtime._validate_executor_decision_packet(packet=packet, ref=ref)
+    finally:
+        ctx.memory_store.close()
+        ctx.session.cleanup()
+
+
 def test_object_parity_gate_fails_when_text_restore_visibility_is_incompatible() -> None:
     from eval.runner import _object_parity_gate
 
@@ -3372,6 +3457,11 @@ def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     assert result["manifest"]["task_mode_counts"]["protocol"] == 11
     assert result["manifest"]["modes"] == ["protocol"]
     assert "Planner Support V3" in report_text
+    assert "- Public surface: `formal_secondary_planner`" in report_text
+    assert "- Evidence tier: `formal_secondary`" in report_text
+    assert "- Formal structure clean retrieval: `no`" in report_text
+    assert "- Plan source default: `yaml`" in report_text
+    assert "- Observed planner sources: `llm, yaml`" in report_text
     summary = result["summary"]["protocol"]
     assert int(summary["run_failure_count"]) == 0
     assert len(summary["tasks"]) == 11
@@ -3412,6 +3502,20 @@ def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     )
     assert auth_validate_llm["metrics"]["planned_step_count"] == 4
     assert auth_validate_llm["results"]["validate"]["success"] is True
+
+
+def test_contest_headline_and_planner_support_surface_boundaries_are_explicit() -> None:
+    contest = load_task_set_bundle("contest_dual_mode_controlled_v3").metadata
+    planner = load_task_set_bundle("planner_support_v3").metadata
+
+    assert contest.public_surface == "formal_headline"
+    assert contest.plan_source_default == "yaml"
+    assert contest.variable_axes == ("mode", "handoff_object")
+
+    assert planner.public_surface == "formal_secondary_planner"
+    assert planner.evidence_tier == "formal_secondary"
+    assert planner.plan_source_default == "yaml"
+    assert planner.variable_axes == ("plan_source",)
 
 
 def test_contest_release_state_transfer_packs_share_family_case_contract() -> None:
