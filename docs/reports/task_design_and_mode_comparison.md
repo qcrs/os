@@ -4,7 +4,7 @@
 
 ## 一、正式 Pack 地图
 
-当前 active benchmark surface 只保留 11 个 v3 对象：
+当前 active benchmark surface 只保留 12 个 v3 对象：
 
 | pack | 类型 | task数 | mode | 只回答什么 | 不回答什么 |
 | --- | --- | ---: | --- | --- | --- |
@@ -19,6 +19,7 @@
 | `memory_reuse_v3` | formal-secondary | 4 | protocol-only | 固定 state_packet_minimal 后 replay-aware memory reuse 是否真实减少重复工作 | 不回答 text vs protocol |
 | `memory_policy_controlled_v3` | formal-secondary | 4 | protocol-only | 固定 `state_packet_minimal` 后 memory policy 单变量归因 | 不回答 text vs protocol |
 | `planner_support_v3` | formal-secondary | 10 | protocol-only | yaml vs llm plan source 的独立 planner 支撑面 | 不与 medium/state claim 混读；不作为赛题主 headline |
+| `typed_state_consumer_sensitivity_v3` | formal-secondary support | 40 | protocol-only | minimal `EXECUTOR_DECISION_PACKET` 是否被真实消费，且缺包/错包是否触发 destructive-control 降级 | 不升格为 typed-state 机制主 headline |
 
 ## 二、state-transfer 读法边界
 
@@ -32,6 +33,7 @@
 - `carrier_microbench_v3`：只读 minimal packet engineering audit，不读成 formal benchmark headline。
 - `memory_policy_controlled_v3`：只读 protocol + state_packet_minimal 固定后的 memory policy 单变量归因。
 - `planner_support_v3`：只读 planner openness/support，不读成 `text vs protocol`、state-transfer 或 memory-reuse 证据。
+- `typed_state_consumer_sensitivity_v3`：只读 minimal decision packet 的 consumer sensitivity / negative-control support，不与机制主 claim 混读。
 
 ## 三、当前 stopline
 

@@ -311,6 +311,7 @@ class DeterministicLLMClient:
                         "steps": [
                             {
                                 "step_id": "retrieve",
+                                "semantic_role": "retrieve",
                                 "owner_agent": "retriever",
                                 "action": "RETRIEVE_EVIDENCE",
                                 "input_state_refs": [],
@@ -324,6 +325,7 @@ class DeterministicLLMClient:
                             },
                             {
                                 "step_id": "validate",
+                                "semantic_role": "validate",
                                 "owner_agent": "executor",
                                 "action": "VALIDATE_ROUTE",
                                 "input_state_refs": [],
@@ -332,6 +334,7 @@ class DeterministicLLMClient:
                             },
                             {
                                 "step_id": "execute",
+                                "semantic_role": "execute",
                                 "owner_agent": "executor",
                                 "action": "EXECUTE_PLAYBOOK",
                                 "input_state_refs": [],
@@ -340,6 +343,7 @@ class DeterministicLLMClient:
                             },
                             {
                                 "step_id": "summarize",
+                                "semantic_role": "summarize",
                                 "owner_agent": "summarizer",
                                 "action": "SUMMARIZE_AND_COMMIT",
                                 "input_state_refs": [],
@@ -373,6 +377,7 @@ class DeterministicLLMClient:
                 plan_steps = [
                     {
                         "step_id": "retrieve",
+                        "semantic_role": "retrieve",
                         "owner_agent": "retriever",
                         "action": "RETRIEVE_EVIDENCE",
                         "input_state_refs": [],
@@ -389,6 +394,7 @@ class DeterministicLLMClient:
                     plan_steps.append(
                         {
                             "step_id": "validate",
+                            "semantic_role": "validate",
                             "owner_agent": "executor",
                             "action": "VALIDATE_ROUTE",
                             "input_state_refs": [],
@@ -400,6 +406,7 @@ class DeterministicLLMClient:
                     [
                         {
                             "step_id": "execute",
+                            "semantic_role": "execute",
                             "owner_agent": "executor",
                             "action": "EXECUTE_PLAYBOOK",
                             "input_state_refs": [],
@@ -408,6 +415,7 @@ class DeterministicLLMClient:
                         },
                         {
                             "step_id": "summarize",
+                            "semantic_role": "summarize",
                             "owner_agent": "summarizer",
                             "action": "SUMMARIZE_AND_COMMIT",
                             "input_state_refs": [],

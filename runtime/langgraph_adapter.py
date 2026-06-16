@@ -241,7 +241,7 @@ class StateBusGraphRunner:
         if precomputed_skip is not None:
             ctx.record_phase_duration("retrieve", gate_elapsed_ms)
             for result in precomputed_skip:
-                step = _step_by_id(plan, result.step_id)
+                step = _step_by_role_or_id(plan, ctx.semantic_role_for_step(result.step_id) or result.step_id)
                 self.orchestrator.register_step_result(
                     step=step,
                     result=result,
@@ -250,7 +250,7 @@ class StateBusGraphRunner:
                 )
             self._refresh_state_snapshot(state)
             return state
-        step = _step_by_id(plan, "retrieve")
+        step = _step_by_role_or_id(plan, "retrieve")
         await self._invoke_normal_step(state, step)
         return state
 
@@ -262,7 +262,7 @@ class StateBusGraphRunner:
         if "execute" in ctx.results:
             self._refresh_state_snapshot(state)
             return state
-        step = _step_by_id(plan, "execute")
+        step = _step_by_role_or_id(plan, "execute")
         gate_started = time.perf_counter()
         maybe_skip = self.orchestrator.resolve_skip_execute(plan, ctx)
         gate_elapsed_ms = (time.perf_counter() - gate_started) * 1000.0
@@ -283,8 +283,8 @@ class StateBusGraphRunner:
         plan = _require_plan(state)
         if state.get("status") == "failed":
             return state
-        step = _step_by_id(plan, "validate", required=False)
-        if step is None or "validate" in state["ctx"].results:
+        step = _step_by_role_or_id(plan, "validate", required=False)
+        if step is None or state["ctx"].result_for_role("validate") is not None:
             self._refresh_state_snapshot(state)
             return state
         await self._invoke_normal_step(state, step)
@@ -294,7 +294,7 @@ class StateBusGraphRunner:
         if state.get("status") == "failed":
             return state
         plan = _require_plan(state)
-        step = _step_by_id(plan, "summarize")
+        step = _step_by_role_or_id(plan, "summarize")
         await self._invoke_normal_step(state, step)
         state["status"] = "completed"
         return state
@@ -308,7 +308,7 @@ class StateBusGraphRunner:
         ctx: RunContext = state["ctx"]
         self.orchestrator.ensure_step_ready(step, ctx)
         result, elapsed_ms = await self.orchestrator.invoke_plan_step(plan, step, ctx)
-        phase_name = self.orchestrator.phase_name_for_step(step.step_id)
+        phase_name = self.orchestrator.phase_name_for_step(step)
         if phase_name is not None:
             ctx.record_phase_duration(phase_name, elapsed_ms)
         self.orchestrator.register_step_result(
@@ -445,19 +445,22 @@ def _require_plan(state: dict[str, Any]) -> Plan:
     return plan
 
 
-def _step_by_id(plan: Plan, step_id: str, *, required: bool = True) -> Any:
+def _step_by_role_or_id(plan: Plan, semantic_role_or_step_id: str, *, required: bool = True) -> Any:
     for step in plan.steps:
-        if step.step_id == step_id:
+        if (step.semantic_role or step.step_id).strip().lower() == semantic_role_or_step_id.strip().lower():
+            return step
+    for step in plan.steps:
+        if step.step_id == semantic_role_or_step_id:
             return step
     if required:
-        raise KeyError(f"missing step in graph plan: {step_id}")
+        raise KeyError(f"missing step in graph plan: {semantic_role_or_step_id}")
     return None
 
 
 def _plan_has_validate_step(plan: Plan | None) -> bool:
     if not isinstance(plan, Plan):
         return False
-    return any(step.step_id == "validate" for step in plan.steps)
+    return any((step.semantic_role or step.step_id).strip().lower() == "validate" for step in plan.steps)
 
 
 def _node_order_for_plan(plan: Plan | None) -> tuple[str, ...]:

@@ -526,15 +526,15 @@ def _runtime_integrity_payload(ctx: RunContext) -> dict[str, Any]:
 def _whole_lane_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> dict[str, Any]:
     if transfer_strategy not in {"text_whole_lane", "text_strict_pure_lane"}:
         return {"whole_lane_text_guard": {"enabled": False}}
-    execute_refs = ctx.step_input_refs("execute")
-    summarize_refs = ctx.step_input_refs("summarize")
+    execute_refs = ctx.step_input_refs_for_role("execute")
+    summarize_refs = ctx.step_input_refs_for_role("summarize")
     execute_input_kinds = [ref.kind for ref in execute_refs]
     summarize_input_kinds = [ref.kind for ref in summarize_refs]
     forbidden_ref_kinds = sorted(
         {kind for kind in execute_input_kinds + summarize_input_kinds if kind in WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS}
     )
-    retrieve_result = ctx.results.get("retrieve")
-    execute_result = ctx.results.get("execute")
+    retrieve_result = ctx.result_for_role("retrieve")
+    execute_result = ctx.result_for_role("execute")
     retrieve_handoff_text = ""
     execute_handoff_text = ""
     if retrieve_result is not None:
@@ -581,11 +581,11 @@ def _whole_lane_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> d
 def _inline_text_boundary_guard_payload(ctx: RunContext, transfer_strategy: str) -> dict[str, Any]:
     if transfer_strategy != "inline_text_handoff":
         return {"inline_text_boundary_guard": {"enabled": False}}
-    execute_refs = ctx.step_input_refs("execute")
-    summarize_refs = ctx.step_input_refs("summarize")
+    execute_refs = ctx.step_input_refs_for_role("execute")
+    summarize_refs = ctx.step_input_refs_for_role("summarize")
     execute_input_kinds = [ref.kind for ref in execute_refs]
     summarize_input_kinds = [ref.kind for ref in summarize_refs]
-    retrieve_result = ctx.results.get("retrieve")
+    retrieve_result = ctx.result_for_role("retrieve")
     inline_handoff_text = ""
     if retrieve_result is not None:
         inline_handoff_text = str(retrieve_result.payload.get("inline_handoff_text", "")).strip()
@@ -1027,6 +1027,40 @@ def _step_output_truth(result: Any) -> list[dict[str, object]]:
         }
         for ref in result.output_state_refs
     ]
+
+
+def _semantic_results_payload(ctx: RunContext, results: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for step_id, result in results.items():
+        role = ctx.semantic_role_for_step(step_id) or step_id
+        payload[role] = {
+            "success": result.success,
+            "skipped": result.skipped,
+            "reused_from_memory_id": result.reused_from_memory_id,
+            "has_memory_commit": (
+                result.memory_commit is not None or bool(result.memory_commits)
+            ),
+            "memory_commit_count": (
+                (1 if result.memory_commit is not None else 0)
+                + len(result.memory_commits)
+            ),
+            "payload": _sanitize_payload(result.payload),
+            "feature_observability": _feature_bundle_observability(ctx, result),
+            "step_id": step_id,
+        }
+    return payload
+
+
+def _semantic_step_truth(ctx: RunContext, results: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for step_id, result in results.items():
+        role = ctx.semantic_role_for_step(step_id) or step_id
+        payload[role] = {
+            "step_id": step_id,
+            "input_refs": _step_input_truth(ctx, step_id),
+            "output_refs": _step_output_truth(result),
+        }
+    return payload
 
 
 def _build_transfer_truth_audit(task_run: dict[str, object]) -> dict[str, object]:
@@ -2140,32 +2174,10 @@ async def _run_mode_once(
                     "memory_restore_visibility": _memory_restore_visibility_payload(ctx),
                     "state_refs": graph_result.state_refs,
                     "state_channels": graph_result.state_channels,
-                    "step_truth": {
-                        step_id: {
-                            "input_refs": _step_input_truth(ctx, step_id),
-                            "output_refs": _step_output_truth(result),
-                        }
-                        for step_id, result in graph_result.results.items()
-                    },
+                    "step_truth": _semantic_step_truth(ctx, graph_result.results),
                     "cas_summary": ctx.statepool.cas_summary(),
                     "graph_state": graph_result.graph_state,
-                    "results": {
-                        step_id: {
-                            "success": result.success,
-                            "skipped": result.skipped,
-                            "reused_from_memory_id": result.reused_from_memory_id,
-                            "has_memory_commit": (
-                                result.memory_commit is not None or bool(result.memory_commits)
-                            ),
-                            "memory_commit_count": (
-                                (1 if result.memory_commit is not None else 0)
-                                + len(result.memory_commits)
-                            ),
-                            "payload": _sanitize_payload(result.payload),
-                            "feature_observability": _feature_bundle_observability(ctx, result),
-                        }
-                        for step_id, result in graph_result.results.items()
-                    },
+                    "results": _semantic_results_payload(ctx, graph_result.results),
                 }
             else:
                 await orchestrator.run_task(task, ctx)
@@ -2246,31 +2258,9 @@ async def _run_mode_once(
                         }
                         for state_id, ref in ctx.state_refs.items()
                     },
-                    "step_truth": {
-                        step_id: {
-                            "input_refs": _step_input_truth(ctx, step_id),
-                            "output_refs": _step_output_truth(result),
-                        }
-                        for step_id, result in ctx.results.items()
-                    },
+                    "step_truth": _semantic_step_truth(ctx, ctx.results),
                     "cas_summary": ctx.statepool.cas_summary(),
-                    "results": {
-                        step_id: {
-                            "success": result.success,
-                            "skipped": result.skipped,
-                            "reused_from_memory_id": result.reused_from_memory_id,
-                            "has_memory_commit": (
-                                result.memory_commit is not None or bool(result.memory_commits)
-                            ),
-                            "memory_commit_count": (
-                                (1 if result.memory_commit is not None else 0)
-                                + len(result.memory_commits)
-                            ),
-                            "payload": _sanitize_payload(result.payload),
-                            "feature_observability": _feature_bundle_observability(ctx, result),
-                        }
-                        for step_id, result in ctx.results.items()
-                    },
+                    "results": _semantic_results_payload(ctx, ctx.results),
                 }
             if progress_callback is not None:
                 progress_callback(
@@ -2382,13 +2372,7 @@ async def _run_mode_once(
                     }
                     for state_id, ref in ctx.state_refs.items()
                 },
-                "step_truth": {
-                    step_id: {
-                        "input_refs": _step_input_truth(ctx, step_id),
-                        "output_refs": _step_output_truth(result),
-                    }
-                    for step_id, result in ctx.results.items()
-                },
+                "step_truth": _semantic_step_truth(ctx, ctx.results),
                 "cas_summary": ctx.statepool.cas_summary(),
                 "results": {},
             }
@@ -3429,6 +3413,10 @@ def _build_result(
             "task_set_variable_axes": list(task_set_metadata.get("variable_axes", [])),
             "task_set_public_surface": str(task_set_metadata.get("public_surface", "")),
             "task_set_evidence_tier": str(task_set_metadata.get("evidence_tier", "")).strip(),
+            "task_set_formal_structure_clean_retrieval": bool(
+                task_set_metadata.get("formal_structure_clean_retrieval", False)
+            ),
+            "task_set_plan_source_default": str(task_set_metadata.get("plan_source_default", "")).strip(),
             "support_evidence_only": bool(task_set_metadata.get("support_only", False)),
             "audit_evidence_only": bool(task_set_metadata.get("audit_only", False)),
             "formal_secondary_evidence": bool(
@@ -3541,6 +3529,8 @@ async def run_benchmark(
         "evidence_tier": task_bundle.metadata.evidence_tier,
         "benchmark_version": task_bundle.metadata.benchmark_version,
         "historical_pack_type": task_bundle.metadata.historical_pack_type,
+        "formal_structure_clean_retrieval": task_bundle.metadata.formal_structure_clean_retrieval,
+        "plan_source_default": task_bundle.metadata.plan_source_default,
     }
     active_embedder = embedder or SentenceTransformerEmbeddingProvider(embedder_model_path)
     active_llm = llm_client or build_llm_client(llm_config)

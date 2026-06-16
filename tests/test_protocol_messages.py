@@ -191,6 +191,7 @@ def test_remote_step_request_protobuf_round_trip_preserves_full_state_refs() -> 
             input_state_refs=["state-evidence-1", "state-features-1"],
             params={"transport": "uds"},
             depends_on=["retrieve"],
+            semantic_role="execute",
         ),
         input_state_refs=[
             StateRef(
@@ -308,6 +309,7 @@ def test_schema_interceptor_rejects_invalid_structured_state_at_producer_boundar
                     input_state_refs=[],
                     params={"query": "inventory invalidation"},
                     depends_on=[],
+                    semantic_role="retrieve",
                 ),
                 result=StepResult(
                     step_id="retrieve",

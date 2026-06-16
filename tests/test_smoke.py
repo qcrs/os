@@ -15,6 +15,7 @@ import msgpack
 import numpy as np
 import pytest
 import hashlib
+import yaml
 
 from agents.base_agent import BaseAgent
 from agents.sample_agents import (
@@ -40,7 +41,7 @@ from eval.open_runner import (
     run_pure_text_open_baseline,
 )
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
-from protocol.messages import MemoryHit
+from protocol.messages import MemoryCommit, MemoryHit
 from protocol.messages import (
     Plan,
     PlanStep,
@@ -71,7 +72,19 @@ from tasks.local_corpus import (
     render_corpus_evidence,
     retrieve_corpus_docs,
 )
-from tasks.sample_tasks import SampleTask, default_task_chain, load_task_set_bundle
+from tasks.contest_family_spec import (
+    CONTEST_BENCHMARK_PATH,
+    CONTEST_CORPUS_PATH,
+    generate_contest_benchmark_payload,
+    generate_contest_corpus_payload,
+    load_contest_family_spec,
+)
+from tasks.sample_tasks import (
+    TASK_SET_ALIASES,
+    SampleTask,
+    default_task_chain,
+    load_task_set_bundle,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -104,6 +117,7 @@ def test_text_frame_is_natural_language_for_control_messages() -> None:
             input_state_refs=[],
             params={"query": "cache invalidation lag"},
             depends_on=[],
+            semantic_role="retrieve",
         )
     )
     assert rendered.startswith("Instruction for retriever:")
@@ -285,6 +299,45 @@ def test_default_task_set_is_contest_dual_mode_controlled_v3_pack() -> None:
     assert {task.summary_contract for task in bundle.tasks} == {"actions_plus_evidence"}
 
 
+def test_active_v3_pack_aliases_all_load_with_explicit_metadata() -> None:
+    active_aliases = sorted(alias for alias in TASK_SET_ALIASES if alias != "default")
+    loaded = {alias: load_task_set_bundle(alias) for alias in active_aliases}
+    loaded["typed_state_consumer_sensitivity_v3"] = load_task_set_bundle(
+        "typed_state_consumer_sensitivity_v3"
+    )
+    assert len(loaded) == 12
+    assert all(bundle.metadata.pack_type != "ad_hoc" for bundle in loaded.values())
+    assert all(bundle.metadata.public_surface for bundle in loaded.values())
+    assert all(bundle.metadata.evidence_tier for bundle in loaded.values())
+    assert all(bundle.metadata.variable_axes for bundle in loaded.values())
+    assert all(bundle.metadata.plan_source_default == "yaml" for bundle in loaded.values())
+
+
+def test_contest_family_spec_generates_committed_benchmark_and_corpus() -> None:
+    benchmark_payload = yaml.safe_load(CONTEST_BENCHMARK_PATH.read_text(encoding="utf-8"))
+    corpus_payload = yaml.safe_load(CONTEST_CORPUS_PATH.read_text(encoding="utf-8"))
+
+    assert generate_contest_benchmark_payload() == benchmark_payload
+    assert generate_contest_corpus_payload() == corpus_payload
+
+
+def test_contest_family_spec_is_single_source_of_truth_for_family_contracts() -> None:
+    spec = load_contest_family_spec()
+    assert spec["task_set"]["pack_type"] == "contest_dual_mode_controlled_v3"
+    assert spec["task_set"]["formal_structure_clean_retrieval"] is True
+    assert spec["corpus_metadata"]["formal_structure_clean"] is True
+    assert len(spec["families"]) == 5
+
+    for family in spec["families"]:
+        assert set(family["cases"]) == {"clean", "distractor", "ambiguous", "replay_reusable"}
+        assert len(family["route_competition"]) >= 2
+        assert len(family["tool_competition"]) >= 2
+        assert len(family["docs"]) == 8
+        case = family["cases"]["replay_reusable"]
+        assert case["required_prior_case_ids"]
+        assert case["required_prior_rejections"]
+
+
 def test_task_pack_aliases_and_support_only_flags() -> None:
     expectations = {
         "default": ("contest_dual_mode_controlled_v3", False, False, False, 40),
@@ -341,6 +394,63 @@ def test_pack_metadata_exposes_single_variable_and_variable_axes() -> None:
     assert planner.single_variable is True
     assert planner.variable_axes == ("plan_source",)
     assert planner.public_surface == "formal_secondary_planner"
+
+
+def test_active_v3_pack_rejects_public_surface_alias_metadata() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-public-surface-alias-") as tmpdir:
+        pack_path = Path(tmpdir) / "alias_pack.yaml"
+        pack_path.write_text(
+            """
+task_set:
+  name: alias_pack
+  pack_type: typed_state_mechanism_v3
+  description: alias contract probe
+  reading_contract: alias contract probe
+  claim_lanes: [state_transfer]
+  single_variable: true
+  variable_axes: [handoff_object]
+  public_surface: formal_secondary_typed_state_mechanism
+  plan_source_default: yaml
+  evidence_tier: formal_secondary
+  benchmark_version: v3
+tasks:
+- task_id: alias-pack-row-001
+  task_group: alias_pack_group
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes: [protocol]
+  transfer_strategy: state_packet_minimal
+  handoff_profile: protocol_minimal_state_packet
+  goal: Alias metadata should fail active-v3 validation.
+  query: checkout canary order confirmations slowed after the rollout, and operators need the safest first validation action
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  corpus_path: contest_release_regression_corpus.yaml
+  summary_hint: Return the safest first action only.
+  evidence_text: Alias metadata contract probe.
+  tags: [release, checkout, latency, clean]
+  reuse_tags: [release, checkout, latency]
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  case_id: alias-pack-case
+  case_type: bounded_alternative
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+  complexity_bucket: simple
+  summary_contract: actions_plus_evidence
+""".strip(),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="canonical public_surface"):
+            load_task_set_bundle(pack_path)
 
 
 def test_legacy_task_pack_aliases_fail() -> None:
@@ -2283,6 +2393,7 @@ def test_execute_playbook_step_ignores_tool_candidate_state_on_feature_only_main
                 input_state_refs=[evidence_ref.state_id, feature_ref.state_id, tool_candidate_ref.state_id],
                 params={},
                 depends_on=["retrieve"],
+                semantic_role="execute",
             ),
             statepool=statepool,
             input_state_refs=[evidence_ref, feature_ref, tool_candidate_ref],
@@ -2362,6 +2473,7 @@ def test_execute_playbook_step_full_rich_audit_can_merge_tool_candidate_state() 
                 input_state_refs=[evidence_ref.state_id, feature_ref.state_id, tool_candidate_ref.state_id],
                 params={},
                 depends_on=["retrieve"],
+                semantic_role="execute",
             ),
             statepool=statepool,
             input_state_refs=[evidence_ref, feature_ref, tool_candidate_ref],
@@ -2441,6 +2553,7 @@ def test_invalid_handoff_state_is_rejected_before_executor_runs() -> None:
                     input_state_refs=[],
                     params={"query": "inventory invalidation"},
                     depends_on=[],
+                    semantic_role="retrieve",
                 ),
                 PlanStep(
                     step_id="execute",
@@ -2449,6 +2562,7 @@ def test_invalid_handoff_state_is_rejected_before_executor_runs() -> None:
                     input_state_refs=[],
                     params={},
                     depends_on=["retrieve"],
+                    semantic_role="execute",
                 ),
             ],
         )
@@ -2601,6 +2715,88 @@ def test_contest_dual_mode_controlled_v3_formal_cases_expose_route_and_tool_bran
     }
     assert billing_reusable.required_prior_case_ids == ("rr-billing-clean",)
     assert billing_reusable.required_prior_rejections == ("db_pool_saturation",)
+
+
+def test_reusable_dependency_gate_requires_prior_case_and_rejection_match() -> None:
+    task = next(
+        task
+        for task in load_task_set_bundle("contest_dual_mode_controlled_v3").tasks
+        if task.task_id == "rr-checkout-replay_reusable-protocol-001"
+    )
+    assert task.complexity_bucket == "reusable"
+    orchestrator = Orchestrator(build_sample_agents_with_executor(llm_client=DeterministicLLMClient()))
+
+    with tempfile.TemporaryDirectory(prefix="statebus-reusable-gate-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+            task_corpus_doc_ids=task.corpus_doc_ids,
+            task_corpus_path=task.corpus_path,
+        )
+        with pytest.raises(ValueError, match="prior reusable dependency unsatisfied"):
+            asyncio.run(orchestrator.run_task(task, ctx))
+        ctx.memory_store.close()
+        ctx.session.cleanup()
+
+
+def test_reusable_dependency_gate_allows_matching_prior_commit() -> None:
+    task = next(
+        task
+        for task in load_task_set_bundle("contest_dual_mode_controlled_v3").tasks
+        if task.task_id == "rr-checkout-replay_reusable-protocol-001"
+    )
+    orchestrator = Orchestrator(build_sample_agents_with_executor(llm_client=DeterministicLLMClient()))
+
+    with tempfile.TemporaryDirectory(prefix="statebus-reusable-gate-match-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+            task_corpus_doc_ids=task.corpus_doc_ids,
+            task_corpus_path=task.corpus_path,
+        )
+        ctx.memory_store.commit_memory(
+            MemoryCommit(
+                memory_id="mem-prior-clean",
+                source_agent_id="runtime",
+                source_task_id="rr-checkout-clean",
+                task_theme=task.task_theme,
+                summary="prior clean task commit",
+                tags=["task_commit"],
+                evidence_state_ids=[],
+                reusable_steps=[],
+                confidence=1.0,
+                embedding_text="prior clean task commit",
+                metadata={
+                    "memory_purpose": "task_commit",
+                    "memory_layer": "task_commit",
+                    "case_id": "rr-checkout-clean",
+                    "rejected_routes": ["worker_queue_starvation"],
+                },
+                evidence_state_refs=[],
+                source_session_id="session-commit",
+                tier="task_commits",
+                commit_ref="commit-prior-clean",
+            )
+        )
+        assert orchestrator._prior_dependency_satisfied(task=task, ctx=ctx) is True
+        results = asyncio.run(orchestrator.run_task(task, ctx))
+        assert results["summarize"].success is True
+        ctx.memory_store.close()
+        ctx.session.cleanup()
 
 
 def test_memory_dual_mode_fairness_v3_pack_has_40_rows_5_families_and_4_memory_buckets() -> None:
@@ -3425,6 +3621,72 @@ def test_typed_state_consumer_sensitivity_v3_alias_expands_to_5_families_and_rep
     assert "formal-secondary support" in report_text
 
 
+def test_typed_state_consumer_sensitivity_v3_bundle_and_expanded_rows_keep_metadata_consistent() -> None:
+    bundle = load_task_set_bundle("typed_state_consumer_sensitivity_v3")
+    metadata = bundle.metadata
+    for task in bundle.tasks:
+        child_metadata = task.task_set_metadata
+        assert child_metadata is not None
+        assert child_metadata.pack_type == metadata.pack_type
+        assert child_metadata.public_surface == metadata.public_surface
+        assert child_metadata.evidence_tier == metadata.evidence_tier
+        assert child_metadata.variable_axes == metadata.variable_axes
+        assert child_metadata.benchmark_version == metadata.benchmark_version
+        assert (
+            child_metadata.formal_structure_clean_retrieval
+            == metadata.formal_structure_clean_retrieval
+        )
+
+
+def test_retrieval_weak_route_diagnostic_task_set_keeps_exact_route_and_tool_pairs() -> None:
+    expected = {
+        "diag-retrieval-weak-route-cache-replica-001": (
+            "cache_replica_stale_read",
+            "tool.replica_stale_read_triage",
+        ),
+        "diag-retrieval-weak-route-session-drift-001": (
+            "auth_session_drift",
+            "tool.auth_session_repair",
+        ),
+        "diag-retrieval-weak-route-session-rate-limit-001": (
+            "auth_session_drift",
+            "tool.auth_session_repair",
+        ),
+        "diag-retrieval-weak-route-cache-invalidation-001": (
+            "cache_replica_stale_read",
+            "tool.replica_stale_read_triage",
+        ),
+        "diag-retrieval-weak-route-latency-db-001": (
+            "worker_queue_starvation",
+            "tool.worker_queue_triage",
+        ),
+        "diag-retrieval-weak-route-latency-worker-001": (
+            "worker_queue_starvation",
+            "tool.worker_queue_triage",
+        ),
+    }
+    with tempfile.TemporaryDirectory(prefix="statebus-retrieval-weak-route-") as tmpdir:
+        out_dir = Path(tmpdir)
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="tasks/retrieval_weak_route_diagnostic_tasks.yaml",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=out_dir,
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    for mode in ("text", "protocol"):
+        tasks = {task["task_id"]: task for task in result["mode_runs"][mode][0]["tasks"]}
+        for task_id, (route, tool_name) in expected.items():
+            retrieve_payload = tasks[task_id]["results"]["retrieve"]["payload"]
+            execute_payload = tasks[task_id]["results"]["execute"]["payload"]
+            assert retrieve_payload["feature_route"] == route
+            assert execute_payload["route"] == route
+            assert execute_payload["tool_name"] == tool_name
+
+
 def test_open_system_comparison_v1_runs_three_arms_and_two_native_reuse_policies() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-open-system-v1-") as tmpdir:
         result = run_open_comparison(out_dir=Path(tmpdir), repeat=1)
@@ -3993,6 +4255,7 @@ def test_remote_executor_serves_over_uds() -> None:
                         input_state_refs=[evidence_ref.state_id, feature_ref.state_id],
                         params={"transport": "uds"},
                         depends_on=["retrieve"],
+                        semantic_role="execute",
                     ),
                     input_state_refs=[evidence_ref, feature_ref],
                 ),

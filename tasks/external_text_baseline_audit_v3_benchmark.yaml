@@ -9,6 +9,7 @@ task_set:
   variable_axes:
   - external_text_surface
   public_surface: audit_only
+  plan_source_default: yaml
   evidence_tier: audit_only
   benchmark_version: v3
 tasks:

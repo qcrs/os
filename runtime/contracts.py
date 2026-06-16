@@ -192,6 +192,8 @@ class SchemaInterceptor:
     def validate_step(step: PlanStep, capability_table: CapabilityTable) -> None:
         if not step.step_id.strip():
             raise SchemaValidationError("plan_step.step_id is required")
+        if not (step.semantic_role or "").strip():
+            raise SchemaValidationError(f"plan_step {step.step_id} missing semantic_role")
         if not step.owner_agent.strip():
             raise SchemaValidationError(f"plan_step {step.step_id} missing owner_agent")
         if not step.action.strip():

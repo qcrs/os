@@ -12,6 +12,7 @@ task_set:
   variable_axes:
   - plan_source
   public_surface: formal_secondary_planner
+  plan_source_default: yaml
   evidence_tier: formal_secondary
   benchmark_version: v3
 tasks:

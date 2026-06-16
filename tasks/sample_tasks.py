@@ -99,6 +99,7 @@ PUBLIC_SURFACES = (
     "formal_secondary",
     "formal_secondary_planner",
     "formal_secondary_memory",
+    "support_audit",
     "audit_only",
 )
 
@@ -110,7 +111,6 @@ PUBLIC_SURFACE_ALIASES = {
     "formal_secondary_typed_state_authenticity": "formal_secondary",
     "audit_only_external_text_baseline": "audit_only",
     "audit_only_object_parity_restore_boundary": "audit_only",
-    "typed_state_consumer_sensitivity_v3": "audit_only",
 }
 
 EVIDENCE_TIERS = (
@@ -249,7 +249,7 @@ class TaskSetMetadata:
 
     @property
     def runtime_hint_allowed(self) -> bool:
-        return self.public_surface == "audit_only"
+        return self.public_surface in {"audit_only", "support_audit"}
 
     @property
     def support_only(self) -> bool:
@@ -473,12 +473,13 @@ def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
         _load_sample_task(task_path, item, task_set_metadata=metadata) for item in tasks
     )
     if requested_alias == "typed_state_consumer_sensitivity_v3":
-        return _build_typed_state_consumer_sensitivity_bundle(task_path, loaded_tasks)
+        return _build_typed_state_consumer_sensitivity_bundle(task_path, metadata, loaded_tasks)
     return TaskSetBundle(path=task_path, metadata=metadata, tasks=loaded_tasks)
 
 
 def _build_typed_state_consumer_sensitivity_bundle(
     task_path: Path,
+    metadata: TaskSetMetadata,
     template_tasks: tuple[SampleTask, ...],
 ) -> TaskSetBundle:
     contest_tasks = [
@@ -539,27 +540,9 @@ def _build_typed_state_consumer_sensitivity_bundle(
                     complexity_bucket=base.complexity_bucket,
                     audit_decision_packet_override_route=wrong_route,
                     audit_decision_packet_override_tool_name=wrong_tool,
+                    task_set_metadata=metadata,
                 )
             )
-    metadata = TaskSetMetadata(
-        name="typed_state_consumer_sensitivity_v3_pack",
-        pack_type="typed_state_consumer_sensitivity_v3",
-        description=(
-            "Formal-secondary typed-state consumer sensitivity pack. It expands the "
-            "destructive consumer audit across the contest families."
-        ),
-        reading_contract=(
-            "Read only as secondary mechanism evidence: minimal EXECUTOR_DECISION_PACKET "
-            "is produced, passed, consumed, and negative controls degrade behavior."
-        ),
-        claim_lanes=("state_transfer",),
-        single_variable=False,
-        variable_axes=("task_family", "audit_variant"),
-        public_surface="audit_only",
-        single_variable_label="task_family x audit_variant",
-        evidence_tier="formal_secondary",
-        benchmark_version="v3",
-    )
     return TaskSetBundle(path=task_path, metadata=metadata, tasks=tuple(expanded))
 
 
@@ -589,6 +572,7 @@ def build_plan(task: SampleTask) -> Plan:
                     "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
                 },
                 depends_on=[],
+                semantic_role="retrieve",
             ),
             PlanStep(
                 step_id="execute",
@@ -597,6 +581,7 @@ def build_plan(task: SampleTask) -> Plan:
                 input_state_refs=[],
                 params={},
                 depends_on=["retrieve"],
+                semantic_role="execute",
             ),
             PlanStep(
                 step_id="summarize",
@@ -608,6 +593,7 @@ def build_plan(task: SampleTask) -> Plan:
                     "tags": list(task.tags),
                 },
                 depends_on=["retrieve", "execute"],
+                semantic_role="summarize",
             ),
         ],
     )
@@ -651,21 +637,10 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
         for item in raw.get("variable_axes", [])
         if str(item).strip()
     )
-    public_surface = PUBLIC_SURFACE_ALIASES.get(
-        str(raw.get("public_surface", "")).strip(),
-        str(raw.get("public_surface", "")).strip(),
-    )
+    raw_public_surface = str(raw.get("public_surface", "")).strip()
+    public_surface = PUBLIC_SURFACE_ALIASES.get(raw_public_surface, raw_public_surface)
     single_variable_label = str(raw.get("single_variable_label", "")).strip()
     evidence_tier = str(raw.get("evidence_tier", "formal_headline")).strip() or "formal_headline"
-    if not public_surface and evidence_tier == "audit_only":
-        public_surface = "audit_only"
-    if not public_surface and evidence_tier == "formal_secondary":
-        if pack_type == "planner_support_v3":
-            public_surface = "formal_secondary_planner"
-        elif pack_type == "memory_policy_controlled_v3":
-            public_surface = "formal_secondary_memory"
-        else:
-            public_surface = "formal_secondary"
     plan_source_default = str(raw.get("plan_source_default", "")).strip()
     explicit_benchmark_version = "benchmark_version" in raw
     benchmark_version = str(raw.get("benchmark_version", "v3")).strip() or "v3"
@@ -679,6 +654,7 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
     _validate_task_set_metadata_contract(
         task_path=task_path,
         pack_type=pack_type,
+        raw_public_surface=raw_public_surface,
         public_surface=public_surface,
         single_variable=single_variable,
         variable_axes=variable_axes,
@@ -872,6 +848,26 @@ def _validate_task_profile_contract(
     raw_transfer_strategy: str,
     raw_handoff_profile: str,
 ) -> None:
+    _validate_transfer_handoff_contract(
+        task,
+        raw_transfer_strategy=raw_transfer_strategy,
+        raw_handoff_profile=raw_handoff_profile,
+    )
+    _validate_plan_source_contract(
+        task,
+        task_set_metadata=task_set_metadata,
+        explicit_plan_source=explicit_plan_source,
+    )
+    _validate_reusable_contract(task, task_set_metadata=task_set_metadata)
+    _validate_formal_pack_task_contract(task, task_set_metadata=task_set_metadata)
+
+
+def _validate_transfer_handoff_contract(
+    task: SampleTask,
+    *,
+    raw_transfer_strategy: str,
+    raw_handoff_profile: str,
+) -> None:
     if "text" in task.allowed_modes and task.handoff_profile != "text_whole_lane" and task.transfer_strategy == "text_whole_lane":
         raise ValueError(f"{task.task_id}: transfer_strategy=text_whole_lane requires handoff_profile=text_whole_lane")
     if task.handoff_profile == "text_whole_lane" and "protocol" in task.allowed_modes:
@@ -894,19 +890,28 @@ def _validate_task_profile_contract(
         raise ValueError(
             f"{task.task_id}: protocol_full_rich_audit rows must use summary_contract=protocol_handoff_audit"
         )
-        if (
-            task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
-            and task_set_metadata.public_surface == "formal_headline"
-            and not task_set_metadata.plan_source_default
-            and not explicit_plan_source
-        ):
+
+
+def _validate_plan_source_contract(
+    task: SampleTask,
+    *,
+    task_set_metadata: TaskSetMetadata,
+    explicit_plan_source: bool,
+) -> None:
+    if task_set_metadata.pack_type not in V3_FORMAL_TASK_PACK_TYPES:
+        return
+    if task_set_metadata.public_surface in {"formal_headline", "formal_secondary", "formal_secondary_planner", "formal_secondary_memory"}:
+        if not task_set_metadata.plan_source_default and not explicit_plan_source:
             raise ValueError(f"{task.task_id}: formal packs must resolve plan_source explicitly")
-        if (
-            task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
-            and task_set_metadata.public_surface == "formal_headline"
-            and task.plan_source not in PLAN_SOURCES
-        ):
+        if task.plan_source not in PLAN_SOURCES:
             raise ValueError(f"{task.task_id}: formal packs require explicit plan_source")
+
+
+def _validate_reusable_contract(
+    task: SampleTask,
+    *,
+    task_set_metadata: TaskSetMetadata,
+) -> None:
     if (
         task.complexity_bucket == "reusable"
         and task_set_metadata.pack_type == "contest_dual_mode_controlled_v3"
@@ -917,10 +922,24 @@ def _validate_task_profile_contract(
             raise ValueError(f"{task.task_id}: reusable rows require required_prior_rejections")
 
 
+def _validate_formal_pack_task_contract(
+    task: SampleTask,
+    *,
+    task_set_metadata: TaskSetMetadata,
+) -> None:
+    if task_set_metadata.pack_type not in V3_FORMAL_TASK_PACK_TYPES:
+        return
+    if task_set_metadata.public_surface == "formal_headline" and not task.acceptable_routes:
+        raise ValueError(f"{task.task_id}: formal headline rows require acceptable_routes")
+    if task_set_metadata.public_surface == "formal_headline" and not task.acceptable_tools:
+        raise ValueError(f"{task.task_id}: formal headline rows require acceptable_tools")
+
+
 def _validate_task_set_metadata_contract(
     *,
     task_path: Path,
     pack_type: str,
+    raw_public_surface: str,
     public_surface: str,
     single_variable: bool,
     variable_axes: tuple[str, ...],
@@ -933,6 +952,10 @@ def _validate_task_set_metadata_contract(
         return
     if not public_surface:
         raise ValueError(f"{task_path}: v3 pack metadata requires public_surface")
+    if raw_public_surface in PUBLIC_SURFACE_ALIASES:
+        raise ValueError(
+            f"{task_path}: active v3 packs must use canonical public_surface, got alias {raw_public_surface!r}"
+        )
     if public_surface not in PUBLIC_SURFACES:
         raise ValueError(f"{task_path}: unsupported public_surface={public_surface!r}")
     if not variable_axes and public_surface == "formal_headline":
@@ -941,5 +964,11 @@ def _validate_task_set_metadata_contract(
         raise ValueError(f"{task_path}: single_variable pack must declare exactly one variable axis")
     if public_surface != "audit_only" and evidence_tier == "audit_only":
         raise ValueError(f"{task_path}: audit_only evidence_tier requires public_surface=audit_only")
+    if evidence_tier == "support_only" and public_surface != "support_audit":
+        raise ValueError(f"{task_path}: support_only evidence_tier requires public_surface=support_audit")
+    if evidence_tier == "formal_secondary" and public_surface in {"audit_only", "support_audit"}:
+        raise ValueError(
+            f"{task_path}: formal_secondary evidence_tier requires a formal_secondary* public_surface"
+        )
     if plan_source_default:
         normalize_plan_source(plan_source_default)

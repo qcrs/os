@@ -145,6 +145,7 @@ class PlanStep:
     input_state_refs: list[str]
     params: dict[str, Any]
     depends_on: list[str]
+    semantic_role: str = ""
 
 
 @dataclass
@@ -855,6 +856,7 @@ def _to_proto_plan_step(step: PlanStep) -> statebus_pb2.PlanStep:
         input_state_refs=step.input_state_refs,
         params_json=_compact_json(step.params),
         depends_on=step.depends_on,
+        semantic_role=step.semantic_role,
     )
 
 
@@ -957,6 +959,7 @@ def _from_proto_plan_step(step: statebus_pb2.PlanStep) -> PlanStep:
         input_state_refs=list(step.input_state_refs),
         params=_parse_json_object(step.params_json),
         depends_on=list(step.depends_on),
+        semantic_role=str(step.semantic_role),
     )
 
 
@@ -1068,6 +1071,7 @@ def _message_from_wire_frame(message_name: str, payload: dict[str, Any]) -> Any:
             input_state_refs=[str(value) for value in payload.get("input_state_refs", [])],
             params=dict(payload.get("params", {}) or {}),
             depends_on=[str(value) for value in payload.get("depends_on", [])],
+            semantic_role=str(payload.get("semantic_role", "")),
         )
     if message_name == "Plan":
         return Plan(

@@ -704,10 +704,26 @@ class RetrieverAgent(BaseAgent):
             override_tool_name = str(
                 getattr(getattr(ctx, "task", None), "audit_decision_packet_override_tool_name", "")
             ).strip()
+            audit_decision_packet_mode = ""
             if override_route:
                 decision_packet["route"] = override_route
             if override_tool_name:
                 decision_packet["tool_name"] = override_tool_name
+            if override_route or override_tool_name:
+                audit_decision_packet_mode = "override_mismatch_abstain"
+                decision_packet["audit_mode"] = audit_decision_packet_mode
+                overridden_route = str(decision_packet.get("route", "")).strip()
+                overridden_tool = str(decision_packet.get("tool_name", "")).strip()
+                decision_packet["tool_candidates"] = [
+                    {
+                        "tool_name": overridden_tool or "tool.collect_more_evidence",
+                        "route": overridden_route or "generic_triage",
+                        "score": int(decision_packet.get("match_score", 0)),
+                        "matched_signals": list(decision_packet.get("matched_signals", [])),
+                        "matched_tags": list(decision_packet.get("matched_tags", [])),
+                        "source": "audit_override",
+                    }
+                ]
             decision_packet_ref = ctx.put_executor_decision_state(
                 state_id=f"{ctx.task_id}-{step.step_id}-decision-packet",
                 decision_packet=decision_packet,
@@ -719,6 +735,7 @@ class RetrieverAgent(BaseAgent):
                     "feature_route_source": feature_bundle["route_source"],
                     "feature_route_confidence": feature_bundle["route_confidence"],
                     "feature_fresh_evidence_sha256": feature_bundle["fresh_evidence_sha256"],
+                    "audit_decision_packet_mode": audit_decision_packet_mode,
                 },
             )
             if getattr(ctx.runtime_profile, "resolved_benchmark_lane", "") == "memory":
@@ -882,8 +899,8 @@ class ExecutorAgent(BaseAgent):
             transfer_strategy=transfer_strategy,
             handoff_profile=ctx.handoff_profile(),
             inline_handoff_text=(
-                str(ctx.results.get("retrieve").payload.get("inline_handoff_text", ""))
-                if transfer_strategy in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.results.get("retrieve") is not None
+                str(ctx.result_for_role("retrieve").payload.get("inline_handoff_text", ""))
+                if transfer_strategy in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.result_for_role("retrieve") is not None
                 else ""
             ),
         )
@@ -892,7 +909,7 @@ class ExecutorAgent(BaseAgent):
     def _validate_route_step(step: PlanStep, ctx: object) -> StepResult:
         input_refs = ctx.step_input_refs(step.step_id)
         ctx.record_transfer_inputs(input_refs)
-        retrieve_result = ctx.results.get("retrieve")
+        retrieve_result = ctx.result_for_role("retrieve")
         retrieve_payload = {} if retrieve_result is None else dict(retrieve_result.payload)
         validated_route = str(retrieve_payload.get("feature_route", "")).strip()
         validated_tool = str(retrieve_payload.get("tool_name", "")).strip() or str(
@@ -941,12 +958,13 @@ class ExecutorAgent(BaseAgent):
                 "transfer_strategy": ctx.transfer_strategy(),
                 "handoff_profile": ctx.handoff_profile(),
                 "inline_handoff_text": (
-                    str(ctx.results.get("retrieve").payload.get("inline_handoff_text", ""))
-                    if ctx.transfer_strategy() in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.results.get("retrieve") is not None
+                    str(ctx.result_for_role("retrieve").payload.get("inline_handoff_text", ""))
+                    if ctx.transfer_strategy() in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.result_for_role("retrieve") is not None
                     else ""
                 ),
             },
             depends_on=list(step.depends_on),
+            semantic_role=step.semantic_role,
         )
         message = RemoteStepRequest(
             mode=str(getattr(ctx, "mode", "protocol")),
@@ -967,8 +985,10 @@ class SummarizerAgent(BaseAgent):
     llm_client: LLMClient
 
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
-        retrieve_result = ctx.results["retrieve"]
-        execute_result = ctx.results["execute"]
+        retrieve_result = ctx.result_for_role("retrieve")
+        execute_result = ctx.result_for_role("execute")
+        if retrieve_result is None or execute_result is None:
+            raise ValueError("summarizer requires retrieve and execute semantic results")
         input_refs = ctx.step_input_refs(step.step_id)
         transfer_strategy = ctx.transfer_strategy()
         retrieve_output_refs = list(retrieve_result.output_state_refs)
@@ -1090,6 +1110,7 @@ class SummarizerAgent(BaseAgent):
             "goal": getattr(ctx, "task_id", ""),
             "task_group": getattr(ctx, "task_group", ""),
             "reuse_signature": ctx.reuse_signature(step),
+            "case_id": str(getattr(getattr(ctx, "task", None), "case_id", "")).strip(),
             "feature_route": execute_result.payload.get("route", ""),
             "feature_tool_name": execute_result.payload.get("tool_name", ""),
             "feature_route_source": retrieve_result.payload.get("feature_route_source", ""),
@@ -1117,6 +1138,33 @@ class SummarizerAgent(BaseAgent):
             "trace_id": ctx.trace_id,
             "llm_model": result_model,
             "handoff_profile": ctx.handoff_profile(),
+            "chosen_route": str(execute_result.payload.get("route", "")).strip(),
+            "rejected_routes": [
+                str(item).strip()
+                for item in getattr(getattr(ctx, "task", None), "acceptable_routes", ())
+                if str(item).strip()
+                and str(item).strip() != str(execute_result.payload.get("route", "")).strip()
+            ],
+            "safe_first_action": (
+                next(
+                    (
+                        str(action).strip()
+                        for action in execute_result.payload.get("actions", [])
+                        if str(action).strip()
+                    ),
+                    "",
+                )
+            ),
+            "first_validation_check": (
+                next(
+                    (
+                        line.strip()
+                        for line in summary_text.splitlines()
+                        if "validation" in line.lower() or "check" in line.lower()
+                    ),
+                    "",
+                )
+            ),
         }
         assist_refs = [
             *([evidence_ref] if evidence_ref is not None else []),
@@ -1415,6 +1463,7 @@ def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
                 input_state_refs=normalized["input_state_refs"],
                 params=normalized["params"],
                 depends_on=normalized["depends_on"],
+                semantic_role=normalized["semantic_role"],
             )
         )
     _validate_plan_dag(plan_steps)
@@ -1449,7 +1498,7 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
         system_prompt = (
             "You are the StateBus Planner. Output strict JSON only. "
             "Return an object with a single key named steps. "
-            "Each step must include step_id, owner_agent, action, input_state_refs, params, depends_on. "
+            "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
             "Return an executable DAG with 3 to 5 steps. "
             "Allowed owner_agent values: planner, retriever, executor, summarizer. "
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE, CHECK_MEMORY_REUSE. "
@@ -1490,7 +1539,7 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "Allowed owner_agent values: planner, retriever, executor, summarizer. "
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE, CHECK_MEMORY_REUSE. "
             "The plan must cover retrieve, execute, and summarize semantics. "
-            "If you use the compact shape, r must contain q,e,t and optional sid/dep/action/owner. s must contain h,t and optional sid/dep/action/owner. "
+            "If you use the compact shape, r must contain q,e,t and optional sid/dep/action/owner/role. s must contain h,t and optional sid/dep/action/owner/role. "
             "Do not emit replay labels, corpus filters, or tool-route hints. "
             "No markdown."
         )
@@ -1578,6 +1627,7 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
     steps = [
         {
             "step_id": retrieve.get("sid", "retrieve"),
+            "semantic_role": retrieve.get("role", "retrieve"),
             "owner_agent": retrieve.get("owner", "retriever"),
             "action": retrieve.get("action", "RETRIEVE_EVIDENCE"),
             "depends_on": retrieve.get("dep", []),
@@ -1588,6 +1638,7 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
         steps.append(
             {
                 "step_id": execute.get("vsid", "validate"),
+                "semantic_role": execute.get("vrole", "validate"),
                 "owner_agent": execute.get("vowner", "executor"),
                 "action": execute.get("vaction", "VALIDATE_ROUTE"),
                 "depends_on": execute.get("vdep", ["retrieve"]),
@@ -1598,6 +1649,7 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
         [
             {
                 "step_id": execute.get("sid", "execute"),
+                "semantic_role": execute.get("role", "execute"),
                 "owner_agent": execute.get("owner", "executor"),
                 "action": execute.get("action", "EXECUTE_PLAYBOOK"),
                 "depends_on": execute.get("dep", ["retrieve", "validate"] if has_validate_step else ["retrieve"]),
@@ -1605,6 +1657,7 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
             },
             {
                 "step_id": summarize.get("sid", "summarize"),
+                "semantic_role": summarize.get("role", "summarize"),
                 "owner_agent": summarize.get("owner", "summarizer"),
                 "action": summarize.get("action", "SUMMARIZE_AND_COMMIT"),
                 "depends_on": summarize.get("dep", ["retrieve", "execute"]),
@@ -1643,12 +1696,17 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
     step_id = normalized_step_aliases.get(raw_step_id.lower(), raw_step_id)
     if nested_step_alias:
         step_id = normalized_step_aliases.get(nested_step_alias, nested_step_alias)
+    semantic_role = str(
+        normalized.get("semantic_role", normalized.get("role", nested_step_alias))
+    ).strip().lower()
     owner_agent = str(normalized.get("owner_agent", normalized.get("owner", ""))).strip().lower()
     action = str(normalized.get("action", "")).strip().upper()
     if owner_agent not in ALLOWED_PLANNER_OWNER_AGENTS:
         raise ValueError(f"planner step owner_agent unsupported: {owner_agent!r}")
     if action not in ALLOWED_PLANNER_ACTIONS:
         raise ValueError(f"planner step action unsupported: {action!r}")
+    if not semantic_role:
+        raise ValueError(f"planner step missing semantic_role: {step!r}")
     raw_params = dict(normalized.get("params", {}) or {})
     params = dict(raw_params)
     if action == "RETRIEVE_EVIDENCE":
@@ -1669,15 +1727,16 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
         }
     raw_depends_on = [str(item) for item in normalized.get("depends_on", []) or []]
     depends_on = [normalized_step_aliases.get(dep.lower(), dep) for dep in raw_depends_on]
-    if step_id == "summarize" and depends_on == ["execute"]:
+    if semantic_role == "summarize" and depends_on == ["execute"]:
         depends_on = ["retrieve", "execute"]
     if not depends_on:
-        if step_id == "execute":
+        if semantic_role == "execute":
             depends_on = ["retrieve"]
-        elif step_id == "summarize":
+        elif semantic_role == "summarize":
             depends_on = ["retrieve", "execute"]
     return {
         "step_id": step_id,
+        "semantic_role": semantic_role,
         "owner_agent": owner_agent,
         "action": action,
         "input_state_refs": [str(item) for item in normalized.get("input_state_refs", []) or []],
@@ -1715,8 +1774,8 @@ def _validate_plan_dag(plan_steps: list[PlanStep]) -> None:
 
 def _validate_planner_semantic_coverage(task: SampleTask, plan_steps: list[PlanStep]) -> None:
     del task
-    action_set = {step.action for step in plan_steps}
-    missing = [action for action in CONTEST_REQUIRED_PLANNER_ACTIONS if action not in action_set]
+    semantic_roles = {str(step.semantic_role or step.step_id).strip().lower() for step in plan_steps}
+    missing = [role for role in ("retrieve", "execute", "summarize") if role not in semantic_roles]
     if missing:
         raise ValueError(f"planner output missing required semantics: {', '.join(missing)}")
 
@@ -1879,6 +1938,8 @@ def _build_protocol_summary_input_packet(
 
 
 def _resolve_runtime_corpus_hints(*, ctx: object, corpus_docs: list[object]) -> list[dict[str, str]]:
+    if _formal_structure_clean_retrieval(ctx):
+        return []
     task_metadata = getattr(getattr(ctx, "task", None), "task_set_metadata", None)
     runtime_hint_allowed = True
     if isinstance(task_metadata, TaskSetMetadata):
