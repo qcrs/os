@@ -245,6 +245,7 @@ class TaskSetMetadata:
     benchmark_version: str = "v3"
     historical_pack_type: str = ""
     plan_source_default: str = ""
+    formal_structure_clean_retrieval: bool = False
 
     @property
     def runtime_hint_allowed(self) -> bool:
@@ -310,6 +311,9 @@ class SampleTask:
     acceptable_routes: tuple[str, ...] = ()
     acceptable_tools: tuple[str, ...] = ()
     disallowed_families: tuple[str, ...] = ()
+    required_prior_case_ids: tuple[str, ...] = ()
+    required_prior_routes: tuple[str, ...] = ()
+    required_prior_rejections: tuple[str, ...] = ()
     abstention_allowed: bool = False
     allowed_abstain_tool: str = ""
     abstain_only_when: str = ""
@@ -376,6 +380,9 @@ class SampleTask:
             "acceptable_routes": list(self.acceptable_routes),
             "acceptable_tools": list(self.acceptable_tools),
             "disallowed_families": list(self.disallowed_families),
+            "required_prior_case_ids": list(self.required_prior_case_ids),
+            "required_prior_routes": list(self.required_prior_routes),
+            "required_prior_rejections": list(self.required_prior_rejections),
             "abstention_allowed": self.abstention_allowed,
             "allowed_abstain_tool": self.allowed_abstain_tool,
             "abstain_only_when": self.abstain_only_when,
@@ -650,6 +657,15 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
     )
     single_variable_label = str(raw.get("single_variable_label", "")).strip()
     evidence_tier = str(raw.get("evidence_tier", "formal_headline")).strip() or "formal_headline"
+    if not public_surface and evidence_tier == "audit_only":
+        public_surface = "audit_only"
+    if not public_surface and evidence_tier == "formal_secondary":
+        if pack_type == "planner_support_v3":
+            public_surface = "formal_secondary_planner"
+        elif pack_type == "memory_policy_controlled_v3":
+            public_surface = "formal_secondary_memory"
+        else:
+            public_surface = "formal_secondary"
     plan_source_default = str(raw.get("plan_source_default", "")).strip()
     explicit_benchmark_version = "benchmark_version" in raw
     benchmark_version = str(raw.get("benchmark_version", "v3")).strip() or "v3"
@@ -683,6 +699,7 @@ def _load_task_set_metadata(task_path: Path, raw: dict[str, object]) -> TaskSetM
         benchmark_version=benchmark_version,
         historical_pack_type=historical_pack_type,
         plan_source_default=normalize_plan_source(plan_source_default) if plan_source_default else "",
+        formal_structure_clean_retrieval=bool(raw.get("formal_structure_clean_retrieval", False)),
     )
 
 
@@ -742,6 +759,17 @@ def _load_sample_task(
     disallowed_families = tuple(
         str(value).strip() for value in item.get("disallowed_families", []) if str(value).strip()
     )
+    required_prior_case_ids = tuple(
+        str(value).strip() for value in item.get("required_prior_case_ids", []) if str(value).strip()
+    )
+    required_prior_routes = tuple(
+        str(value).strip() for value in item.get("required_prior_routes", []) if str(value).strip()
+    )
+    required_prior_rejections = tuple(
+        str(value).strip()
+        for value in item.get("required_prior_rejections", [])
+        if str(value).strip()
+    )
     abstention_allowed = bool(item.get("abstention_allowed", False))
     raw_transfer_strategy = str(item.get("transfer_strategy", "")).strip()
     raw_handoff_profile = str(item.get("handoff_profile", "")).strip()
@@ -800,6 +828,9 @@ def _load_sample_task(
         acceptable_routes=acceptable_routes,
         acceptable_tools=acceptable_tools,
         disallowed_families=disallowed_families,
+        required_prior_case_ids=required_prior_case_ids,
+        required_prior_routes=required_prior_routes,
+        required_prior_rejections=required_prior_rejections,
         abstention_allowed=abstention_allowed,
         allowed_abstain_tool=str(item.get("allowed_abstain_tool", "")).strip(),
         abstain_only_when=str(item.get("abstain_only_when", "")).strip(),
@@ -863,19 +894,27 @@ def _validate_task_profile_contract(
         raise ValueError(
             f"{task.task_id}: protocol_full_rich_audit rows must use summary_contract=protocol_handoff_audit"
         )
+        if (
+            task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
+            and task_set_metadata.public_surface == "formal_headline"
+            and not task_set_metadata.plan_source_default
+            and not explicit_plan_source
+        ):
+            raise ValueError(f"{task.task_id}: formal packs must resolve plan_source explicitly")
+        if (
+            task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
+            and task_set_metadata.public_surface == "formal_headline"
+            and task.plan_source not in PLAN_SOURCES
+        ):
+            raise ValueError(f"{task.task_id}: formal packs require explicit plan_source")
     if (
-        task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
-        and task_set_metadata.public_surface != "audit_only"
-        and not task_set_metadata.plan_source_default
-        and not explicit_plan_source
+        task.complexity_bucket == "reusable"
+        and task_set_metadata.pack_type == "contest_dual_mode_controlled_v3"
     ):
-        raise ValueError(f"{task.task_id}: formal packs must resolve plan_source explicitly")
-    if (
-        task_set_metadata.pack_type in V3_FORMAL_TASK_PACK_TYPES
-        and task_set_metadata.public_surface != "audit_only"
-        and task.plan_source not in PLAN_SOURCES
-    ):
-        raise ValueError(f"{task.task_id}: formal packs require explicit plan_source")
+        if not task.required_prior_case_ids:
+            raise ValueError(f"{task.task_id}: reusable rows require required_prior_case_ids")
+        if not task.required_prior_rejections:
+            raise ValueError(f"{task.task_id}: reusable rows require required_prior_rejections")
 
 
 def _validate_task_set_metadata_contract(
@@ -896,7 +935,7 @@ def _validate_task_set_metadata_contract(
         raise ValueError(f"{task_path}: v3 pack metadata requires public_surface")
     if public_surface not in PUBLIC_SURFACES:
         raise ValueError(f"{task_path}: unsupported public_surface={public_surface!r}")
-    if not variable_axes:
+    if not variable_axes and public_surface == "formal_headline":
         raise ValueError(f"{task_path}: v3 pack metadata requires variable_axes")
     if single_variable and len(variable_axes) != 1:
         raise ValueError(f"{task_path}: single_variable pack must declare exactly one variable axis")

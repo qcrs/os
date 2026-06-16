@@ -68,6 +68,7 @@
 - `carrier_microbench_v3` 只读 engineering audit。
 - 当前 formal v3 已切 surface，但系统机制真实性仍在审计中。
 - 若 `state_packet_minimal` 的 `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 未被 executor 真实消费，`typed_state_mechanism_v3` 必须 withheld。
-- 若 `contest_dual_mode_controlled_v3` 仍只是 seed pair coverage，不得输出正式赛题 headline。
+- `contest_dual_mode_controlled_v3` 当前按 stronger multi-route formal contract 读取：clean / distractor / ambiguous / reusable 都要求 route 竞争集，且 reusable 要显式携带 prior dependency 合同。
+- 当前 contest formal retrieval 按 structure-level clean 读取：formal corpus 不暴露 runtime hint，formal retrieval 不再注入 preferred-doc shortlist，也不再依赖 theme/group bonus 托举候选空间。
 - 若 `memory_dual_mode_fairness_v3` 的 text restore 兼容性或 object parity gate 未过，不得输出 audit fairness 通过结论。
 - `tasks/state_ref_consumer_sensitivity_audit_benchmark.yaml` 是 mechanism audit pack；既逐类关闭 rich typed-state ref 审计 helper-path 复用，也对 minimal packet 做缺包/错包负控。

@@ -1,8 +1,8 @@
 task_set:
   name: contest_dual_mode_controlled_v3_pack
   pack_type: contest_dual_mode_controlled_v3
-  description: V3 formal dual-mode controlled pack with matched strict pure-text
-    and minimal typed-state protocol rows on the same 20 contest-release cases.
+  description: V3 formal dual-mode controlled pack with matched strict pure-text and
+    minimal typed-state protocol rows on the same 20 contest-release cases.
   reading_contract: Read this pack only as the formal v3 dual-mode controlled pack.
     Each pair keeps the same family, query, evidence universe, summary contract, and
     plan source fixed; mode and handoff object differ together, so this is a controlled
@@ -18,34 +18,22 @@ task_set:
   plan_source_default: yaml
   evidence_tier: formal_headline
   benchmark_version: v3
+  formal_structure_clean_retrieval: true
 tasks:
 - task_group: checkout_release_chain
   task_order: 1
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Use the cited release artifacts to triage the checkout regression and recommend
     the first action.
-  query: checkout release 17.4 canary shows connection pool waits and slow orders
-    query after rollout
-  corpus_doc_ids: &id001
-  - rr-checkout-incident
-  - rr-checkout-metrics
-  - rr-checkout-logs
-  - rr-checkout-worker-false
+  query: checkout canary order confirmations slowed after the rollout, and operators
+    need the safest first validation action
+  corpus_doc_ids: &checkout_clean_docs [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id002
-  - release
-  - checkout
-  - latency
-  - database
-  - clean
-  reuse_tags: &id003
-  - release
-  - checkout
-  - database
+  tags: &checkout_clean_tags [release, checkout, latency, clean]
+  reuse_tags: &checkout_reuse_tags [release, checkout, latency]
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -53,16 +41,13 @@ tasks:
   task_id: rr-checkout-clean-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-checkout-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -74,18 +59,17 @@ tasks:
   task_order: 2
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Use the cited release artifacts to triage the checkout regression and recommend
     the first action.
-  query: checkout release 17.4 canary shows connection pool waits and slow orders
-    query after rollout
-  corpus_doc_ids: *id001
+  query: checkout canary order confirmations slowed after the rollout, and operators
+    need the safest first validation action
+  corpus_doc_ids: *checkout_clean_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id002
-  reuse_tags: *id003
+  tags: *checkout_clean_tags
+  reuse_tags: *checkout_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -93,16 +77,13 @@ tasks:
   task_id: rr-checkout-clean-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-checkout-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -114,26 +95,16 @@ tasks:
   task_order: 3
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Re-evaluate the checkout regression under a strong competing queue hypothesis
     and recommend the next action.
-  query: checkout canary still shows slow orders confirmation while a prior tls reload
-    queue incident is being cited as the likely cause
-  corpus_doc_ids: &id004
-  - rr-checkout-incident
-  - rr-checkout-worker-false
-  - rr-checkout-metrics
-  - rr-checkout-config
+  query: checkout confirmations are still delayed, while some responders argue the
+    slowdown is really a reload-driven worker backlog
+  corpus_doc_ids: &checkout_distractor_docs [rr-checkout-incident, rr-checkout-worker-false, rr-checkout-metrics, rr-checkout-config]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id005
-  - release
-  - checkout
-  - latency
-  - database
-  - distractor
-  reuse_tags: *id003
+  tags: &checkout_distractor_tags [release, checkout, latency, distractor]
+  reuse_tags: *checkout_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -146,13 +117,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
-  - tool.worker_queue_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -164,18 +130,17 @@ tasks:
   task_order: 4
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Re-evaluate the checkout regression under a strong competing queue hypothesis
     and recommend the next action.
-  query: checkout canary still shows slow orders confirmation while a prior tls reload
-    queue incident is being cited as the likely cause
-  corpus_doc_ids: *id004
+  query: checkout confirmations are still delayed, while some responders argue the
+    slowdown is really a reload-driven worker backlog
+  corpus_doc_ids: *checkout_distractor_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id005
-  reuse_tags: *id003
+  tags: *checkout_distractor_tags
+  reuse_tags: *checkout_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -188,13 +153,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
-  - tool.worker_queue_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -206,26 +166,16 @@ tasks:
   task_order: 5
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Resolve the checkout regression under mixed queue-versus-db signals and recommend
     the safest next action.
-  query: checkout canary shows both sql wait growth and queue pressure after rollout,
-    but orders filter changes still line up with the failures
-  corpus_doc_ids: &id006
-  - rr-checkout-metrics
-  - rr-checkout-logs
-  - rr-checkout-worker-false
-  - rr-checkout-ambiguous
+  query: checkout canary still shows confirmation-path delays, but the latest review
+    also reports some worker jitter
+  corpus_doc_ids: &checkout_ambiguous_docs [rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false, rr-checkout-ambiguous]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id007
-  - release
-  - checkout
-  - latency
-  - database
-  - ambiguous
-  reuse_tags: *id003
+  tags: &checkout_ambiguous_tags [release, checkout, latency, ambiguous]
+  reuse_tags: *checkout_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -239,13 +189,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
-  - tool.worker_queue_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -257,18 +202,17 @@ tasks:
   task_order: 6
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Resolve the checkout regression under mixed queue-versus-db signals and recommend
     the safest next action.
-  query: checkout canary shows both sql wait growth and queue pressure after rollout,
-    but orders filter changes still line up with the failures
-  corpus_doc_ids: *id006
+  query: checkout canary still shows confirmation-path delays, but the latest review
+    also reports some worker jitter
+  corpus_doc_ids: *checkout_ambiguous_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id007
-  reuse_tags: *id003
+  tags: *checkout_ambiguous_tags
+  reuse_tags: *checkout_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -282,13 +226,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
-  - tool.worker_queue_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -300,26 +239,16 @@ tasks:
   task_order: 7
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable checkout follow-up and recommend the safest scoped validation
     action.
-  query: checkout canary blast radius stays on the new shard with the same connection
-    wait and slow orders pattern
-  corpus_doc_ids: &id008
-  - rr-checkout-metrics
-  - rr-checkout-config
-  - rr-checkout-scope
-  - rr-checkout-logs
+  query: checkout delays remain scoped to the canary shard, and responders want the
+    narrowest safe follow-up action
+  corpus_doc_ids: &checkout_reusable_docs [rr-checkout-config, rr-checkout-scope, rr-checkout-reuse, rr-checkout-worker-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id009
-  - release
-  - checkout
-  - latency
-  - database
-  - replay-reusable
-  reuse_tags: *id003
+  tags: &checkout_reusable_tags [release, checkout, latency, replay-reusable]
+  reuse_tags: *checkout_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -327,20 +256,20 @@ tasks:
   task_id: rr-checkout-replay_reusable-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-checkout-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-checkout-clean]
+  required_prior_routes: [db_pool_saturation]
+  required_prior_rejections: [worker_queue_starvation]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior worker-route rejection is missing or current evidence reopens both routes
   handoff_profile: text_strict_pure_lane
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
@@ -348,18 +277,17 @@ tasks:
   task_order: 8
   task_theme: contest_release_checkout_regression
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable checkout follow-up and recommend the safest scoped validation
     action.
-  query: checkout canary blast radius stays on the new shard with the same connection
-    wait and slow orders pattern
-  corpus_doc_ids: *id008
+  query: checkout delays remain scoped to the canary shard, and responders want the
+    narrowest safe follow-up action
+  corpus_doc_ids: *checkout_reusable_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id009
-  reuse_tags: *id003
+  tags: *checkout_reusable_tags
+  reuse_tags: *checkout_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -367,50 +295,38 @@ tasks:
   task_id: rr-checkout-replay_reusable-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-checkout-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.db_query_hotfix, tool.worker_queue_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-checkout-clean]
+  required_prior_routes: [db_pool_saturation]
+  required_prior_rejections: [worker_queue_starvation]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior worker-route rejection is missing or current evidence reopens both routes
   handoff_profile: protocol_minimal_state_packet
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+
 - task_group: auth_rotation_chain
   task_order: 1
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the auth callback regression and
-    recommend the first action.
-  query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated
-    callback verification failures
-  corpus_doc_ids: &id010
-  - rr-auth-incident
-  - rr-auth-metrics
-  - rr-auth-logs
-  - rr-auth-rate-limit-false
+  goal: Use the cited release artifacts to triage the auth regression and recommend
+    the first action.
+  query: auth canary callback failures rose after metadata rotation, and operators need
+    the safest first validation action
+  corpus_doc_ids: &auth_clean_docs [rr-auth-incident, rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id011
-  - release
-  - auth
-  - session
-  - jwks
-  - clean
-  reuse_tags: &id012
-  - release
-  - auth
-  - session
+  tags: &auth_clean_tags [release, auth, session, clean]
+  reuse_tags: &auth_reuse_tags [release, auth, session]
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -418,16 +334,13 @@ tasks:
   task_id: rr-auth-clean-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-auth-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -439,18 +352,17 @@ tasks:
   task_order: 2
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the auth callback regression and
-    recommend the first action.
-  query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated
-    callback verification failures
-  corpus_doc_ids: *id010
+  goal: Use the cited release artifacts to triage the auth regression and recommend
+    the first action.
+  query: auth canary callback failures rose after metadata rotation, and operators need
+    the safest first validation action
+  corpus_doc_ids: *auth_clean_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id011
-  reuse_tags: *id012
+  tags: *auth_clean_tags
+  reuse_tags: *auth_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -458,16 +370,13 @@ tasks:
   task_id: rr-auth-clean-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-auth-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -479,26 +388,16 @@ tasks:
   task_order: 3
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the auth regression under a strong rate-limit explanation and
-    recommend the next action.
-  query: auth canary still shows callback failures while operators keep citing the
-    earlier rate-limit incident after rotation
-  corpus_doc_ids: &id013
-  - rr-auth-incident
-  - rr-auth-rate-limit-false
-  - rr-auth-metrics
-  - rr-auth-rotation
+  goal: Re-evaluate the auth regression under a strong competing throttle hypothesis
+    and recommend the next action.
+  query: auth callback failures continue, while some responders argue the real issue is
+    an aggressive throttle window
+  corpus_doc_ids: &auth_distractor_docs [rr-auth-incident, rr-auth-rate-limit-false, rr-auth-metrics, rr-auth-rotation]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id014
-  - release
-  - auth
-  - session
-  - jwks
-  - distractor
-  reuse_tags: *id012
+  tags: &auth_distractor_tags [release, auth, session, distractor]
+  reuse_tags: *auth_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -511,13 +410,8 @@ tasks:
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  - auth_rate_limit
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
-  - tool.auth_rate_limit_triage
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -529,18 +423,17 @@ tasks:
   task_order: 4
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the auth regression under a strong rate-limit explanation and
-    recommend the next action.
-  query: auth canary still shows callback failures while operators keep citing the
-    earlier rate-limit incident after rotation
-  corpus_doc_ids: *id013
+  goal: Re-evaluate the auth regression under a strong competing throttle hypothesis
+    and recommend the next action.
+  query: auth callback failures continue, while some responders argue the real issue is
+    an aggressive throttle window
+  corpus_doc_ids: *auth_distractor_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id014
-  reuse_tags: *id012
+  tags: *auth_distractor_tags
+  reuse_tags: *auth_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -553,13 +446,8 @@ tasks:
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  - auth_rate_limit
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
-  - tool.auth_rate_limit_triage
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -571,26 +459,15 @@ tasks:
   task_order: 5
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the auth callback regression under mixed session-versus-rate-limit
-    signals and recommend the safest next action.
-  query: auth canary shows stale jwks, issuer mismatch, and a small backoff rise at
-    the same time after rotation
-  corpus_doc_ids: &id015
-  - rr-auth-metrics
-  - rr-auth-logs
-  - rr-auth-rate-limit-false
-  - rr-auth-ambiguous
+  goal: Resolve the auth regression under mixed drift-versus-throttle signals and recommend
+    the safest next action.
+  query: auth callback failures persist, but the latest review also reports a mild throttle rise
+  corpus_doc_ids: &auth_ambiguous_docs [rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false, rr-auth-ambiguous]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id016
-  - release
-  - auth
-  - session
-  - jwks
-  - ambiguous
-  reuse_tags: *id012
+  tags: &auth_ambiguous_tags [release, auth, session, ambiguous]
+  reuse_tags: *auth_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -604,13 +481,8 @@ tasks:
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  - auth_rate_limit
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
-  - tool.auth_rate_limit_triage
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -622,18 +494,16 @@ tasks:
   task_order: 6
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the auth callback regression under mixed session-versus-rate-limit
-    signals and recommend the safest next action.
-  query: auth canary shows stale jwks, issuer mismatch, and a small backoff rise at
-    the same time after rotation
-  corpus_doc_ids: *id015
+  goal: Resolve the auth regression under mixed drift-versus-throttle signals and recommend
+    the safest next action.
+  query: auth callback failures persist, but the latest review also reports a mild throttle rise
+  corpus_doc_ids: *auth_ambiguous_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id016
-  reuse_tags: *id012
+  tags: *auth_ambiguous_tags
+  reuse_tags: *auth_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -647,13 +517,8 @@ tasks:
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  - auth_rate_limit
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
-  - tool.auth_rate_limit_triage
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -665,26 +530,16 @@ tasks:
   task_order: 7
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable auth follow-up and recommend the safest scoped validation
     action.
-  query: auth callback failures stay limited to pre rotation sessions with the same
-    stale jwks and issuer mismatch pattern
-  corpus_doc_ids: &id017
-  - rr-auth-metrics
-  - rr-auth-rotation
-  - rr-auth-scope
-  - rr-auth-logs
+  query: auth failures remain limited to one tenant slice, and responders want the narrowest
+    safe follow-up action
+  corpus_doc_ids: &auth_reusable_docs [rr-auth-rotation, rr-auth-scope, rr-auth-reuse, rr-auth-rate-limit-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id018
-  - release
-  - auth
-  - session
-  - jwks
-  - replay-reusable
-  reuse_tags: *id012
+  tags: &auth_reusable_tags [release, auth, session, replay-reusable]
+  reuse_tags: *auth_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -692,20 +547,20 @@ tasks:
   task_id: rr-auth-replay_reusable-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-auth-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-auth-clean]
+  required_prior_routes: [auth_session_drift]
+  required_prior_rejections: [auth_rate_limit]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior throttle-route rejection is missing or current evidence reopens both routes
   handoff_profile: text_strict_pure_lane
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
@@ -713,18 +568,17 @@ tasks:
   task_order: 8
   task_theme: contest_release_auth_rotation
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable auth follow-up and recommend the safest scoped validation
     action.
-  query: auth callback failures stay limited to pre rotation sessions with the same
-    stale jwks and issuer mismatch pattern
-  corpus_doc_ids: *id017
+  query: auth failures remain limited to one tenant slice, and responders want the narrowest
+    safe follow-up action
+  corpus_doc_ids: *auth_reusable_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id018
-  reuse_tags: *id012
+  tags: *auth_reusable_tags
+  reuse_tags: *auth_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -732,50 +586,38 @@ tasks:
   task_id: rr-auth-replay_reusable-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-auth-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes:
-  - auth_session_drift
-  acceptable_tools:
-  - tool.auth_session_repair
-  - tool.auth_jwks_refresh
+  acceptable_routes: [auth_session_drift, auth_rate_limit]
+  acceptable_tools: [tool.auth_session_repair, tool.auth_jwks_refresh, tool.auth_rate_limit_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-auth-clean]
+  required_prior_routes: [auth_session_drift]
+  required_prior_rejections: [auth_rate_limit]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior throttle-route rejection is missing or current evidence reopens both routes
   handoff_profile: protocol_minimal_state_packet
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+
 - task_group: inventory_rollout_chain
   task_order: 1
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the stale inventory rollout regression
-    and recommend the first action.
-  query: inventory rollout region shows stale inventory after batch sync with dropped
-    aggregate invalidation rate
-  corpus_doc_ids: &id019
-  - rr-cache-incident
-  - rr-cache-metrics
-  - rr-cache-logs
-  - rr-cache-replica-false
+  goal: Use the cited release artifacts to triage the stale inventory regression and recommend
+    the first action.
+  query: rollout-region inventory counts stayed stale after sync, and operators need
+    the safest first validation action
+  corpus_doc_ids: &cache_clean_docs [rr-cache-incident, rr-cache-metrics, rr-cache-logs, rr-cache-replica-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id020
-  - release
-  - inventory
-  - cache
-  - invalidation
-  - clean
-  reuse_tags: &id021
-  - release
-  - inventory
-  - cache
+  tags: &cache_clean_tags [release, inventory, cache, clean]
+  reuse_tags: &cache_reuse_tags [release, inventory, cache]
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -783,16 +625,13 @@ tasks:
   task_id: rr-cache-clean-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-cache-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -804,18 +643,17 @@ tasks:
   task_order: 2
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the stale inventory rollout regression
-    and recommend the first action.
-  query: inventory rollout region shows stale inventory after batch sync with dropped
-    aggregate invalidation rate
-  corpus_doc_ids: *id019
+  goal: Use the cited release artifacts to triage the stale inventory regression and recommend
+    the first action.
+  query: rollout-region inventory counts stayed stale after sync, and operators need
+    the safest first validation action
+  corpus_doc_ids: *cache_clean_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id020
-  reuse_tags: *id021
+  tags: *cache_clean_tags
+  reuse_tags: *cache_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -823,16 +661,13 @@ tasks:
   task_id: rr-cache-clean-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-cache-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -844,26 +679,15 @@ tasks:
   task_order: 3
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the stale inventory regression under a strong replica-lag explanation
+  goal: Re-evaluate the stale inventory regression under a strong competing replica hypothesis
     and recommend the next action.
-  query: inventory rollout still looks stale after batch sync while responders keep
-    citing the previous replica lag incident
-  corpus_doc_ids: &id022
-  - rr-cache-incident
-  - rr-cache-replica-false
-  - rr-cache-metrics
-  - rr-cache-flag-diff
+  query: stale inventory persists, while some responders argue the real issue is a lagging read replica
+  corpus_doc_ids: &cache_distractor_docs [rr-cache-incident, rr-cache-replica-false, rr-cache-metrics, rr-cache-flag-diff]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id023
-  - release
-  - inventory
-  - cache
-  - invalidation
-  - distractor
-  reuse_tags: *id021
+  tags: &cache_distractor_tags [release, inventory, cache, distractor]
+  reuse_tags: *cache_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -876,13 +700,8 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  - cache_replica_stale_read
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
-  - tool.replica_stale_read_triage
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -894,18 +713,16 @@ tasks:
   task_order: 4
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the stale inventory regression under a strong replica-lag explanation
+  goal: Re-evaluate the stale inventory regression under a strong competing replica hypothesis
     and recommend the next action.
-  query: inventory rollout still looks stale after batch sync while responders keep
-    citing the previous replica lag incident
-  corpus_doc_ids: *id022
+  query: stale inventory persists, while some responders argue the real issue is a lagging read replica
+  corpus_doc_ids: *cache_distractor_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id023
-  reuse_tags: *id021
+  tags: *cache_distractor_tags
+  reuse_tags: *cache_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -918,13 +735,8 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  - cache_replica_stale_read
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
-  - tool.replica_stale_read_triage
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -936,26 +748,15 @@ tasks:
   task_order: 5
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the stale inventory regression under mixed invalidation-versus-replica
-    signals and recommend the safest next action.
-  query: inventory rollout shows dropped invalidation rate plus a mild replica wobble
-    after batch sync on the new path
-  corpus_doc_ids: &id024
-  - rr-cache-metrics
-  - rr-cache-logs
-  - rr-cache-replica-false
-  - rr-cache-ambiguous
+  goal: Resolve the stale inventory regression under mixed invalidation-versus-replica signals and recommend
+    the safest next action.
+  query: stale inventory remains after sync, but the latest review also mentions a short replica lag spike
+  corpus_doc_ids: &cache_ambiguous_docs [rr-cache-metrics, rr-cache-logs, rr-cache-replica-false, rr-cache-ambiguous]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id025
-  - release
-  - inventory
-  - cache
-  - invalidation
-  - ambiguous
-  reuse_tags: *id021
+  tags: &cache_ambiguous_tags [release, inventory, cache, ambiguous]
+  reuse_tags: *cache_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -969,11 +770,8 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -985,18 +783,16 @@ tasks:
   task_order: 6
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the stale inventory regression under mixed invalidation-versus-replica
-    signals and recommend the safest next action.
-  query: inventory rollout shows dropped invalidation rate plus a mild replica wobble
-    after batch sync on the new path
-  corpus_doc_ids: *id024
+  goal: Resolve the stale inventory regression under mixed invalidation-versus-replica signals and recommend
+    the safest next action.
+  query: stale inventory remains after sync, but the latest review also mentions a short replica lag spike
+  corpus_doc_ids: *cache_ambiguous_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id025
-  reuse_tags: *id021
+  tags: *cache_ambiguous_tags
+  reuse_tags: *cache_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -1010,11 +806,8 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1026,26 +819,16 @@ tasks:
   task_order: 7
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable stale inventory follow-up and recommend the safest scoped
     validation action.
-  query: stale inventory stays limited to the rollout region with the same skipped
-    aggregate invalidation pattern
-  corpus_doc_ids: &id026
-  - rr-cache-metrics
-  - rr-cache-flag-diff
-  - rr-cache-scope
-  - rr-cache-logs
+  query: stale inventory remains scoped to one rollout region, and responders want the
+    narrowest safe follow-up action
+  corpus_doc_ids: &cache_reusable_docs [rr-cache-flag-diff, rr-cache-scope, rr-cache-reuse, rr-cache-replica-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id027
-  - release
-  - inventory
-  - cache
-  - invalidation
-  - replay-reusable
-  reuse_tags: *id021
+  tags: &cache_reusable_tags [release, inventory, cache, replay-reusable]
+  reuse_tags: *cache_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -1053,20 +836,20 @@ tasks:
   task_id: rr-cache-replay_reusable-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-cache-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-cache-clean]
+  required_prior_routes: [cache_invalidation]
+  required_prior_rejections: [cache_replica_stale_read]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior replica-route rejection is missing or current evidence reopens both routes
   handoff_profile: text_strict_pure_lane
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
@@ -1074,18 +857,17 @@ tasks:
   task_order: 8
   task_theme: contest_release_inventory_rollout
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable stale inventory follow-up and recommend the safest scoped
     validation action.
-  query: stale inventory stays limited to the rollout region with the same skipped
-    aggregate invalidation pattern
-  corpus_doc_ids: *id026
+  query: stale inventory remains scoped to one rollout region, and responders want the
+    narrowest safe follow-up action
+  corpus_doc_ids: *cache_reusable_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id027
-  reuse_tags: *id021
+  tags: *cache_reusable_tags
+  reuse_tags: *cache_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -1093,50 +875,38 @@ tasks:
   task_id: rr-cache-replay_reusable-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-cache-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes:
-  - cache_invalidation
-  acceptable_tools:
-  - tool.cache_invalidation_playbook
-  - tool.cache_hook_repair
+  acceptable_routes: [cache_invalidation, cache_replica_stale_read]
+  acceptable_tools: [tool.cache_invalidation_playbook, tool.cache_hook_repair, tool.replica_stale_read_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-cache-clean]
+  required_prior_routes: [cache_invalidation]
+  required_prior_rejections: [cache_replica_stale_read]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior replica-route rejection is missing or current evidence reopens both routes
   handoff_profile: protocol_minimal_state_packet
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+
 - task_group: billing_queue_chain
   task_order: 1
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the billing queue regression and
-    recommend the first action.
-  query: billing invoice workers show growing queue depth after release 9.2 with tls
-    reload retries and delayed processing
-  corpus_doc_ids: &id028
-  - rr-billing-incident
-  - rr-billing-metrics
-  - rr-billing-logs
-  - rr-billing-db-false
+  goal: Use the cited release artifacts to triage the billing backlog and recommend
+    the first action.
+  query: billing canary invoice processing slowed after reload, and operators need the
+    safest first validation action
+  corpus_doc_ids: &billing_clean_docs [rr-billing-incident, rr-billing-metrics, rr-billing-logs, rr-billing-db-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id029
-  - release
-  - billing
-  - queue
-  - worker
-  - clean
-  reuse_tags: &id030
-  - release
-  - billing
-  - queue
+  tags: &billing_clean_tags [release, billing, queue, clean]
+  reuse_tags: &billing_reuse_tags [release, billing, queue]
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -1144,19 +914,13 @@ tasks:
   task_id: rr-billing-clean-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-billing-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1168,18 +932,17 @@ tasks:
   task_order: 2
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the billing queue regression and
-    recommend the first action.
-  query: billing invoice workers show growing queue depth after release 9.2 with tls
-    reload retries and delayed processing
-  corpus_doc_ids: *id028
+  goal: Use the cited release artifacts to triage the billing backlog and recommend
+    the first action.
+  query: billing canary invoice processing slowed after reload, and operators need the
+    safest first validation action
+  corpus_doc_ids: *billing_clean_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id029
-  reuse_tags: *id030
+  tags: *billing_clean_tags
+  reuse_tags: *billing_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -1187,19 +950,13 @@ tasks:
   task_id: rr-billing-clean-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-billing-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1211,26 +968,15 @@ tasks:
   task_order: 3
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the billing queue regression under a strong database explanation
+  goal: Re-evaluate the billing backlog under a strong competing database hypothesis
     and recommend the next action.
-  query: billing queue remains delayed after release 9.2 while responders keep citing
-    a previous database saturation incident
-  corpus_doc_ids: &id031
-  - rr-billing-incident
-  - rr-billing-db-false
-  - rr-billing-metrics
-  - rr-billing-runbook
+  query: invoice processing is still delayed, while some responders argue the real issue is database contention
+  corpus_doc_ids: &billing_distractor_docs [rr-billing-incident, rr-billing-db-false, rr-billing-metrics, rr-billing-runbook]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id032
-  - release
-  - billing
-  - queue
-  - worker
-  - distractor
-  reuse_tags: *id030
+  tags: &billing_distractor_tags [release, billing, queue, distractor]
+  reuse_tags: *billing_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -1243,11 +989,8 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1259,18 +1002,16 @@ tasks:
   task_order: 4
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the billing queue regression under a strong database explanation
+  goal: Re-evaluate the billing backlog under a strong competing database hypothesis
     and recommend the next action.
-  query: billing queue remains delayed after release 9.2 while responders keep citing
-    a previous database saturation incident
-  corpus_doc_ids: *id031
+  query: invoice processing is still delayed, while some responders argue the real issue is database contention
+  corpus_doc_ids: *billing_distractor_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id032
-  reuse_tags: *id030
+  tags: *billing_distractor_tags
+  reuse_tags: *billing_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -1283,11 +1024,8 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1299,26 +1037,15 @@ tasks:
   task_order: 5
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the billing regression under mixed queue-versus-db signals and recommend
+  goal: Resolve the billing backlog under mixed worker-versus-db signals and recommend
     the safest next action.
-  query: billing release shows queue backlog, retry storms, and some sql wait increase
-    at the same time during invoice processing
-  corpus_doc_ids: &id033
-  - rr-billing-metrics
-  - rr-billing-logs
-  - rr-billing-db-false
-  - rr-billing-ambiguous
+  query: invoice processing remains delayed, but the latest review also reports a modest wait-time rise
+  corpus_doc_ids: &billing_ambiguous_docs [rr-billing-metrics, rr-billing-logs, rr-billing-db-false, rr-billing-ambiguous]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id034
-  - release
-  - billing
-  - queue
-  - worker
-  - ambiguous
-  reuse_tags: *id030
+  tags: &billing_ambiguous_tags [release, billing, queue, ambiguous]
+  reuse_tags: *billing_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -1332,14 +1059,8 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1351,18 +1072,16 @@ tasks:
   task_order: 6
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the billing regression under mixed queue-versus-db signals and recommend
+  goal: Resolve the billing backlog under mixed worker-versus-db signals and recommend
     the safest next action.
-  query: billing release shows queue backlog, retry storms, and some sql wait increase
-    at the same time during invoice processing
-  corpus_doc_ids: *id033
+  query: invoice processing remains delayed, but the latest review also reports a modest wait-time rise
+  corpus_doc_ids: *billing_ambiguous_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id034
-  reuse_tags: *id030
+  tags: *billing_ambiguous_tags
+  reuse_tags: *billing_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -1376,14 +1095,8 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1395,26 +1108,16 @@ tasks:
   task_order: 7
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable billing follow-up and recommend the safest scoped validation
     action.
-  query: billing backlog stays on the canary workers with the same retry storm and
-    queue depth pattern after reload
-  corpus_doc_ids: &id035
-  - rr-billing-metrics
-  - rr-billing-runbook
-  - rr-billing-scope
-  - rr-billing-logs
+  query: billing delay remains limited to one canary worker slice, and responders want
+    the narrowest safe follow-up action
+  corpus_doc_ids: &billing_reusable_docs [rr-billing-runbook, rr-billing-scope, rr-billing-reuse, rr-billing-db-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id036
-  - release
-  - billing
-  - queue
-  - worker
-  - replay-reusable
-  reuse_tags: *id030
+  tags: &billing_reusable_tags [release, billing, queue, replay-reusable]
+  reuse_tags: *billing_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -1422,20 +1125,20 @@ tasks:
   task_id: rr-billing-replay_reusable-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-billing-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-billing-clean]
+  required_prior_routes: [worker_queue_starvation]
+  required_prior_rejections: [db_pool_saturation]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior database-route rejection is missing or current evidence reopens both routes
   handoff_profile: text_strict_pure_lane
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
@@ -1443,18 +1146,17 @@ tasks:
   task_order: 8
   task_theme: contest_release_billing_queue_backlog
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable billing follow-up and recommend the safest scoped validation
     action.
-  query: billing backlog stays on the canary workers with the same retry storm and
-    queue depth pattern after reload
-  corpus_doc_ids: *id035
+  query: billing delay remains limited to one canary worker slice, and responders want
+    the narrowest safe follow-up action
+  corpus_doc_ids: *billing_reusable_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id036
-  reuse_tags: *id030
+  tags: *billing_reusable_tags
+  reuse_tags: *billing_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -1462,50 +1164,38 @@ tasks:
   task_id: rr-billing-replay_reusable-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-billing-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes:
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.worker_queue_triage
-  - tool.retry_storm_relief
+  acceptable_routes: [worker_queue_starvation, db_pool_saturation]
+  acceptable_tools: [tool.worker_queue_triage, tool.retry_storm_relief, tool.db_pool_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-billing-clean]
+  required_prior_routes: [worker_queue_starvation]
+  required_prior_rejections: [db_pool_saturation]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior database-route rejection is missing or current evidence reopens both routes
   handoff_profile: protocol_minimal_state_packet
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+
 - task_group: deployment_config_chain
   task_order: 1
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the deployment config drift regression
-    and recommend the first action.
-  query: deployment canary shows pool exhaustion after config drift changed connection
-    caps and query path settings
-  corpus_doc_ids: &id037
-  - rr-deploy-incident
-  - rr-deploy-metrics
-  - rr-deploy-logs
-  - rr-deploy-worker-false
+  goal: Use the cited release artifacts to triage the deployment drift regression and recommend
+    the first action.
+  query: deployment canary slowed after a config change, and operators need the safest
+    first validation action
+  corpus_doc_ids: &deploy_clean_docs [rr-deploy-incident, rr-deploy-metrics, rr-deploy-logs, rr-deploy-worker-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id038
-  - release
-  - deployment
-  - config
-  - database
-  - clean
-  reuse_tags: &id039
-  - release
-  - deployment
-  - config
+  tags: &deploy_clean_tags [release, deployment, config, clean]
+  reuse_tags: &deploy_reuse_tags [release, deployment, config]
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -1513,16 +1203,13 @@ tasks:
   task_id: rr-deploy-clean-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-deploy-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1534,18 +1221,17 @@ tasks:
   task_order: 2
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Use the cited release artifacts to triage the deployment config drift regression
-    and recommend the first action.
-  query: deployment canary shows pool exhaustion after config drift changed connection
-    caps and query path settings
-  corpus_doc_ids: *id037
+  goal: Use the cited release artifacts to triage the deployment drift regression and recommend
+    the first action.
+  query: deployment canary slowed after a config change, and operators need the safest
+    first validation action
+  corpus_doc_ids: *deploy_clean_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id038
-  reuse_tags: *id039
+  tags: *deploy_clean_tags
+  reuse_tags: *deploy_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -1553,16 +1239,13 @@ tasks:
   task_id: rr-deploy-clean-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-deploy-clean
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1574,26 +1257,15 @@ tasks:
   task_order: 3
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the deployment config drift regression under a strong worker explanation
+  goal: Re-evaluate the deployment drift regression under a strong competing worker hypothesis
     and recommend the next action.
-  query: deployment canary still shows pool exhaustion while responders keep citing
-    the earlier queue incident during reload
-  corpus_doc_ids: &id040
-  - rr-deploy-incident
-  - rr-deploy-worker-false
-  - rr-deploy-metrics
-  - rr-deploy-config
+  query: deployment canary remains slow, while some responders argue the real issue is reload-driven worker jitter
+  corpus_doc_ids: &deploy_distractor_docs [rr-deploy-incident, rr-deploy-worker-false, rr-deploy-metrics, rr-deploy-config]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id041
-  - release
-  - deployment
-  - config
-  - database
-  - distractor
-  reuse_tags: *id039
+  tags: &deploy_distractor_tags [release, deployment, config, distractor]
+  reuse_tags: *deploy_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -1606,13 +1278,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
-  - tool.worker_queue_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1624,18 +1291,16 @@ tasks:
   task_order: 4
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Re-evaluate the deployment config drift regression under a strong worker explanation
+  goal: Re-evaluate the deployment drift regression under a strong competing worker hypothesis
     and recommend the next action.
-  query: deployment canary still shows pool exhaustion while responders keep citing
-    the earlier queue incident during reload
-  corpus_doc_ids: *id040
+  query: deployment canary remains slow, while some responders argue the real issue is reload-driven worker jitter
+  corpus_doc_ids: *deploy_distractor_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id041
-  reuse_tags: *id039
+  tags: *deploy_distractor_tags
+  reuse_tags: *deploy_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -1648,13 +1313,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  - worker_queue_starvation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
-  - tool.worker_queue_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: false
   allowed_abstain_tool: ''
@@ -1666,26 +1326,15 @@ tasks:
   task_order: 5
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the deployment config drift regression under mixed queue-versus-db
-    signals and recommend the safest next action.
-  query: deployment canary shows both sql wait growth and some worker jitter after
-    config drift changed pool caps and routing
-  corpus_doc_ids: &id042
-  - rr-deploy-metrics
-  - rr-deploy-logs
-  - rr-deploy-worker-false
-  - rr-deploy-ambiguous
+  goal: Resolve the deployment drift regression under mixed config-versus-worker signals and recommend
+    the safest next action.
+  query: deployment canary stays slow, but the latest review also reports mild worker jitter
+  corpus_doc_ids: &deploy_ambiguous_docs [rr-deploy-metrics, rr-deploy-logs, rr-deploy-worker-false, rr-deploy-ambiguous]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id043
-  - release
-  - deployment
-  - config
-  - database
-  - ambiguous
-  reuse_tags: *id039
+  tags: &deploy_ambiguous_tags [release, deployment, config, ambiguous]
+  reuse_tags: *deploy_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -1699,11 +1348,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1715,18 +1361,16 @@ tasks:
   task_order: 6
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
-  goal: Resolve the deployment config drift regression under mixed queue-versus-db
-    signals and recommend the safest next action.
-  query: deployment canary shows both sql wait growth and some worker jitter after
-    config drift changed pool caps and routing
-  corpus_doc_ids: *id042
+  goal: Resolve the deployment drift regression under mixed config-versus-worker signals and recommend
+    the safest next action.
+  query: deployment canary stays slow, but the latest review also reports mild worker jitter
+  corpus_doc_ids: *deploy_ambiguous_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id043
-  reuse_tags: *id039
+  tags: *deploy_ambiguous_tags
+  reuse_tags: *deploy_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
@@ -1740,11 +1384,8 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
-  - tool.db_query_hotfix
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage]
   disallowed_families: []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1756,26 +1397,16 @@ tasks:
   task_order: 7
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - text
+  allowed_modes: [text]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable deployment drift follow-up and recommend the safest scoped
     validation action.
-  query: deployment drift stays isolated to the canary shard with the same pool cap
-    mismatch and sql wait pattern
-  corpus_doc_ids: &id044
-  - rr-deploy-metrics
-  - rr-deploy-config
-  - rr-deploy-scope
-  - rr-deploy-logs
+  query: deployment slowdown remains limited to the canary shard, and responders want the
+    narrowest safe follow-up action
+  corpus_doc_ids: &deploy_reusable_docs [rr-deploy-config, rr-deploy-scope, rr-deploy-reuse, rr-deploy-worker-false]
   evidence_text: Use only the referenced release artifacts. This row is the strict pure-text formal baseline.
-  tags: &id045
-  - release
-  - deployment
-  - config
-  - database
-  - replay-reusable
-  reuse_tags: *id039
+  tags: &deploy_reusable_tags [release, deployment, config, replay-reusable]
+  reuse_tags: *deploy_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -1783,19 +1414,20 @@ tasks:
   task_id: rr-deploy-replay_reusable-text-001
   transfer_strategy: text_strict_pure_lane
   case_id: rr-deploy-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-deploy-clean]
+  required_prior_routes: [db_pool_saturation]
+  required_prior_rejections: [worker_queue_starvation]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior worker-route rejection is missing or current evidence reopens both routes
   handoff_profile: text_strict_pure_lane
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
@@ -1803,18 +1435,17 @@ tasks:
   task_order: 8
   task_theme: contest_release_deployment_config_drift
   benchmark_lane: state_transfer
-  allowed_modes:
-  - protocol
+  allowed_modes: [protocol]
   corpus_path: contest_release_regression_corpus.yaml
   goal: Run the reusable deployment drift follow-up and recommend the safest scoped
     validation action.
-  query: deployment drift stays isolated to the canary shard with the same pool cap
-    mismatch and sql wait pattern
-  corpus_doc_ids: *id044
+  query: deployment slowdown remains limited to the canary shard, and responders want the
+    narrowest safe follow-up action
+  corpus_doc_ids: *deploy_reusable_docs
   evidence_text: Use only the referenced release artifacts. This row is the matched
     minimal typed-packet protocol baseline.
-  tags: *id045
-  reuse_tags: *id039
+  tags: *deploy_reusable_tags
+  reuse_tags: *deploy_reuse_tags
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
@@ -1822,19 +1453,20 @@ tasks:
   task_id: rr-deploy-replay_reusable-protocol-001
   transfer_strategy: state_packet_minimal
   case_id: rr-deploy-replay_reusable
-  case_type: exact_single_solution
+  case_type: bounded_alternative
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes:
-  - db_pool_saturation
-  acceptable_tools:
-  - tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation, worker_queue_starvation]
+  acceptable_tools: [tool.db_pool_triage, tool.worker_queue_triage, tool.collect_more_evidence]
+  required_prior_case_ids: [rr-deploy-clean]
+  required_prior_routes: [db_pool_saturation]
+  required_prior_rejections: [worker_queue_starvation]
   disallowed_families: []
-  abstention_allowed: false
-  allowed_abstain_tool: ''
-  abstain_only_when: ''
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: prior worker-route rejection is missing or current evidence reopens both routes
   handoff_profile: protocol_minimal_state_packet
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence

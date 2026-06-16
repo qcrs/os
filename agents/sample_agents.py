@@ -304,6 +304,7 @@ class RetrieverAgent(BaseAgent):
             embedder=ctx.memory_store.embedder,
             corpus_path=ctx.corpus_path(),
             allow_preferred_doc_bias=_runtime_preferred_doc_bias_allowed(ctx),
+            formal_structure_clean_retrieval=_formal_structure_clean_retrieval(ctx),
         )
         retrieved_hints = _resolve_runtime_corpus_hints(ctx=ctx, corpus_docs=corpus_docs)
         fresh_evidence_text = render_corpus_evidence(corpus_docs)
@@ -1890,5 +1891,12 @@ def _resolve_runtime_corpus_hints(*, ctx: object, corpus_docs: list[object]) -> 
 def _runtime_preferred_doc_bias_allowed(ctx: object) -> bool:
     task_metadata = getattr(getattr(ctx, "task", None), "task_set_metadata", None)
     if isinstance(task_metadata, TaskSetMetadata):
-        return task_metadata.runtime_hint_allowed
+        return task_metadata.runtime_hint_allowed and not task_metadata.formal_structure_clean_retrieval
     return True
+
+
+def _formal_structure_clean_retrieval(ctx: object) -> bool:
+    task_metadata = getattr(getattr(ctx, "task", None), "task_set_metadata", None)
+    if isinstance(task_metadata, TaskSetMetadata):
+        return task_metadata.formal_structure_clean_retrieval
+    return False
