@@ -124,6 +124,7 @@ def test_plan_parser_accepts_numeric_step_ids_from_text_llm() -> None:
             "steps": [
                 {
                     "step_id": 1,
+                    "semantic_role": "retrieve",
                     "owner_agent": "retriever",
                     "action": "RETRIEVE_EVIDENCE",
                     "input_state_refs": [],
@@ -141,6 +142,7 @@ def test_plan_parser_accepts_numeric_step_ids_from_text_llm() -> None:
                 },
                 {
                     "step_id": 2,
+                    "semantic_role": "execute",
                     "owner_agent": "executor",
                     "action": "EXECUTE_PLAYBOOK",
                     "input_state_refs": [],
@@ -149,6 +151,7 @@ def test_plan_parser_accepts_numeric_step_ids_from_text_llm() -> None:
                 },
                 {
                     "step_id": 3,
+                    "semantic_role": "summarize",
                     "owner_agent": "summarizer",
                     "action": "SUMMARIZE_AND_COMMIT",
                     "input_state_refs": [],
@@ -169,6 +172,103 @@ def test_plan_parser_accepts_numeric_step_ids_from_text_llm() -> None:
     plan = _plan_from_llm_output(task, output_text)
 
     assert plan == build_plan(task)
+
+
+def test_plan_parser_requires_explicit_semantic_role_for_non_compact_steps() -> None:
+    task = default_task_chain()[0]
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "gather-001",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "act-002",
+                    "owner_agent": "executor",
+                    "action": "EXECUTE_PLAYBOOK",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["gather-001"],
+                    "semantic_role": "execute",
+                },
+                {
+                    "step_id": "wrap-003",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["gather-001", "act-002"],
+                    "semantic_role": "summarize",
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="missing semantic_role"):
+        _plan_from_llm_output(task, output_text)
+
+
+def test_plan_parser_rejects_missing_required_semantic_coverage() -> None:
+    task = default_task_chain()[0]
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "gather-001",
+                    "semantic_role": "retrieve",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "check-002",
+                    "semantic_role": "validate",
+                    "owner_agent": "executor",
+                    "action": "VALIDATE_ROUTE",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["gather-001"],
+                },
+                {
+                    "step_id": "wrap-003",
+                    "semantic_role": "summarize",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["gather-001", "check-002"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="missing required semantics: execute"):
+        _plan_from_llm_output(task, output_text)
 
 
 def test_plan_builder_keeps_runtime_profile_out_of_live_plan_steps() -> None:

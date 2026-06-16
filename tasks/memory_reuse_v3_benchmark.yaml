@@ -7,6 +7,11 @@ task_set:
     does not answer text-vs-protocol fairness.
   claim_lanes:
   - memory
+  single_variable: true
+  variable_axes:
+  - runtime_reuse_contract
+  public_surface: formal_secondary
+  plan_source_default: yaml
   evidence_tier: formal_secondary
   benchmark_version: v3
 tasks:

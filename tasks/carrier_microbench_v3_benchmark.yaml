@@ -8,8 +8,14 @@ task_set:
     pack is engineering audit only.'
   claim_lanes:
   - state_transfer
+  single_variable: true
+  variable_axes:
+  - handoff_object
+  public_surface: audit_only
+  plan_source_default: yaml
   evidence_tier: audit_only
   benchmark_version: v3
+  formal_structure_clean_retrieval: true
 tasks:
 - task_group: checkout_release_chain
   task_order: 1

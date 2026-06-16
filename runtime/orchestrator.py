@@ -195,6 +195,7 @@ class RunContext:
     metrics: TaskMetrics = field(default_factory=TaskMetrics)
     results: dict[str, StepResult] = field(default_factory=dict)
     prepared_input_refs: dict[str, list[StateRef]] = field(default_factory=dict)
+    step_roles: dict[str, str] = field(default_factory=dict)
     state_refs: dict[str, StateRef] = field(default_factory=dict)
     memory_hits: list[MemoryHit] = field(default_factory=list)
     memory_search_cache: dict[tuple[object, ...], list[MemoryHit]] = field(default_factory=dict)
@@ -284,6 +285,32 @@ class RunContext:
 
     def step_input_refs(self, step_id: str) -> list[StateRef]:
         return list(self.prepared_input_refs.get(step_id, []))
+
+    def set_step_role(self, step_id: str, semantic_role: str) -> None:
+        role = str(semantic_role).strip().lower()
+        if role:
+            self.step_roles[step_id] = role
+
+    def semantic_role_for_step(self, step_id: str) -> str:
+        return str(self.step_roles.get(step_id, "")).strip().lower()
+
+    def step_input_refs_for_role(self, semantic_role: str) -> list[StateRef]:
+        role = str(semantic_role).strip().lower()
+        for step_id, mapped_role in self.step_roles.items():
+            if mapped_role == role:
+                return self.step_input_refs(step_id)
+        if role:
+            return self.step_input_refs(role)
+        return []
+
+    def result_for_role(self, semantic_role: str) -> StepResult | None:
+        role = str(semantic_role).strip().lower()
+        for step_id, mapped_role in self.step_roles.items():
+            if mapped_role == role:
+                return self.results.get(step_id)
+        if role:
+            return self.results.get(role)
+        return None
 
     def put_text_state(
         self,
@@ -848,6 +875,7 @@ class Orchestrator:
 
     async def run_task(self, task: object, ctx: RunContext) -> dict[str, StepResult]:
         started = time.perf_counter()
+        self._ensure_prior_dependency_for_fresh_execution(task=task, ctx=ctx)
         plan = await self.compile_task_plan(task, ctx)
         results = await self._execute_plan(plan, ctx)
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
@@ -856,6 +884,7 @@ class Orchestrator:
 
     async def run_plan(self, plan: Plan, ctx: RunContext) -> dict[str, StepResult]:
         started = time.perf_counter()
+        self._ensure_prior_dependency_for_fresh_execution(task=getattr(ctx, "task", None), ctx=ctx)
         self.prepare_plan(plan, ctx)
         results = await self._execute_plan(plan, ctx)
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
@@ -884,6 +913,8 @@ class Orchestrator:
         ctx.metrics.planned_step_count = len(plan.steps)
         ctx.planner_step_count = len(plan.steps)
         ctx.planner_contract_valid = True
+        for step in plan.steps:
+            ctx.set_step_role(step.step_id, self._semantic_role_for_step(step))
         if getattr(ctx, "_statebus_plan_emitted", False):
             return
         ctx.emit(plan)
@@ -901,9 +932,13 @@ class Orchestrator:
             self.ensure_step_ready(step, ctx)
             if step.step_id in ctx.results:
                 continue
-            if step.step_id == "retrieve" and precomputed_skip is not None:
+            step_role = self._semantic_role_for_step(step)
+            if step_role == "retrieve" and precomputed_skip is not None:
                 for synthetic_step in precomputed_skip:
-                    synthetic_plan_step = self._step_for_emit(plan, synthetic_step.step_id)
+                    synthetic_plan_step = self._step_for_emit(
+                        plan,
+                        self._semantic_role_for_result(ctx, synthetic_step),
+                    )
                     self.register_step_result(
                         step=synthetic_plan_step,
                         result=synthetic_step,
@@ -911,7 +946,7 @@ class Orchestrator:
                         emit_step=True,
                     )
                 continue
-            if step.step_id == "execute":
+            if step_role == "execute":
                 execute_phase_ms = 0.0
                 execute_gate_started = time.perf_counter()
                 maybe_skip = self.resolve_skip_execute(plan, ctx)
@@ -926,9 +961,9 @@ class Orchestrator:
                     )
                     continue
             result, step_elapsed_ms = await self.invoke_plan_step(plan, step, ctx)
-            if step.step_id == "execute":
+            if step_role == "execute":
                 step_elapsed_ms += execute_phase_ms
-            phase_name = self._phase_name_for_step(step.step_id)
+            phase_name = self._phase_name_for_step(step)
             if phase_name is not None:
                 ctx.record_phase_duration(phase_name, step_elapsed_ms)
             self.register_step_result(
@@ -1018,7 +1053,7 @@ class Orchestrator:
             "step_success": bool(result.success),
             "output_refs_registered": all(ref.state_id in ctx.state_refs for ref in result.output_state_refs),
             "channel_route_snapshot_present": bool(
-                step.step_id != "execute"
+                Orchestrator._semantic_role_for_step(step) != "execute"
                 or ctx.transfer_strategy() != "state_ref"
                 or ctx.get_channel_snapshot("route") is not None
             ),
@@ -1104,6 +1139,14 @@ class Orchestrator:
                     "trajectory_commit_hash": commit.commit_hash,
                     "channel_snapshot_hash": commit.channel_snapshot_hash,
                     "dag_integrity_ok": ctx.execution_dag.verify_integrity(),
+                    "case_id": str(getattr(ctx.task, "case_id", "")).strip(),
+                    "chosen_route": Orchestrator._payload_string(
+                        ctx.result_for_role("execute"),
+                        "route",
+                    ),
+                    "rejected_routes": Orchestrator._rejected_routes_for_task(ctx),
+                    "safe_first_action": Orchestrator._safe_first_action(ctx),
+                    "first_validation_check": Orchestrator._first_validation_check(ctx),
                 },
                 evidence_state_refs=list(ctx.state_refs.values()),
                 memory_purpose="task_commit",
@@ -1131,6 +1174,8 @@ class Orchestrator:
         )
         current_query = str(retrieve_step.params.get("query", ""))
         for hit in hits:
+            if not self._prior_dependency_satisfied(task=ctx.task, ctx=ctx, hit=hit):
+                continue
             if not self._matches_skip_retrieve_execute(
                 hit=hit,
                 task_theme=ctx.task_theme,
@@ -1185,7 +1230,7 @@ class Orchestrator:
             return None
         retrieve_step = self._find_step(plan, "retrieve")
         execute_step = self._find_step(plan, "execute")
-        retrieve_result = ctx.results.get("retrieve")
+        retrieve_result = ctx.result_for_role("retrieve")
         if retrieve_result is None:
             return None
         hits = ctx.replay_candidates(
@@ -1195,6 +1240,8 @@ class Orchestrator:
         )
         current_query = str(retrieve_step.params.get("query", ""))
         for hit in hits:
+            if not self._prior_dependency_satisfied(task=ctx.task, ctx=ctx, hit=hit):
+                continue
             if not self._matches_skip_execute(
                 hit=hit,
                 retrieve_result=retrieve_result,
@@ -1293,26 +1340,32 @@ class Orchestrator:
     _register_result = register_result
 
     @staticmethod
-    def _find_step(plan: Plan, step_id: str) -> PlanStep:
+    def _find_step(plan: Plan, semantic_role_or_step_id: str) -> PlanStep:
+        target = str(semantic_role_or_step_id).strip().lower()
         for step in plan.steps:
-            if step.step_id == step_id:
+            if Orchestrator._semantic_role_for_step(step) == target:
                 return step
-        raise KeyError(f"missing step in plan: {step_id}")
+        for step in plan.steps:
+            if step.step_id == semantic_role_or_step_id:
+                return step
+        raise KeyError(f"missing step in plan: {semantic_role_or_step_id}")
 
     @staticmethod
-    def _step_for_emit(plan: Plan, step_id: str) -> PlanStep:
-        for step in plan.steps:
-            if step.step_id == step_id:
-                return step
-        raise KeyError(f"missing step in plan: {step_id}")
+    def _step_for_emit(plan: Plan, semantic_role_or_step_id: str) -> PlanStep:
+        return Orchestrator._find_step(plan, semantic_role_or_step_id)
 
     @staticmethod
-    def phase_name_for_step(step_id: str) -> str | None:
-        if step_id == "retrieve":
+    def phase_name_for_step(step: PlanStep | str) -> str | None:
+        role = (
+            Orchestrator._semantic_role_for_step(step)
+            if isinstance(step, PlanStep)
+            else str(step).strip().lower()
+        )
+        if role == "retrieve":
             return "retrieve"
-        if step_id == "execute":
+        if role == "execute":
             return "execute"
-        if step_id == "summarize":
+        if role == "summarize":
             return "summarize"
         return None
 
@@ -1341,7 +1394,7 @@ class Orchestrator:
         overrides = result_overrides or {}
         for source in contract.sources:
             source_step = self._find_step(plan, source.step_id)
-            source_result = overrides.get(source.step_id, ctx.results.get(source.step_id))
+            source_result = overrides.get(source.step_id, ctx.result_for_role(source.step_id))
             if source_result is None:
                 raise SchemaValidationError(
                     f"step {step.step_id} missing source result {source.step_id}"
@@ -2063,6 +2116,147 @@ class Orchestrator:
             if replay_step_id == "retrieve" and replay_mode == "skip_retrieve_execute":
                 return source_kind in {"DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET"}
             return False
+        return True
+
+    @staticmethod
+    def _semantic_role_for_step(step: PlanStep | str) -> str:
+        if isinstance(step, str):
+            return step.strip().lower()
+        return (step.semantic_role or step.step_id).strip().lower()
+
+    @staticmethod
+    def _semantic_role_for_result(ctx: RunContext, result: StepResult) -> str:
+        return ctx.semantic_role_for_step(result.step_id) or result.step_id
+
+    @staticmethod
+    def _payload_string(result: StepResult | None, key: str) -> str:
+        if result is None:
+            return ""
+        return str(result.payload.get(key, "")).strip()
+
+    @staticmethod
+    def _safe_first_action(ctx: RunContext) -> str:
+        execute_result = ctx.result_for_role("execute")
+        if execute_result is None:
+            return ""
+        actions = execute_result.payload.get("actions", [])
+        if isinstance(actions, list):
+            for action in actions:
+                text = str(action).strip()
+                if text:
+                    return text
+        return ""
+
+    @staticmethod
+    def _first_validation_check(ctx: RunContext) -> str:
+        summarize_result = ctx.result_for_role("summarize")
+        if summarize_result is None:
+            return ""
+        summary = str(summarize_result.payload.get("summary", "")).strip()
+        if not summary:
+            return ""
+        for line in summary.splitlines():
+            lowered = line.lower()
+            if "validation" in lowered or "check" in lowered:
+                return line.strip()
+        return ""
+
+    @staticmethod
+    def _rejected_routes_for_task(ctx: RunContext) -> list[str]:
+        task = getattr(ctx, "task", None)
+        if task is None:
+            return []
+        primary = str(getattr(task, "primary_expected_route", "")).strip()
+        acceptable = [
+            str(item).strip()
+            for item in getattr(task, "acceptable_routes", ())
+            if str(item).strip()
+        ]
+        if not primary:
+            return []
+        return [route for route in acceptable if route != primary]
+
+    def _ensure_prior_dependency_for_fresh_execution(
+        self,
+        *,
+        task: object | None,
+        ctx: RunContext,
+    ) -> None:
+        if self._prior_dependency_satisfied(task=task, ctx=ctx):
+            return
+        task_id = str(getattr(task, "task_id", ctx.task_id or "task")).strip() or "task"
+        required_case_ids = [
+            str(item).strip()
+            for item in getattr(task, "required_prior_case_ids", ())
+            if str(item).strip()
+        ]
+        required_rejections = [
+            str(item).strip()
+            for item in getattr(task, "required_prior_rejections", ())
+            if str(item).strip()
+        ]
+        detail_parts = ["prior reusable dependency unsatisfied"]
+        if required_case_ids:
+            detail_parts.append(f"required_prior_case_ids={required_case_ids}")
+        if required_rejections:
+            detail_parts.append(f"required_prior_rejections={required_rejections}")
+        error = Error(
+            code="prior_dependency_unsatisfied",
+            detail="; ".join(detail_parts),
+            related_id=task_id,
+        )
+        ctx.emit(error)
+        raise ValueError(error.detail)
+
+    def _prior_dependency_satisfied(
+        self,
+        *,
+        task: object | None,
+        ctx: RunContext,
+        hit: MemoryHit | None = None,
+    ) -> bool:
+        if task is None:
+            return True
+        required_case_ids = tuple(
+            str(item).strip()
+            for item in getattr(task, "required_prior_case_ids", ())
+            if str(item).strip()
+        )
+        required_rejections = {
+            str(item).strip()
+            for item in getattr(task, "required_prior_rejections", ())
+            if str(item).strip()
+        }
+        if not required_case_ids and not required_rejections:
+            return True
+        commits = ctx.memory_store.task_commit_candidates(
+            task_theme=ctx.task_theme,
+            required_metadata={"memory_purpose": "task_commit"},
+        )
+        by_case_id: dict[str, MemoryHit] = {}
+        for candidate in commits:
+            case_id = str(candidate.metadata.get("case_id", "")).strip()
+            if case_id:
+                by_case_id.setdefault(case_id, candidate)
+        for case_id in required_case_ids:
+            prior = by_case_id.get(case_id)
+            if prior is None:
+                return False
+            rejected_routes = {
+                str(item).strip()
+                for item in prior.metadata.get("rejected_routes", [])
+                if str(item).strip()
+            }
+            if required_rejections and not required_rejections.issubset(rejected_routes):
+                return False
+        if hit is not None and required_rejections:
+            hit_rejected = {
+                str(item).strip()
+                for item in hit.metadata.get("rejected_routes", [])
+                if str(item).strip()
+            }
+            if hit_rejected and not required_rejections.issubset(hit_rejected):
+                return False
         return True
 
 def _normalize_replay_query(text: str) -> str:

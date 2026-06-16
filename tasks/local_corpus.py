@@ -25,6 +25,7 @@ class CorpusDoc:
     eval_route_label: str
     eval_tool_label: str
     text: str
+    formal_structure_clean: bool = False
 
     @property
     def full_text(self) -> str:
@@ -84,6 +85,7 @@ def load_corpus_docs(path: str | Path | None = None) -> dict[str, CorpusDoc]:
             eval_route_label=eval_route_label,
             eval_tool_label=eval_tool_label,
             text=str(item["text"]).strip(),
+            formal_structure_clean=formal_structure_clean,
         )
         loaded[doc.doc_id] = doc
     return loaded
@@ -120,7 +122,11 @@ def retrieve_corpus_docs(
         tag_overlap = float(len(tag_terms & {tag.lower() for tag in doc.tags}))
         theme_bonus = 0.0 if formal_structure_clean_retrieval else (0.12 if doc.task_theme == task_theme else 0.0)
         group_bonus = 0.0 if formal_structure_clean_retrieval else (0.06 if doc.task_group == task_group else 0.0)
-        preference_bonus = 0.20 if allow_preferred_doc_bias and doc.doc_id in preferred_doc_ids else 0.0
+        preference_bonus = (
+            0.0
+            if formal_structure_clean_retrieval
+            else 0.20 if allow_preferred_doc_bias and doc.doc_id in preferred_doc_ids else 0.0
+        )
         scored.append(
             _CorpusDocScore(
                 doc=doc,

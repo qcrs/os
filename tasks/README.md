@@ -53,10 +53,13 @@
   - protocol carrier-fixed memory policy 单变量归因
 - `planner_support_v3_benchmark.yaml`
 - `planner_support_v3`
+- `state_ref_consumer_sensitivity_audit_benchmark.yaml`
+  - `typed_state_consumer_sensitivity_v3`
+  - minimal decision packet consumer-sensitivity / negative-control support surface
 
 说明：
 
-- 正式 README、默认 CLI、正式 smoke、正式 report 只认以上 11 个 v3 对象。
+- 正式 README、默认 CLI、正式 smoke、正式 report 只认以上 12 个 v3 对象。
 - 主动脚本入口是 `scripts/run_v3_comprehensive_check.py`；`scripts/run_v2_*` 只保留归档/考古用途，默认拒绝运行。
 - `contest_dual_mode_controlled_v3` 是当前 formal dual-mode surface，headline baseline 为 `text_strict_pure_lane` vs `state_packet_minimal`。
 - `memory_dual_mode_fairness_v3` 是保留 pack；当前只读 dual-mode fairness/object parity，不承担 replay proof。
@@ -66,6 +69,7 @@
 - `typed_state_authenticity_v3` 只保留 legacy compatibility surface，正式机制 claim 仍优先读 `typed_state_mechanism_v3`。
 - `text_definition_audit_v3` 只读 boundary 定义，不读成 formal headline。
 - `carrier_microbench_v3` 只读 engineering audit。
+- `typed_state_consumer_sensitivity_v3` 只读 minimal `EXECUTOR_DECISION_PACKET` 消费与负控降级，不升格为 typed-state 机制主 headline。
 - 当前 formal v3 已切 surface，但系统机制真实性仍在审计中。
 - 若 `state_packet_minimal` 的 `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 未被 executor 真实消费，`typed_state_mechanism_v3` 必须 withheld。
 - `contest_dual_mode_controlled_v3` 当前按 stronger multi-route formal contract 读取：clean / distractor / ambiguous / reusable 都要求 route 竞争集，且 reusable 要显式携带 prior dependency 合同。

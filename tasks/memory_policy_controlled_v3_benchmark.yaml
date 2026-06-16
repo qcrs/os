@@ -12,6 +12,7 @@ task_set:
   plan_source_default: yaml
   evidence_tier: formal_secondary
   benchmark_version: v3
+  formal_structure_clean_retrieval: true
 tasks:
 - task_id: memory-policy-checkout-001
   task_group: checkout_release_chain

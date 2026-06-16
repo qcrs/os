@@ -71,6 +71,7 @@ message PlanStep {
   repeated string input_state_refs = 4;
   string params_json = 5;
   repeated string depends_on = 6;
+  string semantic_role = 7;
 }
 
 message Plan {

@@ -4,8 +4,13 @@ task_set:
   description: V3 support-only full-rich typed-state audit pack for protocol-side natural-text versus explicit full-rich audit typed-state comparisons.
   reading_contract: Read this pack only as the v3 full-rich typed-state audit pack. It compares protocol_natural_handoff_text against protocol_full_rich_audit under matched retrieval inputs and must not be read as the mainline typed-state contract.
   claim_lanes: [state_transfer]
+  single_variable: true
+  variable_axes: [handoff_object]
+  public_surface: support_audit
+  plan_source_default: yaml
   evidence_tier: support_only
   benchmark_version: v3
+  formal_structure_clean_retrieval: true
 
 tasks:
   - task_group: checkout_release_chain

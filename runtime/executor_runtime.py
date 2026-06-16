@@ -1019,6 +1019,7 @@ def execute_playbook_step(
             evidence_text=statepool.get_text(evidence_ref),
             decision_packet=_load_executor_decision_packet(statepool, decision_packet_ref),
             registry=registry or default_tool_registry(),
+            ref=decision_packet_ref,
         )
         feature_state_id = decision_packet_ref.state_id
         execution_evidence_text = statepool.get_text(evidence_ref)
@@ -1778,9 +1779,10 @@ def _feature_bundle_from_executor_decision_packet(
     evidence_text: str,
     decision_packet: dict[str, Any],
     registry: ToolRegistry,
+    ref: StateRef | None = None,
 ) -> dict[str, Any]:
     del registry
-    _validate_executor_decision_packet(packet=decision_packet)
+    _validate_executor_decision_packet(packet=decision_packet, ref=ref)
     route = str(decision_packet.get("route", "")).strip()
     tool_name = str(decision_packet.get("tool_name", "")).strip()
     route_source = str(decision_packet.get("route_source", "")).strip() or "decision_packet"
@@ -1792,6 +1794,23 @@ def _feature_bundle_from_executor_decision_packet(
         for item in decision_packet.get("tool_candidates", [])
         if isinstance(item, dict)
     ]
+    audit_mode = str(decision_packet.get("audit_mode", "")).strip()
+    if not audit_mode and ref is not None:
+        audit_mode = str(ref.metadata.get("audit_decision_packet_mode", "")).strip()
+    if audit_mode == "override_mismatch_abstain":
+        fallback_tool = "tool.collect_more_evidence"
+        fallback_candidate = {
+            "tool_name": fallback_tool,
+            "route": route or "generic_triage",
+            "score": 0,
+            "matched_signals": [],
+            "matched_tags": [],
+            "source": "audit_override_abstain",
+        }
+        tool_candidates = [fallback_candidate, *tool_candidates]
+        if fallback_tool:
+            tool_name = fallback_tool
+            route_source = "audit_override_abstain"
     if not tool_candidates and route and tool_name:
         tool_candidates = [
             {
@@ -1846,14 +1865,45 @@ def _validate_executor_decision_packet(
         raise ValueError("executor decision packet retrieved_doc_ids must be a list")
     if not isinstance(packet.get("matched_signals", []), list):
         raise ValueError("executor decision packet matched_signals must be a list")
+    if not isinstance(packet.get("route_provenance", []), list):
+        raise ValueError("executor decision packet route_provenance must be a list")
     route_confidence = packet.get("route_confidence")
     if not isinstance(route_confidence, (int, float)):
         raise ValueError("executor decision packet route_confidence must be numeric")
+    if not 0.0 <= float(route_confidence) <= 1.0:
+        raise ValueError("executor decision packet route_confidence must be within [0,1]")
+    tool_candidates = packet.get("tool_candidates", [])
+    if not isinstance(tool_candidates, list):
+        raise ValueError("executor decision packet tool_candidates must be a list")
+    if not tool_candidates:
+        raise ValueError("executor decision packet requires non-empty tool_candidates")
+    matching_candidate = False
+    for item in tool_candidates:
+        if not isinstance(item, dict):
+            raise ValueError("executor decision packet tool_candidates entries must be objects")
+        candidate_tool = str(item.get("tool_name", "")).strip()
+        candidate_route = str(item.get("route", "")).strip()
+        if not candidate_tool or not candidate_route:
+            raise ValueError("executor decision packet tool_candidates require route and tool_name")
+        if candidate_tool == tool_name and candidate_route == route:
+            matching_candidate = True
+    if not matching_candidate:
+        raise ValueError("executor decision packet selected route/tool must appear in tool_candidates")
+    payload_sha = str(packet.get("feature_fresh_evidence_sha256", "")).strip()
+    if not payload_sha:
+        raise ValueError("executor decision packet missing feature_fresh_evidence_sha256")
     if ref is not None:
         metadata_sha = str(ref.metadata.get("feature_fresh_evidence_sha256", "")).strip()
-        payload_sha = str(packet.get("feature_fresh_evidence_sha256", "")).strip()
         if metadata_sha and payload_sha and metadata_sha != payload_sha:
             raise ValueError("executor decision packet fresh evidence hash mismatch")
+        metadata_route = str(ref.metadata.get("feature_route", "")).strip()
+        metadata_confidence = ref.metadata.get("feature_route_confidence")
+        audit_mode = str(ref.metadata.get("audit_decision_packet_mode", "")).strip()
+        if audit_mode != "override_mismatch_abstain":
+            if metadata_route and metadata_route != route:
+                raise ValueError("executor decision packet route mismatch with state metadata")
+            if isinstance(metadata_confidence, (int, float)) and float(metadata_confidence) != float(route_confidence):
+                raise ValueError("executor decision packet route_confidence mismatch with state metadata")
 
 
 def _parse_transfer_tool_candidates(raw_value: str) -> list[dict[str, Any]]:

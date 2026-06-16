@@ -1,12 +1,17 @@
 task_set:
   name: state_ref_consumer_sensitivity_audit_pack
-  pack_type: ad_hoc
+  pack_type: typed_state_consumer_sensitivity_v3
   description: Audit-only pack that measures both full-rich typed-state visibility sensitivity and minimal-state consumer sensitivity under destructive negative controls.
   reading_contract: Read this pack only as mechanism audit evidence. It holds task semantics fixed, runs explicit full-rich audit rows for helper-path visibility, and adds protocol-minimal destructive rows that remove or corrupt EXECUTOR_DECISION_PACKET to test whether mainline behavior degrades.
   claim_lanes:
   - state_transfer
-  evidence_tier: audit_only
+  single_variable: false
+  variable_axes: [task_family, audit_variant]
+  public_surface: formal_secondary
+  plan_source_default: yaml
+  evidence_tier: formal_secondary
   benchmark_version: v3
+  formal_structure_clean_retrieval: true
 tasks:
 - task_id: audit-sensitivity-rich-full-001
   task_group: audit_state_ref_consumer_sensitivity

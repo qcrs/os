@@ -15,6 +15,7 @@ task_set:
   - runtime_reuse_contract
   - restore_object_class
   public_surface: audit_only
+  plan_source_default: yaml
   evidence_tier: audit_only
   benchmark_version: v3
 tasks:
