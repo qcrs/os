@@ -173,6 +173,8 @@ v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其�
 读法边界：
 
 - `contest_dual_mode_controlled_v3` 是当前正式双模式 headline。`text` 的正式定义是 `text_strict_pure_lane`，读法固定为 `text_strict_pure_lane` vs `state_packet_minimal` 这组受控 mainline handoff object。
+- 当前 `contest_dual_mode_controlled_v3` 已收紧为 stronger multi-route formal contract：clean / distractor / ambiguous / reusable 都要求 route 竞争集，且 reusable 显式携带 prior dependency / prior rejection 合同。
+- 当前 contest formal retrieval 按 structure-level clean 读取：formal corpus 不暴露 runtime hint，formal retrieval 不再注入 preferred-doc shortlist，也不再依赖 theme/group bonus 托举 formal 候选空间。
 - `text_strict_pure_lane` 仍是 StateBus runtime 内部的 strict text lane：executor 不接 typed state ref，但仍复用同一套 lexical route/tool helper path 与 playbook executor。
 - `text_whole_lane` 是内部 whole-lane text audit object；两者都不是 external traditional pure-text multi-agent baseline。
 - `memory_dual_mode_fairness_v3` 是保留的 dual-mode fairness/object-parity surface；不承担 replay proof。

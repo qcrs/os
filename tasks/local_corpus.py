@@ -56,19 +56,33 @@ class _CorpusDocScore:
 def load_corpus_docs(path: str | Path | None = None) -> dict[str, CorpusDoc]:
     corpus_path = Path(path) if path else DEFAULT_TASK_CORPUS
     payload = yaml.safe_load(corpus_path.read_text(encoding="utf-8")) or {}
+    corpus_metadata = payload.get("corpus_metadata", {}) if isinstance(payload, dict) else {}
     docs = payload["docs"] if isinstance(payload, dict) else payload
+    formal_structure_clean = bool(corpus_metadata.get("formal_structure_clean", False))
     loaded: dict[str, CorpusDoc] = {}
     for item in docs:
+        runtime_route_hint = ""
+        runtime_tool_name = ""
+        eval_route_label = ""
+        eval_tool_label = ""
+        if not formal_structure_clean:
+            runtime_route_hint = str(item.get("runtime_route_hint", item.get("route_hint", ""))).strip()
+            runtime_tool_name = str(item.get("runtime_tool_name", item.get("tool_name", ""))).strip()
+            eval_route_label = str(item.get("eval_route_label", item.get("route_hint", ""))).strip()
+            eval_tool_label = str(item.get("eval_tool_label", item.get("tool_name", ""))).strip()
+        else:
+            eval_route_label = str(item.get("eval_route_label", "")).strip()
+            eval_tool_label = str(item.get("eval_tool_label", "")).strip()
         doc = CorpusDoc(
             doc_id=str(item["doc_id"]).strip(),
             task_group=str(item["task_group"]).strip(),
             task_theme=str(item["task_theme"]).strip(),
             title=str(item["title"]).strip(),
             tags=tuple(str(tag).strip() for tag in item.get("tags", [])),
-            runtime_route_hint=str(item.get("route_hint", "")).strip(),
-            runtime_tool_name=str(item.get("tool_name", "")).strip(),
-            eval_route_label=str(item.get("eval_route_label", item.get("route_hint", ""))).strip(),
-            eval_tool_label=str(item.get("eval_tool_label", item.get("tool_name", ""))).strip(),
+            runtime_route_hint=runtime_route_hint,
+            runtime_tool_name=runtime_tool_name,
+            eval_route_label=eval_route_label,
+            eval_tool_label=eval_tool_label,
             text=str(item["text"]).strip(),
         )
         loaded[doc.doc_id] = doc
@@ -86,6 +100,7 @@ def retrieve_corpus_docs(
     corpus_path: str | Path | None = None,
     top_k: int = 2,
     allow_preferred_doc_bias: bool = True,
+    formal_structure_clean_retrieval: bool = False,
 ) -> list[CorpusDoc]:
     docs_by_id = load_corpus_docs(corpus_path)
     preferred_doc_ids = {
@@ -103,11 +118,8 @@ def retrieve_corpus_docs(
         semantic = float(np.dot(query_vector, doc_vector))
         lexical = float(len(query_terms & _normalized_terms(doc.full_text)))
         tag_overlap = float(len(tag_terms & {tag.lower() for tag in doc.tags}))
-        theme_bonus = 0.12 if doc.task_theme == task_theme else 0.0
-        group_bonus = 0.06 if doc.task_group == task_group else 0.0
-        # Keep corpus doc hints as a weak retrieval prior: strong enough to stabilize
-        # close replay/control ties, but not strong enough to override clearly better
-        # lexical/semantic evidence outside the hinted doc set.
+        theme_bonus = 0.0 if formal_structure_clean_retrieval else (0.12 if doc.task_theme == task_theme else 0.0)
+        group_bonus = 0.0 if formal_structure_clean_retrieval else (0.06 if doc.task_group == task_group else 0.0)
         preference_bonus = 0.20 if allow_preferred_doc_bias and doc.doc_id in preferred_doc_ids else 0.0
         scored.append(
             _CorpusDocScore(
@@ -144,7 +156,9 @@ def retrieve_corpus_docs(
         )
     )
     baseline_ids = set(_top_doc_ids(scored, key=lambda item: item.combined_score, limit=top_k))
-    candidate_ids = semantic_ids | lexical_ids | tag_ids | baseline_ids | preferred_doc_ids
+    candidate_ids = semantic_ids | lexical_ids | tag_ids | baseline_ids
+    if allow_preferred_doc_bias and not formal_structure_clean_retrieval:
+        candidate_ids |= preferred_doc_ids
     shortlisted = [item for item in scored if item.doc.doc_id in candidate_ids]
     shortlisted.sort(
         key=lambda item: (

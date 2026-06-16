@@ -545,12 +545,14 @@ def _summarize_rows(*, arm: str, policy: str, rows: list[dict[str, object]]) -> 
         "reuse_gain",
     )
     metrics = {
-        name: _mean(float(row["metrics"][name]) for row in rows)
+        name: _mean(float(dict(row["metrics"]).get(name, 0.0)) for row in rows)
         for name in metric_names
     }
     return {
         "runtime_arm": arm,
         "open_memory_policy": policy,
+        "data_source": "deterministic_oracle",
+        "artifact_reuse": False,
         "task_runs": len(rows),
         **metrics,
     }
