@@ -23,8 +23,11 @@ DECISION_PACKET_REQUIRED_KEYS = (
     "tool_name",
     "route_source",
     "route_confidence",
+    "route_provenance",
+    "tool_candidates",
     "retrieved_doc_ids",
     "matched_signals",
+    "feature_fresh_evidence_sha256",
 )
 CHANNEL_LAST_VALUE = "last_value"
 CHANNEL_TOPIC_ACCUMULATE = "topic_accumulate"
@@ -1867,6 +1870,9 @@ def _validate_executor_decision_packet(
         raise ValueError("executor decision packet matched_signals must be a list")
     if not isinstance(packet.get("route_provenance", []), list):
         raise ValueError("executor decision packet route_provenance must be a list")
+    route_provenance = [str(item).strip() for item in packet.get("route_provenance", []) if str(item).strip()]
+    if not route_provenance:
+        raise ValueError("executor decision packet requires non-empty route_provenance")
     route_confidence = packet.get("route_confidence")
     if not isinstance(route_confidence, (int, float)):
         raise ValueError("executor decision packet route_confidence must be numeric")
@@ -1885,6 +1891,19 @@ def _validate_executor_decision_packet(
         candidate_route = str(item.get("route", "")).strip()
         if not candidate_tool or not candidate_route:
             raise ValueError("executor decision packet tool_candidates require route and tool_name")
+        candidate_score = item.get("score")
+        if candidate_score is not None and not isinstance(candidate_score, (int, float)):
+            raise ValueError("executor decision packet tool_candidates score must be numeric")
+        candidate_signals = item.get("matched_signals", [])
+        if candidate_signals is not None and not isinstance(candidate_signals, list):
+            raise ValueError(
+                "executor decision packet tool_candidates matched_signals must be a list when present"
+            )
+        candidate_tags = item.get("matched_tags", [])
+        if candidate_tags is not None and not isinstance(candidate_tags, list):
+            raise ValueError(
+                "executor decision packet tool_candidates matched_tags must be a list when present"
+            )
         if candidate_tool == tool_name and candidate_route == route:
             matching_candidate = True
     if not matching_candidate:
@@ -1897,13 +1916,33 @@ def _validate_executor_decision_packet(
         if metadata_sha and payload_sha and metadata_sha != payload_sha:
             raise ValueError("executor decision packet fresh evidence hash mismatch")
         metadata_route = str(ref.metadata.get("feature_route", "")).strip()
+        metadata_route_source = str(ref.metadata.get("feature_route_source", "")).strip()
         metadata_confidence = ref.metadata.get("feature_route_confidence")
         audit_mode = str(ref.metadata.get("audit_decision_packet_mode", "")).strip()
         if audit_mode != "override_mismatch_abstain":
             if metadata_route and metadata_route != route:
                 raise ValueError("executor decision packet route mismatch with state metadata")
+            if metadata_route_source and metadata_route_source != str(packet.get("route_source", "")).strip():
+                raise ValueError("executor decision packet route_source mismatch with state metadata")
             if isinstance(metadata_confidence, (int, float)) and float(metadata_confidence) != float(route_confidence):
                 raise ValueError("executor decision packet route_confidence mismatch with state metadata")
+        else:
+            if route == "generic_triage":
+                raise ValueError("executor decision packet override_mismatch_abstain requires explicit override route")
+            if not tool_name:
+                raise ValueError("executor decision packet override_mismatch_abstain requires explicit override tool_name")
+            if "audit_override" not in set(route_provenance):
+                raise ValueError(
+                    "executor decision packet override_mismatch_abstain requires audit_override provenance"
+                )
+            if not packet.get("retrieved_doc_ids", []):
+                raise ValueError(
+                    "executor decision packet override_mismatch_abstain requires retrieved_doc_ids"
+                )
+            if not packet.get("matched_signals", []):
+                raise ValueError(
+                    "executor decision packet override_mismatch_abstain requires matched_signals"
+                )
 
 
 def _parse_transfer_tool_candidates(raw_value: str) -> list[dict[str, Any]]:

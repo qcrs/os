@@ -185,6 +185,7 @@ v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其�
 - `typed_state_full_rich_audit_v3` 只保留 full-rich support/audit，不进 formal headline。
 - `carrier_microbench_v3` 是 engineering audit only，不读成 “纯文本 vs structured” 正式 headline。
 - `memory_policy_controlled_v3` 负责 protocol-only replay policy 归因；`memory_reuse_v3` 保留 protocol-only replay proof surface。
+- `planner_support_v3` 是独立的 planner support/formal-secondary surface：它受控比较 `plan_source=yaml` 与 `plan_source=llm`，用于证明系统覆盖规划角色并支持开放 planner，但不并入 `contest_dual_mode_controlled_v3` 的 communication headline。
 - `typed_state_consumer_sensitivity_v3` 是 formal-secondary support surface，只说明 minimal `EXECUTOR_DECISION_PACKET` 被生产、传递、消费，且缺失/错误 packet 会导致 destructive-control 降级；不升格为主 headline。
 - `open_system_comparison_v1` 是独立 open engineering comparison surface，由 `eval/open_runner.py` 生成，不并入 `eval.runner` 的 formal v3 headline。
 

@@ -58,7 +58,6 @@ ALLOWED_PLANNER_ACTIONS = (
     "EXECUTE_PLAYBOOK",
     "SUMMARIZE_AND_COMMIT",
     "VALIDATE_ROUTE",
-    "CHECK_MEMORY_REUSE",
 )
 CONTEST_REQUIRED_PLANNER_ACTIONS = (
     "RETRIEVE_EVIDENCE",
@@ -712,6 +711,7 @@ class RetrieverAgent(BaseAgent):
             if override_route or override_tool_name:
                 audit_decision_packet_mode = "override_mismatch_abstain"
                 decision_packet["audit_mode"] = audit_decision_packet_mode
+                decision_packet["route_provenance"] = ["audit_override"]
                 overridden_route = str(decision_packet.get("route", "")).strip()
                 overridden_tool = str(decision_packet.get("tool_name", "")).strip()
                 decision_packet["tool_candidates"] = [
@@ -1501,7 +1501,7 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
             "Return an executable DAG with 3 to 5 steps. "
             "Allowed owner_agent values: planner, retriever, executor, summarizer. "
-            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE, CHECK_MEMORY_REUSE. "
+            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
             "The plan must include retrieve, execute, and summarize semantics, but step ids and wording do not need to be fixed. "
             "For RETRIEVE_EVIDENCE include query, evidence_text, tags, allow_memory_reuse, and audit_disable_state_kinds in params. "
             "For SUMMARIZE_AND_COMMIT include summary_hint and tags in params. "
@@ -1537,7 +1537,7 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "Return either {\"steps\":[...]} or the compact shape {\"r\":{...},\"x\":{},\"s\":{...}}. "
             "If you use steps, emit a 3-5 step executable DAG. "
             "Allowed owner_agent values: planner, retriever, executor, summarizer. "
-            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE, CHECK_MEMORY_REUSE. "
+            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
             "The plan must cover retrieve, execute, and summarize semantics. "
             "If you use the compact shape, r must contain q,e,t and optional sid/dep/action/owner/role. s must contain h,t and optional sid/dep/action/owner/role. "
             "Do not emit replay labels, corpus filters, or tool-route hints. "
