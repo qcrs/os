@@ -321,6 +321,7 @@ class SampleTask:
     plan_source: str = "yaml"
     complexity_bucket: str = "simple"
     summary_contract: str = "actions_plus_evidence"
+    required_plan_semantic_roles: tuple[str, ...] = ()
     audit_disable_state_kinds: tuple[str, ...] = ()
     audit_decision_packet_override_route: str = ""
     audit_decision_packet_override_tool_name: str = ""
@@ -386,6 +387,7 @@ class SampleTask:
             "abstention_allowed": self.abstention_allowed,
             "allowed_abstain_tool": self.allowed_abstain_tool,
             "abstain_only_when": self.abstain_only_when,
+            "required_plan_semantic_roles": list(self.required_plan_semantic_roles),
         }
 
     @property
@@ -817,6 +819,11 @@ def _load_sample_task(
         summary_contract=normalize_summary_contract(
             item.get("summary_contract", "actions_plus_evidence")
         ),
+        required_plan_semantic_roles=tuple(
+            str(value).strip().lower()
+            for value in item.get("required_plan_semantic_roles", [])
+            if str(value).strip()
+        ),
         audit_disable_state_kinds=tuple(
             str(value).strip()
             for value in item.get("audit_disable_state_kinds", [])
@@ -933,6 +940,18 @@ def _validate_formal_pack_task_contract(
         raise ValueError(f"{task.task_id}: formal headline rows require acceptable_routes")
     if task_set_metadata.public_surface == "formal_headline" and not task.acceptable_tools:
         raise ValueError(f"{task.task_id}: formal headline rows require acceptable_tools")
+    if task.required_plan_semantic_roles:
+        invalid_roles = sorted(
+            {
+                role
+                for role in task.required_plan_semantic_roles
+                if role not in {"retrieve", "validate", "execute", "summarize", "reuse_check"}
+            }
+        )
+        if invalid_roles:
+            raise ValueError(
+                f"{task.task_id}: unsupported required_plan_semantic_roles={invalid_roles!r}"
+            )
 
 
 def _validate_task_set_metadata_contract(

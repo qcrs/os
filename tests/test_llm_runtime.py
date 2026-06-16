@@ -7,15 +7,19 @@ import asyncio
 import pytest
 
 from agents.sample_agents import (
+    PlannerAgent,
     _plan_from_llm_output,
     _planner_messages,
     _summarizer_messages,
     _summary_from_llm_output,
 )
+from protocol.messages import Capability
 from runtime.llm import DeterministicLLMClient, LLMConfig
+from runtime.llm import LLMResult, LLMUsage
+from runtime.llm import parse_tagged_json
 from runtime.task_profile import RuntimeTaskProfile
 from runtime import executor_runtime
-from tasks.sample_tasks import SampleTask, build_plan, default_task_chain
+from tasks.sample_tasks import SampleTask, build_plan, default_task_chain, load_task_set_bundle
 
 
 def test_llm_config_supports_role_specific_models_from_env(monkeypatch) -> None:
@@ -222,6 +226,130 @@ def test_plan_parser_requires_explicit_semantic_role_for_non_compact_steps() -> 
         _plan_from_llm_output(task, output_text)
 
 
+class _RepairingPlannerClient:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+        del temperature
+        assert purpose == "planner"
+        self.calls.append([msg.content for msg in messages])
+        if len(self.calls) == 1:
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "steps": [
+                            {
+                                "step_id": 1,
+                                "owner_agent": "retriever",
+                                "action": "RETRIEVE_EVIDENCE",
+                                "description": "retrieve evidence",
+                            },
+                            {
+                                "step_id": 2,
+                                "owner_agent": "executor",
+                                "action": "EXECUTE_PLAYBOOK",
+                                "semantic_role": "execute",
+                                "depends_on": [1],
+                                "input_state_refs": [],
+                                "params": {},
+                            },
+                            {
+                                "step_id": 3,
+                                "owner_agent": "summarizer",
+                                "action": "SUMMARIZE_AND_COMMIT",
+                                "semantic_role": "summarize",
+                                "depends_on": [2],
+                                "input_state_refs": [],
+                                "params": {
+                                    "summary_hint": "h",
+                                    "tags": [],
+                                },
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                model="test",
+                usage=LLMUsage(),
+            )
+        return LLMResult(
+            text=json.dumps(
+                {
+                    "steps": [
+                        {
+                            "step_id": "retrieve",
+                            "semantic_role": "retrieve",
+                            "owner_agent": "retriever",
+                            "action": "RETRIEVE_EVIDENCE",
+                            "input_state_refs": [],
+                            "params": {
+                                "query": "q",
+                                "evidence_text": "e",
+                                "tags": [],
+                                "allow_memory_reuse": True,
+                            },
+                            "depends_on": [],
+                        },
+                        {
+                            "step_id": "validate",
+                            "semantic_role": "validate",
+                            "owner_agent": "executor",
+                            "action": "VALIDATE_ROUTE",
+                            "input_state_refs": [],
+                            "params": {},
+                            "depends_on": ["retrieve"],
+                        },
+                        {
+                            "step_id": "execute",
+                            "semantic_role": "execute",
+                            "owner_agent": "executor",
+                            "action": "EXECUTE_PLAYBOOK",
+                            "input_state_refs": [],
+                            "params": {},
+                            "depends_on": ["retrieve", "validate"],
+                        },
+                        {
+                            "step_id": "summarize",
+                            "semantic_role": "summarize",
+                            "owner_agent": "summarizer",
+                            "action": "SUMMARIZE_AND_COMMIT",
+                            "input_state_refs": [],
+                            "params": {
+                                "summary_hint": "h",
+                                "tags": [],
+                            },
+                            "depends_on": ["retrieve", "execute"],
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            model="test",
+            usage=LLMUsage(),
+        )
+
+
+def test_planner_agent_retries_until_planner_contract_is_valid() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    client = _RepairingPlannerClient()
+    agent = PlannerAgent(agent_id="planner", capability=Capability(agent_id="planner", items=[]), llm_client=client)
+
+    class _Ctx:
+        mode = "protocol"
+        def record_llm_result(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+    plan = asyncio.run(agent.plan_task(task, _Ctx()))
+
+    assert [step.semantic_role for step in plan.steps] == ["retrieve", "validate", "execute", "summarize"]
+    assert len(client.calls) == 2
+
+
 def test_plan_parser_rejects_unsupported_memory_reuse_action() -> None:
     task = default_task_chain()[0]
     output_text = json.dumps(
@@ -337,6 +465,121 @@ def test_plan_parser_rejects_missing_required_semantic_coverage() -> None:
     )
 
     with pytest.raises(ValueError, match="missing required semantics: execute"):
+        _plan_from_llm_output(task, output_text)
+
+
+def test_plan_parser_rejects_missing_validate_for_validate_first_task() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "gather-001",
+                    "semantic_role": "retrieve",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "act-002",
+                    "semantic_role": "execute",
+                    "owner_agent": "executor",
+                    "action": "EXECUTE_PLAYBOOK",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["gather-001"],
+                },
+                {
+                    "step_id": "wrap-003",
+                    "semantic_role": "summarize",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["gather-001", "act-002"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="missing required semantics: validate"):
+        _plan_from_llm_output(task, output_text)
+
+
+def test_plan_parser_rejects_semantic_role_owner_action_mismatch() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "retrieve",
+                    "semantic_role": "retrieve",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "validate",
+                    "semantic_role": "validate",
+                    "owner_agent": "planner",
+                    "action": "VALIDATE_ROUTE",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["retrieve"],
+                },
+                {
+                    "step_id": "execute",
+                    "semantic_role": "execute",
+                    "owner_agent": "executor",
+                    "action": "EXECUTE_PLAYBOOK",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["retrieve", "validate"],
+                },
+                {
+                    "step_id": "summarize",
+                    "semantic_role": "summarize",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["retrieve", "execute"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="binding mismatch"):
         _plan_from_llm_output(task, output_text)
 
 
@@ -506,6 +749,29 @@ def test_text_mode_uses_natural_language_prompts() -> None:
     assert '"cd"' not in protocol_messages[-1].content
     assert '"rrc"' not in protocol_messages[-1].content
 
+    validate_task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    validate_messages = _planner_messages(
+        {
+            "task_id": validate_task.task_id,
+            "task_group": validate_task.task_group,
+            "task_theme": validate_task.task_theme,
+            "goal": validate_task.goal,
+            "query": validate_task.query,
+            "evidence_text": validate_task.evidence_text,
+            "tags": list(validate_task.tags),
+            "summary_hint": validate_task.summary_hint,
+            "required_plan_semantic_roles": list(validate_task.required_plan_semantic_roles),
+        },
+        mode="protocol",
+    )
+    validate_payload = parse_tagged_json(validate_messages[-1].content, "sb-plan-v1")
+    assert validate_payload["rr"] == ["retrieve", "validate", "execute", "summarize"]
+    assert "If validate is required, use the explicit steps form" in validate_messages[0].content
+
     summary_messages = _summarizer_messages(
         {
             "task_id": task.task_id,
@@ -637,3 +903,36 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     assert "Evidence:" not in normalized["summary"]
     assert "Playbook:" not in normalized["summary"]
     assert "Actions:" in normalized["summary"]
+
+
+def test_deterministic_llm_emits_validate_step_when_task_contract_requires_it() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    client = DeterministicLLMClient()
+    planner_messages = _planner_messages(
+        {
+            "task_id": task.task_id,
+            "task_group": task.task_group,
+            "task_theme": task.task_theme,
+            "goal": task.goal,
+            "query": task.query,
+            "evidence_text": task.evidence_text,
+            "tags": list(task.tags),
+            "summary_hint": task.summary_hint,
+            "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
+        },
+        mode="protocol",
+    )
+
+    planner_result = asyncio.run(client.complete(planner_messages, purpose="planner"))
+    parsed_plan = _plan_from_llm_output(task, planner_result.text)
+
+    assert [step.semantic_role for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]

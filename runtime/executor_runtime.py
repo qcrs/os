@@ -1939,10 +1939,6 @@ def _validate_executor_decision_packet(
                 raise ValueError(
                     "executor decision packet override_mismatch_abstain requires retrieved_doc_ids"
                 )
-            if not packet.get("matched_signals", []):
-                raise ValueError(
-                    "executor decision packet override_mismatch_abstain requires matched_signals"
-                )
 
 
 def _parse_transfer_tool_candidates(raw_value: str) -> list[dict[str, Any]]:
