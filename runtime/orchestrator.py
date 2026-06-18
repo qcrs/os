@@ -222,6 +222,9 @@ class RunContext:
     planner_source: str = ""
     planner_step_count: int = 0
     planner_contract_valid: bool = False
+    planner_contract_valid_final: bool = False
+    planner_one_shot_valid: bool = True
+    planner_repair_attempt_count: int = 0
     blob_fetch_metrics: dict[str, Any] = field(
         default_factory=lambda: {
             "blob_fetch_count": 0,
@@ -260,6 +263,7 @@ class RunContext:
             "TOOL_CANDIDATE_SET",
             "REPLAY_ELIGIBILITY_BUNDLE",
             "EXECUTOR_DECISION_PACKET",
+            "VALIDATION_GATE_PACKET",
         }
         self.metrics.handoff_ref_count += len(refs)
         self.metrics.handoff_wire_bytes += total_state_ref_lite_wire_bytes(refs)
@@ -595,6 +599,24 @@ class RunContext:
     def get_executor_decision_state(self, ref: StateRef) -> dict[str, object]:
         return self._get_msgpack_state(ref)
 
+    def put_validation_gate_state(
+        self,
+        *,
+        state_id: str,
+        validation_packet: dict[str, object],
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        return self._put_msgpack_state(
+            state_id=state_id,
+            kind="VALIDATION_GATE_PACKET",
+            schema="statebus.validation_gate_packet.v1",
+            payload=validation_packet,
+            metadata=metadata,
+        )
+
+    def get_validation_gate_state(self, ref: StateRef) -> dict[str, object]:
+        return self._get_msgpack_state(ref)
+
     def _put_msgpack_state(
         self,
         *,
@@ -909,10 +931,12 @@ class Orchestrator:
 
     def prepare_plan(self, plan: Plan, ctx: RunContext) -> None:
         self._ensure_handshake(ctx)
+        ctx.plan = plan
         SchemaInterceptor.validate_plan(plan, ctx.session.capability_table)
         ctx.metrics.planned_step_count = len(plan.steps)
         ctx.planner_step_count = len(plan.steps)
         ctx.planner_contract_valid = True
+        ctx.planner_contract_valid_final = True
         for step in plan.steps:
             ctx.set_step_role(step.step_id, self._semantic_role_for_step(step))
         if getattr(ctx, "_statebus_plan_emitted", False):
@@ -1071,7 +1095,9 @@ class Orchestrator:
         )
         ctx.metrics.trajectory_step_count = len(ctx.trajectory_steps)
         ctx.metrics.invariant_check_count += len(invariants)
-        ctx.metrics.invariant_violation_count += sum(1 for ok in invariants.values() if not ok)
+        violations = sum(1 for ok in invariants.values() if not ok)
+        ctx.metrics.true_invariant_violation_count += violations
+        ctx.metrics.invariant_violation_count = ctx.metrics.true_invariant_violation_count
 
     @staticmethod
     def seal_task_commit(ctx: RunContext) -> TaskCommit:
@@ -1435,6 +1461,15 @@ class Orchestrator:
         if step.owner_agent == "executor" and step.action == "EXECUTE_PLAYBOOK":
             if ctx.transfer_strategy() == "state_ref":
                 return ctx.handoff_profile()
+            required_roles = {
+                str(role).strip().lower()
+                for role in getattr(getattr(ctx, "task", None), "required_plan_semantic_roles", ())
+                if str(role).strip()
+            }
+            if ctx.transfer_strategy() == "text_whole_lane" and "validate" in required_roles:
+                return "text_whole_lane_validated"
+            if ctx.transfer_strategy() == "state_packet_minimal" and "validate" in required_roles:
+                return "state_packet_minimal_validated"
             return ctx.transfer_strategy()
         if step.owner_agent == "summarizer" and step.action == "SUMMARIZE_AND_COMMIT":
             if ctx.transfer_strategy() == "state_ref":
@@ -1540,6 +1575,15 @@ class Orchestrator:
         stored_proof_hash = stored_replay_blob_hash or stored_replay_certificate_hash
         fresh_proof_hash = fresh_replay_blob_hash or fresh_replay_certificate_hash
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
+        if Orchestrator._matches_headline_s2_prior_replay(
+            hit=hit,
+            task=getattr(ctx, "task", None),
+            feature_route=feature_route,
+            reusable_steps=reusable_steps,
+            route_confidence=stored_route_confidence,
+            route_provenance=stored_route_provenance,
+        ):
+            return True
         return (
             feature_route
             and feature_route != "generic_triage"
@@ -1563,6 +1607,64 @@ class Orchestrator:
             and _optional_hash_match(stored_channel_snapshot_hash, fresh_channel_snapshot_hash)
             and bool(stored_proof_hash)
             and bool(fresh_proof_hash)
+        )
+
+    @staticmethod
+    def _matches_headline_s2_prior_replay(
+        *,
+        hit: MemoryHit,
+        task: object | None,
+        feature_route: str,
+        reusable_steps: set[str],
+        route_confidence: float,
+        route_provenance: list[str],
+    ) -> bool:
+        if (
+            str(getattr(getattr(task, "task_set_metadata", None), "pack_type", "")).strip()
+            != "contest_honest_headline_v1"
+        ):
+            return False
+        if str(getattr(task, "thickness_setting", "")).strip() != "S2":
+            return False
+        required_case_ids = {
+            str(item).strip()
+            for item in getattr(task, "required_prior_case_ids", ())
+            if str(item).strip()
+        }
+        required_routes = {
+            str(item).strip()
+            for item in getattr(task, "required_prior_routes", ())
+            if str(item).strip()
+        }
+        required_rejections = {
+            str(item).strip()
+            for item in getattr(task, "required_prior_rejections", ())
+            if str(item).strip()
+        }
+        source_case_id = str(hit.metadata.get("case_id", "")).strip()
+        source_rejections = {
+            str(item).strip()
+            for item in hit.metadata.get("rejected_routes", [])
+            if str(item).strip()
+        }
+        return (
+            bool(required_case_ids)
+            and source_case_id in required_case_ids
+            and bool(required_routes)
+            and feature_route in required_routes
+            and (not required_rejections or required_rejections.issubset(source_rejections))
+            and "execute" in reusable_steps
+            and _replay_class_allows(hit.replay_class, required="validated_replay")
+            and _route_is_replay_eligible(
+                route_confidence=route_confidence,
+                route_provenance=route_provenance,
+                minimum_confidence=0.70,
+            )
+            and any(
+                ref.kind == "TOOL_ARTIFACT"
+                and bool(ref.metadata.get("channel_replay_compatible", True))
+                for ref in hit.evidence_state_refs
+            )
         )
 
     def _matches_skip_retrieve_execute(
@@ -1695,6 +1797,8 @@ class Orchestrator:
             refs=hit.evidence_state_refs,
             kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
+        validation_result = ctx.result_for_role("validate")
+        validation_payload = validation_result.payload if validation_result is not None else {}
         route = hit.route or _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
         route_source = hit.route_source or _bundle_string(
             replay_bundle,
@@ -1733,6 +1837,51 @@ class Orchestrator:
                 "tool_candidate_state_id": tool_candidate_state_id,
                 "reused_memory": True,
                 "reuse_mode": "skip_execute",
+                "validated_action_contract": str(
+                    validation_payload.get("validated_action_contract", "")
+                ).strip(),
+                "validation_gate_applied": validation_result is not None,
+                "validation_decision_source": (
+                    "validation_text_handoff"
+                    if ctx.transfer_strategy() == "text_whole_lane"
+                    else "validation_gate"
+                    if validation_result is not None
+                    else ""
+                ),
+                "pre_validation_route": str(validation_payload.get("pre_validation_route", "")).strip(),
+                "pre_validation_tool_name": str(
+                    validation_payload.get("pre_validation_tool_name", "")
+                ).strip(),
+                "pre_validation_action_contract": str(
+                    validation_payload.get("pre_validation_action_contract", "")
+                ).strip(),
+                "validation_changed_action": bool(
+                    validation_payload.get("validation_changed_action", False)
+                ),
+                "validation_refinement_reason": str(
+                    validation_payload.get("validation_refinement_reason", "")
+                ).strip(),
+                "s2_prior_dependency_required": bool(
+                    validation_payload.get("s2_prior_dependency_required", False)
+                ),
+                "s2_prior_dependency_satisfied": bool(
+                    validation_payload.get("s2_prior_dependency_satisfied", False)
+                ),
+                "s2_prior_dependent_action_change": bool(
+                    validation_payload.get("s2_prior_dependent_action_change", False)
+                ),
+                "s2_without_prior_action_contract": str(
+                    validation_payload.get("s2_without_prior_action_contract", "")
+                ).strip(),
+                "s2_without_prior_tool_name": str(
+                    validation_payload.get("s2_without_prior_tool_name", "")
+                ).strip(),
+                "s2_with_prior_action_contract": str(
+                    validation_payload.get("s2_with_prior_action_contract", "")
+                ).strip(),
+                "s2_with_prior_tool_name": str(
+                    validation_payload.get("s2_with_prior_tool_name", "")
+                ).strip(),
             },
             skipped=True,
             reused_from_memory_id=hit.memory_id,
@@ -1832,6 +1981,8 @@ class Orchestrator:
             refs=hit.evidence_state_refs,
             kind="REPLAY_ELIGIBILITY_BUNDLE",
         )
+        validation_result = ctx.result_for_role("validate")
+        validation_payload = validation_result.payload if validation_result is not None else {}
         route = hit.route or _bundle_string(replay_bundle, "route", fallback=hit.metadata.get("feature_route", ""))
         route_source = hit.route_source or _bundle_string(
             replay_bundle,
@@ -1956,6 +2107,51 @@ class Orchestrator:
                 ),
                 "reused_memory": True,
                 "reuse_mode": "skip_retrieve_execute",
+                "validated_action_contract": str(
+                    validation_payload.get("validated_action_contract", "")
+                ).strip(),
+                "validation_gate_applied": validation_result is not None,
+                "validation_decision_source": (
+                    "validation_text_handoff"
+                    if ctx.transfer_strategy() == "text_whole_lane"
+                    else "validation_gate"
+                    if validation_result is not None
+                    else ""
+                ),
+                "pre_validation_route": str(validation_payload.get("pre_validation_route", "")).strip(),
+                "pre_validation_tool_name": str(
+                    validation_payload.get("pre_validation_tool_name", "")
+                ).strip(),
+                "pre_validation_action_contract": str(
+                    validation_payload.get("pre_validation_action_contract", "")
+                ).strip(),
+                "validation_changed_action": bool(
+                    validation_payload.get("validation_changed_action", False)
+                ),
+                "validation_refinement_reason": str(
+                    validation_payload.get("validation_refinement_reason", "")
+                ).strip(),
+                "s2_prior_dependency_required": bool(
+                    validation_payload.get("s2_prior_dependency_required", False)
+                ),
+                "s2_prior_dependency_satisfied": bool(
+                    validation_payload.get("s2_prior_dependency_satisfied", False)
+                ),
+                "s2_prior_dependent_action_change": bool(
+                    validation_payload.get("s2_prior_dependent_action_change", False)
+                ),
+                "s2_without_prior_action_contract": str(
+                    validation_payload.get("s2_without_prior_action_contract", "")
+                ).strip(),
+                "s2_without_prior_tool_name": str(
+                    validation_payload.get("s2_without_prior_tool_name", "")
+                ).strip(),
+                "s2_with_prior_action_contract": str(
+                    validation_payload.get("s2_with_prior_action_contract", "")
+                ).strip(),
+                "s2_with_prior_tool_name": str(
+                    validation_payload.get("s2_with_prior_tool_name", "")
+                ).strip(),
             },
             skipped=True,
             reused_from_memory_id=hit.memory_id,
@@ -2182,6 +2378,12 @@ class Orchestrator:
         task: object | None,
         ctx: RunContext,
     ) -> None:
+        if (
+            str(getattr(getattr(task, "task_set_metadata", None), "pack_type", "")).strip()
+            == "contest_honest_headline_v1"
+            and str(getattr(task, "thickness_setting", "")).strip() == "S2"
+        ):
+            return
         if self._prior_dependency_satisfied(task=task, ctx=ctx):
             return
         task_id = str(getattr(task, "task_id", ctx.task_id or "task")).strip() or "task"

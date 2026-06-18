@@ -119,8 +119,11 @@ benchmark 运行主入口在：
 默认 CLI task-set 当前指向：
 
 - `contest_dual_mode_controlled_v3`
-  - 当前正式 dual-mode headline
+  - 当前内部 controlled composite dual-mode surface
   - 同任务双模式对照：`text_strict_pure_lane` vs `state_packet_minimal`
+- `contest_honest_headline_v1`
+  - 当前 contest-facing 正式 dual-mode headline
+  - 同任务双模式对照：`text_whole_lane` vs `state_packet_minimal`
 
 v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其中重点支持入口包括：
 
@@ -155,9 +158,10 @@ v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其�
 
 这些历史报告保留了 v1/v2 pack 名称、旧任务数或旧运行包数据时，只能作为背景材料；当前 v3 formal 结论以 active v3 pack 的 manifest/report/gate 为准。
 
-当前 active benchmark surface 使用 12 个 v3 pack：
+当前 active benchmark surface 使用 13 个 v3 pack：
 
 - `contest_dual_mode_controlled_v3`
+- `contest_honest_headline_v1`
 - `memory_dual_mode_fairness_v3`
 - `typed_state_mechanism_v3`
 - `external_text_baseline_audit_v3`
@@ -172,11 +176,12 @@ v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其�
 
 读法边界：
 
-- `contest_dual_mode_controlled_v3` 是当前正式双模式 headline。`text` 的正式定义是 `text_strict_pure_lane`，读法固定为 `text_strict_pure_lane` vs `state_packet_minimal` 这组受控 mainline handoff object。
+- `contest_honest_headline_v1` 是当前 contest-facing 正式双模式 headline。`text` 的正式定义是 `text_whole_lane`，读法固定为 `text_whole_lane` vs `state_packet_minimal`。
+- `contest_dual_mode_controlled_v3` 降为内部 controlled composite surface。它保留 `text_strict_pure_lane` vs `state_packet_minimal` 这组受控 mainline handoff object，但不再承担 contest-facing pure-text headline。
 - 当前 `contest_dual_mode_controlled_v3` 已收紧为 stronger multi-route formal contract：clean / distractor / ambiguous / reusable 都要求 route 竞争集，且 reusable 显式携带 prior dependency / prior rejection 合同。
 - 当前 contest formal retrieval 按 structure-level clean 读取：formal corpus 不暴露 runtime hint，formal retrieval 不再注入 preferred-doc shortlist，也不再依赖 theme/group bonus 托举 formal 候选空间。
 - `text_strict_pure_lane` 仍是 StateBus runtime 内部的 strict text lane：executor 不接 typed state ref，但仍复用同一套 lexical route/tool helper path 与 playbook executor。
-- `text_whole_lane` 是内部 whole-lane text audit object；两者都不是 external traditional pure-text multi-agent baseline。
+- `text_whole_lane` 现在同时承担 contest-facing natural-language whole-lane text headline object；它仍不是 external traditional pure-text multi-agent baseline。
 - `memory_dual_mode_fairness_v3` 是保留的 dual-mode fairness/object-parity surface；不承担 replay proof。
 - `typed_state_mechanism_v3` 只回答 `natural_handoff_text` vs `state_packet_minimal(DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET)` 是否真实生产、传递、消费；不读成 dual-mode headline，也不读成 replay 结论。
 - `external_text_baseline_audit_v3` 是独立 external text baseline audit surface；先做 audit-only，不并入 contest headline 或 typed-state 机制 claim。
@@ -185,7 +190,7 @@ v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其�
 - `typed_state_full_rich_audit_v3` 只保留 full-rich support/audit，不进 formal headline。
 - `carrier_microbench_v3` 是 engineering audit only，不读成 “纯文本 vs structured” 正式 headline。
 - `memory_policy_controlled_v3` 负责 protocol-only replay policy 归因；`memory_reuse_v3` 保留 protocol-only replay proof surface。
-- `planner_support_v3` 是独立的 planner support/formal-secondary surface：它受控比较 `plan_source=yaml` 与 `plan_source=llm`，用于证明系统覆盖规划角色并支持开放 planner，但不并入 `contest_dual_mode_controlled_v3` 的 communication headline。
+- `planner_support_v3` 是独立的 planner support/formal-secondary surface：它受控比较 `plan_source=yaml` 与 `plan_source=llm`，用于证明系统覆盖规划角色并支持开放 planner，但不并入 contest communication headline。
 - `typed_state_consumer_sensitivity_v3` 是 formal-secondary support surface，只说明 minimal `EXECUTOR_DECISION_PACKET` 被生产、传递、消费，且缺失/错误 packet 会导致 destructive-control 降级；不升格为主 headline。
 - `open_system_comparison_v1` 是独立 open engineering comparison surface，由 `eval/open_runner.py` 生成，不并入 `eval.runner` 的 formal v3 headline。
 

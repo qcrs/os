@@ -105,6 +105,8 @@ METRIC_FIELDS = (
     "dag_integrity_violation_count",
     "invariant_check_count",
     "invariant_violation_count",
+    "expected_gate_block_count",
+    "true_invariant_violation_count",
 )
 
 COUNTER_FIELDS = (
@@ -155,6 +157,43 @@ MEMORY_POLICY_ORDER = (
     "exact_replay",
 )
 
+WHOLE_LANE_TEXT_TEMPLATE_SLOT_PATTERNS = (
+    "The user goal is:",
+    "The current request is:",
+    "The current working hypothesis is",
+    "The recommended first playbook is",
+    "Request:",
+    "Most likely issue:",
+    "Chosen playbook:",
+)
+
+WHOLE_LANE_TEXT_TEMPLATE_COLON_PREFIXES = (
+    "user goal:",
+    "query:",
+    "request:",
+    "route:",
+    "tool:",
+    "route source:",
+    "route confidence:",
+    "route provenance:",
+    "matched signals:",
+    "matched tags:",
+    "retrieved docs:",
+    "evidence:",
+)
+
+WHOLE_LANE_TEXT_LOW_VARIANT_SLOT_CUES = (
+    "the current request is:",
+    "the visible request is about this situation:",
+    "the current working hypothesis is ",
+    "the recommended first playbook is ",
+    "the first playbook to try is ",
+    "starting with ",
+    "request:",
+    "most likely issue:",
+    "chosen playbook:",
+)
+
 MISFIRE_FIELD_ORDER = (
     "route",
     "route_source",
@@ -173,6 +212,7 @@ CASE_CORRECTNESS_LABELS = (
     "exact_match",
     "admissible_match",
     "abstention_match",
+    "not_evaluated",
     "wrong_family",
     "mismatch",
 )
@@ -214,6 +254,11 @@ FORMAL_DUAL_MODE_PROTOCOL_EXECUTOR_KINDS = (
 )
 
 MINIMAL_TYPED_EXECUTOR_KINDS = {"DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET"}
+VALIDATED_MINIMAL_TYPED_EXECUTOR_KINDS = {
+    "DENSE_EVIDENCE",
+    "EXECUTOR_DECISION_PACKET",
+    "VALIDATION_GATE_PACKET",
+}
 FEATURE_ONLY_TYPED_EXECUTOR_KINDS = {"DENSE_EVIDENCE", "FEATURE_BUNDLE"}
 FULL_RICH_AUDIT_EXECUTOR_KINDS = {
     "DENSE_EVIDENCE",
@@ -549,12 +594,31 @@ def _whole_lane_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> d
     hidden_field_leak = any(marker in retrieve_handoff_text for marker in WHOLE_LANE_TEXT_HIDDEN_FIELD_MARKERS) or any(
         marker in execute_handoff_text for marker in WHOLE_LANE_TEXT_HIDDEN_FIELD_MARKERS
     )
+    def _has_template_slot_leak(text: str) -> bool:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return False
+        lowered = normalized.lower()
+        for line in lowered.splitlines():
+            compact = line.strip()
+            if not compact:
+                continue
+            if any(compact.startswith(prefix) for prefix in WHOLE_LANE_TEXT_TEMPLATE_COLON_PREFIXES):
+                return True
+        if any(pattern.lower() in lowered for pattern in WHOLE_LANE_TEXT_TEMPLATE_SLOT_PATTERNS):
+            return True
+        low_variant_hits = sum(1 for cue in WHOLE_LANE_TEXT_LOW_VARIANT_SLOT_CUES if cue in lowered)
+        return low_variant_hits >= 2
+
+    template_slot_leak = _has_template_slot_leak(retrieve_handoff_text) or _has_template_slot_leak(execute_handoff_text)
     summarizer_typed_visibility = any(kind in WHOLE_LANE_TEXT_FORBIDDEN_REF_KINDS for kind in summarize_input_kinds)
     failed_reasons: list[str] = []
     if forbidden_ref_kinds:
         failed_reasons.append(f"forbidden_ref_kinds={','.join(forbidden_ref_kinds)}")
     if hidden_field_leak:
         failed_reasons.append("hidden_field_leak")
+    if template_slot_leak and transfer_strategy == "text_whole_lane":
+        failed_reasons.append("template_slot_leak")
     if summarizer_typed_visibility:
         failed_reasons.append("summarizer_typed_visibility")
     if not retrieve_handoff_text:
@@ -569,6 +633,7 @@ def _whole_lane_text_guard_payload(ctx: RunContext, transfer_strategy: str) -> d
         "summarizer_input_kinds": summarize_input_kinds,
         "forbidden_ref_kinds": forbidden_ref_kinds,
         "hidden_field_leak": hidden_field_leak,
+        "template_slot_leak": template_slot_leak,
         "summarizer_typed_visibility": summarizer_typed_visibility,
         "retrieve_handoff_text_bytes": len(retrieve_handoff_text.encode("utf-8")),
         "execute_handoff_text_bytes": len(execute_handoff_text.encode("utf-8")),
@@ -846,6 +911,39 @@ def _build_case_contract_audit(task_run: dict[str, object]) -> dict[str, object]
     abstention_allowed = bool(contract.get("abstention_allowed", False))
     allowed_abstain_tool = str(contract.get("allowed_abstain_tool", "")).strip()
     case_type = str(contract.get("case_type", "exact_single_solution")).strip() or "exact_single_solution"
+    if not primary_expected_route and not primary_expected_tool:
+        observed_family = _normalize_route_family(
+            observed_route,
+            expected_family,
+            str(task_run.get("task_theme", "")),
+        )
+        return {
+            "case_id": str(contract.get("case_id", task_run.get("task_id", ""))).strip(),
+            "case_type": case_type,
+            "eval_scope": str(contract.get("eval_scope", "")).strip(),
+            "observed_route": observed_route,
+            "observed_tool": observed_tool,
+            "observed_family": observed_family,
+            "expected_family": expected_family,
+            "primary_expected_route": primary_expected_route,
+            "primary_expected_tool": primary_expected_tool,
+            "acceptable_routes": acceptable_routes,
+            "acceptable_tools": acceptable_tools,
+            "acceptable_route_match": False,
+            "acceptable_tool_match": False,
+            "alternate_pair_admissible": False,
+            "abstention_allowed": abstention_allowed,
+            "allowed_abstain_tool": allowed_abstain_tool,
+            "abstain_only_when": str(contract.get("abstain_only_when", "")).strip(),
+            "disallowed_families": disallowed_families,
+            "correctness_label": "not_evaluated",
+            "route_exact": False,
+            "tool_exact": False,
+            "exact_match": False,
+            "admissible_match": False,
+            "abstention_match": False,
+            "wrong_family": False,
+        }
     observed_family = _normalize_route_family(
         observed_route,
         expected_family,
@@ -942,12 +1040,16 @@ def _expected_executor_kinds_for_transfer(
     *,
     transfer_strategy: str,
     handoff_profile: str,
+    step_truth: dict[str, object] | None = None,
 ) -> set[str]:
+    step_truth = step_truth if isinstance(step_truth, dict) else {}
     if transfer_strategy in {"text_strict_pure_lane", "text_whole_lane", "inline_text_handoff"}:
         return set()
     if transfer_strategy in {"text_brief", "text_packet_minimal", "natural_handoff_text"}:
         return {"TOOL_ARTIFACT"}
     if transfer_strategy == "state_packet_minimal":
+        if "validate" in step_truth:
+            return set(VALIDATED_MINIMAL_TYPED_EXECUTOR_KINDS)
         return set(MINIMAL_TYPED_EXECUTOR_KINDS)
     if transfer_strategy == "channel_store_hashref":
         if handoff_profile == "protocol_full_rich_audit":
@@ -1093,6 +1195,7 @@ def _build_transfer_truth_audit(task_run: dict[str, object]) -> dict[str, object
     expected_executor_kinds = _expected_executor_kinds_for_transfer(
         transfer_strategy=transfer_strategy,
         handoff_profile=handoff_profile,
+        step_truth=step_truth,
     )
     forbidden_executor_kinds = _forbidden_executor_kinds_for_transfer(
         transfer_strategy=transfer_strategy,
@@ -1258,6 +1361,7 @@ def _empty_guard_audit_summary() -> dict[str, object]:
         "inline_text_boundary_guard_pass_rate": 0.0,
         "forbidden_ref_kind_seen_rate": 0.0,
         "hidden_field_leak_rate": 0.0,
+        "template_slot_leak_rate": 0.0,
         "summarizer_typed_visibility_rate": 0.0,
     }
 
@@ -1295,6 +1399,9 @@ def _summarize_guard_rows(rows: list[dict[str, object]]) -> dict[str, object]:
         "hidden_field_leak_rate": (
             sum(1 for row in all_rows if bool(row.get("hidden_field_leak"))) / len(all_rows)
         ),
+        "template_slot_leak_rate": (
+            sum(1 for row in all_rows if bool(row.get("template_slot_leak"))) / len(all_rows)
+        ),
         "summarizer_typed_visibility_rate": (
             sum(1 for row in all_rows if bool(row.get("summarizer_typed_visibility"))) / len(all_rows)
         ),
@@ -1312,10 +1419,11 @@ def _object_parity_gate(
     text_guard_audit: dict[str, object],
 ) -> dict[str, object]:
     gate = {
-        "applicable": pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"},
+        "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"},
         "executor_mainline_object_ok": True,
         "summarizer_mainline_object_ok": True,
         "text_hidden_field_leak_zero": float(text_guard_audit.get("hidden_field_leak_rate", 0.0)) == 0.0,
+        "text_template_slot_leak_zero": float(text_guard_audit.get("template_slot_leak_rate", 0.0)) == 0.0,
         "text_typed_visibility_zero": float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) == 0.0,
         "text_memory_restore_compat_ok": True,
         "failing_task_ids": [],
@@ -1331,10 +1439,20 @@ def _object_parity_gate(
             gate["summarizer_mainline_object_ok"] = False
             failing.add(str(row.get("task_id", "")))
         audit = row.get("transfer_truth_audit", {})
-        executor_kinds = _sorted_kind_tuple(
+        executor_kinds = set(
             audit.get("executor_input_kinds", []) if isinstance(audit, dict) else []
         )
-        if executor_kinds != FORMAL_DUAL_MODE_PROTOCOL_EXECUTOR_KINDS:
+        step_truth = row.get("step_truth", {})
+        if not isinstance(step_truth, dict):
+            step_truth = {}
+        expected_executor_kinds = _expected_executor_kinds_for_transfer(
+            transfer_strategy=str(row.get("transfer_strategy", "")).strip(),
+            handoff_profile=str(row.get("handoff_profile", "")).strip(),
+            step_truth=step_truth,
+        )
+        if not expected_executor_kinds:
+            expected_executor_kinds = set(FORMAL_DUAL_MODE_PROTOCOL_EXECUTOR_KINDS)
+        if executor_kinds != expected_executor_kinds:
             gate["executor_mainline_object_ok"] = False
             failing.add(str(row.get("task_id", "")))
     for row in task_rows_by_mode.get("text", []):
@@ -1364,6 +1482,7 @@ def _object_parity_gate(
             "executor_mainline_object_ok",
             "summarizer_mainline_object_ok",
             "text_hidden_field_leak_zero",
+            "text_template_slot_leak_zero",
             "text_typed_visibility_zero",
             "text_memory_restore_compat_ok",
         )
@@ -1411,6 +1530,84 @@ def _memory_replay_evidence_gate(
     return gate
 
 
+def _headline_memory_replay_effect_gate(
+    *,
+    pack_type: str,
+    task_rows_by_mode: dict[str, list[dict[str, object]]],
+) -> dict[str, object]:
+    gate = {
+        "applicable": pack_type == "contest_honest_headline_v1",
+        "memory_replay_effect_ready": False,
+        "s2_row_count": 0,
+        "expected_replay_row_count": 0,
+        "actual_replay_row_count": 0,
+        "actual_replay_by_mode": {},
+        "skipped_step_count": 0,
+        "reuse_gain_positive_count": 0,
+        "failing_task_ids": [],
+        "notes": [
+            "Headline memory effect requires current-headline S2 rows to show non-zero runtime replay behavior.",
+            "This gate does not claim repeat=10 formal stability.",
+        ],
+    }
+    if not gate["applicable"]:
+        return gate
+
+    actual_by_mode: dict[str, int] = {}
+    failing: list[str] = []
+    s2_row_count = 0
+    expected_replay_count = 0
+    actual_replay_count = 0
+    skipped_step_count = 0
+    reuse_gain_positive_count = 0
+    for mode, rows in task_rows_by_mode.items():
+        for row in rows:
+            if str(row.get("thickness_setting", "")).strip() != "S2":
+                continue
+            s2_row_count += 1
+            expected_mode = str(row.get("expected_reuse_mode", "")).strip()
+            if expected_mode not in {"skip_execute", "skip_retrieve_execute"}:
+                failing.append(str(row.get("task_id", "")))
+                continue
+            expected_replay_count += 1
+            reuse = row.get("reuse", {})
+            actual_mode = str(reuse.get("mode", "")).strip() if isinstance(reuse, dict) else ""
+            metrics = row.get("metrics", {})
+            row_skipped = int(metrics.get("skipped_step_count", 0)) if isinstance(metrics, dict) else 0
+            row_reuse_gain = float(metrics.get("reuse_gain", 0.0)) if isinstance(metrics, dict) else 0.0
+            row_effect = (
+                actual_mode in {"skip_execute", "skip_retrieve_execute"}
+                and row_skipped > 0
+                and row_reuse_gain > 0.0
+            )
+            if row_effect:
+                actual_replay_count += 1
+                actual_by_mode[mode] = actual_by_mode.get(mode, 0) + 1
+                skipped_step_count += row_skipped
+                reuse_gain_positive_count += 1
+            else:
+                failing.append(str(row.get("task_id", "")))
+
+    gate["s2_row_count"] = s2_row_count
+    gate["expected_replay_row_count"] = expected_replay_count
+    gate["actual_replay_row_count"] = actual_replay_count
+    gate["actual_replay_by_mode"] = dict(sorted(actual_by_mode.items()))
+    gate["skipped_step_count"] = skipped_step_count
+    gate["reuse_gain_positive_count"] = reuse_gain_positive_count
+    gate["failing_task_ids"] = sorted(task_id for task_id in failing if task_id)
+    gate["memory_replay_effect_ready"] = (
+        s2_row_count > 0
+        and expected_replay_count == s2_row_count
+        and actual_replay_count == s2_row_count
+        and actual_by_mode.get("text", 0) > 0
+        and actual_by_mode.get("protocol", 0) > 0
+        and skipped_step_count > 0
+        and reuse_gain_positive_count > 0
+        and not failing
+    )
+    return gate
+
+
 def _build_headline_gates(
     *,
     pack_type: str,
@@ -1419,9 +1616,15 @@ def _build_headline_gates(
     object_parity_gate: dict[str, object],
     memory_replay_evidence_gate: dict[str, object],
     contest_formal_coverage_gate: dict[str, object],
+    headline_memory_replay_effect_gate: dict[str, object] | None = None,
 ) -> dict[str, dict[str, object]]:
+    if headline_memory_replay_effect_gate is None:
+        headline_memory_replay_effect_gate = {
+            "applicable": False,
+            "memory_replay_effect_ready": False,
+        }
     communication_reasons = (
-        list(withheld_reasons) if pack_type == "contest_dual_mode_controlled_v3" else []
+        list(withheld_reasons) if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"} else []
     )
     state_authenticity_reasons = []
     if pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}:
@@ -1447,7 +1650,7 @@ def _build_headline_gates(
                 object_parity_reasons.append(reason)
         if not bool(formal_stability_gate.get("passed")):
             object_parity_reasons.append("formal_stability_gate_failed")
-    communication_allowed = pack_type == "contest_dual_mode_controlled_v3" and not communication_reasons
+    communication_allowed = pack_type == "contest_honest_headline_v1" and not communication_reasons
     state_authenticity_allowed = (
         pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}
         and not state_authenticity_reasons
@@ -1465,7 +1668,7 @@ def _build_headline_gates(
     )
     return {
         "communication_gate": {
-            "applicable": pack_type == "contest_dual_mode_controlled_v3",
+            "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"},
             "allowed": communication_allowed,
             "withheld_reasons": communication_reasons,
             "formal_stability_gate": formal_stability_gate,
@@ -1478,10 +1681,16 @@ def _build_headline_gates(
             "withheld_reasons": state_authenticity_reasons,
         },
         "memory_replay_gate": {
-            "applicable": pack_type in {"memory_reuse_v3", "memory_policy_controlled_v3"},
-            "allowed": memory_replay_allowed,
+            "applicable": pack_type
+            in {"contest_honest_headline_v1", "memory_reuse_v3", "memory_policy_controlled_v3"},
+            "allowed": (
+                bool(headline_memory_replay_effect_gate.get("memory_replay_effect_ready"))
+                if pack_type == "contest_honest_headline_v1"
+                else memory_replay_allowed
+            ),
             "withheld_reasons": memory_replay_reasons,
             "memory_replay_evidence_gate": memory_replay_evidence_gate,
+            "headline_memory_replay_effect_gate": headline_memory_replay_effect_gate,
         },
         "object_parity_gate": {
             "applicable": pack_type == "memory_dual_mode_fairness_v3",
@@ -1491,9 +1700,9 @@ def _build_headline_gates(
             "formal_stability_gate": formal_stability_gate,
         },
         "formal_stability_gate": {
-            "applicable": pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"},
+            "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"},
             "allowed": bool(formal_stability_gate.get("passed")),
-            "withheld_reasons": list(withheld_reasons) if pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"} else [],
+            "withheld_reasons": list(withheld_reasons) if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"} else [],
             "formal_stability_gate": formal_stability_gate,
         },
     }
@@ -1516,6 +1725,12 @@ def _contest_formal_coverage_gate(tasks: list[SampleTask], repeat: int) -> dict[
     }
     matched_pair_count = len(text_case_ids & protocol_case_ids)
     required_buckets = {"simple", "distractor", "ambiguous", "reusable"}
+    surface_complete = (
+        len(families) >= 5
+        and set(buckets) == required_buckets
+        and matched_pair_count == 20
+    )
+    repeat_sufficient = repeat >= 10
     return {
         "family_coverage": len(families),
         "complexity_bucket_coverage": buckets,
@@ -1523,12 +1738,281 @@ def _contest_formal_coverage_gate(tasks: list[SampleTask], repeat: int) -> dict[
         "repeat": repeat,
         "text_case_count": len(text_case_ids),
         "protocol_case_count": len(protocol_case_ids),
-        "passed": (
-            len(families) >= 5
-            and set(buckets) == required_buckets
-            and matched_pair_count == 20
-            and repeat >= 10
-        ),
+        "surface_complete": surface_complete,
+        "repeat_sufficient": repeat_sufficient,
+        "passed": surface_complete and repeat_sufficient,
+    }
+
+
+def _headline_thickness_admission_gate(tasks: list[SampleTask]) -> dict[str, object]:
+    headline_tasks = [task for task in tasks if task.benchmark_lane == "state_transfer"]
+    if not headline_tasks:
+        return {
+            "applicable": False,
+            "static_contract_complete": False,
+            "runtime_shape_ready": False,
+            "admission_ready": False,
+            "setting_counts": {},
+            "dependency_depth_counts": {},
+            "reasoning_hops_min_counts": {},
+            "required_plan_semantic_roles_ok": False,
+            "expected_intermediate_decisions_min_ok": False,
+            "abstention_boundary_complete": False,
+            "required_prior_case_ids_present_for_s2": False,
+            "required_prior_rejections_present_for_s2": False,
+            "required_prior_routes_present_for_s2": False,
+            "notes": [],
+        }
+    setting_counts: dict[str, int] = {}
+    dependency_depth_counts: dict[str, int] = {}
+    reasoning_hops_min_counts: dict[str, int] = {}
+    required_plan_semantic_roles_ok = True
+    expected_intermediate_decisions_min_ok = True
+    abstention_boundary_complete = True
+    s2_prior_case_ok = True
+    s2_prior_rejections_ok = True
+    s2_prior_routes_ok = True
+    for task in headline_tasks:
+        setting = str(task.thickness_setting).strip() or "unknown"
+        setting_counts[setting] = setting_counts.get(setting, 0) + 1
+        depth_key = str(int(task.dependency_depth))
+        dependency_depth_counts[depth_key] = dependency_depth_counts.get(depth_key, 0) + 1
+        hops_key = str(int(task.reasoning_hops_min))
+        reasoning_hops_min_counts[hops_key] = reasoning_hops_min_counts.get(hops_key, 0) + 1
+        required_plan_semantic_roles_ok = required_plan_semantic_roles_ok and tuple(
+            task.required_plan_semantic_roles
+        ) == ("retrieve", "validate", "execute", "summarize")
+        expected_intermediate_decisions_min_ok = expected_intermediate_decisions_min_ok and (
+            len(task.expected_intermediate_decisions) >= 2
+        )
+        abstention_boundary_complete = abstention_boundary_complete and bool(task.abstention_boundary)
+        if task.thickness_setting == "S2":
+            s2_prior_case_ok = s2_prior_case_ok and bool(task.required_prior_case_ids)
+            s2_prior_rejections_ok = s2_prior_rejections_ok and bool(task.required_prior_rejections)
+            s2_prior_routes_ok = s2_prior_routes_ok and bool(task.required_prior_routes)
+    static_contract_complete = (
+        set(setting_counts) == {"S1", "S2"}
+        and required_plan_semantic_roles_ok
+        and expected_intermediate_decisions_min_ok
+        and abstention_boundary_complete
+        and s2_prior_case_ok
+        and s2_prior_rejections_ok
+        and s2_prior_routes_ok
+    )
+    runtime_shape_ready = required_plan_semantic_roles_ok
+    notes = [
+        "Static S1/S2 thickness fields are present and auditable in the headline task object.",
+        "Current runtime still uses a fixed retrieve/validate/execute/summarize shape; this is an admission floor, not full connected-multihop proof.",
+    ]
+    return {
+        "applicable": True,
+        "static_contract_complete": static_contract_complete,
+        "runtime_shape_ready": runtime_shape_ready,
+        "admission_ready": static_contract_complete and runtime_shape_ready,
+        "setting_counts": setting_counts,
+        "dependency_depth_counts": dependency_depth_counts,
+        "reasoning_hops_min_counts": reasoning_hops_min_counts,
+        "required_plan_semantic_roles_ok": required_plan_semantic_roles_ok,
+        "expected_intermediate_decisions_min_ok": expected_intermediate_decisions_min_ok,
+        "abstention_boundary_complete": abstention_boundary_complete,
+        "required_prior_case_ids_present_for_s2": s2_prior_case_ok,
+        "required_prior_rejections_present_for_s2": s2_prior_rejections_ok,
+        "required_prior_routes_present_for_s2": s2_prior_routes_ok,
+        "notes": notes,
+    }
+
+
+def _headline_s1_runtime_behavior_gate(task_runs: list[dict[str, object]]) -> dict[str, object]:
+    s1_rows = [
+        row
+        for row in task_runs
+        if str(row.get("thickness_setting", "")).strip() == "S1"
+        and str(row.get("status", "")).strip() == "completed"
+    ]
+    if not s1_rows:
+        return {
+            "applicable": False,
+            "s1_row_count": 0,
+            "validate_success_count": 0,
+            "validation_consumed_count": 0,
+            "changed_action_count": 0,
+            "tool_match_count": 0,
+            "text_guard_pass_count": 0,
+            "s1_runtime_behavior_ready": False,
+        }
+    validate_success_count = 0
+    validation_consumed_count = 0
+    changed_action_count = 0
+    tool_match_count = 0
+    text_rows = 0
+    text_guard_pass_count = 0
+    changed_by_mode: dict[str, int] = {}
+    decision_source_counts: dict[str, int] = {}
+    action_contract_counts: dict[str, int] = {}
+    for row in s1_rows:
+        mode = str(row.get("mode", "")).strip() or "unknown"
+        results = row.get("results", {})
+        if not isinstance(results, dict):
+            results = {}
+        validate = results.get("validate", {})
+        execute = results.get("execute", {})
+        validate_payload = validate.get("payload", {}) if isinstance(validate, dict) else {}
+        execute_payload = execute.get("payload", {}) if isinstance(execute, dict) else {}
+        if not isinstance(validate_payload, dict):
+            validate_payload = {}
+        if not isinstance(execute_payload, dict):
+            execute_payload = {}
+        validate_success = bool(validate.get("success")) if isinstance(validate, dict) else False
+        validation_consumed = bool(execute_payload.get("validation_gate_applied", False))
+        changed_action = bool(validate_payload.get("validation_changed_action", False)) and bool(
+            execute_payload.get("validation_changed_action", False)
+        )
+        tool_match = (
+            str(execute_payload.get("tool_name", "")).strip()
+            == str(validate_payload.get("validated_tool_name", "")).strip()
+        )
+        source = str(execute_payload.get("validation_decision_source", "")).strip() or "unknown"
+        action_contract = str(validate_payload.get("validated_action_contract", "")).strip() or "unknown"
+        validate_success_count += int(validate_success)
+        validation_consumed_count += int(validation_consumed)
+        changed_action_count += int(changed_action)
+        changed_by_mode[mode] = changed_by_mode.get(mode, 0) + int(changed_action)
+        tool_match_count += int(tool_match)
+        decision_source_counts[source] = decision_source_counts.get(source, 0) + 1
+        action_contract_counts[action_contract] = action_contract_counts.get(action_contract, 0) + 1
+        if mode == "text":
+            text_rows += 1
+            guard = row.get("whole_lane_text_guard", {})
+            text_guard_pass_count += int(isinstance(guard, dict) and bool(guard.get("passed")))
+    s1_runtime_behavior_ready = (
+        validate_success_count == len(s1_rows)
+        and validation_consumed_count == len(s1_rows)
+        and tool_match_count == len(s1_rows)
+        and changed_action_count > 0
+        and all(changed_by_mode.get(mode, 0) > 0 for mode in ("text", "protocol"))
+        and (text_rows == 0 or text_guard_pass_count == text_rows)
+    )
+    return {
+        "applicable": True,
+        "s1_row_count": len(s1_rows),
+        "validate_success_count": validate_success_count,
+        "validation_consumed_count": validation_consumed_count,
+        "changed_action_count": changed_action_count,
+        "changed_action_by_mode": changed_by_mode,
+        "tool_match_count": tool_match_count,
+        "text_guard_pass_count": text_guard_pass_count,
+        "text_row_count": text_rows,
+        "decision_source_counts": decision_source_counts,
+        "action_contract_counts": action_contract_counts,
+        "s1_runtime_behavior_ready": s1_runtime_behavior_ready,
+        "notes": [
+            "S1 runtime behavior requires validate to emit a consumed action decision and at least one changed action in both modes.",
+            "S1 runtime behavior does not claim S2 prior-dependent action changes or memory reuse.",
+        ],
+    }
+
+
+def _headline_s2_prior_action_gate(task_runs: list[dict[str, object]]) -> dict[str, object]:
+    s2_rows = [
+        row
+        for row in task_runs
+        if str(row.get("thickness_setting", "")).strip() == "S2"
+        and str(row.get("status", "")).strip() == "completed"
+    ]
+    if not s2_rows:
+        return {
+            "applicable": False,
+            "s2_row_count": 0,
+            "validate_success_count": 0,
+            "validation_consumed_count": 0,
+            "prior_dependency_required_count": 0,
+            "prior_dependency_satisfied_count": 0,
+            "prior_dependent_action_change_count": 0,
+            "s2_prior_action_ready": False,
+        }
+    validate_success_count = 0
+    validation_consumed_count = 0
+    prior_required_count = 0
+    prior_satisfied_count = 0
+    action_change_count = 0
+    text_rows = 0
+    text_guard_pass_count = 0
+    changed_by_mode: dict[str, int] = {}
+    action_contract_counts: dict[str, int] = {}
+    decision_source_counts: dict[str, int] = {}
+    for row in s2_rows:
+        mode = str(row.get("mode", "")).strip() or "unknown"
+        results = row.get("results", {})
+        if not isinstance(results, dict):
+            results = {}
+        validate = results.get("validate", {})
+        execute = results.get("execute", {})
+        validate_payload = validate.get("payload", {}) if isinstance(validate, dict) else {}
+        execute_payload = execute.get("payload", {}) if isinstance(execute, dict) else {}
+        if not isinstance(validate_payload, dict):
+            validate_payload = {}
+        if not isinstance(execute_payload, dict):
+            execute_payload = {}
+        validate_success = bool(validate.get("success")) if isinstance(validate, dict) else False
+        validation_consumed = bool(execute_payload.get("validation_gate_applied", False))
+        prior_required = bool(validate_payload.get("s2_prior_dependency_required", False))
+        prior_satisfied = bool(validate_payload.get("s2_prior_dependency_satisfied", False))
+        without_prior_tool = str(validate_payload.get("s2_without_prior_tool_name", "")).strip()
+        with_prior_tool = str(validate_payload.get("s2_with_prior_tool_name", "")).strip()
+        execute_without_prior_tool = str(execute_payload.get("s2_without_prior_tool_name", "")).strip()
+        execute_with_prior_tool = str(execute_payload.get("s2_with_prior_tool_name", "")).strip()
+        row_action_change = bool(
+            prior_required
+            and prior_satisfied
+            and without_prior_tool
+            and with_prior_tool
+            and without_prior_tool != with_prior_tool
+            and execute_without_prior_tool == without_prior_tool
+            and execute_with_prior_tool == with_prior_tool
+            and bool(validate_payload.get("s2_prior_dependent_action_change", False))
+            and bool(execute_payload.get("s2_prior_dependent_action_change", False))
+        )
+        validate_success_count += int(validate_success)
+        validation_consumed_count += int(validation_consumed)
+        prior_required_count += int(prior_required)
+        prior_satisfied_count += int(prior_satisfied)
+        action_change_count += int(row_action_change)
+        changed_by_mode[mode] = changed_by_mode.get(mode, 0) + int(row_action_change)
+        action_contract = str(validate_payload.get("validated_action_contract", "")).strip() or "unknown"
+        action_contract_counts[action_contract] = action_contract_counts.get(action_contract, 0) + 1
+        source = str(execute_payload.get("validation_decision_source", "")).strip() or "unknown"
+        decision_source_counts[source] = decision_source_counts.get(source, 0) + 1
+        if mode == "text":
+            text_rows += 1
+            guard = row.get("whole_lane_text_guard", {})
+            text_guard_pass_count += int(isinstance(guard, dict) and bool(guard.get("passed")))
+    s2_prior_action_ready = (
+        validate_success_count == len(s2_rows)
+        and validation_consumed_count == len(s2_rows)
+        and prior_required_count == len(s2_rows)
+        and prior_satisfied_count == len(s2_rows)
+        and action_change_count > 0
+        and all(changed_by_mode.get(mode, 0) > 0 for mode in ("text", "protocol"))
+        and (text_rows == 0 or text_guard_pass_count == text_rows)
+    )
+    return {
+        "applicable": True,
+        "s2_row_count": len(s2_rows),
+        "validate_success_count": validate_success_count,
+        "validation_consumed_count": validation_consumed_count,
+        "prior_dependency_required_count": prior_required_count,
+        "prior_dependency_satisfied_count": prior_satisfied_count,
+        "prior_dependent_action_change_count": action_change_count,
+        "prior_dependent_action_change_by_mode": changed_by_mode,
+        "text_guard_pass_count": text_guard_pass_count,
+        "text_row_count": text_rows,
+        "decision_source_counts": decision_source_counts,
+        "action_contract_counts": action_contract_counts,
+        "s2_prior_action_ready": s2_prior_action_ready,
+        "notes": [
+            "S2 prior action requires prior dependency satisfaction to change the admissible action boundary.",
+            "This gate does not claim runtime memory/replay gain unless reuse metrics are non-zero in the same run.",
+        ],
     }
 
 
@@ -2154,11 +2638,25 @@ async def _run_mode_once(
                     "corpus_path": task.corpus_path,
                     "artifact_expectations": dict(task.artifact_expectations),
                     "case_contract": dict(task.case_contract),
+                    "case_id": task.case_id,
+                    "case_type": task.case_type,
+                    "thickness_setting": task.thickness_setting,
+                    "reasoning_hops_min": task.reasoning_hops_min,
+                    "dependency_depth": task.dependency_depth,
+                    "expected_intermediate_decisions": list(task.expected_intermediate_decisions),
+                    "abstention_boundary": task.abstention_boundary,
+                    "required_prior_case_ids": list(task.required_prior_case_ids),
+                    "required_prior_rejections": list(task.required_prior_rejections),
+                    "required_prior_routes": list(task.required_prior_routes),
+                    "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
                     "expected_reuse_mode": task.expected_reuse_mode,
                     "plan_source": task.plan_source,
                     "planner_source": ctx.planner_source,
                     "planner_step_count": ctx.planner_step_count,
                     "planner_contract_valid": ctx.planner_contract_valid,
+                    "planner_contract_valid_final": ctx.planner_contract_valid_final,
+                    "planner_one_shot_valid": ctx.planner_one_shot_valid,
+                    "planner_repair_attempt_count": ctx.planner_repair_attempt_count,
                     "complexity_bucket": task.complexity_bucket,
                     "summary_contract": task.summary_contract,
                     "benchmark_lane": task.benchmark_lane,
@@ -2230,11 +2728,25 @@ async def _run_mode_once(
                     "corpus_path": task.corpus_path,
                     "artifact_expectations": dict(task.artifact_expectations),
                     "case_contract": dict(task.case_contract),
+                    "case_id": task.case_id,
+                    "case_type": task.case_type,
+                    "thickness_setting": task.thickness_setting,
+                    "reasoning_hops_min": task.reasoning_hops_min,
+                    "dependency_depth": task.dependency_depth,
+                    "expected_intermediate_decisions": list(task.expected_intermediate_decisions),
+                    "abstention_boundary": task.abstention_boundary,
+                    "required_prior_case_ids": list(task.required_prior_case_ids),
+                    "required_prior_rejections": list(task.required_prior_rejections),
+                    "required_prior_routes": list(task.required_prior_routes),
+                    "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
                     "expected_reuse_mode": task.expected_reuse_mode,
                     "plan_source": task.plan_source,
                     "planner_source": ctx.planner_source,
                     "planner_step_count": ctx.planner_step_count,
                     "planner_contract_valid": ctx.planner_contract_valid,
+                    "planner_contract_valid_final": ctx.planner_contract_valid_final,
+                    "planner_one_shot_valid": ctx.planner_one_shot_valid,
+                    "planner_repair_attempt_count": ctx.planner_repair_attempt_count,
                     "complexity_bucket": task.complexity_bucket,
                     "summary_contract": task.summary_contract,
                     "benchmark_lane": task.benchmark_lane,
@@ -2333,11 +2845,25 @@ async def _run_mode_once(
                 "corpus_path": task.corpus_path,
                 "artifact_expectations": dict(task.artifact_expectations),
                 "case_contract": dict(task.case_contract),
+                "case_id": task.case_id,
+                "case_type": task.case_type,
+                "thickness_setting": task.thickness_setting,
+                "reasoning_hops_min": task.reasoning_hops_min,
+                "dependency_depth": task.dependency_depth,
+                "expected_intermediate_decisions": list(task.expected_intermediate_decisions),
+                "abstention_boundary": task.abstention_boundary,
+                "required_prior_case_ids": list(task.required_prior_case_ids),
+                "required_prior_rejections": list(task.required_prior_rejections),
+                "required_prior_routes": list(task.required_prior_routes),
+                "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
                 "expected_reuse_mode": task.expected_reuse_mode,
                 "plan_source": task.plan_source,
                 "planner_source": ctx.planner_source,
                 "planner_step_count": ctx.planner_step_count,
                 "planner_contract_valid": ctx.planner_contract_valid,
+                "planner_contract_valid_final": ctx.planner_contract_valid_final,
+                "planner_one_shot_valid": ctx.planner_one_shot_valid,
+                "planner_repair_attempt_count": ctx.planner_repair_attempt_count,
                 "complexity_bucket": task.complexity_bucket,
                 "summary_contract": task.summary_contract,
                 "benchmark_lane": task.benchmark_lane,
@@ -3266,6 +3792,10 @@ def _build_result(
         pack_type=str(task_set_metadata.get("pack_type", "ad_hoc")),
         task_rows_by_mode=task_rows_by_mode,
     )
+    headline_memory_replay_effect_gate = _headline_memory_replay_effect_gate(
+        pack_type=str(task_set_metadata.get("pack_type", "ad_hoc")),
+        task_rows_by_mode=task_rows_by_mode,
+    )
     text_task_rows = task_rows_by_mode.get("text", [])
     has_text_guard_observations = any(
         isinstance(row.get("whole_lane_text_guard"), dict)
@@ -3279,9 +3809,18 @@ def _build_result(
             withheld_reasons.append("whole_lane_text_guard_incomplete")
         if float(text_guard_audit.get("hidden_field_leak_rate", 0.0)) > 0.0:
             withheld_reasons.append("text_hidden_field_leak_detected")
+        if float(text_guard_audit.get("template_slot_leak_rate", 0.0)) > 0.0:
+            withheld_reasons.append("text_template_slot_leak_detected")
         if float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) > 0.0:
             withheld_reasons.append("text_summarizer_typed_visibility_detected")
     contest_coverage_gate = _contest_formal_coverage_gate(tasks, repeat)
+    thickness_admission_gate = _headline_thickness_admission_gate(tasks)
+    s1_runtime_behavior_gate = _headline_s1_runtime_behavior_gate(
+        [row for rows in task_rows_by_mode.values() for row in rows]
+    )
+    s2_prior_action_gate = _headline_s2_prior_action_gate(
+        [row for rows in task_rows_by_mode.values() for row in rows]
+    )
     if pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}:
         if float(protocol_transfer_truth.get("typed_executor_minimal_expected_consumption_rate", 0.0)) <= 0.0:
             withheld_reasons.append("typed_state_not_consumed")
@@ -3295,9 +3834,12 @@ def _build_result(
     if pack_type == "typed_state_full_rich_audit_v3":
         if float(protocol_transfer_truth.get("typed_executor_full_rich_audit_consumption_rate", 0.0)) <= 0.0:
             withheld_reasons.append("full_rich_audit_state_not_consumed")
-    if pack_type == "contest_dual_mode_controlled_v3":
+    if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"}:
         if not bool(contest_coverage_gate.get("passed")):
-            withheld_reasons.append("contest_formal_coverage_incomplete")
+            if not bool(contest_coverage_gate.get("surface_complete")):
+                withheld_reasons.append("contest_case_surface_incomplete")
+            if not bool(contest_coverage_gate.get("repeat_sufficient")):
+                withheld_reasons.append("contest_repeat_insufficient")
     if pack_type == "memory_dual_mode_fairness_v3" and not bool(object_parity_gate.get("passed")):
         withheld_reasons.append("dual_mode_object_parity_failed")
     if memory_replay_evidence_gate["applicable"] and not bool(memory_replay_evidence_gate.get("passed")):
@@ -3309,17 +3851,23 @@ def _build_result(
             withheld_reasons.append("summarizer_mainline_object_failed")
         if not bool(object_parity_gate.get("text_hidden_field_leak_zero")):
             withheld_reasons.append("text_hidden_field_leak_detected")
+        if not bool(object_parity_gate.get("text_template_slot_leak_zero")):
+            withheld_reasons.append("text_template_slot_leak_detected")
         if not bool(object_parity_gate.get("text_typed_visibility_zero")):
             withheld_reasons.append("text_typed_visibility_detected")
         if not bool(object_parity_gate.get("text_memory_restore_compat_ok")):
             withheld_reasons.append("text_memory_restore_compat_failed")
+    if withheld_reasons:
+        # Keep report semantics stable while avoiding duplicated reasons coming
+        # from both guard audit and object-parity reconciliation.
+        withheld_reasons = list(dict.fromkeys(withheld_reasons))
     formal_stability_gate = {
         "required_repeat": 10,
         "repeat_satisfied": repeat >= 10,
         "passed": False,
         "mode_checks": {},
     }
-    if pack_type in {"contest_dual_mode_controlled_v3", "memory_dual_mode_fairness_v3"}:
+    if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"}:
         mode_checks: dict[str, object] = {}
         for mode_name, mode_summary, mode_stability in (
             ("text", summary.get("text", {}), text_stability),
@@ -3423,6 +3971,7 @@ def _build_result(
         formal_stability_gate=formal_stability_gate,
         object_parity_gate=object_parity_gate,
         memory_replay_evidence_gate=memory_replay_evidence_gate,
+        headline_memory_replay_effect_gate=headline_memory_replay_effect_gate,
         contest_formal_coverage_gate=contest_coverage_gate,
     )
     return {
@@ -3454,7 +4003,11 @@ def _build_result(
             "formal_stability_gate": formal_stability_gate,
             "object_parity_gate": object_parity_gate,
             "memory_replay_evidence_gate": memory_replay_evidence_gate,
+            "headline_memory_replay_effect_gate": headline_memory_replay_effect_gate,
             "contest_formal_coverage_gate": contest_coverage_gate,
+            "headline_thickness_admission_gate": thickness_admission_gate,
+            "headline_s1_runtime_behavior_gate": s1_runtime_behavior_gate,
+            "headline_s2_prior_action_gate": s2_prior_action_gate,
             "task_count": len(tasks),
             "continuous_task_count": len(tasks),
             "task_mode_counts": task_mode_counts,
@@ -4194,6 +4747,26 @@ def _report_header_lines(result: dict[str, object]) -> list[str]:
     )
     if planner_sources:
         lines.append(f"- Observed planner sources: `{', '.join(planner_sources)}`")
+    planner_one_shot_values = [
+        bool(task.get("planner_one_shot_valid"))
+        for mode_runs in result.get("mode_runs", {}).values()
+        for run in mode_runs
+        for task in run.get("tasks", [])
+        if str(task.get("planner_source", "")).strip() == "llm"
+    ]
+    planner_repair_attempts = [
+        int(task.get("planner_repair_attempt_count", 0) or 0)
+        for mode_runs in result.get("mode_runs", {}).values()
+        for run in mode_runs
+        for task in run.get("tasks", [])
+        if str(task.get("planner_source", "")).strip() == "llm"
+    ]
+    if planner_one_shot_values:
+        one_shot_rate = sum(1 for item in planner_one_shot_values if item) / len(planner_one_shot_values)
+        lines.append(f"- Planner one-shot valid rate: `{one_shot_rate:.2f}`")
+        lines.append(
+            f"- Planner repair attempts: `{sum(planner_repair_attempts)}` total across {len(planner_repair_attempts)} llm task rows"
+        )
     lines.append(
         f"- Single-variable contract: `{'yes' if bool(manifest.get('task_set_single_variable', False)) else 'no'}`"
     )
@@ -4593,6 +5166,16 @@ def _append_headline_claim_sections(
             f"{protocol_lane['llm_total_tokens'] - text_lane['llm_total_tokens']:.2f} | "
             f"{protocol_lane['task_ms'] - text_lane['task_ms']:.2f} |"
         )
+    pack_type = str(result.get("manifest", {}).get("task_pack_type", "ad_hoc"))
+    text_lane_label = "text_strict_pure_lane"
+    state_transfer_scope_note = (
+        "this v3 state-transfer read compares the strict pure-text formal lane against protocol minimal state packets on the same controlled tasks."
+    )
+    if pack_type == "contest_honest_headline_v1":
+        text_lane_label = "text_whole_lane"
+        state_transfer_scope_note = (
+            "this contest-facing v3 state-transfer read compares natural whole-lane text against protocol minimal state packets on the same controlled tasks."
+        )
     text_state_transfer = _aggregate_filtered_mode_task_runs(
         result,
         "text",
@@ -4609,12 +5192,12 @@ def _append_headline_claim_sections(
                 "",
                 "## State-Transfer Headline",
                 "",
-                "- Scope note: `this v3 state-transfer read compares the strict pure-text formal lane against protocol minimal state packets on the same controlled tasks.`",
+                f"- Scope note: `{state_transfer_scope_note}`",
                 "- Metric note: `handoff_wire_bytes counts serialized StateRefLite pointers on the wire; handoff_payload_bytes counts local StatePool payload bytes available to the executor.`",
                 "",
                 "| mode / handoff | task_count | control_bytes | handoff_wire_bytes | handoff_payload_bytes | executor_handoff_text_bytes | handoff_textual_bytes | handoff_nontext_bytes | llm_total_tokens | task_ms |",
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-                f"| text / text_strict_pure_lane | {text_state_transfer['task_count']} | {text_state_transfer['text_bytes']:.2f} | "
+                f"| text / {text_lane_label} | {text_state_transfer['task_count']} | {text_state_transfer['text_bytes']:.2f} | "
                 f"{text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
                 f"{text_state_transfer.get('executor_handoff_text_bytes', 0.0):.2f} | "
@@ -4626,7 +5209,7 @@ def _append_headline_claim_sections(
                 f"{protocol_state_transfer.get('executor_handoff_text_bytes', 0.0):.2f} | "
                 f"{protocol_state_transfer['handoff_textual_bytes']:.2f} | {protocol_state_transfer['handoff_nontext_bytes']:.2f} | "
                 f"{protocol_state_transfer['llm_total_tokens']:.2f} | {protocol_state_transfer['task_ms']:.2f} |",
-                f"| delta(protocol/state_packet_minimal - text/text_strict_pure_lane) | n/a | {protocol_state_transfer['protocol_bytes'] - text_state_transfer['text_bytes']:.2f} | "
+                f"| delta(protocol/state_packet_minimal - text/{text_lane_label}) | n/a | {protocol_state_transfer['protocol_bytes'] - text_state_transfer['text_bytes']:.2f} | "
                 f"{protocol_state_transfer.get('handoff_wire_bytes', 0.0) - text_state_transfer.get('handoff_wire_bytes', 0.0):.2f} | "
                 f"{protocol_state_transfer.get('handoff_payload_bytes', protocol_state_transfer['handoff_bytes']) - text_state_transfer.get('handoff_payload_bytes', text_state_transfer['handoff_bytes']):.2f} | "
                 f"{protocol_state_transfer.get('executor_handoff_text_bytes', 0.0) - text_state_transfer.get('executor_handoff_text_bytes', 0.0):.2f} | "
@@ -4654,25 +5237,26 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
     if pack_type == "contest_dual_mode_controlled_v3":
         _append_pack_contract_section(
             lines,
-            contract="formal v3 dual-mode controlled pack; keep task object, evidence universe, summary contract, and plan source fixed, then change only mode plus mainline handoff object.",
+            contract="internal controlled dual-mode pack; keep task object, evidence universe, summary contract, and plan source fixed, then compare the internal strict text lane against protocol minimal state packets.",
             single_variable="text_strict_pure_lane vs state_packet_minimal on the same contest-release cases.",
         )
         lines.extend(
             [
                 "",
-                "## Contest Dual-Mode Controlled V3",
+                "## Contest Controlled Composite V3",
                 "",
                 f"- Whole-lane text guard pass rate: `{float(text_guard_audit.get('whole_lane_text_guard_pass_rate', 0.0)):.2f}`",
                 f"- Hidden field leak rate: `{float(text_guard_audit.get('hidden_field_leak_rate', 0.0)):.2f}`",
                 f"- Summarizer typed visibility rate: `{float(text_guard_audit.get('summarizer_typed_visibility_rate', 0.0)):.2f}`",
                 f"- Object parity gate: `{'pass' if bool(manifest.get('object_parity_gate', {}).get('passed')) else 'not_yet'}`",
                 f"- Formal stability gate: `{'pass' if bool(manifest.get('formal_stability_gate', {}).get('passed')) else 'not_yet'}`",
+                "- Reading boundary: `this pack remains an internal controlled composite surface, not the contest-facing honest pure-text baseline.`",
             ]
         )
         communication_gate = manifest.get("headline_gates", {}).get("communication_gate", {})
-        if not bool(communication_gate.get("allowed", manifest.get("state_transfer_headline_allowed", True))):
+        if communication_gate.get("withheld_reasons"):
             lines.append(
-                f"- Formal state-transfer headline withheld: `{','.join(communication_gate.get('withheld_reasons', [])) or str(manifest.get('withheld_headline_reason', '')).strip() or 'guard_not_met'}`"
+                f"- Contest-facing communication headline withheld from this pack: `{','.join(communication_gate.get('withheld_reasons', []))}`"
             )
         stability_gate = manifest.get("formal_stability_gate", {})
         if isinstance(stability_gate, dict) and stability_gate.get("mode_checks"):
@@ -4703,9 +5287,102 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "",
                 "## Stopline",
                 "",
-                "- This is the v3 formal dual-mode surface.",
-                "- Formal headline reads `text_strict_pure_lane` vs `state_packet_minimal` only.",
-                "- `text_whole_lane` remains an internal StateBus text-carrier audit object, not the contest-facing headline baseline.",
+                "- This pack is retained as the internal controlled composite surface.",
+                "- Do not cite it as the contest-facing pure-text versus structured formal headline.",
+                "- The contest-facing honest headline should read from `contest_honest_headline_v1`.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "contest_honest_headline_v1":
+        _append_pack_contract_section(
+            lines,
+            contract="contest-facing dual-mode formal headline pack; keep task object, evidence universe, summary contract, and plan source fixed, then change only mode between natural whole-lane text and protocol minimal state packets.",
+            single_variable="text_whole_lane vs state_packet_minimal on the same contest-release cases.",
+        )
+        lines.extend(
+            [
+                "",
+                "## Contest Honest Headline V1",
+                "",
+                f"- Whole-lane text guard pass rate: `{float(text_guard_audit.get('whole_lane_text_guard_pass_rate', 0.0)):.2f}`",
+                f"- Hidden field leak rate: `{float(text_guard_audit.get('hidden_field_leak_rate', 0.0)):.2f}`",
+                f"- Summarizer typed visibility rate: `{float(text_guard_audit.get('summarizer_typed_visibility_rate', 0.0)):.2f}`",
+                f"- Object parity gate: `{'pass' if bool(manifest.get('object_parity_gate', {}).get('passed')) else 'not_yet'}`",
+                f"- Formal stability gate: `{'pass' if bool(manifest.get('formal_stability_gate', {}).get('passed')) else 'not_yet'}`",
+            ]
+        )
+        thickness_gate = manifest.get("headline_thickness_admission_gate", {})
+        if isinstance(thickness_gate, dict) and bool(thickness_gate.get("applicable")):
+            lines.extend(
+                [
+                    f"- Headline thickness admission gate: `{'pass' if bool(thickness_gate.get('admission_ready')) else 'not_yet'}`",
+                    f"- Static thickness contract: `{'pass' if bool(thickness_gate.get('static_contract_complete')) else 'not_yet'}`",
+                    f"- Runtime admission floor: `{'pass' if bool(thickness_gate.get('runtime_shape_ready')) else 'not_yet'}`",
+                ]
+            )
+        communication_gate = manifest.get("headline_gates", {}).get("communication_gate", {})
+        if not bool(communication_gate.get("allowed", False)):
+            lines.append(
+                f"- Formal communication headline withheld: `{','.join(communication_gate.get('withheld_reasons', [])) or 'guard_not_met'}`"
+            )
+        if isinstance(thickness_gate, dict) and bool(thickness_gate.get("applicable")):
+            lines.extend(
+                [
+                    "",
+                    "## Thickness Admission Gate",
+                    "",
+                    "- Admission note: `this gate proves the static S1/S2 contract is present in the current headline object and visible in emitted artifacts; it does not claim full connected-multihop or live replay execution has already been proven.`",
+                    "",
+                    "| gate | passed | detail |",
+                    "| --- | --- | --- |",
+                    f"| static_contract_complete | {'yes' if bool(thickness_gate.get('static_contract_complete')) else 'no'} | settings={thickness_gate.get('setting_counts', {})} |",
+                    f"| required_plan_semantic_roles_ok | {'yes' if bool(thickness_gate.get('required_plan_semantic_roles_ok')) else 'no'} | expected retrieve/validate/execute/summarize on all headline rows |",
+                    f"| expected_intermediate_decisions_min_ok | {'yes' if bool(thickness_gate.get('expected_intermediate_decisions_min_ok')) else 'no'} | at least two intermediate decisions per row |",
+                    f"| abstention_boundary_complete | {'yes' if bool(thickness_gate.get('abstention_boundary_complete')) else 'no'} | non-empty abstention boundary on all headline rows |",
+                    f"| required_prior_case_ids_present_for_s2 | {'yes' if bool(thickness_gate.get('required_prior_case_ids_present_for_s2')) else 'no'} | reusable rows carry prior case dependency |",
+                    f"| required_prior_rejections_present_for_s2 | {'yes' if bool(thickness_gate.get('required_prior_rejections_present_for_s2')) else 'no'} | reusable rows carry prior rejection dependency |",
+                    f"| required_prior_routes_present_for_s2 | {'yes' if bool(thickness_gate.get('required_prior_routes_present_for_s2')) else 'no'} | reusable rows carry prior route audit field |",
+                    f"| runtime_shape_ready | {'yes' if bool(thickness_gate.get('runtime_shape_ready')) else 'no'} | current admission floor is explicit retrieve/validate/execute/summarize, not hidden 3-step collapse |",
+                    "",
+                    f"- Thickness settings: `{thickness_gate.get('setting_counts', {})}`",
+                    f"- Dependency depth counts: `{thickness_gate.get('dependency_depth_counts', {})}`",
+                    f"- Reasoning hops min counts: `{thickness_gate.get('reasoning_hops_min_counts', {})}`",
+                ]
+            )
+            for note in thickness_gate.get("notes", []):
+                lines.append(f"- {note}")
+        stability_gate = manifest.get("formal_stability_gate", {})
+        if isinstance(stability_gate, dict) and stability_gate.get("mode_checks"):
+            lines.extend(
+                [
+                    "",
+                    "## Formal Stability Gate",
+                    "",
+                    "| mode | required_repeat | run_count | message_count_mean | state_transfer_count_mean | assist_memory_hit_rate_mean | task_ms_mean | run_failure_count | expected_negative_task_failure_count | passed |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+                ]
+            )
+            for mode_name in ("text", "protocol"):
+                check = stability_gate.get("mode_checks", {}).get(mode_name)
+                if not isinstance(check, dict):
+                    continue
+                lines.append(
+                    f"| {mode_name} | {int(stability_gate.get('required_repeat', 10))} | {int(check.get('run_count', 0))} | "
+                    f"{float(check.get('message_count_mean', 0.0)):.2f} | {float(check.get('state_transfer_count_mean', 0.0)):.2f} | "
+                    f"{float(check.get('assist_memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
+                    f"{int(check.get('run_failure_count', 0))} | {int(check.get('expected_negative_task_failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
+                )
+        _append_headline_claim_sections(lines, result=result, summary=result["summary"])
+        _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack is the contest-facing honest dual-mode formal headline.",
+                "- Formal headline reads `text_whole_lane` vs `state_packet_minimal` only.",
+                "- `text_strict_pure_lane` remains an internal controlled text lane and is not the contest-facing baseline.",
             ]
         )
         return "\n".join(lines) + "\n"
@@ -5135,11 +5812,26 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             contract="formal v3 planner-support pack; compare yaml control rows against llm-generated plans without collapsing planner openness into communication-medium claims.",
             single_variable="plan_source = yaml vs llm under matched runtime surfaces.",
         )
-        combined_admissible = mean(
-            [
-                float(text_case_audit.get("admissible_match_rate", 0.0)),
-                float(protocol_case_audit.get("admissible_match_rate", 0.0)),
-            ]
+        yaml_rows = _aggregate_filtered_mode_task_runs(result, "protocol", plan_source="yaml")
+        llm_rows = _aggregate_filtered_mode_task_runs(result, "protocol", plan_source="llm")
+        yaml_audit = dict(yaml_rows.get("case_contract_audit", {}) if isinstance(yaml_rows, dict) else {})
+        llm_audit = dict(llm_rows.get("case_contract_audit", {}) if isinstance(llm_rows, dict) else {})
+        planner_one_shot_values = [
+            bool(task.get("planner_one_shot_valid"))
+            for run in result.get("mode_runs", {}).get("protocol", [])
+            for task in run.get("tasks", [])
+            if task.get("status") == "completed" and str(task.get("planner_source", "")).strip() == "llm"
+        ]
+        planner_one_shot_valid_rate = (
+            sum(1 for value in planner_one_shot_values if value) / len(planner_one_shot_values)
+            if planner_one_shot_values
+            else 0.0
+        )
+        planner_repair_attempt_total = sum(
+            int(task.get("planner_repair_attempt_count", 0) or 0)
+            for run in result.get("mode_runs", {}).get("protocol", [])
+            for task in run.get("tasks", [])
+            if task.get("status") == "completed" and str(task.get("planner_source", "")).strip() == "llm"
         )
         lines.extend(
             [
@@ -5148,25 +5840,25 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "",
                 "| metric | value |",
                 "| --- | ---: |",
-                f"| text_admissible_match_rate | {float(text_case_audit.get('admissible_match_rate', 0.0)):.2f} |",
-                f"| protocol_admissible_match_rate | {float(protocol_case_audit.get('admissible_match_rate', 0.0)):.2f} |",
-                f"| combined_admissible_match_rate | {combined_admissible:.2f} |",
+                f"| yaml_control_admissible_match_rate | {float(yaml_audit.get('admissible_match_rate', 0.0)):.2f} |",
+                f"| llm_plan_admissible_match_rate | {float(llm_audit.get('admissible_match_rate', 0.0)):.2f} |",
+                f"| planner_one_shot_valid_rate | {planner_one_shot_valid_rate:.2f} |",
+                f"| planner_repair_attempt_total | {planner_repair_attempt_total} |",
             ]
         )
-        for mode in available_modes:
-            aggregate = result["summary"][mode]["aggregate"]
-            lines.extend(
-                [
-                    "",
-                    f"## Planner Support V3 ({mode})",
-                    "",
-                    "| metric | value |",
-                    "| --- | ---: |",
-                    f"| planner_llm_request_count | {aggregate['planner_llm_request_count']:.2f} |",
-                    f"| planned_step_count | {aggregate['planned_step_count']:.2f} |",
-                    f"| task_ms | {aggregate['task_ms']:.2f} |",
-                ]
-            )
+        aggregate = result["summary"]["protocol"]["aggregate"]
+        lines.extend(
+            [
+                "",
+                "## Planner Contract Metrics",
+                "",
+                "| metric | value |",
+                "| --- | ---: |",
+                f"| planner_llm_request_count | {aggregate['planner_llm_request_count']:.2f} |",
+                f"| planned_step_count | {aggregate['planned_step_count']:.2f} |",
+                f"| task_ms | {aggregate['task_ms']:.2f} |",
+            ]
+        )
         lines.extend(["", "## Stopline", "", "- Planner openness is its own v3 claim; do not merge it into text-vs-protocol or typed-state authenticity."])
         return "\n".join(lines) + "\n"
     return None

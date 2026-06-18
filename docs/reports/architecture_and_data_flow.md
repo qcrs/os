@@ -1,470 +1,426 @@
 # StateBus 架构与完整工作流
 
-日期：`2026-06-11`
-
-> 当前定位：架构参考 / 历史工作流说明。本文仍包含旧 `sample_benchmark.yaml`、`formal_controlled`、24-task 等历史名称时，只能作为数据流背景，不能作为当前 v3 active benchmark surface 或 formal claim 依据。当前入口与 pack 合同请以 `README.md`、`tasks/README.md` 和 `docs/reports/task_design_and_mode_comparison.md` 为准。
+日期：2026-06-16
 
 ---
 
 ## 一、系统对象定义
 
-StateBus 是一个四 Agent 协作运行时，核心设计是把通信拆成三个面：
+StateBus 是一个四 Agent 协作运行时，核心设计是参考赛题"低开销通信、非文本状态传递、共享记忆复用"三项要求，把通信拆成三个面：
 
 | 面 | 传什么 | 存储在哪 | 通信量指标 | 典型内容 |
 |----|--------|---------|-----------|---------|
-| **控制面** | 谁干什么、下一步 | 协议消息（线上） | `control_bytes`（控制面字节数） | Plan/PlanStep/StepResult/Ack/Hello |
-| **状态面** | 实际数据（中间结果） | StatePool（mmap文件） | `handoff_wire_bytes`（线上指针）+ `handoff_payload_bytes`（本地负载） | evidence文本、FEATURE_BUNDLE、embedding |
+| **控制面** | 谁干什么、下一步 | 协议消息（线上） | `control_bytes` | Plan/PlanStep/StepResult/Ack/Hello |
+| **状态面** | 实际数据（中间结果） | StatePool（mmap 文件） | `handoff_wire_bytes`（线上指针）+ `handoff_payload_bytes`（本地负载） | evidence 文本、EXECUTOR_DECISION_PACKET、VALIDATION_GATE_PACKET |
 | **记忆面** | 历史经验 | SQLite + FAISS | — | 每次 task 的摘要、证据引用、replay 线索 |
 
-**关键边界**：控制面只传指针（`StateRefLite{state_id, kind, length}` ≈ 50-80字节/个）。实际数据在 StatePool 的 mmap 文件里，Agent 通过指针去本地读取（零拷贝）。所以 `handoff_wire_bytes`（线上指针字节）≠ `handoff_payload_bytes`（本地负载字节）。
+**关键边界**：控制面只传指针（`StateRefLite{state_id, kind, length}` ≈ 50-80 字节/个）。实际数据在 StatePool 的 mmap 文件里，Agent 通过指针去本地读取。这就是赛题要求"不得仅通过自然语言长文本直接透传全部协作信息"的核心实现——重状态不进入消息体，只在控制面传引用，在数据面做零拷贝读取。`handoff_wire_bytes`（线上指针）≠ `handoff_payload_bytes`（本地负载）。
+
+系统支持两种通信模式：**纯文本协作模式**和**结构化协议协作模式**。在纯文本模式下，Agent 间通过自然语言 structured text 传递 route/tool 等决策信息；在结构化模式下，通过 Protobuf 控制帧传递动作语义，通过 StateRef 指针引用 mmap 中的 typed state（EXECUTOR_DECISION_PACKET 等 msgpack 序列化对象）。
 
 ---
 
 ## 二、文件架构与职责
 
+
 ```
 project/
-├── runtime/                    ← 核心运行时
-│   ├── orchestrator.py (1573行)  编排引擎：task派发、replay gate、_prepare_step_input_refs
-│   ├── executor_runtime.py(1574行) 执行层：ToolRegistry(7工具)、build_feature_bundle(30+字段)
-│   ├── contracts.py (676行)      Schema校验、StateContractRegistry(11合同)、InvariantChecker
-│   ├── llm.py (683行)            LLM抽象：OpenAICompatibleLLMClient + DeterministicLLMClient
-│   ├── reuse_contract.py (91行)  复用合同：4级(reuse_disabled→exact_replay)→3个gate boolean
-│   ├── task_profile.py (109行)   任务配置：benchmark_lane/transfer_strategy/mode解析
-│   ├── codeact_runner.py (98行)  CodeAct受控代码执行
-│   ├── remote_executor.py (85行) UDS远端执行器
-│   ├── uds_transport.py (45行)   AF_UNIX消息传输
-│   ├── tool_worker.py (29行)     子进程工具CLI
-│   └── smoke.py (44行)           烟雾测试入口
+├── runtime/                       ← 核心运行时
+│   ├── orchestrator.py              编排引擎。负责 task 派发、plan 编译、semantic_role 驱动的步骤调度、
+│   │                                  replay gate、prior dependency enforcement、TaskCommit 密封。
+│   │                                 通过 RunContext 管理每个 task 的完整执行状态。
+│   │
+│   ├── executor_runtime.py           执行层。定义 9 种 transfer strategy 的分派逻辑、ToolRegistry（10+
+│   │                                 工具及其 match pattern）、build_feature_bundle() 路由推理、
+│   │                                 execute_playbook_step() 主执行函数。
+│   │
+│   ├── langgraph_adapter.py          LangGraph 编排适配器。构建 5 节点 DAG（planner→retriever→[validate]
+│   │                                 →executor→summarizer）+ 条件路由。每个节点内部调用 Orchestrator
+│   │                                 原语，LangGraph 层管理 graph state 传播和失败传播。
+│   │
+│   ├── contracts.py                  Schema 校验层。StateContractRegistry 注册 15+ 状态合同、
+│   │                                 StepInputContract 定义 Agent 间合法的 state 传递链路、
+│   │                                 SchemaInterceptor 校验 plan/step/result 合法性、
+│   │                                 VALIDATION_GATE_PACKET 的验证合同。
+│   │
+│   ├── llm.py                        LLM 抽象层。OpenAICompatibleLLMClient（真实 API 调用）+
+│   │                                 DeterministicLLMClient（测试用）。含 planner/summarizer 的
+│   │                                 prompt 构造、LLM 输出解析（JSON extraction、tagged block）。
+│   │
+│   ├── reuse_contract.py             复用合同。4 级复用策略（reuse_disabled→assist_allowed→
+│   │                                 validated_replay→exact_replay）→ 3 个 boolean gate。
+│   │
+│   ├── task_profile.py               任务配置归一化。9 种 handoff profile、8 种 transfer strategy、
+│   │                                 4 种 benchmark lane 的定义和解析。
+│   │
+│   ├── codeact_runner.py             CodeAct 受控代码执行（experimental，非主线）。
+│   ├── remote_executor.py            UDS 远端执行器样机。
+│   ├── uds_transport.py              AF_UNIX 消息传输。
+│   └── smoke.py                      烟雾测试入口。
 │
-├── agents/                     ← Agent实现
-│   ├── sample_agents.py (1306行) Planner/Retriever/Executor/Summarizer四Agent
-│   └── base_agent.py (20行)     BaseAgent ABC
+├── agents/                        ← Agent 实现
+│   ├── sample_agents.py              PlannerAgent（LLM 规划，支持 repair loop 最多 3 次尝试）、
+│   │                                 RetrieverAgent（corpus 检索 + typed state 生成 + memory assist）、
+│   │                                 ExecutorAgent（工具执行 + _validate_route_step 真实校验 +
+│   │                                 VALIDATION_GATE_PACKET 生成）、
+│   │                                 SummarizerAgent（LLM 总结 + MemoryCommit 生成）。
+│   │                                 含 PLANNER_ROLE_BINDINGS（semantic_role→owner_agent/action 映射）。
+│   │
+│   └── base_agent.py                 BaseAgent 抽象基类。
 │
-├── protocol/                   ← 通信协议层
-│   ├── messages.py (998行)      14种消息dataclass + protobuf/json序列化 + CASF DAG结构
-│   ├── statebus.proto (152行)   WireEnvelope oneof定义12种消息
-│   └── statebus_pb2.py (20行)   protobuf编译stub
+├── protocol/                      ← 通信协议层
+│   ├── messages.py                   14 种消息类型的 dataclass 定义 + Protobuf/JSON 双向序列化 +
+│   │                                 semantic_role 字段（PlanStep 的属性，使 step 语义与 step_id 解耦）。
+│   │                                 定义 StateRef（typed state 引用）、Plan/PlanStep（含 depends_on DAG）、
+│   │                                 StepResult（含 output_state_refs）、MemoryCommit、TaskCommit 等。
+│   │
+│   ├── statebus.proto                WireEnvelope oneof 定义：12 种消息类型统一序列化为 protobuf bytes。
+│   ├── statebus_pb2.py               编译生成的 Python protobuf stub。
+│   └── channels.py                   StateChannel 定义 + 8 个 channel registry（evidence/route/tool_candidates 等）。
 │
-├── memory/                     ← 共享记忆层
-│   └── store.py (914行)         MemoryStore：SQLite schema + FAISS/numpy + 多信号检索融合
+├── memory/                        ← 共享记忆
+│   └── store.py                      MemoryStore。SQLite 存储元数据（ID/来源 Agent/时间/主题/摘要），
+│                                     FAISS 存储向量索引。支持 assist 语义检索和 replay 精确查询。
+│                                     多信号融合排序：semantic × tier + 0.25×BM25 + 0.20×tag + 0.10×recency。
+│                                     支持 4 个 tier：working/long_term/replay_episodes/task_commits。
 │
-├── statepool/                  ← 状态池（数据面）
-│   └── store.py (405行)         FileBackedStatePool(mmap) + SharedMemoryStatePool + ContentAddressedBlobStore
+├── statepool/                     ← 状态池（数据面）
+│   └── store.py                     FileBackedStatePool(mmap) + SharedMemoryStatePool +
+│                                     ContentAddressedBlobStore（SHA-256 内容寻址，支持 replay 去重）。
 │
-├── eval/                       ← 评测层
-│   ├── runner.py (3327行)       run_benchmark/_run_mode_once/6层aggregation/report生成
-│   └── metrics.py (90行)        TaskMetrics：50+指标字段
+├── eval/                          ← 评测层
+│   ├── runner.py                     run_benchmark() 主入口。task 加载→ mode 交替执行→ 指标聚合→
+│   │                                 report 生成。含 gate 函数系列（object_parity_gate、
+│   │                                 memory_replay_evidence_gate、contest_formal_coverage_gate、
+│   │                                 _whole_lane_text_guard_payload 等）。6 层聚合：
+│   │                                 per-task→per-group→per-reuse-slice→per-lane→per-mode→cross-repeat。
+│   │
+│   ├── metrics.py                   TaskMetrics dataclass：60+ 基础指标 + derived properties
+│   │                                 (assist_memory_hit_rate、reuse_gain、planner_one_shot_valid、
+│   │                                 planner_repair_rate、replay_apply_rate 等)。
+│   │
+│   ├── open_runner.py               Open surface engineering simulator（audit-only，deterministic oracle 模式）。
+│   └── text_open_baseline.py        External text baseline（lexical deterministic runtime，audit-only）。
 │
-├── tasks/                      ← 任务定义
-│   ├── sample_tasks.py (394行)  SampleTask dataclass/build_plan/YAML加载/PLAN_SOURCES
-│   ├── local_corpus.py (229行)  CorpusDoc检索（semantic+lexical+tag+theme+group scoring）
-│   ├── sample_benchmark.yaml    formal_controlled主包（24 task）
-│   └── *_benchmark.yaml         专用包（communication/memory/open_validation/...）
+├── tasks/                         ← 任务定义（YAML）
+│   ├── sample_tasks.py               SampleTask dataclass（60+ 字段：task_id/query/corpus_doc_ids/
+│   │                                 transfer_strategy/required_prior_case_ids 等）、build_plan()（含
+│   │                                 validate step 的条件生成）、public_surface 系统（4 类 + 8 alias）、
+│   │                                 YAML 加载和 contract 校验。
+│   │
+│   ├── contest_family_spec.yaml      Contest 的全部 family spec（~1,600 行，单源真相）。包含 5 个 family
+│   │                                 的 docs（8 类/族）和 cases（4 复杂度/族）定义。
+│   │
+│   ├── contest_family_spec.py        生成器：解析 spec → 生成 contest_dual_mode_controlled_v3_benchmark.yaml
+│   │                                 + contest_release_regression_corpus.yaml。维护入口只在 spec 文件。
+│   │
+│   ├── local_corpus.py               CorpusDoc 检索逻辑。semantic + lexical + tag 混合检索。
+│   │                                 支持 formal_structure_clean_retrieval 模式（关闭 theme/group bonus、
+│   │                                 不注入 preferred doc shortlist、不消费 runtime hint）。
+│   │
+│   ├── contest_dual_mode_controlled_v3_benchmark.yaml     formal headline (40 task, text+protocol)
+│   ├── memory_policy_controlled_v3_benchmark.yaml          formal memory (8 task, protocol-only)
+│   ├── typed_state_mechanism_v3_benchmark.yaml             formal typed-state (8 task, protocol-only)
+│   ├── planner_support_v3_benchmark.yaml                   formal planner (11 task, protocol-only)
+│   └── *_benchmark.yaml                                    其余 8 个 audit/support/legacy pack
 │
-└── tests/ (95个pytest)
+├── scripts/                       ← 运行脚本
+│   ├── run_v3_api_repeat3_suite.py    全量 API repeat=3 suite
+│   ├── generate_contest_family_yaml.py 从 family spec 生成 contest YAML + corpus YAML
+│   └── run_issue_discovery_smoke.sh   定向 issue discovery smoke（5 block）
+│
+└── tests/ (191 pytest)
 ```
 
 ---
 
-## 三、完整执行工作流（从 benchmark runner 到 LLM 调用）
+## 三、LangGraph 编排架构
 
-### 3.1 进入：eval/runner.py 发起 benchmark
-
-```
-run_benchmark(task_set="formal_controlled", repeat=3, modes=("text","protocol"))
-  │
-  ├─ load_task_set_bundle() → 24个 SampleTask 对象
-  │
-  └─ for run_index in range(3):          # 跑3轮
-       for mode in ("text","protocol"):   # 每轮 text→proto 交替
-           │
-           ├─ 创建 RunSession(mode)       # 每个 task_group 共享 memory.sqlite3
-           ├─ 创建 Orchestrator(agents)   # Planner/Retriever/Executor/Summarizer
-           │
-           └─ for task in 24个task:       # 串行执行
-                │
-                ├─ ctx = create_context(task, mode, state_root, memory_db_path, ...)
-                │    ctx.runtime_profile → transfer_strategy, reuse_contract
-                │    ctx.runtime_gates   → allow_memory_assist/allow_execute_prune/allow_exact_replay
-                │
-                └─ await orchestrator.run_task(task, ctx)
-```
-
-### 3.2 阶段A：规划（runtime/orchestrator.py `_plan_task`）
+系统使用 LangGraph 作为 task 执行编排的基础设施。LangGraph 构建一个 5 节点的有向无环图（DAG），管理 task 执行的完整生命周期。
 
 ```
-_plan_task(task, ctx)
-  │
-  ├─ plan_source == "yaml" (受控包默认):
-  │    return build_plan(task)           # tasks/sample_tasks.py
-  │    → 固定3-step DAG:                 # 不调LLM。planner_requests=0
-  │       retrieve(owner=retriever)      # 所有task共用
-  │       → execute(owner=executor)      #
-  │       → summarize(owner=summarizer)  #
-  │
-  └─ plan_source == "llm" (仅open_validation):
-       return await planner.plan_task(task, ctx)
-       → PlannerAgent 调 LLM 生成 Plan → _plan_from_llm_output 解析
-       → _expected_plan_contract 严格校验 → 不满足则 raise
+StateBusGraphRunner.build_langgraph()                  runtime/langgraph_adapter.py:185-197
+
+    graph.add_node("planner",    → _planner_node)      编译 plan（调用 orchestrator.compile_task_plan）
+    graph.add_node("retriever",  → _retriever_node)    检索 + replay gate 检查
+    graph.add_node("validate",   → _validate_node)     路由验证（按 plan 结构可选加入）
+    graph.add_node("executor",   → _executor_node)     工具执行 + validate gate 检查
+    graph.add_node("summarizer", → _summarizer_node)   LLM 总结 + MemoryCommit
+
+    graph.set_entry_point("planner")
+    graph.add_edge("planner", "retriever")
+
+    graph.add_conditional_edges("retriever", _next_after_retrieve)
+    → plan 含 semantic_role="validate" 的步骤时路由到 validate 节点
+    → 否则直通 executor 节点
+
+    graph.add_edge("validate", "executor")
+    graph.add_edge("executor", "summarizer")
+    graph.add_edge("summarizer", END)
 ```
 
-### 3.3 阶段B：执行（runtime/orchestrator.py `_execute_plan`）
+**LangGraph 的具体职责**：
+- **Graph state 管理**：每个节点执行后，`_refresh_state_snapshot()` 将 ctx 中的 results、state_refs、memory_hits、metrics、replay_decision 拷贝到 graph state dict，保证节点间状态传播
+- **失败传播**：任一节点失败 → `state["status"] = "failed"` → 后续节点检查状态后跳过
+- **条件路由**：`_next_after_retrieve()` 根据 Plan 结构（是否含 `semantic_role="validate"` 的步骤）决定下一步走 validate 还是 executor
 
-这是核心执行循环。每一步都有 replay gate 检查：
+每个 LangGraph 节点内部**不包含业务逻辑**——它调用 Orchestrator 的公开方法（`compile_task_plan`、`resolve_skip_retrieve_execute`、`invoke_plan_step`、`register_step_result` 等）。Orchestrator 承担所有业务语义：plan 编译、步骤执行、replay gate 决策、schema 校验、StatePool/MemoryStore 副作用。
 
-```
-_execute_plan(plan, ctx)
-  │
-  ├─ ctx.emit(plan)                           # 控制面：序列化Plan消息 → control_bytes累加
-  │
-  ├─ [Replay Gate 1: 精确回放]                # 尝试跳过 retrieve + execute 两层
-  │   _resolve_skip_retrieve_execute(plan, ctx)
-  │   │
-  │   ├─ 条件: ctx.runtime_gates["allow_exact_replay"] == True
-  │   ├─ ctx.replay_candidates() → memory_store.replay_candidates()
-  │   │   查 SQLite WHERE memory_purpose="replay" AND task_theme=当前theme
-  │   │   返回 MemoryHit（含 evidence_state_refs 和 metadata）
-  │   │
-  │   ├─ 匹配条件:
-  │   │   - task_theme 完全相同
-  │   │   - feature_route 非 "generic_triage"
-  │   │   - reusable_steps 包含 "retrieve" 和 "execute"
-  │   │   - 归一化 query 精确匹配
-  │   │   - evidence_sha256 非空
-  │   │   - route_confidence >= 0.80 && "lexical" in route_provenance
-  │   │
-  │   ├─ 匹配成功 → 从 MemoryHit.evidence_state_refs 重建 StepResult
-  │   │   _prepare_step_input_refs(execute, overrides=retrieve_result)
-  │   │   _prepare_step_input_refs(summarize, overrides=both)
-  │   │   ctx.pruned_step_ids = ["retrieve","execute"]
-  │   │   ctx.metrics.skipped_step_count += 2
-  │   │   → 跳过retrieve和execute，直接进入summarize
-  │   │
-  │   └─ 不匹配 → 继续正常流程
-  │
-  ├─ Step "retrieve"                            # ── Retriever执行 ──
-  │   │
-  │   ├─ _prepare_step_input_refs(plan, step, ctx)
-  │   │   step_input_contract(agent="retriever") → sources=[] (无上游)
-  │   │   → selected_refs = []
-  │   │
-  │   ├─ ctx.emit(step)                        # 控制面：序列化PlanStep → control_bytes累加
-  │   │
-  │   ├─ agent = self.agents["retriever"]
-  │   ├─ result = await retriever.execute_step(step, ctx)
-  │   │   │                                     # ↓ 详见 §四
-  │   │   └─ 返回 StepResult(output_state_refs=[evidence_ref, feature_ref, ...])
-  │   │
-  │   ├─ SchemaInterceptor.validate_result()
-  │   ├─ _register_result(result, ctx)
-  │   │   ├─ 注册所有 output_state_refs → ctx.state_refs
-  │   │   └─ ctx.results["retrieve"] = result
-  │   │
-  │   └─ if not result.success: break
-  │
-  ├─ Step "execute"                             # ── Executor执行 ──
-  │   │
-  │   ├─ [Replay Gate 2: 执行剪枝]              # 尝试只跳过 execute
-  │   │   _resolve_skip_execute(plan, ctx)
-  │   │   │
-  │   │   ├─ 条件: ctx.runtime_gates["allow_execute_prune"] == True
-  │   │   │        + ctx.results["retrieve"] 已存在
-  │   │   ├─ 查 replay candidates → 比较:
-  │   │   │   - feature_route 匹配
-  │   │   │   - fresh_evidence_sha256 匹配
-  │   │   │   - 归一化 query token overlap >= 85%
-  │   │   │   - route_confidence >= 0.70 && lexical in provenance
-  │   │   │
-  │   │   ├─ 匹配成功 → 合成 execute StepResult
-  │   │   │   ctx.pruned_step_ids = ["execute"]
-  │   │   │   ctx.metrics.skipped_step_count += 1
-  │   │   │   → 跳过execute，直接summarize
-  │   │   │
-  │   │   └─ 不匹配 → 继续正常流程
-  │   │
-  │   ├─ _prepare_step_input_refs(plan, step, ctx)
-  │   │   step_input_contract(agent="executor", variant=transfer_strategy):
-  │   │     source step="retrieve"
-  │   │     include_kinds = [DENSE_EVIDENCE, TOOL_ARTIFACT, FEATURE_BUNDLE, ...]
-  │   │   → 从 retrieve_result.output_state_refs 中筛选匹配kind的 StateRef
-  │   │   → selected_refs = [evidence_ref, feature_ref?, transfer_brief_ref?, ...]
-  │   │
-  │   ├─ ctx.record_transfer_inputs(selected_refs)  # ← 这里产生 handoff 指标！
-  │   │   ├─ handoff_wire_bytes += StateRefLite序列化大小(~50-80/个)   ← 线上通信 ✅
-  │   │   └─ handoff_payload_bytes += ref.length (mmap payload大小)    ← 本地读取 ❌
-  │   │
-  │   ├─ agent = self.agents["executor"]
-  │   ├─ result = await executor.execute_step(step, ctx)
-  │   │   │                                     # ↓ 详见 §四
-  │   │   └─ 返回 StepResult(output_state_refs=[tool_artifact_ref])
-  │   │
-  │   └─ _register_result → ctx.results["execute"] = result
-  │
-  └─ Step "summarize"                           # ── Summarizer执行 ──
-      │
-      ├─ _prepare_step_input_refs(plan, step, ctx)
-      │   step_input_contract(agent="summarizer"):
-      │     source step="retrieve": include_kinds=[DENSE_EVIDENCE, FEATURE_BUNDLE, EMBEDDING, ...]
-      │     source step="execute":  include_kinds=[TOOL_ARTIFACT]
-      │   → selected_refs = [evidence_ref, feature_ref?, ..., artifact_ref]
-      │
-      ├─ agent = self.agents["summarizer"]
-      ├─ result = await summarizer.execute_step(step, ctx)
-      │   │                                     # ↓ 详见 §四
-      │   └─ 返回 StepResult(output_state_refs=[summary_ref],
-      │                       memory_commit=assist_commit,
-      │                       memory_commits=[replay_commit])
-      │
-      └─ _register_result → ctx.results["summarize"] = result
-           ├─ ctx.commit_memory(assist_commit)  → SQLite + FAISS  (purpose=assist)
-           └─ ctx.commit_memory(replay_commit)  → SQLite + FAISS  (purpose=replay)
-```
-
-### 3.4 回到 runner：指标收集
-
-```
-_run_mode_once 中每个 task 完成后:
-  ctx.metrics.to_dict() → {
-    control_bytes, state_bytes, llm_total_tokens, task_ms,
-    handoff_wire_bytes, handoff_payload_bytes,
-    handoff_textual_bytes, handoff_nontext_bytes,
-    memory_hit_rate, skipped_step_count, reuse_gain,
-    planner_total_tokens, summarizer_total_tokens,
-    ...
-  }
-  
-所有 task 跑完后:
-  _aggregate_mode_runs → 平均/求和 → benchmark_results.json
-  _write_markdown_report → benchmark_report.md
-```
+**为什么用 LangGraph**：它提供标准化的 DAG 编排能力（条件路由、状态传播、失败处理），让 benchmark runner 不需要自己实现执行循环。Orchestrator 也可以独立运行（在测试中使用），LangGraph 和 Orchestrator 的关系是编排层和语义层的分离。
 
 ---
 
-## 四、四个 Agent 在两种模式下的详细行为
+## 四、完整执行工作流
 
-### 4.0 总览
+### 4.1 入口：benchmark runner 发起 task
 
-| Agent | 调 LLM? | 两种模式差异 | 差异层面 | token 影响 |
-|-------|:---:|------|---------|:---:|
-| Planner | 受控包：否 | 受控包：无差异（plan 来自 YAML） | — | 0 |
-| Retriever | 否 | 完全相同（产出相同的 StateRef） | 仅握手格式不同 | 0 |
-| Executor | 否 | text_brief 下解析文本；state_ref 下直接读字段 | 仅握手格式不同 | 0 |
-| Summarizer | **是** | text: 原材料（原始 evidence 全文）；proto: 加工品（结构化 handoff） | prompt 内容+格式都不同 | **全部差异来源** |
-
-### 4.1 Planner
+Benchmark 从 `eval/runner.py` 的 `run_benchmark()` 启动。加载指定 pack 的 YAML → 创建 StateBusGraphRunner → 为每个 task 创建 RunContext → 串行执行。
 
 ```
-职责: 把用户 task 分解为 step 序列
-
-受控包 (plan_source="yaml"):
-  build_plan() → 固定3-step DAG → 不调 LLM
-  planner_requests = 0, planner_total_tokens = 0
-
-开放包 (plan_source="llm", 仅 open_validation):
-  PlannerAgent.plan_task() → _planner_messages() → LLM → _plan_from_llm_output()
-  → _expected_plan_contract() 校验 (必须3-step)
-```
-
-### 4.2 Retriever
-
-```
-职责: 检索 corpus → 查共享记忆 → 构建特征 → 写入 StatePool → 返回 StateRef 指针
-不调 LLM。两种模式完全相同。
-
-执行流程:
-  1. retrieve_corpus_docs(query, tags, corpus_doc_ids)  → 本地 corpus 语义+词法检索
-  2. ctx.search_memory(purpose="assist")                 → 查共享记忆
-  3. build_feature_bundle(query, evidence, tags, ...)    → route/confidence/signals
-  4. 根据 transfer_strategy 决定握手格式:
-     
-     state_ref (大部分task):                     text_brief (仅 transfer_lane text模式):
-     ├─ put_feature_state() → FEATURE_BUNDLE     ├─ _build_transfer_brief() → Key-Value文本
-     ├─ put_ranked_evidence() → RANKED_EVIDENCE  ├─ put_text_state() → TOOL_ARTIFACT
-     ├─ put_tool_candidate() → TOOL_CANDIDATE    │
-     ├─ put_replay_eligibility() → REPLAY_ELIG   │   产出: 1个 StateRef, ~1790字节
-     ├─ put_embedding() → EMBEDDING              │
-     │                                            │
-     产出: 5个 StateRef, ~3600字节               │
-
-    ⚠️ 两者都走 StatePool → StateRef指针 → mmap     两者都走 StatePool → StateRef指针 → mmap
-    通信路径完全相同！                                通信路径完全相同！
-    只差在 payload 格式(msgpack vs Key-Value文本)     只差在 payload 格式
-```
-
-### 4.3 Executor
-
-```
-职责: 读 StateRef 指针 → mmap 取 payload → 选 tool → subprocess 执行
-不调 LLM。两种模式下的 tool 选择结果相同（expectation_match=1.00）。
-
-text_brief 握手 (transfer_lane text模式):
-  收到: 1个 TOOL_ARTIFACT StateRef
-  读 payload: "Route: cache_invalidation\nTool: fix_invalidation_hook\n..."
-  → 解析 Key-Value 文本 → 提取 route/tool/confidence
-  → select_tool_name(feature_bundle) → tool lookup → subprocess 执行
-  
-state_ref 握手 (其余所有):
-  收到: 5个 StateRef (FEATURE_BUNDLE + TOOL_CANDIDATE_SET + ...)
-  读 FEATURE_BUNDLE payload: msgpack bytes → dict{route:"cache_invalidation",tool:"fix_cache",...}
-  → 直接读结构化字段 → select_tool_name(feature_bundle) → tool lookup → subprocess 执行
-
-产出: TOOL_ARTIFACT StateRef (actions 文本)
-```
-
-### 4.4 Summarizer —— 唯一调 LLM 的 Agent，text/proto 差异根源
-
-```
-text 模式                          protocol 模式
-─────────                          ─────────────
-
-收到 evidence (来自 Retriever):
-  原始 corpus 文档全文              _build_protocol_summary_handoff()
-  (几千字节自然语言)                 生成的紧凑描述:
-                                   "Query: inventory stale...
-                                    Route: cache_invalidation
-                                    Route confidence: 0.92
-                                    Matched signals: invalidation, batch-sync
-                                    Evidence preview: Fresh evidence should..."
-
-收到 prompt:
-  system: "你是纯文本协作环境中       system: (无额外包装，紧凑模式)
-           的 Summarizer。你收到了     
-           之前 Agent 的自然语言交接..."
-  user: 自然语言格式                  user: tagged_json(
-           "Summarizer handoff for           "statebus-summary-input",
-           a text-only workflow.             {"h": hint, "e": evidence,
-           Task ID: sample-cache-001          "a": actions, "t": tags,
-           Task theme: ...                    "r": reusable_steps}
-           Evidence note: ..."               )
-
-token 消耗: ≈ 500+                    token 消耗: ≈ 200+
-
-导致差异的根因:
-  Retriever的推理(route)→文本化→Summarizer再理解    Retriever的推理→结构化→Summarizer直接读
-  = "内部状态→文本→内部状态" 反复转换                = 消灭了转换损耗
-
-这不是"给 Summarizer 更少信息"——是给"更浓缩的信息"。
-上游已经提取好的 route/confidence/signals，不需要 Summarizer 重新推理。
-expectation_match=1.00 证明输出一致性。
-```
-
----
-
-## 五、StateRef 生命周期与指标采集点
-
-```
-Retriever                             Executor
-────────                              ────────
-ctx.put_feature_state()
-  ├─ msgpack 序列化 feature_bundle
-  ├─ 写入 StatePool (mmap文件)  → data/task-001-features.bin
-  └─ 返回 StateRef {
-       state_id: "task-001-features"
-       kind: "FEATURE_BUNDLE"
-       storage: "MMAP_FILE"
-       handle: "/path/to/data/task-001-features.bin"
-       length: 1200
-       checksum: "abc123..."
-       metadata: {route:"cache_invalidation", ...}
-     }
+run_benchmark(task_set, repeat, modes)                  eval/runner.py
+  │
+  ├─ load_task_set_bundle() → SampleTask[]              tasks/sample_tasks.py
+  │   └─ YAML → TaskSetMetadata + tuple[SampleTask]
+  │      public_surface / evidence_tier / variable_axes / plan_source_default
+  │
+  └─ for run_index in range(repeat):
+       for mode in modes:
          │
-         │ 放入 StepResult.output_state_refs = [evidence_ref, feature_ref, ...]
+         ├─ 创建 RunSession(mode) / StatePool(MMAP_FILE) / MemoryStore(SQLite+FAISS)
+         ├─ 创建 StateBusGraphRunner (langgraph 编排)
          │
-         ├── 控制面序列化 (protobuf WireEnvelope) ──→
-         │   StateRefLite {                          _prepare_step_input_refs
-         │     state_id: "task-001-features"          │
-         │     kind: "FEATURE_BUNDLE"                 ├─ 按 contract 筛选 kind
-         │     length: 1200                           │   executor contract:
-         │   }                                        │     include_kinds=[DENSE_EVIDENCE,
-         │   ≈ 60-80 字节 (不含payload!)              │       TOOL_ARTIFACT, FEATURE_BUNDLE, ...]
-         │                                            │
-         │                                            ├─ handoff_wire_bytes    ← ✅ 线上通信！
-         │   ① 序列化 StateRefLite → protocol_bytes   │   += 每个指针 60-80 字节
-         │   ② 嵌入 StepResult → protocol_bytes       │
-         │   ③ Session.record_message →               ├─ handoff_payload_bytes ← ❌ 本地读取！
-         │      metrics.control_bytes +=               │   += ref.length (mmap文件大小)
-         │                                            │
-         │   注意: payload (1200字节) 不进入控制面    │
-         │                                            │
-         │                                            ├─ ctx.resolve_ref(state_id)
-         │                                            │   → statepool.get_bytes(ref)
-         │                                            │   → mmap 零拷贝读取 1200字节
-         │                                            │   → msgpack 反序列化
-         │                                            │   → 得到 route/tool/confidence
-         │                                            │
-         │                                            └─ 选 tool → subprocess 执行
+         └─ for task in tasks:
+              │
+              ├─ ctx = Orchestrator.create_context(...)
+              │    ctx.runtime_profile → transfer_strategy, handoff_profile
+              │    ctx.runtime_gates   → allow_memory_assist / allow_execute_prune / allow_exact_replay
+              │
+              └─ await graph_runner.run_task(task, ctx)
+                   → build_langgraph().ainvoke(state)
+                   → 5 个节点顺序执行（含条件路由）
 ```
 
-**关键：控制面只传指针（~60字节），payload 在本地 mmap 文件里。`handoff_wire_bytes` 才是通信量，`handoff_payload_bytes` 是本地 StatePool 存储量。**
+### 4.2 Planner — 任务规划
 
----
+Plan 编译是执行的第一步。系统支持两种 plan 来源：
 
-## 六、记忆流：写入与检索
+**yaml plan**：`build_plan()` 从 SampleTask 生成固定 3-step plan（retrieve→execute→summarize），每步标记 `semantic_role`。当 task 的 `required_plan_semantic_roles` 含 `validate` 时，自动插入 validate 步骤变为 4-step。不调 LLM——用于受控实验（contest 和 memory_policy 包通过 `plan_source_default: yaml` 使用此模式）。
 
-### 6.1 写入（Summarizer → SQLite + FAISS）
+**llm plan**：`PlannerAgent.plan_task()` 通过 LLM 生成计划。流程是：
 
 ```
-Summarizer 生成两份 MemoryCommit:
-  ├─ assist_commit (purpose="assist", reusable_steps=["retrieve"])
-  │   嵌入文本: query + route + summary
-  │   evidence_state_refs: [evidence_ref, feature_ref, ..., summary_ref]
+compile_task_plan(task, ctx)
   │
-  └─ replay_commit (purpose="replay", reusable_steps=["retrieve","execute"])
-      嵌入文本: query + route + summary + full actions
-      evidence_state_refs: [*assist_refs, artifact_ref]
+  ├─ plan_source == "yaml" → build_plan(task)
+  │
+  └─ plan_source == "llm" → PlannerAgent.plan_task()
+        │
+        ├─ _planner_messages() → 构造 LLM prompt
+        │   ├─ 注入 required_plan_semantic_roles（如 ["retrieve","validate","execute","summarize"]）
+        │   ├─ protocol 模式：提示 LLM 产出显式 {"steps":[...]} 格式
+        │   └─ 禁止 planner 作为 step owner
+        │
+        ├─ LLM 调用（支持 repair loop: 最多 3 次尝试）
+        │   └─ _plan_from_llm_output() 解析失败时，_planner_repair_messages()
+        │      构造修复提示，把原 LLM 输出和验证错误传给 LLM 重新生成
+        │
+        ├─ _plan_from_llm_output()
+        │   ├─ extract_json_object() → 解析 LLM 输出
+        │   ├─ _normalize_planner_step() → 通过 PLANNER_ROLE_BINDINGS
+        │   │   校验 semantic_role 对应的 owner_agent 和 action 是否正确
+        │   ├─ _validate_plan_dag() → DAG 无循环、step_id 唯一
+        │   └─ _validate_planner_semantic_coverage() → 检查 required_roles 全部覆盖
+        │
+        └─ 产出 Plan(steps=[PlanStep(semantic_role="retrieve", ...), ...])
 
-ctx.commit_memory(commit) → memory_store.commit_memory():
-  ├─ INSERT INTO memories (...) → SQLite 行
-  ├─ embed(embedding_text) → FAISS 向量索引
-  └─ faiss_outbox → 异步索引同步
+prepare_plan(plan, ctx):
+  ├─ ctx.set_step_role(step.step_id, step.semantic_role)   ← 注册语义角色映射
+  ├─ SchemaInterceptor.validate_plan()                      ← DAG 合法性 + CapabilityTable 校验
+  └─ ctx.emit(plan) → protobuf 序列化 → control_bytes 累加
 ```
 
-### 6.2 查询（Retriever/Ochestrator → 检索记忆）
+### 4.3 执行循环 — semantic_role 驱动的步骤调度
+
+，当前使用 `semantic_role` 驱动步骤调度。这意味着 Plan 的步骤可以任意命名（如 `"gather-001"`），只要 `semantic_role` 正确，执行引擎就能找到对应的处理逻辑。
 
 ```
-assist 查询（在 RetrieverAgent 中）:
-  ctx.search_memory(task_theme, query_text, tags, 
-                    required_metadata={"memory_purpose":"assist"})
-  → memory_store.search(MemoryQuery)
-  → FAISS 向量搜索 + SQLite metadata/tag 过滤
-  → 多信号融合排序:
-      combined = semantic × tier(同session=1.5) 
-               + 0.25×BM25 + 0.20×tag + 0.10×recency
-  → 返回 MemoryHit[]
+_execute_plan(plan, ctx)                                orchestrator.py:947
 
-replay 查询（在 _resolve_skip_* 中）:
-  ctx.replay_candidates(task_theme, required_metadata={"memory_purpose":"replay"})
-  → memory_store.replay_candidates()
-  → SQLite 精确查询 WHERE task_theme=? AND purpose=replay
-  → 返回 MemoryHit[] (含 evidence_state_refs)
+  for step in plan.steps:
+    step_role = ctx.semantic_role_for_step(step.step_id)
+
+    if step_role == "retrieve":
+      │
+      ├─ [Replay Gate 1: 精确回放]
+      │   resolve_skip_retrieve_execute(plan, ctx)
+      │   ├─ 条件: allow_exact_replay + prior_dependency_satisfied
+      │   ├─ ctx.replay_candidates() → memory_store.replay_candidates()
+      │   ├─ 匹配: task_theme + route(非generic) + query精确匹配
+      │   │        + evidence_sha256 + route_confidence≥0.80 + lexical prov
+      │   └─ 匹配成功 → 合成 retrieve+execute StepResult
+      │       ctx.skipped_step_count += 2 → 跳过后续 retrieve/execute
+      │
+      └─ RetrieverAgent.execute_step()
+            ├─ retrieve_corpus_docs() → 语义+词法检索
+            ├─ _resolve_runtime_corpus_hints() → formal 包返回空
+            ├─ build_feature_bundle() → route/tool/confidence/evidence_hash
+            ├─ 按 transfer_strategy 生成 typed state
+            └─ 返回 StepResult(output_state_refs=[...])
+
+    if step_role == "validate":
+      │
+      └─ ExecutorAgent._validate_route_step()
+            ├─ 读 EXECUTOR_DECISION_PACKET (msgpack)
+            ├─ 读 retrieve_result.payload
+            ├─ 8 项校验: route非空/非generic_triage → confidence≥0.5
+            │   → tool在acceptable_tools → doc_ids非空
+            │   → decision_packet与retrieve一致性
+            ├─ 产出 VALIDATION_GATE_PACKET typed state
+            └─ validation_success=False → 后续 execute 将被阻断
+
+    if step_role == "execute":
+      │
+      ├─ [Replay Gate 2: 执行剪枝]
+      │   resolve_skip_execute(plan, ctx)
+      │   ├─ 条件: allow_execute_prune + retrieve_result存在 + prior_dependency_satisfied
+      │   ├─ 匹配: route+evidence_hash→ ctx.skipped_step_count += 1
+      │   └─ 不匹配 → 继续正常流程
+      │
+      ├─ [Validate Gate] 读 VALIDATION_GATE_PACKET (如有)
+      │   └─ validation_success != true → raise ValueError，阻断执行
+      │
+      └─ ExecutorAgent.execute_step()
+            ├─ 按 transfer_strategy 选择 execution 路径
+            ├─ state_packet_minimal: 读 EXECUTOR_DECISION_PACKET → route/tool
+            ├─ text_strict_pure_lane: 解析 structured text handoff
+            ├─ select_tool_name() → ToolRegistry
+            └─ _invoke_tool() → playbook 执行 → TOOL_ARTIFACT
+
+    if step_role == "summarize":
+      │
+      └─ SummarizerAgent.execute_step()
+            ├─ protocol 模式: 收 compact JSON structured digest
+            ├─ text 模式: 收纯文本 evidence
+            ├─ LLM 调用 → summary + tags + reusable_steps
+            ├─ MemoryCommit × 2 (assist + replay)
+            └─ ctx.commit_memory() → SQLite + FAISS
+```
+
+### 4.4 9 种 Transfer Strategy 详解
+
+Transfer strategy 决定了 Retriever 产出什么、Executor 收到什么。系统当前定义了 9 种 strategy，对应不同的赛题验证需求：
+
+| Strategy | Retriever 产出 | Executor 输入 | 使用场景 |
+|---|---|---|---|
+| `text_strict_pure_lane` | structured text handoff（含 Route:/Tool: 显式字段） | 解析 handoff 文本中的 route/tool | contest formal headline 的 text 侧。公平性修复后，executor 不独立做词法匹配 |
+| `text_whole_lane` | 自然语言 handoff（无结构化字段） | 纯自然文本，无 route/tool 信息 | memory fairness 的 text 侧。格式固有限制：无法携带结构化决策 |
+| `state_packet_minimal` | DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET (msgpack) | 直接读 decision packet 的 route/tool | contest/memory_policy/replay 的 protocol 侧。最小 typed state 集合 |
+| `natural_handoff_text` | DENSE_EVIDENCE + TOOL_ARTIFACT 自然文本 | 读 TOOL_ARTIFACT 中的 route/tool | typed_state_mechanism 对照实验 |
+| `inline_text_handoff` | 纯 inline text（零 typed state ref） | 零 StateRef，executor 只读文本 | text_definition audit：验证 executor boundary |
+| `text_packet_minimal` | DENSE_EVIDENCE + TOOL_ARTIFACT text packet | 解析 text packet 中的 route/tool | carrier microbench：对比 text packet vs state packet 的工程开销 |
+| `text_brief` | Key-Value 文本 brief | 解析 brief 文本 | 旧兼容 |
+| `state_ref` | FEATURE_BUNDLE + CHANNEL_SNAPSHOT + TOOL_CANDIDATE_SET + RANKED_EVIDENCE + REPLAY_ELIGIBILITY + EMBEDDING | 读多个 typed state ref | full rich audit：查看所有 rich helper 对象的可见性 |
+| `protocol_full_rich_audit` | 同上 + 全量 rich typed state | 同上 | audit support |
+
+**公平性合同**：当前 lane policy 的核心约束是——两种 lane 的 executor 都只消费上游 handoff 对象中显式给出的 route/tool，不做独立 lexical recovery。text_strict_pure_lane 从 structured text 中解析 route/tool，state_packet_minimal 从 msgpack packet 中直接读取。两条路径对称，差异只来自 handoff 对象的格式能力，不来自 executor 的补救能力。
+
+### 4.5 指标采集体系
+
+每个 task 执行完成后，`RunContext.metrics` 包含 60+ 基础指标字段。通过 `TaskMetrics.to_dict()` 导出，再由 runner 的 6 层聚合系统生成 benchmark report。
+
+```
+每个 task 的指标:
+  ├─ 通信面
+  │   control_bytes, text_bytes, protocol_bytes    ← 控制面字节数
+  │   handoff_wire_bytes, handoff_payload_bytes    ← 状态面线上指针 vs 本地负载
+  │   handoff_textual_bytes, handoff_nontext_bytes ← 状态面文本 vs 非文本分解
+  │   handoff_ref_count, handoff_nontext_ref_count ← StateRef 指针计数
+  │
+  ├─ LLM 面
+  │   planner_total_tokens, summarizer_total_tokens, llm_total_tokens
+  │   planner_llm_request_count, planner_repair_attempt_count
+  │
+  ├─ 记忆面
+  │   assist_memory_hit_rate ← assist 路径命中率
+  │   replay_probe_hit_rate  ← replay 候选命中率
+  │   skipped_step_count, reuse_gain
+  │
+  ├─ 正确率面
+  │   route_exact_rate, tool_exact_rate, exact_match_rate
+  │   admissible_match_rate, abstention_rate, wrong_family_rate
+  │
+  ├─ typed-state 消费面
+  │   typed_executor_minimal_expected_consumption_rate
+  │   executor_expected_kind_match_rate
+  │   executor_unexpected_kind_seen_rate
+  │
+  └─ Planner 面
+      planner_one_shot_valid, planner_repair_rate
+      planner_contract_valid_final
+
+聚合层次:
+  per-task → per-group (_aggregate_task_groups)
+          → per-reuse-slice (_aggregate_named_task_summaries)
+          → per-lane (_aggregate_named_task_summaries)
+          → per-mode (_aggregate_mode_runs)
+          → cross-repeat (_build_stability_summary)
+          → headline gates (_build_headline_gates)
+
+输出:
+  benchmark_results.json  ← 完整 JSON
+  benchmark_report.md     ← markdown 报告
+  benchmark_compare.csv   ← per-family 对比 CSV
 ```
 
 ---
 
-## 七、受控包 vs 开放包的运行时差异
+## 五、记忆流：写入、检索与 Replay
 
-```
-                 formal_controlled               open_validation
-                 ────────────────                ───────────────
-Plan 来源:        build_plan() (固定3-step)       PlannerAgent.plan_task() (LLM生成)
-Planner LLM调用:  0次                             3次 (仅 plan_source="llm" 的task)
-Per-task 变量:    通信格式 + prompt + 握手         通信格式 + prompt + plan变异性
-宣称范围:         正式 headline                    support-only (答辩佐证)
-设计意图:         公平对比：控制Plan变量            证明Planner能工作、系统能处理开放场景
-```
+### 5.1 写入路径
+
+每次 task 的 Summarizer 生成两份 MemoryCommit：
+
+- **assist_commit**（`purpose="assist"`）：轻量级，只包含 route/summary 文本，用于后续 task 的 assist 提示
+- **replay_commit**（`purpose="replay"`）：重量级，包含 evidence_state_refs（指向 retriever/executor 产出的全部 StateRef），用于严格 replay gate 匹配
+
+两条 commit 都通过 `ctx.commit_memory()` 同时写入 SQLite（元数据）和 FAISS（向量索引）。写入后通过 `faiss_outbox` 异步同步索引。
+
+### 5.2 检索路径
+
+**assist 查询**（在 RetrieverAgent 中）：通过 `ctx.search_memory()` 发起。FAISS 语义搜索 + SQLite metadata/tag 过滤，多信号融合排序（semantic × tier + 0.25×BM25 + 0.20×tag + 0.10×recency）。返回的 MemoryHit 用作候选 route 的辅助提示。
+
+**replay 查询**（在 Orchestrator 的 gate 函数中）：通过 `ctx.replay_candidates()` 发起。SQLite 精确查询 WHERE task_theme=? AND memory_purpose=replay。返回的 MemoryHit 含 evidence_state_refs——如果能通过 route/docset/hash/query 的全匹配，则直接跳过步骤。
+
+**prior dependency 查询**（在 task 执行前和 replay gate 中）：`_prior_dependency_satisfied()` 通过 `memory_store.task_commit_candidates()` 查找前序 task 的 TaskCommit，验证 `required_prior_case_ids` 和 `required_prior_rejections` 是否被满足。
+
+### 5.3 Replay Gate 机制
+
+| Gate | 触发条件 | 跳过的步骤 | 效果 |
+|---|---|---|---|
+| `resolve_skip_retrieve_execute` | exact_replay 开启 + route/evidence_hash/query 全匹配 + prior dependency 满足 | retrieve + execute | skipped += 2, reuse_gain 增加 |
+| `resolve_skip_execute` | validated_replay 开启 + retrieve 已完成 + route/evidence_hash 匹配 + prior dependency 满足 | execute | skipped += 1 |
+
+两个 gate 都通过 strict matching（非语义相似度）避免误跳。匹配条件包括：归一化 query 精确匹配、evidence_sha256 全一致、route 非 generic_triage、route_confidence 和 provenance 达标。
 
 ---
 
-## 八、关键决策点总表
+## 六、当前 Benchmark Surface（12 个 v3 pack）
 
-| 决策点 | 位置 | 条件 | 效果 |
-|--------|------|------|------|
-| Plan 来源 | orchestrator L820 | `plan_source="yaml"` → `build_plan()` | 固定3-step，不调LLM |
-| | | `plan_source="llm"` → `PlannerAgent.plan_task()` | LLM 生成，受 contract 校验 |
-| 跳过 retrieve+execute | orchestrator L716 | `allow_exact_replay` + route/evidence hash/query 全匹配 | 两层跳过，`skipped_step_count += 2` |
-| 只跳过 execute | orchestrator L774 | `allow_execute_prune` + retrieve 已完成 + evidence hash/route 匹配 | 跳过 execute，`skipped_step_count += 1` |
-| 握手策略 (text) | task_profile L101 | `mode_split` + mode="text" → `text_brief` | Retriever→Executor 传 Key-Value 文本 |
-| 握手策略 (proto) | task_profile L102 | `mode_split` + mode="protocol" → `state_ref` | Retriever→Executor 传结构化 msgpack |
-| Summarizer 输入 | sample_agents L635 | mode="text" → raw evidence 全文 | Summarizer 看到原材料 |
-| | sample_agents L636 | mode="protocol" → `_build_protocol_summary_handoff` | Summarizer 看到结构化加工品 |
+12 个 pack 按赛题三条主线和支撑角色分层：
+
+| 面 | pack | public_surface | 验证内容 |
+|---|---|---|---|
+| **通信+状态 headline** | contest_dual_mode_controlled_v3 | formal_headline | text vs protocol 同任务对照（40 task） |
+| **状态传递机制** | typed_state_mechanism_v3 | formal_secondary | natural_text vs typed_packet 机制真实性（8 task） |
+| **记忆单变量归因** | memory_policy_controlled_v3 | formal_secondary_memory | 单变量 replay 归因（8 task） |
+| **Planner 能力** | planner_support_v3 | formal_secondary_planner | yaml vs LLM plan 对照（11 task） |
+| **Consumer 消融** | typed_state_consumer_sensitivity_v3 | formal_secondary | 缺 packet/错 packet 的负控制（40 task） |
+| **记忆 replay proof** | memory_reuse_v3 | formal_secondary | protocol-only replay（4 task） |
+| **记忆公平性** | memory_dual_mode_fairness_v3 | audit_only | 双模式 object parity（40 task） |
+| **包体工程** | carrier_microbench_v3 | audit_only | text_packet vs state_packet 开销（40 task） |
+| **文本边界** | text_definition_audit_v3 | audit_only | inline text executor boundary（40 task） |
+| **外部基线** | external_text_baseline_audit_v3 | audit_only | text-only surface（4 task） |
+| **旧兼容** | typed_state_authenticity_v3 | audit_only | legacy compatibility（40 task） |
+| **Rich audit** | typed_state_full_rich_audit_v3 | audit_only | 全量 rich helper 可见性（40 task） |
+
+---

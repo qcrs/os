@@ -43,6 +43,7 @@ class TaskMetrics:
     llm_completion_tokens: int = 0
     llm_total_tokens: int = 0
     planner_llm_request_count: int = 0
+    planner_repair_attempt_count: int = 0
     planner_prompt_tokens: int = 0
     planner_completion_tokens: int = 0
     planner_total_tokens: int = 0
@@ -65,6 +66,8 @@ class TaskMetrics:
     dag_integrity_violation_count: int = 0
     invariant_check_count: int = 0
     invariant_violation_count: int = 0
+    expected_gate_block_count: int = 0
+    true_invariant_violation_count: int = 0
 
     @property
     def assist_memory_hit_rate(self) -> float:
@@ -99,6 +102,18 @@ class TaskMetrics:
         return self.planner_ms + self.retrieve_ms + self.execute_ms + self.summarize_ms
 
     @property
+    def planner_one_shot_valid(self) -> float:
+        if self.planner_llm_request_count == 0:
+            return 1.0
+        return 1.0 if self.planner_repair_attempt_count == 0 else 0.0
+
+    @property
+    def planner_repair_rate(self) -> float:
+        if self.planner_llm_request_count == 0:
+            return 0.0
+        return min(self.planner_repair_attempt_count / self.planner_llm_request_count, 1.0)
+
+    @property
     def phase_overhead_ms(self) -> float:
         return max(self.task_ms - self.phase_accounted_ms, 0.0)
 
@@ -118,8 +133,11 @@ class TaskMetrics:
         payload["replay_probe_hit_rate"] = self.replay_probe_hit_rate
         payload["replay_apply_rate"] = self.replay_apply_rate
         payload["reuse_gain"] = self.reuse_gain
+        payload["planner_one_shot_valid"] = self.planner_one_shot_valid
+        payload["planner_repair_rate"] = self.planner_repair_rate
         payload["phase_accounted_ms"] = self.phase_accounted_ms
         payload["phase_overhead_ms"] = self.phase_overhead_ms
         payload["blob_cache_hit_rate"] = self.blob_cache_hit_rate
         payload["dag_integrity_ok"] = self.dag_integrity_ok
+        payload["invariant_violation_count"] = self.true_invariant_violation_count
         return payload

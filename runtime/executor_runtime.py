@@ -804,6 +804,228 @@ def select_tool_name(
     return active_registry.get_for_route(route).name
 
 
+def _apply_validation_gate_to_feature_bundle(
+    feature_bundle: dict[str, Any],
+    validation_packet: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not validation_packet:
+        return feature_bundle
+    if not bool(validation_packet.get("validation_success")):
+        return feature_bundle
+    validated_tool = str(validation_packet.get("validated_tool_name", "")).strip()
+    validated_route = str(validation_packet.get("validated_route", "")).strip()
+    if not validated_tool and not validated_route:
+        return feature_bundle
+    validated_candidates = [
+        dict(item)
+        for item in validation_packet.get("validated_tool_candidates", [])
+        if isinstance(item, dict)
+    ]
+    if validated_tool or validated_route:
+        selected_candidate = {
+            "tool_name": validated_tool or str(feature_bundle.get("tool_name", "")).strip(),
+            "route": validated_route or str(feature_bundle.get("route", "")).strip(),
+            "score": int(feature_bundle.get("match_score", 0) or 0),
+            "matched_signals": list(feature_bundle.get("matched_signals", [])),
+            "matched_tags": list(feature_bundle.get("matched_tags", [])),
+            "source": str(
+                validation_packet.get("validation_refinement_reason", "")
+                or validation_packet.get("validation_decision_source", "")
+                or "validation_gate"
+            ).strip(),
+        }
+        deduped_candidates = [
+            item
+            for item in validated_candidates
+            if str(item.get("tool_name", "")).strip() != selected_candidate["tool_name"]
+            or str(item.get("route", "")).strip() != selected_candidate["route"]
+        ]
+        validated_candidates = [selected_candidate, *deduped_candidates]
+    if not validated_candidates and (validated_tool or validated_route):
+        validated_candidates = [
+            {
+                "tool_name": validated_tool or str(feature_bundle.get("tool_name", "")).strip(),
+                "route": validated_route or str(feature_bundle.get("route", "")).strip(),
+                "score": int(feature_bundle.get("match_score", 0) or 0),
+                "matched_signals": list(feature_bundle.get("matched_signals", [])),
+                "matched_tags": list(feature_bundle.get("matched_tags", [])),
+                "source": "validation_gate",
+            }
+        ]
+    gated = dict(feature_bundle)
+    if validated_route:
+        gated["route"] = validated_route
+    if validated_tool:
+        gated["tool_name"] = validated_tool
+    if validated_candidates:
+        gated["tool_candidates"] = validated_candidates
+    gated["validated_action_contract"] = str(
+        validation_packet.get("validated_action_contract", "")
+    ).strip()
+    gated["pre_validation_route"] = str(
+        validation_packet.get("pre_validation_route", "")
+    ).strip()
+    gated["pre_validation_tool_name"] = str(
+        validation_packet.get("pre_validation_tool_name", "")
+    ).strip()
+    gated["pre_validation_action_contract"] = str(
+        validation_packet.get("pre_validation_action_contract", "")
+    ).strip()
+    gated["validation_changed_action"] = bool(
+        validation_packet.get("validation_changed_action", False)
+    )
+    gated["validation_refinement_reason"] = str(
+        validation_packet.get("validation_refinement_reason", "")
+    ).strip()
+    for key in (
+        "s2_prior_dependency_required",
+        "s2_prior_dependency_satisfied",
+        "s2_required_prior_case_ids",
+        "s2_required_prior_rejections",
+        "s2_required_prior_routes",
+        "s2_observed_prior_case_ids",
+        "s2_observed_prior_rejections",
+        "s2_observed_prior_routes",
+        "s2_missing_prior_case_ids",
+        "s2_missing_prior_rejections",
+        "s2_missing_prior_routes",
+        "s2_without_prior_action_contract",
+        "s2_without_prior_tool_name",
+        "s2_with_prior_action_contract",
+        "s2_with_prior_tool_name",
+        "s2_prior_dependent_action_change",
+    ):
+        if key in validation_packet:
+            gated[key] = validation_packet[key]
+    gated["validation_gate_applied"] = True
+    gated["validation_decision_source"] = str(
+        validation_packet.get("validation_decision_source", "validation_gate")
+    ).strip() or "validation_gate"
+    return gated
+
+
+def _validation_packet_from_plain_text_handoff(
+    *,
+    validation_text: str,
+    feature_bundle: dict[str, Any],
+    registry: ToolRegistry,
+) -> dict[str, Any] | None:
+    text = str(validation_text or "").strip()
+    if "Validation review in plain language for the contest headline lane." not in text:
+        return None
+    route_candidate = ""
+    pre_validation_tool_candidate = ""
+    tool_candidate = ""
+    action_contract = "execute_validated_tool"
+    s2_prior_status = ""
+    s2_without_prior_tool_name = ""
+    s2_with_prior_tool_name = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if " settled on " in line:
+            route_candidate = line.split(" settled on ", 1)[1].strip().rstrip(".")
+        if "first-pass handoff pointed at the " in line and " playbook before validation" in line:
+            pre_validation_tool_candidate = (
+                line.split("first-pass handoff pointed at the ", 1)[1]
+                .split(" playbook before validation", 1)[0]
+                .strip()
+            )
+        if "next step should collect more evidence" in line:
+            action_contract = "abstain_collect_more_evidence"
+            tool_candidate = "collect_more_evidence"
+        elif "next step should proceed with the " in line and " playbook" in line:
+            tool_candidate = (
+                line.split("next step should proceed with the ", 1)[1]
+                .split(" playbook", 1)[0]
+                .strip()
+            )
+        if line.startswith("For the S2 prior check, status is "):
+            remainder = line.split("For the S2 prior check, status is ", 1)[1]
+            s2_prior_status = remainder.split(";", 1)[0].strip()
+            if "without that prior the admissible action is " in line:
+                s2_without_prior_tool_name = (
+                    line.split("without that prior the admissible action is ", 1)[1]
+                    .split(",", 1)[0]
+                    .strip()
+                )
+            if "with it the admissible action is " in line:
+                s2_with_prior_tool_name = (
+                    line.split("with it the admissible action is ", 1)[1]
+                    .strip()
+                    .rstrip(".")
+                )
+    validated_route = str(feature_bundle.get("route", "")).strip()
+    normalized_route = route_candidate.replace(" ", "_").strip().lower()
+    if normalized_route:
+        route_tool = registry.maybe_get_for_route(normalized_route)
+        if route_tool is not None:
+            validated_route = route_tool.route
+    validated_tool = str(feature_bundle.get("tool_name", "")).strip()
+    pre_validation_tool = str(feature_bundle.get("tool_name", "")).strip()
+    normalized_pre_tool = pre_validation_tool_candidate.replace(" ", "_").strip().lower()
+    if normalized_pre_tool:
+        candidate_name = normalized_pre_tool if normalized_pre_tool.startswith("tool.") else f"tool.{normalized_pre_tool}"
+        try:
+            pre_validation_tool = registry.get(candidate_name).name
+        except KeyError:
+            pass
+    normalized_tool = tool_candidate.replace(" ", "_").strip().lower()
+    if normalized_tool:
+        candidate_name = normalized_tool if normalized_tool.startswith("tool.") else f"tool.{normalized_tool}"
+        try:
+            spec = registry.get(candidate_name)
+            validated_tool = spec.name
+            validated_route = spec.route
+        except KeyError:
+            pass
+    if not validated_route and not validated_tool:
+        return None
+    packet = {
+        "pre_validation_route": str(feature_bundle.get("route", "")).strip(),
+        "pre_validation_tool_name": pre_validation_tool,
+        "pre_validation_action_contract": "route_level_candidate",
+        "validated_route": validated_route,
+        "validated_tool_name": validated_tool,
+        "validated_action_contract": action_contract,
+        "validated_tool_candidates": [
+            {
+                "tool_name": validated_tool,
+                "route": validated_route,
+                "score": int(feature_bundle.get("match_score", 0) or 0),
+                "matched_signals": list(feature_bundle.get("matched_signals", [])),
+                "matched_tags": list(feature_bundle.get("matched_tags", [])),
+                "source": "validation_text_handoff",
+            }
+        ],
+        "validation_success": True,
+        "validation_refinement_reason": "validation_text_handoff",
+        "validation_changed_action": bool(
+            pre_validation_tool
+            and pre_validation_tool != validated_tool
+        ),
+        "validation_decision_source": "validation_text_handoff",
+    }
+    if s2_prior_status:
+        packet.update(
+            {
+                "s2_prior_dependency_required": True,
+                "s2_prior_dependency_satisfied": s2_prior_status == "satisfied",
+                "s2_without_prior_action_contract": "abstain_collect_more_evidence",
+                "s2_without_prior_tool_name": s2_without_prior_tool_name,
+                "s2_with_prior_action_contract": "execute_validated_tool",
+                "s2_with_prior_tool_name": s2_with_prior_tool_name,
+                "s2_prior_dependent_action_change": bool(
+                    s2_without_prior_tool_name
+                    and s2_with_prior_tool_name
+                    and s2_without_prior_tool_name != s2_with_prior_tool_name
+                ),
+            }
+        )
+    return packet
+
+
 class LightweightSubprocessRunner:
     """Best-effort subprocess isolation for host-side tool execution.
 
@@ -934,8 +1156,19 @@ def execute_playbook_step(
         (ref for ref in input_state_refs if ref.kind == "EXECUTOR_DECISION_PACKET"),
         None,
     )
+    validation_ref = next(
+        (ref for ref in input_state_refs if ref.kind == "VALIDATION_GATE_PACKET"),
+        None,
+    )
     transfer_brief_ref = next((ref for ref in input_state_refs if ref.kind == "TOOL_ARTIFACT"), None)
     execution_evidence_text = ""
+    validation_packet = None
+    if validation_ref is not None:
+        validation_packet = _load_structured_bundle(
+            statepool,
+            validation_ref,
+            expected_kind="VALIDATION_GATE_PACKET",
+        )
     if evidence_ref is None and transfer_strategy not in {"natural_handoff_text", "inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"}:
         raise ValueError(f"step {step.step_id} missing DENSE_EVIDENCE input")
     if transfer_strategy == "text_brief":
@@ -1005,15 +1238,20 @@ def execute_playbook_step(
             handoff_text = str(step.params.get("inline_handoff_text", "")).strip()
         if not handoff_text:
             raise ValueError(f"step {step.step_id} missing whole-lane text handoff")
-        feature_bundle = _feature_bundle_from_natural_handoff(
+        feature_bundle = _feature_bundle_from_text_whole_lane_handoff(
             query_text=step.params.get("query", ""),
             evidence_text=handoff_text,
             handoff_text=handoff_text,
             registry=registry or default_tool_registry(),
         )
-        feature_bundle["transfer_strategy"] = "text_whole_lane"
         feature_state_id = ""
         execution_evidence_text = handoff_text
+        if transfer_brief_ref is not None:
+            validation_packet = _validation_packet_from_plain_text_handoff(
+                validation_text=statepool.get_text(transfer_brief_ref),
+                feature_bundle=feature_bundle,
+                registry=registry or default_tool_registry(),
+            ) or validation_packet
     elif transfer_strategy == "state_packet_minimal":
         if decision_packet_ref is None:
             raise ValueError(f"step {step.step_id} missing executor decision packet input")
@@ -1056,6 +1294,7 @@ def execute_playbook_step(
                 tool_candidate_set=_load_tool_candidate_set(statepool, tool_candidate_ref),
             )
         execution_evidence_text = statepool.get_text(evidence_ref)
+    feature_bundle = _apply_validation_gate_to_feature_bundle(feature_bundle, validation_packet)
     active_registry = registry or default_tool_registry()
     tool_name = select_tool_name(feature_bundle, registry=active_registry)
     tool_spec = active_registry.get(tool_name)
@@ -1137,6 +1376,47 @@ def execute_playbook_step(
             ),
             "transfer_strategy": transfer_strategy,
             "handoff_profile": handoff_profile,
+            "validation_gate_applied": bool(feature_bundle.get("validation_gate_applied", False)),
+            "validation_decision_source": str(
+                feature_bundle.get("validation_decision_source", "")
+            ).strip(),
+            "pre_validation_route": str(feature_bundle.get("pre_validation_route", "")).strip(),
+            "pre_validation_tool_name": str(
+                feature_bundle.get("pre_validation_tool_name", "")
+            ).strip(),
+            "pre_validation_action_contract": str(
+                feature_bundle.get("pre_validation_action_contract", "")
+            ).strip(),
+            "validation_changed_action": bool(
+                feature_bundle.get("validation_changed_action", False)
+            ),
+            "validation_refinement_reason": str(
+                feature_bundle.get("validation_refinement_reason", "")
+            ).strip(),
+            "validated_action_contract": str(
+                feature_bundle.get("validated_action_contract", "")
+            ).strip(),
+            "s2_prior_dependency_required": bool(
+                feature_bundle.get("s2_prior_dependency_required", False)
+            ),
+            "s2_prior_dependency_satisfied": bool(
+                feature_bundle.get("s2_prior_dependency_satisfied", False)
+            ),
+            "s2_without_prior_action_contract": str(
+                feature_bundle.get("s2_without_prior_action_contract", "")
+            ).strip(),
+            "s2_without_prior_tool_name": str(
+                feature_bundle.get("s2_without_prior_tool_name", "")
+            ).strip(),
+            "s2_with_prior_action_contract": str(
+                feature_bundle.get("s2_with_prior_action_contract", "")
+            ).strip(),
+            "s2_with_prior_tool_name": str(
+                feature_bundle.get("s2_with_prior_tool_name", "")
+            ).strip(),
+            "s2_prior_dependent_action_change": bool(
+                feature_bundle.get("s2_prior_dependent_action_change", False)
+            ),
         },
     )
 
@@ -1157,10 +1437,9 @@ def _build_executor_plaintext_handoff(
     action_lines = "\n".join(f"- {action}" for action in actions if str(action).strip())
     return (
         "Executor handoff in plain language.\n"
-        f"Request: {query.strip()}\n"
-        f"Most likely issue: {normalized_route}.\n"
-        f"Chosen playbook: {normalized_tool}.\n"
-        "Actions taken:\n"
+        f"For the visible request about {query.strip()}, the issue still looks most consistent with {normalized_route}.\n"
+        f"I proceeded with the {normalized_tool} playbook.\n"
+        "Actions taken in that playbook:\n"
         f"{action_lines}\n"
     )
 
@@ -1711,14 +1990,128 @@ def _feature_bundle_from_text_packet(
     return bundle
 
 
+def _feature_bundle_from_explicit_text_handoff(
+    *,
+    query_text: object,
+    evidence_text: str,
+    handoff_text: str,
+) -> dict[str, Any]:
+    lines = [line.strip() for line in handoff_text.splitlines() if line.strip()]
+    payload: dict[str, Any] = {
+        "query": str(query_text or "").strip(),
+        "route": "",
+        "tool_name": "",
+        "route_source": "retriever_handoff",
+        "route_confidence": 0.0,
+        "route_provenance": [],
+        "matched_signals": [],
+        "matched_tags": [],
+        "retrieved_doc_ids": [],
+    }
+    for line in lines:
+        if line.startswith("Query: ") and not payload["query"]:
+            payload["query"] = line.removeprefix("Query: ").strip()
+        elif line.startswith("Route: "):
+            payload["route"] = _normalize_brief_scalar(line.removeprefix("Route: ").strip())
+        elif line.startswith("Tool: "):
+            payload["tool_name"] = _normalize_brief_scalar(line.removeprefix("Tool: ").strip())
+        elif line.startswith("Route source: "):
+            payload["route_source"] = (
+                _normalize_brief_scalar(line.removeprefix("Route source: ").strip())
+                or "retriever_handoff"
+            )
+        elif line.startswith("Route confidence: "):
+            payload["route_confidence"] = _parse_float_or_default(
+                line.removeprefix("Route confidence: ").strip(),
+                default=0.0,
+            )
+        elif line.startswith("Route provenance: "):
+            raw = line.removeprefix("Route provenance: ").strip().rstrip(".")
+            payload["route_provenance"] = [] if not raw or raw.lower() == "none" else [
+                _normalize_brief_scalar(item.strip()) for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Matched signals: "):
+            raw = line.removeprefix("Matched signals: ").strip().rstrip(".")
+            payload["matched_signals"] = [] if not raw or raw.lower() == "none" else [
+                _normalize_brief_scalar(item.strip()) for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Matched tags: "):
+            raw = line.removeprefix("Matched tags: ").strip().rstrip(".")
+            payload["matched_tags"] = [] if not raw or raw.lower() == "none" else [
+                _normalize_brief_scalar(item.strip()) for item in raw.split(",") if item.strip()
+            ]
+        elif line.startswith("Retrieved docs: "):
+            raw = line.removeprefix("Retrieved docs: ").strip().rstrip(".")
+            payload["retrieved_doc_ids"] = [] if not raw or raw.lower() == "none" else [
+                _normalize_brief_scalar(item.strip()) for item in raw.split(",") if item.strip()
+            ]
+    route = str(payload.get("route", "")).strip() or "generic_triage"
+    tool_name = str(payload.get("tool_name", "")).strip() or "tool.collect_more_evidence"
+    return {
+        "schema": "statebus.feature_bundle.v1",
+        "route": route,
+        "tool_name": tool_name,
+        "query": str(payload.get("query", query_text or "")).strip(),
+        "query_terms": [],
+        "tags": list(payload.get("matched_tags", [])),
+        "matched_signals": list(payload.get("matched_signals", [])),
+        "matched_tags": list(payload.get("matched_tags", [])),
+        "match_score": len(list(payload.get("matched_signals", []))),
+        "route_source": str(payload.get("route_source", "")).strip() or "retriever_handoff",
+        "route_confidence": float(payload.get("route_confidence", 0.0)),
+        "route_provenance": list(payload.get("route_provenance", [])),
+        "hint_doc_ids": [],
+        "hint_route": "",
+        "hint_tool_name": "",
+        "tool_candidates": [
+            {
+                "tool_name": tool_name,
+                "route": route,
+                "score": len(list(payload.get("matched_signals", []))),
+                "matched_signals": list(payload.get("matched_signals", [])),
+                "matched_tags": list(payload.get("matched_tags", [])),
+                "source": str(payload.get("route_source", "")).strip() or "retriever_handoff",
+            }
+        ],
+        "retrieved_doc_ids": list(payload.get("retrieved_doc_ids", [])),
+        "feature_evidence_sha256": "",
+        "feature_fresh_evidence_sha256": hashlib.sha256(evidence_text.encode("utf-8")).hexdigest(),
+        "evidence_sha256": hashlib.sha256(evidence_text.encode("utf-8")).hexdigest(),
+    }
+
+
 def _build_natural_handoff_text(
     *,
     query: str,
     evidence_text: str,
+    route: str,
+    tool_name: str,
+    route_source: str,
+    route_confidence: float,
+    route_provenance: list[str],
+    matched_signals: list[str],
+    matched_tags: list[str],
+    retrieved_doc_ids: list[str],
 ) -> str:
     return (
         "Retriever handoff in plain language.\n"
         f"The downstream agent needs to answer this request: {query.strip()}.\n"
+        f"Route: {route.strip() or 'generic_triage'}.\n"
+        f"Tool: {tool_name.strip() or 'tool.collect_more_evidence'}.\n"
+        f"Route source: {route_source.strip() or 'retriever_handoff'}.\n"
+        f"Route confidence: {route_confidence:.2f}\n"
+        "Route provenance: "
+        + (", ".join(item.strip() for item in route_provenance if str(item).strip()) or "none")
+        + ".\n"
+        "Matched signals: "
+        + (", ".join(item.strip() for item in matched_signals if str(item).strip()) or "none")
+        + ".\n"
+        "Matched tags: "
+        + (", ".join(item.strip() for item in matched_tags if str(item).strip()) or "none")
+        + ".\n"
+        "Retrieved docs: "
+        + (", ".join(item.strip() for item in retrieved_doc_ids if str(item).strip()) or "none")
+        + ".\n"
         "Use only the cited evidence below to decide the most likely issue, rule out the strongest competing explanation, and choose the first action.\n"
         "Evidence follows:\n"
         f"{evidence_text.strip()}\n"
@@ -1732,15 +2125,82 @@ def _feature_bundle_from_natural_handoff(
     handoff_text: str,
     registry: ToolRegistry,
 ) -> dict[str, Any]:
+    del registry
+    bundle = _feature_bundle_from_explicit_text_handoff(
+        query_text=query_text,
+        evidence_text=evidence_text,
+        handoff_text=handoff_text,
+    )
+    bundle["transfer_strategy"] = "natural_handoff_text"
+    return bundle
+
+
+def _feature_bundle_from_text_whole_lane_handoff(
+    *,
+    query_text: object,
+    evidence_text: str,
+    handoff_text: str,
+    registry: ToolRegistry,
+) -> dict[str, Any]:
+    query = str(query_text or "").strip()
+    route_candidate = ""
+    tool_candidate = ""
+    for raw_line in handoff_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("The current request is: ") and not query:
+            query = line.removeprefix("The current request is: ").strip()
+        elif line.startswith("The visible request is about this situation: ") and not query:
+            query = line.removeprefix("The visible request is about this situation: ").strip()
+        elif line.startswith("The visible request concerns ") and not query:
+            query = line.removeprefix("The visible request concerns ").strip().rstrip(".")
+        elif line.startswith("The current working hypothesis is "):
+            route_candidate = line.removeprefix("The current working hypothesis is ").strip().rstrip(".")
+        elif line.startswith("Based on the visible evidence, ") and " is the leading explanation so far" in line:
+            route_candidate = (
+                line.removeprefix("Based on the visible evidence, ")
+                .split(" is the leading explanation so far", 1)[0]
+                .strip()
+                .rstrip(".")
+            )
+        elif line.startswith("The recommended first playbook is "):
+            tool_candidate = line.removeprefix("The recommended first playbook is ").strip().rstrip(".")
+        elif line.startswith("The first playbook to try is "):
+            tool_candidate = line.removeprefix("The first playbook to try is ").strip().rstrip(".")
+        elif line.startswith("Starting with ") and " is the safest next step for now" in line:
+            tool_candidate = (
+                line.removeprefix("Starting with ")
+                .split(" is the safest next step for now", 1)[0]
+                .strip()
+                .rstrip(".")
+            )
     bundle = build_feature_bundle(
-        query=query_text,
-        evidence_text=f"{evidence_text}\n{handoff_text}",
+        query=query,
+        evidence_text=evidence_text,
         tags=[],
-        reuse_signature="natural_handoff_transfer",
+        reuse_signature="text_whole_lane_transfer",
         reused_memory=False,
         registry=registry,
     )
-    bundle["transfer_strategy"] = "natural_handoff_text"
+    normalized_route = route_candidate.replace(" ", "_").strip().lower()
+    normalized_tool = tool_candidate.replace(" ", "_").strip().lower()
+    if normalized_route:
+        route_tool = registry.maybe_get_for_route(normalized_route)
+        if route_tool is not None:
+            bundle["route"] = route_tool.route
+            bundle["tool_name"] = route_tool.name
+    if normalized_tool:
+        candidate_name = normalized_tool if normalized_tool.startswith("tool.") else f"tool.{normalized_tool}"
+        try:
+            spec = registry.get(candidate_name)
+            bundle["tool_name"] = spec.name
+            bundle["route"] = spec.route
+        except KeyError:
+            pass
+    bundle["route_source"] = "headline_natural_language_handoff"
+    bundle["route_provenance"] = ["headline_natural_language_handoff"]
+    bundle["transfer_strategy"] = "text_whole_lane"
     return bundle
 
 
@@ -1750,30 +2210,14 @@ def _feature_bundle_from_strict_pure_text_handoff(
     handoff_text: str,
     registry: ToolRegistry,
 ) -> dict[str, Any]:
-    query = str(query_text).strip()
-    evidence_text = handoff_text.strip()
-    lexical_match = registry.retrieve_candidates(
-        query_text=query.lower(),
-        primary_evidence_text=evidence_text.lower(),
-        evidence_text=evidence_text.lower(),
-        tags=[],
-        limit=1,
+    del registry
+    bundle = _feature_bundle_from_explicit_text_handoff(
+        query_text=query_text,
+        evidence_text=handoff_text,
+        handoff_text=handoff_text,
     )
-    selected = lexical_match[0] if lexical_match else registry.fallback_match()
-    route = selected.route or "generic_triage"
-    tool_name = selected.tool_name or registry.get_for_route(route).name
-    route_source = "strict_pure_text_lexical" if lexical_match else "strict_pure_text_fallback"
-    route_provenance = ["pure_text_lexical"] if lexical_match else ["pure_text_fallback"]
-    return {
-        "route": route,
-        "tool_name": tool_name,
-        "query": query,
-        "route_source": route_source,
-        "route_provenance": route_provenance,
-        "route_confidence": _route_confidence_from_match(selected) if lexical_match else 0.0,
-        "matched_signals": list(selected.matched_signals),
-        "transfer_strategy": "text_strict_pure_lane",
-    }
+    bundle["transfer_strategy"] = "text_strict_pure_lane"
+    return bundle
 
 
 def _feature_bundle_from_executor_decision_packet(
@@ -1911,6 +2355,8 @@ def _validate_executor_decision_packet(
     payload_sha = str(packet.get("feature_fresh_evidence_sha256", "")).strip()
     if not payload_sha:
         raise ValueError("executor decision packet missing feature_fresh_evidence_sha256")
+    if not packet.get("retrieved_doc_ids", []):
+        raise ValueError("executor decision packet requires non-empty retrieved_doc_ids")
     if ref is not None:
         metadata_sha = str(ref.metadata.get("feature_fresh_evidence_sha256", "")).strip()
         if metadata_sha and payload_sha and metadata_sha != payload_sha:
@@ -1918,7 +2364,14 @@ def _validate_executor_decision_packet(
         metadata_route = str(ref.metadata.get("feature_route", "")).strip()
         metadata_route_source = str(ref.metadata.get("feature_route_source", "")).strip()
         metadata_confidence = ref.metadata.get("feature_route_confidence")
+        task_pack_type = str(ref.metadata.get("task_pack_type", "")).strip()
         audit_mode = str(ref.metadata.get("audit_decision_packet_mode", "")).strip()
+        if route == "generic_triage" and task_pack_type in {
+            "planner_support_v3",
+            "contest_dual_mode_controlled_v3",
+            "memory_policy_controlled_v3",
+        }:
+            raise ValueError("executor decision packet generic_triage is not allowed for controlled execution")
         if audit_mode != "override_mismatch_abstain":
             if metadata_route and metadata_route != route:
                 raise ValueError("executor decision packet route mismatch with state metadata")
@@ -2011,4 +2464,8 @@ def _is_route_replay_eligible(
 
 def _normalize_brief_scalar(raw_value: str) -> str:
     text = str(raw_value).strip()
+    if text.endswith(".") and text.count(".") >= 1:
+        head = text[:-1]
+        if head and all(ch.isalnum() or ch in {"_", "-", ".", ":"} for ch in head):
+            text = head
     return "" if text.lower() == "none" else text

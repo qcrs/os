@@ -29,9 +29,10 @@ docs:
   eval_route_label: auth_session_drift
   eval_tool_label: tool.auth_session_repair
   text: After the metadata rotation, callback failures and forced sign-outs rose on
-    the auth canary. The incident note says the failures cluster in one slice of traffic
-    but does not identify whether the main issue is session drift or a throttling
-    control.
+    the auth canary. The incident note says the failures cluster in one slice of traffic,
+    with callback verification failures, stale jwks cache hits, issuer mismatch symptoms,
+    and session drift appearing together, but does not fully close whether the main
+    issue is session drift or a throttling control.
 - doc_id: rr-auth-logs
   task_group: auth_rotation_chain
   task_theme: contest_release_auth_rotation
@@ -75,7 +76,7 @@ docs:
   eval_tool_label: tool.auth_rate_limit_triage
   text: A previous auth incident came from a bad throttle window and aggressive backoff.
     That case did not show stale metadata drift or issuer mismatch on the callback
-    path.
+    path, stale jwks refresh loss, or session drift on callback verification.
 - doc_id: rr-auth-reuse
   task_group: auth_rotation_chain
   task_theme: contest_release_auth_rotation
@@ -119,8 +120,9 @@ docs:
   eval_route_label: auth_session_drift
   eval_tool_label: tool.auth_session_repair
   text: The scope note limits failures to tenants carrying pre-rotation sessions into
-    the canary. Any first action should stay inside that tenant slice until the throttle
-    hypothesis is rejected.
+    the canary. The same scope note says the affected slice lines up with stale pre-rotation
+    sessions rather than a broad throttle spiral, so any first action should stay
+    inside that tenant slice until the throttle hypothesis is rejected.
 - doc_id: rr-billing-ambiguous
   task_group: billing_queue_chain
   task_theme: contest_release_billing_queue_backlog
@@ -165,8 +167,10 @@ docs:
   eval_route_label: worker_queue_starvation
   eval_tool_label: tool.worker_queue_triage
   text: After a billing canary reload, invoice completion delay rose quickly and requests
-    waited longer in the processing path. The incident note does not yet say whether
-    the main route is worker backlog or a database contention relapse.
+    waited longer in the processing path. The incident note records retry storm behavior,
+    invoice queue backlog growth, and worker queue starvation on one slice, but does
+    not yet fully close whether the main route is worker backlog or a database contention
+    relapse.
 - doc_id: rr-billing-logs
   task_group: billing_queue_chain
   task_theme: contest_release_billing_queue_backlog
@@ -240,6 +244,9 @@ docs:
   eval_tool_label: tool.worker_queue_triage
   text: The scope note keeps the backlog limited to one canary worker slice. Any first
     action should stay there until the database-collapse explanation is rejected.
+    The same note says the blast radius never widened into a broad database collapse,
+    which keeps the worker queue starvation branch live instead of a broad database
+    collapse.
 - doc_id: rr-checkout-ambiguous
   task_group: checkout_release_chain
   task_theme: contest_release_checkout_regression
@@ -283,9 +290,10 @@ docs:
   eval_route_label: db_pool_saturation
   eval_tool_label: tool.db_pool_triage
   text: Release 17.4 reached the checkout canary and order confirmation latency rose
-    quickly on one shard. The incident note only says requests stack up during the
-    confirmation path after the rollout and that the blast radius is still limited
-    to the canary tenants.
+    quickly on one shard. The incident note says requests stack up during the confirmation
+    path after the rollout, with sql wait growth, connection pool headroom loss, and
+    database pool contention around the changed filter path, while the blast radius
+    is still limited to the canary tenants.
 - doc_id: rr-checkout-logs
   task_group: checkout_release_chain
   task_theme: contest_release_checkout_regression
@@ -345,8 +353,10 @@ docs:
   eval_route_label: db_pool_saturation
   eval_tool_label: tool.db_pool_triage
   text: The scope update shows only the canary shard and tenants on the changed confirmation
-    path are affected. Any first action should stay scoped to that shard until the
-    competing worker hypothesis is explicitly ruled out.
+    path are affected. The same scope update says the regression stays tied to the
+    changed confirmation path, connection pool pressure, and db pool saturation rather
+    than a fleet-wide worker backlog, so any first action should stay scoped to that
+    shard until the competing worker hypothesis is explicitly ruled out.
 - doc_id: rr-checkout-worker-false
   task_group: checkout_release_chain
   task_theme: contest_release_checkout_regression
@@ -361,7 +371,8 @@ docs:
   eval_tool_label: tool.worker_queue_triage
   text: A prior checkout incident looked similar at the surface but the decisive evidence
     there was retry growth and worker backlog after a reload event. That case did
-    not show the same confirmation-path wait pattern.
+    not show the same confirmation-path wait pattern, sql wait growth, or connection
+    pool pressure.
 - doc_id: rr-deploy-ambiguous
   task_group: deployment_config_chain
   task_theme: contest_release_deployment_config_drift
@@ -405,8 +416,10 @@ docs:
   eval_route_label: db_pool_saturation
   eval_tool_label: tool.db_pool_triage
   text: A deployment drift reached the canary and request completion slowed. The incident
-    note says the degradation began right after the config change but does not yet
-    say whether the main route is pool/config contention or a worker-side reload issue.
+    note says the degradation began right after the config change, with connection
+    pool headroom loss, db pool saturation, slower request-path activation, and config
+    mismatch signals appearing together, but does not yet fully decide whether the
+    main route is pool/config contention or a worker-side reload issue.
 - doc_id: rr-deploy-logs
   task_group: deployment_config_chain
   task_theme: contest_release_deployment_config_drift
@@ -462,8 +475,10 @@ docs:
   - canary
   eval_route_label: db_pool_saturation
   eval_tool_label: tool.db_pool_triage
-  text: The scope note isolates the drift to the canary shard only. Any first action
-    should stay on that shard until the worker route is rejected.
+  text: The scope note isolates the drift to the canary shard carrying the config
+    mismatch. It says the slowdown follows the drifted shard, connection pool pressure,
+    and database pool contention rather than a broad reload storm, so any first action
+    should stay there until the worker route is rejected.
 - doc_id: rr-deploy-worker-false
   task_group: deployment_config_chain
   task_theme: contest_release_deployment_config_drift
@@ -477,8 +492,8 @@ docs:
   eval_route_label: worker_queue_starvation
   eval_tool_label: tool.worker_queue_triage
   text: A previous deployment incident looked similar at the surface but the decisive
-    evidence was worker jitter during reload. That case did not show the same pool-cap
-    mismatch and slower-path activation.
+    evidence was worker jitter during reload. That case did not show the same connection
+    pool pressure, db pool saturation, pool-cap mismatch, and slower-path activation.
 - doc_id: rr-cache-ambiguous
   task_group: inventory_rollout_chain
   task_theme: contest_release_inventory_rollout
@@ -522,8 +537,11 @@ docs:
   eval_route_label: cache_invalidation
   eval_tool_label: tool.cache_invalidation_playbook
   text: After the new sync path reached one rollout region, inventory counts on the
-    read side stayed stale after batch sync. The incident note does not yet say whether
-    the primary cause is invalidation loss or stale replica reads.
+    read side stayed stale after batch sync. The incident note says aggregate-refresh
+    updates are missing on the new sync path while writes stay healthy, with cache
+    invalidation loss, aggregate invalidation misses, and invalidation hook skips
+    appearing together, but does not yet fully close whether the primary cause is
+    invalidation loss or stale replica reads.
 - doc_id: rr-cache-logs
   task_group: inventory_rollout_chain
   task_theme: contest_release_inventory_rollout
@@ -565,7 +583,8 @@ docs:
   eval_route_label: cache_replica_stale_read
   eval_tool_label: tool.replica_stale_read_triage
   text: A separate stale-count incident was driven by read replica lag after a failover.
-    That case did not include skipped aggregate-refresh evidence.
+    That case did not include skipped aggregate-refresh evidence, cache invalidation
+    loss, or invalidation hook skips.
 - doc_id: rr-cache-reuse
   task_group: inventory_rollout_chain
   task_theme: contest_release_inventory_rollout
@@ -594,5 +613,6 @@ docs:
   eval_route_label: cache_invalidation
   eval_tool_label: tool.cache_invalidation_playbook
   text: The scope note isolates the stale path to the rollout region and the new sync
-    lane. Any first action should stay in that region until the replica hypothesis
-    is rejected.
+    lane. It says the stale path follows the new sync lane, cache invalidation failure,
+    and aggregate invalidation loss rather than a broad replica incident, so any first
+    action should stay in that region until the replica hypothesis is rejected.

@@ -24,11 +24,13 @@ from protocol.messages import (
 from runtime.executor_runtime import (
     _build_natural_handoff_text,
     _build_text_packet_minimal,
+    _feature_bundle_from_text_whole_lane_handoff,
     build_executor_decision_packet,
     build_feature_bundle,
     build_ranked_evidence_bundle,
     build_replay_eligibility_bundle,
     build_tool_candidate_set,
+    default_tool_registry,
     execute_playbook_step,
 )
 from runtime.llm import (
@@ -92,6 +94,15 @@ AUDIT_TYPED_STATE_KINDS = (
     "RANKED_EVIDENCE_BUNDLE",
     "REPLAY_ELIGIBILITY_BUNDLE",
 )
+
+HEADLINE_S1_REFINEMENT_TOOLS_BY_ROUTE = {
+    "auth_session_drift": "tool.auth_jwks_refresh",
+    "cache_invalidation": "tool.cache_hook_repair",
+    "db_pool_saturation": "tool.db_query_hotfix",
+    "worker_queue_starvation": "tool.retry_storm_relief",
+}
+S2_NO_PRIOR_TOOL_NAME = "tool.collect_more_evidence"
+S2_NO_PRIOR_ROUTE = "generic_triage"
 
 
 def _build_memory_assist_lookup_text(
@@ -171,13 +182,28 @@ def _build_text_whole_lane_retriever_handoff(
     goal: str,
     query: str,
     evidence_text: str,
+    route: str,
+    tool_name: str,
+    route_confidence: float,
+    retrieved_doc_ids: list[str],
     upstream_text: str = "",
 ) -> str:
+    route_text = route.replace("_", " ").strip() or "generic triage"
+    tool_text = tool_name.split(".")[-1].replace("_", " ").strip() if tool_name else "collect more evidence"
+    doc_text = ", ".join(doc_id.strip() for doc_id in retrieved_doc_ids if str(doc_id).strip()) or "the cited release artifacts"
+    confidence_text = "high" if route_confidence >= 0.85 else "moderate" if route_confidence >= 0.55 else "low"
     parts = [
-        "Retriever handoff in plain language.",
-        f"User goal: {goal.strip()}",
-        f"Query: {query.strip()}",
-        "Evidence:",
+        "Retriever handoff in plain language for the contest headline lane.",
+        f"The user is trying to {goal.strip()}.",
+        f"The visible request concerns {query.strip()}.",
+        (
+            f"Based on the visible evidence, {route_text} is the leading explanation so far, "
+            "and the strongest competing explanation has not overtaken it."
+        ),
+        f"Starting with {tool_text} is the safest next step for now.",
+        f"This read stays at {confidence_text} confidence and depends only on {doc_text}.",
+        "Stay inside the visible evidence below and do not rely on any hidden structured packet, route field, tool field, or retrieval shortcut.",
+        "The visible evidence appears below.",
         evidence_text.strip(),
     ]
     if upstream_text.strip():
@@ -185,17 +211,263 @@ def _build_text_whole_lane_retriever_handoff(
     return "\n".join(part for part in parts if part.strip()) + "\n"
 
 
+def _build_text_whole_lane_validation_handoff(validation_packet: dict[str, object]) -> str:
+    route_text = str(validation_packet.get("validated_route", "")).replace("_", " ").strip()
+    if not route_text:
+        route_text = "generic triage"
+    pre_tool_name = str(validation_packet.get("pre_validation_tool_name", "")).strip()
+    pre_tool_text = pre_tool_name.split(".")[-1].replace("_", " ").strip() if pre_tool_name else "the initial playbook"
+    tool_name = str(validation_packet.get("validated_tool_name", "")).strip()
+    tool_text = tool_name.split(".")[-1].replace("_", " ").strip() if tool_name else "collect more evidence"
+    action_contract = str(validation_packet.get("validated_action_contract", "")).strip()
+    if action_contract == "abstain_collect_more_evidence":
+        decision_text = "collect more evidence before a narrower action"
+    elif action_contract == "execute_validated_tool":
+        decision_text = f"proceed with the {tool_text} playbook"
+    else:
+        decision_text = "stop before execution"
+    retrieved_doc_ids = [
+        str(item).strip()
+        for item in validation_packet.get("retrieved_doc_ids", [])
+        if str(item).strip()
+    ]
+    doc_text = ", ".join(retrieved_doc_ids) or "the cited release artifacts"
+    confidence = float(validation_packet.get("route_confidence", 0.0) or 0.0)
+    confidence_text = "high" if confidence >= 0.85 else "moderate" if confidence >= 0.55 else "low"
+    prior_text = ""
+    if bool(validation_packet.get("s2_prior_dependency_required", False)):
+        prior_status = (
+            "satisfied"
+            if bool(validation_packet.get("s2_prior_dependency_satisfied", False))
+            else "missing"
+        )
+        without_tool = (
+            str(validation_packet.get("s2_without_prior_tool_name", "")).strip()
+            or S2_NO_PRIOR_TOOL_NAME
+        )
+        with_tool = (
+            str(validation_packet.get("s2_with_prior_tool_name", "")).strip()
+            or str(validation_packet.get("validated_tool_name", "")).strip()
+        )
+        prior_text = (
+            f"For the S2 prior check, status is {prior_status}; without that prior "
+            f"the admissible action is {without_tool}, while with it the admissible "
+            f"action is {with_tool}.\n"
+        )
+    return (
+        "Validation review in plain language for the contest headline lane.\n"
+        f"The review step compared the visible handoff with the allowed task contract and settled on {route_text}.\n"
+        f"The first-pass handoff pointed at the {pre_tool_text} playbook before validation.\n"
+        f"After that check, the next step should {decision_text}.\n"
+        + prior_text
+        + f"The reviewed evidence stays at {confidence_text} confidence and depends only on {doc_text}.\n"
+        "The executor should follow this reviewed decision using the same visible text lane.\n"
+    )
+
+
+def _headline_s1_action_refinement(
+    *,
+    task: object | None,
+    decision_packet: dict[str, object],
+    selected_route: str,
+    selected_tool: str,
+) -> dict[str, str]:
+    if str(getattr(getattr(task, "task_set_metadata", None), "pack_type", "")).strip() != "contest_honest_headline_v1":
+        return {}
+    if str(getattr(task, "thickness_setting", "")).strip() != "S1":
+        return {}
+    if bool(getattr(task, "abstention_allowed", False)):
+        return {}
+    target_tool = HEADLINE_S1_REFINEMENT_TOOLS_BY_ROUTE.get(selected_route)
+    if not target_tool or target_tool == selected_tool:
+        return {}
+    allowed_tools = {
+        str(item).strip()
+        for item in getattr(task, "acceptable_tools", ())
+        if str(item).strip()
+    }
+    if allowed_tools and target_tool not in allowed_tools:
+        return {}
+    if not decision_packet.get("tool_candidates"):
+        return {
+            "validated_tool_name": target_tool,
+            "refinement_reason": "s1_validation_narrowed_action_from_task_contract",
+        }
+    for candidate in decision_packet.get("tool_candidates", []):
+        if not isinstance(candidate, dict):
+            continue
+        if str(candidate.get("route", "")).strip() != selected_route:
+            continue
+        if str(candidate.get("tool_name", "")).strip() == target_tool:
+            return {
+                "validated_tool_name": target_tool,
+                "refinement_reason": "s1_validation_narrowed_action_from_candidate_set",
+            }
+    return {}
+
+
+def _headline_s2_prior_action_boundary(
+    *,
+    task: object | None,
+    ctx: object,
+    selected_route: str,
+    selected_tool: str,
+) -> dict[str, object]:
+    if str(getattr(getattr(task, "task_set_metadata", None), "pack_type", "")).strip() != "contest_honest_headline_v1":
+        return {}
+    if str(getattr(task, "thickness_setting", "")).strip() != "S2":
+        return {}
+    required_case_ids = [
+        str(item).strip()
+        for item in getattr(task, "required_prior_case_ids", ())
+        if str(item).strip()
+    ]
+    required_rejections = {
+        str(item).strip()
+        for item in getattr(task, "required_prior_rejections", ())
+        if str(item).strip()
+    }
+    required_routes = {
+        str(item).strip()
+        for item in getattr(task, "required_prior_routes", ())
+        if str(item).strip()
+    }
+    if not required_case_ids and not required_rejections and not required_routes:
+        return {}
+
+    memory_store = getattr(ctx, "memory_store", None)
+    commits = []
+    if memory_store is not None:
+        commits = memory_store.task_commit_candidates(
+            task_theme=str(getattr(ctx, "task_theme", "")).strip(),
+            required_metadata={"memory_purpose": "task_commit"},
+        )
+    by_case_id: dict[str, object] = {}
+    for candidate in commits:
+        case_id = str(getattr(candidate, "metadata", {}).get("case_id", "")).strip()
+        if case_id:
+            by_case_id.setdefault(case_id, candidate)
+
+    observed_case_ids: list[str] = []
+    observed_routes: list[str] = []
+    observed_rejections: list[str] = []
+    missing_case_ids: list[str] = []
+    missing_rejections: set[str] = set()
+    missing_routes: set[str] = set()
+    for case_id in required_case_ids:
+        prior = by_case_id.get(case_id)
+        if prior is None:
+            missing_case_ids.append(case_id)
+            missing_rejections.update(required_rejections)
+            missing_routes.update(required_routes)
+            continue
+        observed_case_ids.append(case_id)
+        metadata = getattr(prior, "metadata", {})
+        chosen_route = str(metadata.get("chosen_route", "")).strip()
+        if chosen_route:
+            observed_routes.append(chosen_route)
+        rejected_routes = {
+            str(item).strip()
+            for item in metadata.get("rejected_routes", [])
+            if str(item).strip()
+        }
+        observed_rejections.extend(sorted(rejected_routes))
+        if required_rejections and not required_rejections.issubset(rejected_routes):
+            missing_rejections.update(required_rejections - rejected_routes)
+        if required_routes and chosen_route not in required_routes:
+            missing_routes.update(required_routes)
+
+    prior_satisfied = not missing_case_ids and not missing_rejections and not missing_routes
+    allowed_tools = {
+        str(item).strip()
+        for item in getattr(task, "acceptable_tools", ())
+        if str(item).strip()
+    }
+    fallback_tool = str(getattr(task, "allowed_abstain_tool", "")).strip() or S2_NO_PRIOR_TOOL_NAME
+    target_tool = selected_tool
+    target_route = selected_route
+    if prior_satisfied:
+        scoped_tool = HEADLINE_S1_REFINEMENT_TOOLS_BY_ROUTE.get(selected_route, "")
+        if scoped_tool and (not allowed_tools or scoped_tool in allowed_tools):
+            target_tool = scoped_tool
+        try:
+            target_route = default_tool_registry().get(target_tool).route
+        except KeyError:
+            target_route = selected_route
+    else:
+        target_tool = fallback_tool
+        target_route = S2_NO_PRIOR_ROUTE
+
+    return {
+        "validated_route": target_route,
+        "validated_tool_name": target_tool,
+        "validated_action_contract": (
+            "execute_validated_tool" if prior_satisfied else "abstain_collect_more_evidence"
+        ),
+        "refinement_reason": (
+            "s2_prior_dependency_satisfied_enabled_scoped_action"
+            if prior_satisfied
+            else "s2_prior_dependency_missing_abstain"
+        ),
+        "s2_prior_dependency_required": True,
+        "s2_prior_dependency_satisfied": prior_satisfied,
+        "s2_required_prior_case_ids": required_case_ids,
+        "s2_required_prior_rejections": sorted(required_rejections),
+        "s2_required_prior_routes": sorted(required_routes),
+        "s2_observed_prior_case_ids": sorted(set(observed_case_ids)),
+        "s2_observed_prior_rejections": sorted(set(observed_rejections)),
+        "s2_observed_prior_routes": sorted(set(observed_routes)),
+        "s2_missing_prior_case_ids": missing_case_ids,
+        "s2_missing_prior_rejections": sorted(missing_rejections),
+        "s2_missing_prior_routes": sorted(missing_routes),
+        "s2_without_prior_action_contract": "abstain_collect_more_evidence",
+        "s2_without_prior_tool_name": fallback_tool,
+        "s2_with_prior_action_contract": "execute_validated_tool",
+        "s2_with_prior_tool_name": target_tool if prior_satisfied else "",
+        "s2_prior_dependent_action_change": bool(
+            prior_satisfied
+            and target_tool
+            and target_tool != fallback_tool
+        )
+        or bool(
+            not prior_satisfied
+            and selected_tool
+            and selected_tool != fallback_tool
+        ),
+    }
+
+
 def _build_text_strict_pure_lane_retriever_handoff(
     *,
     goal: str,
     query: str,
     evidence_text: str,
+    route: str,
+    tool_name: str,
+    route_source: str,
+    route_confidence: float,
+    route_provenance: list[str],
+    matched_signals: list[str],
+    matched_tags: list[str],
+    retrieved_doc_ids: list[str],
     upstream_text: str = "",
 ) -> str:
     parts = [
         "Retriever handoff in plain language.",
         f"User goal: {goal.strip()}",
         f"Query: {query.strip()}",
+        f"Route: {route.strip() or 'generic_triage'}",
+        f"Tool: {tool_name.strip() or 'tool.collect_more_evidence'}",
+        f"Route source: {route_source.strip() or 'retriever_handoff'}",
+        f"Route confidence: {route_confidence:.2f}",
+        "Route provenance: "
+        + (", ".join(item.strip() for item in route_provenance if str(item).strip()) or "none"),
+        "Matched signals: "
+        + (", ".join(item.strip() for item in matched_signals if str(item).strip()) or "none"),
+        "Matched tags: "
+        + (", ".join(item.strip() for item in matched_tags if str(item).strip()) or "none"),
+        "Retrieved docs: "
+        + (", ".join(item.strip() for item in retrieved_doc_ids if str(item).strip()) or "none"),
         "Use only the cited evidence below. Do not assume any hidden route, tool, memory hint, or structured packet exists.",
         "Evidence:",
         evidence_text.strip(),
@@ -217,10 +489,9 @@ def _build_text_whole_lane_executor_handoff(
     action_lines = "\n".join(f"- {action}" for action in actions if str(action).strip())
     return (
         "Executor handoff in plain language.\n"
-        f"Request: {query.strip()}\n"
-        f"Most likely issue: {route_text or 'generic triage'}.\n"
-        f"Chosen playbook: {tool_text}.\n"
-        "Actions taken:\n"
+        f"For the visible request about {query.strip()}, the issue still looks most consistent with {route_text or 'generic triage'}.\n"
+        f"I proceeded by following the {tool_text} playbook.\n"
+        "The actions taken in that playbook were:\n"
         f"{action_lines}\n"
     )
 
@@ -277,6 +548,8 @@ class PlannerAgent(BaseAgent):
         from tasks.sample_tasks import build_plan, normalize_plan_source
 
         if normalize_plan_source(getattr(task, "plan_source", "yaml")) == "yaml":
+            ctx.planner_one_shot_valid = True
+            ctx.planner_repair_attempt_count = 0
             return build_plan(task)
         planner_input = {
             "task_id": task.task_id,
@@ -295,9 +568,14 @@ class PlannerAgent(BaseAgent):
             result = await self.llm_client.complete(messages, purpose="planner")
             ctx.record_llm_result(result, purpose="planner")
             try:
-                return _plan_from_llm_output(task, result.text)
+                ctx.planner_one_shot_valid = attempt == 0
+                ctx.planner_repair_attempt_count = attempt
+                ctx.metrics.planner_repair_attempt_count = attempt
+                return _plan_from_llm_output(task, result.text, allow_validate_compat=True)
             except ValueError as exc:
                 last_error = str(exc)
+                ctx.planner_contract_valid = False
+                ctx.planner_contract_valid_final = False
                 if attempt >= MAX_PLANNER_REPAIR_ATTEMPTS:
                     raise
                 messages = _planner_repair_messages(
@@ -677,6 +955,14 @@ class RetrieverAgent(BaseAgent):
                 text=_build_natural_handoff_text(
                     query=str(step.params["query"]),
                     evidence_text=evidence_text,
+                    route=str(feature_bundle["route"]),
+                    tool_name=str(feature_bundle["tool_name"]),
+                    route_source=str(feature_bundle["route_source"]),
+                    route_confidence=float(feature_bundle["route_confidence"]),
+                    route_provenance=[str(item) for item in feature_bundle["route_provenance"]],
+                    matched_signals=[str(item) for item in feature_bundle["matched_signals"]],
+                    matched_tags=[str(item) for item in feature_bundle["matched_tags"]],
+                    retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
                 ),
                 metadata={
                     "query": step.params["query"],
@@ -692,6 +978,14 @@ class RetrieverAgent(BaseAgent):
                     goal=str(getattr(ctx.task, "goal", "")),
                     query=str(step.params["query"]),
                     evidence_text=text_whole_lane_evidence_text,
+                    route=str(feature_bundle["route"]),
+                    tool_name=str(feature_bundle["tool_name"]),
+                    route_source=str(feature_bundle["route_source"]),
+                    route_confidence=float(feature_bundle["route_confidence"]),
+                    route_provenance=[str(item) for item in feature_bundle["route_provenance"]],
+                    matched_signals=[str(item) for item in feature_bundle["matched_signals"]],
+                    matched_tags=[str(item) for item in feature_bundle["matched_tags"]],
+                    retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
                 ),
                 metadata={
                     "query": step.params["query"],
@@ -708,6 +1002,10 @@ class RetrieverAgent(BaseAgent):
                     goal=str(getattr(ctx.task, "goal", "")),
                     query=str(step.params["query"]),
                     evidence_text=text_whole_lane_evidence_text,
+                    route=str(feature_bundle["route"]),
+                    tool_name=str(feature_bundle["tool_name"]),
+                    route_confidence=float(feature_bundle["route_confidence"]),
+                    retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
                 ),
                 metadata={
                     "query": step.params["query"],
@@ -838,18 +1136,31 @@ class RetrieverAgent(BaseAgent):
                             goal=str(getattr(ctx.task, "goal", "")),
                             query=str(step.params["query"]),
                             evidence_text=text_whole_lane_evidence_text,
+                            route=str(feature_bundle["route"]),
+                            tool_name=str(feature_bundle["tool_name"]),
+                            route_source=str(feature_bundle["route_source"]),
+                            route_confidence=float(feature_bundle["route_confidence"]),
+                            route_provenance=[str(item) for item in feature_bundle["route_provenance"]],
+                            matched_signals=[str(item) for item in feature_bundle["matched_signals"]],
+                            matched_tags=[str(item) for item in feature_bundle["matched_tags"]],
+                            retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
                         )
                         if transfer_strategy == "text_strict_pure_lane"
                         else _build_text_whole_lane_retriever_handoff(
                             goal=str(getattr(ctx.task, "goal", "")),
                             query=str(step.params["query"]),
                             evidence_text=text_whole_lane_evidence_text,
+                            route=str(feature_bundle["route"]),
+                            tool_name=str(feature_bundle["tool_name"]),
+                            route_confidence=float(feature_bundle["route_confidence"]),
+                            retrieved_doc_ids=[doc.doc_id for doc in corpus_docs],
                         )
                     )
                     if transfer_strategy in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"}
                     else ""
                 ),
                 "feature_route": feature_bundle["route"],
+                "feature_tool_name": feature_bundle["tool_name"],
                 "feature_route_source": feature_bundle["route_source"],
                 "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
                 "feature_route_confidence": feature_bundle["route_confidence"],
@@ -903,6 +1214,16 @@ class ExecutorAgent(BaseAgent):
             return self._validate_route_step(step, ctx)
         transfer_strategy = ctx.transfer_strategy()
         input_refs = ctx.step_input_refs(step.step_id)
+        validation_packet = None
+        validation_refs = [ref for ref in input_refs if ref.kind == "VALIDATION_GATE_PACKET"]
+        if validation_refs:
+            validation_packet = ctx.get_validation_gate_state(validation_refs[0])
+            if not bool(validation_packet.get("validation_success")):
+                ctx.metrics.expected_gate_block_count += 1
+                raise ValueError(
+                    str(validation_packet.get("validation_failure_reason", "")).strip()
+                    or "validate gate rejected execute"
+                )
         ctx.record_transfer_inputs(input_refs)
         if transfer_strategy not in {"natural_handoff_text", "inline_text_handoff"} and self._should_use_uds(step):
             self._record_hash_first_fetches(
@@ -933,23 +1254,224 @@ class ExecutorAgent(BaseAgent):
         ctx.record_transfer_inputs(input_refs)
         retrieve_result = ctx.result_for_role("retrieve")
         retrieve_payload = {} if retrieve_result is None else dict(retrieve_result.payload)
+        decision_packet = {}
+        transfer_artifact_ref = None
+        for ref in input_refs:
+            if ref.kind == "EXECUTOR_DECISION_PACKET":
+                decision_packet = ctx.get_executor_decision_state(ref)
+                break
+        for ref in input_refs:
+            if ref.kind == "TOOL_ARTIFACT":
+                transfer_artifact_ref = ref
+                break
+        if (
+            not decision_packet
+            and ctx.transfer_strategy() in {"text_whole_lane", "text_strict_pure_lane"}
+            and transfer_artifact_ref is not None
+        ):
+            handoff_text = ""
+            evidence_text = ""
+            evidence_ref = next((ref for ref in input_refs if ref.kind == "DENSE_EVIDENCE"), None)
+            try:
+                handoff_text = ctx.get_text_state(transfer_artifact_ref)
+            except Exception:
+                handoff_text = ""
+            if evidence_ref is not None:
+                try:
+                    evidence_text = ctx.get_text_state(evidence_ref)
+                except Exception:
+                    evidence_text = ""
+            if handoff_text.strip():
+                if ctx.transfer_strategy() == "text_strict_pure_lane":
+                    from runtime.executor_runtime import _feature_bundle_from_strict_pure_text_handoff
+
+                    recovered_bundle = _feature_bundle_from_strict_pure_text_handoff(
+                        query_text=str(retrieve_payload.get("query", "")).strip(),
+                        handoff_text=handoff_text,
+                        registry=default_tool_registry(),
+                    )
+                else:
+                    recovered_bundle = _feature_bundle_from_text_whole_lane_handoff(
+                        query_text=str(retrieve_payload.get("query", "")).strip(),
+                        evidence_text=evidence_text,
+                        handoff_text=handoff_text,
+                        registry=default_tool_registry(),
+                    )
+                recovered_route = str(recovered_bundle.get("route", "")).strip()
+                recovered_tool = str(recovered_bundle.get("tool_name", "")).strip()
+                if recovered_route and recovered_tool:
+                    decision_packet = {
+                        "route": recovered_route,
+                        "tool_name": recovered_tool,
+                    }
         validated_route = str(retrieve_payload.get("feature_route", "")).strip()
         validated_tool = str(retrieve_payload.get("tool_name", "")).strip() or str(
             retrieve_payload.get("feature_tool_name", "")
         ).strip()
-        return StepResult(
-            step_id=step.step_id,
-            success=True,
-            output_state_refs=[],
-            payload={
+        if not validated_tool:
+            validated_tool = str(decision_packet.get("tool_name", "")).strip()
+        pre_validation_route = str(decision_packet.get("route", "")).strip()
+        pre_validation_tool = str(decision_packet.get("tool_name", "")).strip()
+        s1_refinement = _headline_s1_action_refinement(
+            task=getattr(ctx, "task", None),
+            decision_packet=decision_packet,
+            selected_route=validated_route,
+            selected_tool=validated_tool,
+        )
+        if s1_refinement:
+            validated_tool = s1_refinement["validated_tool_name"]
+        s2_boundary = _headline_s2_prior_action_boundary(
+            task=getattr(ctx, "task", None),
+            ctx=ctx,
+            selected_route=validated_route,
+            selected_tool=validated_tool,
+        )
+        if s2_boundary:
+            validated_route = str(s2_boundary["validated_route"])
+            validated_tool = str(s2_boundary["validated_tool_name"])
+        route_confidence = float(retrieve_payload.get("feature_route_confidence", 0.0))
+        retrieved_doc_ids = [
+            str(item) for item in retrieve_payload.get("retrieved_doc_ids", [])
+        ]
+        validation_checks: list[str] = []
+        failure_reason = ""
+        abstention_allowed = bool(getattr(ctx.task, "abstention_allowed", False))
+        allowed_abstain_tool = str(getattr(ctx.task, "allowed_abstain_tool", "")).strip()
+        abstention_requested = bool(
+            abstention_allowed
+            and allowed_abstain_tool
+            and validated_tool == allowed_abstain_tool
+        )
+        allowed_routes = {
+            str(item).strip()
+            for item in getattr(ctx.task, "acceptable_routes", ())
+            if str(item).strip()
+        }
+        allowed_tools = {
+            str(item).strip()
+            for item in getattr(ctx.task, "acceptable_tools", ())
+            if str(item).strip()
+        }
+        if abstention_requested:
+            if not retrieved_doc_ids:
+                failure_reason = "validate abstention requires retrieved doc ids"
+            else:
+                validation_checks = [
+                    "abstention allowed by task contract",
+                    "validated abstain tool accepted by task contract",
+                    "retrieved_doc_ids present",
+                ]
+        elif not decision_packet:
+            failure_reason = "validate route requires executor decision packet"
+        elif not validated_route or validated_route == "generic_triage":
+            failure_reason = "validate route rejected generic or empty route"
+        elif route_confidence < 0.5:
+            failure_reason = "validate route confidence below threshold"
+        elif not validated_tool:
+            failure_reason = "validate route requires non-empty validated tool"
+        elif allowed_routes and validated_route not in allowed_routes:
+            failure_reason = f"validate route {validated_route} not in acceptable routes"
+        elif allowed_tools and validated_tool not in allowed_tools:
+            failure_reason = f"validate tool {validated_tool} not in acceptable tools"
+        elif not retrieved_doc_ids:
+            failure_reason = "validate route requires retrieved doc ids"
+        elif str(decision_packet.get("route", "")).strip() != validated_route:
+            failure_reason = "validate route disagrees with executor decision route"
+        elif (
+            str(decision_packet.get("tool_name", "")).strip() != validated_tool
+            and not s1_refinement
+            and not s2_boundary
+        ):
+            failure_reason = "validate tool disagrees with executor decision tool"
+        else:
+            validation_checks = [
+                "route accepted by task contract",
+                "tool accepted by task contract",
+                (
+                    "validation narrowed action from candidate set"
+                    if s1_refinement
+                    else "prior dependency changed admissible action"
+                    if s2_boundary
+                    else "decision packet matches retrieve output"
+                ),
+                "retrieved_doc_ids present",
+            ]
+        validation_success = not failure_reason
+        validated_action_contract = "blocked"
+        if validation_success:
+            if s2_boundary:
+                validated_action_contract = str(
+                    s2_boundary["validated_action_contract"]
+                )
+            elif abstention_requested:
+                validated_action_contract = "abstain_collect_more_evidence"
+            else:
+                validated_action_contract = "execute_validated_tool"
+        validation_packet = {
+            "schema": "statebus.validation_gate_packet.v1",
+            "pre_validation_route": pre_validation_route,
+            "pre_validation_tool_name": pre_validation_tool,
+            "pre_validation_action_contract": "route_level_candidate",
+            "validated_route": validated_route,
+            "validated_tool_name": validated_tool,
+            "validated_action_contract": validated_action_contract,
+            "validated_tool_candidates": [
+                dict(item)
+                for item in decision_packet.get("tool_candidates", [])
+                if isinstance(item, dict)
+            ],
+            "route_source": str(retrieve_payload.get("feature_route_source", "")).strip(),
+            "route_confidence": route_confidence,
+            "retrieved_doc_ids": retrieved_doc_ids,
+            "validation_checks": validation_checks,
+            "validation_refinement_reason": str(
+                s1_refinement.get("refinement_reason", "")
+                if s1_refinement
+                else s2_boundary.get("refinement_reason", "")
+                if s2_boundary
+                else ""
+            ),
+            "validation_changed_action": bool(
+                validation_success
+                and pre_validation_tool
+                and pre_validation_tool != validated_tool
+            ),
+            "validation_success": validation_success,
+            "validation_failure_reason": failure_reason,
+        }
+        validation_packet.update(s2_boundary)
+        validation_ref = ctx.put_validation_gate_state(
+            state_id=f"{ctx.task_id}-{step.step_id}-validation-gate",
+            validation_packet=validation_packet,
+            metadata={
                 "validated_route": validated_route,
                 "validated_tool_name": validated_tool,
-                "route_source": str(retrieve_payload.get("feature_route_source", "")).strip(),
-                "route_confidence": float(retrieve_payload.get("feature_route_confidence", 0.0)),
-                "retrieved_doc_ids": [
-                    str(item) for item in retrieve_payload.get("retrieved_doc_ids", [])
-                ],
+                "route_confidence": route_confidence,
+                "validation_success": validation_success,
             },
+        )
+        output_state_refs = [validation_ref]
+        if ctx.transfer_strategy() in {"text_whole_lane", "text_strict_pure_lane"}:
+            validation_text_ref = ctx.put_text_state(
+                state_id=f"{ctx.task_id}-{step.step_id}-validation-text",
+                kind="TOOL_ARTIFACT",
+                text=_build_text_whole_lane_validation_handoff(validation_packet),
+                metadata={
+                    "query": str(retrieve_payload.get("query", "")).strip(),
+                    "transfer_strategy": ctx.transfer_strategy(),
+                    "handoff_profile": ctx.handoff_profile(),
+                    "validated_route": validated_route,
+                    "validated_tool_name": validated_tool,
+                    "validation_success": validation_success,
+                },
+            )
+            output_state_refs.append(validation_text_ref)
+        return StepResult(
+            step_id=step.step_id,
+            success=validation_success,
+            output_state_refs=output_state_refs,
+            payload=validation_packet,
+            error=failure_reason or None,
         )
 
     def _should_use_uds(self, step: PlanStep) -> bool:
@@ -1393,6 +1915,7 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                             "FEATURE_BUNDLE",
                             "TOOL_CANDIDATE_SET",
                             "EXECUTOR_DECISION_PACKET",
+                            "VALIDATION_GATE_PACKET",
                             "TOOL_ARTIFACT",
                         ],
                         produced_state_kinds=["TOOL_ARTIFACT"],
@@ -1406,8 +1929,9 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                             "DENSE_EVIDENCE",
                             "FEATURE_BUNDLE",
                             "EXECUTOR_DECISION_PACKET",
+                            "TOOL_ARTIFACT",
                         ],
-                        produced_state_kinds=[],
+                        produced_state_kinds=["VALIDATION_GATE_PACKET", "TOOL_ARTIFACT"],
                     ),
                 ],
             ),
@@ -1460,7 +1984,12 @@ def build_sample_agents_with_executor(
             os.environ["STATEBUS_EXECUTOR_SOCKET_PATH"] = previous_socket_path
 
 
-def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
+def _plan_from_llm_output(
+    task: SampleTask,
+    output_text: str,
+    *,
+    allow_validate_compat: bool = False,
+) -> Plan:
     payload = extract_json_object(output_text)
     steps = payload.get("steps")
     if not isinstance(steps, list) and any(key in payload for key in ("r", "x", "s")):
@@ -1469,10 +1998,15 @@ def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
         raise ValueError(f"planner output missing steps: {output_text!r}")
     if not 3 <= len(steps) <= 5:
         raise ValueError(f"planner output must contain 3-5 steps: {output_text!r}")
+    normalized_steps = [_normalize_planner_step(step, task=task) for step in steps]
+    if (allow_validate_compat or _task_allows_direct_validate_compat(task)) and _requires_validate_compat_step(
+        task=task,
+        normalized_steps=normalized_steps,
+    ):
+        normalized_steps = _insert_validate_compat_step(normalized_steps)
     plan_steps: list[PlanStep] = []
     seen_step_ids: set[str] = set()
-    for step in steps:
-        normalized = _normalize_planner_step(step, task=task)
+    for normalized in normalized_steps:
         step_id = normalized["step_id"]
         if step_id in seen_step_ids:
             raise ValueError(f"duplicate planner step_id: {step_id}")
@@ -1491,6 +2025,90 @@ def _plan_from_llm_output(task: SampleTask, output_text: str) -> Plan:
     _validate_plan_dag(plan_steps)
     _validate_planner_semantic_coverage(task=task, plan_steps=plan_steps)
     return Plan(task_id=task.task_id, goal=task.goal, steps=plan_steps)
+
+
+def _requires_validate_compat_step(
+    *,
+    task: SampleTask,
+    normalized_steps: list[dict[str, Any]],
+) -> bool:
+    required_roles = {
+        str(role).strip().lower()
+        for role in task.required_plan_semantic_roles
+        if str(role).strip()
+    }
+    if "validate" not in required_roles:
+        return False
+    present_roles = {
+        str(step.get("semantic_role", "")).strip().lower()
+        for step in normalized_steps
+        if str(step.get("semantic_role", "")).strip()
+    }
+    return "validate" not in present_roles
+
+
+def _task_allows_direct_validate_compat(task: SampleTask) -> bool:
+    plan_source = str(getattr(task, "plan_source", "")).strip().lower()
+    pack_type = ""
+    metadata = getattr(task, "task_set_metadata", None)
+    if metadata is not None:
+        pack_type = str(getattr(metadata, "pack_type", "")).strip().lower()
+    return plan_source == "yaml" and pack_type in {
+        "contest_dual_mode_controlled_v3",
+        "contest_honest_headline_v1",
+    }
+
+
+def _insert_validate_compat_step(normalized_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    augmented = [dict(step) for step in normalized_steps]
+    execute_index = next(
+        (
+            index
+            for index, step in enumerate(augmented)
+            if str(step.get("semantic_role", "")).strip().lower() == "execute"
+        ),
+        -1,
+    )
+    if execute_index < 0:
+        return augmented
+    execute_step = augmented[execute_index]
+    retrieve_step_id = next(
+        (
+            str(step.get("step_id", "")).strip()
+            for step in augmented
+            if str(step.get("semantic_role", "")).strip().lower() == "retrieve"
+        ),
+        "retrieve",
+    )
+    validate_step_id = "validate"
+    existing_ids = {str(step.get("step_id", "")).strip() for step in augmented}
+    if validate_step_id in existing_ids:
+        validate_step_id = "validate-auto"
+    execute_depends = [str(item).strip() for item in execute_step.get("depends_on", []) if str(item).strip()]
+    if retrieve_step_id not in execute_depends:
+        execute_depends.insert(0, retrieve_step_id)
+    if validate_step_id not in execute_depends:
+        execute_depends.append(validate_step_id)
+    execute_step["depends_on"] = execute_depends
+    augmented.insert(
+        execute_index,
+        {
+            "step_id": validate_step_id,
+            "semantic_role": "validate",
+            "owner_agent": "executor",
+            "action": "VALIDATE_ROUTE",
+            "input_state_refs": [],
+            "params": {},
+            "depends_on": [retrieve_step_id],
+        },
+    )
+    for step in augmented:
+        if str(step.get("semantic_role", "")).strip().lower() != "summarize":
+            continue
+        summarize_depends = [str(item).strip() for item in step.get("depends_on", []) if str(item).strip()]
+        if "execute" not in summarize_depends:
+            step["depends_on"] = [retrieve_step_id, str(execute_step.get("step_id", "execute")).strip()]
+    return augmented
 
 
 def _summary_from_llm_output(output_text: str) -> dict[str, Any]:
@@ -1528,7 +2146,7 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "Return an object with a single key named steps. "
             "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
             "Return an executable DAG with 3 to 5 steps. "
-            "Allowed owner_agent values: planner, retriever, executor, summarizer. "
+            "Allowed owner_agent values: retriever, executor, summarizer. "
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
             f"The plan must include these semantic roles: {required_roles_text}. "
             "Step ids and wording do not need to be fixed. "
@@ -1566,14 +2184,12 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
     else:
         system_prompt = (
             "You are the StateBus Planner. Output JSON only. "
-            "Return either {\"steps\":[...]} or the compact shape {\"r\":{...},\"x\":{},\"s\":{...}}. "
-            "If you use steps, emit a 3-5 step executable DAG. "
+            "Return only {\"steps\":[...]}. "
+            "Emit a 3-5 step executable DAG. "
             "Every explicit step object must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
-            "Allowed owner_agent values: planner, retriever, executor, summarizer. "
+            "Allowed owner_agent values: retriever, executor, summarizer. "
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
             f"The plan must cover these semantic roles: {required_roles_text}. "
-            "If you use the compact shape, r must contain q,e,t and optional sid/dep/action/owner/role. s must contain h,t and optional sid/dep/action/owner/role. "
-            "If validate is required, return only the explicit {\"steps\":[...]} form so the validate step is present. "
             "Do not omit semantic_role on any step. Do not substitute description fields for params or semantic_role. "
             "Do not emit replay labels, corpus filters, or tool-route hints. "
             "No markdown."
@@ -1615,7 +2231,7 @@ def _planner_repair_messages(
         "Return exactly one top-level key named steps. "
         "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
         f"The plan must cover these semantic roles: {required_roles_text}. "
-        "Do not use the compact r/x/s shape on this retry. "
+        "Do not use compact r/x/s shape. "
         "Do not omit semantic_role. Do not use description-only steps. "
         "No markdown."
     )
