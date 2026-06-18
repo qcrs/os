@@ -417,9 +417,13 @@ def _graph_state_snapshot(
     ctx: RunContext,
     results: dict[str, StepResult],
 ) -> dict[str, object]:
+    plan_step_ids: list[str] = []
+    current_plan = getattr(ctx, "plan", None)
+    if isinstance(current_plan, Plan):
+        plan_step_ids = [step.step_id for step in current_plan.steps]
     return {
         "task_id": task.task_id,
-        "plan_step_ids": list(results),
+        "plan_step_ids": plan_step_ids,
         "state_ref_ids": sorted(ctx.state_refs),
         "memory_hit_ids": [hit.memory_id for hit in ctx.memory_hits],
         "replay_decision": {
@@ -434,7 +438,7 @@ def _graph_state_snapshot(
             ),
         },
         "metrics": ctx.metrics.to_dict(),
-        "status": "completed" if "summarize" in results else "running",
+        "status": "completed" if "summarize" in results else ("failed" if any(not item.success for item in results.values()) else "running"),
     }
 
 

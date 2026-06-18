@@ -225,6 +225,7 @@ class SchemaInterceptor:
                     state_contract_registry.validate_state_ref(
                         ref,
                         producer_agent=step.owner_agent,
+                        consumer_agent=None,
                         statepool=statepool,
                     )
 
@@ -450,6 +451,23 @@ def default_state_contract_registry() -> StateContractRegistry:
     )
     registry.register_state_contract(
         StateContract(
+            name="validation_gate_packet",
+            kind="VALIDATION_GATE_PACKET",
+            producer_agents=("executor",),
+            consumer_agents=("executor", "summarizer"),
+            schema="statebus.validation_gate_packet.v1",
+            required_metadata=(
+                "encoding",
+                "schema",
+                "route_confidence",
+                "validation_success",
+            ),
+            lifecycle="task_scoped",
+            replay_compatible=True,
+        )
+    )
+    registry.register_state_contract(
+        StateContract(
             name="transfer_brief_artifact",
             kind="TOOL_ARTIFACT",
             producer_agents=("retriever",),
@@ -500,6 +518,22 @@ def default_state_contract_registry() -> StateContractRegistry:
             ),
             lifecycle="task_scoped",
             replay_compatible=True,
+        )
+    )
+    registry.register_state_contract(
+        StateContract(
+            name="validation_text_decision_artifact",
+            kind="TOOL_ARTIFACT",
+            producer_agents=("executor",),
+            consumer_agents=("executor",),
+            required_metadata=(
+                "channel_name",
+                "channel_kind",
+                "transfer_strategy",
+                "validation_success",
+            ),
+            lifecycle="task_scoped",
+            replay_compatible=False,
         )
     )
     registry.register_state_contract(
@@ -576,6 +610,20 @@ def default_state_contract_registry() -> StateContractRegistry:
             action="EXECUTE_PLAYBOOK",
             variant="text_whole_lane",
             sources=(),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="EXECUTE_PLAYBOOK",
+            variant="text_whole_lane_validated",
+            sources=(
+                StepInputSource(
+                    step_id="validate",
+                    include_kinds=("TOOL_ARTIFACT",),
+                    required_kind_groups=(("TOOL_ARTIFACT",),),
+                ),
+            ),
         )
     )
     registry.register_step_input_contract(
@@ -703,6 +751,28 @@ def default_state_contract_registry() -> StateContractRegistry:
                         ("DENSE_EVIDENCE",),
                         ("EXECUTOR_DECISION_PACKET",),
                     ),
+                ),
+            ),
+        )
+    )
+    registry.register_step_input_contract(
+        StepInputContract(
+            agent_id="executor",
+            action="EXECUTE_PLAYBOOK",
+            variant="state_packet_minimal_validated",
+            sources=(
+                StepInputSource(
+                    step_id="retrieve",
+                    include_kinds=("DENSE_EVIDENCE", "EXECUTOR_DECISION_PACKET"),
+                    required_kind_groups=(
+                        ("DENSE_EVIDENCE",),
+                        ("EXECUTOR_DECISION_PACKET",),
+                    ),
+                ),
+                StepInputSource(
+                    step_id="validate",
+                    include_kinds=("VALIDATION_GATE_PACKET",),
+                    required_kind_groups=(("VALIDATION_GATE_PACKET",),),
                 ),
             ),
         )
@@ -864,6 +934,7 @@ def default_state_contract_registry() -> StateContractRegistry:
                         "DENSE_EVIDENCE",
                         "FEATURE_BUNDLE",
                         "EXECUTOR_DECISION_PACKET",
+                        "TOOL_ARTIFACT",
                     ),
                     required_kind_groups=(
                         ("DENSE_EVIDENCE",),
@@ -878,6 +949,8 @@ def default_state_contract_registry() -> StateContractRegistry:
 def _metadata_value_present(value: object) -> bool:
     if value is None:
         return False
+    if isinstance(value, bool):
+        return True
     if isinstance(value, str):
         return bool(value.strip())
     if isinstance(value, (list, tuple, dict, set)):

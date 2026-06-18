@@ -67,8 +67,9 @@ families:
       eval_tool_label: tool.auth_session_repair
       text: After the metadata rotation, callback failures and forced sign-outs rose
         on the auth canary. The incident note says the failures cluster in one slice
-        of traffic but does not identify whether the main issue is session drift or
-        a throttling control.
+        of traffic, with callback verification failures, stale jwks cache hits, issuer
+        mismatch symptoms, and session drift appearing together, but does not fully
+        close whether the main issue is session drift or a throttling control.
     logs:
       doc_id: rr-auth-logs
       title: Logs show issuer mismatch while callback retries stay local
@@ -109,7 +110,7 @@ families:
       eval_tool_label: tool.auth_rate_limit_triage
       text: A previous auth incident came from a bad throttle window and aggressive
         backoff. That case did not show stale metadata drift or issuer mismatch on
-        the callback path.
+        the callback path, stale jwks refresh loss, or session drift on callback verification.
     reuse:
       doc_id: rr-auth-reuse
       title: Follow-up note requires inherited rejection of pure throttle regression
@@ -150,8 +151,10 @@ families:
       eval_route_label: auth_session_drift
       eval_tool_label: tool.auth_session_repair
       text: The scope note limits failures to tenants carrying pre-rotation sessions
-        into the canary. Any first action should stay inside that tenant slice until
-        the throttle hypothesis is rejected.
+        into the canary. The same scope note says the affected slice lines up with
+        stale pre-rotation sessions rather than a broad throttle spiral, so any first
+        action should stay inside that tenant slice until the throttle hypothesis
+        is rejected.
   cases:
     clean:
       case_id: rr-auth-clean
@@ -199,6 +202,22 @@ families:
       - metrics
       - logs
       - rate-limit-false
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     distractor:
       case_id: rr-auth-distractor
       goal: Re-evaluate the auth regression under a strong competing throttle hypothesis
@@ -243,8 +262,24 @@ families:
       corpus_doc_roles:
       - incident
       - rate-limit-false
+      - logs
       - metrics
       - rotation
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     ambiguous:
       case_id: rr-auth-ambiguous
       goal: Resolve the auth regression under mixed drift-versus-throttle signals
@@ -256,7 +291,7 @@ families:
         check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: ambiguous
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: auth_session_drift
       primary_expected_route: auth_session_drift
@@ -292,6 +327,21 @@ families:
       - logs
       - rate-limit-false
       - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     replay_reusable:
       case_id: rr-auth-replay_reusable
       goal: Run the reusable auth follow-up and recommend the safest scoped validation
@@ -302,7 +352,7 @@ families:
         explanation ruled out, safest scoped action, and post-action validation check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: reusable
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: auth_session_drift
       primary_expected_route: auth_session_drift
@@ -342,6 +392,27 @@ families:
       - scope
       - reuse
       - rate-limit-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - auth_session_drift
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
 - family_id: billing_queue_backlog
   task_theme: contest_release_billing_queue_backlog
   task_group: billing_queue_chain
@@ -401,9 +472,10 @@ families:
       eval_route_label: worker_queue_starvation
       eval_tool_label: tool.worker_queue_triage
       text: After a billing canary reload, invoice completion delay rose quickly and
-        requests waited longer in the processing path. The incident note does not
-        yet say whether the main route is worker backlog or a database contention
-        relapse.
+        requests waited longer in the processing path. The incident note records retry
+        storm behavior, invoice queue backlog growth, and worker queue starvation
+        on one slice, but does not yet fully close whether the main route is worker
+        backlog or a database contention relapse.
     logs:
       doc_id: rr-billing-logs
       title: Logs record repeated retry rescheduling on the worker slice
@@ -473,7 +545,9 @@ families:
       eval_tool_label: tool.worker_queue_triage
       text: The scope note keeps the backlog limited to one canary worker slice. Any
         first action should stay there until the database-collapse explanation is
-        rejected.
+        rejected. The same note says the blast radius never widened into a broad database
+        collapse, which keeps the worker queue starvation branch live instead of a
+        broad database collapse.
   cases:
     clean:
       case_id: rr-billing-clean
@@ -521,6 +595,23 @@ families:
       - metrics
       - logs
       - db-false
+      - runbook
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     distractor:
       case_id: rr-billing-distractor
       goal: Re-evaluate the billing backlog under a strong competing database hypothesis
@@ -565,8 +656,24 @@ families:
       corpus_doc_roles:
       - incident
       - db-false
+      - logs
       - metrics
       - runbook
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     ambiguous:
       case_id: rr-billing-ambiguous
       goal: Resolve the billing backlog under mixed worker-versus-db signals and recommend
@@ -578,7 +685,7 @@ families:
         check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: ambiguous
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: worker_queue_starvation
       primary_expected_route: worker_queue_starvation
@@ -614,6 +721,21 @@ families:
       - logs
       - db-false
       - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     replay_reusable:
       case_id: rr-billing-replay_reusable
       goal: Run the reusable billing follow-up and recommend the safest scoped validation
@@ -624,7 +746,7 @@ families:
         explanation ruled out, safest scoped action, and post-action validation check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: reusable
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: worker_queue_starvation
       primary_expected_route: worker_queue_starvation
@@ -664,6 +786,27 @@ families:
       - scope
       - reuse
       - db-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - worker_queue_starvation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
 - family_id: checkout_regression
   task_theme: contest_release_checkout_regression
   task_group: checkout_release_chain
@@ -722,9 +865,10 @@ families:
       eval_route_label: db_pool_saturation
       eval_tool_label: tool.db_pool_triage
       text: Release 17.4 reached the checkout canary and order confirmation latency
-        rose quickly on one shard. The incident note only says requests stack up during
-        the confirmation path after the rollout and that the blast radius is still
-        limited to the canary tenants.
+        rose quickly on one shard. The incident note says requests stack up during
+        the confirmation path after the rollout, with sql wait growth, connection
+        pool headroom loss, and database pool contention around the changed filter
+        path, while the blast radius is still limited to the canary tenants.
     logs:
       doc_id: rr-checkout-logs
       title: Log excerpt records wait-time spikes around the confirmation path
@@ -781,8 +925,11 @@ families:
       eval_route_label: db_pool_saturation
       eval_tool_label: tool.db_pool_triage
       text: The scope update shows only the canary shard and tenants on the changed
-        confirmation path are affected. Any first action should stay scoped to that
-        shard until the competing worker hypothesis is explicitly ruled out.
+        confirmation path are affected. The same scope update says the regression
+        stays tied to the changed confirmation path, connection pool pressure, and
+        db pool saturation rather than a fleet-wide worker backlog, so any first action
+        should stay scoped to that shard until the competing worker hypothesis is
+        explicitly ruled out.
     worker-false:
       doc_id: rr-checkout-worker-false
       title: Similar symptoms previously came from reload-driven worker backlog
@@ -796,7 +943,8 @@ families:
       eval_tool_label: tool.worker_queue_triage
       text: A prior checkout incident looked similar at the surface but the decisive
         evidence there was retry growth and worker backlog after a reload event. That
-        case did not show the same confirmation-path wait pattern.
+        case did not show the same confirmation-path wait pattern, sql wait growth,
+        or connection pool pressure.
   cases:
     clean:
       case_id: rr-checkout-clean
@@ -844,6 +992,23 @@ families:
       - metrics
       - logs
       - worker-false
+      - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     distractor:
       case_id: rr-checkout-distractor
       goal: Re-evaluate the checkout regression under a strong competing queue hypothesis
@@ -888,8 +1053,24 @@ families:
       corpus_doc_roles:
       - incident
       - worker-false
+      - logs
       - metrics
       - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     ambiguous:
       case_id: rr-checkout-ambiguous
       goal: Resolve the checkout regression under mixed queue-versus-db signals and
@@ -901,7 +1082,7 @@ families:
         check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: ambiguous
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: db_pool_saturation
       primary_expected_route: db_pool_saturation
@@ -937,6 +1118,21 @@ families:
       - logs
       - worker-false
       - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     replay_reusable:
       case_id: rr-checkout-replay_reusable
       goal: Run the reusable checkout follow-up and recommend the safest scoped validation
@@ -947,7 +1143,7 @@ families:
         explanation ruled out, safest scoped action, and post-action validation check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: reusable
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: db_pool_saturation
       primary_expected_route: db_pool_saturation
@@ -987,6 +1183,27 @@ families:
       - scope
       - reuse
       - worker-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - db_pool_saturation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
 - family_id: deployment_config_drift
   task_theme: contest_release_deployment_config_drift
   task_group: deployment_config_chain
@@ -1044,9 +1261,10 @@ families:
       eval_route_label: db_pool_saturation
       eval_tool_label: tool.db_pool_triage
       text: A deployment drift reached the canary and request completion slowed. The
-        incident note says the degradation began right after the config change but
-        does not yet say whether the main route is pool/config contention or a worker-side
-        reload issue.
+        incident note says the degradation began right after the config change, with
+        connection pool headroom loss, db pool saturation, slower request-path activation,
+        and config mismatch signals appearing together, but does not yet fully decide
+        whether the main route is pool/config contention or a worker-side reload issue.
     logs:
       doc_id: rr-deploy-logs
       title: Logs show pool-cap mismatch and slower-path activation
@@ -1098,8 +1316,10 @@ families:
       - canary
       eval_route_label: db_pool_saturation
       eval_tool_label: tool.db_pool_triage
-      text: The scope note isolates the drift to the canary shard only. Any first
-        action should stay on that shard until the worker route is rejected.
+      text: The scope note isolates the drift to the canary shard carrying the config
+        mismatch. It says the slowdown follows the drifted shard, connection pool
+        pressure, and database pool contention rather than a broad reload storm, so
+        any first action should stay there until the worker route is rejected.
     worker-false:
       doc_id: rr-deploy-worker-false
       title: Earlier deployment issue came from reload-driven worker jitter
@@ -1113,7 +1333,8 @@ families:
       eval_tool_label: tool.worker_queue_triage
       text: A previous deployment incident looked similar at the surface but the decisive
         evidence was worker jitter during reload. That case did not show the same
-        pool-cap mismatch and slower-path activation.
+        connection pool pressure, db pool saturation, pool-cap mismatch, and slower-path
+        activation.
   cases:
     clean:
       case_id: rr-deploy-clean
@@ -1160,6 +1381,23 @@ families:
       - metrics
       - logs
       - worker-false
+      - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     distractor:
       case_id: rr-deploy-distractor
       goal: Re-evaluate the deployment drift regression under a strong competing worker
@@ -1203,8 +1441,24 @@ families:
       corpus_doc_roles:
       - incident
       - worker-false
+      - logs
       - metrics
       - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     ambiguous:
       case_id: rr-deploy-ambiguous
       goal: Resolve the deployment drift regression under mixed config-versus-worker
@@ -1216,7 +1470,7 @@ families:
         check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: ambiguous
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: db_pool_saturation
       primary_expected_route: db_pool_saturation
@@ -1251,6 +1505,21 @@ families:
       - logs
       - worker-false
       - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     replay_reusable:
       case_id: rr-deploy-replay_reusable
       goal: Run the reusable deployment drift follow-up and recommend the safest scoped
@@ -1261,7 +1530,7 @@ families:
         explanation ruled out, safest scoped action, and post-action validation check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: reusable
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: db_pool_saturation
       primary_expected_route: db_pool_saturation
@@ -1300,6 +1569,27 @@ families:
       - scope
       - reuse
       - worker-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - db_pool_saturation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
 - family_id: inventory_rollout
   task_theme: contest_release_inventory_rollout
   task_group: inventory_rollout_chain
@@ -1359,8 +1649,11 @@ families:
       eval_route_label: cache_invalidation
       eval_tool_label: tool.cache_invalidation_playbook
       text: After the new sync path reached one rollout region, inventory counts on
-        the read side stayed stale after batch sync. The incident note does not yet
-        say whether the primary cause is invalidation loss or stale replica reads.
+        the read side stayed stale after batch sync. The incident note says aggregate-refresh
+        updates are missing on the new sync path while writes stay healthy, with cache
+        invalidation loss, aggregate invalidation misses, and invalidation hook skips
+        appearing together, but does not yet fully close whether the primary cause
+        is invalidation loss or stale replica reads.
     logs:
       doc_id: rr-cache-logs
       title: Logs show aggregate-refresh skips on the new sync path
@@ -1400,7 +1693,8 @@ families:
       eval_route_label: cache_replica_stale_read
       eval_tool_label: tool.replica_stale_read_triage
       text: A separate stale-count incident was driven by read replica lag after a
-        failover. That case did not include skipped aggregate-refresh evidence.
+        failover. That case did not include skipped aggregate-refresh evidence, cache
+        invalidation loss, or invalidation hook skips.
     reuse:
       doc_id: rr-cache-reuse
       title: Follow-up note requires inherited rejection of replica-lag explanation
@@ -1427,7 +1721,9 @@ families:
       eval_route_label: cache_invalidation
       eval_tool_label: tool.cache_invalidation_playbook
       text: The scope note isolates the stale path to the rollout region and the new
-        sync lane. Any first action should stay in that region until the replica hypothesis
+        sync lane. It says the stale path follows the new sync lane, cache invalidation
+        failure, and aggregate invalidation loss rather than a broad replica incident,
+        so any first action should stay in that region until the replica hypothesis
         is rejected.
   cases:
     clean:
@@ -1476,6 +1772,23 @@ families:
       - metrics
       - logs
       - replica-false
+      - flag-diff
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     distractor:
       case_id: rr-cache-distractor
       goal: Re-evaluate the stale inventory regression under a strong competing replica
@@ -1520,8 +1833,24 @@ families:
       corpus_doc_roles:
       - incident
       - replica-false
+      - logs
       - metrics
       - flag-diff
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     ambiguous:
       case_id: rr-cache-ambiguous
       goal: Resolve the stale inventory regression under mixed invalidation-versus-replica
@@ -1533,7 +1862,7 @@ families:
         check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: ambiguous
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: cache_invalidation
       primary_expected_route: cache_invalidation
@@ -1569,6 +1898,21 @@ families:
       - logs
       - replica-false
       - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
     replay_reusable:
       case_id: rr-cache-replay_reusable
       goal: Run the reusable stale inventory follow-up and recommend the safest scoped
@@ -1579,7 +1923,7 @@ families:
         explanation ruled out, safest scoped action, and post-action validation check.'
       summary_contract: actions_plus_evidence
       complexity_bucket: reusable
-      case_type: bounded_alternative
+      case_type: abstention_allowed
       eval_scope: case_level
       expected_family: cache_invalidation
       primary_expected_route: cache_invalidation
@@ -1619,3 +1963,24 @@ families:
       - scope
       - reuse
       - replica-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - cache_invalidation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3

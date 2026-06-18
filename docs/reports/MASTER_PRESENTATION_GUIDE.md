@@ -2,13 +2,22 @@
 
 日期：`2026-06-11`
 
-**三份文档按"数据→设计→架构"递进。本文档是串联入口。**
+> 2026-06-18 update: current formal headline 已冻结到
+> `/home/qcrs/statebus/runs/contest_honest_headline_goal3_repeat_api_r10_20260618_151845/`。
+> 后续报告和答辩优先读取
+> `docs/reports/final_claim_matrix_and_freeze_20260618.md`。
+> 旧的 Goal2 结论中关于 current headline fresh-retrieval-only、repeat 未闭合、
+> memory/replay 未进入 headline 的判断已经被 Goal3 artifacts superseded。
+
+**核心文档按"冻结主线→数据→设计→架构"递进。本文档是串联入口。**
 
 ---
 
 ## 一、文档定位
 
+| 问题 | 文档 | 用途 |
 |-----------|--------|------|
+| 当前正式主线能说什么？ | `final_claim_matrix_and_freeze_20260618` | frozen headline + claim matrix + can/cannot say |
 | 系统跑出什么结果？ | `benchmark_results_interpretation` | 完整数据 + 每指标含义 + 公平性边界 |
 | 系统怎么设计的？测了什么？ | `task_design_and_mode_comparison` | v3 pack 设计 + 三层差异矩阵 + pack 分工 |
 | 系统内部怎么工作的？ | `architecture_and_data_flow` | 代码架构 + 数据流图 + Agent职责：谁调LLM、谁不调 |
@@ -20,25 +29,25 @@
 ```
 主张              状态        最强证据                         关键数据
 ──────────────────────────────────────────────────────────────────────
-通信效率           ⚠️ scoped  contest_dual_mode_controlled_v3   当前 formal surface
-                              communication 专用包              repeat/API 正式证据另跑
+通信效率           frozen     contest_honest_headline_v1         API repeat=10 formal headline
+                              goal3_repeat_api_r10              control bytes: text 223741.2 vs protocol 192935.2
 
-状态传递机制        ⚠️ scoped  typed_state_mechanism_v3          protocol-only mechanism surface
+状态传递机制        frozen     contest_honest_headline_v1         protocol state_transfer_count mean 50
                               state_packet_minimal              DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET
 
-external text审计   ⚠️ audit   external_text_baseline_audit_v3   external text-only audit surface
+external text审计   audit      external_text_baseline_audit_v3   external text-only audit surface
                               不并入正式headline                不与 typed-state 机制混读
 
-记忆公平性         ⚠️ audit    memory_dual_mode_fairness_v3     dual-mode fairness/object-parity surface
-                              restore 兼容性显式受限            不承担 replay proof
+记忆公平性         audit      memory_dual_mode_fairness_v3     dual-mode fairness/object-parity surface
+                              restore 兼容性显式受限            不承担 frozen headline 外的广义 replay proof
 
-记忆复用           ⚠️ scoped  memory_reuse_v3                   protocol-only replay proof
-                              memory_policy_controlled_v3       carrier-fixed policy attribution
+记忆复用           scoped     contest_honest_headline_v1         controlled S2 replay effect
+                              goal3_repeat_api_r10              actual replay rows 100, skipped steps 100
 
-记忆策略归因        ⚠️ scoped  memory_policy_controlled_v3      protocol carrier-fixed policy surface
+记忆策略归因        scoped     memory_policy_controlled_v3      protocol carrier-fixed policy surface
                               单变量只改 policy                replay gate 只在这里读
 
-系统完整性          ⚠️ scoped  planner_support_v3               planner support surface
+系统完整性          scoped     planner_support_v3               planner support surface
                               多 Agent 主链路已运行，但正式结论需按 pack gate 独立解读
 ```
 
@@ -48,7 +57,9 @@ external text审计   ⚠️ audit   external_text_baseline_audit_v3   external 
 
 ### 第1步：定义
 
-> StateBus 是四个 Agent（Planner/Retriever/Executor/Summarizer）通过两种模式协作的运行时。当前 formal dual-mode surface 比较的是 `text_strict_pure_lane` vs `state_packet_minimal` 这两个受控 mainline handoff object；它不是 external traditional pure-text baseline，也不是单一通信载体变量对照。
+> StateBus 在受控 paired contest task object 中，用 structured control + typed-state handoff 替代 whole-lane text handoff，稳定降低控制面通信开销，并证明 S1/S2/replay runtime behavior。
+
+当前 contest-facing formal dual-mode surface 比较的是 `text_whole_lane` vs `state_packet_minimal`。它不是 external traditional pure-text baseline，不是 open-world agent benchmark，不是 LangGraph 创新证明，也不是开放 Planner 能力证明。
 
 ### 第2步：架构
 
@@ -67,25 +78,26 @@ external text审计   ⚠️ audit   external_text_baseline_audit_v3   external 
 
 ### 第3步：结果
 
-1. **通信**→ 当前只读 v3 surface 和本地 deterministic gates；历史百分比不能直接替代当前 v3 formal rerun
-2. **状态传递**→ 只读 `typed_state_mechanism_v3`：`DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 是否被 executor 真实消费
-3. **记忆**→ 见 §四：replay 只按 `memory_reuse_v3` / `memory_policy_controlled_v3` 的 gate 读取；历史百分比不能替代当前 v3 正式 rerun
+1. **通信**→ 当前正式主线优先读 `contest_honest_headline_v1` 的 API repeat=10 frozen artifact；主结论是 control-byte compactness。
+2. **状态传递**→ 当前正式主线可读 `contest_honest_headline_v1` 的 `state_packet_minimal`：`DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 被 executor 真实消费。
+3. **记忆**→ 当前正式主线只 claim controlled S2 replay effect；更广义的 memory policy 归因仍读 `memory_reuse_v3` / `memory_policy_controlled_v3`。
 
 ### 第5步：诚实边界（加分项）
 
-"我们在报告里诚实标注了三件事：assist_only不work所以不claim、state_transfer的wire差异来自共享StatePool而非'纯文本通信'、受控包里Planner不工作是为了控制变量。这种诚实性比宣称'全面胜利'更有说服力。"
+"我们在报告里诚实标注了四件事：`text_whole_lane` 是内部 comparator 不是 external pure-text baseline，LangGraph 是 substrate 不是主创新，Planner 在 headline 中主要是 contract compiler，memory/replay 是 controlled S2 replay 不是广义长期记忆 agent。这种诚实性比宣称'全面胜利'更有说服力。"
 
 ---
 
-## 四、三个概念不要混
+## 四、概念不要混
 
 | 概念 | 含义 | 在哪讲 |
 |------|------|--------|
+| `contest_honest_headline_v1` | frozen formal headline: `text_whole_lane` vs `state_packet_minimal` | current mainline |
 | `text vs protocol` | 控制面消息格式+LLM prompt | communication主张 |
 | `memory_dual_mode_fairness_v3` | `text_whole_lane` vs `state_packet_minimal` 的 dual-mode memory fairness | audit fairness |
 | `typed_state_mechanism_v3` | 固定 `protocol + reuse_disabled` 后只改 `natural_handoff_text` vs `state_packet_minimal` | protocol-only typed-state mechanism |
 | `external_text_baseline_audit_v3` | 独立 external text 侧 surface | audit only |
 | `memory_policy_controlled_v3` | 固定 `protocol + state_packet_minimal` 后只改 memory policy | protocol-only policy attribution |
-| `memory_reuse_v3` | protocol replay proof | protocol-only reuse |
+| `memory_reuse_v3` | secondary protocol replay proof | protocol-only reuse |
 
-`memory_dual_mode_fairness_v3` 不回答 typed-state mechanism，也不单独回答 replay proof；`typed_state_mechanism_v3` 不回答 external text baseline；`memory_reuse_v3` 和 `memory_policy_controlled_v3` 都不回答 text-vs-protocol。
+`contest_honest_headline_v1` 是当前 frozen 主线；`memory_dual_mode_fairness_v3` 不回答 typed-state mechanism，也不单独回答 replay proof；`typed_state_mechanism_v3` 不回答 external text baseline；`memory_reuse_v3` 和 `memory_policy_controlled_v3` 都不回答 text-vs-protocol。

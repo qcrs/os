@@ -67,6 +67,21 @@ tasks:
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id009
+  - keep the primary and competing routes explicit after retrieval
+  - validate the primary route against scope and artifact evidence before execution
+  - choose the narrowest first action only after validation closes the competing route
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: &id010
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id011 []
   task_order: 1
   allowed_modes:
   - text
@@ -106,6 +121,14 @@ tasks:
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id009
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: *id010
+  required_prior_routes: *id011
   task_order: 2
   allowed_modes:
   - protocol
@@ -122,17 +145,18 @@ tasks:
     and recommend the next action.
   query: auth callback failures continue, while some responders argue the real issue
     is an aggressive throttle window
-  corpus_doc_ids: &id009
+  corpus_doc_ids: &id012
   - rr-auth-incident
   - rr-auth-rate-limit-false
+  - rr-auth-logs
   - rr-auth-metrics
   - rr-auth-rotation
-  tags: &id010
+  tags: &id013
   - release
   - auth
   - session
   - distractor
-  reuse_tags: &id011
+  reuse_tags: &id014
   - release
   - auth
   - session
@@ -146,21 +170,36 @@ tasks:
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes: &id012
+  acceptable_routes: &id015
   - auth_session_drift
   - auth_rate_limit
-  acceptable_tools: &id013
+  acceptable_tools: &id016
   - tool.auth_session_repair
   - tool.auth_jwks_refresh
   - tool.auth_rate_limit_triage
-  disallowed_families: &id014 []
-  required_prior_case_ids: &id015 []
-  required_prior_rejections: &id016 []
+  disallowed_families: &id017 []
+  required_prior_case_ids: &id018 []
+  required_prior_rejections: &id019 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id020
+  - surface the strongest competing route from distractor evidence
+  - validate the surviving route against logs and metrics before execution
+  - reject the distractor route before selecting the next action
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: &id021
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id022 []
   task_order: 3
   allowed_modes:
   - text
@@ -177,9 +216,9 @@ tasks:
     and recommend the next action.
   query: auth callback failures continue, while some responders argue the real issue
     is an aggressive throttle window
-  corpus_doc_ids: *id009
-  tags: *id010
-  reuse_tags: *id011
+  corpus_doc_ids: *id012
+  tags: *id013
+  reuse_tags: *id014
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -190,16 +229,24 @@ tasks:
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes: *id012
-  acceptable_tools: *id013
-  disallowed_families: *id014
-  required_prior_case_ids: *id015
-  required_prior_rejections: *id016
+  acceptable_routes: *id015
+  acceptable_tools: *id016
+  disallowed_families: *id017
+  required_prior_case_ids: *id018
+  required_prior_rejections: *id019
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id020
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: *id021
+  required_prior_routes: *id022
   task_order: 4
   allowed_modes:
   - protocol
@@ -216,17 +263,17 @@ tasks:
     recommend the safest next action.
   query: auth callback failures persist, but the latest review also reports a mild
     throttle rise
-  corpus_doc_ids: &id017
+  corpus_doc_ids: &id023
   - rr-auth-metrics
   - rr-auth-logs
   - rr-auth-rate-limit-false
   - rr-auth-ambiguous
-  tags: &id018
+  tags: &id024
   - release
   - auth
   - session
   - ambiguous
-  reuse_tags: &id019
+  reuse_tags: &id025
   - release
   - auth
   - session
@@ -236,26 +283,41 @@ tasks:
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-auth-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes: &id020
+  acceptable_routes: &id026
   - auth_session_drift
   - auth_rate_limit
-  acceptable_tools: &id021
+  acceptable_tools: &id027
   - tool.auth_session_repair
   - tool.auth_jwks_refresh
   - tool.auth_rate_limit_triage
-  disallowed_families: &id022 []
-  required_prior_case_ids: &id023 []
-  required_prior_rejections: &id024 []
+  disallowed_families: &id028 []
+  required_prior_case_ids: &id029 []
+  required_prior_rejections: &id030 []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: &id031
+  - keep at least two route families live after retrieval
+  - validate whether current evidence is sufficient to collapse route competition
+  - either abstain for more evidence or choose a scoped action after validation
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: &id032
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id033 []
   task_order: 5
   allowed_modes:
   - text
@@ -272,30 +334,38 @@ tasks:
     recommend the safest next action.
   query: auth callback failures persist, but the latest review also reports a mild
     throttle rise
-  corpus_doc_ids: *id017
-  tags: *id018
-  reuse_tags: *id019
+  corpus_doc_ids: *id023
+  tags: *id024
+  reuse_tags: *id025
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-auth-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes: *id020
-  acceptable_tools: *id021
-  disallowed_families: *id022
-  required_prior_case_ids: *id023
-  required_prior_rejections: *id024
+  acceptable_routes: *id026
+  acceptable_tools: *id027
+  disallowed_families: *id028
+  required_prior_case_ids: *id029
+  required_prior_rejections: *id030
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: *id031
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: *id032
+  required_prior_routes: *id033
   task_order: 6
   allowed_modes:
   - protocol
@@ -312,17 +382,17 @@ tasks:
     action.
   query: auth failures remain limited to one tenant slice, and responders want the
     narrowest safe follow-up action
-  corpus_doc_ids: &id025
+  corpus_doc_ids: &id034
   - rr-auth-rotation
   - rr-auth-scope
   - rr-auth-reuse
   - rr-auth-rate-limit-false
-  tags: &id026
+  tags: &id035
   - release
   - auth
   - session
   - replay-reusable
-  reuse_tags: &id027
+  reuse_tags: &id036
   - release
   - auth
   - session
@@ -331,23 +401,23 @@ tasks:
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-auth-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes: &id028
+  acceptable_routes: &id037
   - auth_session_drift
   - auth_rate_limit
-  acceptable_tools: &id029
+  acceptable_tools: &id038
   - tool.auth_session_repair
   - tool.auth_jwks_refresh
   - tool.auth_rate_limit_triage
   - tool.collect_more_evidence
-  disallowed_families: &id030 []
-  required_prior_case_ids: &id031
+  disallowed_families: &id039 []
+  required_prior_case_ids: &id040
   - rr-auth-clean
-  required_prior_rejections: &id032
+  required_prior_rejections: &id041
   - auth_rate_limit
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -355,6 +425,23 @@ tasks:
     reopens both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: &id042
+  - recover the prior accepted route together with the competing route that was rejected
+  - validate the carried-forward rejection against the current scoped evidence
+  - either take the scoped follow-up action or abstain for more evidence
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: &id043
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id044
+  - auth_session_drift
   task_order: 7
   allowed_modes:
   - text
@@ -371,30 +458,39 @@ tasks:
     action.
   query: auth failures remain limited to one tenant slice, and responders want the
     narrowest safe follow-up action
-  corpus_doc_ids: *id025
-  tags: *id026
-  reuse_tags: *id027
+  corpus_doc_ids: *id034
+  tags: *id035
+  reuse_tags: *id036
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-auth-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: auth_session_drift
   primary_expected_route: auth_session_drift
   primary_expected_tool: tool.auth_session_repair
-  acceptable_routes: *id028
-  acceptable_tools: *id029
-  disallowed_families: *id030
-  required_prior_case_ids: *id031
-  required_prior_rejections: *id032
+  acceptable_routes: *id037
+  acceptable_tools: *id038
+  disallowed_families: *id039
+  required_prior_case_ids: *id040
+  required_prior_rejections: *id041
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: prior throttle-route rejection is missing or current evidence
     reopens both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: *id042
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: *id043
+  required_prior_routes: *id044
   task_order: 8
   allowed_modes:
   - protocol
@@ -411,17 +507,18 @@ tasks:
     the first action.
   query: billing canary invoice processing slowed after reload, and operators need
     the safest first validation action
-  corpus_doc_ids: &id033
+  corpus_doc_ids: &id045
   - rr-billing-incident
   - rr-billing-metrics
   - rr-billing-logs
   - rr-billing-db-false
-  tags: &id034
+  - rr-billing-runbook
+  tags: &id046
   - release
   - billing
   - queue
   - clean
-  reuse_tags: &id035
+  reuse_tags: &id047
   - release
   - billing
   - queue
@@ -435,21 +532,36 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: &id036
+  acceptable_routes: &id048
   - worker_queue_starvation
   - db_pool_saturation
-  acceptable_tools: &id037
+  acceptable_tools: &id049
   - tool.worker_queue_triage
   - tool.retry_storm_relief
   - tool.db_pool_triage
-  disallowed_families: &id038 []
-  required_prior_case_ids: &id039 []
-  required_prior_rejections: &id040 []
+  disallowed_families: &id050 []
+  required_prior_case_ids: &id051 []
+  required_prior_rejections: &id052 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id053
+  - keep the primary and competing routes explicit after retrieval
+  - validate the primary route against scope and artifact evidence before execution
+  - choose the narrowest first action only after validation closes the competing route
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: &id054
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id055 []
   task_order: 1
   allowed_modes:
   - text
@@ -466,9 +578,9 @@ tasks:
     the first action.
   query: billing canary invoice processing slowed after reload, and operators need
     the safest first validation action
-  corpus_doc_ids: *id033
-  tags: *id034
-  reuse_tags: *id035
+  corpus_doc_ids: *id045
+  tags: *id046
+  reuse_tags: *id047
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -479,16 +591,24 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: *id036
-  acceptable_tools: *id037
-  disallowed_families: *id038
-  required_prior_case_ids: *id039
-  required_prior_rejections: *id040
+  acceptable_routes: *id048
+  acceptable_tools: *id049
+  disallowed_families: *id050
+  required_prior_case_ids: *id051
+  required_prior_rejections: *id052
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id053
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: *id054
+  required_prior_routes: *id055
   task_order: 2
   allowed_modes:
   - protocol
@@ -505,17 +625,18 @@ tasks:
     and recommend the next action.
   query: invoice processing is still delayed, while some responders argue the real
     issue is database contention
-  corpus_doc_ids: &id041
+  corpus_doc_ids: &id056
   - rr-billing-incident
   - rr-billing-db-false
+  - rr-billing-logs
   - rr-billing-metrics
   - rr-billing-runbook
-  tags: &id042
+  tags: &id057
   - release
   - billing
   - queue
   - distractor
-  reuse_tags: &id043
+  reuse_tags: &id058
   - release
   - billing
   - queue
@@ -529,21 +650,36 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: &id044
+  acceptable_routes: &id059
   - worker_queue_starvation
   - db_pool_saturation
-  acceptable_tools: &id045
+  acceptable_tools: &id060
   - tool.worker_queue_triage
   - tool.retry_storm_relief
   - tool.db_pool_triage
-  disallowed_families: &id046 []
-  required_prior_case_ids: &id047 []
-  required_prior_rejections: &id048 []
+  disallowed_families: &id061 []
+  required_prior_case_ids: &id062 []
+  required_prior_rejections: &id063 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id064
+  - surface the strongest competing route from distractor evidence
+  - validate the surviving route against logs and metrics before execution
+  - reject the distractor route before selecting the next action
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: &id065
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id066 []
   task_order: 3
   allowed_modes:
   - text
@@ -560,9 +696,9 @@ tasks:
     and recommend the next action.
   query: invoice processing is still delayed, while some responders argue the real
     issue is database contention
-  corpus_doc_ids: *id041
-  tags: *id042
-  reuse_tags: *id043
+  corpus_doc_ids: *id056
+  tags: *id057
+  reuse_tags: *id058
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -573,16 +709,24 @@ tasks:
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: *id044
-  acceptable_tools: *id045
-  disallowed_families: *id046
-  required_prior_case_ids: *id047
-  required_prior_rejections: *id048
+  acceptable_routes: *id059
+  acceptable_tools: *id060
+  disallowed_families: *id061
+  required_prior_case_ids: *id062
+  required_prior_rejections: *id063
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id064
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: *id065
+  required_prior_routes: *id066
   task_order: 4
   allowed_modes:
   - protocol
@@ -599,17 +743,17 @@ tasks:
     the safest next action.
   query: invoice processing remains delayed, but the latest review also reports a
     modest wait-time rise
-  corpus_doc_ids: &id049
+  corpus_doc_ids: &id067
   - rr-billing-metrics
   - rr-billing-logs
   - rr-billing-db-false
   - rr-billing-ambiguous
-  tags: &id050
+  tags: &id068
   - release
   - billing
   - queue
   - ambiguous
-  reuse_tags: &id051
+  reuse_tags: &id069
   - release
   - billing
   - queue
@@ -619,26 +763,41 @@ tasks:
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-billing-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: &id052
+  acceptable_routes: &id070
   - worker_queue_starvation
   - db_pool_saturation
-  acceptable_tools: &id053
+  acceptable_tools: &id071
   - tool.worker_queue_triage
   - tool.retry_storm_relief
   - tool.db_pool_triage
-  disallowed_families: &id054 []
-  required_prior_case_ids: &id055 []
-  required_prior_rejections: &id056 []
+  disallowed_families: &id072 []
+  required_prior_case_ids: &id073 []
+  required_prior_rejections: &id074 []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: &id075
+  - keep at least two route families live after retrieval
+  - validate whether current evidence is sufficient to collapse route competition
+  - either abstain for more evidence or choose a scoped action after validation
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: &id076
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id077 []
   task_order: 5
   allowed_modes:
   - text
@@ -655,30 +814,38 @@ tasks:
     the safest next action.
   query: invoice processing remains delayed, but the latest review also reports a
     modest wait-time rise
-  corpus_doc_ids: *id049
-  tags: *id050
-  reuse_tags: *id051
+  corpus_doc_ids: *id067
+  tags: *id068
+  reuse_tags: *id069
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-billing-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: *id052
-  acceptable_tools: *id053
-  disallowed_families: *id054
-  required_prior_case_ids: *id055
-  required_prior_rejections: *id056
+  acceptable_routes: *id070
+  acceptable_tools: *id071
+  disallowed_families: *id072
+  required_prior_case_ids: *id073
+  required_prior_rejections: *id074
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: *id075
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: *id076
+  required_prior_routes: *id077
   task_order: 6
   allowed_modes:
   - protocol
@@ -695,17 +862,17 @@ tasks:
     action.
   query: billing delay remains limited to one canary worker slice, and responders
     want the narrowest safe follow-up action
-  corpus_doc_ids: &id057
+  corpus_doc_ids: &id078
   - rr-billing-runbook
   - rr-billing-scope
   - rr-billing-reuse
   - rr-billing-db-false
-  tags: &id058
+  tags: &id079
   - release
   - billing
   - queue
   - replay-reusable
-  reuse_tags: &id059
+  reuse_tags: &id080
   - release
   - billing
   - queue
@@ -714,23 +881,23 @@ tasks:
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-billing-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: &id060
+  acceptable_routes: &id081
   - worker_queue_starvation
   - db_pool_saturation
-  acceptable_tools: &id061
+  acceptable_tools: &id082
   - tool.worker_queue_triage
   - tool.retry_storm_relief
   - tool.db_pool_triage
   - tool.collect_more_evidence
-  disallowed_families: &id062 []
-  required_prior_case_ids: &id063
+  disallowed_families: &id083 []
+  required_prior_case_ids: &id084
   - rr-billing-clean
-  required_prior_rejections: &id064
+  required_prior_rejections: &id085
   - db_pool_saturation
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -738,6 +905,23 @@ tasks:
     reopens both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: &id086
+  - recover the prior accepted route together with the competing route that was rejected
+  - validate the carried-forward rejection against the current scoped evidence
+  - either take the scoped follow-up action or abstain for more evidence
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: &id087
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id088
+  - worker_queue_starvation
   task_order: 7
   allowed_modes:
   - text
@@ -754,30 +938,39 @@ tasks:
     action.
   query: billing delay remains limited to one canary worker slice, and responders
     want the narrowest safe follow-up action
-  corpus_doc_ids: *id057
-  tags: *id058
-  reuse_tags: *id059
+  corpus_doc_ids: *id078
+  tags: *id079
+  reuse_tags: *id080
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-billing-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: worker_queue_starvation
   primary_expected_route: worker_queue_starvation
   primary_expected_tool: tool.worker_queue_triage
-  acceptable_routes: *id060
-  acceptable_tools: *id061
-  disallowed_families: *id062
-  required_prior_case_ids: *id063
-  required_prior_rejections: *id064
+  acceptable_routes: *id081
+  acceptable_tools: *id082
+  disallowed_families: *id083
+  required_prior_case_ids: *id084
+  required_prior_rejections: *id085
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: prior database-route rejection is missing or current evidence
     reopens both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: *id086
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: *id087
+  required_prior_routes: *id088
   task_order: 8
   allowed_modes:
   - protocol
@@ -794,17 +987,18 @@ tasks:
     the first action.
   query: checkout canary order confirmations slowed after the rollout, and operators
     need the safest first validation action
-  corpus_doc_ids: &id065
+  corpus_doc_ids: &id089
   - rr-checkout-incident
   - rr-checkout-metrics
   - rr-checkout-logs
   - rr-checkout-worker-false
-  tags: &id066
+  - rr-checkout-config
+  tags: &id090
   - release
   - checkout
   - latency
   - clean
-  reuse_tags: &id067
+  reuse_tags: &id091
   - release
   - checkout
   - latency
@@ -818,21 +1012,36 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id068
+  acceptable_routes: &id092
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id069
+  acceptable_tools: &id093
   - tool.db_pool_triage
   - tool.db_query_hotfix
   - tool.worker_queue_triage
-  disallowed_families: &id070 []
-  required_prior_case_ids: &id071 []
-  required_prior_rejections: &id072 []
+  disallowed_families: &id094 []
+  required_prior_case_ids: &id095 []
+  required_prior_rejections: &id096 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id097
+  - keep the primary and competing routes explicit after retrieval
+  - validate the primary route against scope and artifact evidence before execution
+  - choose the narrowest first action only after validation closes the competing route
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: &id098
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id099 []
   task_order: 1
   allowed_modes:
   - text
@@ -849,9 +1058,9 @@ tasks:
     the first action.
   query: checkout canary order confirmations slowed after the rollout, and operators
     need the safest first validation action
-  corpus_doc_ids: *id065
-  tags: *id066
-  reuse_tags: *id067
+  corpus_doc_ids: *id089
+  tags: *id090
+  reuse_tags: *id091
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -862,16 +1071,24 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id068
-  acceptable_tools: *id069
-  disallowed_families: *id070
-  required_prior_case_ids: *id071
-  required_prior_rejections: *id072
+  acceptable_routes: *id092
+  acceptable_tools: *id093
+  disallowed_families: *id094
+  required_prior_case_ids: *id095
+  required_prior_rejections: *id096
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id097
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: *id098
+  required_prior_routes: *id099
   task_order: 2
   allowed_modes:
   - protocol
@@ -888,17 +1105,18 @@ tasks:
     and recommend the next action.
   query: checkout confirmations are still delayed, while some responders argue the
     slowdown is really a reload-driven worker backlog
-  corpus_doc_ids: &id073
+  corpus_doc_ids: &id100
   - rr-checkout-incident
   - rr-checkout-worker-false
+  - rr-checkout-logs
   - rr-checkout-metrics
   - rr-checkout-config
-  tags: &id074
+  tags: &id101
   - release
   - checkout
   - latency
   - distractor
-  reuse_tags: &id075
+  reuse_tags: &id102
   - release
   - checkout
   - latency
@@ -912,21 +1130,36 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id076
+  acceptable_routes: &id103
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id077
+  acceptable_tools: &id104
   - tool.db_pool_triage
   - tool.db_query_hotfix
   - tool.worker_queue_triage
-  disallowed_families: &id078 []
-  required_prior_case_ids: &id079 []
-  required_prior_rejections: &id080 []
+  disallowed_families: &id105 []
+  required_prior_case_ids: &id106 []
+  required_prior_rejections: &id107 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id108
+  - surface the strongest competing route from distractor evidence
+  - validate the surviving route against logs and metrics before execution
+  - reject the distractor route before selecting the next action
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: &id109
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id110 []
   task_order: 3
   allowed_modes:
   - text
@@ -943,9 +1176,9 @@ tasks:
     and recommend the next action.
   query: checkout confirmations are still delayed, while some responders argue the
     slowdown is really a reload-driven worker backlog
-  corpus_doc_ids: *id073
-  tags: *id074
-  reuse_tags: *id075
+  corpus_doc_ids: *id100
+  tags: *id101
+  reuse_tags: *id102
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -956,16 +1189,24 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id076
-  acceptable_tools: *id077
-  disallowed_families: *id078
-  required_prior_case_ids: *id079
-  required_prior_rejections: *id080
+  acceptable_routes: *id103
+  acceptable_tools: *id104
+  disallowed_families: *id105
+  required_prior_case_ids: *id106
+  required_prior_rejections: *id107
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id108
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: *id109
+  required_prior_routes: *id110
   task_order: 4
   allowed_modes:
   - protocol
@@ -982,17 +1223,17 @@ tasks:
     the safest next action.
   query: checkout canary still shows confirmation-path delays, but the latest review
     also reports some worker jitter
-  corpus_doc_ids: &id081
+  corpus_doc_ids: &id111
   - rr-checkout-metrics
   - rr-checkout-logs
   - rr-checkout-worker-false
   - rr-checkout-ambiguous
-  tags: &id082
+  tags: &id112
   - release
   - checkout
   - latency
   - ambiguous
-  reuse_tags: &id083
+  reuse_tags: &id113
   - release
   - checkout
   - latency
@@ -1002,26 +1243,41 @@ tasks:
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-checkout-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id084
+  acceptable_routes: &id114
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id085
+  acceptable_tools: &id115
   - tool.db_pool_triage
   - tool.db_query_hotfix
   - tool.worker_queue_triage
-  disallowed_families: &id086 []
-  required_prior_case_ids: &id087 []
-  required_prior_rejections: &id088 []
+  disallowed_families: &id116 []
+  required_prior_case_ids: &id117 []
+  required_prior_rejections: &id118 []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: &id119
+  - keep at least two route families live after retrieval
+  - validate whether current evidence is sufficient to collapse route competition
+  - either abstain for more evidence or choose a scoped action after validation
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: &id120
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id121 []
   task_order: 5
   allowed_modes:
   - text
@@ -1038,30 +1294,38 @@ tasks:
     the safest next action.
   query: checkout canary still shows confirmation-path delays, but the latest review
     also reports some worker jitter
-  corpus_doc_ids: *id081
-  tags: *id082
-  reuse_tags: *id083
+  corpus_doc_ids: *id111
+  tags: *id112
+  reuse_tags: *id113
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-checkout-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id084
-  acceptable_tools: *id085
-  disallowed_families: *id086
-  required_prior_case_ids: *id087
-  required_prior_rejections: *id088
+  acceptable_routes: *id114
+  acceptable_tools: *id115
+  disallowed_families: *id116
+  required_prior_case_ids: *id117
+  required_prior_rejections: *id118
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: *id119
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: *id120
+  required_prior_routes: *id121
   task_order: 6
   allowed_modes:
   - protocol
@@ -1078,17 +1342,17 @@ tasks:
     action.
   query: checkout delays remain scoped to the canary shard, and responders want the
     narrowest safe follow-up action
-  corpus_doc_ids: &id089
+  corpus_doc_ids: &id122
   - rr-checkout-config
   - rr-checkout-scope
   - rr-checkout-reuse
   - rr-checkout-worker-false
-  tags: &id090
+  tags: &id123
   - release
   - checkout
   - latency
   - replay-reusable
-  reuse_tags: &id091
+  reuse_tags: &id124
   - release
   - checkout
   - latency
@@ -1097,23 +1361,23 @@ tasks:
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-checkout-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id092
+  acceptable_routes: &id125
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id093
+  acceptable_tools: &id126
   - tool.db_pool_triage
   - tool.db_query_hotfix
   - tool.worker_queue_triage
   - tool.collect_more_evidence
-  disallowed_families: &id094 []
-  required_prior_case_ids: &id095
+  disallowed_families: &id127 []
+  required_prior_case_ids: &id128
   - rr-checkout-clean
-  required_prior_rejections: &id096
+  required_prior_rejections: &id129
   - worker_queue_starvation
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1121,6 +1385,23 @@ tasks:
     both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: &id130
+  - recover the prior accepted route together with the competing route that was rejected
+  - validate the carried-forward rejection against the current scoped evidence
+  - either take the scoped follow-up action or abstain for more evidence
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: &id131
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id132
+  - db_pool_saturation
   task_order: 7
   allowed_modes:
   - text
@@ -1137,30 +1418,39 @@ tasks:
     action.
   query: checkout delays remain scoped to the canary shard, and responders want the
     narrowest safe follow-up action
-  corpus_doc_ids: *id089
-  tags: *id090
-  reuse_tags: *id091
+  corpus_doc_ids: *id122
+  tags: *id123
+  reuse_tags: *id124
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-checkout-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id092
-  acceptable_tools: *id093
-  disallowed_families: *id094
-  required_prior_case_ids: *id095
-  required_prior_rejections: *id096
+  acceptable_routes: *id125
+  acceptable_tools: *id126
+  disallowed_families: *id127
+  required_prior_case_ids: *id128
+  required_prior_rejections: *id129
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: prior worker-route rejection is missing or current evidence reopens
     both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: *id130
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: *id131
+  required_prior_routes: *id132
   task_order: 8
   allowed_modes:
   - protocol
@@ -1177,17 +1467,18 @@ tasks:
     and recommend the first action.
   query: deployment canary slowed after a config change, and operators need the safest
     first validation action
-  corpus_doc_ids: &id097
+  corpus_doc_ids: &id133
   - rr-deploy-incident
   - rr-deploy-metrics
   - rr-deploy-logs
   - rr-deploy-worker-false
-  tags: &id098
+  - rr-deploy-config
+  tags: &id134
   - release
   - deployment
   - config
   - clean
-  reuse_tags: &id099
+  reuse_tags: &id135
   - release
   - deployment
   - config
@@ -1201,20 +1492,35 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id100
+  acceptable_routes: &id136
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id101
+  acceptable_tools: &id137
   - tool.db_pool_triage
   - tool.worker_queue_triage
-  disallowed_families: &id102 []
-  required_prior_case_ids: &id103 []
-  required_prior_rejections: &id104 []
+  disallowed_families: &id138 []
+  required_prior_case_ids: &id139 []
+  required_prior_rejections: &id140 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id141
+  - keep the primary and competing routes explicit after retrieval
+  - validate the primary route against scope and artifact evidence before execution
+  - choose the narrowest first action only after validation closes the competing route
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: &id142
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id143 []
   task_order: 1
   allowed_modes:
   - text
@@ -1231,9 +1537,9 @@ tasks:
     and recommend the first action.
   query: deployment canary slowed after a config change, and operators need the safest
     first validation action
-  corpus_doc_ids: *id097
-  tags: *id098
-  reuse_tags: *id099
+  corpus_doc_ids: *id133
+  tags: *id134
+  reuse_tags: *id135
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -1244,16 +1550,24 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id100
-  acceptable_tools: *id101
-  disallowed_families: *id102
-  required_prior_case_ids: *id103
-  required_prior_rejections: *id104
+  acceptable_routes: *id136
+  acceptable_tools: *id137
+  disallowed_families: *id138
+  required_prior_case_ids: *id139
+  required_prior_rejections: *id140
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id141
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: *id142
+  required_prior_routes: *id143
   task_order: 2
   allowed_modes:
   - protocol
@@ -1270,17 +1584,18 @@ tasks:
     hypothesis and recommend the next action.
   query: deployment canary remains slow, while some responders argue the real issue
     is reload-driven worker jitter
-  corpus_doc_ids: &id105
+  corpus_doc_ids: &id144
   - rr-deploy-incident
   - rr-deploy-worker-false
+  - rr-deploy-logs
   - rr-deploy-metrics
   - rr-deploy-config
-  tags: &id106
+  tags: &id145
   - release
   - deployment
   - config
   - distractor
-  reuse_tags: &id107
+  reuse_tags: &id146
   - release
   - deployment
   - config
@@ -1294,20 +1609,35 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id108
+  acceptable_routes: &id147
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id109
+  acceptable_tools: &id148
   - tool.db_pool_triage
   - tool.worker_queue_triage
-  disallowed_families: &id110 []
-  required_prior_case_ids: &id111 []
-  required_prior_rejections: &id112 []
+  disallowed_families: &id149 []
+  required_prior_case_ids: &id150 []
+  required_prior_rejections: &id151 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id152
+  - surface the strongest competing route from distractor evidence
+  - validate the surviving route against logs and metrics before execution
+  - reject the distractor route before selecting the next action
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: &id153
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id154 []
   task_order: 3
   allowed_modes:
   - text
@@ -1324,9 +1654,9 @@ tasks:
     hypothesis and recommend the next action.
   query: deployment canary remains slow, while some responders argue the real issue
     is reload-driven worker jitter
-  corpus_doc_ids: *id105
-  tags: *id106
-  reuse_tags: *id107
+  corpus_doc_ids: *id144
+  tags: *id145
+  reuse_tags: *id146
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -1337,16 +1667,24 @@ tasks:
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id108
-  acceptable_tools: *id109
-  disallowed_families: *id110
-  required_prior_case_ids: *id111
-  required_prior_rejections: *id112
+  acceptable_routes: *id147
+  acceptable_tools: *id148
+  disallowed_families: *id149
+  required_prior_case_ids: *id150
+  required_prior_rejections: *id151
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id152
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: *id153
+  required_prior_routes: *id154
   task_order: 4
   allowed_modes:
   - protocol
@@ -1363,17 +1701,17 @@ tasks:
     and recommend the safest next action.
   query: deployment canary stays slow, but the latest review also reports mild worker
     jitter
-  corpus_doc_ids: &id113
+  corpus_doc_ids: &id155
   - rr-deploy-metrics
   - rr-deploy-logs
   - rr-deploy-worker-false
   - rr-deploy-ambiguous
-  tags: &id114
+  tags: &id156
   - release
   - deployment
   - config
   - ambiguous
-  reuse_tags: &id115
+  reuse_tags: &id157
   - release
   - deployment
   - config
@@ -1383,25 +1721,40 @@ tasks:
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-deploy-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id116
+  acceptable_routes: &id158
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id117
+  acceptable_tools: &id159
   - tool.db_pool_triage
   - tool.worker_queue_triage
-  disallowed_families: &id118 []
-  required_prior_case_ids: &id119 []
-  required_prior_rejections: &id120 []
+  disallowed_families: &id160 []
+  required_prior_case_ids: &id161 []
+  required_prior_rejections: &id162 []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: &id163
+  - keep at least two route families live after retrieval
+  - validate whether current evidence is sufficient to collapse route competition
+  - either abstain for more evidence or choose a scoped action after validation
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: &id164
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id165 []
   task_order: 5
   allowed_modes:
   - text
@@ -1418,30 +1771,38 @@ tasks:
     and recommend the safest next action.
   query: deployment canary stays slow, but the latest review also reports mild worker
     jitter
-  corpus_doc_ids: *id113
-  tags: *id114
-  reuse_tags: *id115
+  corpus_doc_ids: *id155
+  tags: *id156
+  reuse_tags: *id157
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-deploy-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id116
-  acceptable_tools: *id117
-  disallowed_families: *id118
-  required_prior_case_ids: *id119
-  required_prior_rejections: *id120
+  acceptable_routes: *id158
+  acceptable_tools: *id159
+  disallowed_families: *id160
+  required_prior_case_ids: *id161
+  required_prior_rejections: *id162
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: *id163
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: *id164
+  required_prior_routes: *id165
   task_order: 6
   allowed_modes:
   - protocol
@@ -1458,17 +1819,17 @@ tasks:
     validation action.
   query: deployment slowdown remains limited to the canary shard, and responders want
     the narrowest safe follow-up action
-  corpus_doc_ids: &id121
+  corpus_doc_ids: &id166
   - rr-deploy-config
   - rr-deploy-scope
   - rr-deploy-reuse
   - rr-deploy-worker-false
-  tags: &id122
+  tags: &id167
   - release
   - deployment
   - config
   - replay-reusable
-  reuse_tags: &id123
+  reuse_tags: &id168
   - release
   - deployment
   - config
@@ -1477,22 +1838,22 @@ tasks:
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-deploy-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: &id124
+  acceptable_routes: &id169
   - db_pool_saturation
   - worker_queue_starvation
-  acceptable_tools: &id125
+  acceptable_tools: &id170
   - tool.db_pool_triage
   - tool.worker_queue_triage
   - tool.collect_more_evidence
-  disallowed_families: &id126 []
-  required_prior_case_ids: &id127
+  disallowed_families: &id171 []
+  required_prior_case_ids: &id172
   - rr-deploy-clean
-  required_prior_rejections: &id128
+  required_prior_rejections: &id173
   - worker_queue_starvation
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1500,6 +1861,23 @@ tasks:
     both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: &id174
+  - recover the prior accepted route together with the competing route that was rejected
+  - validate the carried-forward rejection against the current scoped evidence
+  - either take the scoped follow-up action or abstain for more evidence
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: &id175
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id176
+  - db_pool_saturation
   task_order: 7
   allowed_modes:
   - text
@@ -1516,30 +1894,39 @@ tasks:
     validation action.
   query: deployment slowdown remains limited to the canary shard, and responders want
     the narrowest safe follow-up action
-  corpus_doc_ids: *id121
-  tags: *id122
-  reuse_tags: *id123
+  corpus_doc_ids: *id166
+  tags: *id167
+  reuse_tags: *id168
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-deploy-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: db_pool_saturation
   primary_expected_route: db_pool_saturation
   primary_expected_tool: tool.db_pool_triage
-  acceptable_routes: *id124
-  acceptable_tools: *id125
-  disallowed_families: *id126
-  required_prior_case_ids: *id127
-  required_prior_rejections: *id128
+  acceptable_routes: *id169
+  acceptable_tools: *id170
+  disallowed_families: *id171
+  required_prior_case_ids: *id172
+  required_prior_rejections: *id173
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: prior worker-route rejection is missing or current evidence reopens
     both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: *id174
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: *id175
+  required_prior_routes: *id176
   task_order: 8
   allowed_modes:
   - protocol
@@ -1556,17 +1943,18 @@ tasks:
     recommend the first action.
   query: rollout-region inventory counts stayed stale after sync, and operators need
     the safest first validation action
-  corpus_doc_ids: &id129
+  corpus_doc_ids: &id177
   - rr-cache-incident
   - rr-cache-metrics
   - rr-cache-logs
   - rr-cache-replica-false
-  tags: &id130
+  - rr-cache-flag-diff
+  tags: &id178
   - release
   - inventory
   - cache
   - clean
-  reuse_tags: &id131
+  reuse_tags: &id179
   - release
   - inventory
   - cache
@@ -1580,21 +1968,36 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: &id132
+  acceptable_routes: &id180
   - cache_invalidation
   - cache_replica_stale_read
-  acceptable_tools: &id133
+  acceptable_tools: &id181
   - tool.cache_invalidation_playbook
   - tool.cache_hook_repair
   - tool.replica_stale_read_triage
-  disallowed_families: &id134 []
-  required_prior_case_ids: &id135 []
-  required_prior_rejections: &id136 []
+  disallowed_families: &id182 []
+  required_prior_case_ids: &id183 []
+  required_prior_rejections: &id184 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id185
+  - keep the primary and competing routes explicit after retrieval
+  - validate the primary route against scope and artifact evidence before execution
+  - choose the narrowest first action only after validation closes the competing route
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: &id186
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id187 []
   task_order: 1
   allowed_modes:
   - text
@@ -1611,9 +2014,9 @@ tasks:
     recommend the first action.
   query: rollout-region inventory counts stayed stale after sync, and operators need
     the safest first validation action
-  corpus_doc_ids: *id129
-  tags: *id130
-  reuse_tags: *id131
+  corpus_doc_ids: *id177
+  tags: *id178
+  reuse_tags: *id179
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: most likely cause, strongest competing
@@ -1624,16 +2027,24 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: *id132
-  acceptable_tools: *id133
-  disallowed_families: *id134
-  required_prior_case_ids: *id135
-  required_prior_rejections: *id136
+  acceptable_routes: *id180
+  acceptable_tools: *id181
+  disallowed_families: *id182
+  required_prior_case_ids: *id183
+  required_prior_rejections: *id184
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: simple
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id185
+  abstention_boundary: Validation must collapse route competition before execution;
+    collect-more-evidence is not score-valid on the clean slice.
+  required_plan_semantic_roles: *id186
+  required_prior_routes: *id187
   task_order: 2
   allowed_modes:
   - protocol
@@ -1650,17 +2061,18 @@ tasks:
     hypothesis and recommend the next action.
   query: stale inventory persists, while some responders argue the real issue is a
     lagging read replica
-  corpus_doc_ids: &id137
+  corpus_doc_ids: &id188
   - rr-cache-incident
   - rr-cache-replica-false
+  - rr-cache-logs
   - rr-cache-metrics
   - rr-cache-flag-diff
-  tags: &id138
+  tags: &id189
   - release
   - inventory
   - cache
   - distractor
-  reuse_tags: &id139
+  reuse_tags: &id190
   - release
   - inventory
   - cache
@@ -1674,21 +2086,36 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: &id140
+  acceptable_routes: &id191
   - cache_invalidation
   - cache_replica_stale_read
-  acceptable_tools: &id141
+  acceptable_tools: &id192
   - tool.cache_invalidation_playbook
   - tool.cache_hook_repair
   - tool.replica_stale_read_triage
-  disallowed_families: &id142 []
-  required_prior_case_ids: &id143 []
-  required_prior_rejections: &id144 []
+  disallowed_families: &id193 []
+  required_prior_case_ids: &id194 []
+  required_prior_rejections: &id195 []
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: &id196
+  - surface the strongest competing route from distractor evidence
+  - validate the surviving route against logs and metrics before execution
+  - reject the distractor route before selecting the next action
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: &id197
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id198 []
   task_order: 3
   allowed_modes:
   - text
@@ -1705,9 +2132,9 @@ tasks:
     hypothesis and recommend the next action.
   query: stale inventory persists, while some responders argue the real issue is a
     lagging read replica
-  corpus_doc_ids: *id137
-  tags: *id138
-  reuse_tags: *id139
+  corpus_doc_ids: *id188
+  tags: *id189
+  reuse_tags: *id190
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: surviving cause, competing explanation
@@ -1718,16 +2145,24 @@ tasks:
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: *id140
-  acceptable_tools: *id141
-  disallowed_families: *id142
-  required_prior_case_ids: *id143
-  required_prior_rejections: *id144
+  acceptable_routes: *id191
+  acceptable_tools: *id192
+  disallowed_families: *id193
+  required_prior_case_ids: *id194
+  required_prior_rejections: *id195
   abstention_allowed: false
   allowed_abstain_tool: ''
   abstain_only_when: ''
   complexity_bucket: distractor
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions: *id196
+  abstention_boundary: The distractor route must be explicitly rejected at validation;
+    collect-more-evidence is not score-valid once the distractor is ruled out.
+  required_plan_semantic_roles: *id197
+  required_prior_routes: *id198
   task_order: 4
   allowed_modes:
   - protocol
@@ -1744,17 +2179,17 @@ tasks:
     signals and recommend the safest next action.
   query: stale inventory remains after sync, but the latest review also mentions a
     short replica lag spike
-  corpus_doc_ids: &id145
+  corpus_doc_ids: &id199
   - rr-cache-metrics
   - rr-cache-logs
   - rr-cache-replica-false
   - rr-cache-ambiguous
-  tags: &id146
+  tags: &id200
   - release
   - inventory
   - cache
   - ambiguous
-  reuse_tags: &id147
+  reuse_tags: &id201
   - release
   - inventory
   - cache
@@ -1764,26 +2199,41 @@ tasks:
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-cache-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: &id148
+  acceptable_routes: &id202
   - cache_invalidation
   - cache_replica_stale_read
-  acceptable_tools: &id149
+  acceptable_tools: &id203
   - tool.cache_invalidation_playbook
   - tool.cache_hook_repair
   - tool.replica_stale_read_triage
-  disallowed_families: &id150 []
-  required_prior_case_ids: &id151 []
-  required_prior_rejections: &id152 []
+  disallowed_families: &id204 []
+  required_prior_case_ids: &id205 []
+  required_prior_rejections: &id206 []
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: &id207
+  - keep at least two route families live after retrieval
+  - validate whether current evidence is sufficient to collapse route competition
+  - either abstain for more evidence or choose a scoped action after validation
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: &id208
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id209 []
   task_order: 5
   allowed_modes:
   - text
@@ -1800,30 +2250,38 @@ tasks:
     signals and recommend the safest next action.
   query: stale inventory remains after sync, but the latest review also mentions a
     short replica lag spike
-  corpus_doc_ids: *id145
-  tags: *id146
-  reuse_tags: *id147
+  corpus_doc_ids: *id199
+  tags: *id200
+  reuse_tags: *id201
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: best-supported cause, competing
     explanation still considered, safest next action, and the deciding validation
     check.'
   case_id: rr-cache-ambiguous
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: *id148
-  acceptable_tools: *id149
-  disallowed_families: *id150
-  required_prior_case_ids: *id151
-  required_prior_rejections: *id152
+  acceptable_routes: *id202
+  acceptable_tools: *id203
+  disallowed_families: *id204
+  required_prior_case_ids: *id205
+  required_prior_rejections: *id206
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: mixed evidence keeps at least two route families admissible
   complexity_bucket: ambiguous
   summary_contract: actions_plus_evidence
+  thickness_setting: S1
+  reasoning_hops_min: 3
+  dependency_depth: 1
+  expected_intermediate_decisions: *id207
+  abstention_boundary: Collect more evidence is score-valid only while validation
+    keeps at least two competing routes admissible.
+  required_plan_semantic_roles: *id208
+  required_prior_routes: *id209
   task_order: 6
   allowed_modes:
   - protocol
@@ -1840,17 +2298,17 @@ tasks:
     validation action.
   query: stale inventory remains scoped to one rollout region, and responders want
     the narrowest safe follow-up action
-  corpus_doc_ids: &id153
+  corpus_doc_ids: &id210
   - rr-cache-flag-diff
   - rr-cache-scope
   - rr-cache-reuse
   - rr-cache-replica-false
-  tags: &id154
+  tags: &id211
   - release
   - inventory
   - cache
   - replay-reusable
-  reuse_tags: &id155
+  reuse_tags: &id212
   - release
   - inventory
   - cache
@@ -1859,23 +2317,23 @@ tasks:
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-cache-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: &id156
+  acceptable_routes: &id213
   - cache_invalidation
   - cache_replica_stale_read
-  acceptable_tools: &id157
+  acceptable_tools: &id214
   - tool.cache_invalidation_playbook
   - tool.cache_hook_repair
   - tool.replica_stale_read_triage
   - tool.collect_more_evidence
-  disallowed_families: &id158 []
-  required_prior_case_ids: &id159
+  disallowed_families: &id215 []
+  required_prior_case_ids: &id216
   - rr-cache-clean
-  required_prior_rejections: &id160
+  required_prior_rejections: &id217
   - cache_replica_stale_read
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
@@ -1883,6 +2341,23 @@ tasks:
     reopens both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: &id218
+  - recover the prior accepted route together with the competing route that was rejected
+  - validate the carried-forward rejection against the current scoped evidence
+  - either take the scoped follow-up action or abstain for more evidence
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: &id219
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  required_prior_routes: &id220
+  - cache_invalidation
   task_order: 7
   allowed_modes:
   - text
@@ -1899,30 +2374,39 @@ tasks:
     validation action.
   query: stale inventory remains scoped to one rollout region, and responders want
     the narrowest safe follow-up action
-  corpus_doc_ids: *id153
-  tags: *id154
-  reuse_tags: *id155
+  corpus_doc_ids: *id210
+  tags: *id211
+  reuse_tags: *id212
   expected_reuse_mode: none
   runtime_reuse_contract: reuse_disabled
   summary_hint: 'Return four concise points only: reused cause pattern, competing
     explanation ruled out, safest scoped action, and post-action validation check.'
   case_id: rr-cache-replay_reusable
-  case_type: bounded_alternative
+  case_type: abstention_allowed
   eval_scope: case_level
   expected_family: cache_invalidation
   primary_expected_route: cache_invalidation
   primary_expected_tool: tool.cache_invalidation_playbook
-  acceptable_routes: *id156
-  acceptable_tools: *id157
-  disallowed_families: *id158
-  required_prior_case_ids: *id159
-  required_prior_rejections: *id160
+  acceptable_routes: *id213
+  acceptable_tools: *id214
+  disallowed_families: *id215
+  required_prior_case_ids: *id216
+  required_prior_rejections: *id217
   abstention_allowed: true
   allowed_abstain_tool: tool.collect_more_evidence
   abstain_only_when: prior replica-route rejection is missing or current evidence
     reopens both routes
   complexity_bucket: reusable
   summary_contract: actions_plus_evidence
+  thickness_setting: S2
+  reasoning_hops_min: 3
+  dependency_depth: 2
+  expected_intermediate_decisions: *id218
+  abstention_boundary: Collect more evidence is score-valid only when the prior rejection
+    or inherited scoped route is missing, or when current evidence reopens both competing
+    routes.
+  required_plan_semantic_roles: *id219
+  required_prior_routes: *id220
   task_order: 8
   allowed_modes:
   - protocol

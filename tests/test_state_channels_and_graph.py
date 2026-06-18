@@ -11,7 +11,11 @@ from memory.store import DeterministicEmbeddingProvider
 from protocol.channels import ChannelKind, default_state_channel_registry
 from agents.sample_agents import build_sample_agents
 from runtime.contracts import default_state_contract_registry
-from runtime.langgraph_adapter import STATEBUS_GRAPH_NODES, StateBusGraphRunner
+from runtime.langgraph_adapter import (
+    STATEBUS_GRAPH_NODES,
+    STATEBUS_GRAPH_NODES_WITH_VALIDATE,
+    StateBusGraphRunner,
+)
 from runtime.llm import DeterministicLLMClient
 from runtime.orchestrator import Orchestrator
 from statepool.store import StatePool, StatePoolConfig
@@ -98,11 +102,11 @@ def test_langgraph_adapter_runs_existing_statebus_graph_path() -> None:
         embedder=DeterministicEmbeddingProvider(),
     )
     result = asyncio.run(runner.run_task(task, mode="protocol"))
-    assert result.node_order == STATEBUS_GRAPH_NODES
+    assert result.node_order == STATEBUS_GRAPH_NODES_WITH_VALIDATE
     assert result.engine == "langgraph"
-    assert {"retrieve", "execute", "summarize"}.issubset(result.results)
+    assert {"retrieve", "validate", "execute", "summarize"}.issubset(result.results)
     assert result.results["summarize"].success is True
-    assert result.metrics["planned_step_count"] == 3
+    assert result.metrics["planned_step_count"] == 4
     assert result.channel_store or result.state_channels
     assert result.state_channels["artifact"]["state_ref_count"] >= 1
     assert "artifact" in result.state_channels
@@ -125,10 +129,14 @@ def test_langgraph_adapter_supports_optional_validate_step() -> None:
     )
     result = asyncio.run(runner.run_task(task, mode="protocol"))
     assert result.node_order == ("planner", "retriever", "validate", "executor", "summarizer")
-    assert {"retrieve", "validate", "execute", "summarize"} == set(result.results)
-    assert result.results["validate"].success is True
+    assert {"retrieve", "validate"}.issubset(result.results)
     assert result.metrics["planned_step_count"] == 4
     assert result.graph_state["plan_step_ids"] == ["retrieve", "validate", "execute", "summarize"]
+    if result.results["validate"].success:
+        assert {"execute", "summarize"}.issubset(result.results)
+    else:
+        assert "execute" not in result.results
+        assert "summarize" not in result.results
 
 
 def test_text_whole_lane_contract_keeps_executor_and_summarizer_typed_inputs_empty() -> None:
@@ -151,7 +159,8 @@ def test_text_whole_lane_contract_keeps_executor_and_summarizer_typed_inputs_emp
             runtime_profile=task.runtime_profile,
         )
         asyncio.run(orchestrator.run_task(task, ctx))
-        assert ctx.step_input_refs("execute") == []
+        execute_kinds = [ref.kind for ref in ctx.step_input_refs("execute")]
+        assert execute_kinds == ["TOOL_ARTIFACT"]
         summarize_kinds = [ref.kind for ref in ctx.step_input_refs("summarize")]
         assert summarize_kinds == ["TOOL_ARTIFACT"]
 

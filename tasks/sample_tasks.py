@@ -27,6 +27,7 @@ DEFAULT_BENCHMARK_TASK_SET = DEFAULT_TASKS_DIR / "contest_dual_mode_controlled_v
 TASK_SET_ALIASES = {
     "default": "contest_dual_mode_controlled_v3_benchmark.yaml",
     "contest_dual_mode_controlled_v3": "contest_dual_mode_controlled_v3_benchmark.yaml",
+    "contest_honest_headline_v1": "contest_dual_mode_controlled_v3_benchmark.yaml",
     "memory_dual_mode_fairness_v3": "memory_dual_mode_fairness_v3_benchmark.yaml",
     "typed_state_mechanism_v3": "typed_state_mechanism_v3_benchmark.yaml",
     "external_text_baseline_audit_v3": "external_text_baseline_audit_v3_benchmark.yaml",
@@ -42,6 +43,7 @@ TASK_SET_ALIASES = {
 
 V3_FORMAL_TASK_PACK_TYPES = (
     "contest_dual_mode_controlled_v3",
+    "contest_honest_headline_v1",
     "memory_dual_mode_fairness_v3",
     "typed_state_mechanism_v3",
     "external_text_baseline_audit_v3",
@@ -129,6 +131,12 @@ COMPLEXITY_BUCKETS = (
     "reusable",
 )
 
+THICKNESS_SETTINGS = (
+    "S0",
+    "S1",
+    "S2",
+)
+
 SUMMARY_CONTRACTS = (
     "actions_plus_evidence",
     "protocol_handoff_audit",
@@ -146,6 +154,7 @@ def normalize_task_pack_type(value: object) -> str:
     alias_map = {
         "": "ad_hoc",
         "contest_dual_mode_controlled_v3": "contest_dual_mode_controlled_v3",
+        "contest_honest_headline_v1": "contest_honest_headline_v1",
         "memory_dual_mode_fairness_v3": "memory_dual_mode_fairness_v3",
         "typed_state_mechanism_v3": "typed_state_mechanism_v3",
         "external_text_baseline_audit_v3": "external_text_baseline_audit_v3",
@@ -205,6 +214,14 @@ def normalize_summary_contract(value: object) -> str:
     normalized = text or "actions_plus_evidence"
     if normalized not in SUMMARY_CONTRACTS:
         raise ValueError(f"unsupported summary_contract: {value!r}")
+    return normalized
+
+
+def normalize_thickness_setting(value: object) -> str:
+    text = str(value or "").strip().upper()
+    normalized = text or "S0"
+    if normalized not in THICKNESS_SETTINGS:
+        raise ValueError(f"unsupported thickness_setting: {value!r}")
     return normalized
 
 
@@ -320,6 +337,11 @@ class SampleTask:
     allowed_modes: tuple[str, ...] = TASK_MODES
     plan_source: str = "yaml"
     complexity_bucket: str = "simple"
+    thickness_setting: str = "S0"
+    reasoning_hops_min: int = 1
+    dependency_depth: int = 0
+    expected_intermediate_decisions: tuple[str, ...] = ()
+    abstention_boundary: str = ""
     summary_contract: str = "actions_plus_evidence"
     required_plan_semantic_roles: tuple[str, ...] = ()
     audit_disable_state_kinds: tuple[str, ...] = ()
@@ -387,6 +409,11 @@ class SampleTask:
             "abstention_allowed": self.abstention_allowed,
             "allowed_abstain_tool": self.allowed_abstain_tool,
             "abstain_only_when": self.abstain_only_when,
+            "thickness_setting": self.thickness_setting,
+            "reasoning_hops_min": self.reasoning_hops_min,
+            "dependency_depth": self.dependency_depth,
+            "expected_intermediate_decisions": list(self.expected_intermediate_decisions),
+            "abstention_boundary": self.abstention_boundary,
             "required_plan_semantic_roles": list(self.required_plan_semantic_roles),
         }
 
@@ -474,9 +501,76 @@ def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
     loaded_tasks = tuple(
         _load_sample_task(task_path, item, task_set_metadata=metadata) for item in tasks
     )
+    if requested_alias == "contest_honest_headline_v1":
+        return _build_contest_honest_headline_bundle(task_path, metadata, loaded_tasks)
     if requested_alias == "typed_state_consumer_sensitivity_v3":
         return _build_typed_state_consumer_sensitivity_bundle(task_path, metadata, loaded_tasks)
     return TaskSetBundle(path=task_path, metadata=metadata, tasks=loaded_tasks)
+
+
+def _build_contest_honest_headline_bundle(
+    task_path: Path,
+    metadata: TaskSetMetadata,
+    template_tasks: tuple[SampleTask, ...],
+) -> TaskSetBundle:
+    headline_metadata = replace(
+        metadata,
+        name="contest_honest_headline_v1_pack",
+        pack_type="contest_honest_headline_v1",
+        description=(
+            "Contest-facing dual-mode formal headline pack with matched natural whole-lane text "
+            "and minimal typed-state protocol rows on the same contest-release cases."
+        ),
+        reading_contract=(
+            "Read this pack only as the contest-facing dual-mode formal headline. "
+            "Each pair keeps the same family, query, evidence universe, summary contract, "
+            "and plan source fixed; only mode differs, with text using natural whole-lane "
+            "handoff and protocol using the minimal typed-state packet."
+        ),
+        single_variable=True,
+        variable_axes=("mode",),
+        public_surface="formal_headline",
+        evidence_tier="formal_headline",
+    )
+    transformed: list[SampleTask] = []
+    for task in template_tasks:
+        memory_effect_overrides: dict[str, object] = {}
+        if task.thickness_setting == "S2":
+            memory_effect_overrides = {
+                "expected_reuse_mode": "skip_execute",
+                "runtime_reuse_contract_override": "validated_replay",
+            }
+        if task.supports_mode("text"):
+            transformed.append(
+                replace(
+                    task,
+                    transfer_strategy="text_whole_lane",
+                    handoff_profile="text_whole_lane",
+                    evidence_text=(
+                        "Use only the referenced release artifacts. "
+                        "This row is the contest-facing natural-language whole-lane text baseline."
+                    ),
+                    task_set_metadata=headline_metadata,
+                    **memory_effect_overrides,
+                )
+            )
+        elif task.supports_mode("protocol"):
+            transformed.append(
+                replace(
+                    task,
+                    task_set_metadata=headline_metadata,
+                    **memory_effect_overrides,
+                )
+            )
+        else:
+            transformed.append(
+                replace(
+                    task,
+                    task_set_metadata=headline_metadata,
+                    **memory_effect_overrides,
+                )
+            )
+    return TaskSetBundle(path=task_path, metadata=headline_metadata, tasks=tuple(transformed))
 
 
 def _build_typed_state_consumer_sensitivity_bundle(
@@ -557,32 +651,50 @@ def default_task_chain() -> list[SampleTask]:
 
 
 def build_plan(task: SampleTask) -> Plan:
-    return Plan(
-        task_id=task.task_id,
-        goal=task.goal,
-        steps=[
+    required_roles = {
+        str(role).strip().lower()
+        for role in task.required_plan_semantic_roles
+        if str(role).strip()
+    }
+    has_validate = "validate" in required_roles
+    steps = [
+        PlanStep(
+            step_id="retrieve",
+            owner_agent="retriever",
+            action="RETRIEVE_EVIDENCE",
+            input_state_refs=[],
+            params={
+                "query": task.query,
+                "evidence_text": task.evidence_text,
+                "tags": list(task.tags),
+                "allow_memory_reuse": True,
+                "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
+            },
+            depends_on=[],
+            semantic_role="retrieve",
+        ),
+    ]
+    if has_validate:
+        steps.append(
             PlanStep(
-                step_id="retrieve",
-                owner_agent="retriever",
-                action="RETRIEVE_EVIDENCE",
+                step_id="validate",
+                owner_agent="executor",
+                action="VALIDATE_ROUTE",
                 input_state_refs=[],
-                params={
-                    "query": task.query,
-                    "evidence_text": task.evidence_text,
-                    "tags": list(task.tags),
-                    "allow_memory_reuse": True,
-                    "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
-                },
-                depends_on=[],
-                semantic_role="retrieve",
-            ),
+                params={},
+                depends_on=["retrieve"],
+                semantic_role="validate",
+            )
+        )
+    steps.extend(
+        [
             PlanStep(
                 step_id="execute",
                 owner_agent="executor",
                 action="EXECUTE_PLAYBOOK",
                 input_state_refs=[],
                 params={},
-                depends_on=["retrieve"],
+                depends_on=["retrieve", "validate"] if has_validate else ["retrieve"],
                 semantic_role="execute",
             ),
             PlanStep(
@@ -597,7 +709,12 @@ def build_plan(task: SampleTask) -> Plan:
                 depends_on=["retrieve", "execute"],
                 semantic_role="summarize",
             ),
-        ],
+        ]
+    )
+    return Plan(
+        task_id=task.task_id,
+        goal=task.goal,
+        steps=steps,
     )
 
 
@@ -816,6 +933,15 @@ def _load_sample_task(
         allowed_modes=normalize_task_modes(item.get("allowed_modes", TASK_MODES)),
         plan_source=normalize_plan_source(plan_source_raw),
         complexity_bucket=normalize_complexity_bucket(item.get("complexity_bucket", "simple")),
+        thickness_setting=normalize_thickness_setting(item.get("thickness_setting", "S0")),
+        reasoning_hops_min=int(item.get("reasoning_hops_min", 1)),
+        dependency_depth=int(item.get("dependency_depth", 0)),
+        expected_intermediate_decisions=tuple(
+            str(value).strip()
+            for value in item.get("expected_intermediate_decisions", [])
+            if str(value).strip()
+        ),
+        abstention_boundary=str(item.get("abstention_boundary", "")).strip(),
         summary_contract=normalize_summary_contract(
             item.get("summary_contract", "actions_plus_evidence")
         ),
@@ -921,7 +1047,7 @@ def _validate_reusable_contract(
 ) -> None:
     if (
         task.complexity_bucket == "reusable"
-        and task_set_metadata.pack_type == "contest_dual_mode_controlled_v3"
+        and task_set_metadata.pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"}
     ):
         if not task.required_prior_case_ids:
             raise ValueError(f"{task.task_id}: reusable rows require required_prior_case_ids")
@@ -940,6 +1066,30 @@ def _validate_formal_pack_task_contract(
         raise ValueError(f"{task.task_id}: formal headline rows require acceptable_routes")
     if task_set_metadata.public_surface == "formal_headline" and not task.acceptable_tools:
         raise ValueError(f"{task.task_id}: formal headline rows require acceptable_tools")
+    if task_set_metadata.pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"}:
+        if task.thickness_setting == "S0":
+            raise ValueError(f"{task.task_id}: contest headline rows must not remain at thickness_setting=S0")
+        if task.reasoning_hops_min < 2:
+            raise ValueError(f"{task.task_id}: contest headline rows require reasoning_hops_min >= 2")
+        if task.thickness_setting == "S1" and task.dependency_depth != 1:
+            raise ValueError(f"{task.task_id}: S1 contest rows require dependency_depth == 1")
+        if task.thickness_setting == "S2" and task.dependency_depth < 2:
+            raise ValueError(f"{task.task_id}: S2 contest rows require dependency_depth >= 2")
+        if len(task.expected_intermediate_decisions) < 2:
+            raise ValueError(
+                f"{task.task_id}: contest headline rows require at least two expected_intermediate_decisions"
+            )
+        if tuple(task.required_plan_semantic_roles) != (
+            "retrieve",
+            "validate",
+            "execute",
+            "summarize",
+        ):
+            raise ValueError(
+                f"{task.task_id}: contest headline rows require required_plan_semantic_roles=retrieve/validate/execute/summarize"
+            )
+        if not task.abstention_boundary:
+            raise ValueError(f"{task.task_id}: contest headline rows require abstention_boundary")
     if task.required_plan_semantic_roles:
         invalid_roles = sorted(
             {

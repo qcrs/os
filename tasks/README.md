@@ -59,9 +59,10 @@
 
 说明：
 
-- 正式 README、默认 CLI、正式 smoke、正式 report 只认以上 12 个 v3 对象。
+- 正式 README、默认 CLI、正式 smoke、正式 report 只认以上 13 个 v3 对象。
 - 主动脚本入口是 `scripts/run_v3_comprehensive_check.py`；`scripts/run_v2_*` 只保留归档/考古用途，默认拒绝运行。
-- `contest_dual_mode_controlled_v3` 是当前 formal dual-mode surface，headline baseline 为 `text_strict_pure_lane` vs `state_packet_minimal`。
+- `contest_honest_headline_v1` 是当前 contest-facing formal dual-mode surface，headline baseline 为 `text_whole_lane` vs `state_packet_minimal`。
+- `contest_dual_mode_controlled_v3` 是内部 controlled composite surface，保留 `text_strict_pure_lane` vs `state_packet_minimal` 的 mainline handoff 对照，不再承担 contest-facing pure-text headline。
 - `memory_dual_mode_fairness_v3` 是保留 pack；当前只读 dual-mode fairness/object parity，不承担 replay proof。
 - `typed_state_mechanism_v3` 只读 protocol-only `natural_handoff_text` vs `state_packet_minimal` 机制真实性；不读成 dual-mode headline。
 - `external_text_baseline_audit_v3` 只读独立 external text baseline 审计；不并入当前正式 headline。

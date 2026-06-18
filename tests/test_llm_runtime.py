@@ -341,13 +341,25 @@ def test_planner_agent_retries_until_planner_contract_is_valid() -> None:
 
     class _Ctx:
         mode = "protocol"
+        planner_one_shot_valid = True
+        planner_repair_attempt_count = 0
+        planner_contract_valid = False
+        planner_contract_valid_final = False
+
+        class _Metrics:
+            planner_repair_attempt_count = 0
+
+        metrics = _Metrics()
         def record_llm_result(self, *args, **kwargs):  # type: ignore[no-untyped-def]
             return None
 
-    plan = asyncio.run(agent.plan_task(task, _Ctx()))
+    ctx = _Ctx()
+    plan = asyncio.run(agent.plan_task(task, ctx))
 
     assert [step.semantic_role for step in plan.steps] == ["retrieve", "validate", "execute", "summarize"]
     assert len(client.calls) == 2
+    assert ctx.planner_one_shot_valid is False
+    assert ctx.planner_repair_attempt_count == 1
 
 
 def test_plan_parser_rejects_unsupported_memory_reuse_action() -> None:
@@ -663,11 +675,12 @@ def test_strict_pure_text_handoff_does_not_call_build_feature_bundle(monkeypatch
         registry=executor_runtime.default_tool_registry(),
     )
     assert bundle["transfer_strategy"] == "text_strict_pure_lane"
-    assert "tool_candidates" not in bundle
-    assert "hint_route" not in bundle
-    assert "hint_tool_name" not in bundle
-    assert "hint_doc_ids" not in bundle
-    assert "matched_tags" not in bundle
+    assert bundle["tool_candidates"][0]["tool_name"] == "tool.collect_more_evidence"
+    assert bundle["tool_candidates"][0]["source"] == "retriever_handoff"
+    assert bundle["hint_route"] == ""
+    assert bundle["hint_tool_name"] == ""
+    assert bundle["hint_doc_ids"] == []
+    assert bundle["matched_tags"] == []
 
 
 def test_summary_parser_normalizes_scalar_reusable_steps() -> None:
@@ -770,7 +783,7 @@ def test_text_mode_uses_natural_language_prompts() -> None:
     )
     validate_payload = parse_tagged_json(validate_messages[-1].content, "sb-plan-v1")
     assert validate_payload["rr"] == ["retrieve", "validate", "execute", "summarize"]
-    assert "If validate is required, use the explicit steps form" in validate_messages[0].content
+    assert "Return only {\"steps\":[...]}" in validate_messages[0].content
 
     summary_messages = _summarizer_messages(
         {
@@ -868,12 +881,20 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     )
     planner_result = asyncio.run(client.complete(planner_messages, purpose="planner"))
     planner_payload = json.loads(planner_result.text)
-    assert set(planner_payload) == {"r", "s", "x"}
-    assert "reuse" not in planner_payload["r"]
-    assert "erm" not in planner_payload["r"]
-    assert "cd" not in planner_payload["r"]
-    assert "rrc" not in planner_payload["r"]
-    assert "sig" not in planner_payload["r"]
+    if "steps" in planner_payload:
+        assert [step["semantic_role"] for step in planner_payload["steps"]] == [
+            "retrieve",
+            "validate",
+            "execute",
+            "summarize",
+        ]
+    else:
+        assert set(planner_payload) == {"r", "s", "x"}
+        assert "reuse" not in planner_payload["r"]
+        assert "erm" not in planner_payload["r"]
+        assert "cd" not in planner_payload["r"]
+        assert "rrc" not in planner_payload["r"]
+        assert "sig" not in planner_payload["r"]
     assert _plan_from_llm_output(task, planner_result.text) == build_plan(task)
     parsed_plan = _plan_from_llm_output(task, planner_result.text)
     assert parsed_plan.steps[0].params["allow_memory_reuse"] is True

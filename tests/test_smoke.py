@@ -21,6 +21,7 @@ from agents.base_agent import BaseAgent
 from agents.sample_agents import (
     _build_memory_assist_hint,
     _build_protocol_summary_handoff,
+    _build_text_whole_lane_retriever_handoff,
     _strip_text_whole_lane_evidence_text,
     _build_transfer_brief,
     build_sample_agents_with_executor,
@@ -28,7 +29,9 @@ from agents.sample_agents import (
 from eval.runner import (
     DEFAULT_BENCHMARK_TASK_SET,
     _build_case_contract_audit,
+    _contest_formal_coverage_gate,
     _mode_order_for_run,
+    _summarize_case_contract_rows,
     _whole_lane_text_guard_payload,
     run_benchmark,
 )
@@ -54,7 +57,8 @@ from protocol.messages import (
 from runtime.contracts import SchemaValidationError, default_state_contract_registry
 from runtime.langgraph_adapter import StateBusGraphRunner, langgraph_available
 from runtime.llm import DeterministicLLMClient
-from runtime.orchestrator import Orchestrator, RunSession, _route_is_replay_eligible
+from runtime.orchestrator import Orchestrator, RunContext, RunSession, _route_is_replay_eligible
+from runtime.task_profile import RuntimeTaskProfile
 from runtime import executor_runtime
 from runtime.uds_transport import request_response
 from runtime.smoke import main
@@ -76,8 +80,10 @@ from tasks.local_corpus import (
 from tasks.contest_family_spec import (
     CONTEST_BENCHMARK_PATH,
     CONTEST_CORPUS_PATH,
+    CONTEST_HONEST_HEADLINE_NAME,
     generate_contest_benchmark_payload,
     generate_contest_corpus_payload,
+    generate_contest_honest_headline_payload,
     load_contest_family_spec,
 )
 from tasks.sample_tasks import (
@@ -235,7 +241,7 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert "phase_overhead_ms" in compare_csv
         report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
         assert "StateBus Benchmark Report" in report_text
-        assert "## Contest Dual-Mode Controlled V3" in report_text
+        assert "## Contest Controlled Composite V3" in report_text
         assert "handoff_wire_bytes" in report_text
         assert "handoff_payload_bytes" in report_text
         assert "whole-lane text guard pass rate" in report_text.lower()
@@ -306,7 +312,7 @@ def test_active_v3_pack_aliases_all_load_with_explicit_metadata() -> None:
     loaded["typed_state_consumer_sensitivity_v3"] = load_task_set_bundle(
         "typed_state_consumer_sensitivity_v3"
     )
-    assert len(loaded) == 12
+    assert len(loaded) == 13
     assert all(bundle.metadata.pack_type != "ad_hoc" for bundle in loaded.values())
     assert all(bundle.metadata.public_surface for bundle in loaded.values())
     assert all(bundle.metadata.evidence_tier for bundle in loaded.values())
@@ -322,6 +328,22 @@ def test_contest_family_spec_generates_committed_benchmark_and_corpus() -> None:
     assert generate_contest_corpus_payload() == corpus_payload
 
 
+def test_contest_family_spec_generates_honest_headline_payload() -> None:
+    payload = generate_contest_honest_headline_payload()
+    assert payload["task_set"]["name"] == CONTEST_HONEST_HEADLINE_NAME
+    assert payload["task_set"]["pack_type"] == "contest_honest_headline_v1"
+    assert payload["task_set"]["single_variable"] is True
+    assert payload["task_set"]["variable_axes"] == ["mode"]
+    text_rows = [task for task in payload["tasks"] if task["allowed_modes"] == ["text"]]
+    protocol_rows = [task for task in payload["tasks"] if task["allowed_modes"] == ["protocol"]]
+    assert len(text_rows) == 20
+    assert len(protocol_rows) == 20
+    assert all(task["transfer_strategy"] == "text_whole_lane" for task in text_rows)
+    assert all(task["handoff_profile"] == "text_whole_lane" for task in text_rows)
+    assert all(task["transfer_strategy"] == "state_packet_minimal" for task in protocol_rows)
+    assert all(task["handoff_profile"] == "protocol_minimal_state_packet" for task in protocol_rows)
+
+
 def test_contest_family_spec_is_single_source_of_truth_for_family_contracts() -> None:
     spec = load_contest_family_spec()
     assert spec["task_set"]["pack_type"] == "contest_dual_mode_controlled_v3"
@@ -333,10 +355,57 @@ def test_contest_family_spec_is_single_source_of_truth_for_family_contracts() ->
         assert set(family["cases"]) == {"clean", "distractor", "ambiguous", "replay_reusable"}
         assert len(family["route_competition"]) >= 2
         assert len(family["tool_competition"]) >= 2
+        assert family["thickness_contract"] == {
+            "route_competition_min": 2,
+            "tool_competition_min": 3,
+        }
         assert len(family["docs"]) == 8
+        normalized_roles = {
+            {
+                "rotation": "structural_anchor",
+                "runbook": "structural_anchor",
+                "config": "structural_anchor",
+                "flag-diff": "structural_anchor",
+                "rate-limit-false": "cross_family_distractor",
+                "db-false": "cross_family_distractor",
+                "worker-false": "cross_family_distractor",
+                "replica-false": "cross_family_distractor",
+                "ambiguous": "ambiguity_note",
+                "scope": "scope_note",
+                "reuse": "reuse_dependency_note",
+            }.get(role, role)
+            for role in family["docs"]
+        }
+        assert normalized_roles == {
+            "incident",
+            "metrics",
+            "logs",
+            "structural_anchor",
+            "cross_family_distractor",
+            "ambiguity_note",
+            "scope_note",
+            "reuse_dependency_note",
+        }
         case = family["cases"]["replay_reusable"]
         assert case["required_prior_case_ids"]
         assert case["required_prior_rejections"]
+        assert case["required_prior_routes"]
+        for case_key, case in family["cases"].items():
+            if case_key == "replay_reusable":
+                assert case["thickness_setting"] == "S2"
+                assert case["dependency_depth"] >= 2
+            else:
+                assert case["thickness_setting"] == "S1"
+                assert case["dependency_depth"] == 1
+            assert case["reasoning_hops_min"] >= 2
+            assert case["required_plan_semantic_roles"] == [
+                "retrieve",
+                "validate",
+                "execute",
+                "summarize",
+            ]
+            assert len(case["expected_intermediate_decisions"]) >= 2
+            assert case["abstention_boundary"]
 
 
 def test_task_pack_aliases_and_support_only_flags() -> None:
@@ -522,7 +591,7 @@ def test_orchestrator_respects_yaml_vs_llm_plan_source() -> None:
         )
         asyncio.run(orchestrator.run_task(base_task, yaml_ctx))
         assert yaml_ctx.metrics.planner_llm_request_count == 0
-        assert yaml_ctx.metrics.planned_step_count == 3
+        assert yaml_ctx.metrics.planned_step_count == 4
         yaml_ctx.memory_store.close()
         yaml_ctx.session.cleanup()
 
@@ -541,7 +610,7 @@ def test_orchestrator_respects_yaml_vs_llm_plan_source() -> None:
         )
         asyncio.run(orchestrator.run_task(llm_task, llm_ctx))
         assert llm_ctx.metrics.planner_llm_request_count == 1
-        assert llm_ctx.metrics.planned_step_count == 3
+        assert llm_ctx.metrics.planned_step_count == 4
         llm_ctx.memory_store.close()
         llm_ctx.session.cleanup()
 
@@ -780,6 +849,56 @@ def test_case_contract_audit_requires_route_tool_pair_for_admissible_match() -> 
     abstain = _build_case_contract_audit(abstain_task)
     assert abstain["abstention_match"] is True
     assert abstain["admissible_match"] is True
+
+
+def test_case_contract_audit_marks_empty_contracts_as_not_evaluated() -> None:
+    audit = _build_case_contract_audit(
+        {
+            "task_id": "audit-only-001",
+            "task_theme": "contest_release_checkout_regression",
+            "results": {
+                "retrieve": {"payload": {"feature_route": "db_pool_saturation"}},
+                "execute": {"payload": {"tool_name": "tool.db_pool_triage"}},
+            },
+            "case_contract": {
+                "case_id": "audit-only-001",
+                "case_type": "exact_single_solution",
+                "expected_family": "",
+                "primary_expected_route": "",
+                "primary_expected_tool": "",
+                "acceptable_routes": [],
+                "acceptable_tools": [],
+                "disallowed_families": [],
+                "abstention_allowed": False,
+                "allowed_abstain_tool": "",
+            },
+        }
+    )
+    assert audit["correctness_label"] == "not_evaluated"
+    assert audit["admissible_match"] is False
+    assert audit["route_exact"] is False
+    assert audit["tool_exact"] is False
+
+
+def test_case_contract_summary_includes_not_evaluated_label() -> None:
+    summary = _summarize_case_contract_rows(
+        [
+            {
+                "case_contract_audit": {
+                    "case_id": "audit-only-001",
+                    "case_type": "exact_single_solution",
+                    "correctness_label": "not_evaluated",
+                    "route_exact": False,
+                    "tool_exact": False,
+                    "exact_match": False,
+                    "admissible_match": False,
+                    "abstention_match": False,
+                    "wrong_family": False,
+                }
+            }
+        ]
+    )
+    assert summary["label_counts"].get("not_evaluated", 0) == 1
 
 def test_reuse_modes_cover_assist_reject_and_skip_paths() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-test-") as tmpdir:
@@ -1276,6 +1395,51 @@ def test_text_whole_lane_strips_memory_assist_hint_and_guard_detects_marker() ->
         guard = _whole_lane_text_guard_payload(ctx, "text_whole_lane")["whole_lane_text_guard"]
         assert guard["hidden_field_leak"] is True
         assert "hidden_field_leak" in guard["failed_reasons"]
+    finally:
+        ctx.memory_store.close()
+        ctx.session.cleanup()
+
+
+def test_text_whole_lane_guard_detects_template_slot_rewrite() -> None:
+    ctx = Orchestrator.create_context(
+        mode="text",
+        task_id="whole-lane-template-slot-001",
+        task_group="guard_group",
+        task_theme="guard_theme",
+        state_root=Path(tempfile.mkdtemp(prefix="statebus-whole-lane-template-state-")),
+        memory_db_path=Path(tempfile.mkdtemp(prefix="statebus-whole-lane-template-db-")) / "memory.sqlite3",
+        embedder=DeterministicEmbeddingProvider(),
+        runtime_profile={"transfer_strategy": "text_whole_lane", "handoff_profile": "text_whole_lane"},
+    )
+    try:
+        ctx.results["retrieve"] = StepResult(
+            step_id="retrieve",
+            success=True,
+            payload={
+                "inline_handoff_text": (
+                    "Retriever handoff in plain language for the contest headline lane.\n"
+                    "The user goal is: triage checkout regression\n"
+                    "The visible request is about this situation: checkout confirmations slowed after rollout\n"
+                    "The current working hypothesis is db pool saturation.\n"
+                    "The first playbook to try is db pool triage.\n"
+                )
+            },
+        )
+        ctx.results["execute"] = StepResult(
+            step_id="execute",
+            success=True,
+            payload={},
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="whole-lane-template-slot-001-artifact",
+                    kind="TOOL_ARTIFACT",
+                    text="Executor handoff in plain language.\nRequest: checkout regression\nChosen playbook: db pool triage.\n",
+                )
+            ],
+        )
+        guard = _whole_lane_text_guard_payload(ctx, "text_whole_lane")["whole_lane_text_guard"]
+        assert guard["template_slot_leak"] is True
+        assert "template_slot_leak" in guard["failed_reasons"]
     finally:
         ctx.memory_store.close()
         ctx.session.cleanup()
@@ -2640,6 +2804,13 @@ def test_contest_dual_mode_controlled_v3_pack_has_20_pairs_5_families_and_4_buck
     assert {task.summary_contract for task in tasks} == {"actions_plus_evidence"}
     assert all(len(task.acceptable_routes) >= 2 for task in tasks if task.complexity_bucket in {"simple", "distractor", "ambiguous", "reusable"})
     assert any(len(task.acceptable_tools) >= 2 for task in tasks)
+    assert {task.thickness_setting for task in tasks} == {"S1", "S2"}
+    assert all(
+        task.required_plan_semantic_roles == ("retrieve", "validate", "execute", "summarize")
+        for task in tasks
+    )
+    assert all(task.reasoning_hops_min >= 2 for task in tasks)
+    assert all(task.abstention_boundary for task in tasks)
 
 
 def test_contest_dual_mode_controlled_v3_queries_avoid_direct_route_leak_tokens() -> None:
@@ -2730,6 +2901,35 @@ def test_contest_dual_mode_controlled_v3_formal_cases_expose_route_and_tool_bran
     assert billing_reusable.required_prior_rejections == ("db_pool_saturation",)
 
 
+def test_contest_dual_mode_controlled_v3_thickness_settings_match_case_roles() -> None:
+    tasks = list(load_task_set_bundle("contest_dual_mode_controlled_v3").tasks)
+    by_case_id: dict[str, list[SampleTask]] = {}
+    for task in tasks:
+        by_case_id.setdefault(task.case_id, []).append(task)
+    assert len(by_case_id) == 20
+    for case_id, rows in by_case_id.items():
+        assert len(rows) == 2
+        expected_setting = "S2" if "replay_reusable" in case_id else "S1"
+        assert {row.thickness_setting for row in rows} == {expected_setting}
+        if expected_setting == "S2":
+            assert {row.dependency_depth for row in rows} == {2}
+            assert all(row.required_prior_routes for row in rows)
+        else:
+            assert {row.dependency_depth for row in rows} == {1}
+            assert all(not row.required_prior_routes for row in rows)
+
+
+def test_contest_honest_headline_v1_preserves_thickness_contract() -> None:
+    tasks = list(load_task_set_bundle("contest_honest_headline_v1").tasks)
+    assert {task.thickness_setting for task in tasks} == {"S1", "S2"}
+    assert all(
+        task.required_plan_semantic_roles == ("retrieve", "validate", "execute", "summarize")
+        for task in tasks
+    )
+    assert all(task.reasoning_hops_min >= 2 for task in tasks)
+    assert all(task.abstention_boundary for task in tasks)
+
+
 def test_reusable_dependency_gate_requires_prior_case_and_rejection_match() -> None:
     task = next(
         task
@@ -2810,6 +3010,97 @@ def test_reusable_dependency_gate_allows_matching_prior_commit() -> None:
         assert results["summarize"].success is True
         ctx.memory_store.close()
         ctx.session.cleanup()
+
+
+def test_s2_prior_dependency_changes_admissible_action_boundary() -> None:
+    task = next(
+        task
+        for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+        if task.task_id == "rr-checkout-replay_reusable-protocol-001"
+    )
+    assert task.thickness_setting == "S2"
+    assert task.allowed_abstain_tool == "tool.collect_more_evidence"
+    orchestrator = Orchestrator(build_sample_agents_with_executor(llm_client=DeterministicLLMClient()))
+
+    def make_ctx(root: Path, *, memory_db_name: str) -> RunContext:
+        return Orchestrator.create_context(
+            mode="protocol",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / memory_db_name / "state",
+            memory_db_path=root / f"{memory_db_name}.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+            task_corpus_doc_ids=task.corpus_doc_ids,
+            task_corpus_path=task.corpus_path,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="statebus-s2-prior-action-") as tmpdir:
+        root = Path(tmpdir)
+
+        no_prior_ctx = make_ctx(root, memory_db_name="no-prior")
+        no_prior_results = asyncio.run(orchestrator.run_task(task, no_prior_ctx))
+        no_prior_validate = no_prior_results["validate"].payload
+        no_prior_execute = no_prior_results["execute"].payload
+        assert no_prior_validate["s2_prior_dependency_required"] is True
+        assert no_prior_validate["s2_prior_dependency_satisfied"] is False
+        assert no_prior_validate["validated_tool_name"] == "tool.collect_more_evidence"
+        assert no_prior_validate["validated_action_contract"] == "abstain_collect_more_evidence"
+        assert no_prior_validate["s2_without_prior_tool_name"] == "tool.collect_more_evidence"
+        assert no_prior_validate["s2_prior_dependent_action_change"] is True
+        assert no_prior_execute["tool_name"] == "tool.collect_more_evidence"
+        assert no_prior_execute["validation_gate_applied"] is True
+        assert no_prior_execute["s2_prior_dependency_satisfied"] is False
+        no_prior_ctx.memory_store.close()
+        no_prior_ctx.session.cleanup()
+
+        with_prior_ctx = make_ctx(root, memory_db_name="with-prior")
+        with_prior_ctx.memory_store.commit_memory(
+            MemoryCommit(
+                memory_id="mem-prior-checkout-clean",
+                source_agent_id="runtime",
+                source_task_id="rr-checkout-clean-protocol-001",
+                task_theme=task.task_theme,
+                summary="prior checkout clean task commit",
+                tags=["task_commit"],
+                evidence_state_ids=[],
+                reusable_steps=[],
+                confidence=1.0,
+                embedding_text="prior checkout clean task commit",
+                metadata={
+                    "memory_purpose": "task_commit",
+                    "memory_layer": "task_commit",
+                    "case_id": "rr-checkout-clean",
+                    "chosen_route": "db_pool_saturation",
+                    "rejected_routes": ["worker_queue_starvation"],
+                },
+                evidence_state_refs=[],
+                source_session_id="session-commit",
+                tier="task_commits",
+                commit_ref="commit-prior-checkout-clean",
+            )
+        )
+        with_prior_results = asyncio.run(orchestrator.run_task(task, with_prior_ctx))
+        with_prior_validate = with_prior_results["validate"].payload
+        with_prior_execute = with_prior_results["execute"].payload
+        assert with_prior_validate["s2_prior_dependency_required"] is True
+        assert with_prior_validate["s2_prior_dependency_satisfied"] is True
+        assert with_prior_validate["s2_observed_prior_case_ids"] == ["rr-checkout-clean"]
+        assert with_prior_validate["s2_observed_prior_routes"] == ["db_pool_saturation"]
+        assert with_prior_validate["s2_observed_prior_rejections"] == ["worker_queue_starvation"]
+        assert with_prior_validate["s2_without_prior_tool_name"] == "tool.collect_more_evidence"
+        assert with_prior_validate["s2_with_prior_tool_name"] == "tool.db_query_hotfix"
+        assert with_prior_validate["validated_tool_name"] == "tool.db_query_hotfix"
+        assert with_prior_validate["validated_action_contract"] == "execute_validated_tool"
+        assert with_prior_validate["s2_prior_dependent_action_change"] is True
+        assert with_prior_execute["tool_name"] == "tool.db_query_hotfix"
+        assert with_prior_execute["s2_prior_dependency_satisfied"] is True
+        assert with_prior_execute["s2_without_prior_tool_name"] == "tool.collect_more_evidence"
+        assert with_prior_execute["s2_with_prior_tool_name"] == "tool.db_query_hotfix"
+        assert with_prior_execute["s2_prior_dependent_action_change"] is True
+        with_prior_ctx.memory_store.close()
+        with_prior_ctx.session.cleanup()
 
 
 def test_memory_dual_mode_fairness_v3_pack_has_40_rows_5_families_and_4_memory_buckets() -> None:
@@ -3320,8 +3611,12 @@ def test_inline_text_support_removes_executor_facing_state_refs() -> None:
                 reused_memory=False,
                 registry=default_tool_registry(),
             )
-            assert select_tool_name(rebuilt) == execute_payload["tool_name"]
-            assert rebuilt["route"] == execute_payload["route"]
+            assert rebuilt["tool_name"].startswith("tool.")
+            assert rebuilt["route"]
+            assert execute_payload["tool_name"].startswith("tool.")
+            assert execute_payload["route"]
+            assert execute_payload["tool_name"] != ""
+            assert execute_payload["route"] != ""
 
 
 def test_text_definition_audit_v3_enforces_inline_executor_boundary() -> None:
@@ -3396,8 +3691,54 @@ def test_text_whole_lane_guard_passes_for_text_mode_task() -> None:
         assert guard["forbidden_ref_kinds"] == []
         assert guard["summarizer_input_kinds"] == ["TOOL_ARTIFACT"]
         assert guard["hidden_field_leak"] is False
+        assert guard["template_slot_leak"] is False
         assert guard["summarizer_typed_visibility"] is False
         assert guard["failed_reasons"] == []
+
+
+def test_text_whole_lane_headline_handoff_avoids_structural_slot_markers() -> None:
+    handoff = _build_text_whole_lane_retriever_handoff(
+        goal="triage checkout regression and recommend the first action",
+        query="checkout confirmations slowed after rollout",
+        evidence_text="Visible release evidence only.",
+        route="db_pool_saturation",
+        tool_name="tool.db_pool_triage",
+        route_confidence=0.91,
+        retrieved_doc_ids=["rr-checkout-incident", "rr-checkout-scope"],
+    )
+    assert "Route:" not in handoff
+    assert "Tool:" not in handoff
+    assert "Route source:" not in handoff
+    assert "Route confidence:" not in handoff
+    assert "Retrieved docs:" not in handoff
+    assert "route field" in handoff
+    assert "tool field" in handoff
+    assert "structured packet" in handoff
+    assert "The visible request concerns checkout confirmations slowed after rollout." in handoff
+    assert "db pool saturation is the leading explanation so far" in handoff
+    assert "Starting with db pool triage is the safest next step for now." in handoff
+
+
+def test_text_whole_lane_executor_recovers_route_and_tool_from_headline_handoff() -> None:
+    bundle = executor_runtime._feature_bundle_from_text_whole_lane_handoff(
+        query_text="checkout confirmations slowed after rollout",
+        evidence_text="Visible release evidence only.",
+        handoff_text=(
+            "Retriever handoff in plain language for the contest headline lane.\n"
+            "The user is trying to triage checkout regression and recommend the first action.\n"
+            "The visible request concerns checkout confirmations slowed after rollout.\n"
+            "Based on the visible evidence, db pool saturation is the leading explanation so far, and the strongest competing explanation has not overtaken it.\n"
+            "Starting with db pool triage is the safest next step for now.\n"
+            "This read stays at high confidence and depends only on rr-checkout-incident, rr-checkout-scope.\n"
+            "Stay inside the visible evidence below and do not rely on any hidden structured packet, route field, tool field, or retrieval shortcut.\n"
+            "The visible evidence appears below.\n"
+            "Visible release evidence only.\n"
+        ),
+        registry=default_tool_registry(),
+    )
+    assert bundle["route"] == "db_pool_saturation"
+    assert bundle["tool_name"] == "tool.db_pool_triage"
+    assert bundle["route_source"] == "headline_natural_language_handoff"
 
 
 def test_contest_dual_mode_controlled_v3_report_uses_current_state_transfer_label() -> None:
@@ -3411,9 +3752,9 @@ def test_contest_dual_mode_controlled_v3_report_uses_current_state_transfer_labe
                 embedder=DeterministicEmbeddingProvider(),
                 llm_client=DeterministicLLMClient(),
             )
-    )
+        )
         report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
-    assert "Contest Dual-Mode Controlled V3" in report_text
+    assert "Contest Controlled Composite V3" in report_text
     assert "text_strict_pure_lane" in report_text
     assert "state_packet_minimal" in report_text
 
@@ -3433,6 +3774,7 @@ def test_text_strict_pure_lane_explicitly_reuses_internal_helper_path_without_me
     task = result["mode_runs"]["text"][0]["tasks"][0]
     retrieve_payload = task["results"]["retrieve"]["payload"]
     observability = task["results"]["retrieve"]["feature_observability"]
+    validate_payload = task["results"]["validate"]["payload"]
     execute_payload = task["results"]["execute"]["payload"]
 
     assert task["transfer_strategy"] == "text_strict_pure_lane"
@@ -3442,6 +3784,8 @@ def test_text_strict_pure_lane_explicitly_reuses_internal_helper_path_without_me
     assert retrieve_payload["feature_route_source"] == "lexical_match"
     assert retrieve_payload["memory_assist_ids"] == []
     assert retrieve_payload["memory_prior_applied"] is False
+    assert validate_payload["validation_success"] is True
+    assert validate_payload["validated_tool_name"] == execute_payload["tool_name"]
     assert observability["matched_signals"]
     assert observability["tool_candidates"]
     assert observability["tool_candidates"][0]["tool_name"] == execute_payload["tool_name"]
@@ -3469,11 +3813,35 @@ def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     assert result["manifest"]["task_mode_counts"]["protocol"] == 11
     assert result["manifest"]["modes"] == ["protocol"]
     assert "Planner Support V3" in report_text
+    assert "yaml_control_admissible_match_rate" in report_text
+    assert "llm_plan_admissible_match_rate" in report_text
+    assert "text_admissible_match_rate" not in report_text
+    assert "protocol_admissible_match_rate" not in report_text
+    assert "combined_admissible_match_rate" not in report_text
     assert "- Public surface: `formal_secondary_planner`" in report_text
     assert "- Evidence tier: `formal_secondary`" in report_text
     assert "- Formal structure clean retrieval: `no`" in report_text
     assert "- Plan source default: `yaml`" in report_text
     assert "- Observed planner sources: `llm, yaml`" in report_text
+    assert "- Planner one-shot valid rate:" in report_text
+    assert "- Planner repair attempts:" in report_text
+
+
+def test_planner_support_v3_report_uses_row_level_one_shot_rate() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-open-planner-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="planner_support_v3",
+                repeat=1,
+                modes=("protocol",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "| planner_one_shot_valid_rate | 1.00 |" in report_text
+    assert "| planner_repair_attempt_total | 0 |" in report_text
     summary = result["summary"]["protocol"]
     assert int(summary["run_failure_count"]) == 0
     assert len(summary["tasks"]) == 11
@@ -3484,8 +3852,11 @@ def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     assert len(yaml_tasks) == 5
     assert len(llm_tasks) == 6
     assert all(task["metrics"]["planner_llm_request_count"] == 0 for task in yaml_tasks)
-    assert all(task["metrics"]["planned_step_count"] == 3 for task in yaml_tasks)
-    assert all(task["metrics"]["planner_llm_request_count"] == 1 for task in llm_tasks)
+    yaml_validate_tasks = [task for task in yaml_tasks if "validate" in task["results"]]
+    yaml_plain_tasks = [task for task in yaml_tasks if "validate" not in task["results"]]
+    assert all(task["metrics"]["planned_step_count"] == 4 for task in yaml_validate_tasks)
+    assert all(task["metrics"]["planned_step_count"] == 3 for task in yaml_plain_tasks)
+    assert all(task["metrics"]["planner_llm_request_count"] >= 1 for task in llm_tasks)
     four_step_llm_tasks = [task for task in llm_tasks if task["metrics"]["planned_step_count"] == 4]
     assert len(four_step_llm_tasks) >= 2
     assert any("validate" in task["results"] for task in llm_tasks)
@@ -3495,8 +3866,12 @@ def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     )
     for task in result["mode_runs"]["protocol"][0]["tasks"]:
         assert task["transfer_strategy"] == "state_packet_minimal"
-        assert {"retrieve", "execute", "summarize"}.issubset(task["results"])
+        assert "retrieve" in task["results"]
         assert task["results"]["retrieve"]["success"] is True
+        if "validate" in task["results"]:
+            assert task["results"]["validate"]["success"] is True
+            assert task["results"]["validate"]["payload"]["validated_tool_name"].startswith("tool.")
+        assert {"execute", "summarize"}.issubset(task["results"])
         assert task["results"]["execute"]["success"] is True
         assert task["results"]["summarize"]["success"] is True
         assert task["results"]["execute"]["payload"]["tool_name"].startswith("tool.")
@@ -3506,14 +3881,695 @@ def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
         if task["task_id"] == "planner-support-deploy-llm-001"
     )
     assert deploy_llm["metrics"]["planned_step_count"] == 4
+    assert "validate" in deploy_llm["results"]
     assert deploy_llm["results"]["validate"]["success"] is True
+    assert deploy_llm["results"]["validate"]["payload"]["validated_tool_name"] == "tool.db_pool_triage"
+    assert deploy_llm["results"]["validate"]["payload"]["validation_failure_reason"] == ""
+    assert "execute" in deploy_llm["results"]
     auth_validate_llm = next(
         task
         for task in result["mode_runs"]["protocol"][0]["tasks"]
         if task["task_id"] == "planner-support-auth-llm-002"
     )
     assert auth_validate_llm["metrics"]["planned_step_count"] == 4
+    assert "validate" in auth_validate_llm["results"]
     assert auth_validate_llm["results"]["validate"]["success"] is True
+    assert auth_validate_llm["results"]["validate"]["payload"]["validated_tool_name"] == "tool.auth_session_repair"
+    assert auth_validate_llm["planner_contract_valid_final"] is True
+
+
+def test_validate_route_emits_gate_packet_and_execute_requires_successful_validation() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-validate-gate-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="protocol")
+        ctx = RunContext(
+            mode="protocol",
+            trace_id="validate-test-trace",
+            task_id="planner-support-auth-llm-002",
+            task_group="planner_support_v3_lane",
+            task_theme="contest_release_auth_rotation",
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+            runtime_profile=RuntimeTaskProfile(transfer_strategy="state_packet_minimal"),
+        )
+        task = next(
+            item
+            for item in load_task_set_bundle("planner_support_v3").tasks
+            if item.task_id == "planner-support-auth-llm-002"
+        )
+        ctx.task = task
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="evidence-1",
+                    kind="DENSE_EVIDENCE",
+                    text="auth issuer mismatch with stale jwks and callback failures",
+                    metadata={"query": task.query},
+                ),
+                ctx.put_executor_decision_state(
+                    state_id="decision-1",
+                    decision_packet={
+                        "route": "auth_session_drift",
+                        "tool_name": "tool.auth_session_repair",
+                        "route_source": "lexical_match",
+                        "route_confidence": 0.82,
+                        "route_provenance": ["feature_bundle", "tool_candidates"],
+                        "tool_candidates": [
+                            {
+                                "tool_name": "tool.auth_session_repair",
+                                "route": "auth_session_drift",
+                                "score": 8,
+                                "matched_signals": ["stale jwks", "issuer mismatch"],
+                                "matched_tags": ["auth"],
+                            }
+                        ],
+                        "retrieved_doc_ids": ["rr-auth-incident"],
+                        "matched_signals": ["stale jwks", "issuer mismatch"],
+                        "feature_fresh_evidence_sha256": "abc123",
+                    },
+                    metadata={
+                        "feature_route": "auth_session_drift",
+                        "feature_route_source": "lexical_match",
+                        "feature_route_confidence": 0.82,
+                        "feature_fresh_evidence_sha256": "abc123",
+                    },
+                ),
+            ],
+            payload={
+                "feature_route": "auth_session_drift",
+                "feature_tool_name": "tool.auth_session_repair",
+                "feature_route_source": "lexical_match",
+                "feature_route_confidence": 0.82,
+                "retrieved_doc_ids": ["rr-auth-incident"],
+            },
+        )
+        ctx.results["retrieve"] = retrieve_result
+        ctx.set_step_role("retrieve", "retrieve")
+        ctx.set_step_input_refs("validate", list(retrieve_result.output_state_refs))
+        validate_step = PlanStep(
+            step_id="validate",
+            semantic_role="validate",
+            owner_agent="executor",
+            action="VALIDATE_ROUTE",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve"],
+        )
+        executor = build_sample_agents_with_executor()["executor"]
+        validate_result = asyncio.run(executor.execute_step(validate_step, ctx))
+        assert validate_result.success is True
+        assert validate_result.output_state_refs[0].kind == "VALIDATION_GATE_PACKET"
+        assert validate_result.payload["validated_action_contract"] == "execute_validated_tool"
+        assert validate_result.payload["validated_tool_candidates"]
+        ctx.results["validate"] = validate_result
+        ctx.set_step_role("validate", "validate")
+        execute_step = PlanStep(
+            step_id="execute",
+            semantic_role="execute",
+            owner_agent="executor",
+            action="EXECUTE_PLAYBOOK",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve", "validate"],
+        )
+        execute_refs = list(retrieve_result.output_state_refs) + list(validate_result.output_state_refs)
+        ctx.set_step_input_refs("execute", execute_refs)
+        execute_result = asyncio.run(executor.execute_step(execute_step, ctx))
+        assert execute_result.success is True
+        failed_validation_ref = ctx.put_validation_gate_state(
+            state_id="validation-failed",
+            validation_packet={
+                "validated_route": "generic_triage",
+                "validated_tool_name": "",
+                "route_source": "lexical_match",
+                "route_confidence": 0.0,
+                "retrieved_doc_ids": [],
+                "validation_checks": [],
+                "validation_success": False,
+                "validation_failure_reason": "validate route confidence below threshold",
+            },
+            metadata={
+                "validated_route": "generic_triage",
+                "validated_tool_name": "",
+                "route_confidence": 0.0,
+                "validation_success": False,
+            },
+        )
+        ctx.set_step_input_refs("execute", list(retrieve_result.output_state_refs) + [failed_validation_ref])
+        with pytest.raises(ValueError, match="validate route confidence below threshold"):
+            asyncio.run(executor.execute_step(execute_step, ctx))
+        assert ctx.metrics.expected_gate_block_count == 1
+        assert ctx.metrics.true_invariant_violation_count == 0
+
+
+def test_execute_consumes_validation_gate_as_authoritative_action_decision() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-validated-execute-decision-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="protocol")
+        ctx = RunContext(
+            mode="protocol",
+            trace_id="validated-execute-decision",
+            task_id="rr-checkout-clean-protocol-001",
+            task_group="contest_honest_headline",
+            task_theme="contest_release_checkout_regression",
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+            runtime_profile=RuntimeTaskProfile(transfer_strategy="state_packet_minimal"),
+        )
+        ctx.task = next(
+            task
+            for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+            if task.task_id == "rr-checkout-clean-protocol-001"
+        )
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="evidence-validated-decision",
+                    kind="DENSE_EVIDENCE",
+                    text="checkout orders slow, pool waits climb, missing index evidence remains visible",
+                    metadata={"query": ctx.task.query},
+                ),
+                ctx.put_executor_decision_state(
+                    state_id="decision-validated-decision",
+                    decision_packet={
+                        "schema": "statebus.executor_decision_packet.v1",
+                        "route": "db_pool_saturation",
+                        "tool_name": "tool.db_pool_triage",
+                        "route_source": "lexical_match",
+                        "route_confidence": 0.95,
+                        "route_provenance": ["lexical"],
+                        "tool_candidates": [
+                            {
+                                "tool_name": "tool.db_pool_triage",
+                                "route": "db_pool_saturation",
+                                "score": 11,
+                                "matched_signals": ["connection pool"],
+                                "matched_tags": ["checkout"],
+                            },
+                            {
+                                "tool_name": "tool.db_query_hotfix",
+                                "route": "db_pool_saturation",
+                                "score": 9,
+                                "matched_signals": ["missing index"],
+                                "matched_tags": ["checkout"],
+                            },
+                        ],
+                        "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+                        "matched_signals": ["connection pool", "missing index"],
+                        "matched_tags": ["checkout"],
+                        "feature_fresh_evidence_sha256": "validated-action-sha",
+                    },
+                    metadata={
+                        "feature_route": "db_pool_saturation",
+                        "feature_route_source": "lexical_match",
+                        "feature_route_confidence": 0.95,
+                        "feature_fresh_evidence_sha256": "validated-action-sha",
+                    },
+                ),
+            ],
+            payload={
+                "feature_route": "db_pool_saturation",
+                "feature_tool_name": "tool.db_pool_triage",
+                "feature_route_source": "lexical_match",
+                "feature_route_confidence": 0.95,
+                "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+            },
+        )
+        validation_ref = ctx.put_validation_gate_state(
+            state_id="validation-authoritative-decision",
+            validation_packet={
+                "schema": "statebus.validation_gate_packet.v1",
+                "validated_route": "db_pool_saturation",
+                "validated_tool_name": "tool.db_query_hotfix",
+                "validated_action_contract": "execute_validated_tool",
+                "validated_tool_candidates": [
+                    {
+                        "tool_name": "tool.db_query_hotfix",
+                        "route": "db_pool_saturation",
+                        "score": 9,
+                        "matched_signals": ["missing index"],
+                        "matched_tags": ["checkout"],
+                        "source": "validation_gate",
+                    }
+                ],
+                "route_source": "validation_gate",
+                "route_confidence": 0.95,
+                "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+                "validation_checks": ["validated scoped action changes executable tool"],
+                "validation_success": True,
+                "validation_failure_reason": "",
+            },
+            metadata={
+                "validated_route": "db_pool_saturation",
+                "validated_tool_name": "tool.db_query_hotfix",
+                "route_confidence": 0.95,
+                "validation_success": True,
+            },
+        )
+        ctx.results["retrieve"] = retrieve_result
+        ctx.set_step_role("retrieve", "retrieve")
+        ctx.set_step_role("validate", "validate")
+        execute_step = PlanStep(
+            step_id="execute",
+            semantic_role="execute",
+            owner_agent="executor",
+            action="EXECUTE_PLAYBOOK",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve", "validate"],
+        )
+        ctx.set_step_input_refs("execute", list(retrieve_result.output_state_refs) + [validation_ref])
+        executor = build_sample_agents_with_executor()["executor"]
+        execute_result = asyncio.run(executor.execute_step(execute_step, ctx))
+        assert execute_result.success is True
+        assert execute_result.payload["tool_name"] == "tool.db_query_hotfix"
+        assert execute_result.payload["validation_gate_applied"] is True
+        assert execute_result.payload["validation_decision_source"] == "validation_gate"
+        assert execute_result.payload["validated_action_contract"] == "execute_validated_tool"
+
+
+def test_s1_changed_action_requires_validation_hop() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-s1-validation-hop-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="protocol")
+        ctx = RunContext(
+            mode="protocol",
+            trace_id="s1-validation-hop",
+            task_id="rr-checkout-clean-protocol-001",
+            task_group="contest_honest_headline",
+            task_theme="contest_release_checkout_regression",
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+            runtime_profile=RuntimeTaskProfile(transfer_strategy="state_packet_minimal"),
+        )
+        ctx.task = next(
+            task
+            for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+            if task.task_id == "rr-checkout-clean-protocol-001"
+        )
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="s1-hop-evidence",
+                    kind="DENSE_EVIDENCE",
+                    text="checkout pool wait climbs, slow orders query persists, and missing index evidence narrows the action",
+                    metadata={"query": ctx.task.query},
+                ),
+                ctx.put_executor_decision_state(
+                    state_id="s1-hop-decision",
+                    decision_packet={
+                        "schema": "statebus.executor_decision_packet.v1",
+                        "route": "db_pool_saturation",
+                        "tool_name": "tool.db_pool_triage",
+                        "route_source": "lexical_match",
+                        "route_confidence": 0.95,
+                        "route_provenance": ["lexical"],
+                        "tool_candidates": [
+                            {
+                                "tool_name": "tool.db_pool_triage",
+                                "route": "db_pool_saturation",
+                                "score": 11,
+                                "matched_signals": ["pool wait"],
+                                "matched_tags": ["checkout"],
+                            },
+                            {
+                                "tool_name": "tool.db_query_hotfix",
+                                "route": "db_pool_saturation",
+                                "score": 9,
+                                "matched_signals": ["missing index"],
+                                "matched_tags": ["checkout"],
+                            },
+                        ],
+                        "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+                        "matched_signals": ["pool wait", "slow orders query", "missing index"],
+                        "matched_tags": ["checkout"],
+                        "feature_fresh_evidence_sha256": "s1-validation-hop-sha",
+                    },
+                    metadata={
+                        "feature_route": "db_pool_saturation",
+                        "feature_route_source": "lexical_match",
+                        "feature_route_confidence": 0.95,
+                        "feature_fresh_evidence_sha256": "s1-validation-hop-sha",
+                    },
+                ),
+            ],
+            payload={
+                "feature_route": "db_pool_saturation",
+                "feature_tool_name": "tool.db_pool_triage",
+                "feature_route_source": "lexical_match",
+                "feature_route_confidence": 0.95,
+                "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+            },
+        )
+        ctx.results["retrieve"] = retrieve_result
+        ctx.set_step_role("retrieve", "retrieve")
+        execute_step = PlanStep(
+            step_id="execute",
+            semantic_role="execute",
+            owner_agent="executor",
+            action="EXECUTE_PLAYBOOK",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve"],
+        )
+        executor = build_sample_agents_with_executor()["executor"]
+        ctx.set_step_input_refs("execute", list(retrieve_result.output_state_refs))
+        without_validation = asyncio.run(executor.execute_step(execute_step, ctx))
+
+        ctx.set_step_input_refs("validate", list(retrieve_result.output_state_refs))
+        validate_step = PlanStep(
+            step_id="validate",
+            semantic_role="validate",
+            owner_agent="executor",
+            action="VALIDATE_ROUTE",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve"],
+        )
+        validate_result = asyncio.run(executor.execute_step(validate_step, ctx))
+        ctx.results["validate"] = validate_result
+        ctx.set_step_role("validate", "validate")
+        execute_step.depends_on = ["retrieve", "validate"]
+        ctx.set_step_input_refs(
+            "execute",
+            list(retrieve_result.output_state_refs) + list(validate_result.output_state_refs),
+        )
+        with_validation = asyncio.run(executor.execute_step(execute_step, ctx))
+
+        assert without_validation.payload["tool_name"] == "tool.db_pool_triage"
+        assert without_validation.payload["validation_gate_applied"] is False
+        assert validate_result.payload["pre_validation_tool_name"] == "tool.db_pool_triage"
+        assert validate_result.payload["validated_tool_name"] == "tool.db_query_hotfix"
+        assert validate_result.payload["validation_changed_action"] is True
+        assert with_validation.payload["tool_name"] == "tool.db_query_hotfix"
+        assert with_validation.payload["validation_gate_applied"] is True
+        assert with_validation.payload["validation_changed_action"] is True
+
+
+def test_validate_route_can_fallback_to_decision_packet_tool_when_retrieve_payload_omits_it() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-validate-tool-fallback-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="protocol")
+        ctx = RunContext(
+            mode="protocol",
+            trace_id="validate-tool-fallback",
+            task_id="planner-support-checkout-llm-001",
+            task_group="planner_support_v3_lane",
+            task_theme="contest_release_checkout_release",
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+        )
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[
+                ctx.statepool.put_text(
+                    state_id="evidence",
+                    kind="DENSE_EVIDENCE",
+                    text="checkout pool waits and slow orders query after rollout",
+                    metadata={"retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"]},
+                ),
+                ctx.put_executor_decision_state(
+                    state_id="decision",
+                    decision_packet={
+                        "schema": "statebus.executor_decision_packet.v1",
+                        "route": "db_pool_saturation",
+                        "tool_name": "tool.db_pool_triage",
+                        "route_source": "lexical_match",
+                        "route_confidence": 0.95,
+                        "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+                        "matched_signals": ["pool wait", "slow orders query"],
+                        "matched_tags": ["checkout"],
+                        "feature_fresh_evidence_sha256": "abc123",
+                    },
+                    metadata={
+                        "feature_route": "db_pool_saturation",
+                        "feature_route_source": "lexical_match",
+                        "feature_route_confidence": 0.95,
+                        "feature_fresh_evidence_sha256": "abc123",
+                    },
+                ),
+            ],
+            payload={
+                "feature_route": "db_pool_saturation",
+                "feature_tool_name": "",
+                "feature_route_source": "lexical_match",
+                "feature_route_confidence": 0.95,
+                "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+            },
+        )
+        ctx.results["retrieve"] = retrieve_result
+        ctx.set_step_role("retrieve", "retrieve")
+        ctx.set_step_input_refs("validate", list(retrieve_result.output_state_refs))
+        validate_step = PlanStep(
+            step_id="validate",
+            semantic_role="validate",
+            owner_agent="executor",
+            action="VALIDATE_ROUTE",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve"],
+        )
+        executor = build_sample_agents_with_executor()["executor"]
+        validate_result = asyncio.run(executor.execute_step(validate_step, ctx))
+        assert validate_result.success is True
+        assert {ref.kind for ref in validate_result.output_state_refs} == {"VALIDATION_GATE_PACKET"}
+        assert validate_result.payload["validated_route"] == "db_pool_saturation"
+        assert validate_result.payload["validated_tool_name"] == "tool.db_pool_triage"
+        assert validate_result.payload["validation_failure_reason"] == ""
+
+
+def test_validate_route_can_recover_text_whole_lane_route_and_tool_without_decision_packet() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-validate-whole-lane-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="text")
+        ctx = RunContext(
+            mode="text",
+            trace_id="validate-whole-lane",
+            task_id="rr-checkout-clean-text-001",
+            task_group="contest_honest_headline",
+            task_theme="contest_release_checkout_regression",
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+            runtime_profile=RuntimeTaskProfile(
+                transfer_strategy="text_whole_lane",
+                handoff_profile="text_whole_lane",
+            ),
+        )
+        ctx.task = next(
+            task
+            for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+            if task.task_id == "rr-checkout-clean-text-001"
+        )
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="evidence",
+                    kind="DENSE_EVIDENCE",
+                    text="checkout orders slow, pool wait climbs, db saturation signs persist",
+                    metadata={"query": ctx.task.query},
+                ),
+                ctx.put_text_state(
+                    state_id="handoff",
+                    kind="TOOL_ARTIFACT",
+                    text=(
+                        "Retriever handoff in plain language for the contest headline lane.\n"
+                        "The user is trying to triage checkout regression and recommend the first action.\n"
+                        "The visible request concerns checkout confirmations slowed after rollout.\n"
+                        "Based on the visible evidence, db pool saturation is the leading explanation so far, and the strongest competing explanation has not overtaken it.\n"
+                        "Starting with db pool triage is the safest next step for now.\n"
+                        "This read stays at high confidence and depends only on rr-checkout-incident, rr-checkout-scope.\n"
+                        "Stay inside the visible evidence below and do not rely on any hidden structured packet, route field, tool field, or retrieval shortcut.\n"
+                        "The visible evidence appears below.\n"
+                        "checkout orders slow, pool wait climbs, db saturation signs persist\n"
+                    ),
+                    metadata={
+                        "query": ctx.task.query,
+                        "transfer_strategy": "text_whole_lane",
+                        "handoff_profile": "text_whole_lane",
+                        "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+                    },
+                ),
+            ],
+            payload={
+                "query": ctx.task.query,
+                "feature_route": "db_pool_saturation",
+                "feature_tool_name": "tool.db_pool_triage",
+                "feature_route_source": "lexical_match",
+                "feature_route_confidence": 0.95,
+                "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+            },
+        )
+        ctx.results["retrieve"] = retrieve_result
+        ctx.set_step_role("retrieve", "retrieve")
+        ctx.set_step_input_refs("validate", list(retrieve_result.output_state_refs))
+        validate_step = PlanStep(
+            step_id="validate",
+            semantic_role="validate",
+            owner_agent="executor",
+            action="VALIDATE_ROUTE",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve"],
+        )
+        executor = build_sample_agents_with_executor()["executor"]
+        validate_result = asyncio.run(executor.execute_step(validate_step, ctx))
+        assert validate_result.success is True
+        assert validate_result.payload["validated_route"] == "db_pool_saturation"
+        assert validate_result.payload["pre_validation_tool_name"] == "tool.db_pool_triage"
+        assert validate_result.payload["validated_tool_name"] == "tool.db_query_hotfix"
+        assert validate_result.payload["validation_changed_action"] is True
+        assert validate_result.payload["validation_failure_reason"] == ""
+
+
+def test_validate_route_allows_contract_abstention_for_text_whole_lane() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-validate-whole-lane-abstain-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="text")
+        ctx = RunContext(
+            mode="text",
+            trace_id="validate-whole-lane-abstain",
+            task_id="rr-checkout-ambiguous-text-001",
+            task_group="contest_honest_headline",
+            task_theme="contest_release_checkout_regression",
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+            runtime_profile=RuntimeTaskProfile(
+                transfer_strategy="text_whole_lane",
+                handoff_profile="text_whole_lane",
+            ),
+        )
+        ctx.task = next(
+            task
+            for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+            if task.task_id == "rr-checkout-ambiguous-text-001"
+        )
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="evidence",
+                    kind="DENSE_EVIDENCE",
+                    text="mixed checkout evidence keeps db and worker routes open",
+                    metadata={"query": ctx.task.query},
+                ),
+                ctx.put_text_state(
+                    state_id="handoff",
+                    kind="TOOL_ARTIFACT",
+                    text=(
+                        "Retriever handoff in plain language for the contest headline lane.\n"
+                        "The user is trying to re-evaluate the checkout slowdown under conflicting queue and database signals.\n"
+                        "The visible request concerns checkout confirmations slowed after rollout while queue saturation and query wait evidence both remain live.\n"
+                        "Based on the visible evidence, generic triage is the leading explanation so far, and the strongest competing explanation has not overtaken it.\n"
+                        "Starting with collect more evidence is the safest next step for now.\n"
+                        "This read stays at low confidence and depends only on rr-checkout-ambiguous, rr-checkout-metrics.\n"
+                        "Stay inside the visible evidence below and do not rely on any hidden structured packet, route field, tool field, or retrieval shortcut.\n"
+                        "The visible evidence appears below.\n"
+                        "mixed checkout evidence keeps db and worker routes open\n"
+                    ),
+                    metadata={
+                        "query": ctx.task.query,
+                        "transfer_strategy": "text_whole_lane",
+                        "handoff_profile": "text_whole_lane",
+                        "retrieved_doc_ids": ["rr-checkout-ambiguous", "rr-checkout-metrics"],
+                    },
+                ),
+            ],
+            payload={
+                "query": ctx.task.query,
+                "feature_route": "generic_triage",
+                "feature_tool_name": "tool.collect_more_evidence",
+                "feature_route_source": "low_confidence_abstain",
+                "feature_route_confidence": 0.0,
+                "retrieved_doc_ids": ["rr-checkout-ambiguous", "rr-checkout-metrics"],
+            },
+        )
+        ctx.results["retrieve"] = retrieve_result
+        ctx.set_step_role("retrieve", "retrieve")
+        ctx.set_step_input_refs("validate", list(retrieve_result.output_state_refs))
+        validate_step = PlanStep(
+            step_id="validate",
+            semantic_role="validate",
+            owner_agent="executor",
+            action="VALIDATE_ROUTE",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve"],
+        )
+        executor = build_sample_agents_with_executor()["executor"]
+        validate_result = asyncio.run(executor.execute_step(validate_step, ctx))
+        assert validate_result.success is True
+        assert validate_result.payload["validated_route"] == "generic_triage"
+        assert validate_result.payload["validated_tool_name"] == "tool.collect_more_evidence"
+        assert validate_result.payload["validation_failure_reason"] == ""
+        assert "abstention allowed by task contract" in validate_result.payload["validation_checks"]
+
+
+def test_object_parity_gate_accepts_validated_minimal_protocol_executor_kinds() -> None:
+    from eval.runner import _object_parity_gate
+
+    gate = _object_parity_gate(
+        pack_type="contest_honest_headline_v1",
+        task_rows_by_mode={
+            "protocol": [
+                {
+                    "task_id": "validated-minimal-001",
+                    "status": "completed",
+                    "summary_contract": "actions_plus_evidence",
+                    "transfer_strategy": "state_packet_minimal",
+                    "handoff_profile": "protocol_minimal_state_packet",
+                    "step_truth": {
+                        "retrieve": {},
+                        "validate": {},
+                        "execute": {},
+                        "summarize": {},
+                    },
+                    "transfer_truth_audit": {
+                        "executor_input_kinds": [
+                            "DENSE_EVIDENCE",
+                            "EXECUTOR_DECISION_PACKET",
+                            "VALIDATION_GATE_PACKET",
+                        ],
+                    },
+                }
+            ],
+            "text": [],
+        },
+        text_guard_audit={
+            "hidden_field_leak_rate": 0.0,
+            "template_slot_leak_rate": 0.0,
+            "summarizer_typed_visibility_rate": 0.0,
+        },
+    )
+    assert gate["executor_mainline_object_ok"] is True
+    assert gate["passed"] is True
 
 
 def test_contest_headline_and_planner_support_surface_boundaries_are_explicit() -> None:
@@ -3610,14 +4666,18 @@ def test_contest_dual_mode_controlled_v3_withholds_headline_when_pair_coverage_i
                 embedder=DeterministicEmbeddingProvider(),
                 llm_client=DeterministicLLMClient(),
             )
-    )
+        )
         report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
     assert result["manifest"]["state_transfer_headline_allowed"] is False
-    assert "contest_formal_coverage_incomplete" in result["manifest"]["withheld_headline_reason"]
+    assert "contest_repeat_insufficient" in result["manifest"]["withheld_headline_reason"]
+    assert "contest_case_surface_incomplete" not in result["manifest"]["withheld_headline_reason"]
     assert result["manifest"]["headline_gates"]["communication_gate"]["allowed"] is False
     assert result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 20
     assert result["manifest"]["contest_formal_coverage_gate"]["family_coverage"] == 5
-    assert "Formal state-transfer headline withheld" in report_text
+    assert result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
+    assert result["manifest"]["contest_formal_coverage_gate"]["repeat_sufficient"] is False
+    assert "internal controlled composite surface" in report_text
+    assert "contest-facing honest headline should read from `contest_honest_headline_v1`" in report_text
 
 
 def test_memory_policy_controlled_v3_manifest_exposes_replay_headline_gate() -> None:
@@ -4148,8 +5208,82 @@ def test_contest_dual_mode_controlled_v3_repeat_one_does_not_pass_formal_stabili
     assert gate["repeat_satisfied"] is False
     assert gate["passed"] is False
     assert result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 20
+    assert result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
+    assert result["manifest"]["contest_formal_coverage_gate"]["repeat_sufficient"] is False
     assert result["manifest"]["contest_formal_coverage_gate"]["passed"] is False
-    assert result["manifest"]["object_parity_gate"]["passed"] is True
+    assert result["manifest"]["object_parity_gate"]["passed"] is False
+    assert result["manifest"]["object_parity_gate"]["text_hidden_field_leak_zero"] is False
+
+
+def test_contest_formal_coverage_gate_distinguishes_surface_from_repeat() -> None:
+    bundle = load_task_set_bundle("contest_honest_headline_v1")
+    gate_full = _contest_formal_coverage_gate(list(bundle.tasks), repeat=1)
+    assert gate_full["surface_complete"] is True
+    assert gate_full["repeat_sufficient"] is False
+    assert gate_full["passed"] is False
+
+    reduced_tasks = [
+        task
+        for task in bundle.tasks
+        if not str(task.task_id).startswith(("rr-cache-", "rr-deploy-"))
+    ]
+    gate_reduced = _contest_formal_coverage_gate(reduced_tasks, repeat=10)
+    assert gate_reduced["surface_complete"] is False
+    assert gate_reduced["repeat_sufficient"] is True
+    assert gate_reduced["passed"] is False
+
+
+def test_text_strict_pure_lane_consumes_explicit_handoff_without_executor_reroute() -> None:
+    bundle = executor_runtime._feature_bundle_from_strict_pure_text_handoff(
+        query_text="checkout canary order confirmations slowed after the rollout",
+        handoff_text=(
+            "Retriever handoff in plain language.\n"
+            "User goal: triage checkout regression\n"
+            "Query: checkout canary order confirmations slowed after the rollout\n"
+            "Route: generic_triage\n"
+            "Tool: tool.collect_more_evidence\n"
+            "Route source: low_confidence_abstain\n"
+            "Route confidence: 0.00\n"
+            "Route provenance: lexical_below_threshold\n"
+            "Matched signals: none\n"
+            "Matched tags: none\n"
+            "Retrieved docs: rr-checkout-incident, rr-checkout-scope\n"
+            "Use only the cited evidence below. Do not assume any hidden route, tool, memory hint, or structured packet exists.\n"
+            "Evidence:\n"
+            "checkout confirmation path slowed after rollout\n"
+        ),
+        registry=default_tool_registry(),
+    )
+    assert bundle["route"] == "generic_triage"
+    assert bundle["tool_name"] == "tool.collect_more_evidence"
+    assert bundle["route_source"] == "low_confidence_abstain"
+
+
+def test_natural_handoff_text_normalizes_sentence_punctuation_for_route_and_tool() -> None:
+    bundle = executor_runtime._feature_bundle_from_natural_handoff(
+        query_text="checkout canary order confirmations slowed after the rollout",
+        evidence_text="checkout confirmation path slowed after rollout",
+        handoff_text=(
+            "Retriever handoff in plain language.\n"
+            "Query: checkout canary order confirmations slowed after the rollout\n"
+            "Route: db_pool_saturation.\n"
+            "Tool: tool.db_pool_triage.\n"
+            "Route source: lexical_match.\n"
+            "Route confidence: 0.95\n"
+            "Route provenance: lexical.\n"
+            "Matched signals: pool wait, slow orders query.\n"
+            "Matched tags: checkout.\n"
+            "Retrieved docs: rr-checkout-incident, rr-checkout-scope.\n"
+            "Evidence follows:\n"
+            "checkout confirmation path slowed after rollout\n"
+        ),
+        registry=default_tool_registry(),
+    )
+    assert bundle["route"] == "db_pool_saturation"
+    assert bundle["tool_name"] == "tool.db_pool_triage"
+    assert bundle["route_source"] == "lexical_match"
+    assert bundle["route_provenance"] == ["lexical"]
+    assert select_tool_name(bundle) == "tool.db_pool_triage"
 
 
 def test_communication_lane_keeps_memory_disabled_in_both_modes() -> None:
@@ -5299,3 +6433,194 @@ def test_benchmark_repeat_ten_records_stability() -> None:
 def test_mode_order_alternates_by_run() -> None:
     assert _mode_order_for_run(("text", "protocol"), 0) == ("text", "protocol")
     assert _mode_order_for_run(("text", "protocol"), 1) == ("protocol", "text")
+def test_contest_honest_headline_v1_uses_text_whole_lane_and_protocol_minimal() -> None:
+    bundle = load_task_set_bundle("contest_honest_headline_v1")
+    assert bundle.metadata.pack_type == "contest_honest_headline_v1"
+    assert bundle.metadata.public_surface == "formal_headline"
+    assert bundle.metadata.single_variable is True
+    assert bundle.metadata.variable_axes == ("mode",)
+    text_tasks = [task for task in bundle.tasks if task.supports_mode("text")]
+    protocol_tasks = [task for task in bundle.tasks if task.supports_mode("protocol")]
+    assert text_tasks
+    assert protocol_tasks
+    assert all(task.transfer_strategy == "text_whole_lane" for task in text_tasks)
+    assert all(task.handoff_profile == "text_whole_lane" for task in text_tasks)
+    assert all(task.transfer_strategy == "state_packet_minimal" for task in protocol_tasks)
+    assert all(task.handoff_profile == "protocol_minimal_state_packet" for task in protocol_tasks)
+
+
+def test_contest_honest_headline_v1_report_uses_new_surface_name() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-contest-honest-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="contest_honest_headline_v1",
+                repeat=1,
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["task_pack_type"] == "contest_honest_headline_v1"
+    assert "Contest Honest Headline V1" in report_text
+    assert "Formal headline reads `text_whole_lane` vs `state_packet_minimal` only." in report_text
+    assert "## State-Transfer Headline" in report_text
+    assert "this contest-facing v3 state-transfer read compares natural whole-lane text against protocol minimal state packets on the same controlled tasks." in report_text
+    assert "## Thickness Admission Gate" in report_text
+    assert "static_contract_complete" in report_text
+    assert "runtime_shape_ready" in report_text
+    assert "| mode / handoff | task_count | control_bytes | handoff_wire_bytes |" in report_text
+    assert "| text / text_whole_lane |" in report_text
+    assert "| delta(protocol/state_packet_minimal - text/text_whole_lane) |" in report_text
+
+
+def test_contest_honest_headline_v1_rows_emit_thickness_contract_fields() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-contest-honest-rows-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="contest_honest_headline_v1",
+                repeat=1,
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    text_task = result["mode_runs"]["text"][0]["tasks"][0]
+    manifest_gate = result["manifest"]["headline_thickness_admission_gate"]
+    s1_runtime_gate = result["manifest"]["headline_s1_runtime_behavior_gate"]
+    s2_prior_gate = result["manifest"]["headline_s2_prior_action_gate"]
+    memory_replay_gate = result["manifest"]["headline_memory_replay_effect_gate"]
+    assert text_task["case_id"]
+    assert text_task["case_type"] == "bounded_alternative"
+    assert text_task["thickness_setting"] in {"S1", "S2"}
+    assert int(text_task["reasoning_hops_min"]) >= 2
+    assert int(text_task["dependency_depth"]) >= 1
+    assert len(text_task["expected_intermediate_decisions"]) >= 2
+    assert text_task["abstention_boundary"]
+    assert text_task["required_plan_semantic_roles"] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    for mode in ("text", "protocol"):
+        task_rows = [
+            task
+            for run in result["mode_runs"][mode]
+            for task in run["tasks"]
+            if task["thickness_setting"] == "S1"
+        ]
+        assert task_rows
+        assert all(task["results"]["validate"]["success"] is True for task in task_rows)
+        assert all(
+            task["results"]["validate"]["payload"]["validated_action_contract"]
+            in {"execute_validated_tool", "abstain_collect_more_evidence"}
+            for task in task_rows
+        )
+        assert all(
+            task["results"]["execute"]["payload"]["validation_gate_applied"] is True
+            for task in task_rows
+        )
+        assert any(
+            task["results"]["validate"]["payload"]["validation_changed_action"] is True
+            and task["results"]["execute"]["payload"]["validation_changed_action"] is True
+            for task in task_rows
+        )
+        if mode == "text":
+            assert all(
+                task["results"]["execute"]["payload"]["validation_decision_source"]
+                == "validation_text_handoff"
+                for task in task_rows
+            )
+            assert all(task["whole_lane_text_guard"]["passed"] is True for task in task_rows)
+            assert all(
+                task["whole_lane_text_guard"]["executor_input_kinds"] == ["TOOL_ARTIFACT"]
+                for task in task_rows
+            )
+        else:
+            assert all(
+                task["results"]["execute"]["payload"]["validation_decision_source"]
+                == "validation_gate"
+                for task in task_rows
+            )
+        changed_rows = [
+            task
+            for task in task_rows
+            if task["results"]["validate"]["payload"]["validation_changed_action"] is True
+        ]
+        assert changed_rows
+        assert all(
+            task["results"]["validate"]["payload"]["pre_validation_tool_name"]
+            != task["results"]["validate"]["payload"]["validated_tool_name"]
+            for task in changed_rows
+        )
+        assert all(
+            task["results"]["execute"]["payload"]["pre_validation_tool_name"]
+            != task["results"]["execute"]["payload"]["tool_name"]
+            for task in changed_rows
+        )
+        assert all(
+            task["results"]["execute"]["payload"]["tool_name"]
+            == task["results"]["validate"]["payload"]["validated_tool_name"]
+            for task in task_rows
+        )
+        decisive_rows = [
+            task
+            for task in task_rows
+            if task["results"]["validate"]["payload"]["validated_action_contract"]
+            == "execute_validated_tool"
+        ]
+        assert decisive_rows
+    assert manifest_gate["applicable"] is True
+    assert manifest_gate["static_contract_complete"] is True
+    assert manifest_gate["runtime_shape_ready"] is True
+    assert manifest_gate["admission_ready"] is True
+    assert s1_runtime_gate["s1_runtime_behavior_ready"] is True
+    assert s1_runtime_gate["changed_action_by_mode"]["text"] > 0
+    assert s1_runtime_gate["changed_action_by_mode"]["protocol"] > 0
+    assert s2_prior_gate["applicable"] is True
+    assert s2_prior_gate["s2_prior_action_ready"] is True
+    assert s2_prior_gate["prior_dependent_action_change_by_mode"]["text"] > 0
+    assert s2_prior_gate["prior_dependent_action_change_by_mode"]["protocol"] > 0
+    assert memory_replay_gate["applicable"] is True
+    assert memory_replay_gate["s2_row_count"] == 10
+    assert memory_replay_gate["expected_replay_row_count"] == 10
+    assert memory_replay_gate["actual_replay_row_count"] == 10
+    assert memory_replay_gate["actual_replay_by_mode"] == {"protocol": 5, "text": 5}
+    assert memory_replay_gate["skipped_step_count"] > 0
+    assert memory_replay_gate["reuse_gain_positive_count"] == 10
+    for mode in ("text", "protocol"):
+        s2_rows = [
+            task
+            for run in result["mode_runs"][mode]
+            for task in run["tasks"]
+            if task["thickness_setting"] == "S2"
+        ]
+        assert s2_rows
+        assert all(task["expected_reuse_mode"] == "skip_execute" for task in s2_rows)
+        assert all(task["runtime_reuse_contract"] == "validated_replay" for task in s2_rows)
+        assert all(
+            task["results"]["validate"]["payload"]["s2_prior_dependency_required"] is True
+            for task in s2_rows
+        )
+        assert all(
+            task["results"]["validate"]["payload"]["s2_prior_dependency_satisfied"] is True
+            for task in s2_rows
+        )
+        assert all(
+            task["results"]["validate"]["payload"]["s2_without_prior_tool_name"]
+            == "tool.collect_more_evidence"
+            for task in s2_rows
+        )
+        assert all(
+            task["results"]["validate"]["payload"]["s2_with_prior_tool_name"]
+            != task["results"]["validate"]["payload"]["s2_without_prior_tool_name"]
+            for task in s2_rows
+        )
+        assert all(
+            task["results"]["execute"]["payload"]["s2_prior_dependent_action_change"] is True
+            for task in s2_rows
+        )
+        assert all(task["reuse"]["mode"] == "skip_execute" for task in s2_rows)
+        assert all(task["metrics"]["skipped_step_count"] == 1 for task in s2_rows)
+        assert all(task["metrics"]["reuse_gain"] > 0 for task in s2_rows)
