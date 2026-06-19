@@ -1,0 +1,291 @@
+{
+  "task_count": 12,
+  "experiment": "local_qwen3_8b_structured_all_three_channels",
+  "switches": {
+    "ENABLE_CONTEXT_PACKETS": "1",
+    "ENABLE_EMBEDDING_TRANSFER": "1",
+    "ENABLE_HIDDEN_STATE_TRANSFER": "1",
+    "CHAT_BACKEND": "transformers",
+    "LOCAL_MODEL_PATH": "/data/models/Qwen3-8B",
+    "LOCAL_HIDDEN_POOLING": "last_token"
+  },
+  "structured_mode": {
+    "total_time": 635.9768173573539,
+    "summary": {
+      "message_count": 72,
+      "param_chars": 7231,
+      "result_chars": 16770,
+      "embedding_transfers": 36,
+      "hidden_state_transfers": 72,
+      "hidden_state_payloads_sent": 36,
+      "hidden_state_payloads_received": 36,
+      "hidden_state_produced_planner": 12,
+      "hidden_state_produced_retriever": 36,
+      "hidden_state_used_executor_context_ranking": 12,
+      "hidden_state_used_summarizer_guidance": 12,
+      "hidden_state_context_packets_skipped": 12,
+      "hidden_state_context_chars_skipped": 4261,
+      "context_packets_enabled": 36,
+      "context_packets_disabled": 0,
+      "embedding_received": 36,
+      "context_packet_fallback_documents": 0,
+      "context_original_chars": 21227,
+      "context_compressed_chars": 14125,
+      "context_saved_chars": 7102,
+      "total_task_time": 63.57760344725102,
+      "total_node_time": 960.8159927781671,
+      "memory_reuse_hits": 68,
+      "llm_calls": 72,
+      "input_tokens": 19503,
+      "output_tokens": 13121,
+      "total_tokens": 32624
+    },
+    "per_round": [
+      {
+        "task_id": "R01",
+        "desc": "LangGraph 核心概念",
+        "duration": 63.57760344725102,
+        "plan": "本研究计划旨在全面调研 LangGraph 框架的核心架构设计，重点分析其 StateGraph、节点、边、条件边等基本概念，并深入理解它们之间的交互机制与实现方式。",
+        "sub_queries": [
+          "LangGraph 框架中 StateGraph 的核心设计原理与实现方式是什么？",
+          "LangGraph 框架中的节点和边是如何定义和交互的？",
+          "LangGraph 框架中条件边的逻辑机制及其应用场景有哪些？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 150,
+        "summary_len": 206,
+        "key_findings_count": 3,
+        "key_findings": [
+          "StateGraph 是 LangGraph 框架中用于构建复杂状态转换流程的核心组件，其设计基于状态机的概念。",
+          "节点和边的交互是 LangGraph 的核心机制，用于定义状态之间的转换逻辑。",
+          "条件边的引入增强了框架的灵活性，允许状态转换根据特定条件进行动态调整。"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R02",
+        "desc": "状态管理机制",
+        "duration": 50.11158048454672,
+        "plan": "本研究计划基于对 LangGraph 核心架构的已有调研，深入分析其状态管理机制，重点关注 Channel、Reducer 和 Checkpoint 等关键组件的设计与实现，以全面理解其状态管理的运作方式。",
+        "sub_queries": [
+          "LangGraph 中 Channel 的作用和实现机制是什么？",
+          "Reducer 在 LangGraph 状态管理中的功能和设计原理是什么？",
+          "Checkpoint 在 LangGraph 中如何支持状态的持久化和恢复？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 242,
+        "summary_len": 325,
+        "key_findings_count": 2,
+        "key_findings": [
+          "Reducer 是 LangGraph 状态管理中的核心概念，用于管理状态的更新和转换。",
+          "Channel 在"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R03",
+        "desc": "共享记忆系统",
+        "duration": 54.64051017444581,
+        "plan": "本研究旨在基于对 LangGraph 状态管理机制的已有分析，深入探讨其共享记忆系统的实现方式，重点关注 InMemoryStore、Namespace 和语义搜索等关键组件的设计与功能。通过分解研究问题，我们将从系统架构、数据存储机制和语义检索能力三个方面进行信息检索，以全面理解其共享记忆系统的实现原理。",
+        "sub_queries": [
+          "LangGraph 中 InMemoryStore 的具体实现方式及其在状态管理中的作用",
+          "Namespace 在 LangGraph 共享记忆系统中的设计目标与实现机制",
+          "LangGraph 如何利用语义搜索技术实现共享记忆的高效检索与管理"
+        ],
+        "doc_count": 0,
+        "analysis_len": 209,
+        "summary_len": 231,
+        "key_findings_count": 2,
+        "key_findings": [
+          "LangGraph 是一个基于图结构的语义搜索框架，通过节点和边的组合结合语义搜索技术实现对共享记忆的高效检索与管理。",
+          "Namespace 作为关键设计概念，用于组织、隔离和共享记忆数据，为系统的模块化和可扩展性提供了支持"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R04",
+        "desc": "多智能体通信",
+        "duration": 53.83963425178081,
+        "plan": "本研究旨在基于对 LangGraph 记忆系统的已有调研，深入分析其多智能体通信机制，包括 Send 原语、fan-out/fan-in 模式以及消息传递机制。通过分解为三个子查询，分别聚焦通信原语、通信模式和消息传递机制，从而全面理解其通信架构与实现细节。",
+        "sub_queries": [
+          "LangGraph 中的 Send 原语是如何实现多智能体之间的消息传递的？",
+          "LangGraph 支持哪些 fan-out 和 fan-in 模式，它们在多智能体通信中如何应用？",
+          "LangGraph 的消息传递机制如何确保消息的可靠性和效率？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 180,
+        "summary_len": 246,
+        "key_findings_count": 3,
+        "key_findings": [
+          "Send 原语是实现多智能体之间消息传递的核心机制之一。",
+          "图结构中的边用于表示智能体之间的连接关系，支持动态添加和删除边。",
+          ""
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R05",
+        "desc": "AutoGen 架构",
+        "duration": 52.86199856735766,
+        "plan": "本研究旨在调研 AutoGen 框架的多智能体协作架构，重点分析其对话管理和任务分配机制。通过将研究分解为三个子查询，分别聚焦对话管理机制、任务分配策略以及智能体间协作流程，从而全面理解其架构设计与实现细节。",
+        "sub_queries": [
+          "AutoGen 框架中对话管理机制的具体实现方式是什么？",
+          "AutoGen 框架如何实现多智能体之间的任务分配与协调？",
+          "AutoGen 框架中智能体间的协作流程与通信机制如何相互作用？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 197,
+        "summary_len": 197,
+        "key_findings_count": 3,
+        "key_findings": [
+          "AutoGen 框架通过灵活的对话管理机制实现了多智能体之间的任务分配与协调。",
+          "智能体之间的协作流程与通信机制紧密交织，是系统高效运作的基础。",
+          "任务分配策略和对话管理机制共同构成了多智能体协作架构的核心部分。"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R06",
+        "desc": "CrewAI 架构",
+        "duration": 52.916248007677495,
+        "plan": "本研究旨在调研 CrewAI 框架的多智能体协作架构，重点分析其角色定义和工作流编排机制。通过将研究分解为三个子查询，分别聚焦角色定义机制、工作流编排策略以及智能体间协作流程，从而全面理解其架构设计与实现细节。",
+        "sub_queries": [
+          "CrewAI 框架中智能体角色定义的机制与实现方式",
+          "CrewAI 框架中工作流编排的具体策略与实现方法",
+          "CrewAI 框架中多智能体协作流程与通信机制"
+        ],
+        "doc_count": 0,
+        "analysis_len": 242,
+        "summary_len": 242,
+        "key_findings_count": 1,
+        "key_findings": [
+          "CrewAI 框架采用结构化和模块化的角色设计方法，明确职责划分和协作逻辑，以提升多智能体系统的效率与"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R07",
+        "desc": "三框架对比",
+        "duration": 53.062244159169495,
+        "plan": "本研究旨在基于对 LangGraph、AutoGen 和 CrewAI 三个框架的已有调研，对比分析它们在状态管理、通信协议和记忆系统方面的异同。通过分解为三个子查询，分别聚焦于状态管理机制、通信协议设计和记忆系统实现，以全面理解各框架的核心架构与实现细节。",
+        "sub_queries": [
+          "LangGraph、AutoGen 和 CrewAI 在状态管理机制上的异同",
+          "LangGraph、AutoGen 和 CrewAI 在通信协议设计上的异同",
+          "LangGraph、AutoGen 和 CrewAI 在记忆系统实现上的异同"
+        ],
+        "doc_count": 0,
+        "analysis_len": 273,
+        "summary_len": 244,
+        "key_findings_count": 3,
+        "key_findings": [
+          "LangGraph 使用图结构表示智能体之间的连接关系，支持动态添加和删除边。",
+          "CrewAI 采用结构化和模块化的角色设计方法，明确职责划分和协作逻辑。",
+          "三个框架"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R08",
+        "desc": "共同瓶颈识别",
+        "duration": 52.62931649014354,
+        "plan": "本研究旨在基于之前的对比分析，识别当前多智能体框架共同面临的核心技术瓶颈和未解决问题。通过分析状态管理、通信协议和记忆系统等方面的异同，聚焦于通信机制、状态同步和记忆一致性等关键问题，以识别共性挑战。",
+        "sub_queries": [
+          "多智能体框架在通信协议设计中面临哪些共性技术瓶颈？",
+          "当前多智能体系统在状态管理方面存在哪些未解决的关键问题？",
+          "不同框架在记忆系统实现上有哪些共同的挑战和未解决问题？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 235,
+        "summary_len": 234,
+        "key_findings_count": 3,
+        "key_findings": [
+          "通信协议设计是多智能体系统协同效率、可靠性和扩展性的关键因素。",
+          "状态管理面临高效同步和一致性的问题，是当前多智能体框架的共性挑战。",
+          "记忆系统的一致性"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R09",
+        "desc": "改进架构设计",
+        "duration": 47.513158951886,
+        "plan": "本研究旨在基于已识别的技术瓶颈，设计一个改进的多智能体协作系统架构，重点解决通信协议设计、状态管理和记忆系统的一致性与共享性问题。通过结构化通信协议、语义记忆和非文本状态传递三个核心模块，提升系统的协同效率、可靠性和扩展性。",
+        "sub_queries": [
+          "如何设计一种结构化的通信协议以提高多智能体系统的协同效率和可靠性？",
+          "如何实现语义记忆系统以增强多智能体之间的信息共享与一致性？",
+          "如何通过非文本状态传递机制优化多智能体的状态同步与管理？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 203,
+        "summary_len": 253,
+        "key_findings_count": 1,
+        "key_findings": [
+          "语义记忆系统需要结合语义表示、知识图谱、分布式存储和协同学习等技术，以增强多智能体之间的信息共享"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R10",
+        "desc": "实验方案设计",
+        "duration": 51.667001717723906,
+        "plan": "基于已有的架构设计方案，本研究将通过设计具体的实验方案，验证结构化协议相比纯文本协作在token效率和任务质量上的优势。实验将从协议性能、任务执行效率和结果一致性三个方面进行评估。",
+        "sub_queries": [
+          "结构化协议在多智能体协作任务中相比纯文本协议在token使用效率上的具体表现",
+          "结构化协议对多智能体任务执行质量的影响及其与纯文本协作的对比",
+          "结构化协议在不同任务复杂度下的稳定性与一致性表现"
+        ],
+        "doc_count": 0,
+        "analysis_len": 181,
+        "summary_len": 228,
+        "key_findings_count": 3,
+        "key_findings": [
+          "结构化协议在多智能体系统中对任务执行质量具有显著影响。",
+          "结构化协议在不同任务复杂度下的稳定性与一致性表现取决于协议设计目标、任务性质和系统环境。",
+          "结构化协议在提升任务"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R11",
+        "desc": "原型实现",
+        "duration": 51.46018617693335,
+        "plan": "基于已有实验方案和调研结果，设计并实现一个最小可行的多智能体协作原型系统的核心模块。该计划将聚焦于通信机制的实现，包括通信原语、通信模式和消息传递机制，以确保系统具备基本的协作能力。",
+        "sub_queries": [
+          "如何实现多智能体系统中的 Send 原语以支持消息传递？",
+          "如何设计和实现 fan-out/fan-in 模式的通信机制？",
+          "如何构建基于图结构的消息传递机制以支持动态连接？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 215,
+        "summary_len": 196,
+        "key_findings_count": 3,
+        "key_findings": [
+          "Send 原语是实现多智能体之间消息传递的核心机制之一。",
+          "Fan-Out/Fan-In 模式被设计用于实现消息的广播和聚合，适用于分布式系统。",
+          "通信机制的设计和实现为多智能体协作系统提供了基础支持。"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R12",
+        "desc": "最终技术报告",
+        "duration": 51.670875335112214,
+        "plan": "基于已有调研、分析、设计和实现结果，生成一份完整的多智能体协作系统技术报告。报告将涵盖架构设计、对比分析、改进方案和实验结论，重点聚焦通信机制的设计与实现，结合现有框架的对比分析，提出改进方案并总结实验结果。",
+        "sub_queries": [
+          "多智能体协作系统的核心通信机制设计与实现细节",
+          "LangGraph、AutoGen和CrewAI框架在通信协议、状态管理和记忆系统方面的对比分析",
+          "基于现有通信机制和框架对比的改进方案与实验结论"
+        ],
+        "doc_count": 0,
+        "analysis_len": 198,
+        "summary_len": 276,
+        "key_findings_count": 1,
+        "key_findings": [
+          "通信机制的核心部分包括通信原语、通信模式和消息传递机制，其中‘Send"
+        ],
+        "messages_count": 6
+      }
+    ]
+  },
+  "report": "======================================================================\nPerformance Metrics Report\n======================================================================\n\n--- Task Timings ---\n  node_executor: avg=9.2885s, min=8.3683s, max=9.8458s, count=12\n  node_planner: avg=7.6264s, min=6.0835s, max=17.5264s, count=12\n  node_retriever: avg=17.9842s, min=8.6405s, max=27.9021s, count=36\n  node_summarizer: avg=9.2005s, min=9.0456s, max=9.4001s, count=12\n  task_R01: avg=63.5776s, min=63.5776s, max=63.5776s, count=1\n  task_R02: avg=50.1116s, min=50.1116s, max=50.1116s, count=1\n  task_R03: avg=54.6405s, min=54.6405s, max=54.6405s, count=1\n  task_R04: avg=53.8396s, min=53.8396s, max=53.8396s, count=1\n  task_R05: avg=52.8620s, min=52.8620s, max=52.8620s, count=1\n  task_R06: avg=52.9162s, min=52.9162s, max=52.9162s, count=1\n  task_R07: avg=53.0622s, min=53.0622s, max=53.0622s, count=1\n  task_R08: avg=52.6293s, min=52.6293s, max=52.6293s, count=1\n  task_R09: avg=47.5132s, min=47.5132s, max=47.5132s, count=1\n  task_R10: avg=51.6670s, min=51.6670s, max=51.6670s, count=1\n  task_R11: avg=51.4602s, min=51.4602s, max=51.4602s, count=1\n  task_R12: avg=51.6709s, min=51.6709s, max=51.6709s, count=1\n\n--- Counters ---\n  context_packets_checked: 24\n  context_packets_enabled: 36\n  context_packets_failed: 0\n  context_packets_rehydrated: 24\n  context_packets_reliable: 0\n  embedding_received: 36\n  hidden_state_alignment_scored_retriever: 36\n  hidden_state_context_chars_skipped: 4261\n  hidden_state_context_packets_skipped: 12\n  hidden_state_payloads_received: 36\n  hidden_state_payloads_sent: 36\n  hidden_state_produced_planner: 12\n  hidden_state_produced_retriever: 36\n  hidden_state_received_executor: 12\n  hidden_state_received_retriever: 36\n  hidden_state_received_summarizer: 12\n  hidden_state_used_executor_context_ranking: 12\n  hidden_state_used_summarizer_guidance: 12\n  hidden_state_vector_dims_received: 245760\n  memory_reuse_attempts: 12\n  memory_reuse_hits: 68\n\n--- Store Operations ---\n  put: 72 ops, avg=0.000581s\n  get: 24 ops, avg=0.000017s\n  search: 143 ops, avg=0.005374s\n  search scores: avg=0.4709, min=0.2015, max=0.7649\n\n--- Memory Reuse ---\n  Reuse attempts: 12\n  Reuse hits: 68\n  Hit rate: 566.7%\n\n--- Communication Overhead Estimate ---\n  Total node execution: 960.8160s\n  Total task time: 63.5776s\n  Framework overhead: -897.2384s (-1411.2%)\n\n--- Structured Communication Metrics ---\n  Total messages: 72\n  Param chars (total): 7231\n  Result chars (total): 16770\n  Total payload chars: 24001\n  Embedding transfers: 36\n  Embedding dims: 1024\n  Hidden-state transfers: 72\n  Hidden-state dims: 4096\n  Action 'analyze': 12 message(s)\n  Action 'plan': 12 message(s)\n  Action 'retrieve': 36 message(s)\n  Action 'summarize': 12 message(s)\n\n--- Context Compression ---\n  Records: 48\n  Original chars: 21227\n  Compressed chars: 14125\n  Saved chars: 7102 (33.5%)\n  executor_prompt: 12 records, saved=74.0%\n  retriever: 36 records, saved=6.5%\n\n--- LLM Token Usage ---\n  Total calls: 72\n  Input tokens: 19503\n  Output tokens: 13121\n  Total tokens: 32624\n  executor: 12 calls, in=7391, out=2304, total=9695\n  planner: 12 calls, in=4359, out=1601, total=5960\n  retriever: 36 calls, in=2541, out=6912, total=9453\n  summarizer: 12 calls, in=5212, out=2304, total=7516\n\n======================================================================"
+}

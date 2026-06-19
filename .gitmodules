@@ -1,0 +1,3 @@
+[submodule "langgraph"]
+	path = langgraph
+	url = https://github.com/skwmw01/langgraph.git

@@ -1,0 +1,66 @@
+[structured] 01/12 LangGraph 核心概念 ...
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:00<00:00, 100.19it/s]
+  done 68.4s findings=3 analysis=134 summary=200
+[structured] 02/12 状态管理机制 ...
+  done 54.2s findings=3 analysis=215 summary=274
+[structured] 03/12 共享记忆系统 ...
+  done 62.1s findings=3 analysis=242 summary=279
+[structured] 04/12 多智能体通信 ...
+  done 64.1s findings=3 analysis=260 summary=269
+[structured] 05/12 AutoGen 架构 ...
+  done 71.0s findings=3 analysis=233 summary=244
+[structured] 06/12 CrewAI 架构 ...
+  done 86.2s findings=3 analysis=400 summary=367
+[structured] 07/12 三框架对比 ...
+  done 74.6s findings=3 analysis=414 summary=393
+[structured] 08/12 共同瓶颈识别 ...
+  done 72.7s findings=3 analysis=318 summary=324
+[structured] 09/12 改进架构设计 ...
+  done 64.5s findings=3 analysis=220 summary=215
+[structured] 10/12 实验方案设计 ...
+  done 59.6s findings=3 analysis=127 summary=212
+[structured] 11/12 原型实现 ...
+  done 71.3s findings=3 analysis=296 summary=296
+[structured] 12/12 最终技术报告 ...
+  done 70.6s findings=3 analysis=308 summary=340
+RESULT_PATH=/workspace/langgraph/examples/multi_agent_demo/ablation_results/context_hidden.json
+{
+  "label": "context_hidden",
+  "summary": {
+    "message_count": 72,
+    "param_chars": 8034,
+    "result_chars": 18475,
+    "embedding_transfers": 0,
+    "hidden_state_transfers": 72,
+    "hidden_state_payloads_sent": 36,
+    "hidden_state_payloads_received": 36,
+    "hidden_state_produced_planner": 12,
+    "hidden_state_produced_retriever": 36,
+    "hidden_state_used_executor_context_ranking": 12,
+    "hidden_state_used_summarizer_guidance": 12,
+    "hidden_state_context_packets_skipped": 12,
+    "hidden_state_context_chars_skipped": 7931,
+    "context_packets_enabled": 36,
+    "context_packets_disabled": 0,
+    "embedding_received": 0,
+    "context_packet_fallback_documents": 0,
+    "context_original_chars": 39119,
+    "context_compressed_chars": 14572,
+    "context_saved_chars": 24547,
+    "total_task_time": 86.17297550104558,
+    "total_node_time": 1265.2489702776074,
+    "memory_reuse_hits": 68,
+    "llm_calls": 72,
+    "input_tokens": 21909,
+    "output_tokens": 22939,
+    "total_tokens": 44848
+  },
+  "quality": {
+    "total_key_findings": 36,
+    "avg_key_findings": 3.0,
+    "total_analysis_chars": 3167,
+    "total_summary_chars": 3413,
+    "total_docs": 0,
+    "avg_docs": 0.0
+  }
+}
