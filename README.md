@@ -1,6 +1,6 @@
-# Multi-Agent Research System Demo
+# SynapseX - 面向多智能体协作的低开销通信、状态传递与共享记忆机制
 
-基于 LangGraph 框架 + DeepSeek V4 API 的多智能体研究系统。
+基于 LangGraph 框架 + 本地 Qwen3-8B 模型的多智能体研究系统。
 
 ## 功能覆盖
 
@@ -8,23 +8,25 @@
 |---|------|---------|
 | 1 | ≥3 Agent 协同（规划/检索/执行/总结） | 4 个 Agent 节点：planner → retriever(s) → executor → summarizer |
 | 2 | 结构化通信协议 | TypedDict 状态 + Channel 系统（LastValue / BinaryOperatorAggregate） |
-| 3 | 非文本中间状态传递 | DashScope `text-embedding-v4` 生成语义向量，InMemoryStore 向量检索 |
+| 3 | 非文本中间状态传递 | Hidden state 传递 + Context Packet 压缩 + Embedding 向量 |
 | 4 | 共享记忆模块 | InMemoryStore + 层级化 namespace，支持 put/get/search |
-| 5 | ≥2 组关联连续任务 | Task A（框架分析）→ Task B（系统设计），B 复用 A 的记忆 |
-| 6 | 性能对比数据 | perf_counter 测量各节点时延、通信开销、记忆复用率 |
+| 5 | ≥2 组关联连续任务 | 12 轮连续任务，每轮复用前序轮次记忆 |
+| 6 | 性能对比数据 | TEXT vs STRUCTURED 模式对比（tokens、时延、findings） |
 
 ## 快速开始
 
 ```bash
 # 1. 安装依赖
-pip install langgraph langchain-core langchain-openai dashscope
+pip install langgraph langchain-core langchain-openai transformers torch accelerate numpy
 
-# 2. 设置 API Key
-export DEEPSEEK_API_KEY="your-deepseek-api-key"
-export DASHSCOPE_API_KEY="your-dashscope-api-key"
+# 2. 设置本地模型路径（默认 /data/models/Qwen3-8B）
+export CHAT_BACKEND=transformers
+export CHAT_MODEL=qwen3-8b
+export LOCAL_MODEL_PATH=/data/models/Qwen3-8B
+export LOCAL_MODEL_DEVICE=cuda:0
 
 # 3. 运行 demo
-cd /data/mingwei/Synapse
+cd /data/mingwei/SynapseX
 python run_demo.py
 ```
 
@@ -50,19 +52,21 @@ Task B (shares same Store):
 ## 文件结构
 
 ```
-├── src/                # 核心代码
-│   ├── agents.py       # 4 个 Agent 实现（调用 DeepSeek V4）
-│   ├── config.py       # 配置常量
-│   ├── graph.py        # StateGraph 定义（节点、边、Send fan-out）
-│   ├── memory.py       # InMemoryStore + DashScope text-embedding-v4
-│   ├── models.py       # DeepSeek V4 模型配置
-│   ├── metrics.py      # 性能度量工具
-│   └── protocol.py     # 结构化通信协议
-├── run_demo.py         # 主运行脚本
-├── run_12rounds.py     # 12 轮实验脚本
-├── docs/               # 项目文档
-├── langgraph/          # LangGraph 框架（git submodule）
-└── README.md           # 本文件
+├── src/                    # 核心代码
+│   ├── agents.py           # 4 个 Agent 实现（planner/retriever/executor/summarizer）
+│   ├── config.py           # 配置常量（模型路径、环境变量）
+│   ├── graph.py            # StateGraph 定义（节点、边、Send fan-out）
+│   ├── memory.py           # InMemoryStore + 共享记忆
+│   ├── models.py           # 本地模型加载（支持 Transformers/vLLM）
+│   ├── metrics.py          # 性能度量工具
+│   └── protocol.py         # 结构化通信协议（AgentMessage、ContextPacket）
+├── run_demo.py             # 主运行脚本（2 组关联任务）
+├── run_12rounds.py         # 12 轮实验脚本（TEXT vs STRUCTURED 对比）
+├── run_structured_only.py  # 仅 STRUCTURED 模式测试
+├── docs/                   # 项目文档
+│   └── openos/             # 详细技术文档
+├── langgraph/              # LangGraph 框架（git submodule）
+└── README.md               # 本文件
 ```
 
 ## 关键 LangGraph 特性使用
