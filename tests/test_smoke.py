@@ -259,6 +259,11 @@ def test_benchmark_runner_writes_outputs() -> None:
             "executor",
             "summarizer",
         }
+        executor_slice = task_run["graph_state"]["role_context_slices"]["executor"]
+        assert executor_slice["projection_class"]
+        assert executor_slice["included_fields"]
+        assert executor_slice["omitted_fields"]
+        assert executor_slice["role_visible_contract"]
         assert task_run["graph_state"]["fairness_gate"]["passed"] is True
         assert "logical_replay_reuse" in task_run["reuse"]
         assert "physical_blob_reuse" in task_run["reuse"]

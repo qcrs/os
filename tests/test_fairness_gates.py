@@ -95,3 +95,103 @@ def test_execution_fairness_gate_requires_context_and_trace_for_all_roles() -> N
     assert gate.passed is False
     assert gate.missing_context_roles == ("summarizer",)
     assert gate.missing_trace_roles == ("summarizer",)
+
+
+def test_execution_fairness_gate_fails_closed_on_text_typed_state_leakage() -> None:
+    plan = Plan(
+        task_id="task-3",
+        goal="goal",
+        steps=[
+            PlanStep("planner", "planner", "PLAN", [], {}, [], semantic_role="planner"),
+            PlanStep("retrieve", "retriever", "RETRIEVE_EVIDENCE", [], {}, ["planner"], semantic_role="retrieve"),
+            PlanStep("execute", "executor", "EXECUTE_PLAYBOOK", [], {}, ["retrieve"], semantic_role="execute"),
+            PlanStep("summarize", "summarizer", "SUMMARIZE_AND_COMMIT", [], {}, ["execute"], semantic_role="summarize"),
+        ],
+    )
+
+    gate = evaluate_execution_fairness_gate(
+        plan=plan,
+        role_context_slices={
+            "planner": type("Slice", (), {"carrier": "text_whole_lane", "visible_state_ids": (), "projection_class": "planner_text_brief", "included_fields": ("goal",), "omitted_fields": ("typed_state_payloads",), "role_visible_contract": "planner_contract_v1", "helper_visibility": "declared_only", "model_visibility": "same_model_required", "tool_visibility": "catalog_visible", "corpus_visibility": "task_scope_only"})(),
+            "retriever": type("Slice", (), {"carrier": "text_whole_lane", "visible_state_ids": (), "projection_class": "retriever_text_brief", "included_fields": ("query",), "omitted_fields": ("typed_state_payloads",), "role_visible_contract": "retriever_contract_v1", "helper_visibility": "declared_only", "model_visibility": "same_model_required", "tool_visibility": "catalog_visible", "corpus_visibility": "task_scope_only"})(),
+            "executor": type("Slice", (), {"carrier": "text_whole_lane", "visible_state_ids": ("state-1",), "projection_class": "executor_text_handoff", "included_fields": ("retrieval_evidence",), "omitted_fields": ("full_feature_bundle_payload",), "role_visible_contract": "executor_contract_v1", "helper_visibility": "declared_only", "model_visibility": "same_model_required", "tool_visibility": "catalog_visible", "corpus_visibility": "retrieved_only"})(),
+            "summarizer": type("Slice", (), {"carrier": "text_whole_lane", "visible_state_ids": (), "projection_class": "summarizer_text_handoff", "included_fields": ("summary_hint",), "omitted_fields": ("full_typed_packet_dump",), "role_visible_contract": "summarizer_contract_v1", "helper_visibility": "declared_only", "model_visibility": "same_model_required", "tool_visibility": "artifact_only", "corpus_visibility": "retrieved_only"})(),
+        },
+        role_trace=[
+            {"role": "planner", "input_state_ids": []},
+            {"role": "retriever", "input_state_ids": []},
+            {"role": "executor", "input_state_ids": ["state-1"]},
+            {"role": "summarizer", "input_state_ids": []},
+        ],
+        contract_errors=[],
+    )
+
+    assert gate.passed is False
+    assert gate.text_typed_state_leak_roles == ("executor",)
+
+
+def test_execution_fairness_gate_fails_closed_on_unbounded_protocol_projection_and_hidden_helper() -> None:
+    plan = Plan(
+        task_id="task-4",
+        goal="goal",
+        steps=[
+            PlanStep("planner", "planner", "PLAN", [], {}, [], semantic_role="planner"),
+            PlanStep("retrieve", "retriever", "RETRIEVE_EVIDENCE", [], {}, ["planner"], semantic_role="retrieve"),
+            PlanStep("execute", "executor", "EXECUTE_PLAYBOOK", [], {}, ["retrieve"], semantic_role="execute"),
+            PlanStep("summarize", "summarizer", "SUMMARIZE_AND_COMMIT", [], {}, ["execute"], semantic_role="summarize"),
+        ],
+    )
+
+    bad_slice = type(
+        "Slice",
+        (),
+        {
+            "carrier": "protocol_full_rich_audit",
+            "visible_state_ids": ("state-1",),
+            "projection_class": "",
+            "included_fields": (),
+            "omitted_fields": (),
+            "role_visible_contract": "",
+            "helper_visibility": "hidden_helper",
+            "model_visibility": "same_model_required",
+            "tool_visibility": "catalog_visible",
+            "corpus_visibility": "retrieved_only",
+        },
+    )()
+    ok_slice = type(
+        "Slice",
+        (),
+        {
+            "carrier": "protocol_full_rich_audit",
+            "visible_state_ids": (),
+            "projection_class": "planner_statebus_brief",
+            "included_fields": ("goal",),
+            "omitted_fields": ("typed_state_payloads",),
+            "role_visible_contract": "planner_contract_v1",
+            "helper_visibility": "declared_only",
+            "model_visibility": "same_model_required",
+            "tool_visibility": "catalog_visible",
+            "corpus_visibility": "task_scope_only",
+        },
+    )()
+
+    gate = evaluate_execution_fairness_gate(
+        plan=plan,
+        role_context_slices={
+            "planner": ok_slice,
+            "retriever": ok_slice,
+            "executor": bad_slice,
+            "summarizer": ok_slice,
+        },
+        role_trace=[
+            {"role": "planner", "input_state_ids": []},
+            {"role": "retriever", "input_state_ids": []},
+            {"role": "executor", "input_state_ids": ["state-1"]},
+            {"role": "summarizer", "input_state_ids": []},
+        ],
+        contract_errors=[],
+    )
+
+    assert gate.passed is False
+    assert gate.unbounded_projection_roles == ("executor",)
+    assert gate.hidden_helper_roles == ("executor",)

@@ -27,6 +27,9 @@ def test_default_role_contracts_cover_four_role_comparator() -> None:
     assert tuple(contracts) == FOUR_ROLE_COMPARATOR_ORDER
     assert contracts["retriever"].required_upstream_roles == ("planner",)
     assert "EXECUTOR_DECISION_PACKET" in contracts["executor"].allowed_input_state_kinds
+    assert contracts["executor"].visibility_contract is not None
+    assert contracts["executor"].visibility_contract.protocol_lane_projection_class == "executor_statebus_bounded_projection"
+    assert contracts["planner"].visibility_contract.allows_typed_state_visibility is False
 
 
 def test_role_execution_contract_normalizes_role_and_upstream() -> None:

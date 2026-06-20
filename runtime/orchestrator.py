@@ -829,6 +829,11 @@ class RunContext:
         input_state_refs: list[StateRef],
         output_state_refs: list[StateRef],
         carrier: str,
+        slice_kind: str = "",
+        projection_class: str = "",
+        included_fields: tuple[str, ...] = (),
+        omitted_fields: tuple[str, ...] = (),
+        helper_visibility: str = "",
     ) -> None:
         self.role_trace.append(
             {
@@ -838,6 +843,11 @@ class RunContext:
                 "carrier": carrier,
                 "input_state_ids": [ref.state_id for ref in input_state_refs],
                 "output_state_ids": [ref.state_id for ref in output_state_refs],
+                "slice_kind": slice_kind,
+                "projection_class": projection_class,
+                "included_fields": list(included_fields),
+                "omitted_fields": list(omitted_fields),
+                "helper_visibility": helper_visibility,
             }
         )
 
@@ -1014,6 +1024,17 @@ class Orchestrator:
                 carrier=ctx.transfer_strategy(),
                 visible_text=plan.goal,
                 upstream_roles=(),
+                slice_kind="planner_contract_view",
+                projection_class="planner_statebus_brief",
+                included_fields=("goal", "query", "role_graph"),
+                omitted_fields=("typed_state_payloads", "executor_artifact"),
+                text_budget_class="brief",
+                typed_state_budget_class="none",
+                role_visible_contract="planner_contract_v1",
+                helper_visibility="declared_only",
+                model_visibility="same_model_required",
+                tool_visibility="catalog_visible",
+                corpus_visibility="task_scope_only",
                 metadata={
                     "step_count": len(plan.steps),
                     "summary_contract": ctx.summary_contract,
@@ -1027,6 +1048,11 @@ class Orchestrator:
             input_state_refs=[],
             output_state_refs=[],
             carrier=ctx.transfer_strategy(),
+            slice_kind="planner_contract_view",
+            projection_class="planner_statebus_brief",
+            included_fields=("goal", "query", "role_graph"),
+            omitted_fields=("typed_state_payloads", "executor_artifact"),
+            helper_visibility="declared_only",
         )
         if getattr(ctx, "_statebus_plan_emitted", False):
             return
@@ -1620,32 +1646,14 @@ class Orchestrator:
                 ctx.add_contract_error(detail)
                 raise SchemaValidationError(detail)
         input_refs = ctx.step_input_refs(step.step_id)
-        visible_text_parts = [
-            str(step.params.get("query", "")).strip(),
-            str(step.params.get("summary_hint", "")).strip(),
-            str(step.params.get("evidence_text", "")).strip(),
-        ]
+        slice_view = Orchestrator._build_role_context_slice(
+            role=role,
+            step=step,
+            ctx=ctx,
+            input_refs=input_refs,
+        )
         ctx.set_role_context_slice(
-            build_context_slice(
-                role=role,
-                task_id=ctx.task_id,
-                mode=ctx.mode,
-                carrier=ctx.transfer_strategy(),
-                visible_text="\n".join(part for part in visible_text_parts if part),
-                visible_state_refs=input_refs,
-                upstream_roles=tuple(
-                    normalized_role
-                    for dep in step.depends_on
-                    for normalized_role in [_maybe_normalize_comparator_role(ctx.semantic_role_for_step(dep) or dep)]
-                    if normalized_role
-                ),
-                metadata={
-                    "step_id": step.step_id,
-                    "owner_agent": step.owner_agent,
-                    "action": step.action,
-                    "success": result.success,
-                },
-            )
+            slice_view
         )
         ctx.record_role_trace(
             role=role,
@@ -1654,6 +1662,11 @@ class Orchestrator:
             input_state_refs=input_refs,
             output_state_refs=result.output_state_refs,
             carrier=ctx.transfer_strategy(),
+            slice_kind=slice_view.slice_kind,
+            projection_class=slice_view.projection_class,
+            included_fields=slice_view.included_fields,
+            omitted_fields=slice_view.omitted_fields,
+            helper_visibility=slice_view.helper_visibility,
         )
 
     @staticmethod
@@ -1666,6 +1679,81 @@ class Orchestrator:
         )
         ctx.fairness_gate = gate
         return gate
+
+    @staticmethod
+    def _build_role_context_slice(
+        *,
+        role: str,
+        step: PlanStep,
+        ctx: RunContext,
+        input_refs: list[StateRef],
+    ) -> LLMContextSlice:
+        contract = ctx.role_contracts[role]
+        visibility = contract.visibility_contract
+        included_fields: tuple[str, ...]
+        omitted_fields: tuple[str, ...]
+        visible_text_parts: list[str]
+        carrier = ctx.transfer_strategy()
+        if role == "retriever":
+            included_fields = ("query", "planner_goal", "tags")
+            omitted_fields = ("typed_state_payloads", "executor_artifact", "summary_hint")
+            visible_text_parts = [
+                str(step.params.get("query", "")).strip(),
+                str(step.params.get("evidence_text", "")).strip(),
+            ]
+        elif role == "executor":
+            included_fields = ("retrieval_evidence", "route_projection", "tool_projection")
+            omitted_fields = ("full_feature_bundle_payload", "full_channel_snapshot_payload", "memory_hidden_hints")
+            visible_text_parts = []
+        elif role == "summarizer":
+            included_fields = ("summary_hint", "retrieval_evidence", "executor_artifact")
+            omitted_fields = ("planner_hidden_state", "route_search_space", "full_typed_packet_dump")
+            visible_text_parts = [
+                str(step.params.get("summary_hint", "")).strip(),
+            ]
+        else:
+            included_fields = ("goal", "query", "role_graph")
+            omitted_fields = ("typed_state_payloads", "executor_artifact")
+            visible_text_parts = [
+                str(getattr(getattr(ctx, "plan", None), "goal", "")).strip(),
+            ]
+        projection_class = (
+            visibility.text_lane_projection_class
+            if carrier in {"text", "text_whole_lane", "text_brief", "text_packet_minimal", "text_strict_pure_lane", "natural_handoff_text", "inline_text_handoff"}
+            else visibility.protocol_lane_projection_class
+        )
+        typed_refs = tuple(input_refs) if contract.consumes_typed_state and carrier not in {"text", "text_whole_lane", "text_brief", "text_packet_minimal", "text_strict_pure_lane", "natural_handoff_text", "inline_text_handoff"} else ()
+        visible_text = "\n".join(part for part in visible_text_parts if part)
+        return build_context_slice(
+            role=role,
+            task_id=ctx.task_id,
+            mode=ctx.mode,
+            carrier=carrier,
+            visible_text=visible_text,
+            visible_state_refs=typed_refs,
+            upstream_roles=tuple(
+                normalized_role
+                for dep in step.depends_on
+                for normalized_role in [_maybe_normalize_comparator_role(ctx.semantic_role_for_step(dep) or dep)]
+                if normalized_role
+            ),
+            slice_kind=f"{role}_visible_slice",
+            projection_class=projection_class,
+            included_fields=included_fields,
+            omitted_fields=omitted_fields,
+            text_budget_class="brief" if carrier in {"text", "text_whole_lane", "text_brief", "text_packet_minimal", "text_strict_pure_lane", "natural_handoff_text", "inline_text_handoff"} else "bounded_projection",
+            typed_state_budget_class="none" if not typed_refs else "bounded_typed_refs_only",
+            role_visible_contract=f"{role}_visible_contract_v1",
+            helper_visibility=visibility.helper_visibility_policy if visibility is not None else "declared_only",
+            model_visibility=visibility.model_visibility if visibility is not None else "same_model_required",
+            tool_visibility=visibility.tool_visibility if visibility is not None else "",
+            corpus_visibility=visibility.corpus_visibility if visibility is not None else "",
+            metadata={
+                "step_id": step.step_id,
+                "owner_agent": step.owner_agent,
+                "action": step.action,
+            },
+        )
 
     @staticmethod
     def _matches_skip_execute(
