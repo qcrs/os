@@ -514,7 +514,22 @@ def _run_native_task(
     if arm in {"external_text_open", "external_text_live_api_open"}:
         if external_runtime is None:
             raise RuntimeError("external text runtime was not initialized")
-        graph_state = asyncio.run(external_runtime.run_task(task=task, policy=policy, run_index=run_index))
+        try:
+            graph_state = asyncio.run(
+                external_runtime.run_task(task=task, policy=policy, run_index=run_index)
+            )
+        except Exception as exc:
+            if str(getattr(external_runtime, "live_mode", "")).strip().lower() != "api":
+                raise
+            return _failed_external_text_row(
+                task=task,
+                policy=policy,
+                run_index=run_index,
+                started=started,
+                runtime_arm=arm,
+                external_runtime=external_runtime,
+                error=exc,
+            )
         return _external_text_row_from_state(
             task=task,
             policy=policy,
@@ -1079,6 +1094,7 @@ def _external_text_row_from_state(
         "task_id": task.task_id,
         "task_group": task.task_group,
         "task_theme": task.task_theme,
+        "status": "completed",
         "runtime_arm": runtime_arm,
         "open_memory_policy": policy,
         "run_index": run_index,
@@ -1139,6 +1155,98 @@ def _external_text_row_from_state(
         "statebus_contract_used": bool(graph_state.get("statebus_contract_used", False)),
         "metadata_oracle_used": bool(graph_state.get("metadata_oracle_used", False)),
         "decision_source": str(graph_state.get("decision_source", "")),
+    }
+
+
+def _failed_external_text_row(
+    *,
+    task: SampleTask,
+    policy: str,
+    run_index: int,
+    started: float,
+    runtime_arm: str,
+    external_runtime: ExternalTextOpenRuntime,
+    error: Exception,
+) -> dict[str, object]:
+    task_ms = max(1.0, (time.perf_counter() - started) * 1000.0 + 8.0)
+    error_text = f"{type(error).__name__}: {error}"
+    purity_audit = {
+        "passed": False,
+        "no_statebus_contract_used": True,
+        "no_metadata_oracle_used": True,
+        "no_lexical_fallback": True,
+        "no_silent_correction": False,
+        "no_hidden_helper_advantage": True,
+        "helper_mode": "declared_candidate_generation_only",
+        "structured_packet_markers_present": False,
+        "role_count": 0,
+    }
+    return {
+        "task_id": task.task_id,
+        "task_group": task.task_group,
+        "task_theme": task.task_theme,
+        "status": "failed",
+        "runtime_arm": runtime_arm,
+        "open_memory_policy": policy,
+        "run_index": run_index,
+        "route": "",
+        "tool_name": "",
+        "expected_route": task.primary_expected_route,
+        "expected_tool_name": task.primary_expected_tool,
+        "retrieved_doc_ids": [],
+        "retrieved_snippets": [],
+        "message_log": [],
+        "issue_hypotheses": [],
+        "correctness": {
+            "route_exact": False,
+            "tool_exact": False,
+            "exact_match": False,
+            "admissible_match": False,
+        },
+        "metrics": {
+            "route_exact_rate": 0.0,
+            "tool_exact_rate": 0.0,
+            "exact_match_rate": 0.0,
+            "admissible_match_rate": 0.0,
+            "llm_total_tokens": 0.0,
+            "message_count": 0.0,
+            "transport_bytes": 0.0,
+            "handoff_wire_bytes": 0.0,
+            "handoff_payload_bytes": 0.0,
+            "task_ms": task_ms,
+            "assist_memory_hit_rate": 0.0,
+            "replay_hit_rate": 0.0,
+            "skipped_step_count": 0.0,
+            "reuse_gain": 0.0,
+        },
+        "data_source": str(getattr(external_runtime, "data_source", "strict_pure_text_four_role")),
+        "artifact_reuse": False,
+        "runtime_contract": str(getattr(external_runtime, "runtime_contract", "")),
+        "purity_audit": purity_audit,
+        "role_trace": [],
+        "lexical_fallback_used": False,
+        "helper_dominance": False,
+        "visible_candidate_count": 0,
+        "visible_candidates": [],
+        "helper_top1_route": "",
+        "helper_top1_tool_name": "",
+        "helper_selected_matches_top1": False,
+        "helper_single_candidate": False,
+        "native_replay": {
+            "hit": False,
+            "source": "",
+            "match_fields": [
+                "task_theme",
+                "normalized_query",
+                "retrieved_doc_ids",
+                "route",
+                "tool",
+            ],
+        },
+        "statebus_contract_used": False,
+        "metadata_oracle_used": False,
+        "decision_source": "external_text_four_role_failed",
+        "error": error_text,
     }
 
 

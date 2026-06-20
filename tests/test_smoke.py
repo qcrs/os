@@ -5831,6 +5831,122 @@ def test_pure_text_open_baseline_v1_supports_api_mode_with_explicit_client() -> 
     assert all(row["runtime_contract"] == "external_pure_text_four_role_baseline_v1" for row in result["tasks"])
 
 
+class _StrictExternalAliasClient:
+    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+        del temperature, messages
+        if purpose == "planner":
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "steps": [
+                            {"semantic_role": "retriever", "action": "compare visible candidates"},
+                            {"semantic_role": "executor", "action": "validate selected pair"},
+                            {"semantic_role": "summarizer", "action": "write summary"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                model="fake-planner",
+                usage=LLMUsage(prompt_tokens=10, completion_tokens=6, total_tokens=16),
+            )
+        if purpose == "retriever":
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "route": "db pool saturation",
+                        "tool_name": "tool db pool triage",
+                        "reason": "humanized alias form that should still map to a visible candidate",
+                    },
+                    ensure_ascii=False,
+                ),
+                model="fake-retriever",
+                usage=LLMUsage(prompt_tokens=12, completion_tokens=7, total_tokens=19),
+            )
+        if purpose == "executor":
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "route": "`db_pool_saturation`",
+                        "tool_name": "`tool.db_pool_triage`",
+                        "action_contract": "execute_validated_tool",
+                    },
+                    ensure_ascii=False,
+                ),
+                model="fake-executor",
+                usage=LLMUsage(prompt_tokens=12, completion_tokens=7, total_tokens=19),
+            )
+        assert purpose == "summarizer"
+        return LLMResult(
+            text="Most likely cause: database pool saturation. First action: run the DB pool triage playbook.",
+            model="fake-summarizer",
+            usage=LLMUsage(prompt_tokens=11, completion_tokens=10, total_tokens=21),
+        )
+
+
+class _StrictExternalInvalidRetrieverClient:
+    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+        del temperature, messages
+        if purpose == "planner":
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "steps": [
+                            {"semantic_role": "retriever", "action": "compare visible candidates"},
+                            {"semantic_role": "executor", "action": "validate selected pair"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                model="fake-planner",
+                usage=LLMUsage(prompt_tokens=9, completion_tokens=5, total_tokens=14),
+            )
+        if purpose == "retriever":
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "route": "not a visible route",
+                        "tool_name": "tool.not_in_visible_candidates",
+                        "reason": "intentional contract violation for API-mode failure-row regression",
+                    },
+                    ensure_ascii=False,
+                ),
+                model="fake-retriever",
+                usage=LLMUsage(prompt_tokens=10, completion_tokens=7, total_tokens=17),
+            )
+        raise AssertionError(f"unexpected purpose after invalid retriever selection: {purpose}")
+
+
+def test_pure_text_open_baseline_api_mode_canonicalizes_humanized_visible_candidate_aliases() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-open-api-alias-") as tmpdir:
+        result = run_pure_text_open_baseline(
+            out_dir=Path(tmpdir),
+            repeat=1,
+            llm_mode="api",
+            llm_client=_StrictExternalAliasClient(),
+        )
+    assert all(row["status"] == "completed" for row in result["tasks"])
+    assert all(row["route"] == "db_pool_saturation" for row in result["tasks"])
+    assert all(row["tool_name"] == "tool.db_pool_triage" for row in result["tasks"])
+    assert result["manifest"]["purity_gate"]["passed"] is True
+
+
+def test_pure_text_open_baseline_api_mode_keeps_failed_rows_when_retriever_breaks_visible_set_contract() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-open-api-failed-row-") as tmpdir:
+        result = run_pure_text_open_baseline(
+            out_dir=Path(tmpdir),
+            repeat=1,
+            llm_mode="api",
+            llm_client=_StrictExternalInvalidRetrieverClient(),
+        )
+    assert result["tasks"]
+    assert all(row["status"] == "failed" for row in result["tasks"])
+    assert all(row["decision_source"] == "external_text_four_role_failed" for row in result["tasks"])
+    assert all("outside visible candidate set" in str(row["error"]) for row in result["tasks"])
+    assert result["manifest"]["purity_gate"]["passed"] is False
+    assert "four_role_contract_missing" in result["manifest"]["purity_gate"]["withheld_reasons"]
+    assert "role_trace_contract_mismatch" in result["manifest"]["purity_gate"]["withheld_reasons"]
+
+
 class _LiveTextOpenFakeClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
