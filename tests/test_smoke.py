@@ -304,13 +304,22 @@ def test_deterministic_formal_comparator_artifact_writes_and_freezes_surfaces() 
         assert surfaces["support_and_audit"]["public_surface"] == "support_only_or_audit_only"
         assert surfaces["external_pure_text_baseline"]["claim_surface"] == "formal_ready"
         assert payload["api_repeat1_plan"]["ready"] is True
+        assert payload["api_repeat1_plan"]["script"] == "scripts/run_formal_comparator_api_repeat1.sh"
         assert len(payload["api_repeat1_plan"]["run_order"]) == 3
+        external_step = payload["api_repeat1_plan"]["run_order"][1]
+        assert external_step["object"] == "external_pure_text_four_role_baseline_v1"
+        assert "--pack pure_text_open_baseline_v1" in external_step["command"]
+        assert "pure_text_open_live_api_slice_v1" not in external_step["command"]
+        assert "--task-set contest_dual_mode_controlled_v3" in external_step["command"]
+        assert "--llm-config deploy/statebus_llm.yaml.local" in external_step["command"]
+        assert external_step["out_dir"] == "runs/<stamp>/api_repeat1_external_pure_text_baseline"
         report_text = artifact_md.read_text(encoding="utf-8")
         assert "Deterministic Formal Comparator Artifact" in report_text
         assert "contest_four_role_carrier_comparison_v1" in report_text
         assert "external_pure_text_four_role_baseline_v1" in report_text
         assert "contest_honest_headline_v1" in report_text
         assert "API Repeat=1 Plan" in report_text
+        assert "scripts/run_formal_comparator_api_repeat1.sh" in report_text
         assert "Do not merge support/audit outputs" in report_text
 
 
@@ -5805,6 +5814,21 @@ def test_external_text_open_source_stays_outside_statebus_runtime_and_structured
     )
     for token in forbidden:
         assert token not in source_text
+
+
+def test_pure_text_open_baseline_v1_supports_api_mode_with_explicit_client() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-open-api-") as tmpdir:
+        result = run_pure_text_open_baseline(
+            out_dir=Path(tmpdir),
+            repeat=1,
+            llm_mode="api",
+            llm_client=DeterministicLLMClient(),
+        )
+    assert result["manifest"]["llm_mode"] == "api"
+    assert result["manifest"]["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
+    assert result["manifest"]["runtime_arms"] == ["external_text_open"]
+    assert all(row["metrics"]["llm_total_tokens"] > 0 for row in result["tasks"])
+    assert all(row["runtime_contract"] == "external_pure_text_four_role_baseline_v1" for row in result["tasks"])
 
 
 class _LiveTextOpenFakeClient:

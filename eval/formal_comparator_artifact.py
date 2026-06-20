@@ -218,6 +218,7 @@ def _build_artifact_payload(
     api_repeat1_plan = {
         "ready": bool(external_purity.get("formal_ready", False)),
         "purpose": "serialized API repeat=1 comparator sanity pass before any larger API sweep",
+        "script": "scripts/run_formal_comparator_api_repeat1.sh",
         "run_order": [
             {
                 "object": "contest_four_role_carrier_comparison_v1",
@@ -230,7 +231,8 @@ def _build_artifact_payload(
                 "command": (
                     "source deploy/activate_statebus_host.sh\n"
                     "python -m eval.runner --task-set contest_dual_mode_controlled_v3 --repeat 1 "
-                    "--llm-mode api --out runs/<stamp>/api_repeat1_internal_paired"
+                    "--modes text,protocol --llm-mode api --llm-config deploy/statebus_llm.yaml.local "
+                    "--out runs/<stamp>/api_repeat1_internal_paired"
                 ),
                 "out_dir": "runs/<stamp>/api_repeat1_internal_paired",
             },
@@ -244,10 +246,12 @@ def _build_artifact_payload(
                 ],
                 "command": (
                     "source deploy/activate_statebus_host.sh\n"
-                    "python -m eval.open_runner --pack pure_text_open_live_api_slice_v1 --repeat 1 "
-                    "--llm-mode api --out runs/<stamp>/api_repeat1_external_pure_text_slice"
+                    "python -m eval.open_runner --pack pure_text_open_baseline_v1 --repeat 1 "
+                    "--task-set contest_dual_mode_controlled_v3 --llm-mode api "
+                    "--llm-config deploy/statebus_llm.yaml.local "
+                    "--out runs/<stamp>/api_repeat1_external_pure_text_baseline"
                 ),
-                "out_dir": "runs/<stamp>/api_repeat1_external_pure_text_slice",
+                "out_dir": "runs/<stamp>/api_repeat1_external_pure_text_baseline",
             },
             {
                 "object": "contest_honest_headline_v1",
@@ -259,7 +263,8 @@ def _build_artifact_payload(
                 "command": (
                     "source deploy/activate_statebus_host.sh\n"
                     "python -m eval.runner --task-set contest_honest_headline_v1 --repeat 1 "
-                    "--llm-mode api --out runs/<stamp>/api_repeat1_frozen_headline"
+                    "--modes text,protocol --llm-mode api --llm-config deploy/statebus_llm.yaml.local "
+                    "--out runs/<stamp>/api_repeat1_frozen_headline"
                 ),
                 "out_dir": "runs/<stamp>/api_repeat1_frozen_headline",
             },
@@ -388,6 +393,7 @@ def _build_artifact_report(artifact: dict[str, Any]) -> str:
             "## API Repeat=1 Plan",
             "",
             artifact["api_repeat1_plan"]["purpose"],
+            f"- Unified script: `{artifact['api_repeat1_plan']['script']}`",
             "",
         ]
     )

@@ -259,8 +259,16 @@ def run_pure_text_open_baseline(
     task_set: str = "contest_dual_mode_controlled_v3",
     runtime_arms: Iterable[str] = PURE_TEXT_BASELINE_ARMS,
     memory_policies: Iterable[str] = OPEN_MEMORY_POLICIES,
+    llm_mode: str = "deterministic",
+    llm_config: str | Path | None = None,
+    llm_client=None,
 ) -> dict[str, object]:
-    runtime_llm_client = build_llm_client(LLMConfig.from_runtime().with_mode("deterministic"))
+    active_mode = str(llm_mode).strip().lower()
+    runtime_llm_client = llm_client
+    if runtime_llm_client is None:
+        runtime_llm_client = build_llm_client(
+            LLMConfig.from_runtime(llm_config).with_mode(active_mode)
+        )
     return _run_open_pack(
         out_dir=out_dir,
         repeat=repeat,
@@ -273,7 +281,7 @@ def run_pure_text_open_baseline(
             "Formal-ready strict external pure-text four-role baseline. Pure text only, no StateBus typed state, "
             "no lexical fallback correction, and no hidden helper decision path."
         ),
-        llm_mode="deterministic",
+        llm_mode=active_mode,
         llm_client=runtime_llm_client,
         data_source="strict_pure_text_four_role",
         runtime_contract=STRICT_EXTERNAL_TEXT_BASELINE_OBJECT,
@@ -1021,7 +1029,13 @@ def main() -> None:
             llm_config=args.llm_config,
         )
     elif args.pack == PURE_TEXT_OPEN_BASELINE_PACK:
-        run_pure_text_open_baseline(out_dir=out_dir, repeat=args.repeat, task_set=args.task_set)
+        run_pure_text_open_baseline(
+            out_dir=out_dir,
+            repeat=args.repeat,
+            task_set=args.task_set,
+            llm_mode=args.llm_mode,
+            llm_config=args.llm_config,
+        )
     else:
         run_open_comparison(out_dir=out_dir, repeat=args.repeat, task_set=args.task_set)
 
