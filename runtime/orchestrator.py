@@ -8,6 +8,11 @@ from uuid import uuid4
 
 import msgpack
 
+from eval.fairness_gates import (
+    CarrierFairnessGate,
+    evaluate_execution_fairness_gate,
+    evaluate_plan_fairness_gate,
+)
 from eval.metrics import TaskMetrics
 from memory.store import EmbeddingProvider, MemoryStore
 from protocol.channels import attach_channel_metadata
@@ -18,7 +23,13 @@ from runtime.contracts import (
     StateContractRegistry,
     default_state_contract_registry,
 )
+from runtime.context_slice import LLMContextSlice, build_context_slice
 from runtime.llm import LLMResult
+from runtime.role_contracts import (
+    RoleExecutionContract,
+    default_role_execution_contracts,
+    normalize_comparator_role_name,
+)
 from runtime.reuse_contract import resolve_runtime_reuse_contract
 from runtime.reuse_contract import runtime_reuse_contract_gates
 from runtime.task_profile import RuntimeTaskProfile, build_reuse_signature
@@ -232,6 +243,14 @@ class RunContext:
             "blob_fetch_hits": 0,
         }
     )
+    role_contracts: dict[str, RoleExecutionContract] = field(
+        default_factory=default_role_execution_contracts
+    )
+    role_context_slices: dict[str, LLMContextSlice] = field(default_factory=dict)
+    role_trace: list[dict[str, Any]] = field(default_factory=list)
+    contract_errors: list[str] = field(default_factory=list)
+    fairness_gate: CarrierFairnessGate | None = None
+    plan_fairness_gate: CarrierFairnessGate | None = None
 
     def emit(self, message: object) -> None:
         protocol_size, text_chars, text_size = self.session.record_message(message, phase="steady")
@@ -758,22 +777,69 @@ class RunContext:
             self.metrics.summarizer_prompt_tokens += result.usage.prompt_tokens
             self.metrics.summarizer_completion_tokens += result.usage.completion_tokens
             self.metrics.summarizer_total_tokens += result.usage.total_tokens
+        if normalized_purpose:
+            try:
+                normalized_role = normalize_comparator_role_name(normalized_purpose)
+            except ValueError:
+                normalized_role = ""
+        else:
+            normalized_role = ""
+        if normalized_role and normalized_role in self.role_contracts:
+            self.metrics.record_role_llm_usage(
+                role=normalized_role,
+                prompt_tokens=result.usage.prompt_tokens,
+                completion_tokens=result.usage.completion_tokens,
+                total_tokens=result.usage.total_tokens,
+            )
 
     def record_phase_duration(self, phase: str, elapsed_ms: float) -> None:
         normalized_phase = phase.strip().lower()
         if normalized_phase == "planner":
             self.metrics.planner_ms += elapsed_ms
+            self.metrics.record_role_latency(role="planner", elapsed_ms=elapsed_ms)
             return
         if normalized_phase == "retrieve":
             self.metrics.retrieve_ms += elapsed_ms
+            self.metrics.record_role_latency(role="retriever", elapsed_ms=elapsed_ms)
             return
         if normalized_phase == "execute":
             self.metrics.execute_ms += elapsed_ms
+            self.metrics.record_role_latency(role="executor", elapsed_ms=elapsed_ms)
             return
         if normalized_phase == "summarize":
             self.metrics.summarize_ms += elapsed_ms
+            self.metrics.record_role_latency(role="summarizer", elapsed_ms=elapsed_ms)
             return
         raise ValueError(f"unsupported phase timing bucket: {phase}")
+
+    def set_role_context_slice(self, slice_view: LLMContextSlice) -> None:
+        self.role_context_slices[slice_view.role] = slice_view
+
+    def add_contract_error(self, detail: str) -> None:
+        normalized = str(detail).strip()
+        if normalized:
+            self.contract_errors.append(normalized)
+
+    def record_role_trace(
+        self,
+        *,
+        role: str,
+        step_id: str,
+        phase: str,
+        input_state_refs: list[StateRef],
+        output_state_refs: list[StateRef],
+        carrier: str,
+    ) -> None:
+        self.role_trace.append(
+            {
+                "role": role,
+                "step_id": step_id,
+                "phase": phase,
+                "carrier": carrier,
+                "input_state_ids": [ref.state_id for ref in input_state_refs],
+                "output_state_ids": [ref.state_id for ref in output_state_refs],
+            }
+        )
 
     def note_reuse(self, hit: MemoryHit, *, reuse_mode: str) -> None:
         prior_mode = self.reuse_mode
@@ -937,8 +1003,31 @@ class Orchestrator:
         ctx.planner_step_count = len(plan.steps)
         ctx.planner_contract_valid = True
         ctx.planner_contract_valid_final = True
+        ctx.plan_fairness_gate = evaluate_plan_fairness_gate(plan)
         for step in plan.steps:
             ctx.set_step_role(step.step_id, self._semantic_role_for_step(step))
+        ctx.set_role_context_slice(
+            build_context_slice(
+                role="planner",
+                task_id=plan.task_id,
+                mode=ctx.mode,
+                carrier=ctx.transfer_strategy(),
+                visible_text=plan.goal,
+                upstream_roles=(),
+                metadata={
+                    "step_count": len(plan.steps),
+                    "summary_contract": ctx.summary_contract,
+                },
+            )
+        )
+        ctx.record_role_trace(
+            role="planner",
+            step_id="planner",
+            phase="plan",
+            input_state_refs=[],
+            output_state_refs=[],
+            carrier=ctx.transfer_strategy(),
+        )
         if getattr(ctx, "_statebus_plan_emitted", False):
             return
         ctx.emit(plan)
@@ -1048,6 +1137,7 @@ class Orchestrator:
             statepool=ctx.statepool,
         )
         self.register_result(result, ctx)
+        self._record_role_context(step=step, result=result, ctx=ctx)
         self.register_step_tree(step=step, result=result, ctx=ctx)
 
     @staticmethod
@@ -1450,6 +1540,30 @@ class Orchestrator:
             statepool=ctx.statepool,
             producer_agents_by_state_id=producer_agents_by_state_id,
         )
+        raw_role = self._semantic_role_for_step(step)
+        try:
+            role = normalize_comparator_role_name(raw_role)
+        except ValueError:
+            role = raw_role
+        contract = ctx.role_contracts.get(role)
+        if contract is not None:
+            if selected_refs and not contract.consumes_typed_state:
+                detail = f"role {role} cannot consume typed state"
+                ctx.add_contract_error(detail)
+                raise SchemaValidationError(detail)
+            if contract.allowed_input_state_kinds:
+                disallowed = [
+                    ref.kind
+                    for ref in selected_refs
+                    if ref.kind not in contract.allowed_input_state_kinds
+                ]
+                if disallowed:
+                    detail = (
+                        f"role {role} received disallowed input state kinds: "
+                        + ", ".join(sorted(dict.fromkeys(disallowed)))
+                    )
+                    ctx.add_contract_error(detail)
+                    raise SchemaValidationError(detail)
         if persist:
             ctx.set_step_input_refs(step.step_id, selected_refs)
         return selected_refs
@@ -1476,6 +1590,82 @@ class Orchestrator:
                 return ctx.handoff_profile()
             return ctx.transfer_strategy()
         return "default"
+
+    @staticmethod
+    def _record_role_context(
+        *,
+        step: PlanStep,
+        result: StepResult,
+        ctx: RunContext,
+    ) -> None:
+        raw_role = Orchestrator._semantic_role_for_step(step)
+        try:
+            role = normalize_comparator_role_name(raw_role)
+        except ValueError:
+            role = raw_role
+        contract = ctx.role_contracts.get(role)
+        if contract is None:
+            return
+        if contract.allowed_output_state_kinds:
+            disallowed = [
+                ref.kind
+                for ref in result.output_state_refs
+                if ref.kind not in contract.allowed_output_state_kinds
+            ]
+            if disallowed:
+                detail = (
+                    f"role {role} produced disallowed output state kinds: "
+                    + ", ".join(sorted(dict.fromkeys(disallowed)))
+                )
+                ctx.add_contract_error(detail)
+                raise SchemaValidationError(detail)
+        input_refs = ctx.step_input_refs(step.step_id)
+        visible_text_parts = [
+            str(step.params.get("query", "")).strip(),
+            str(step.params.get("summary_hint", "")).strip(),
+            str(step.params.get("evidence_text", "")).strip(),
+        ]
+        ctx.set_role_context_slice(
+            build_context_slice(
+                role=role,
+                task_id=ctx.task_id,
+                mode=ctx.mode,
+                carrier=ctx.transfer_strategy(),
+                visible_text="\n".join(part for part in visible_text_parts if part),
+                visible_state_refs=input_refs,
+                upstream_roles=tuple(
+                    normalized_role
+                    for dep in step.depends_on
+                    for normalized_role in [_maybe_normalize_comparator_role(ctx.semantic_role_for_step(dep) or dep)]
+                    if normalized_role
+                ),
+                metadata={
+                    "step_id": step.step_id,
+                    "owner_agent": step.owner_agent,
+                    "action": step.action,
+                    "success": result.success,
+                },
+            )
+        )
+        ctx.record_role_trace(
+            role=role,
+            step_id=step.step_id,
+            phase=Orchestrator.phase_name_for_step(step) or role,
+            input_state_refs=input_refs,
+            output_state_refs=result.output_state_refs,
+            carrier=ctx.transfer_strategy(),
+        )
+
+    @staticmethod
+    def finalize_fairness_gate(plan: Plan, ctx: RunContext) -> CarrierFairnessGate:
+        gate = evaluate_execution_fairness_gate(
+            plan=plan,
+            role_context_slices=ctx.role_context_slices,
+            role_trace=ctx.role_trace,
+            contract_errors=ctx.contract_errors,
+        )
+        ctx.fairness_gate = gate
+        return gate
 
     @staticmethod
     def _matches_skip_execute(
@@ -2632,3 +2822,10 @@ def _bundle_float(
     if bundle is not None and key in bundle:
         return _coerce_float(bundle.get(key), default=default)
     return _coerce_float(fallback, default=default)
+
+
+def _maybe_normalize_comparator_role(role: str) -> str:
+    try:
+        return normalize_comparator_role_name(role)
+    except ValueError:
+        return ""

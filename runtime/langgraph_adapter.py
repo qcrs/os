@@ -113,6 +113,9 @@ class StateBusGraphRunner:
             results = {}
         ctx.metrics.task_ms = (time.perf_counter() - started) * 1000.0
         self.orchestrator.seal_task_commit(ctx)
+        current_plan = runtime_state.get("plan")
+        if isinstance(current_plan, Plan):
+            self.orchestrator.finalize_fairness_gate(current_plan, ctx)
         return GraphRunnerResult(
             task_id=task.task_id,
             mode=ctx.mode,
@@ -340,6 +343,19 @@ class StateBusGraphRunner:
                 len(ctx.reuse_hit.step_output_state_refs) if ctx.reuse_hit is not None else 0
             ),
         }
+        state["role_context_slices"] = {
+            role: {
+                "task_id": slice_view.task_id,
+                "mode": slice_view.mode,
+                "carrier": slice_view.carrier,
+                "visible_state_ids": list(slice_view.visible_state_ids),
+                "upstream_roles": list(slice_view.upstream_roles),
+                "metadata": dict(slice_view.metadata),
+            }
+            for role, slice_view in ctx.role_context_slices.items()
+        }
+        state["role_trace"] = list(ctx.role_trace)
+        state["fairness_gate"] = None if ctx.fairness_gate is None else ctx.fairness_gate.to_dict()
 
 
 def run_task_sync(
@@ -438,6 +454,16 @@ def _graph_state_snapshot(
             ),
         },
         "metrics": ctx.metrics.to_dict(),
+        "role_context_slices": {
+            role: {
+                "visible_state_ids": list(slice_view.visible_state_ids),
+                "upstream_roles": list(slice_view.upstream_roles),
+                "carrier": slice_view.carrier,
+            }
+            for role, slice_view in ctx.role_context_slices.items()
+        },
+        "role_trace": list(ctx.role_trace),
+        "fairness_gate": None if ctx.fairness_gate is None else ctx.fairness_gate.to_dict(),
         "status": "completed" if "summarize" in results else ("failed" if any(not item.success for item in results.values()) else "running"),
     }
 

@@ -1925,6 +1925,8 @@ def build_sample_agents(llm_client: LLMClient | None = None) -> dict[str, BaseAg
                             "DENSE_EVIDENCE",
                             "CHANNEL_SNAPSHOT",
                             "FEATURE_BUNDLE",
+                            "RANKED_EVIDENCE_BUNDLE",
+                            "REPLAY_ELIGIBILITY_BUNDLE",
                             "TOOL_CANDIDATE_SET",
                             "EXECUTOR_DECISION_PACKET",
                             "VALIDATION_GATE_PACKET",

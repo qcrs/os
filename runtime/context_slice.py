@@ -24,7 +24,12 @@ class LLMContextSlice:
         object.__setattr__(
             self,
             "upstream_roles",
-            tuple(normalize_comparator_role_name(role) for role in self.upstream_roles),
+            tuple(
+                normalized
+                for role in self.upstream_roles
+                for normalized in [_maybe_normalize_comparator_role(role)]
+                if normalized
+            ),
         )
 
     @property
@@ -67,3 +72,10 @@ def build_context_slice(
         tags=tuple(str(tag) for tag in (tags or ()) if str(tag).strip()),
         metadata=dict(metadata or {}),
     )
+
+
+def _maybe_normalize_comparator_role(role: str) -> str:
+    try:
+        return normalize_comparator_role_name(role)
+    except ValueError:
+        return ""
