@@ -18,6 +18,7 @@ from tasks.sample_tasks import SampleTask, load_task_set_bundle
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+STRICT_EXTERNAL_TEXT_BASELINE_OBJECT = "external_pure_text_four_role_baseline_v1"
 
 OPEN_SYSTEM_PACK = "open_system_comparison_v1"
 PURE_TEXT_OPEN_BASELINE_PACK = "pure_text_open_baseline_v1"
@@ -259,6 +260,7 @@ def run_pure_text_open_baseline(
     runtime_arms: Iterable[str] = PURE_TEXT_BASELINE_ARMS,
     memory_policies: Iterable[str] = OPEN_MEMORY_POLICIES,
 ) -> dict[str, object]:
+    runtime_llm_client = build_llm_client(LLMConfig.from_runtime().with_mode("deterministic"))
     return _run_open_pack(
         out_dir=out_dir,
         repeat=repeat,
@@ -268,9 +270,14 @@ def run_pure_text_open_baseline(
         task_pack=PURE_TEXT_OPEN_BASELINE_PACK,
         task_loader=_load_pure_text_open_tasks,
         contract=(
-            "Audit-only external pure-text baseline. Not formal v3 headline, not controlled mechanism "
-            "causality proof, and not part of default open_system_comparison_v1."
+            "Formal-ready strict external pure-text four-role baseline. Pure text only, no StateBus typed state, "
+            "no lexical fallback correction, and no hidden helper decision path."
         ),
+        llm_mode="deterministic",
+        llm_client=runtime_llm_client,
+        data_source="strict_pure_text_four_role",
+        runtime_contract=STRICT_EXTERNAL_TEXT_BASELINE_OBJECT,
+        statebus_contract_used=False,
     )
 
 
@@ -354,11 +361,11 @@ def _run_open_pack(
         "task_count": len(tasks),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "contract": contract,
-        "public_surface": "audit_only",
+        "public_surface": "formal_ready" if task_pack == PURE_TEXT_OPEN_BASELINE_PACK else "audit_only",
         "single_variable": False,
         "variable_axes": ["runtime_arm", "open_memory_policy"],
         "data_source": data_source
-        or ("lexical_stub" if task_pack == PURE_TEXT_OPEN_BASELINE_PACK else "deterministic_oracle"),
+        or ("strict_pure_text_four_role" if task_pack == PURE_TEXT_OPEN_BASELINE_PACK else "deterministic_oracle"),
         "artifact_reuse": False,
         "runtime_contract": runtime_contract,
         "statebus_contract_used": (
@@ -372,11 +379,13 @@ def _run_open_pack(
     }
     if task_pack == PURE_TEXT_OPEN_BASELINE_PACK:
         manifest["surface_notes"] = [
-            "audit-only external pure-text baseline",
-            "not formal v3 headline",
-            "not controlled mechanism causality proof",
-            "not part of default open_system_comparison_v1",
+            "strict external pure-text four-role baseline",
+            "formal-ready external comparator object",
+            "no StateBus typed state or structured packet carrier",
+            "no lexical fallback or hidden helper decision path",
         ]
+        manifest["baseline_object"] = STRICT_EXTERNAL_TEXT_BASELINE_OBJECT
+        manifest["purity_gate"] = _build_external_purity_gate(rows)
     if task_pack == PURE_TEXT_OPEN_LIVE_API_PACK:
         manifest["surface_notes"] = [
             "audit-only external live API baseline",
@@ -683,6 +692,9 @@ def _summarize_rows(*, arm: str, policy: str, rows: list[dict[str, object]]) -> 
         "data_source": data_sources[0] if len(data_sources) == 1 else ",".join(data_sources),
         "artifact_reuse": False,
         "task_runs": len(rows),
+        "purity_pass_rate": _mean(
+            1.0 if bool(dict(row.get("purity_audit", {})).get("passed", False)) else 0.0 for row in rows
+        ),
         **metrics,
     }
 
@@ -712,7 +724,7 @@ def _report_md(result: dict[str, object]) -> str:
         )
     )
     intro = (
-        "This is an audit-only external pure-text baseline, not a formal v3 headline or controlled mechanism proof."
+        "This is a formal-ready strict external pure-text four-role baseline. It uses only text-visible role handoffs and records purity gate evidence."
         if manifest["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
         else (
             "This is an audit-only external live API pure-text slice. It keeps message logs text-only and does not reuse the StateBus structured contract."
@@ -742,14 +754,30 @@ def _report_md(result: dict[str, object]) -> str:
         "",
         "## Summary",
         "",
-        "| runtime_arm | open_memory_policy | exact_match_rate | llm_total_tokens | message_count | handoff_wire_bytes | replay_hit_rate | skipped_step_count | reuse_gain | task_ms | data_source | artifact_reuse |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| runtime_arm | open_memory_policy | exact_match_rate | llm_total_tokens | message_count | handoff_wire_bytes | replay_hit_rate | skipped_step_count | reuse_gain | task_ms | data_source | purity_pass_rate | artifact_reuse |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |",
     ]
     for row in result["summary"]:
         lines.append(
-            "| {runtime_arm} | {open_memory_policy} | {exact_match_rate:.2f} | {llm_total_tokens:.2f} | {message_count:.2f} | {handoff_wire_bytes:.2f} | {replay_hit_rate:.2f} | {skipped_step_count:.2f} | {reuse_gain:.2f} | {task_ms:.2f} | {data_source} | {artifact_reuse} |".format(
+            "| {runtime_arm} | {open_memory_policy} | {exact_match_rate:.2f} | {llm_total_tokens:.2f} | {message_count:.2f} | {handoff_wire_bytes:.2f} | {replay_hit_rate:.2f} | {skipped_step_count:.2f} | {reuse_gain:.2f} | {task_ms:.2f} | {data_source} | {purity_pass_rate:.2f} | {artifact_reuse} |".format(
                 **row
             )
+        )
+    if manifest["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK:
+        purity_gate = dict(manifest.get("purity_gate", {}))
+        lines.extend(
+            [
+                "",
+                "## Purity Gate",
+                "",
+                f"- Passed: `{'yes' if bool(purity_gate.get('passed')) else 'no'}`",
+                f"- Formal-ready: `{'yes' if bool(purity_gate.get('formal_ready')) else 'no'}`",
+                f"- Withheld reasons: `{', '.join(purity_gate.get('withheld_reasons', [])) or 'none'}`",
+                f"- Contaminated task ids: `{', '.join(purity_gate.get('contaminated_task_ids', [])) or 'none'}`",
+                f"- Hidden helper task ids: `{', '.join(purity_gate.get('hidden_helper_task_ids', [])) or 'none'}`",
+                f"- Lexical fallback task ids: `{', '.join(purity_gate.get('lexical_fallback_task_ids', [])) or 'none'}`",
+                f"- Structured marker task ids: `{', '.join(purity_gate.get('structured_marker_task_ids', [])) or 'none'}`",
+            ]
         )
     lines.extend(
         [
@@ -759,12 +787,12 @@ def _report_md(result: dict[str, object]) -> str:
             (
                 "- Audit-only external live API baseline."
                 if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
-                else "- This surface is audit-only engineering simulation."
+                else "- Formal-ready external pure-text baseline object. Keep it separate from the frozen internal headline."
             ),
             (
                 "- Intended to locate weakness in message overhead, tool routing, and replay semantics, not to requalify the frozen headline."
                 if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
-                else "- `data_source=deterministic_oracle` or `lexical_stub` means these rows are not real-LLM headline evidence."
+                else "- It is strict pure-text only and does not inherit StateBus typed-state semantics."
             ),
             "- Do not merge this output into `contest_dual_mode_controlled_v3`, `typed_state_mechanism_v3`, or `memory_policy_controlled_v3` claims.",
         ]
@@ -1054,6 +1082,11 @@ def _external_text_row_from_state(
         "data_source": str(graph_state.get("data_source", "lexical_stub")),
         "artifact_reuse": False,
         "runtime_contract": str(graph_state.get("runtime_contract", "")),
+        "purity_audit": dict(graph_state.get("purity_audit", {})),
+        "role_trace": list(graph_state.get("role_trace", [])),
+        "lexical_fallback_used": bool(graph_state.get("lexical_fallback_used", False)),
+        "helper_dominance": bool(graph_state.get("helper_dominance", False)),
+        "visible_candidate_count": int(graph_state.get("visible_candidate_count", 0) or 0),
         "native_replay": {
             "hit": replay_hit,
             "source": "native_text_store" if replay_hit else "",
@@ -1068,6 +1101,49 @@ def _external_text_row_from_state(
         "statebus_contract_used": bool(graph_state.get("statebus_contract_used", False)),
         "metadata_oracle_used": bool(graph_state.get("metadata_oracle_used", False)),
         "decision_source": str(graph_state.get("decision_source", "")),
+    }
+
+
+def _build_external_purity_gate(rows: list[dict[str, object]]) -> dict[str, object]:
+    contaminated_task_ids: list[str] = []
+    hidden_helper_task_ids: list[str] = []
+    lexical_fallback_task_ids: list[str] = []
+    structured_marker_task_ids: list[str] = []
+    wrong_role_count_task_ids: list[str] = []
+    for row in rows:
+        task_id = str(row.get("task_id", "")).strip()
+        purity = dict(row.get("purity_audit", {}) or {})
+        if not bool(purity.get("passed", False)):
+            contaminated_task_ids.append(task_id)
+        if not bool(purity.get("no_hidden_helper_advantage", False)):
+            hidden_helper_task_ids.append(task_id)
+        if not bool(purity.get("no_lexical_fallback", False)) or bool(row.get("lexical_fallback_used", False)):
+            lexical_fallback_task_ids.append(task_id)
+        if bool(purity.get("structured_packet_markers_present", False)):
+            structured_marker_task_ids.append(task_id)
+        if int(purity.get("role_count", 0) or 0) != 4:
+            wrong_role_count_task_ids.append(task_id)
+    withheld_reasons: list[str] = []
+    if contaminated_task_ids:
+        withheld_reasons.append("contamination_detected")
+    if hidden_helper_task_ids:
+        withheld_reasons.append("hidden_helper_advantage_detected")
+    if lexical_fallback_task_ids:
+        withheld_reasons.append("lexical_fallback_detected")
+    if structured_marker_task_ids:
+        withheld_reasons.append("structured_marker_detected")
+    if wrong_role_count_task_ids:
+        withheld_reasons.append("four_role_contract_missing")
+    passed = not withheld_reasons
+    return {
+        "passed": passed,
+        "formal_ready": passed,
+        "withheld_reasons": withheld_reasons,
+        "contaminated_task_ids": contaminated_task_ids,
+        "hidden_helper_task_ids": hidden_helper_task_ids,
+        "lexical_fallback_task_ids": lexical_fallback_task_ids,
+        "structured_marker_task_ids": structured_marker_task_ids,
+        "wrong_role_count_task_ids": wrong_role_count_task_ids,
     }
 
 

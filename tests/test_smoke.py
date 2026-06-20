@@ -5475,8 +5475,12 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
 
     assert result["manifest"]["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
     assert tuple(result["manifest"]["runtime_arms"]) == ("external_text_open",)
-    assert "external pure-text baseline" in result["manifest"]["contract"].lower()
-    assert result["manifest"]["data_source"] == "lexical_stub"
+    assert "strict external pure-text four-role baseline" in result["manifest"]["contract"].lower()
+    assert result["manifest"]["data_source"] == "strict_pure_text_four_role"
+    assert result["manifest"]["public_surface"] == "formal_ready"
+    assert result["manifest"]["baseline_object"] == "external_pure_text_four_role_baseline_v1"
+    assert result["manifest"]["purity_gate"]["passed"] is True
+    assert result["manifest"]["purity_gate"]["formal_ready"] is True
     assert result["manifest"]["selected_complexity_buckets"] == [
         "ambiguous",
         "reusable",
@@ -5486,13 +5490,21 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
     assert len(summary) == 2
     for policy in OPEN_MEMORY_POLICIES:
         assert summary[("external_text_open", policy)]["runtime_arm"] == "external_text_open"
-        assert summary[("external_text_open", policy)]["data_source"] == "lexical_stub"
+        assert summary[("external_text_open", policy)]["data_source"] == "strict_pure_text_four_role"
+        assert summary[("external_text_open", policy)]["purity_pass_rate"] == 1.0
     for row in result["tasks"]:
         assert row["runtime_arm"] == "external_text_open"
         assert row["statebus_contract_used"] is False
         assert row["metadata_oracle_used"] is False
-        assert row["decision_source"] == "text_only_lexical_playbook"
-        assert row["data_source"] == "lexical_stub"
+        assert row["decision_source"] in {"external_text_four_role_llm", "external_text_four_role_replay"}
+        assert row["data_source"] == "strict_pure_text_four_role"
+        assert row["runtime_contract"] == "external_pure_text_four_role_baseline_v1"
+        assert row["purity_audit"]["passed"] is True
+        assert row["purity_audit"]["role_count"] == 4
+        assert row["lexical_fallback_used"] is False
+        assert row["helper_dominance"] is False
+        assert len(row["role_trace"]) == 4
+        assert row["visible_candidate_count"] >= 1
         assert all(isinstance(message, str) for message in row["message_log"])
         assert all("StateRef" not in message for message in row["message_log"])
         assert all("EXECUTOR_DECISION_PACKET" not in message for message in row["message_log"])
@@ -5678,14 +5690,24 @@ def test_external_text_open_message_log_stays_text_only_and_without_markers() ->
     forbidden_markers = (
         "MEMORY_ASSIST_HINT",
         "Suggested route:",
-        "Tool candidates:",
         "StateRef",
         "EXECUTOR_DECISION_PACKET",
+        "<sb-",
     )
     for row in result["tasks"]:
         for message in row["message_log"]:
             assert isinstance(message, str)
             assert all(marker not in message for marker in forbidden_markers)
+
+
+def test_external_text_open_report_surfaces_formal_ready_purity_gate() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-report-") as tmpdir:
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=1)
+        report_text = (Path(tmpdir) / "open_report.md").read_text(encoding="utf-8")
+    assert result["manifest"]["purity_gate"]["passed"] is True
+    assert "## Purity Gate" in report_text
+    assert "Formal-ready: `yes`" in report_text
+    assert "strict external pure-text four-role baseline" in report_text.lower()
 
 
 def test_external_text_open_source_stays_outside_statebus_runtime_and_structured_packets() -> None:
