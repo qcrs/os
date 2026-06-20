@@ -60,6 +60,7 @@ external text审计   audit      external_text_baseline_audit_v3   external text
 > StateBus 在受控 paired contest task object 中，用 structured control + typed-state handoff 替代 whole-lane text handoff，稳定降低控制面通信开销，并证明 S1/S2/replay runtime behavior。
 
 当前 contest-facing formal dual-mode surface 比较的是 `text_whole_lane` vs `state_packet_minimal`。它不是 external traditional pure-text baseline，不是 open-world agent benchmark，不是 LangGraph 创新证明，也不是开放 Planner 能力证明。
+换句话说，它是受控 paired contest object 下的单一通信载体变量对照，不是 external pure-text framework 对照。
 
 ### 第2步：架构
 

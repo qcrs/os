@@ -1241,6 +1241,9 @@ class ExecutorAgent(BaseAgent):
             input_state_refs=input_refs,
             transfer_strategy=transfer_strategy,
             handoff_profile=ctx.handoff_profile(),
+            audit_text_helper_disabled=bool(
+                getattr(ctx.runtime_profile, "audit_text_helper_disabled", False)
+            ),
             inline_handoff_text=(
                 str(ctx.result_for_role("retrieve").payload.get("inline_handoff_text", ""))
                 if transfer_strategy in {"inline_text_handoff", "text_whole_lane", "text_strict_pure_lane"} and ctx.result_for_role("retrieve") is not None
@@ -1254,6 +1257,10 @@ class ExecutorAgent(BaseAgent):
         ctx.record_transfer_inputs(input_refs)
         retrieve_result = ctx.result_for_role("retrieve")
         retrieve_payload = {} if retrieve_result is None else dict(retrieve_result.payload)
+        text_helper_disabled = (
+            ctx.transfer_strategy() == "text_whole_lane"
+            and bool(getattr(ctx.runtime_profile, "audit_text_helper_disabled", False))
+        )
         decision_packet = {}
         transfer_artifact_ref = None
         for ref in input_refs:
@@ -1267,6 +1274,7 @@ class ExecutorAgent(BaseAgent):
         if (
             not decision_packet
             and ctx.transfer_strategy() in {"text_whole_lane", "text_strict_pure_lane"}
+            and not text_helper_disabled
             and transfer_artifact_ref is not None
         ):
             handoff_text = ""
@@ -1304,10 +1312,14 @@ class ExecutorAgent(BaseAgent):
                         "route": recovered_route,
                         "tool_name": recovered_tool,
                     }
-        validated_route = str(retrieve_payload.get("feature_route", "")).strip()
-        validated_tool = str(retrieve_payload.get("tool_name", "")).strip() or str(
-            retrieve_payload.get("feature_tool_name", "")
-        ).strip()
+        if text_helper_disabled:
+            validated_route = ""
+            validated_tool = ""
+        else:
+            validated_route = str(retrieve_payload.get("feature_route", "")).strip()
+            validated_tool = str(retrieve_payload.get("tool_name", "")).strip() or str(
+                retrieve_payload.get("feature_tool_name", "")
+            ).strip()
         if not validated_tool:
             validated_tool = str(decision_packet.get("tool_name", "")).strip()
         pre_validation_route = str(decision_packet.get("route", "")).strip()
@@ -2351,6 +2363,36 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
     return steps
 
 
+def _repair_common_planner_binding_confusions(step: dict[str, Any]) -> dict[str, Any]:
+    repaired = dict(step)
+    semantic_role = str(repaired.get("semantic_role", "")).strip().lower()
+    owner_agent = str(repaired.get("owner_agent", "")).strip().lower()
+    action = str(repaired.get("action", "")).strip().upper()
+    binding = PLANNER_ROLE_BINDINGS.get(semantic_role)
+    if binding is None:
+        return repaired
+    expected_owner_agent, expected_action = binding
+    if owner_agent == expected_owner_agent and action != expected_action:
+        repaired["action"] = expected_action
+    return repaired
+
+
+def _normalize_planner_step_alias(value: object) -> str:
+    text = str(value or "").strip()
+    lowered = text.lower()
+    alias_map = {
+        "retrieve": "retrieve",
+        "retrieve_evidence": "retrieve",
+        "validate": "validate",
+        "validate_route": "validate",
+        "execute": "execute",
+        "execute_playbook": "execute",
+        "summarize": "summarize",
+        "summarize_and_commit": "summarize",
+    }
+    return alias_map.get(lowered, text)
+
+
 def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]:
     if not isinstance(step, dict):
         raise ValueError(f"planner step must be an object: {step!r}")
@@ -2374,13 +2416,24 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
         "execute": "execute",
         "summarize": "summarize",
     }
-    step_id = raw_step_id.lower() if raw_step_id.lower() in normalized_step_aliases else raw_step_id
+    step_id = _normalize_planner_step_alias(raw_step_id)
     if nested_step_alias:
         step_id = normalized_step_aliases.get(nested_step_alias, nested_step_alias)
     semantic_role = str(
         normalized.get("semantic_role", normalized.get("role", nested_step_alias))
     ).strip().lower()
     owner_agent = str(normalized.get("owner_agent", normalized.get("owner", ""))).strip().lower()
+    action = str(normalized.get("action", "")).strip().upper()
+    normalized = _repair_common_planner_binding_confusions(
+        {
+            **normalized,
+            "semantic_role": semantic_role,
+            "owner_agent": owner_agent,
+            "action": action,
+        }
+    )
+    semantic_role = str(normalized.get("semantic_role", "")).strip().lower()
+    owner_agent = str(normalized.get("owner_agent", "")).strip().lower()
     action = str(normalized.get("action", "")).strip().upper()
     if owner_agent not in ALLOWED_PLANNER_OWNER_AGENTS:
         raise ValueError(f"planner step owner_agent unsupported: {owner_agent!r}")
@@ -2413,6 +2466,10 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
                 "audit_disable_state_kinds",
                 list(task.audit_disable_state_kinds),
             ),
+            "audit_text_helper_mode": raw_params.get(
+                "audit_text_helper_mode",
+                task.audit_text_helper_mode,
+            ),
         }
     elif action == "SUMMARIZE_AND_COMMIT":
         params = {
@@ -2434,7 +2491,7 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
             "3": "summarize",
         }
     depends_on = [
-        normalized_step_aliases.get(dep.lower(), role_by_numeric_index.get(dep, dep))
+        _normalize_planner_step_alias(role_by_numeric_index.get(dep, dep))
         for dep in raw_depends_on
     ]
     if semantic_role == "summarize" and depends_on == ["execute"]:

@@ -1,0 +1,25 @@
+task_set:
+  name: pure_text_open_live_api_slice_v1_pack
+  pack_type: pure_text_open_live_api_slice_v1
+  description: Audit-only external pure-text live API slice derived from frozen headline text rows.
+  reading_contract: Read this pack only as an audit-only external live API slice. It keeps the local corpus source but forbids StateBus structured packets, artifact reuse, and replay semantics. Do not merge it into the frozen headline.
+  claim_lanes: [communication, state_transfer]
+  single_variable: true
+  variable_axes: [external_text_runtime_contract]
+  public_surface: audit_only
+  plan_source_default: yaml
+  evidence_tier: audit_only
+  benchmark_version: v3
+
+source_task_set: contest_honest_headline_v1
+selected_task_ids:
+  - rr-auth-clean-text-001
+  - rr-auth-ambiguous-text-001
+  - rr-billing-clean-text-001
+  - rr-billing-ambiguous-text-001
+  - rr-checkout-clean-text-001
+  - rr-checkout-ambiguous-text-001
+  - rr-deploy-distractor-text-001
+  - rr-cache-distractor-text-001
+
+tasks: []

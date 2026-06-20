@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+import json
+import re
 from pathlib import Path
 
 import yaml
 
+from runtime.llm import ChatMessage, LLMClient, extract_json_object
 from tasks.sample_tasks import SampleTask
 
 
@@ -103,14 +105,40 @@ PLAYBOOK_CATALOG = (
     ),
 )
 
+PLAYBOOK_BY_ROUTE = {item.route: item for item in PLAYBOOK_CATALOG}
+PLAYBOOK_BY_TOOL = {item.tool_name: item for item in PLAYBOOK_CATALOG}
+
 
 class ExternalTextOpenRuntime:
     node_order = ("planner", "retriever", "executor", "summarizer")
 
-    def __init__(self, replay_store: object) -> None:
+    def __init__(
+        self,
+        replay_store: object,
+        *,
+        llm_client: LLMClient | None = None,
+        data_source: str = "lexical_stub",
+        runtime_contract: str = "external_text_open_stub",
+        live_mode: str = "deterministic",
+    ) -> None:
         self.replay_store = replay_store
+        self.llm_client = llm_client
+        self.data_source = data_source
+        self.runtime_contract = runtime_contract
+        self.live_mode = live_mode
 
-    def run_task(
+    async def run_task(
+        self,
+        *,
+        task: SampleTask,
+        policy: str,
+        run_index: int,
+    ) -> dict[str, object]:
+        if self.data_source == "live_api_text_only":
+            return await self._run_live_text_task(task=task, policy=policy, run_index=run_index)
+        return self._run_lexical_stub_task(task=task, policy=policy, run_index=run_index)
+
+    def _run_lexical_stub_task(
         self,
         *,
         task: SampleTask,
@@ -171,7 +199,173 @@ class ExternalTextOpenRuntime:
             "decision_source": "text_only_lexical_playbook",
             "metadata_oracle_used": False,
             "statebus_contract_used": False,
+            "data_source": self.data_source,
+            "runtime_contract": self.runtime_contract,
+            "llm_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
+
+    async def _run_live_text_task(
+        self,
+        *,
+        task: SampleTask,
+        policy: str,
+        run_index: int,
+    ) -> dict[str, object]:
+        normalized_query = normalize_query(task.query)
+        retrieved_docs = retrieve_corpus_docs(task)
+        retrieved_doc_ids = tuple(doc.doc_id for doc in retrieved_docs)
+        replay_record = None
+        if policy == "native_reuse_on":
+            lexical_route, lexical_tool = choose_playbook(task=task, retrieved_docs=retrieved_docs)
+            replay_record = self.replay_store.lookup(
+                task_theme=task.task_theme,
+                normalized_query=normalized_query,
+                retrieved_doc_ids=retrieved_doc_ids,
+                route=lexical_route,
+                tool_name=lexical_tool,
+            )
+        replay_hit = replay_record is not None
+        usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        if replay_hit:
+            route = str(replay_record.route)
+            tool_name = str(replay_record.tool_name)
+            summary_text = str(replay_record.summary_text)
+            strongest_competing_route = ""
+            validation_check = "retrieval set matched a prior validated text-only decision"
+            decision_source = "pure_text_message_log_replay"
+        else:
+            route, tool_name = choose_playbook(task=task, retrieved_docs=retrieved_docs)
+            strongest_competing_route = ""
+            validation_check = ""
+            decision_source = "dry_run_text_contract"
+            if self.live_mode == "api":
+                if self.llm_client is None:
+                    raise ValueError("live API text runtime requires llm_client")
+                planner_payload, planner_usage = await self._planner_decision(task=task, retrieved_docs=retrieved_docs)
+                usage = _merge_usage(usage, planner_usage)
+                route, tool_name = _sanitize_route_tool(
+                    route=str(planner_payload.get("route", "")),
+                    tool_name=str(planner_payload.get("tool_name", "")),
+                    fallback_route=route,
+                    fallback_tool_name=tool_name,
+                )
+                strongest_competing_route = str(planner_payload.get("strongest_competing_route", "")).strip()
+                validation_check = str(planner_payload.get("validation_check", "")).strip()
+                decision_source = "live_api_text_only"
+                summary_text, summary_usage = await self._summary_text(
+                    task=task,
+                    retrieved_docs=retrieved_docs,
+                    route=route,
+                    tool_name=tool_name,
+                    strongest_competing_route=strongest_competing_route,
+                    validation_check=validation_check,
+                )
+                usage = _merge_usage(usage, summary_usage)
+            else:
+                summary_text = summarize(task, retrieved_docs, route, tool_name)
+                strongest_competing_route = _best_competing_route(route=route, retrieved_docs=retrieved_docs)
+                validation_check = "dry-run contract only"
+            if policy == "native_reuse_on":
+                self.replay_store.commit_payload(
+                    {
+                        "task_theme": task.task_theme,
+                        "normalized_query": normalized_query,
+                        "retrieved_doc_ids": retrieved_doc_ids,
+                        "route": route,
+                        "tool_name": tool_name,
+                        "summary_text": summary_text,
+                        "evidence_digest": evidence_digest(retrieved_doc_ids),
+                    }
+                )
+        return {
+            "task": task,
+            "policy": policy,
+            "run_index": run_index,
+            "normalized_query": normalized_query,
+            "retrieved_doc_ids": retrieved_doc_ids,
+            "retrieved_snippets": [
+                {"doc_id": doc.doc_id, "snippet": render_snippet(doc.text)} for doc in retrieved_docs
+            ],
+            "route": route,
+            "tool_name": tool_name,
+            "summary_text": summary_text,
+            "evidence_digest": evidence_digest(retrieved_doc_ids),
+            "replay_hit": replay_hit,
+            "skipped_step_count": 2 if replay_hit else 0,
+            "message_log": build_live_message_log(
+                task=task,
+                retrieved_docs=retrieved_docs,
+                route=route,
+                tool_name=tool_name,
+                strongest_competing_route=strongest_competing_route,
+                validation_check=validation_check,
+                replay_hit=replay_hit,
+            ),
+            "decision_source": decision_source,
+            "metadata_oracle_used": False,
+            "statebus_contract_used": False,
+            "data_source": self.data_source,
+            "runtime_contract": self.runtime_contract,
+            "llm_usage": usage,
+        }
+
+    async def _planner_decision(
+        self,
+        *,
+        task: SampleTask,
+        retrieved_docs: list[CorpusDoc],
+    ) -> tuple[dict[str, object], dict[str, int]]:
+        assert self.llm_client is not None
+        prompt = build_planner_prompt(task=task, retrieved_docs=retrieved_docs)
+        result = await self.llm_client.complete(
+            [
+                ChatMessage(
+                    role="system",
+                    content=(
+                        "You are a text-only incident triage planner. Pick one route and one tool from the listed options. "
+                        "Return JSON only."
+                    ),
+                ),
+                ChatMessage(role="user", content=prompt),
+            ],
+            purpose="planner",
+        )
+        payload = extract_json_object(result.text)
+        return payload, _usage_dict(result)
+
+    async def _summary_text(
+        self,
+        *,
+        task: SampleTask,
+        retrieved_docs: list[CorpusDoc],
+        route: str,
+        tool_name: str,
+        strongest_competing_route: str,
+        validation_check: str,
+    ) -> tuple[str, dict[str, int]]:
+        assert self.llm_client is not None
+        prompt = build_summary_prompt(
+            task=task,
+            retrieved_docs=retrieved_docs,
+            route=route,
+            tool_name=tool_name,
+            strongest_competing_route=strongest_competing_route,
+            validation_check=validation_check,
+        )
+        result = await self.llm_client.complete(
+            [
+                ChatMessage(
+                    role="system",
+                    content=(
+                        "Write a compact plain-text triage summary. "
+                        "Do not emit JSON, code fences, packet markers, or structured protocol names."
+                    ),
+                ),
+                ChatMessage(role="user", content=prompt),
+            ],
+            purpose="summarizer",
+        )
+        return sanitize_message_text(result.text), _usage_dict(result)
 
 
 def retrieve_corpus_docs(task: SampleTask) -> list[CorpusDoc]:
@@ -229,7 +423,83 @@ def build_message_log(
         f"Executor: based on docs {doc_phrase}, pick route {route} and run {tool_name}."
     )
     messages.append("Summarizer: explain the first action and the strongest competing explanation ruled out.")
-    return messages
+    return [sanitize_message_text(item) for item in messages]
+
+
+def build_live_message_log(
+    *,
+    task: SampleTask,
+    retrieved_docs: list[CorpusDoc],
+    route: str,
+    tool_name: str,
+    strongest_competing_route: str,
+    validation_check: str,
+    replay_hit: bool,
+) -> list[str]:
+    doc_phrase = ", ".join(doc.doc_id for doc in retrieved_docs[:3])
+    messages = [
+        f"Planner: read the request and keep the collaboration text-only for {task.task_theme}.",
+        f"Retriever: use local docs {doc_phrase} and quote only short snippets into the conversation.",
+    ]
+    if replay_hit:
+        messages.append(
+            f"Executor: retrieval matched a prior text-only decision for route {route} with tool {tool_name}."
+        )
+        messages.append("Summarizer: reuse the prior text summary because the evidence set matched exactly.")
+        return [sanitize_message_text(item) for item in messages]
+    messages.append(
+        f"Executor: choose route {route} and tool {tool_name}; strongest competing route is {strongest_competing_route or 'none'}."
+    )
+    messages.append(
+        f"Summarizer: return the first action and the validation check `{validation_check or 'confirm the top evidence path'}` in plain text."
+    )
+    return [sanitize_message_text(item) for item in messages]
+
+
+def build_planner_prompt(*, task: SampleTask, retrieved_docs: list[CorpusDoc]) -> str:
+    doc_lines = "\n".join(
+        f"- {doc.doc_id}: {render_snippet(doc.text, limit=220)}" for doc in retrieved_docs[:4]
+    )
+    choices = "\n".join(f"- {rule.route} -> {rule.tool_name}" for rule in PLAYBOOK_CATALOG)
+    return "\n".join(
+        [
+            f"Task theme: {task.task_theme}",
+            f"Goal: {task.goal}",
+            f"User request: {task.query}",
+            "Allowed route and tool pairs:",
+            choices,
+            "Retrieved local evidence:",
+            doc_lines,
+            "Return JSON with keys route, tool_name, strongest_competing_route, and validation_check.",
+        ]
+    )
+
+
+def build_summary_prompt(
+    *,
+    task: SampleTask,
+    retrieved_docs: list[CorpusDoc],
+    route: str,
+    tool_name: str,
+    strongest_competing_route: str,
+    validation_check: str,
+) -> str:
+    snippets = "\n".join(
+        f"- {doc.doc_id}: {render_snippet(doc.text, limit=180)}" for doc in retrieved_docs[:3]
+    )
+    return "\n".join(
+        [
+            f"Task theme: {task.task_theme}",
+            f"Summary hint: {task.summary_hint}",
+            f"Chosen route: {route}",
+            f"Chosen tool: {tool_name}",
+            f"Strongest competing route: {strongest_competing_route or 'none'}",
+            f"Validation check: {validation_check or 'confirm the top evidence path'}",
+            "Evidence snippets:",
+            snippets,
+            "Write plain text only.",
+        ]
+    )
 
 
 def load_corpus_docs(path_text: str) -> dict[str, CorpusDoc]:
@@ -269,3 +539,57 @@ def lexical_tokens(text: str) -> set[str]:
 
 def lexical_overlap(left: set[str], right: set[str]) -> int:
     return len(left & right)
+
+
+def sanitize_message_text(text: str) -> str:
+    sanitized = text.replace("StateRef", "state reference")
+    for marker in ("EXECUTOR_DECISION_PACKET", "DENSE_EVIDENCE", "FEATURE_BUNDLE", "MEMORY_ASSIST_HINT", "MEMORY_ASSIST"):
+        sanitized = sanitized.replace(marker, marker.lower().replace("_", " "))
+    sanitized = sanitized.replace("<", "").replace(">", "")
+    return sanitized.strip()
+
+
+def _usage_dict(result) -> dict[str, int]:
+    usage = getattr(result, "usage", None)
+    return {
+        "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+        "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+    }
+
+
+def _merge_usage(base: dict[str, int], delta: dict[str, int]) -> dict[str, int]:
+    return {
+        "prompt_tokens": int(base.get("prompt_tokens", 0)) + int(delta.get("prompt_tokens", 0)),
+        "completion_tokens": int(base.get("completion_tokens", 0)) + int(delta.get("completion_tokens", 0)),
+        "total_tokens": int(base.get("total_tokens", 0)) + int(delta.get("total_tokens", 0)),
+    }
+
+
+def _sanitize_route_tool(
+    *,
+    route: str,
+    tool_name: str,
+    fallback_route: str,
+    fallback_tool_name: str,
+) -> tuple[str, str]:
+    route = route.strip()
+    tool_name = tool_name.strip()
+    if route in PLAYBOOK_BY_ROUTE and PLAYBOOK_BY_ROUTE[route].tool_name == tool_name:
+        return route, tool_name
+    if tool_name in PLAYBOOK_BY_TOOL and PLAYBOOK_BY_TOOL[tool_name].route == route:
+        return route, tool_name
+    return fallback_route, fallback_tool_name
+
+
+def _best_competing_route(*, route: str, retrieved_docs: list[CorpusDoc]) -> str:
+    combined_tokens = lexical_tokens("\n".join(doc.text for doc in retrieved_docs))
+    scored = sorted(
+        (
+            (lexical_overlap(combined_tokens, set(rule.keywords)), rule.route)
+            for rule in PLAYBOOK_CATALOG
+            if rule.route != route
+        ),
+        reverse=True,
+    )
+    return scored[0][1] if scored and scored[0][0] > 0 else ""

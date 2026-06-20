@@ -1,0 +1,180 @@
+task_set:
+  name: text_helper_ablation_audit_v1_pack
+  pack_type: text_helper_ablation_audit_v1
+  description: Audit-only text helper ablation pack; compares text_whole_lane helper-on and helper-off rows on matched contest-release cases, with protocol rows as unchanged compactness controls.
+  reading_contract: Read this pack only as Audit B. The primary variable is text_whole_lane route/tool recovery helper availability. Protocol rows are reference controls only and must not replace or mutate the frozen contest_honest_headline_v1 evidence.
+  claim_lanes:
+  - state_transfer
+  single_variable: true
+  variable_axes:
+  - text_route_tool_recovery_helper
+  public_surface: audit_only
+  plan_source_default: yaml
+  evidence_tier: audit_only
+  benchmark_version: v3
+tasks:
+- &checkout_clean_base
+  task_group: text_helper_ablation_checkout
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids:
+  - rr-checkout-incident
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - clean
+  - text-helper-ablation
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: rr-checkout-clean-helper-on
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  - tool.db_query_hotfix
+  disallowed_families: []
+  required_prior_case_ids: []
+  required_prior_routes: []
+  required_prior_rejections: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  allowed_modes:
+  - text
+  evidence_text: Audit B helper-on text_whole_lane row. Do not promote into the frozen headline.
+  task_id: rr-checkout-clean-text-helper-on-001
+  transfer_strategy: text_whole_lane
+  handoff_profile: text_whole_lane
+  complexity_bucket: simple
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions:
+  - keep the primary and competing routes explicit after retrieval
+  - validate the primary route against scope and artifact evidence before execution
+  abstention_boundary: Validation must preserve the route/tool boundary before execution.
+  summary_contract: actions_plus_evidence
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
+- <<: *checkout_clean_base
+  task_order: 2
+  case_id: rr-checkout-clean-helper-off
+  allowed_modes:
+  - text
+  evidence_text: Audit B helper-off text_whole_lane row. The natural text handoff remains unchanged, but StateBus route/tool recovery helpers are disabled for this row.
+  task_id: rr-checkout-clean-text-helper-off-001
+  audit_text_helper_mode: disabled
+- <<: *checkout_clean_base
+  task_order: 3
+  case_id: rr-checkout-clean-protocol-control
+  allowed_modes:
+  - protocol
+  evidence_text: Audit B protocol compactness reference control; unchanged minimal typed-state packet row.
+  task_id: rr-checkout-clean-protocol-control-001
+  transfer_strategy: state_packet_minimal
+  handoff_profile: protocol_minimal_state_packet
+- &checkout_ambiguous_base
+  task_group: text_helper_ablation_checkout
+  task_order: 4
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Resolve the checkout regression under mixed queue-versus-db signals and recommend the safest next action.
+  query: checkout canary shows both sql wait growth and queue pressure after rollout, but orders filter changes still line up with the failures
+  corpus_doc_ids:
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  - rr-checkout-ambiguous
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - ambiguous
+  - text-helper-ablation
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check.'
+  case_id: rr-checkout-ambiguous-helper-on
+  case_type: bounded_alternative
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.collect_more_evidence
+  disallowed_families: []
+  required_prior_case_ids: []
+  required_prior_routes: []
+  required_prior_rejections: []
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: mixed evidence keeps at least two route families admissible
+  allowed_modes:
+  - text
+  evidence_text: Audit B helper-on text_whole_lane ambiguous row. Do not promote into the frozen headline.
+  task_id: rr-checkout-ambiguous-text-helper-on-001
+  transfer_strategy: text_whole_lane
+  handoff_profile: text_whole_lane
+  complexity_bucket: ambiguous
+  thickness_setting: S1
+  reasoning_hops_min: 2
+  dependency_depth: 1
+  expected_intermediate_decisions:
+  - keep the primary and competing routes explicit after retrieval
+  - validate whether the evidence supports execution or abstention
+  abstention_boundary: Collect-more-evidence is valid only if mixed evidence keeps multiple route families admissible.
+  summary_contract: actions_plus_evidence
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
+- <<: *checkout_ambiguous_base
+  task_order: 5
+  case_id: rr-checkout-ambiguous-helper-off
+  allowed_modes:
+  - text
+  evidence_text: Audit B helper-off text_whole_lane ambiguous row. The natural text handoff remains unchanged, but StateBus route/tool recovery helpers are disabled for this row.
+  task_id: rr-checkout-ambiguous-text-helper-off-001
+  audit_text_helper_mode: disabled
+- <<: *checkout_ambiguous_base
+  task_order: 6
+  case_id: rr-checkout-ambiguous-protocol-control
+  allowed_modes:
+  - protocol
+  evidence_text: Audit B protocol compactness reference control; unchanged minimal typed-state packet row.
+  task_id: rr-checkout-ambiguous-protocol-control-001
+  transfer_strategy: state_packet_minimal
+  handoff_profile: protocol_minimal_state_packet

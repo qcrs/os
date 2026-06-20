@@ -24,6 +24,7 @@ from agents.sample_agents import (
     _build_text_whole_lane_retriever_handoff,
     _strip_text_whole_lane_evidence_text,
     _build_transfer_brief,
+    _headline_s2_prior_action_boundary,
     build_sample_agents_with_executor,
 )
 from eval.runner import (
@@ -38,10 +39,12 @@ from eval.runner import (
 from eval.open_runner import (
     OPEN_MEMORY_POLICIES,
     PURE_TEXT_OPEN_BASELINE_PACK,
+    PURE_TEXT_OPEN_LIVE_API_PACK,
     RUNTIME_ARMS,
     run_langgraph_native_text_open_smoke,
     run_open_comparison,
     run_pure_text_open_baseline,
+    run_pure_text_open_live_api_slice,
 )
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
 from protocol.messages import MemoryCommit, MemoryHit
@@ -56,7 +59,7 @@ from protocol.messages import (
 )
 from runtime.contracts import SchemaValidationError, default_state_contract_registry
 from runtime.langgraph_adapter import StateBusGraphRunner, langgraph_available
-from runtime.llm import DeterministicLLMClient
+from runtime.llm import DeterministicLLMClient, LLMResult, LLMUsage
 from runtime.orchestrator import Orchestrator, RunContext, RunSession, _route_is_replay_eligible
 from runtime.task_profile import RuntimeTaskProfile
 from runtime import executor_runtime
@@ -312,7 +315,7 @@ def test_active_v3_pack_aliases_all_load_with_explicit_metadata() -> None:
     loaded["typed_state_consumer_sensitivity_v3"] = load_task_set_bundle(
         "typed_state_consumer_sensitivity_v3"
     )
-    assert len(loaded) == 13
+    assert len(loaded) == 17
     assert all(bundle.metadata.pack_type != "ad_hoc" for bundle in loaded.values())
     assert all(bundle.metadata.public_surface for bundle in loaded.values())
     assert all(bundle.metadata.evidence_tier for bundle in loaded.values())
@@ -421,6 +424,8 @@ def test_task_pack_aliases_and_support_only_flags() -> None:
         "memory_reuse_v3": ("memory_reuse_v3", False, False, True, 4),
         "memory_policy_controlled_v3": ("memory_policy_controlled_v3", False, False, True, 8),
         "planner_support_v3": ("planner_support_v3", False, False, True, 11),
+        "pure_text_open_live_api_slice_v1": ("pure_text_open_live_api_slice_v1", False, True, False, 8),
+        "route_corpus_stress_whole_lane_audit_v1": ("route_corpus_stress_whole_lane_audit_v1", False, True, False, 4),
     }
     for alias, (pack_type, support_only, audit_only, formal_secondary, task_count) in expectations.items():
         bundle = load_task_set_bundle(alias)
@@ -3103,6 +3108,276 @@ def test_s2_prior_dependency_changes_admissible_action_boundary() -> None:
         with_prior_ctx.session.cleanup()
 
 
+@pytest.mark.parametrize(
+    ("case_name", "commit_theme", "metadata", "missing_key", "missing_value"),
+    [
+        (
+            "missing_prior_case",
+            None,
+            None,
+            "s2_missing_prior_case_ids",
+            "rr-checkout-clean",
+        ),
+        (
+            "wrong_prior_route",
+            "contest_release_checkout_regression",
+            {
+                "case_id": "rr-checkout-clean",
+                "chosen_route": "worker_queue_starvation",
+                "rejected_routes": ["worker_queue_starvation"],
+            },
+            "s2_missing_prior_routes",
+            "db_pool_saturation",
+        ),
+        (
+            "missing_required_rejection",
+            "contest_release_checkout_regression",
+            {
+                "case_id": "rr-checkout-clean",
+                "chosen_route": "db_pool_saturation",
+                "rejected_routes": [],
+            },
+            "s2_missing_prior_rejections",
+            "worker_queue_starvation",
+        ),
+        (
+            "wrong_rejected_route",
+            "contest_release_checkout_regression",
+            {
+                "case_id": "rr-checkout-clean",
+                "chosen_route": "db_pool_saturation",
+                "rejected_routes": ["auth_rate_limit"],
+            },
+            "s2_missing_prior_rejections",
+            "worker_queue_starvation",
+        ),
+        (
+            "task_family_mismatch",
+            "contest_release_auth_rotation",
+            {
+                "case_id": "rr-checkout-clean",
+                "chosen_route": "db_pool_saturation",
+                "rejected_routes": ["worker_queue_starvation"],
+            },
+            "s2_missing_prior_case_ids",
+            "rr-checkout-clean",
+        ),
+    ],
+)
+def test_s2_negative_controls_do_not_upgrade_without_valid_prior(
+    case_name: str,
+    commit_theme: str | None,
+    metadata: dict[str, object] | None,
+    missing_key: str,
+    missing_value: str,
+) -> None:
+    task = next(
+        task
+        for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+        if task.task_id == "rr-checkout-replay_reusable-protocol-001"
+    )
+    with tempfile.TemporaryDirectory(prefix=f"statebus-s2-negative-{case_name}-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+            task_corpus_doc_ids=task.corpus_doc_ids,
+            task_corpus_path=task.corpus_path,
+        )
+        if metadata is not None and commit_theme is not None:
+            ctx.memory_store.commit_memory(
+                MemoryCommit(
+                    memory_id=f"mem-s2-negative-{case_name}",
+                    source_agent_id="runtime",
+                    source_task_id=str(metadata.get("case_id", "prior-case")),
+                    task_theme=commit_theme,
+                    summary=f"S2 negative-control prior for {case_name}",
+                    tags=["task_commit"],
+                    evidence_state_ids=[],
+                    reusable_steps=[],
+                    confidence=1.0,
+                    embedding_text=f"S2 negative-control prior for {case_name}",
+                    metadata={
+                        "memory_purpose": "task_commit",
+                        "memory_layer": "task_commit",
+                        **metadata,
+                    },
+                    evidence_state_refs=[],
+                    source_session_id="session-s2-negative",
+                    tier="task_commits",
+                    commit_ref=f"commit-s2-negative-{case_name}",
+                )
+            )
+
+        boundary = _headline_s2_prior_action_boundary(
+            task=task,
+            ctx=ctx,
+            selected_route="db_pool_saturation",
+            selected_tool="tool.db_pool_triage",
+        )
+        assert boundary["s2_prior_dependency_required"] is True
+        assert boundary["s2_prior_dependency_satisfied"] is False
+        assert boundary["validated_route"] == "generic_triage"
+        assert boundary["validated_tool_name"] == "tool.collect_more_evidence"
+        assert boundary["validated_action_contract"] == "abstain_collect_more_evidence"
+        assert boundary["s2_with_prior_tool_name"] == ""
+        assert boundary["s2_prior_dependent_action_change"] is True
+        assert missing_value in boundary[missing_key]
+        ctx.memory_store.close()
+        ctx.session.cleanup()
+
+
+def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact() -> None:
+    task = next(
+        task
+        for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+        if task.task_id == "rr-checkout-replay_reusable-protocol-001"
+    )
+    with tempfile.TemporaryDirectory(prefix="statebus-s2-replay-negative-") as tmpdir:
+        root = Path(tmpdir)
+        ctx = Orchestrator.create_context(
+            mode="protocol",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=task.runtime_profile,
+            task_corpus_doc_ids=task.corpus_doc_ids,
+            task_corpus_path=task.corpus_path,
+        )
+        replay_ref = ctx.put_text_state(
+            state_id="s2-replay-compatible-artifact",
+            kind="TOOL_ARTIFACT",
+            text="validated checkout remediation artifact",
+            metadata={"channel_replay_compatible": True},
+        )
+        incompatible_ref = ctx.put_text_state(
+            state_id="s2-replay-incompatible-artifact",
+            kind="TOOL_ARTIFACT",
+            text="artifact intentionally excluded from replay restore",
+            metadata={"channel_replay_compatible": False},
+        )
+        non_artifact_ref = ctx.put_replay_eligibility_state(
+            state_id="s2-replay-non-artifact",
+            replay_eligibility_bundle={
+                "schema": "statebus.replay_eligibility_bundle.v1",
+                "query": task.query,
+                "route": "db_pool_saturation",
+            },
+        )
+
+        def make_hit(
+            *,
+            case_id: str = "rr-checkout-clean",
+            rejected_routes: list[str] | None = None,
+            evidence_refs: list[StateRef] | None = None,
+            replay_class: str = "validated_replay",
+        ) -> MemoryHit:
+            return MemoryHit(
+                memory_id=f"mem-s2-replay-{case_id}-{replay_class}",
+                confidence=0.95,
+                reusable_steps=["execute"],
+                evidence_state_refs=list([replay_ref] if evidence_refs is None else evidence_refs),
+                task_theme=task.task_theme,
+                replay_class=replay_class,
+                route="db_pool_saturation",
+                route_confidence=0.95,
+                route_provenance=["corpus_metadata", "lexical"],
+                metadata={
+                    "case_id": case_id,
+                    "rejected_routes": rejected_routes
+                    if rejected_routes is not None
+                    else ["worker_queue_starvation"],
+                    "feature_route": "db_pool_saturation",
+                    "feature_route_confidence": 0.95,
+                    "feature_route_provenance": ["corpus_metadata", "lexical"],
+                },
+            )
+
+        assert Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(case_id="rr-auth-clean"),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(rejected_routes=["auth_rate_limit"]),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(evidence_refs=[]),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(evidence_refs=[incompatible_ref]),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(evidence_refs=[non_artifact_ref]),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(replay_class="assist"),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(),
+            task=task,
+            feature_route="worker_queue_starvation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"retrieve"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+        )
+        ctx.memory_store.close()
+        ctx.session.cleanup()
+
+
 def test_memory_dual_mode_fairness_v3_pack_has_40_rows_5_families_and_4_memory_buckets() -> None:
     tasks = list(load_task_set_bundle("memory_dual_mode_fairness_v3").tasks)
     assert len(tasks) == 40
@@ -3739,6 +4014,106 @@ def test_text_whole_lane_executor_recovers_route_and_tool_from_headline_handoff(
     assert bundle["route"] == "db_pool_saturation"
     assert bundle["tool_name"] == "tool.db_pool_triage"
     assert bundle["route_source"] == "headline_natural_language_handoff"
+
+
+def test_text_whole_lane_executor_helper_disabled_does_not_recover_route_or_tool() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-text-helper-off-exec-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        result = execute_playbook_step(
+            task_id="audit-text-helper-off",
+            task_theme="contest_release_checkout_regression",
+            step=PlanStep(
+                step_id="execute",
+                owner_agent="executor",
+                action="EXECUTE_PLAYBOOK",
+                input_state_refs=[],
+                params={
+                    "query": "checkout confirmations slowed after rollout",
+                    "inline_handoff_text": (
+                        "Retriever handoff in plain language for the contest headline lane.\n"
+                        "The user is trying to triage checkout regression and recommend the first action.\n"
+                        "The visible request concerns checkout confirmations slowed after rollout.\n"
+                        "Based on the visible evidence, db pool saturation is the leading explanation so far, and the strongest competing explanation has not overtaken it.\n"
+                        "Starting with db pool triage is the safest next step for now.\n"
+                        "This read stays at high confidence and depends only on rr-checkout-incident, rr-checkout-scope.\n"
+                        "Stay inside the visible evidence below and do not rely on any hidden structured packet, route field, tool field, or retrieval shortcut.\n"
+                        "The visible evidence appears below.\n"
+                        "Visible release evidence only.\n"
+                    ),
+                },
+                depends_on=["retrieve"],
+                semantic_role="execute",
+            ),
+            statepool=pool,
+            input_state_refs=[],
+            transfer_strategy="text_whole_lane",
+            handoff_profile="text_whole_lane",
+            audit_text_helper_disabled=True,
+        )
+    assert result.success is True
+    assert result.payload["route"] == "generic_triage"
+    assert result.payload["tool_name"] == "tool.collect_more_evidence"
+    assert result.payload["feature_route_source"] == "audit_text_helper_disabled"
+    assert result.payload["audit_text_helper_mode"] == "disabled"
+    assert result.output_state_refs[0].metadata["audit_text_helper_mode"] == "disabled"
+
+
+def test_text_helper_ablation_audit_pack_is_audit_only_and_keeps_helper_flag_single_variable() -> None:
+    bundle = load_task_set_bundle("text_helper_ablation_audit_v1")
+    assert bundle.metadata.public_surface == "audit_only"
+    assert bundle.metadata.evidence_tier == "audit_only"
+    assert bundle.metadata.single_variable is True
+    assert bundle.metadata.variable_axes == ("text_route_tool_recovery_helper",)
+    helper_on = [
+        task
+        for task in bundle.tasks
+        if task.supports_mode("text") and task.audit_text_helper_mode == ""
+    ]
+    helper_off = [
+        task
+        for task in bundle.tasks
+        if task.supports_mode("text") and task.audit_text_helper_mode == "disabled"
+    ]
+    protocol_controls = [task for task in bundle.tasks if task.supports_mode("protocol")]
+    assert len(helper_on) == len(helper_off) == len(protocol_controls) == 2
+    assert {task.transfer_strategy for task in helper_on + helper_off} == {"text_whole_lane"}
+    assert {task.handoff_profile for task in helper_on + helper_off} == {"text_whole_lane"}
+    assert {task.transfer_strategy for task in protocol_controls} == {"state_packet_minimal"}
+    assert {task.runtime_profile.audit_text_helper_disabled for task in helper_off} == {True}
+    assert {task.runtime_profile.audit_text_helper_disabled for task in helper_on} == {False}
+
+
+def test_route_corpus_stress_audit_pack_is_audit_only_and_pair_matched() -> None:
+    bundle = load_task_set_bundle("route_corpus_stress_audit_v1")
+    assert bundle.metadata.public_surface == "audit_only"
+    assert bundle.metadata.evidence_tier == "audit_only"
+    assert bundle.metadata.single_variable is True
+    assert bundle.metadata.variable_axes == ("corpus_evidence_surface",)
+    assert len(bundle.tasks) == 4
+    by_case: dict[str, list[SampleTask]] = {}
+    for task in bundle.tasks:
+        by_case.setdefault(task.case_id, []).append(task)
+        assert task.plan_source == "yaml"
+        assert task.runtime_reuse_contract == "reuse_disabled"
+        assert task.complexity_bucket == "ambiguous"
+        assert task.required_plan_semantic_roles == (
+            "retrieve",
+            "validate",
+            "execute",
+            "summarize",
+        )
+        assert "stress" in task.tags
+    assert set(by_case) == {"stress-auth-ambiguous", "stress-billing-ambiguous"}
+    for rows in by_case.values():
+        assert {row.allowed_modes for row in rows} == {("text",), ("protocol",)}
+        text_row = next(row for row in rows if row.supports_mode("text"))
+        protocol_row = next(row for row in rows if row.supports_mode("protocol"))
+        assert text_row.query == protocol_row.query
+        assert text_row.corpus_doc_ids == protocol_row.corpus_doc_ids
+        assert text_row.primary_expected_route == protocol_row.primary_expected_route
+        assert text_row.primary_expected_tool == protocol_row.primary_expected_tool
+        assert text_row.transfer_strategy == "text_strict_pure_lane"
+        assert protocol_row.transfer_strategy == "state_packet_minimal"
 
 
 def test_contest_dual_mode_controlled_v3_report_uses_current_state_transfer_label() -> None:
@@ -4445,6 +4820,95 @@ def test_validate_route_can_recover_text_whole_lane_route_and_tool_without_decis
         assert validate_result.payload["validation_failure_reason"] == ""
 
 
+def test_validate_route_helper_disabled_does_not_recover_text_whole_lane_tool() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-validate-whole-lane-helper-off-") as tmpdir:
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="text")
+        ctx = RunContext(
+            mode="text",
+            trace_id="validate-whole-lane-helper-off",
+            task_id="rr-checkout-clean-text-001",
+            task_group="contest_honest_headline",
+            task_theme="contest_release_checkout_regression",
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+            runtime_profile=RuntimeTaskProfile(
+                transfer_strategy="text_whole_lane",
+                handoff_profile="text_whole_lane",
+                audit_text_helper_mode="disabled",
+            ),
+        )
+        ctx.task = next(
+            task
+            for task in load_task_set_bundle("contest_honest_headline_v1").tasks
+            if task.task_id == "rr-checkout-clean-text-001"
+        )
+        retrieve_result = StepResult(
+            step_id="retrieve",
+            success=True,
+            output_state_refs=[
+                ctx.put_text_state(
+                    state_id="evidence",
+                    kind="DENSE_EVIDENCE",
+                    text="checkout orders slow, pool wait climbs, db saturation signs persist",
+                    metadata={"query": ctx.task.query},
+                ),
+                ctx.put_text_state(
+                    state_id="handoff",
+                    kind="TOOL_ARTIFACT",
+                    text=(
+                        "Retriever handoff in plain language for the contest headline lane.\n"
+                        "The user is trying to triage checkout regression and recommend the first action.\n"
+                        "The visible request concerns checkout confirmations slowed after rollout.\n"
+                        "Based on the visible evidence, db pool saturation is the leading explanation so far, and the strongest competing explanation has not overtaken it.\n"
+                        "Starting with db pool triage is the safest next step for now.\n"
+                        "This read stays at high confidence and depends only on rr-checkout-incident, rr-checkout-scope.\n"
+                        "Stay inside the visible evidence below and do not rely on any hidden structured packet, route field, tool field, or retrieval shortcut.\n"
+                        "The visible evidence appears below.\n"
+                        "checkout orders slow, pool wait climbs, db saturation signs persist\n"
+                    ),
+                    metadata={
+                        "query": ctx.task.query,
+                        "transfer_strategy": "text_whole_lane",
+                        "handoff_profile": "text_whole_lane",
+                        "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+                    },
+                ),
+            ],
+            payload={
+                "query": ctx.task.query,
+                "feature_route": "",
+                "feature_tool_name": "",
+                "feature_route_source": "lexical_match",
+                "feature_route_confidence": 0.95,
+                "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
+            },
+        )
+        ctx.results["retrieve"] = retrieve_result
+        ctx.set_step_role("retrieve", "retrieve")
+        ctx.set_step_input_refs("validate", list(retrieve_result.output_state_refs))
+        validate_step = PlanStep(
+            step_id="validate",
+            semantic_role="validate",
+            owner_agent="executor",
+            action="VALIDATE_ROUTE",
+            input_state_refs=[],
+            params={},
+            depends_on=["retrieve"],
+        )
+        executor = build_sample_agents_with_executor()["executor"]
+        validate_result = asyncio.run(executor.execute_step(validate_step, ctx))
+        assert validate_result.success is False
+        assert validate_result.payload["validated_route"] == ""
+        assert validate_result.payload["pre_validation_tool_name"] == ""
+        assert validate_result.payload["validated_tool_name"] == ""
+        assert validate_result.payload["validation_refinement_reason"] == ""
+        assert validate_result.payload["validation_failure_reason"] == "validate route requires executor decision packet"
+
+
 def test_validate_route_allows_contract_abstention_for_text_whole_lane() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-validate-whole-lane-abstain-") as tmpdir:
         pool = StatePool(Path(tmpdir) / "state")
@@ -4899,18 +5363,109 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
     assert result["manifest"]["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
     assert tuple(result["manifest"]["runtime_arms"]) == ("external_text_open",)
     assert "external pure-text baseline" in result["manifest"]["contract"].lower()
+    assert result["manifest"]["data_source"] == "lexical_stub"
+    assert result["manifest"]["selected_complexity_buckets"] == [
+        "ambiguous",
+        "reusable",
+        "simple",
+    ]
     summary = {(row["runtime_arm"], row["open_memory_policy"]): row for row in result["summary"]}
     assert len(summary) == 2
     for policy in OPEN_MEMORY_POLICIES:
         assert summary[("external_text_open", policy)]["runtime_arm"] == "external_text_open"
+        assert summary[("external_text_open", policy)]["data_source"] == "lexical_stub"
     for row in result["tasks"]:
         assert row["runtime_arm"] == "external_text_open"
         assert row["statebus_contract_used"] is False
         assert row["metadata_oracle_used"] is False
         assert row["decision_source"] == "text_only_lexical_playbook"
+        assert row["data_source"] == "lexical_stub"
         assert all(isinstance(message, str) for message in row["message_log"])
         assert all("StateRef" not in message for message in row["message_log"])
         assert all("EXECUTOR_DECISION_PACKET" not in message for message in row["message_log"])
+
+
+def test_pure_text_open_baseline_v1_selects_text_rows_across_small_mixed_complexity_slice() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-open-slice-") as tmpdir:
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=1)
+    tasks_by_id = {
+        task.task_id: task
+        for task in load_task_set_bundle("contest_dual_mode_controlled_v3").tasks
+    }
+    selected_ids = tuple(result["manifest"]["selected_task_ids"])
+    assert selected_ids
+    assert all(tasks_by_id[task_id].supports_mode("text") for task_id in selected_ids)
+    assert all(not tasks_by_id[task_id].supports_mode("protocol") for task_id in selected_ids)
+    assert {tasks_by_id[task_id].complexity_bucket for task_id in selected_ids} == {
+        "simple",
+        "ambiguous",
+        "reusable",
+    }
+    assert len({tasks_by_id[task_id].task_theme for task_id in selected_ids}) == 2
+
+
+def test_pure_text_open_baseline_v1_rejects_too_narrow_task_surface() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-open-narrow-") as tmpdir:
+        custom_pack = Path(tmpdir) / "narrow_pack.yaml"
+        corpus_path = (REPO_ROOT / "tasks" / "contest_release_regression_corpus.yaml").resolve()
+        custom_pack.write_text(
+            f"""
+task_set:
+  name: narrow_pack
+  pack_type: ad_hoc
+  description: Too narrow pure-text baseline pack.
+  reading_contract: Use this pack only to test pure-text selection gates.
+  claim_lanes: [state_transfer]
+  evidence_tier: audit_only
+  benchmark_version: v3
+tasks:
+- task_id: narrow-simple-001
+  task_group: narrow_group
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: internal_regression
+  allowed_modes: [text]
+  corpus_path: {corpus_path}
+  goal: Use the local corpus to diagnose the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs]
+  summary_hint: Return the first action only.
+  transfer_strategy: text_strict_pure_lane
+  handoff_profile: text_strict_pure_lane
+  complexity_bucket: simple
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+""".strip(),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="missing complexity buckets"):
+            run_pure_text_open_baseline(out_dir=Path(tmpdir) / "out", repeat=1, task_set=custom_pack)
+
+
+def test_pure_text_open_live_api_slice_v1_selects_frozen_headline_text_rows_only() -> None:
+    bundle = load_task_set_bundle("pure_text_open_live_api_slice_v1")
+    source_tasks = {task.task_id: task for task in load_task_set_bundle("contest_honest_headline_v1").tasks}
+    assert bundle.metadata.pack_type == "pure_text_open_live_api_slice_v1"
+    assert bundle.metadata.audit_only is True
+    assert len(bundle.tasks) == 8
+    assert all(task.supports_mode("text") for task in bundle.tasks)
+    assert all(task.transfer_strategy == "text_whole_lane" for task in bundle.tasks)
+    assert all(task.expected_reuse_mode == "none" for task in bundle.tasks)
+    assert all(task.task_id in source_tasks for task in bundle.tasks)
+    assert {task.complexity_bucket for task in bundle.tasks} == {"simple", "ambiguous", "distractor"}
+
+
+def test_route_corpus_stress_whole_lane_audit_v1_keeps_protocol_side_and_moves_text_side_to_whole_lane() -> None:
+    bundle = load_task_set_bundle("route_corpus_stress_whole_lane_audit_v1")
+    assert bundle.metadata.pack_type == "route_corpus_stress_whole_lane_audit_v1"
+    text_tasks = [task for task in bundle.tasks if task.supports_mode("text")]
+    protocol_tasks = [task for task in bundle.tasks if task.supports_mode("protocol")]
+    assert text_tasks
+    assert protocol_tasks
+    assert all(task.transfer_strategy == "text_whole_lane" for task in text_tasks)
+    assert all(task.handoff_profile == "text_whole_lane" for task in text_tasks)
+    assert all(task.transfer_strategy == "state_packet_minimal" for task in protocol_tasks)
+    assert all(task.runtime_reuse_contract == "reuse_disabled" for task in bundle.tasks)
 
 
 def test_external_text_open_ignores_expected_metadata_oracle_fields() -> None:
@@ -4939,6 +5494,47 @@ tasks:
   query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
   corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs]
   summary_hint: Return the first action only.
+  transfer_strategy: text_strict_pure_lane
+  handoff_profile: text_strict_pure_lane
+  complexity_bucket: simple
+  expected_route: wrong_expected_route
+  expected_tool_name: tool.wrong_expected_tool
+  primary_expected_route: wrong_primary_route
+  primary_expected_tool: tool.wrong_primary_tool
+- task_id: oracle-leak-002
+  task_group: oracle_leak_group
+  task_order: 2
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: internal_regression
+  allowed_modes: [text]
+  corpus_path: {corpus_path}
+  goal: Use the local corpus to diagnose the checkout regression and recommend the first action.
+  query: checkout canary shows both sql wait growth and queue pressure after rollout, but orders filter changes still line up with the failures
+  corpus_doc_ids: [rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false, rr-checkout-ambiguous]
+  summary_hint: Return the first action only.
+  transfer_strategy: text_strict_pure_lane
+  handoff_profile: text_strict_pure_lane
+  complexity_bucket: ambiguous
+  expected_route: wrong_expected_route
+  expected_tool_name: tool.wrong_expected_tool
+  primary_expected_route: wrong_primary_route
+  primary_expected_tool: tool.wrong_primary_tool
+- task_id: oracle-leak-003
+  task_group: oracle_leak_group
+  task_order: 3
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: internal_regression
+  allowed_modes: [text]
+  corpus_path: {corpus_path}
+  goal: Use the local corpus to diagnose the checkout regression and recommend the first action.
+  query: checkout canary blast radius stays on the new shard with the same connection wait and slow orders pattern
+  corpus_doc_ids: [rr-checkout-metrics, rr-checkout-config, rr-checkout-scope, rr-checkout-logs]
+  summary_hint: Return the first action only.
+  transfer_strategy: text_strict_pure_lane
+  handoff_profile: text_strict_pure_lane
+  complexity_bucket: reusable
+  required_prior_case_ids: [rr-checkout-clean]
+  required_prior_rejections: [worker_queue_starvation]
   expected_route: wrong_expected_route
   expected_tool_name: tool.wrong_expected_tool
   primary_expected_route: wrong_primary_route
@@ -4983,15 +5579,116 @@ def test_external_text_open_source_stays_outside_statebus_runtime_and_structured
     source_text = (REPO_ROOT / "eval" / "text_open_baseline.py").read_text(encoding="utf-8")
     forbidden = (
         "Orchestrator",
-        "StateRef",
         "StatePool",
-        "EXECUTOR_DECISION_PACKET",
-        "from runtime",
         "from protocol",
         "from statepool",
     )
     for token in forbidden:
         assert token not in source_text
+
+
+class _LiveTextOpenFakeClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+        del temperature
+        prompt = messages[-1].content
+        self.calls.append((purpose, prompt))
+        if purpose == "planner":
+            assert "expected_route" not in prompt
+            assert "expected_tool_name" not in prompt
+            assert "primary_expected_route" not in prompt
+            assert "primary_expected_tool" not in prompt
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "route": "db_pool_saturation",
+                        "tool_name": "tool.db_pool_triage",
+                        "strongest_competing_route": "worker_queue_starvation",
+                        "validation_check": "confirm the slow orders query and pool wait evidence align",
+                    },
+                    ensure_ascii=False,
+                ),
+                model="fake",
+                usage=LLMUsage(prompt_tokens=17, completion_tokens=9, total_tokens=26),
+            )
+        assert purpose == "summarizer"
+        return LLMResult(
+            text="Use the database triage playbook first after checking the slow orders query evidence.",
+            model="fake",
+            usage=LLMUsage(prompt_tokens=11, completion_tokens=8, total_tokens=19),
+        )
+
+    def describe(self) -> dict[str, object]:
+        return {"backend": "fake-live-text"}
+
+
+def test_pure_text_open_live_api_slice_v1_runs_text_only_pack_and_writes_manifest_fields() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-live-text-open-") as tmpdir:
+        result = run_pure_text_open_live_api_slice(
+            out_dir=Path(tmpdir),
+            repeat=1,
+            llm_mode="deterministic",
+        )
+    assert result["manifest"]["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
+    assert result["manifest"]["runtime_arms"] == ["external_text_live_api_open"]
+    assert result["manifest"]["open_memory_policies"] == ["memory_off"]
+    assert result["manifest"]["data_source"] == "live_api_text_only"
+    assert result["manifest"]["runtime_contract"] == "pure_text_message_log_only"
+    assert result["manifest"]["artifact_reuse"] is False
+    assert result["manifest"]["statebus_contract_used"] is False
+    assert result["manifest"]["selected_complexity_buckets"] == ["ambiguous", "distractor", "simple"]
+    assert all(row["runtime_arm"] == "external_text_live_api_open" for row in result["tasks"])
+
+
+def test_pure_text_open_live_api_slice_v1_does_not_send_oracle_fields_and_keeps_text_only_logs() -> None:
+    fake = _LiveTextOpenFakeClient()
+    with tempfile.TemporaryDirectory(prefix="statebus-live-text-open-fake-") as tmpdir:
+        custom_pack = Path(tmpdir) / "custom_live_pack.yaml"
+        custom_pack.write_text(
+            """
+task_set:
+  name: custom_live_pack
+  pack_type: pure_text_open_live_api_slice_v1
+  description: test-only live text slice
+  reading_contract: test-only
+  claim_lanes: [communication, state_transfer]
+  single_variable: true
+  variable_axes: [external_text_runtime_contract]
+  public_surface: audit_only
+  plan_source_default: yaml
+  evidence_tier: audit_only
+  benchmark_version: v3
+source_task_set: contest_honest_headline_v1
+selected_task_ids:
+  - rr-checkout-clean-text-001
+  - rr-checkout-ambiguous-text-001
+  - rr-deploy-distractor-text-001
+tasks: []
+""".strip(),
+            encoding="utf-8",
+        )
+        result = run_pure_text_open_live_api_slice(
+            out_dir=Path(tmpdir) / "out",
+            repeat=1,
+            task_set=custom_pack,
+            llm_mode="api",
+            llm_client=fake,
+        )
+    assert any(purpose == "planner" for purpose, _prompt in fake.calls)
+    assert any(purpose == "summarizer" for purpose, _prompt in fake.calls)
+    for row in result["tasks"]:
+        assert row["data_source"] == "live_api_text_only"
+        assert row["runtime_contract"] == "pure_text_message_log_only"
+        assert row["statebus_contract_used"] is False
+        assert row["metadata_oracle_used"] is False
+        assert row["decision_source"] == "live_api_text_only"
+        assert row["metrics"]["llm_total_tokens"] > 0
+        assert all(isinstance(message, str) for message in row["message_log"])
+        assert all("StateRef" not in message for message in row["message_log"])
+        assert all("EXECUTOR_DECISION_PACKET" not in message for message in row["message_log"])
+        assert all("FEATURE_BUNDLE" not in message for message in row["message_log"])
 
 
 def test_langgraph_native_text_open_smoke_is_independent_from_statebus_replay_contract() -> None:

@@ -595,6 +595,128 @@ def test_plan_parser_rejects_semantic_role_owner_action_mismatch() -> None:
         _plan_from_llm_output(task, output_text)
 
 
+def test_plan_parser_repairs_execute_action_mislabeled_as_validate_route() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-billing-llm-001"
+    )
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "retrieve",
+                    "semantic_role": "retrieve",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "execute",
+                    "semantic_role": "execute",
+                    "owner_agent": "executor",
+                    "action": "VALIDATE_ROUTE",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["retrieve"],
+                },
+                {
+                    "step_id": "summarize",
+                    "semantic_role": "summarize",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["retrieve", "execute"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    plan = _plan_from_llm_output(task, output_text)
+
+    assert [step.semantic_role for step in plan.steps] == ["retrieve", "execute", "summarize"]
+    execute = next(step for step in plan.steps if step.semantic_role == "execute")
+    assert execute.owner_agent == "executor"
+    assert execute.action == "EXECUTE_PLAYBOOK"
+
+
+def test_plan_parser_normalizes_validate_route_dependency_alias_for_summarize() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "retrieve_evidence",
+                    "semantic_role": "retrieve",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "validate_route",
+                    "semantic_role": "validate",
+                    "owner_agent": "executor",
+                    "action": "VALIDATE_ROUTE",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["retrieve_evidence"],
+                },
+                {
+                    "step_id": "execute_playbook",
+                    "semantic_role": "execute",
+                    "owner_agent": "executor",
+                    "action": "EXECUTE_PLAYBOOK",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["retrieve_evidence", "validate_route"],
+                },
+                {
+                    "step_id": "summarize_and_commit",
+                    "semantic_role": "summarize",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["retrieve_evidence", "validate_route", "execute_playbook"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    plan = _plan_from_llm_output(task, output_text)
+
+    assert [step.step_id for step in plan.steps] == ["retrieve", "validate", "execute", "summarize"]
+    summarize = next(step for step in plan.steps if step.semantic_role == "summarize")
+    assert summarize.depends_on == ["retrieve", "validate", "execute"]
+
+
 def test_plan_builder_keeps_runtime_profile_out_of_live_plan_steps() -> None:
     task = SampleTask(
         task_id="explicit-contract-001",
