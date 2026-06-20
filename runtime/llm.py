@@ -9,6 +9,8 @@ from typing import Any, Protocol
 import yaml
 from openai import AsyncOpenAI
 
+from runtime.role_contracts import FOUR_ROLE_COMPARATOR_ORDER, normalize_comparator_role_name
+
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 DEFAULT_LLM_MODEL = "deepseek-v4-flash"
 DEFAULT_LLM_CONFIG_FILE = Path("deploy/statebus_llm.yaml.local")
@@ -74,6 +76,8 @@ class LLMConfig:
     roles: dict[str, RoleLLMConfig] = field(
         default_factory=lambda: {
             "planner": RoleLLMConfig(),
+            "retriever": RoleLLMConfig(),
+            "executor": RoleLLMConfig(),
             "summarizer": RoleLLMConfig(),
         }
     )
@@ -100,31 +104,15 @@ class LLMConfig:
             ),
             timeout_s=float(os.getenv("STATEBUS_LLM_TIMEOUT_S", "60")),
         )
-        planner = RoleLLMConfig(
-            provider=os.getenv("STATEBUS_LLM_PLANNER_PROVIDER", "default"),
-            model=os.getenv("STATEBUS_LLM_PLANNER_MODEL") or default_model,
-            json_output=_env_bool("STATEBUS_LLM_PLANNER_JSON_MODE", True),
-            temperature=_env_optional_float("STATEBUS_LLM_PLANNER_TEMPERATURE", 0.0),
-            max_tokens=_env_optional_int("STATEBUS_LLM_PLANNER_MAX_TOKENS"),
-            reasoning_effort=os.getenv("STATEBUS_LLM_PLANNER_REASONING_EFFORT"),
-            extra_body=_env_json("STATEBUS_LLM_PLANNER_EXTRA_BODY"),
-            request_kwargs=_env_json("STATEBUS_LLM_PLANNER_REQUEST_KWARGS"),
-        )
-        summarizer = RoleLLMConfig(
-            provider=os.getenv("STATEBUS_LLM_SUMMARIZER_PROVIDER", "default"),
-            model=os.getenv("STATEBUS_LLM_SUMMARIZER_MODEL") or default_model,
-            json_output=_env_bool("STATEBUS_LLM_SUMMARIZER_JSON_MODE", True),
-            temperature=_env_optional_float("STATEBUS_LLM_SUMMARIZER_TEMPERATURE", 0.0),
-            max_tokens=_env_optional_int("STATEBUS_LLM_SUMMARIZER_MAX_TOKENS"),
-            reasoning_effort=os.getenv("STATEBUS_LLM_SUMMARIZER_REASONING_EFFORT"),
-            extra_body=_env_json("STATEBUS_LLM_SUMMARIZER_EXTRA_BODY"),
-            request_kwargs=_env_json("STATEBUS_LLM_SUMMARIZER_REQUEST_KWARGS"),
-        )
+        roles = {
+            role: _role_from_env(default_model=default_model, role_name=role)
+            for role in FOUR_ROLE_COMPARATOR_ORDER
+        }
         return cls(
             mode=os.getenv("STATEBUS_LLM_MODE", "deterministic").strip().lower(),
             source="env",
             providers={"default": provider},
-            roles={"planner": planner, "summarizer": summarizer},
+            roles=roles,
         )
 
     @classmethod
@@ -142,14 +130,11 @@ class LLMConfig:
             for name, item in providers_payload.items()
         }
         roles = {
-            "planner": _role_from_mapping(
-                role_name="planner",
-                payload=dict(roles_payload.get("planner") or {}),
-            ),
-            "summarizer": _role_from_mapping(
-                role_name="summarizer",
-                payload=dict(roles_payload.get("summarizer") or {}),
-            ),
+            role: _role_from_mapping(
+                role_name=role,
+                payload=dict(roles_payload.get(role) or {}),
+            )
+            for role in FOUR_ROLE_COMPARATOR_ORDER
         }
         return cls(
             mode=str(payload.get("mode", "deterministic")).strip().lower(),
@@ -183,9 +168,10 @@ class LLMConfig:
         return self.providers[name]
 
     def role_config(self, purpose: str) -> RoleLLMConfig:
-        if purpose not in self.roles:
+        role_name = normalize_comparator_role_name(purpose)
+        if role_name not in self.roles:
             raise KeyError(f"unknown llm role {purpose}")
-        return self.roles[purpose]
+        return self.roles[role_name]
 
     def with_mode(self, mode: str) -> "LLMConfig":
         return replace(self, mode=mode.strip().lower())
@@ -198,10 +184,11 @@ class LLMConfig:
         return replace(self, providers=providers)
 
     def with_role_override(self, role_name: str, **kwargs: object) -> "LLMConfig":
-        role = self.role_config(role_name)
+        normalized_role_name = normalize_comparator_role_name(role_name)
+        role = self.role_config(normalized_role_name)
         updated = replace(role, **kwargs)
         roles = dict(self.roles)
-        roles[role_name] = updated
+        roles[normalized_role_name] = updated
         return replace(self, roles=roles)
 
     def require_api_ready(self) -> None:
@@ -268,16 +255,22 @@ class OpenAICompatibleLLMClient:
         )
 
     def describe(self) -> dict[str, object]:
-        planner = self.config.role_config("planner")
-        summarizer = self.config.role_config("summarizer")
         return {
             "backend": "openai_compatible",
             "mode": self.config.mode,
             "source": self.config.source,
-            "planner_provider": planner.provider,
-            "planner_model": planner.model,
-            "summarizer_provider": summarizer.provider,
-            "summarizer_model": summarizer.model,
+            "planner_provider": self.config.role_config("planner").provider,
+            "planner_model": self.config.role_config("planner").model,
+            "summarizer_provider": self.config.role_config("summarizer").provider,
+            "summarizer_model": self.config.role_config("summarizer").model,
+            "roles": {
+                role: {
+                    "provider": self.config.role_config(role).provider,
+                    "model": self.config.role_config(role).model,
+                    "json_output": self.config.role_config(role).json_output,
+                }
+                for role in FOUR_ROLE_COMPARATOR_ORDER
+            },
             "providers": {
                 name: {
                     "kind": provider.kind,
@@ -475,16 +468,22 @@ class DeterministicLLMClient:
         raise ValueError(f"unsupported deterministic llm purpose: {purpose}")
 
     def describe(self) -> dict[str, object]:
-        planner = self.config.role_config("planner")
-        summarizer = self.config.role_config("summarizer")
         return {
             "backend": "deterministic",
             "mode": self.config.mode,
             "source": self.config.source,
-            "planner_provider": planner.provider,
-            "planner_model": planner.model,
-            "summarizer_provider": summarizer.provider,
-            "summarizer_model": summarizer.model,
+            "planner_provider": self.config.role_config("planner").provider,
+            "planner_model": self.config.role_config("planner").model,
+            "summarizer_provider": self.config.role_config("summarizer").provider,
+            "summarizer_model": self.config.role_config("summarizer").model,
+            "roles": {
+                role: {
+                    "provider": self.config.role_config(role).provider,
+                    "model": self.config.role_config(role).model,
+                    "json_output": self.config.role_config(role).json_output,
+                }
+                for role in FOUR_ROLE_COMPARATOR_ORDER
+            },
             "providers": {
                 name: {
                     "kind": provider.kind,
@@ -646,6 +645,20 @@ def _role_from_mapping(role_name: str, payload: dict[str, Any]) -> RoleLLMConfig
         reasoning_effort=_coerce_optional_str(payload.get("reasoning_effort")),
         extra_body=dict(payload.get("extra_body") or {}),
         request_kwargs=dict(payload.get("request_kwargs") or {}),
+    )
+
+
+def _role_from_env(*, default_model: str, role_name: str) -> RoleLLMConfig:
+    env_prefix = f"STATEBUS_LLM_{normalize_comparator_role_name(role_name).upper()}"
+    return RoleLLMConfig(
+        provider=os.getenv(f"{env_prefix}_PROVIDER", "default"),
+        model=os.getenv(f"{env_prefix}_MODEL") or default_model,
+        json_output=_env_bool(f"{env_prefix}_JSON_MODE", True),
+        temperature=_env_optional_float(f"{env_prefix}_TEMPERATURE", 0.0),
+        max_tokens=_env_optional_int(f"{env_prefix}_MAX_TOKENS"),
+        reasoning_effort=os.getenv(f"{env_prefix}_REASONING_EFFORT"),
+        extra_body=_env_json(f"{env_prefix}_EXTRA_BODY"),
+        request_kwargs=_env_json(f"{env_prefix}_REQUEST_KWARGS"),
     )
 
 

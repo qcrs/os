@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+
+from runtime.role_contracts import FOUR_ROLE_COMPARATOR_ORDER, normalize_comparator_role_name
+
+
+@dataclass
+class RoleUsageMetrics:
+    llm_request_count: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    latency_ms: float = 0.0
 
 
 @dataclass
@@ -68,6 +79,36 @@ class TaskMetrics:
     invariant_violation_count: int = 0
     expected_gate_block_count: int = 0
     true_invariant_violation_count: int = 0
+    role_usage: dict[str, RoleUsageMetrics] = field(
+        default_factory=lambda: {
+            role: RoleUsageMetrics() for role in FOUR_ROLE_COMPARATOR_ORDER
+        }
+    )
+
+    def record_role_llm_usage(
+        self,
+        *,
+        role: str,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+        request_count: int = 1,
+    ) -> None:
+        usage = self.role_usage.setdefault(
+            normalize_comparator_role_name(role),
+            RoleUsageMetrics(),
+        )
+        usage.llm_request_count += request_count
+        usage.prompt_tokens += prompt_tokens
+        usage.completion_tokens += completion_tokens
+        usage.total_tokens += total_tokens
+
+    def record_role_latency(self, *, role: str, elapsed_ms: float) -> None:
+        usage = self.role_usage.setdefault(
+            normalize_comparator_role_name(role),
+            RoleUsageMetrics(),
+        )
+        usage.latency_ms += elapsed_ms
 
     @property
     def assist_memory_hit_rate(self) -> float:

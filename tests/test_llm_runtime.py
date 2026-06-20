@@ -28,6 +28,8 @@ def test_llm_config_supports_role_specific_models_from_env(monkeypatch) -> None:
     monkeypatch.setenv("STATEBUS_LLM_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("STATEBUS_LLM_DEFAULT_MODEL", "deepseek-v4-flash")
     monkeypatch.setenv("STATEBUS_LLM_PLANNER_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("STATEBUS_LLM_RETRIEVER_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("STATEBUS_LLM_EXECUTOR_MODEL", "gpt-4.1-nano")
     monkeypatch.setenv("STATEBUS_LLM_SUMMARIZER_MODEL", "gpt-4.1-mini")
 
     config = LLMConfig.from_env()
@@ -35,6 +37,8 @@ def test_llm_config_supports_role_specific_models_from_env(monkeypatch) -> None:
     assert config.use_api is True
     assert config.provider_config("default").base_url == "https://api.deepseek.com"
     assert config.role_config("planner").model == "deepseek-v4-flash"
+    assert config.role_config("retriever").model == "gpt-4.1-mini"
+    assert config.role_config("executor").model == "gpt-4.1-nano"
     assert config.role_config("summarizer").model == "gpt-4.1-mini"
 
 
@@ -63,6 +67,12 @@ roles:
     json_output: true
     request_kwargs:
       top_p: 0.8
+  retriever:
+    provider: deepseek
+    model: gpt-4.1-nano
+  executor:
+    provider: deepseek
+    model: gpt-4.1
 """.strip(),
         encoding="utf-8",
     )
@@ -72,6 +82,8 @@ roles:
     assert config.use_api is True
     assert config.source == str(config_path)
     assert config.role_config("planner").extra_body["thinking"]["type"] == "disabled"
+    assert config.role_config("retriever").model == "gpt-4.1-nano"
+    assert config.role_config("executor").model == "gpt-4.1"
     assert config.role_config("summarizer").request_kwargs["top_p"] == 0.8
     assert config.role_config("summarizer").model == "gpt-4.1-mini"
 
