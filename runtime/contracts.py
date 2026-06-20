@@ -365,7 +365,7 @@ def default_state_contract_registry() -> StateContractRegistry:
             name="ranked_evidence_bundle",
             kind="RANKED_EVIDENCE_BUNDLE",
             producer_agents=("retriever",),
-            consumer_agents=("summarizer",),
+            consumer_agents=("executor", "summarizer"),
             schema="statebus.ranked_evidence_bundle.v1",
             required_metadata=(
                 "channel_name",
@@ -408,7 +408,7 @@ def default_state_contract_registry() -> StateContractRegistry:
             name="replay_eligibility_bundle",
             kind="REPLAY_ELIGIBILITY_BUNDLE",
             producer_agents=("retriever",),
-            consumer_agents=("summarizer",),
+            consumer_agents=("executor", "summarizer"),
             schema="statebus.replay_eligibility_bundle.v1",
             required_metadata=(
                 "channel_name",
@@ -678,6 +678,8 @@ def default_state_contract_registry() -> StateContractRegistry:
                         "DENSE_EVIDENCE",
                         "CHANNEL_SNAPSHOT",
                         "FEATURE_BUNDLE",
+                        "RANKED_EVIDENCE_BUNDLE",
+                        "REPLAY_ELIGIBILITY_BUNDLE",
                         "TOOL_CANDIDATE_SET",
                     ),
                     required_kind_groups=(

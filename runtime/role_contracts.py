@@ -54,11 +54,7 @@ class RoleIOView:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "role", normalize_comparator_role_name(self.role))
-        object.__setattr__(
-            self,
-            "upstream_roles",
-            tuple(normalize_comparator_role_name(role) for role in self.upstream_roles),
-        )
+        object.__setattr__(self, "upstream_roles", tuple(_filter_comparator_roles(self.upstream_roles)))
 
 
 def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
@@ -75,7 +71,18 @@ def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
             owner_agent="retriever",
             consumes_text_handoff=True,
             consumes_typed_state=True,
-            allowed_output_state_kinds=("DENSE_EVIDENCE", "RANKED_EVIDENCE_BUNDLE"),
+            allowed_output_state_kinds=(
+                "DENSE_EVIDENCE",
+                "FEATURE_BUNDLE",
+                "CHANNEL_PATCH",
+                "CHANNEL_SNAPSHOT",
+                "RANKED_EVIDENCE_BUNDLE",
+                "TOOL_CANDIDATE_SET",
+                "REPLAY_ELIGIBILITY_BUNDLE",
+                "EXECUTOR_DECISION_PACKET",
+                "TOOL_ARTIFACT",
+                "EMBEDDING",
+            ),
             required_upstream_roles=("planner",),
         ),
         "executor": RoleExecutionContract(
@@ -86,10 +93,15 @@ def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
             allowed_input_state_kinds=(
                 "DENSE_EVIDENCE",
                 "FEATURE_BUNDLE",
+                "CHANNEL_SNAPSHOT",
                 "EXECUTOR_DECISION_PACKET",
                 "RANKED_EVIDENCE_BUNDLE",
+                "REPLAY_ELIGIBILITY_BUNDLE",
+                "TOOL_CANDIDATE_SET",
+                "VALIDATION_GATE_PACKET",
+                "TOOL_ARTIFACT",
             ),
-            allowed_output_state_kinds=("TOOL_ARTIFACT",),
+            allowed_output_state_kinds=("TOOL_ARTIFACT", "VALIDATION_GATE_PACKET"),
             required_upstream_roles=("retriever",),
         ),
         "summarizer": RoleExecutionContract(
@@ -99,9 +111,26 @@ def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
             consumes_typed_state=True,
             allowed_input_state_kinds=(
                 "DENSE_EVIDENCE",
+                "FEATURE_BUNDLE",
                 "TOOL_ARTIFACT",
                 "EXECUTOR_DECISION_PACKET",
+                "RANKED_EVIDENCE_BUNDLE",
+                "TOOL_CANDIDATE_SET",
+                "REPLAY_ELIGIBILITY_BUNDLE",
+                "EMBEDDING",
             ),
+            allowed_output_state_kinds=("TOOL_ARTIFACT",),
             required_upstream_roles=("executor",),
         ),
     }
+
+
+def _filter_comparator_roles(roles: tuple[str, ...]) -> tuple[str, ...]:
+    normalized_roles: list[str] = []
+    for role in roles:
+        try:
+            normalized = normalize_comparator_role_name(role)
+        except ValueError:
+            continue
+        normalized_roles.append(normalized)
+    return tuple(normalized_roles)

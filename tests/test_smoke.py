@@ -253,6 +253,13 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert task_run["graph_state"]["metrics"] == task_run["metrics"]
         assert sorted(task_run["state_refs"]) == sorted(task_run["graph_state"]["state_ref_ids"])
         assert task_run["state_channels"]
+        assert set(task_run["graph_state"]["role_context_slices"]) >= {
+            "planner",
+            "retriever",
+            "executor",
+            "summarizer",
+        }
+        assert task_run["graph_state"]["fairness_gate"]["passed"] is True
         assert "logical_replay_reuse" in task_run["reuse"]
         assert "physical_blob_reuse" in task_run["reuse"]
         protocol_tasks = payload["mode_runs"]["protocol"][0]["tasks"]
