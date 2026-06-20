@@ -631,13 +631,14 @@ class ExternalTextOpenRuntime:
                 "Candidate notes: " + "; ".join(
                     (
                         f"{str(item['route'])}::{str(item['tool_name'])}"
-                        f"|helper_rank={int(item.get('helper_rank', 0) or 0)}"
-                        f"|score={int(item.get('score', 0) or 0)}"
+                        f"|support_terms={','.join(str(term) for term in item.get('support_terms', []))}"
+                        f"|support_doc_count={int(item.get('support_doc_count', 0) or 0)}"
                         f"|support_docs={','.join(str(doc_id) for doc_id in item.get('supporting_doc_ids', []))}"
                     )
                     for item in visible_candidates
                 ),
-                "The helper-ranked order is advisory only. Choose the route/tool pair best supported by the retrieved evidence, not automatically helper rank 1.",
+                "Candidate order is alphabetical only. Treat the notes as evidence-backed provenance, not as a ranking.",
+                "Choose the route/tool pair best supported by the retrieved evidence and support terms.",
             ]
         )
         result = await self.llm_client.complete(
@@ -646,7 +647,8 @@ class ExternalTextOpenRuntime:
                     role="system",
                     content=(
                         "You are the retriever in a strict external pure-text workflow. "
-                        "Use the helper-produced candidate list only as a visible search space, not as the decision authority. "
+                        "Use the visible candidate cards as a bounded comparison set. "
+                        "Do not assume any candidate is pre-approved. "
                         "Return JSON."
                     ),
                 ),
@@ -682,13 +684,14 @@ class ExternalTextOpenRuntime:
                 "Candidate notes: " + "; ".join(
                     (
                         f"{str(item['route'])}::{str(item['tool_name'])}"
-                        f"|helper_rank={int(item.get('helper_rank', 0) or 0)}"
-                        f"|score={int(item.get('score', 0) or 0)}"
+                        f"|support_terms={','.join(str(term) for term in item.get('support_terms', []))}"
+                        f"|support_doc_count={int(item.get('support_doc_count', 0) or 0)}"
                         f"|support_docs={','.join(str(doc_id) for doc_id in item.get('supporting_doc_ids', []))}"
                     )
                     for item in visible_candidates
                 ),
-                "Choose the best-supported visible route/tool pair. You may keep or revise the proposed pair, but you must stay inside the visible candidate set.",
+                "Candidate order is alphabetical only. Re-check the proposed pair against the evidence-backed candidate notes.",
+                "You may keep or revise the proposed pair, but you must stay inside the visible candidate set.",
                 "Validated action contract: execute_validated_tool",
             ]
         )
@@ -790,6 +793,11 @@ def build_visible_tool_candidates(
                     for doc in retrieved_docs
                     if lexical_overlap(doc_tokens.get(doc.doc_id, set()), set(rule.keywords)) > 0
                 ][:3],
+                "support_terms": [
+                    keyword
+                    for keyword in rule.keywords
+                    if keyword in combined_tokens
+                ][:4],
             }
             for rule in PLAYBOOK_CATALOG
         ),
@@ -810,7 +818,11 @@ def build_visible_tool_candidates(
                 break
     for index, item in enumerate(visible, start=1):
         item["helper_rank"] = index
-    return visible
+        item["support_doc_count"] = len([doc_id for doc_id in item["supporting_doc_ids"] if str(doc_id).strip()])
+    return sorted(
+        visible,
+        key=lambda item: (str(item["route"]), str(item["tool_name"])),
+    )
 
 
 def summarize(task: SampleTask, retrieved_docs: list[CorpusDoc], route: str, tool_name: str) -> str:

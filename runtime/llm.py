@@ -783,6 +783,10 @@ def _parse_text_candidate_notes(value: str) -> list[dict[str, Any]]:
                 payload[key] = int(raw_value or 0)
             elif key == "score":
                 payload[key] = int(raw_value or 0)
+            elif key == "support_doc_count":
+                payload[key] = int(raw_value or 0)
+            elif key == "support_terms":
+                payload["support_terms"] = [item for item in raw_value.split(",") if item]
             elif key == "support_docs":
                 payload["supporting_doc_ids"] = [item for item in raw_value.split(",") if item]
         candidates.append(payload)
@@ -799,9 +803,8 @@ def _deterministic_retriever_choice(*, query: str, tool_candidates: list[dict[st
         tool_candidates,
         key=lambda item: (
             -_candidate_query_affinity(query_tokens, item),
-            -int(item.get("score", 0) or 0),
-            -len([doc_id for doc_id in item.get("supporting_doc_ids", []) if str(doc_id).strip()]),
-            int(item.get("helper_rank", 0) or 0),
+            -int(item.get("support_doc_count", 0) or 0),
+            -len([term for term in item.get("support_terms", []) if str(term).strip()]),
             str(item.get("route", "")),
             str(item.get("tool_name", "")),
         ),
@@ -827,6 +830,7 @@ def _candidate_query_affinity(query_tokens: set[str], item: dict[str, Any]) -> i
         [
             str(item.get("route", "")),
             str(item.get("tool_name", "")),
+            " ".join(str(term) for term in item.get("support_terms", []) if str(term).strip()),
             " ".join(str(doc_id) for doc_id in item.get("supporting_doc_ids", []) if str(doc_id).strip()),
         ]
     ).lower()
