@@ -1125,6 +1125,11 @@ def lexical_overlap(left: set[str], right: set[str]) -> int:
     return len(left & right)
 
 
+def canonical_identity_token(text: str) -> str:
+    stripped = str(text).strip().strip("`'\"")
+    return re.sub(r"[^a-z0-9]+", "", stripped.lower())
+
+
 def sanitize_message_text(text: str) -> str:
     sanitized = text.replace("StateRef", "state reference")
     for marker in ("EXECUTOR_DECISION_PACKET", "DENSE_EVIDENCE", "FEATURE_BUNDLE", "MEMORY_ASSIST_HINT", "MEMORY_ASSIST"):
@@ -1154,15 +1159,20 @@ def _strict_visible_selection(
 ) -> tuple[str, str]:
     route = str(retriever_payload.get("route", "")).strip()
     tool_name = str(retriever_payload.get("tool_name", "")).strip()
-    visible_pairs = {
-        (str(item["route"]).strip(), str(item["tool_name"]).strip())
-        for item in visible_candidates
-    }
-    if (route, tool_name) not in visible_pairs:
-        raise ValueError(
-            "strict external pure-text retriever selected route/tool outside visible candidate set"
-        )
-    return route, tool_name
+    if resolved := _resolve_visible_candidate_selection(
+        route=route,
+        tool_name=tool_name,
+        visible_candidates=visible_candidates,
+    ):
+        return resolved
+    visible_preview = ", ".join(
+        f"{str(item['route']).strip()}::{str(item['tool_name']).strip()}"
+        for item in visible_candidates[:4]
+    )
+    raise ValueError(
+        "strict external pure-text retriever selected route/tool outside visible candidate set: "
+        f"route={route!r} tool={tool_name!r} visible_preview=[{visible_preview}]"
+    )
 
 
 def _strict_action_contract(payload: dict[str, object]) -> str:
@@ -1183,13 +1193,58 @@ def _strict_executor_selection(
 ) -> tuple[str, str]:
     route = str(executor_payload.get("route", "")).strip()
     tool_name = str(executor_payload.get("tool_name", "")).strip()
-    visible_pairs = {
+    if resolved := _resolve_visible_candidate_selection(
+        route=route,
+        tool_name=tool_name,
+        visible_candidates=visible_candidates,
+    ):
+        return resolved
+    return fallback_route, fallback_tool_name
+
+
+def _resolve_visible_candidate_selection(
+    *,
+    route: str,
+    tool_name: str,
+    visible_candidates: list[dict[str, object]],
+) -> tuple[str, str] | None:
+    visible_pairs = [
         (str(item["route"]).strip(), str(item["tool_name"]).strip())
         for item in visible_candidates
-    }
+    ]
     if (route, tool_name) in visible_pairs:
-        return route, tool_name
-    return fallback_route, fallback_tool_name
+        return (route, tool_name)
+
+    by_canonical_pair = {
+        (canonical_identity_token(candidate_route), canonical_identity_token(candidate_tool)): (
+            candidate_route,
+            candidate_tool,
+        )
+        for candidate_route, candidate_tool in visible_pairs
+    }
+    canonical_route = canonical_identity_token(route)
+    canonical_tool = canonical_identity_token(tool_name)
+    if canonical_route and canonical_tool:
+        if resolved := by_canonical_pair.get((canonical_route, canonical_tool)):
+            return resolved
+
+    route_matches = [
+        pair for pair in visible_pairs if canonical_route and canonical_identity_token(pair[0]) == canonical_route
+    ]
+    tool_matches = [
+        pair for pair in visible_pairs if canonical_tool and canonical_identity_token(pair[1]) == canonical_tool
+    ]
+    if route_matches and tool_matches:
+        shared = [pair for pair in route_matches if pair in tool_matches]
+        if len(shared) == 1:
+            return shared[0]
+    if len(route_matches) == 1 and not canonical_tool:
+        return route_matches[0]
+    if len(tool_matches) == 1 and not canonical_route:
+        return tool_matches[0]
+    if len(route_matches) == 1 and len(tool_matches) == 1 and route_matches[0] == tool_matches[0]:
+        return route_matches[0]
+    return None
 
 
 def _extract_summary_text(text: str) -> str:
