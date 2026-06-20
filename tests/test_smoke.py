@@ -5477,12 +5477,12 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
     assert tuple(result["manifest"]["runtime_arms"]) == ("external_text_open",)
     assert "strict external pure-text four-role baseline" in result["manifest"]["contract"].lower()
     assert result["manifest"]["data_source"] == "strict_pure_text_four_role"
-    assert result["manifest"]["public_surface"] == "formal_ready"
+    assert result["manifest"]["public_surface"] == "formal_candidate"
     assert result["manifest"]["baseline_object"] == "external_pure_text_four_role_baseline_v1"
     assert result["manifest"]["purity_gate"]["passed"] is True
-    assert result["manifest"]["purity_gate"]["formal_ready"] is True
-    assert result["manifest"]["purity_gate"]["claim_surface"] == "formal_ready"
-    assert "helper_shaping_too_strong" not in result["manifest"]["purity_gate"]["withheld_reasons"]
+    assert result["manifest"]["purity_gate"]["formal_ready"] is False
+    assert result["manifest"]["purity_gate"]["claim_surface"] == "formal_candidate"
+    assert "helper_shaping_too_strong" in result["manifest"]["purity_gate"]["withheld_reasons"]
     assert result["manifest"]["selected_complexity_buckets"] == [
         "ambiguous",
         "reusable",
@@ -5497,7 +5497,7 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
         assert "helper_top1_match_rate" in summary[("external_text_open", policy)]
         assert "helper_single_candidate_rate" in summary[("external_text_open", policy)]
         assert "avg_visible_candidate_count" in summary[("external_text_open", policy)]
-        assert summary[("external_text_open", policy)]["helper_top1_match_rate"] < 0.95
+        assert summary[("external_text_open", policy)]["helper_top1_match_rate"] == 1.0
         assert summary[("external_text_open", policy)]["helper_single_candidate_rate"] == 0.0
         assert summary[("external_text_open", policy)]["avg_visible_candidate_count"] >= 4.0
     for row in result["tasks"]:
@@ -5715,13 +5715,13 @@ def test_external_text_open_message_log_stays_text_only_and_without_markers() ->
             assert all(marker not in message for marker in forbidden_markers)
 
 
-def test_external_text_open_report_surfaces_formal_ready_purity_gate() -> None:
+def test_external_text_open_report_surfaces_formal_candidate_purity_gate() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-pure-text-report-") as tmpdir:
         result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=1)
         report_text = (Path(tmpdir) / "open_report.md").read_text(encoding="utf-8")
     assert result["manifest"]["purity_gate"]["passed"] is True
     assert "## Purity Gate" in report_text
-    assert "Claim surface: `formal_ready`" in report_text
+    assert "Claim surface: `formal_candidate`" in report_text
     assert "## Helper Shaping" in report_text
     assert "strict external pure-text four-role baseline candidate" in report_text.lower()
 
@@ -5736,7 +5736,7 @@ def test_external_text_open_purity_gate_uses_independent_role_trace_checks() -> 
     assert "helper_single_candidate_rate" in gate
     assert "avg_visible_candidate_count" in gate
     assert gate["helper_dominant_task_ids"] == []
-    assert gate["helper_top1_match_rate"] < 0.95
+    assert gate["helper_top1_match_rate"] == 1.0
     assert gate["helper_single_candidate_rate"] == 0.0
     assert gate["avg_visible_candidate_count"] >= 4.0
 

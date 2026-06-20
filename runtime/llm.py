@@ -794,35 +794,19 @@ def _deterministic_retriever_choice(*, query: str, tool_candidates: list[dict[st
         return {"route": "generic_triage", "tool_name": "tool.collect_more_evidence"}
     if not any(int(item.get("helper_rank", 0) or 0) > 0 for item in tool_candidates):
         return tool_candidates[0]
-    ranked_by_helper = sorted(
-        tool_candidates,
-        key=lambda item: (
-            int(item.get("helper_rank", 0) or 0),
-            str(item.get("route", "")),
-            str(item.get("tool_name", "")),
-        ),
-    )
-    if len(ranked_by_helper) >= 2:
-        top_score = int(ranked_by_helper[0].get("score", 0) or 0)
-        second_score = int(ranked_by_helper[1].get("score", 0) or 0)
-        if top_score - second_score <= 1:
-            return ranked_by_helper[1]
     query_tokens = set(query.lower().split())
     scored = sorted(
         tool_candidates,
         key=lambda item: (
             -_candidate_query_affinity(query_tokens, item),
+            -int(item.get("score", 0) or 0),
+            -len([doc_id for doc_id in item.get("supporting_doc_ids", []) if str(doc_id).strip()]),
             int(item.get("helper_rank", 0) or 0),
             str(item.get("route", "")),
             str(item.get("tool_name", "")),
         ),
     )
-    if len(scored) >= 3:
-        selected = scored[1]
-        if _candidate_identity(selected) == _candidate_identity(scored[0]):
-            selected = scored[2]
-        return selected
-    return scored[-1]
+    return scored[0]
 
 
 def _deterministic_executor_choice(
