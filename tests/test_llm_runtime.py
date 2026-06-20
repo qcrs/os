@@ -356,6 +356,24 @@ async def test_deterministic_llm_retriever_uses_neutral_query_affinity_ranking_f
     assert payload["tool_name"] == "tool.auth_rate_limit_triage"
 
 
+def test_text_candidate_notes_parse_support_terms_and_doc_count_without_helper_rank_bias() -> None:
+    from runtime.llm import _parse_text_candidate_notes
+
+    parsed = _parse_text_candidate_notes(
+        "auth_rate_limit::tool.auth_rate_limit_triage|support_terms=auth,rate,login|support_doc_count=2|support_docs=doc-1,doc-2"
+    )
+
+    assert parsed == [
+        {
+            "route": "auth_rate_limit",
+            "tool_name": "tool.auth_rate_limit_triage",
+            "support_terms": ["auth", "rate", "login"],
+            "support_doc_count": 2,
+            "supporting_doc_ids": ["doc-1", "doc-2"],
+        }
+    ]
+
+
 class _RepairingPlannerClient:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []

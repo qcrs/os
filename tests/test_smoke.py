@@ -5741,6 +5741,22 @@ def test_external_text_open_purity_gate_uses_independent_role_trace_checks() -> 
     assert gate["avg_visible_candidate_count"] >= 4.0
 
 
+def test_external_text_open_visible_candidates_are_exposed_as_neutral_cards_not_helper_ranked_prompt_order() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-candidates-") as tmpdir:
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=1)
+    row = result["tasks"][0]
+    visible_candidates = row["visible_candidates"]
+    assert visible_candidates
+    first_candidate = visible_candidates[0]
+    assert "support_terms" in first_candidate
+    assert "support_doc_count" in first_candidate
+    ordered_pairs = [
+        (str(item["route"]), str(item["tool_name"]))
+        for item in visible_candidates
+    ]
+    assert ordered_pairs == sorted(ordered_pairs)
+
+
 def test_external_text_open_source_stays_outside_statebus_runtime_and_structured_packets() -> None:
     source_text = (REPO_ROOT / "eval" / "text_open_baseline.py").read_text(encoding="utf-8")
     forbidden = (
