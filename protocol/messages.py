@@ -184,6 +184,7 @@ class StepResult:
     success: bool
     output_state_refs: list[StateRef] = field(default_factory=list)
     payload: dict[str, Any] = field(default_factory=dict)
+    semantic_trace: dict[str, Any] = field(default_factory=dict)
     memory_commit: MemoryCommit | None = None
     memory_commits: list[MemoryCommit] = field(default_factory=list)
     error: str | None = None

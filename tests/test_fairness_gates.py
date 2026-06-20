@@ -195,3 +195,61 @@ def test_execution_fairness_gate_fails_closed_on_unbounded_protocol_projection_a
     assert gate.passed is False
     assert gate.unbounded_projection_roles == ("executor",)
     assert gate.hidden_helper_roles == ("executor",)
+
+
+def test_execution_fairness_gate_requires_actual_parity_evidence_and_non_dominant_helper() -> None:
+    plan = Plan(
+        task_id="task-5",
+        goal="goal",
+        steps=[
+            PlanStep("planner", "planner", "PLAN", [], {}, [], semantic_role="planner"),
+            PlanStep("retrieve", "retriever", "RETRIEVE_EVIDENCE", [], {}, ["planner"], semantic_role="retrieve"),
+            PlanStep("execute", "executor", "EXECUTE_PLAYBOOK", [], {}, ["retrieve"], semantic_role="execute"),
+            PlanStep("summarize", "summarizer", "SUMMARIZE_AND_COMMIT", [], {}, ["execute"], semantic_role="summarize"),
+        ],
+    )
+
+    def _slice(role: str, *, decision_source: str = "role_llm") -> object:
+        return type(
+            "Slice",
+            (),
+            {
+                "carrier": "state_packet_minimal",
+                "visible_state_ids": (),
+                "projection_class": "bounded",
+                "included_fields": ("a",),
+                "omitted_fields": ("b",),
+                "role_visible_contract": f"{role}_contract_v1",
+                "helper_visibility": "declared_only",
+                "model_visibility": "same_model_required",
+                "tool_visibility": "catalog_visible",
+                "corpus_visibility": "retrieved_only",
+                "metadata": {
+                    "actual_llm_model": "det-model",
+                    "actual_tool_catalog": ["tool.a"],
+                    "actual_tool_candidates": ["r::tool.a"],
+                    "actual_corpus_scope": ["doc-1"],
+                    "decision_source": decision_source,
+                },
+            },
+        )()
+
+    gate = evaluate_execution_fairness_gate(
+        plan=plan,
+        role_context_slices={
+            "planner": _slice("planner"),
+            "retriever": _slice("retriever", decision_source="helper_selected_directly"),
+            "executor": _slice("executor"),
+            "summarizer": _slice("summarizer"),
+        },
+        role_trace=[
+            {"role": "planner", "input_state_ids": [], "semantic_trace": {}},
+            {"role": "retriever", "input_state_ids": [], "semantic_trace": {"helper_selected_directly": True}},
+            {"role": "executor", "input_state_ids": [], "semantic_trace": {"helper_selected_directly": False}},
+            {"role": "summarizer", "input_state_ids": [], "semantic_trace": {}},
+        ],
+        contract_errors=[],
+    )
+
+    assert gate.passed is False
+    assert gate.helper_dominance_roles == ("retriever",)

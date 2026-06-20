@@ -264,6 +264,11 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert executor_slice["included_fields"]
         assert executor_slice["omitted_fields"]
         assert executor_slice["role_visible_contract"]
+        assert executor_slice["metadata"]["decision_source"]
+        assert executor_slice["metadata"]["actual_llm_model"]
+        assert executor_slice["metadata"]["actual_tool_catalog"]
+        assert executor_slice["metadata"]["actual_corpus_scope"]
+        assert task_run["actual_parity"]["executor"]["actual_llm_model"]
         assert task_run["graph_state"]["fairness_gate"]["passed"] is True
         assert "logical_replay_reuse" in task_run["reuse"]
         assert "physical_blob_reuse" in task_run["reuse"]
@@ -3618,6 +3623,7 @@ def test_executor_decision_packet_requires_non_empty_route_provenance() -> None:
                 "route": "db_pool_saturation",
                 "tool_name": "tool.db_pool_triage",
                 "route_source": "hint_consensus",
+                "decision_source": "executor_llm_role",
                 "route_confidence": 0.91,
                 "route_provenance": [],
                 "tool_candidates": [
@@ -3654,15 +3660,16 @@ def test_executor_decision_packet_override_mode_requires_audit_override_provenan
     try:
         ref = ctx.put_executor_decision_state(
             state_id="audit-override-contract-001-decision",
-            decision_packet={
-                "schema": "statebus.executor_decision_packet.v1",
-                "query": "checkout release canary shows slow p95 and queueing",
-                "route": "worker_queue_starvation",
-                "tool_name": "tool.worker_queue_triage",
-                "route_source": "hint_consensus",
-                "route_confidence": 0.62,
-                "route_provenance": ["corpus_metadata", "lexical"],
-                "matched_signals": ["worker backlog"],
+                decision_packet={
+                    "schema": "statebus.executor_decision_packet.v1",
+                    "query": "checkout release canary shows slow p95 and queueing",
+                    "route": "worker_queue_starvation",
+                    "tool_name": "tool.worker_queue_triage",
+                    "route_source": "hint_consensus",
+                    "decision_source": "executor_llm_role",
+                    "route_confidence": 0.62,
+                    "route_provenance": ["corpus_metadata", "lexical"],
+                    "matched_signals": ["worker backlog"],
                 "matched_tags": ["queue"],
                 "match_score": 7,
                 "tool_candidates": [
@@ -4181,6 +4188,27 @@ def test_text_strict_pure_lane_explicitly_reuses_internal_helper_path_without_me
     assert execute_payload["actions"]
 
 
+def test_text_strict_pure_lane_handles_empty_memory_hits_without_crashing() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-text-strict-no-memory-hit-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="contest_dual_mode_controlled_v3",
+                repeat=1,
+                modes=("text",),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+    task = result["mode_runs"]["text"][0]["tasks"][0]
+    retrieve_payload = task["results"]["retrieve"]["payload"]
+
+    assert task["status"] == "completed"
+    assert task["runtime_reuse_contract"] == "reuse_disabled"
+    assert retrieve_payload["memory_hits"] == []
+    assert retrieve_payload["memory_assist_ids"] == []
+
+
 def test_planner_support_v3_runs_llm_planner_in_protocol_mode() -> None:
     with tempfile.TemporaryDirectory(prefix="statebus-open-planner-") as tmpdir:
         result = asyncio.run(
@@ -4320,13 +4348,14 @@ def test_validate_route_emits_gate_packet_and_execute_requires_successful_valida
                 ),
                 ctx.put_executor_decision_state(
                     state_id="decision-1",
-                    decision_packet={
-                        "route": "auth_session_drift",
-                        "tool_name": "tool.auth_session_repair",
-                        "route_source": "lexical_match",
-                        "route_confidence": 0.82,
-                        "route_provenance": ["feature_bundle", "tool_candidates"],
-                        "tool_candidates": [
+                        decision_packet={
+                            "route": "auth_session_drift",
+                            "tool_name": "tool.auth_session_repair",
+                            "route_source": "lexical_match",
+                            "decision_source": "retriever_llm_role",
+                            "route_confidence": 0.82,
+                            "route_provenance": ["feature_bundle", "tool_candidates"],
+                            "tool_candidates": [
                             {
                                 "tool_name": "tool.auth_session_repair",
                                 "route": "auth_session_drift",
@@ -4448,14 +4477,15 @@ def test_execute_consumes_validation_gate_as_authoritative_action_decision() -> 
                 ),
                 ctx.put_executor_decision_state(
                     state_id="decision-validated-decision",
-                    decision_packet={
-                        "schema": "statebus.executor_decision_packet.v1",
-                        "route": "db_pool_saturation",
-                        "tool_name": "tool.db_pool_triage",
-                        "route_source": "lexical_match",
-                        "route_confidence": 0.95,
-                        "route_provenance": ["lexical"],
-                        "tool_candidates": [
+                        decision_packet={
+                            "schema": "statebus.executor_decision_packet.v1",
+                            "route": "db_pool_saturation",
+                            "tool_name": "tool.db_pool_triage",
+                            "route_source": "lexical_match",
+                            "decision_source": "retriever_llm_role",
+                            "route_confidence": 0.95,
+                            "route_provenance": ["lexical"],
+                            "tool_candidates": [
                             {
                                 "tool_name": "tool.db_pool_triage",
                                 "route": "db_pool_saturation",
@@ -4584,6 +4614,7 @@ def test_s1_changed_action_requires_validation_hop() -> None:
                         "route": "db_pool_saturation",
                         "tool_name": "tool.db_pool_triage",
                         "route_source": "lexical_match",
+                        "decision_source": "retriever_llm_role",
                         "route_confidence": 0.95,
                         "route_provenance": ["lexical"],
                         "tool_candidates": [
@@ -4701,6 +4732,7 @@ def test_validate_route_can_fallback_to_decision_packet_tool_when_retrieve_paylo
                         "route": "db_pool_saturation",
                         "tool_name": "tool.db_pool_triage",
                         "route_source": "lexical_match",
+                        "decision_source": "retriever_llm_role",
                         "route_confidence": 0.95,
                         "retrieved_doc_ids": ["rr-checkout-incident", "rr-checkout-scope"],
                         "matched_signals": ["pool wait", "slow orders query"],

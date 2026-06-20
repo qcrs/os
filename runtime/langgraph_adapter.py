@@ -481,6 +481,7 @@ def _graph_state_snapshot(
                 "model_visibility": slice_view.model_visibility,
                 "tool_visibility": slice_view.tool_visibility,
                 "corpus_visibility": slice_view.corpus_visibility,
+                "metadata": dict(slice_view.metadata),
             }
             for role, slice_view in ctx.role_context_slices.items()
         },

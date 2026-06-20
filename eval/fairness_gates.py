@@ -46,6 +46,10 @@ class CarrierFairnessGate:
     tool_visibility_mismatch_roles: tuple[str, ...] = ()
     corpus_visibility_mismatch_roles: tuple[str, ...] = ()
     hidden_helper_roles: tuple[str, ...] = ()
+    actual_model_parity_roles: tuple[str, ...] = ()
+    actual_tool_parity_roles: tuple[str, ...] = ()
+    actual_corpus_parity_roles: tuple[str, ...] = ()
+    helper_dominance_roles: tuple[str, ...] = ()
     contract_errors: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
@@ -65,6 +69,10 @@ class CarrierFairnessGate:
             "tool_visibility_mismatch_roles": list(self.tool_visibility_mismatch_roles),
             "corpus_visibility_mismatch_roles": list(self.corpus_visibility_mismatch_roles),
             "hidden_helper_roles": list(self.hidden_helper_roles),
+            "actual_model_parity_roles": list(self.actual_model_parity_roles),
+            "actual_tool_parity_roles": list(self.actual_tool_parity_roles),
+            "actual_corpus_parity_roles": list(self.actual_corpus_parity_roles),
+            "helper_dominance_roles": list(self.helper_dominance_roles),
             "contract_errors": list(self.contract_errors),
         }
 
@@ -138,6 +146,10 @@ def evaluate_execution_fairness_gate(
     tool_visibility_mismatch_roles: list[str] = []
     corpus_visibility_mismatch_roles: list[str] = []
     hidden_helper_roles: list[str] = []
+    actual_model_parity_roles: list[str] = []
+    actual_tool_parity_roles: list[str] = []
+    actual_corpus_parity_roles: list[str] = []
+    helper_dominance_roles: list[str] = []
 
     for role, slice_view in normalized_slices.items():
         carrier = str(getattr(slice_view, "carrier", "")).strip()
@@ -151,6 +163,17 @@ def evaluate_execution_fairness_gate(
         tool_visibility = str(getattr(slice_view, "tool_visibility", "")).strip()
         corpus_visibility = str(getattr(slice_view, "corpus_visibility", "")).strip()
         input_state_ids = tuple(trace_index.get(role, {}).get("input_state_ids", ()))
+        slice_metadata = dict(getattr(slice_view, "metadata", {}) or {})
+        trace_semantic = dict(trace_index.get(role, {}).get("semantic_trace", {}) or {})
+        actual_llm_model = str(
+            slice_metadata.get("actual_llm_model") or trace_semantic.get("llm_model") or ""
+        ).strip()
+        actual_tool_catalog = tuple(str(item).strip() for item in slice_metadata.get("actual_tool_catalog", []) if str(item).strip())
+        actual_corpus_scope = tuple(str(item).strip() for item in slice_metadata.get("actual_corpus_scope", []) if str(item).strip())
+        helper_selected_directly = bool(trace_semantic.get("helper_selected_directly", False))
+        decision_source = str(
+            slice_metadata.get("decision_source") or trace_semantic.get("decision_source") or ""
+        ).strip()
 
         if role not in traced_roles or role not in normalized_slices:
             mega_prompt_roles.append(role)
@@ -170,6 +193,14 @@ def evaluate_execution_fairness_gate(
             corpus_visibility_mismatch_roles.append(role)
         if helper_visibility not in {"declared_only", "none"}:
             hidden_helper_roles.append(role)
+        if role in {"retriever", "executor"} and not actual_llm_model:
+            actual_model_parity_roles.append(role)
+        if role in {"retriever", "executor"} and not actual_tool_catalog:
+            actual_tool_parity_roles.append(role)
+        if role in {"retriever", "executor"} and not actual_corpus_scope:
+            actual_corpus_parity_roles.append(role)
+        if helper_selected_directly or decision_source.startswith("helper"):
+            helper_dominance_roles.append(role)
 
     normalized_errors = tuple(str(item).strip() for item in contract_errors if str(item).strip())
     passed = not (
@@ -184,6 +215,10 @@ def evaluate_execution_fairness_gate(
         or tool_visibility_mismatch_roles
         or corpus_visibility_mismatch_roles
         or hidden_helper_roles
+        or actual_model_parity_roles
+        or actual_tool_parity_roles
+        or actual_corpus_parity_roles
+        or helper_dominance_roles
         or normalized_errors
     )
     observed_roles = tuple(
@@ -215,5 +250,9 @@ def evaluate_execution_fairness_gate(
             sorted(dict.fromkeys(corpus_visibility_mismatch_roles))
         ),
         hidden_helper_roles=tuple(sorted(dict.fromkeys(hidden_helper_roles))),
+        actual_model_parity_roles=tuple(sorted(dict.fromkeys(actual_model_parity_roles))),
+        actual_tool_parity_roles=tuple(sorted(dict.fromkeys(actual_tool_parity_roles))),
+        actual_corpus_parity_roles=tuple(sorted(dict.fromkeys(actual_corpus_parity_roles))),
+        helper_dominance_roles=tuple(sorted(dict.fromkeys(helper_dominance_roles))),
         contract_errors=normalized_errors,
     )
