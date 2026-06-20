@@ -360,13 +360,14 @@ def test_text_candidate_notes_parse_support_terms_and_doc_count_without_helper_r
     from runtime.llm import _parse_text_candidate_notes
 
     parsed = _parse_text_candidate_notes(
-        "auth_rate_limit::tool.auth_rate_limit_triage|support_terms=auth,rate,login|support_doc_count=2|support_docs=doc-1,doc-2"
+        "auth_rate_limit::tool.auth_rate_limit_triage|matched_issue_ids=auth_control_surface,traffic_shaping_surface|support_terms=auth,rate,login|support_doc_count=2|support_docs=doc-1,doc-2"
     )
 
     assert parsed == [
         {
             "route": "auth_rate_limit",
             "tool_name": "tool.auth_rate_limit_triage",
+            "matched_issue_ids": ["auth_control_surface", "traffic_shaping_surface"],
             "support_terms": ["auth", "rate", "login"],
             "support_doc_count": 2,
             "supporting_doc_ids": ["doc-1", "doc-2"],
