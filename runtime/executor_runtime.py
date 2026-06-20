@@ -1139,6 +1139,7 @@ def execute_playbook_step(
     transfer_strategy: str = "state_ref",
     handoff_profile: str = "",
     inline_handoff_text: str = "",
+    audit_text_helper_disabled: bool = False,
 ) -> StepResult:
     evidence_ref = next((ref for ref in input_state_refs if ref.kind == "DENSE_EVIDENCE"), None)
     channel_snapshot_ref = next(
@@ -1238,15 +1239,46 @@ def execute_playbook_step(
             handoff_text = str(step.params.get("inline_handoff_text", "")).strip()
         if not handoff_text:
             raise ValueError(f"step {step.step_id} missing whole-lane text handoff")
-        feature_bundle = _feature_bundle_from_text_whole_lane_handoff(
-            query_text=step.params.get("query", ""),
-            evidence_text=handoff_text,
-            handoff_text=handoff_text,
-            registry=registry or default_tool_registry(),
-        )
+        if audit_text_helper_disabled:
+            feature_bundle = {
+                "query": str(step.params.get("query", "")),
+                "route": "generic_triage",
+                "tool_name": "tool.collect_more_evidence",
+                "route_source": "audit_text_helper_disabled",
+                "route_confidence": 0.0,
+                "route_provenance": ["audit_text_helper_disabled"],
+                "matched_signals": [],
+                "matched_tags": [],
+                "match_score": 0,
+                "hint_doc_ids": [],
+                "hint_route": "",
+                "hint_tool_name": "",
+                "tool_candidates": [
+                    {
+                        "tool_name": "tool.collect_more_evidence",
+                        "route": "generic_triage",
+                        "score": 0,
+                        "matched_signals": [],
+                        "matched_tags": [],
+                        "source": "audit_text_helper_disabled",
+                    }
+                ],
+                "evidence_preview": handoff_text[:240],
+                "evidence_sha256": hashlib.sha256(handoff_text.encode("utf-8")).hexdigest(),
+                "fresh_evidence_sha256": hashlib.sha256(handoff_text.encode("utf-8")).hexdigest(),
+                "transfer_strategy": "text_whole_lane",
+                "audit_text_helper_mode": "disabled",
+            }
+        else:
+            feature_bundle = _feature_bundle_from_text_whole_lane_handoff(
+                query_text=step.params.get("query", ""),
+                evidence_text=handoff_text,
+                handoff_text=handoff_text,
+                registry=registry or default_tool_registry(),
+            )
         feature_state_id = ""
         execution_evidence_text = handoff_text
-        if transfer_brief_ref is not None:
+        if transfer_brief_ref is not None and not audit_text_helper_disabled:
             validation_packet = _validation_packet_from_plain_text_handoff(
                 validation_text=statepool.get_text(transfer_brief_ref),
                 feature_bundle=feature_bundle,
@@ -1349,6 +1381,10 @@ def execute_playbook_step(
                 ),
                 "tool_name": execution.tool_name,
                 "route": execution.route,
+                "feature_route_source": str(feature_bundle.get("route_source", "")).strip(),
+                "audit_text_helper_mode": str(
+                    feature_bundle.get("audit_text_helper_mode", "")
+                ).strip(),
                 "sandbox_mode": execution.sandbox_mode,
                 "transfer_strategy": transfer_strategy,
             },
@@ -1365,6 +1401,10 @@ def execute_playbook_step(
             "reusable_steps": execution.reusable_steps,
             "tool_name": execution.tool_name,
             "route": execution.route,
+            "feature_route_source": str(feature_bundle.get("route_source", "")).strip(),
+            "audit_text_helper_mode": str(
+                feature_bundle.get("audit_text_helper_mode", "")
+            ).strip(),
             "sandbox_mode": execution.sandbox_mode,
             "matched_signals": list(execution.diagnostics.get("matched_signals", [])),
             "feature_state_id": feature_state_id,

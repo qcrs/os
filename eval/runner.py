@@ -2663,6 +2663,7 @@ async def _run_mode_once(
                     "mode": mode,
                     "handoff_profile": task.runtime_profile.resolved_handoff_profile,
                     "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
+                    "audit_text_helper_mode": task.runtime_profile.resolved_audit_text_helper_mode,
                     "transfer_strategy": _public_transfer_strategy(
                         task.runtime_profile.effective_transfer_strategy(mode),
                         mode,
@@ -2753,6 +2754,7 @@ async def _run_mode_once(
                     "mode": mode,
                     "handoff_profile": task.runtime_profile.resolved_handoff_profile,
                     "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
+                    "audit_text_helper_mode": task.runtime_profile.resolved_audit_text_helper_mode,
                     "transfer_strategy": _public_transfer_strategy(
                         task.runtime_profile.effective_transfer_strategy(mode),
                         mode,
@@ -5632,6 +5634,158 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             ]
         )
         return "\n".join(lines) + "\n"
+    if pack_type == "text_helper_ablation_audit_v1":
+        _append_pack_contract_section(
+            lines,
+            contract="audit-only text helper ablation pack; compare text_whole_lane helper-on and helper-off rows without mutating contest_honest_headline_v1.",
+            single_variable="text_whole_lane route/tool recovery helper availability; protocol rows are unchanged compactness controls only.",
+        )
+        helper_mode_counts: dict[str, int] = {}
+        helper_rows: list[dict[str, object]] = []
+        for run in result.get("mode_runs", {}).get("text", []):
+            for task in run.get("tasks", []):
+                if str(task.get("status", "")).strip() not in {"completed", "failed"}:
+                    continue
+                mode_value = str(task.get("audit_text_helper_mode", "")).strip() or "enabled"
+                helper_mode_counts[mode_value] = helper_mode_counts.get(mode_value, 0) + 1
+                helper_rows.append(task)
+        lines.extend(
+            [
+                "",
+                "## Text Helper Ablation Audit V1",
+                "",
+                "| helper_mode | task_runs |",
+                "| --- | ---: |",
+            ]
+        )
+        for helper_mode, count in sorted(helper_mode_counts.items()):
+            lines.append(f"| {helper_mode} | {count} |")
+        lines.extend(
+            [
+                "",
+                "| helper_mode | validation_success_rate | recovered_route_tool_rate | execute_reached_rate | validation_block_rate |",
+                "| --- | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for helper_mode in sorted(helper_mode_counts):
+            rows = [
+                row
+                for row in helper_rows
+                if (str(row.get("audit_text_helper_mode", "")).strip() or "enabled") == helper_mode
+            ]
+            validate_payloads = [
+                dict(row.get("results", {}).get("validate", {}).get("payload", {}))
+                for row in rows
+                if isinstance(row.get("results", {}).get("validate", {}), dict)
+            ]
+            validation_success_rate = (
+                sum(1 for payload in validate_payloads if bool(payload.get("validation_success"))) / len(rows)
+                if rows
+                else 0.0
+            )
+            recovered_route_tool_rate = (
+                sum(
+                    1
+                    for payload in validate_payloads
+                    if str(payload.get("pre_validation_route", "")).strip()
+                    and str(payload.get("pre_validation_tool_name", "")).strip()
+                )
+                / len(rows)
+                if rows
+                else 0.0
+            )
+            execute_reached_rate = (
+                sum(
+                    1
+                    for row in rows
+                    if isinstance(row.get("results", {}).get("execute", {}), dict)
+                    and bool(row.get("results", {}).get("execute", {}).get("success"))
+                )
+                / len(rows)
+                if rows
+                else 0.0
+            )
+            validation_block_rate = (
+                sum(
+                    1
+                    for payload in validate_payloads
+                    if str(payload.get("validation_failure_reason", "")).strip()
+                )
+                / len(rows)
+                if rows
+                else 0.0
+            )
+            lines.append(
+                f"| {helper_mode} | "
+                f"{validation_success_rate:.2f} | "
+                f"{recovered_route_tool_rate:.2f} | "
+                f"{execute_reached_rate:.2f} | "
+                f"{validation_block_rate:.2f} |"
+            )
+        lines.extend(
+            [
+                "",
+                "## Protocol Compactness Control",
+                "",
+                "| metric | text | protocol | delta(protocol - text) |",
+                "| --- | ---: | ---: | ---: |",
+                f"| steady_state_text_bytes | {float(text_summary.get('aggregate', {}).get('steady_state_text_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('steady_state_text_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('steady_state_text_bytes', 0.0)) - float(text_summary.get('aggregate', {}).get('steady_state_text_bytes', 0.0)):.2f} |",
+                f"| steady_state_protocol_bytes | {float(text_summary.get('aggregate', {}).get('steady_state_protocol_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('steady_state_protocol_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('steady_state_protocol_bytes', 0.0)) - float(text_summary.get('aggregate', {}).get('steady_state_protocol_bytes', 0.0)):.2f} |",
+                f"| handoff_textual_bytes | {float(text_summary.get('aggregate', {}).get('handoff_textual_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('handoff_textual_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('handoff_textual_bytes', 0.0)) - float(text_summary.get('aggregate', {}).get('handoff_textual_bytes', 0.0)):.2f} |",
+                f"| handoff_nontext_bytes | {float(text_summary.get('aggregate', {}).get('handoff_nontext_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('handoff_nontext_bytes', 0.0)):.2f} | "
+                f"{float(protocol_summary.get('aggregate', {}).get('handoff_nontext_bytes', 0.0)) - float(text_summary.get('aggregate', {}).get('handoff_nontext_bytes', 0.0)):.2f} |",
+            ]
+        )
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack is Audit B evidence only.",
+                "- Helper-off text rows are an ablation of the internal text comparator, not an external pure-text baseline.",
+                "- Do not merge these rows into the frozen contest headline.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type in {"route_corpus_stress_audit_v1", "route_corpus_stress_whole_lane_audit_v1"}:
+        text_case_audit = text_summary.get("misfire_audit", {}).get("case_contract", {})
+        protocol_case_audit = protocol_summary.get("misfire_audit", {}).get("case_contract", {})
+        text_label = "text_strict_pure_lane" if pack_type == "route_corpus_stress_audit_v1" else "text_whole_lane"
+        _append_pack_contract_section(
+            lines,
+            contract="audit-only route/corpus stress pack; perturb wording and evidence surface while keeping family and summary contracts fixed.",
+            single_variable=f"{text_label} vs state_packet_minimal under audit-only corpus shaping stress.",
+        )
+        lines.extend(
+            [
+                "",
+                "## Route Corpus Stress Audit",
+                "",
+                f"- Text side: `{text_label}`",
+                "- Protocol side: `state_packet_minimal`",
+                f"- Whole-lane text guard pass rate: `{float(text_guard_audit.get('whole_lane_text_guard_pass_rate', 0.0)):.2f}`",
+                "",
+                "| arm | exact_match_rate | admissible_match_rate | wrong_family_rate | task_ms |",
+                "| --- | ---: | ---: | ---: | ---: |",
+                f"| text | {float(text_case_audit.get('exact_match_rate', 0.0)):.2f} | {float(text_case_audit.get('admissible_match_rate', 0.0)):.2f} | {float(text_case_audit.get('wrong_family_rate', 0.0)):.2f} | {float(text_summary.get('aggregate', {}).get('task_ms', 0.0)):.2f} |",
+                f"| protocol | {float(protocol_case_audit.get('exact_match_rate', 0.0)):.2f} | {float(protocol_case_audit.get('admissible_match_rate', 0.0)):.2f} | {float(protocol_case_audit.get('wrong_family_rate', 0.0)):.2f} | {float(protocol_summary.get('aggregate', {}).get('task_ms', 0.0)):.2f} |",
+                "",
+                "## Stopline",
+                "",
+                "- This pack is audit-only stress evidence.",
+                "- Use it to inspect wording and corpus sensitivity near the current headline text object.",
+                "- Do not merge it into the frozen headline and do not overwrite the original route_corpus_stress_audit_v1 history.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
     if pack_type == "typed_state_authenticity_v3":
         left_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="natural_handoff_text")
         right_task = _first_matching_task_run(result, mode="protocol", benchmark_lane="state_transfer", transfer_strategy="state_packet_minimal")
@@ -5820,7 +5974,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             bool(task.get("planner_one_shot_valid"))
             for run in result.get("mode_runs", {}).get("protocol", [])
             for task in run.get("tasks", [])
-            if task.get("status") == "completed" and str(task.get("planner_source", "")).strip() == "llm"
+            if str(task.get("plan_source", task.get("planner_source", ""))).strip() == "llm"
         ]
         planner_one_shot_valid_rate = (
             sum(1 for value in planner_one_shot_values if value) / len(planner_one_shot_values)
@@ -5831,7 +5985,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             int(task.get("planner_repair_attempt_count", 0) or 0)
             for run in result.get("mode_runs", {}).get("protocol", [])
             for task in run.get("tasks", [])
-            if task.get("status") == "completed" and str(task.get("planner_source", "")).strip() == "llm"
+            if str(task.get("plan_source", task.get("planner_source", ""))).strip() == "llm"
         )
         lines.extend(
             [

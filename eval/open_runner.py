@@ -10,9 +10,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from eval.text_open_baseline import ExternalTextOpenRuntime
+from runtime.llm import LLMConfig, build_llm_client
 from tasks.sample_tasks import SampleTask, load_task_set_bundle
 
 
@@ -20,12 +21,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 OPEN_SYSTEM_PACK = "open_system_comparison_v1"
 PURE_TEXT_OPEN_BASELINE_PACK = "pure_text_open_baseline_v1"
+PURE_TEXT_OPEN_LIVE_API_PACK = "pure_text_open_live_api_slice_v1"
 RUNTIME_ARMS = (
     "statebus_protocol_open",
     "statebus_text_open",
     "langgraph_native_text_open",
 )
 PURE_TEXT_BASELINE_ARMS = ("external_text_open",)
+PURE_TEXT_LIVE_API_ARMS = ("external_text_live_api_open",)
 OPEN_MEMORY_POLICIES = ("memory_off", "native_reuse_on")
 
 
@@ -263,10 +266,44 @@ def run_pure_text_open_baseline(
         runtime_arms=runtime_arms,
         memory_policies=memory_policies,
         task_pack=PURE_TEXT_OPEN_BASELINE_PACK,
+        task_loader=_load_pure_text_open_tasks,
         contract=(
             "Audit-only external pure-text baseline. Not formal v3 headline, not controlled mechanism "
             "causality proof, and not part of default open_system_comparison_v1."
         ),
+    )
+
+
+def run_pure_text_open_live_api_slice(
+    *,
+    out_dir: Path,
+    repeat: int = 1,
+    task_set: str = PURE_TEXT_OPEN_LIVE_API_PACK,
+    llm_mode: str = "api",
+    llm_config: str | Path | None = None,
+    llm_client=None,
+) -> dict[str, object]:
+    runtime_llm_client = llm_client
+    active_mode = str(llm_mode).strip().lower()
+    if runtime_llm_client is None and active_mode == "api":
+        runtime_llm_client = build_llm_client(LLMConfig.from_runtime(llm_config).with_mode("api"))
+    return _run_open_pack(
+        out_dir=out_dir,
+        repeat=repeat,
+        task_set=task_set,
+        runtime_arms=PURE_TEXT_LIVE_API_ARMS,
+        memory_policies=("memory_off",),
+        task_pack=PURE_TEXT_OPEN_LIVE_API_PACK,
+        task_loader=_load_live_api_text_slice_tasks,
+        contract=(
+            "Audit-only external live API pure-text slice. Not formal headline evidence and not a replay surface. "
+            "Use it only to locate text-only weakness in message overhead, route/tool choice, and replay semantics."
+        ),
+        llm_mode=active_mode,
+        llm_client=runtime_llm_client,
+        data_source="live_api_text_only",
+        runtime_contract="pure_text_message_log_only",
+        statebus_contract_used=False,
     )
 
 
@@ -278,17 +315,33 @@ def _run_open_pack(
     runtime_arms: Iterable[str],
     memory_policies: Iterable[str],
     task_pack: str,
+    task_loader: Callable[[str], list[SampleTask]] | None = None,
     contract: str,
+    llm_mode: str = "deterministic",
+    llm_client=None,
+    data_source: str | None = None,
+    runtime_contract: str = "",
+    statebus_contract_used: bool | None = None,
 ) -> dict[str, object]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    tasks = _load_open_tasks(task_set)
+    load_tasks = task_loader or _load_open_tasks
+    tasks = load_tasks(task_set)
     rows: list[dict[str, object]] = []
     summaries: list[dict[str, object]] = []
     for arm in runtime_arms:
         _validate_arm(arm)
         for policy in memory_policies:
             _validate_policy(policy)
-            arm_rows = _run_arm_policy(arm=arm, policy=policy, tasks=tasks, repeat=repeat)
+            arm_rows = _run_arm_policy(
+                arm=arm,
+                policy=policy,
+                tasks=tasks,
+                repeat=repeat,
+                llm_mode=llm_mode,
+                llm_client=llm_client,
+                data_source=data_source,
+                runtime_contract=runtime_contract,
+            )
             rows.extend(arm_rows)
             summaries.append(_summarize_rows(arm=arm, policy=policy, rows=arm_rows))
 
@@ -304,8 +357,18 @@ def _run_open_pack(
         "public_surface": "audit_only",
         "single_variable": False,
         "variable_axes": ["runtime_arm", "open_memory_policy"],
-        "data_source": "deterministic_oracle",
+        "data_source": data_source
+        or ("lexical_stub" if task_pack == PURE_TEXT_OPEN_BASELINE_PACK else "deterministic_oracle"),
         "artifact_reuse": False,
+        "runtime_contract": runtime_contract,
+        "statebus_contract_used": (
+            bool(statebus_contract_used)
+            if statebus_contract_used is not None
+            else any(bool(row.get("statebus_contract_used", False)) for row in rows)
+        ),
+        "llm_mode": llm_mode,
+        "selected_task_ids": [task.task_id for task in tasks],
+        "selected_complexity_buckets": sorted({task.complexity_bucket for task in tasks}),
     }
     if task_pack == PURE_TEXT_OPEN_BASELINE_PACK:
         manifest["surface_notes"] = [
@@ -313,6 +376,12 @@ def _run_open_pack(
             "not formal v3 headline",
             "not controlled mechanism causality proof",
             "not part of default open_system_comparison_v1",
+        ]
+    if task_pack == PURE_TEXT_OPEN_LIVE_API_PACK:
+        manifest["surface_notes"] = [
+            "audit-only external live API baseline",
+            "not formal headline",
+            "intended to locate weakness in message overhead, tool routing, and replay semantics",
         ]
     result = {"manifest": manifest, "summary": summaries, "tasks": rows}
     _write_outputs(out_dir=out_dir, result=result)
@@ -365,10 +434,24 @@ def _run_arm_policy(
     policy: str,
     tasks: list[SampleTask],
     repeat: int,
+    llm_mode: str = "deterministic",
+    llm_client=None,
+    data_source: str | None = None,
+    runtime_contract: str = "",
 ) -> list[dict[str, object]]:
     store = NativeTextReplayStore()
     langgraph_runtime = LangGraphNativeTextRuntime(store) if arm == "langgraph_native_text_open" else None
-    external_runtime = ExternalTextOpenRuntime(store) if arm == "external_text_open" else None
+    external_runtime = (
+        ExternalTextOpenRuntime(
+            store,
+            llm_client=llm_client,
+            data_source=data_source or "lexical_stub",
+            runtime_contract=runtime_contract or "external_text_open_stub",
+            live_mode=llm_mode,
+        )
+        if arm in {"external_text_open", "external_text_live_api_open"}
+        else None
+    )
     rows: list[dict[str, object]] = []
     for run_index in range(repeat):
         for task in tasks:
@@ -410,16 +493,17 @@ def _run_native_task(
             graph_state=graph_state,
             started=started,
         )
-    if arm == "external_text_open":
+    if arm in {"external_text_open", "external_text_live_api_open"}:
         if external_runtime is None:
             raise RuntimeError("external text runtime was not initialized")
-        graph_state = external_runtime.run_task(task=task, policy=policy, run_index=run_index)
+        graph_state = asyncio.run(external_runtime.run_task(task=task, policy=policy, run_index=run_index))
         return _external_text_row_from_state(
             task=task,
             policy=policy,
             run_index=run_index,
             graph_state=graph_state,
             started=started,
+            runtime_arm=arm,
         )
     normalized_query = _normalize_query(task.query)
     retrieved_doc_ids = tuple(task.corpus_doc_ids)
@@ -527,6 +611,50 @@ def _load_open_tasks(task_set: str) -> list[SampleTask]:
     return selected + selected
 
 
+def _load_pure_text_open_tasks(task_set: str) -> list[SampleTask]:
+    text_tasks = [
+        task
+        for task in load_task_set_bundle(task_set).tasks
+        if task.supports_mode("text")
+        and task.primary_expected_tool
+        and task.transfer_strategy in {"text_strict_pure_lane", "text_whole_lane"}
+    ]
+    bucket_order = ("simple", "ambiguous", "reusable")
+    family_order = sorted({task.task_theme for task in text_tasks})
+    selected: list[SampleTask] = []
+    for family in family_order[:2]:
+        by_bucket: dict[str, SampleTask] = {}
+        for task in text_tasks:
+            if task.task_theme != family:
+                continue
+            by_bucket.setdefault(task.complexity_bucket, task)
+        selected.extend(task for bucket in bucket_order if (task := by_bucket.get(bucket)) is not None)
+    if not selected:
+        raise ValueError(f"no pure-text open baseline tasks found in {task_set!r}")
+    missing_buckets = [bucket for bucket in bucket_order if not any(task.complexity_bucket == bucket for task in selected)]
+    if missing_buckets:
+        raise ValueError(
+            f"pure-text open baseline task set {task_set!r} missing complexity buckets: {', '.join(missing_buckets)}"
+        )
+    return selected + selected
+
+
+def _load_live_api_text_slice_tasks(task_set: str) -> list[SampleTask]:
+    tasks = [
+        task
+        for task in load_task_set_bundle(task_set).tasks
+        if task.supports_mode("text")
+        and task.transfer_strategy == "text_whole_lane"
+        and task.expected_reuse_mode == "none"
+    ]
+    complexities = {task.complexity_bucket for task in tasks}
+    if len(complexities) < 3:
+        raise ValueError(f"live API pure-text slice {task_set!r} must cover at least 3 complexity buckets")
+    if not tasks:
+        raise ValueError(f"no live API pure-text slice tasks found in {task_set!r}")
+    return tasks
+
+
 def _summarize_rows(*, arm: str, policy: str, rows: list[dict[str, object]]) -> dict[str, object]:
     metric_names = (
         "route_exact_rate",
@@ -548,10 +676,11 @@ def _summarize_rows(*, arm: str, policy: str, rows: list[dict[str, object]]) -> 
         name: _mean(float(dict(row["metrics"]).get(name, 0.0)) for row in rows)
         for name in metric_names
     }
+    data_sources = sorted({str(row.get("data_source", "deterministic_oracle")) for row in rows})
     return {
         "runtime_arm": arm,
         "open_memory_policy": policy,
-        "data_source": "deterministic_oracle",
+        "data_source": data_sources[0] if len(data_sources) == 1 else ",".join(data_sources),
         "artifact_reuse": False,
         "task_runs": len(rows),
         **metrics,
@@ -576,12 +705,20 @@ def _report_md(result: dict[str, object]) -> str:
     title = (
         "# Pure Text Open Baseline V1"
         if manifest["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
-        else "# Open System Comparison V1"
+        else (
+            "# Pure Text Open Live API Slice V1"
+            if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
+            else "# Open System Comparison V1"
+        )
     )
     intro = (
         "This is an audit-only external pure-text baseline, not a formal v3 headline or controlled mechanism proof."
         if manifest["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
-        else "This is an open engineering comparison surface, not a formal StateBus mechanism proof."
+        else (
+            "This is an audit-only external live API pure-text slice. It keeps message logs text-only and does not reuse the StateBus structured contract."
+            if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
+            else "This is an open engineering comparison surface, not a formal StateBus mechanism proof."
+        )
     )
     lines = [
         title,
@@ -600,6 +737,8 @@ def _report_md(result: dict[str, object]) -> str:
         f"- Variable axes: `{', '.join(str(item) for item in manifest.get('variable_axes', []))}`",
         f"- Data source: `{manifest.get('data_source', '')}`",
         f"- Artifact reuse: `{str(bool(manifest.get('artifact_reuse', False))).lower()}`",
+        f"- Runtime contract: `{manifest.get('runtime_contract', '')}`",
+        f"- StateBus contract used: `{str(bool(manifest.get('statebus_contract_used', False))).lower()}`",
         "",
         "## Summary",
         "",
@@ -617,8 +756,16 @@ def _report_md(result: dict[str, object]) -> str:
             "",
             "## Stopline",
             "",
-            "- This surface is audit-only engineering simulation.",
-            "- `data_source=deterministic_oracle` or `lexical_stub` means these rows are not real-LLM headline evidence.",
+            (
+                "- Audit-only external live API baseline."
+                if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
+                else "- This surface is audit-only engineering simulation."
+            ),
+            (
+                "- Intended to locate weakness in message overhead, tool routing, and replay semantics, not to requalify the frozen headline."
+                if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
+                else "- `data_source=deterministic_oracle` or `lexical_stub` means these rows are not real-LLM headline evidence."
+            ),
             "- Do not merge this output into `contest_dual_mode_controlled_v3`, `typed_state_mechanism_v3`, or `memory_policy_controlled_v3` claims.",
         ]
     )
@@ -790,7 +937,7 @@ def _mean(values: Iterable[float]) -> float:
 
 
 def _validate_arm(value: str) -> None:
-    if value not in RUNTIME_ARMS and value not in PURE_TEXT_BASELINE_ARMS:
+    if value not in RUNTIME_ARMS and value not in PURE_TEXT_BASELINE_ARMS and value not in PURE_TEXT_LIVE_API_ARMS:
         raise ValueError(f"unsupported runtime_arm: {value}")
 
 
@@ -803,12 +950,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run isolated open-system comparison surfaces.")
     parser.add_argument(
         "--pack",
-        choices=(OPEN_SYSTEM_PACK, PURE_TEXT_OPEN_BASELINE_PACK, "langgraph_native_text_open"),
+        choices=(OPEN_SYSTEM_PACK, PURE_TEXT_OPEN_BASELINE_PACK, PURE_TEXT_OPEN_LIVE_API_PACK, "langgraph_native_text_open"),
         default=OPEN_SYSTEM_PACK,
     )
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--task-set", default="contest_dual_mode_controlled_v3")
+    parser.add_argument("--llm-mode", choices=("deterministic", "api"), default="deterministic")
+    parser.add_argument("--llm-config", default="deploy/statebus_llm.yaml.local")
     return parser
 
 
@@ -817,6 +966,14 @@ def main() -> None:
     out_dir = args.out or REPO_ROOT / "runs" / f"{args.pack}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     if args.pack == "langgraph_native_text_open":
         run_langgraph_native_text_open_smoke(out_dir=out_dir, repeat=args.repeat)
+    elif args.pack == PURE_TEXT_OPEN_LIVE_API_PACK:
+        run_pure_text_open_live_api_slice(
+            out_dir=out_dir,
+            repeat=args.repeat,
+            task_set=args.task_set if args.task_set != "contest_dual_mode_controlled_v3" else PURE_TEXT_OPEN_LIVE_API_PACK,
+            llm_mode=args.llm_mode,
+            llm_config=args.llm_config,
+        )
     elif args.pack == PURE_TEXT_OPEN_BASELINE_PACK:
         run_pure_text_open_baseline(out_dir=out_dir, repeat=args.repeat, task_set=args.task_set)
     else:
@@ -830,6 +987,7 @@ def _external_text_row_from_state(
     run_index: int,
     graph_state: dict[str, object],
     started: float,
+    runtime_arm: str,
 ) -> dict[str, object]:
     route = str(graph_state.get("route", ""))
     tool_name = str(graph_state.get("tool_name", ""))
@@ -850,16 +1008,18 @@ def _external_text_row_from_state(
         task.goal,
         task.query,
         summary_text,
-        arm="external_text_open",
+        arm=runtime_arm,
         replay_hit=replay_hit,
     )
+    llm_usage = dict(graph_state.get("llm_usage", {}))
+    llm_total_tokens = float(llm_usage.get("total_tokens", llm_total_tokens) or llm_total_tokens)
     task_ms = max(1.0, (time.perf_counter() - started) * 1000.0 + 8.0 + message_count * 2.0)
     exact = route == task.primary_expected_route and tool_name == task.primary_expected_tool
     return {
         "task_id": task.task_id,
         "task_group": task.task_group,
         "task_theme": task.task_theme,
-        "runtime_arm": "external_text_open",
+        "runtime_arm": runtime_arm,
         "open_memory_policy": policy,
         "run_index": run_index,
         "route": route,
@@ -891,8 +1051,9 @@ def _external_text_row_from_state(
             "skipped_step_count": float(skipped_step_count),
             "reuse_gain": float(skipped_step_count) / 4.0,
         },
-        "data_source": "lexical_stub",
+        "data_source": str(graph_state.get("data_source", "lexical_stub")),
         "artifact_reuse": False,
+        "runtime_contract": str(graph_state.get("runtime_contract", "")),
         "native_replay": {
             "hit": replay_hit,
             "source": "native_text_store" if replay_hit else "",

@@ -39,6 +39,10 @@ TASK_SET_ALIASES = {
     "memory_policy_controlled_v3": "memory_policy_controlled_v3_benchmark.yaml",
     "planner_support_v3": "planner_support_v3_benchmark.yaml",
     "typed_state_consumer_sensitivity_v3": "state_ref_consumer_sensitivity_audit_benchmark.yaml",
+    "text_helper_ablation_audit_v1": "text_helper_ablation_audit_v1_benchmark.yaml",
+    "route_corpus_stress_audit_v1": "route_corpus_stress_audit_v1_benchmark.yaml",
+    "pure_text_open_live_api_slice_v1": "pure_text_open_live_api_slice_v1.yaml",
+    "route_corpus_stress_whole_lane_audit_v1": "route_corpus_stress_whole_lane_audit_v1.yaml",
 }
 
 V3_FORMAL_TASK_PACK_TYPES = (
@@ -55,6 +59,10 @@ V3_FORMAL_TASK_PACK_TYPES = (
     "memory_policy_controlled_v3",
     "planner_support_v3",
     "typed_state_consumer_sensitivity_v3",
+    "text_helper_ablation_audit_v1",
+    "route_corpus_stress_audit_v1",
+    "pure_text_open_live_api_slice_v1",
+    "route_corpus_stress_whole_lane_audit_v1",
 )
 
 TASK_PACK_TYPES = (*V3_FORMAL_TASK_PACK_TYPES, "ad_hoc")
@@ -166,6 +174,9 @@ def normalize_task_pack_type(value: object) -> str:
         "memory_policy_controlled_v3": "memory_policy_controlled_v3",
         "planner_support_v3": "planner_support_v3",
         "typed_state_consumer_sensitivity_v3": "typed_state_consumer_sensitivity_v3",
+        "route_corpus_stress_audit_v1": "route_corpus_stress_audit_v1",
+        "pure_text_open_live_api_slice_v1": "pure_text_open_live_api_slice_v1",
+        "route_corpus_stress_whole_lane_audit_v1": "route_corpus_stress_whole_lane_audit_v1",
         "adhoc": "ad_hoc",
         "ad_hoc": "ad_hoc",
     }
@@ -347,6 +358,7 @@ class SampleTask:
     audit_disable_state_kinds: tuple[str, ...] = ()
     audit_decision_packet_override_route: str = ""
     audit_decision_packet_override_tool_name: str = ""
+    audit_text_helper_mode: str = ""
     task_set_metadata: TaskSetMetadata | None = None
 
     @property
@@ -376,6 +388,7 @@ class SampleTask:
             "audit_disable_state_kinds": list(self.audit_disable_state_kinds),
             "audit_decision_packet_override_route": self.audit_decision_packet_override_route,
             "audit_decision_packet_override_tool_name": self.audit_decision_packet_override_tool_name,
+            "audit_text_helper_mode": self.audit_text_helper_mode,
         }
 
     @property
@@ -457,6 +470,7 @@ class SampleTask:
             benchmark_lane=self.benchmark_lane,
             transfer_strategy=self.transfer_strategy,
             handoff_profile=self.handoff_profile,
+            audit_text_helper_mode=self.audit_text_helper_mode,
         )
 
     def supports_mode(self, mode: str) -> bool:
@@ -505,6 +519,10 @@ def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
         return _build_contest_honest_headline_bundle(task_path, metadata, loaded_tasks)
     if requested_alias == "typed_state_consumer_sensitivity_v3":
         return _build_typed_state_consumer_sensitivity_bundle(task_path, metadata, loaded_tasks)
+    if requested_alias == "pure_text_open_live_api_slice_v1" or metadata.pack_type == "pure_text_open_live_api_slice_v1":
+        return _build_pure_text_open_live_api_slice_bundle(task_path, metadata)
+    if requested_alias == "route_corpus_stress_whole_lane_audit_v1" or metadata.pack_type == "route_corpus_stress_whole_lane_audit_v1":
+        return _build_route_corpus_stress_whole_lane_bundle(task_path, metadata)
     return TaskSetBundle(path=task_path, metadata=metadata, tasks=loaded_tasks)
 
 
@@ -642,6 +660,70 @@ def _build_typed_state_consumer_sensitivity_bundle(
     return TaskSetBundle(path=task_path, metadata=metadata, tasks=tuple(expanded))
 
 
+def _build_pure_text_open_live_api_slice_bundle(
+    task_path: Path,
+    metadata: TaskSetMetadata,
+) -> TaskSetBundle:
+    payload = yaml.safe_load(task_path.read_text(encoding="utf-8")) or {}
+    selected_task_ids = [
+        str(item).strip() for item in payload.get("selected_task_ids", []) if str(item).strip()
+    ]
+    source_task_set = str(payload.get("source_task_set", "contest_honest_headline_v1")).strip()
+    source_tasks = {
+        task.task_id: task
+        for task in load_task_set_bundle(source_task_set).tasks
+        if task.supports_mode("text")
+        and task.transfer_strategy == "text_whole_lane"
+        and task.expected_reuse_mode == "none"
+    }
+    selected: list[SampleTask] = []
+    for order, task_id in enumerate(selected_task_ids, start=1):
+        if task_id not in source_tasks:
+            raise ValueError(f"{task_path}: selected_task_id {task_id!r} not found in {source_task_set!r}")
+        base = source_tasks[task_id]
+        selected.append(
+            replace(
+                base,
+                task_group="pure_text_open_live_api_slice_v1",
+                task_order=order,
+                evidence_text=(
+                    "Audit-only live API external pure-text slice. "
+                    "Keep the local corpus source, but route and tool choice must come from text-only messages."
+                ),
+                task_set_metadata=metadata,
+            )
+        )
+    complexities = {task.complexity_bucket for task in selected}
+    if len(complexities) < 3:
+        raise ValueError(f"{task_path}: pure text live API slice must cover at least 3 complexity buckets")
+    return TaskSetBundle(path=task_path, metadata=metadata, tasks=tuple(selected))
+
+
+def _build_route_corpus_stress_whole_lane_bundle(
+    task_path: Path,
+    metadata: TaskSetMetadata,
+) -> TaskSetBundle:
+    base_bundle = load_task_set_bundle("route_corpus_stress_audit_v1")
+    transformed: list[SampleTask] = []
+    for task in base_bundle.tasks:
+        if task.supports_mode("text"):
+            transformed.append(
+                replace(
+                    task,
+                    transfer_strategy="text_whole_lane",
+                    handoff_profile="text_whole_lane",
+                    evidence_text=(
+                        "Audit-only whole-lane stress row. "
+                        "Perturb wording and evidence order near the frozen headline text object without changing family or summary contract."
+                    ),
+                    task_set_metadata=metadata,
+                )
+            )
+        else:
+            transformed.append(replace(task, task_set_metadata=metadata))
+    return TaskSetBundle(path=task_path, metadata=metadata, tasks=tuple(transformed))
+
+
 def load_task_set(path: str | Path | None = None) -> list[SampleTask]:
     return list(load_task_set_bundle(path).tasks)
 
@@ -669,6 +751,7 @@ def build_plan(task: SampleTask) -> Plan:
                 "tags": list(task.tags),
                 "allow_memory_reuse": True,
                 "audit_disable_state_kinds": list(task.audit_disable_state_kinds),
+                "audit_text_helper_mode": task.audit_text_helper_mode,
             },
             depends_on=[],
             semantic_role="retrieve",
@@ -961,6 +1044,7 @@ def _load_sample_task(
         audit_decision_packet_override_tool_name=str(
             item.get("audit_decision_packet_override_tool_name", "")
         ).strip(),
+        audit_text_helper_mode=str(item.get("audit_text_helper_mode", "")).strip(),
         task_set_metadata=task_set_metadata,
     )
     _validate_task_profile_contract(

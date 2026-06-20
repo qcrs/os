@@ -99,6 +99,7 @@ class RuntimeTaskProfile:
     benchmark_lane: str = ""
     transfer_strategy: str = ""
     handoff_profile: str = ""
+    audit_text_helper_mode: str = ""
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any] | None = None) -> RuntimeTaskProfile:
@@ -107,6 +108,7 @@ class RuntimeTaskProfile:
         raw_lane = str(values.get("benchmark_lane", "")).strip()
         raw_transfer_strategy = str(values.get("transfer_strategy", "")).strip()
         raw_handoff_profile = str(values.get("handoff_profile", "")).strip()
+        raw_audit_text_helper_mode = str(values.get("audit_text_helper_mode", "")).strip()
         return cls(
             runtime_reuse_contract=(
                 normalize_runtime_reuse_contract(raw_contract) if raw_contract else ""
@@ -122,6 +124,7 @@ class RuntimeTaskProfile:
                 if raw_handoff_profile
                 else ""
             ),
+            audit_text_helper_mode=raw_audit_text_helper_mode,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -134,6 +137,8 @@ class RuntimeTaskProfile:
             payload["transfer_strategy"] = self.transfer_strategy
         if self.handoff_profile:
             payload["handoff_profile"] = self.handoff_profile
+        if self.audit_text_helper_mode:
+            payload["audit_text_helper_mode"] = self.audit_text_helper_mode
         return payload
 
     @property
@@ -143,6 +148,7 @@ class RuntimeTaskProfile:
             and not self.benchmark_lane
             and not self.transfer_strategy
             and not self.handoff_profile
+            and not self.audit_text_helper_mode
         )
 
     @property
@@ -175,6 +181,19 @@ class RuntimeTaskProfile:
         if strategy == "text_whole_lane":
             return "text_whole_lane"
         return normalize_handoff_profile(strategy)
+
+    @property
+    def resolved_audit_text_helper_mode(self) -> str:
+        value = str(self.audit_text_helper_mode or "").strip().lower().replace("-", "_")
+        if not value:
+            return ""
+        if value not in {"disabled"}:
+            raise ValueError(f"unsupported audit_text_helper_mode: {self.audit_text_helper_mode!r}")
+        return value
+
+    @property
+    def audit_text_helper_disabled(self) -> bool:
+        return self.resolved_audit_text_helper_mode == "disabled"
 
     def effective_transfer_strategy(self, mode: str) -> str:
         profile = self.resolved_handoff_profile
