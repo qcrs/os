@@ -25,6 +25,22 @@ def normalize_comparator_role_name(role: str) -> str:
 
 
 @dataclass(frozen=True)
+class RoleVisibilityContract:
+    role: str
+    allowed_visible_field_groups: tuple[str, ...]
+    text_lane_projection_class: str
+    protocol_lane_projection_class: str
+    allows_typed_state_visibility: bool
+    helper_visibility_policy: str
+    model_visibility: str
+    tool_visibility: str
+    corpus_visibility: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role", normalize_comparator_role_name(self.role))
+
+
+@dataclass(frozen=True)
 class RoleExecutionContract:
     role: str
     owner_agent: str
@@ -33,12 +49,18 @@ class RoleExecutionContract:
     allowed_input_state_kinds: tuple[str, ...] = ()
     allowed_output_state_kinds: tuple[str, ...] = ()
     required_upstream_roles: tuple[str, ...] = ()
+    visibility_contract: RoleVisibilityContract | None = None
     notes: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "role", normalize_comparator_role_name(self.role))
         upstream = tuple(normalize_comparator_role_name(role) for role in self.required_upstream_roles)
         object.__setattr__(self, "required_upstream_roles", upstream)
+        visibility_contract = self.visibility_contract
+        if visibility_contract is not None and visibility_contract.role != self.role:
+            raise ValueError(
+                f"visibility contract role mismatch: {visibility_contract.role} != {self.role}"
+            )
 
 
 @dataclass(frozen=True)
@@ -50,6 +72,17 @@ class RoleIOView:
     visible_text: str = ""
     visible_state_refs: tuple[StateRef, ...] = ()
     upstream_roles: tuple[str, ...] = ()
+    slice_kind: str = ""
+    projection_class: str = ""
+    included_fields: tuple[str, ...] = ()
+    omitted_fields: tuple[str, ...] = ()
+    text_budget_class: str = ""
+    typed_state_budget_class: str = ""
+    role_visible_contract: str = ""
+    helper_visibility: str = ""
+    model_visibility: str = ""
+    tool_visibility: str = ""
+    corpus_visibility: str = ""
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -65,6 +98,17 @@ def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
             consumes_text_handoff=True,
             consumes_typed_state=False,
             required_upstream_roles=(),
+            visibility_contract=RoleVisibilityContract(
+                role="planner",
+                allowed_visible_field_groups=("task", "goal", "query", "role_graph"),
+                text_lane_projection_class="planner_text_brief",
+                protocol_lane_projection_class="planner_statebus_brief",
+                allows_typed_state_visibility=False,
+                helper_visibility_policy="declared_only",
+                model_visibility="same_model_required",
+                tool_visibility="catalog_visible",
+                corpus_visibility="task_scope_only",
+            ),
         ),
         "retriever": RoleExecutionContract(
             role="retriever",
@@ -84,6 +128,17 @@ def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
                 "EMBEDDING",
             ),
             required_upstream_roles=("planner",),
+            visibility_contract=RoleVisibilityContract(
+                role="retriever",
+                allowed_visible_field_groups=("task", "query", "planner_output", "corpus_scope"),
+                text_lane_projection_class="retriever_text_brief",
+                protocol_lane_projection_class="retriever_statebus_projection",
+                allows_typed_state_visibility=False,
+                helper_visibility_policy="declared_only",
+                model_visibility="same_model_required",
+                tool_visibility="catalog_visible",
+                corpus_visibility="task_scope_only",
+            ),
         ),
         "executor": RoleExecutionContract(
             role="executor",
@@ -103,6 +158,22 @@ def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
             ),
             allowed_output_state_kinds=("TOOL_ARTIFACT", "VALIDATION_GATE_PACKET"),
             required_upstream_roles=("retriever",),
+            visibility_contract=RoleVisibilityContract(
+                role="executor",
+                allowed_visible_field_groups=(
+                    "retrieval_evidence",
+                    "route_decision",
+                    "tool_candidates",
+                    "validation_gate",
+                ),
+                text_lane_projection_class="executor_text_handoff",
+                protocol_lane_projection_class="executor_statebus_bounded_projection",
+                allows_typed_state_visibility=True,
+                helper_visibility_policy="declared_only",
+                model_visibility="same_model_required",
+                tool_visibility="catalog_visible",
+                corpus_visibility="retrieved_only",
+            ),
         ),
         "summarizer": RoleExecutionContract(
             role="summarizer",
@@ -121,6 +192,17 @@ def default_role_execution_contracts() -> dict[str, RoleExecutionContract]:
             ),
             allowed_output_state_kinds=("TOOL_ARTIFACT",),
             required_upstream_roles=("executor",),
+            visibility_contract=RoleVisibilityContract(
+                role="summarizer",
+                allowed_visible_field_groups=("retrieve_summary", "executor_artifact", "summary_hint"),
+                text_lane_projection_class="summarizer_text_handoff",
+                protocol_lane_projection_class="summarizer_statebus_projection",
+                allows_typed_state_visibility=True,
+                helper_visibility_policy="declared_only",
+                model_visibility="same_model_required",
+                tool_visibility="artifact_only",
+                corpus_visibility="retrieved_only",
+            ),
         ),
     }
 
