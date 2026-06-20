@@ -262,6 +262,15 @@ class ExternalTextOpenRuntime:
             usage = _merge_usage(usage, executor_usage)
             strongest_competing_route = str(retriever_payload.get("reason", "")).strip()
             validation_check = _strict_action_contract(executor_payload)
+            route, tool_name = _strict_executor_selection(
+                executor_payload=executor_payload,
+                visible_candidates=visible_candidates,
+                fallback_route=route,
+                fallback_tool_name=tool_name,
+            )
+            helper_selected_matches_top1 = (
+                route == helper_top1_route and tool_name == helper_top1_tool_name
+            )
             role_trace.append(
                 {
                     "role": "executor",
@@ -619,14 +628,27 @@ class ExternalTextOpenRuntime:
                     f"{str(item['route'])}::{str(item['tool_name'])}"
                     for item in visible_candidates
                 ),
-                "Pick one visible route/tool pair only.",
+                "Candidate notes: " + "; ".join(
+                    (
+                        f"{str(item['route'])}::{str(item['tool_name'])}"
+                        f"|helper_rank={int(item.get('helper_rank', 0) or 0)}"
+                        f"|score={int(item.get('score', 0) or 0)}"
+                        f"|support_docs={','.join(str(doc_id) for doc_id in item.get('supporting_doc_ids', []))}"
+                    )
+                    for item in visible_candidates
+                ),
+                "The helper-ranked order is advisory only. Choose the route/tool pair best supported by the retrieved evidence, not automatically helper rank 1.",
             ]
         )
         result = await self.llm_client.complete(
             [
                 ChatMessage(
                     role="system",
-                    content="You are the retriever in a strict external pure-text workflow. Select one visible candidate only and return JSON.",
+                    content=(
+                        "You are the retriever in a strict external pure-text workflow. "
+                        "Use the helper-produced candidate list only as a visible search space, not as the decision authority. "
+                        "Return JSON."
+                    ),
                 ),
                 ChatMessage(role="user", content=prompt),
             ],
@@ -652,19 +674,32 @@ class ExternalTextOpenRuntime:
                 f"Tool: {tool_name}",
                 f"Validated route: {route}",
                 f"Validated tool: {tool_name}",
-                "Validated action contract: execute_validated_tool",
                 f"Evidence docs: {', '.join(doc.doc_id for doc in retrieved_docs[:4])}",
                 "Visible candidates: " + "; ".join(
                     f"{str(item['route'])}::{str(item['tool_name'])}"
                     for item in visible_candidates
                 ),
+                "Candidate notes: " + "; ".join(
+                    (
+                        f"{str(item['route'])}::{str(item['tool_name'])}"
+                        f"|helper_rank={int(item.get('helper_rank', 0) or 0)}"
+                        f"|score={int(item.get('score', 0) or 0)}"
+                        f"|support_docs={','.join(str(doc_id) for doc_id in item.get('supporting_doc_ids', []))}"
+                    )
+                    for item in visible_candidates
+                ),
+                "Choose the best-supported visible route/tool pair. You may keep or revise the proposed pair, but you must stay inside the visible candidate set.",
+                "Validated action contract: execute_validated_tool",
             ]
         )
         result = await self.llm_client.complete(
             [
                 ChatMessage(
                     role="system",
-                    content="You are the executor in a strict external pure-text workflow. Validate the visible route/tool pair and return JSON.",
+                    content=(
+                        "You are the executor in a strict external pure-text workflow. "
+                        "Independently validate the proposed route/tool pair against the visible evidence and return JSON."
+                    ),
                 ),
                 ChatMessage(role="user", content=prompt),
             ],
@@ -740,20 +775,41 @@ def build_visible_tool_candidates(
 ) -> list[dict[str, object]]:
     combined_text = "\n".join([task.goal, task.query, *(doc.text for doc in retrieved_docs)])
     combined_tokens = lexical_tokens(combined_text)
+    doc_tokens = {
+        doc.doc_id: lexical_tokens(f"{doc.title}\n{doc.text}")
+        for doc in retrieved_docs
+    }
     ranked = sorted(
         (
             {
                 "route": rule.route,
                 "tool_name": rule.tool_name,
                 "score": lexical_overlap(combined_tokens, set(rule.keywords)),
+                "supporting_doc_ids": [
+                    doc.doc_id
+                    for doc in retrieved_docs
+                    if lexical_overlap(doc_tokens.get(doc.doc_id, set()), set(rule.keywords)) > 0
+                ][:3],
             }
             for rule in PLAYBOOK_CATALOG
         ),
         key=lambda item: (-int(item["score"]), str(item["route"]), str(item["tool_name"])),
     )
-    visible = [item for item in ranked if int(item["score"]) > 0][:3]
-    if not visible:
-        visible = ranked[:1]
+    visible = [dict(item) for item in ranked if int(item["score"]) > 0]
+    minimum_visible = 4
+    if len(visible) < minimum_visible:
+        for item in ranked:
+            if any(
+                str(existing["route"]) == str(item["route"])
+                and str(existing["tool_name"]) == str(item["tool_name"])
+                for existing in visible
+            ):
+                continue
+            visible.append(dict(item))
+            if len(visible) >= minimum_visible:
+                break
+    for index, item in enumerate(visible, start=1):
+        item["helper_rank"] = index
     return visible
 
 
@@ -1002,6 +1058,24 @@ def _strict_action_contract(payload: dict[str, object]) -> str:
             "strict external pure-text executor returned unsupported action_contract"
         )
     return contract
+
+
+def _strict_executor_selection(
+    *,
+    executor_payload: dict[str, object],
+    visible_candidates: list[dict[str, object]],
+    fallback_route: str,
+    fallback_tool_name: str,
+) -> tuple[str, str]:
+    route = str(executor_payload.get("route", "")).strip()
+    tool_name = str(executor_payload.get("tool_name", "")).strip()
+    visible_pairs = {
+        (str(item["route"]).strip(), str(item["tool_name"]).strip())
+        for item in visible_candidates
+    }
+    if (route, tool_name) in visible_pairs:
+        return route, tool_name
+    return fallback_route, fallback_tool_name
 
 
 def _extract_summary_text(text: str) -> str:

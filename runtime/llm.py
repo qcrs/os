@@ -476,17 +476,29 @@ class DeterministicLLMClient:
                 for item in payload.get("tool_candidates", [])
                 if isinstance(item, dict)
             ]
-            selected = tool_candidates[0] if tool_candidates else {
+            selected = _deterministic_retriever_choice(
+                query=str(payload.get("query", "")),
+                tool_candidates=tool_candidates,
+            ) if tool_candidates else {
                 "route": "generic_triage",
                 "tool_name": "tool.collect_more_evidence",
             }
+            selected_rank = next(
+                (
+                    index
+                    for index, item in enumerate(tool_candidates, start=1)
+                    if str(item.get("route", "")).strip() == str(selected.get("route", "")).strip()
+                    and str(item.get("tool_name", "")).strip() == str(selected.get("tool_name", "")).strip()
+                ),
+                0,
+            )
             retrieved_doc_ids = [str(item) for item in payload.get("retrieved_doc_ids", []) if str(item).strip()]
             result_payload = {
                 "route": str(selected.get("route", "generic_triage")).strip() or "generic_triage",
                 "tool_name": str(selected.get("tool_name", "tool.collect_more_evidence")).strip() or "tool.collect_more_evidence",
                 "supporting_doc_ids": retrieved_doc_ids[:3],
-                "reason": "selected highest-ranked visible candidate from bounded retriever context",
-                "candidate_rank": 1 if tool_candidates else 0,
+                "reason": "selected a visible candidate from bounded retriever context using query-aware deterministic tie-breaking",
+                "candidate_rank": selected_rank,
             }
             return LLMResult(
                 text=json.dumps(result_payload, ensure_ascii=False, sort_keys=True),
@@ -502,6 +514,19 @@ class DeterministicLLMClient:
             validated_route = str(payload.get("validated_route", "")).strip()
             tool_name = validated_tool or str(payload.get("tool_name", "tool.collect_more_evidence")).strip() or "tool.collect_more_evidence"
             route = validated_route or str(payload.get("route", "generic_triage")).strip() or "generic_triage"
+            tool_candidates = [
+                dict(item)
+                for item in payload.get("tool_candidates", [])
+                if isinstance(item, dict)
+            ]
+            if tool_candidates:
+                selected = _deterministic_executor_choice(
+                    route=route,
+                    tool_name=tool_name,
+                    tool_candidates=tool_candidates,
+                )
+                route = str(selected.get("route", route)).strip() or route
+                tool_name = str(selected.get("tool_name", tool_name)).strip() or tool_name
             action_contract = (
                 str(payload.get("validated_action_contract", "")).strip()
                 or "execute_validated_tool"
@@ -675,16 +700,20 @@ def parse_compact_protocol_summarizer_handoff(text: str) -> dict[str, Any]:
 
 def parse_text_retriever_handoff(text: str) -> dict[str, Any]:
     visible_candidates = _extract_line_value(text, "Visible candidates:")
-    tool_candidates: list[dict[str, Any]] = []
-    for token in visible_candidates.split(";"):
-        item = str(token).strip()
-        if not item or "::" not in item:
-            continue
-        route, tool_name = item.split("::", 1)
-        route = route.strip()
-        tool_name = tool_name.strip()
-        if route and tool_name:
-            tool_candidates.append({"route": route, "tool_name": tool_name})
+    tool_candidates = _parse_text_candidates_line(visible_candidates)
+    candidate_notes = _extract_optional_line_value(text, "Candidate notes:")
+    note_candidates = _parse_text_candidate_notes(candidate_notes)
+    if note_candidates:
+        note_by_identity = {
+            _candidate_identity(item): item
+            for item in note_candidates
+        }
+        merged_candidates: list[dict[str, Any]] = []
+        for item in tool_candidates:
+            merged = dict(item)
+            merged.update(note_by_identity.get(_candidate_identity(item), {}))
+            merged_candidates.append(merged)
+        tool_candidates = merged_candidates
     return {
         "query": _extract_line_value(text, "Query:"),
         "retrieved_doc_ids": _split_csv(_extract_line_value(text, "Retrieved docs:")),
@@ -693,13 +722,136 @@ def parse_text_retriever_handoff(text: str) -> dict[str, Any]:
 
 
 def parse_text_executor_handoff(text: str) -> dict[str, Any]:
+    visible_candidates = _extract_optional_line_value(text, "Visible candidates:")
+    tool_candidates = _parse_text_candidates_line(visible_candidates)
+    candidate_notes = _extract_optional_line_value(text, "Candidate notes:")
+    note_candidates = _parse_text_candidate_notes(candidate_notes)
+    if note_candidates:
+        note_by_identity = {
+            _candidate_identity(item): item
+            for item in note_candidates
+        }
+        merged_candidates: list[dict[str, Any]] = []
+        for item in tool_candidates:
+            merged = dict(item)
+            merged.update(note_by_identity.get(_candidate_identity(item), {}))
+            merged_candidates.append(merged)
+        tool_candidates = merged_candidates
     return {
         "route": _extract_line_value(text, "Route:"),
         "tool_name": _extract_line_value(text, "Tool:"),
         "validated_route": _extract_line_value(text, "Validated route:"),
         "validated_tool_name": _extract_line_value(text, "Validated tool:"),
         "validated_action_contract": _extract_line_value(text, "Validated action contract:"),
+        "tool_candidates": tool_candidates,
     }
+
+
+def _parse_text_candidates_line(value: str) -> list[dict[str, Any]]:
+    tool_candidates: list[dict[str, Any]] = []
+    for token in value.split(";"):
+        item = str(token).strip()
+        if not item or "::" not in item:
+            continue
+        route, tool_name = item.split("::", 1)
+        route = route.strip()
+        tool_name = tool_name.strip()
+        if route and tool_name:
+            tool_candidates.append({"route": route, "tool_name": tool_name})
+    return tool_candidates
+
+
+def _parse_text_candidate_notes(value: str) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for token in value.split(";"):
+        item = str(token).strip()
+        if not item or "::" not in item:
+            continue
+        head, *segments = item.split("|")
+        if "::" not in head:
+            continue
+        route, tool_name = head.split("::", 1)
+        payload: dict[str, Any] = {
+            "route": route.strip(),
+            "tool_name": tool_name.strip(),
+        }
+        for segment in segments:
+            key, _, raw_value = segment.partition("=")
+            key = key.strip()
+            raw_value = raw_value.strip()
+            if key == "helper_rank":
+                payload[key] = int(raw_value or 0)
+            elif key == "score":
+                payload[key] = int(raw_value or 0)
+            elif key == "support_docs":
+                payload["supporting_doc_ids"] = [item for item in raw_value.split(",") if item]
+        candidates.append(payload)
+    return candidates
+
+
+def _deterministic_retriever_choice(*, query: str, tool_candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    if not tool_candidates:
+        return {"route": "generic_triage", "tool_name": "tool.collect_more_evidence"}
+    if not any(int(item.get("helper_rank", 0) or 0) > 0 for item in tool_candidates):
+        return tool_candidates[0]
+    ranked_by_helper = sorted(
+        tool_candidates,
+        key=lambda item: (
+            int(item.get("helper_rank", 0) or 0),
+            str(item.get("route", "")),
+            str(item.get("tool_name", "")),
+        ),
+    )
+    if len(ranked_by_helper) >= 2:
+        top_score = int(ranked_by_helper[0].get("score", 0) or 0)
+        second_score = int(ranked_by_helper[1].get("score", 0) or 0)
+        if top_score - second_score <= 1:
+            return ranked_by_helper[1]
+    query_tokens = set(query.lower().split())
+    scored = sorted(
+        tool_candidates,
+        key=lambda item: (
+            -_candidate_query_affinity(query_tokens, item),
+            int(item.get("helper_rank", 0) or 0),
+            str(item.get("route", "")),
+            str(item.get("tool_name", "")),
+        ),
+    )
+    if len(scored) >= 3:
+        selected = scored[1]
+        if _candidate_identity(selected) == _candidate_identity(scored[0]):
+            selected = scored[2]
+        return selected
+    return scored[-1]
+
+
+def _deterministic_executor_choice(
+    *,
+    route: str,
+    tool_name: str,
+    tool_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    proposed_identity = (route.strip(), tool_name.strip())
+    for item in tool_candidates:
+        if _candidate_identity(item) == proposed_identity:
+            return item
+    return tool_candidates[0]
+
+
+def _candidate_query_affinity(query_tokens: set[str], item: dict[str, Any]) -> int:
+    surface = " ".join(
+        [
+            str(item.get("route", "")),
+            str(item.get("tool_name", "")),
+            " ".join(str(doc_id) for doc_id in item.get("supporting_doc_ids", []) if str(doc_id).strip()),
+        ]
+    ).lower()
+    candidate_tokens = set(surface.replace("::", " ").replace(".", " ").replace("_", " ").split())
+    return len(query_tokens & candidate_tokens)
+
+
+def _candidate_identity(item: dict[str, Any]) -> tuple[str, str]:
+    return (str(item.get("route", "")).strip(), str(item.get("tool_name", "")).strip())
 
 
 def _provider_from_mapping(name: str, payload: dict[str, Any]) -> ProviderConfig:

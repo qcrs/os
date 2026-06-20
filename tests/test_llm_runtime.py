@@ -302,6 +302,60 @@ async def test_deterministic_llm_supports_retriever_and_executor_roles() -> None
     assert json.loads(executor.text)["action_contract"] == "execute_validated_tool"
 
 
+@pytest.mark.asyncio
+async def test_deterministic_llm_retriever_does_not_force_helper_top1_when_multiple_candidates_are_visible() -> None:
+    client = DeterministicLLMClient()
+    retriever = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-retriever-v1>\n"
+                    + json.dumps(
+                        {
+                            "query": "auth login rate limiter callback issuer",
+                            "retrieved_doc_ids": ["doc-1", "doc-2"],
+                            "tool_candidates": [
+                                {
+                                    "route": "auth_rate_limit",
+                                    "tool_name": "tool.auth_rate_limit_triage",
+                                    "score": 5,
+                                    "helper_rank": 1,
+                                    "supporting_doc_ids": ["doc-1"],
+                                },
+                                {
+                                    "route": "auth_session_drift",
+                                    "tool_name": "tool.auth_session_repair",
+                                    "score": 5,
+                                    "helper_rank": 2,
+                                    "supporting_doc_ids": ["doc-2"],
+                                },
+                                {
+                                    "route": "cache_invalidation",
+                                    "tool_name": "tool.cache_invalidation_playbook",
+                                    "score": 1,
+                                    "helper_rank": 3,
+                                    "supporting_doc_ids": ["doc-2"],
+                                },
+                            ],
+                        }
+                    )
+                    + "\n</sb-retriever-v1>",
+                },
+            )(),
+        ],
+        purpose="retriever",
+    )
+
+    payload = json.loads(retriever.text)
+    assert payload["candidate_rank"] == 2
+    assert payload["route"] == "auth_session_drift"
+    assert payload["tool_name"] == "tool.auth_session_repair"
+
+
 class _RepairingPlannerClient:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
