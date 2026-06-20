@@ -47,6 +47,7 @@ from eval.open_runner import (
     run_pure_text_open_baseline,
     run_pure_text_open_live_api_slice,
 )
+from eval.formal_comparator_artifact import build_deterministic_formal_comparator_artifact
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
 from protocol.messages import MemoryCommit, MemoryHit
 from protocol.messages import (
@@ -117,6 +118,7 @@ def test_runtime_smoke_module_entry_emits_stdout() -> None:
     )
     assert "statebus smoke scope:" in completed.stdout
     assert "statebus smoke ok:" in completed.stdout
+    assert "statebus comparator artifact ok:" in completed.stdout
 
 
 def test_text_frame_is_natural_language_for_control_messages() -> None:
@@ -279,6 +281,37 @@ def test_benchmark_runner_writes_outputs() -> None:
         protocol_tasks = payload["mode_runs"]["protocol"][0]["tasks"]
         assert max(task["metrics"]["trajectory_commit_count"] for task in protocol_tasks) > 1
         assert max(task["metrics"]["trajectory_diff_count"] for task in protocol_tasks) > 0
+
+
+def test_deterministic_formal_comparator_artifact_writes_and_freezes_surfaces() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-formal-comparator-") as tmpdir:
+        out_dir = Path(tmpdir)
+        artifact = asyncio.run(
+            build_deterministic_formal_comparator_artifact(
+                out_dir=out_dir,
+                repeat=1,
+            )
+        )
+        artifact_json = out_dir / "formal_comparator_artifact.json"
+        artifact_md = out_dir / "formal_comparator_artifact.md"
+        assert artifact_json.exists()
+        assert artifact_md.exists()
+        payload = json.loads(artifact_json.read_text(encoding="utf-8"))
+        surfaces = payload["surfaces"]
+        assert surfaces["internal_paired_comparator"]["object_name"] == "contest_four_role_carrier_comparison_v1"
+        assert surfaces["external_pure_text_baseline"]["object_name"] == "external_pure_text_four_role_baseline_v1"
+        assert surfaces["frozen_headline"]["object_name"] == "contest_honest_headline_v1"
+        assert surfaces["support_and_audit"]["public_surface"] == "support_only_or_audit_only"
+        assert surfaces["external_pure_text_baseline"]["claim_surface"] == "formal_ready"
+        assert payload["api_repeat1_plan"]["ready"] is True
+        assert len(payload["api_repeat1_plan"]["run_order"]) == 3
+        report_text = artifact_md.read_text(encoding="utf-8")
+        assert "Deterministic Formal Comparator Artifact" in report_text
+        assert "contest_four_role_carrier_comparison_v1" in report_text
+        assert "external_pure_text_four_role_baseline_v1" in report_text
+        assert "contest_honest_headline_v1" in report_text
+        assert "API Repeat=1 Plan" in report_text
+        assert "Do not merge support/audit outputs" in report_text
 
 
 def test_benchmark_runner_is_langgraph_only() -> None:
