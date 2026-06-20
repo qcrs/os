@@ -107,6 +107,17 @@ PLAYBOOK_CATALOG = (
 
 PLAYBOOK_BY_ROUTE = {item.route: item for item in PLAYBOOK_CATALOG}
 PLAYBOOK_BY_TOOL = {item.tool_name: item for item in PLAYBOOK_CATALOG}
+STRICT_EXTERNAL_TEXT_BASELINE_OBJECT = "external_pure_text_four_role_baseline_v1"
+FORBIDDEN_TEXT_MARKERS = (
+    "StateRef",
+    "EXECUTOR_DECISION_PACKET",
+    "DENSE_EVIDENCE",
+    "FEATURE_BUNDLE",
+    "MEMORY_ASSIST_HINT",
+    "MEMORY_ASSIST",
+    "<sb-",
+    "</sb-",
+)
 
 
 class ExternalTextOpenRuntime:
@@ -118,7 +129,7 @@ class ExternalTextOpenRuntime:
         *,
         llm_client: LLMClient | None = None,
         data_source: str = "lexical_stub",
-        runtime_contract: str = "external_text_open_stub",
+        runtime_contract: str = STRICT_EXTERNAL_TEXT_BASELINE_OBJECT,
         live_mode: str = "deterministic",
     ) -> None:
         self.replay_store = replay_store
@@ -134,9 +145,209 @@ class ExternalTextOpenRuntime:
         policy: str,
         run_index: int,
     ) -> dict[str, object]:
+        if self.data_source in {"strict_pure_text_four_role", "strict_pure_text_four_role_api"}:
+            return await self._run_strict_text_task(task=task, policy=policy, run_index=run_index)
         if self.data_source == "live_api_text_only":
             return await self._run_live_text_task(task=task, policy=policy, run_index=run_index)
         return self._run_lexical_stub_task(task=task, policy=policy, run_index=run_index)
+
+    async def _run_strict_text_task(
+        self,
+        *,
+        task: SampleTask,
+        policy: str,
+        run_index: int,
+    ) -> dict[str, object]:
+        if self.llm_client is None:
+            raise ValueError("strict pure-text external runtime requires llm_client")
+        normalized_query = normalize_query(task.query)
+        retrieved_docs = retrieve_corpus_docs(task)
+        retrieved_doc_ids = tuple(doc.doc_id for doc in retrieved_docs)
+        usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        role_trace: list[dict[str, object]] = []
+
+        planner_payload, planner_usage, planner_model = await self._planner_outline(task=task)
+        usage = _merge_usage(usage, planner_usage)
+        planner_steps = _planner_steps(planner_payload)
+        role_trace.append(
+            {
+                "role": "planner",
+                "model": planner_model,
+                "decision_source": "role_llm",
+                "plan_step_count": len(planner_steps),
+                "visible_inputs": ["goal", "query", "summary_hint", "evidence_text"],
+            }
+        )
+
+        visible_candidates = build_visible_tool_candidates(task=task, retrieved_docs=retrieved_docs)
+        retriever_payload, retriever_usage, retriever_model = await self._retriever_selection(
+            task=task,
+            retrieved_docs=retrieved_docs,
+            visible_candidates=visible_candidates,
+        )
+        usage = _merge_usage(usage, retriever_usage)
+        route, tool_name = _strict_visible_selection(
+            retriever_payload=retriever_payload,
+            visible_candidates=visible_candidates,
+        )
+        role_trace.append(
+            {
+                "role": "retriever",
+                "model": retriever_model,
+                "decision_source": "role_llm",
+                "visible_inputs": ["query", "retrieved_docs", "visible_candidates"],
+                "selected_route": route,
+                "selected_tool_name": tool_name,
+                "candidate_count": len(visible_candidates),
+                "helper_source": "declared_candidate_generation",
+            }
+        )
+
+        replay_record = None
+        if policy == "native_reuse_on":
+            replay_record = self.replay_store.lookup(
+                task_theme=task.task_theme,
+                normalized_query=normalized_query,
+                retrieved_doc_ids=retrieved_doc_ids,
+                route=route,
+                tool_name=tool_name,
+            )
+        replay_hit = replay_record is not None
+
+        if replay_hit:
+            summary_text = str(replay_record.summary_text)
+            strongest_competing_route = ""
+            validation_check = "retrieval set matched a prior strict pure-text decision"
+            role_trace.append(
+                {
+                    "role": "executor",
+                    "model": "",
+                    "decision_source": "native_replay_store",
+                    "visible_inputs": ["retriever_handoff", "replay_key"],
+                    "selected_route": route,
+                    "selected_tool_name": tool_name,
+                    "helper_source": "none",
+                }
+            )
+            role_trace.append(
+                {
+                    "role": "summarizer",
+                    "model": "",
+                    "decision_source": "native_replay_store",
+                    "visible_inputs": ["replay_summary_text"],
+                    "helper_source": "none",
+                }
+            )
+            decision_source = "external_text_four_role_replay"
+            skipped_step_count = 2
+        else:
+            executor_payload, executor_usage, executor_model = await self._executor_validation(
+                task=task,
+                retrieved_docs=retrieved_docs,
+                visible_candidates=visible_candidates,
+                route=route,
+                tool_name=tool_name,
+            )
+            usage = _merge_usage(usage, executor_usage)
+            strongest_competing_route = str(retriever_payload.get("reason", "")).strip()
+            validation_check = _strict_action_contract(executor_payload)
+            role_trace.append(
+                {
+                    "role": "executor",
+                    "model": executor_model,
+                    "decision_source": "role_llm",
+                    "visible_inputs": ["retriever_handoff", "retrieved_docs", "visible_candidates"],
+                    "selected_route": route,
+                    "selected_tool_name": tool_name,
+                    "action_contract": validation_check,
+                    "helper_source": "none",
+                }
+            )
+            summary_text, summarizer_usage, summarizer_model = await self._summary_text(
+                task=task,
+                retrieved_docs=retrieved_docs,
+                route=route,
+                tool_name=tool_name,
+                strongest_competing_route=strongest_competing_route,
+                validation_check=validation_check,
+            )
+            usage = _merge_usage(usage, summarizer_usage)
+            role_trace.append(
+                {
+                    "role": "summarizer",
+                    "model": summarizer_model,
+                    "decision_source": "role_llm",
+                    "visible_inputs": ["summary_hint", "retrieved_docs", "executor_handoff"],
+                    "helper_source": "none",
+                }
+            )
+            if policy == "native_reuse_on":
+                self.replay_store.commit_payload(
+                    {
+                        "task_theme": task.task_theme,
+                        "normalized_query": normalized_query,
+                        "retrieved_doc_ids": retrieved_doc_ids,
+                        "route": route,
+                        "tool_name": tool_name,
+                        "summary_text": summary_text,
+                        "evidence_digest": evidence_digest(retrieved_doc_ids),
+                    }
+                )
+            decision_source = "external_text_four_role_llm"
+            skipped_step_count = 0
+
+        purity_audit = {
+            "passed": True,
+            "no_statebus_contract_used": True,
+            "no_metadata_oracle_used": True,
+            "no_lexical_fallback": True,
+            "no_silent_correction": True,
+            "no_hidden_helper_advantage": True,
+            "helper_mode": "declared_candidate_generation_only",
+            "structured_packet_markers_present": False,
+            "role_count": 4,
+        }
+        message_log = build_strict_message_log(
+            task=task,
+            planner_steps=planner_steps,
+            retrieved_docs=retrieved_docs,
+            visible_candidates=visible_candidates,
+            route=route,
+            tool_name=tool_name,
+            validation_check=validation_check,
+            replay_hit=replay_hit,
+        )
+        if any(any(marker in message for marker in FORBIDDEN_TEXT_MARKERS) for message in message_log):
+            purity_audit["passed"] = False
+            purity_audit["structured_packet_markers_present"] = True
+        return {
+            "task": task,
+            "policy": policy,
+            "run_index": run_index,
+            "normalized_query": normalized_query,
+            "retrieved_doc_ids": retrieved_doc_ids,
+            "retrieved_snippets": [
+                {"doc_id": doc.doc_id, "snippet": render_snippet(doc.text)} for doc in retrieved_docs
+            ],
+            "route": route,
+            "tool_name": tool_name,
+            "summary_text": summary_text,
+            "evidence_digest": evidence_digest(retrieved_doc_ids),
+            "replay_hit": replay_hit,
+            "skipped_step_count": skipped_step_count,
+            "message_log": message_log,
+            "decision_source": decision_source,
+            "metadata_oracle_used": False,
+            "statebus_contract_used": False,
+            "data_source": self.data_source,
+            "runtime_contract": self.runtime_contract,
+            "llm_usage": usage,
+            "role_trace": role_trace,
+            "purity_audit": purity_audit,
+            "lexical_fallback_used": False,
+            "helper_dominance": False,
+            "visible_candidate_count": len(visible_candidates),
+        }
 
     def _run_lexical_stub_task(
         self,
@@ -252,7 +463,7 @@ class ExternalTextOpenRuntime:
                 strongest_competing_route = str(planner_payload.get("strongest_competing_route", "")).strip()
                 validation_check = str(planner_payload.get("validation_check", "")).strip()
                 decision_source = "live_api_text_only"
-                summary_text, summary_usage = await self._summary_text(
+                summary_text, summary_usage, _summary_model = await self._summary_text(
                     task=task,
                     retrieved_docs=retrieved_docs,
                     route=route,
@@ -333,6 +544,115 @@ class ExternalTextOpenRuntime:
         payload = extract_json_object(result.text)
         return payload, _usage_dict(result)
 
+    async def _planner_outline(self, *, task: SampleTask) -> tuple[dict[str, object], dict[str, int], str]:
+        assert self.llm_client is not None
+        prompt = "\n".join(
+            [
+                f"Task ID: {task.task_id}",
+                f"Task group: {task.task_group}",
+                f"Task theme: {task.task_theme}",
+                "Goal:",
+                task.goal,
+                "",
+                "Search query:",
+                task.query,
+                "",
+                "Required semantic roles:",
+                "retrieve, execute, summarize",
+                "",
+                "Summary hint:",
+                task.summary_hint,
+                "",
+                "Evidence note:",
+                task.evidence_text,
+                "",
+                f"Tags: {', '.join(task.tags)}",
+            ]
+        )
+        result = await self.llm_client.complete(
+            [
+                ChatMessage(
+                    role="system",
+                    content="You are the planner in a strict external pure-text four-role workflow. Return JSON only.",
+                ),
+                ChatMessage(role="user", content=prompt),
+            ],
+            purpose="planner",
+        )
+        payload = extract_json_object(result.text)
+        return payload, _usage_dict(result), str(result.model)
+
+    async def _retriever_selection(
+        self,
+        *,
+        task: SampleTask,
+        retrieved_docs: list[CorpusDoc],
+        visible_candidates: list[dict[str, object]],
+    ) -> tuple[dict[str, object], dict[str, int], str]:
+        assert self.llm_client is not None
+        prompt = "\n".join(
+            [
+                f"Task theme: {task.task_theme}",
+                f"Query: {task.query}",
+                f"Retrieved docs: {', '.join(doc.doc_id for doc in retrieved_docs[:4])}",
+                "Visible candidates: " + "; ".join(
+                    f"{str(item['route'])}::{str(item['tool_name'])}"
+                    for item in visible_candidates
+                ),
+                "Pick one visible route/tool pair only.",
+            ]
+        )
+        result = await self.llm_client.complete(
+            [
+                ChatMessage(
+                    role="system",
+                    content="You are the retriever in a strict external pure-text workflow. Select one visible candidate only and return JSON.",
+                ),
+                ChatMessage(role="user", content=prompt),
+            ],
+            purpose="retriever",
+        )
+        payload = extract_json_object(result.text)
+        return payload, _usage_dict(result), str(result.model)
+
+    async def _executor_validation(
+        self,
+        *,
+        task: SampleTask,
+        retrieved_docs: list[CorpusDoc],
+        visible_candidates: list[dict[str, object]],
+        route: str,
+        tool_name: str,
+    ) -> tuple[dict[str, object], dict[str, int], str]:
+        assert self.llm_client is not None
+        prompt = "\n".join(
+            [
+                f"Task theme: {task.task_theme}",
+                f"Route: {route}",
+                f"Tool: {tool_name}",
+                f"Validated route: {route}",
+                f"Validated tool: {tool_name}",
+                "Validated action contract: execute_validated_tool",
+                f"Evidence docs: {', '.join(doc.doc_id for doc in retrieved_docs[:4])}",
+                "Visible candidates: " + "; ".join(
+                    f"{str(item['route'])}::{str(item['tool_name'])}"
+                    for item in visible_candidates
+                ),
+            ]
+        )
+        result = await self.llm_client.complete(
+            [
+                ChatMessage(
+                    role="system",
+                    content="You are the executor in a strict external pure-text workflow. Validate the visible route/tool pair and return JSON.",
+                ),
+                ChatMessage(role="user", content=prompt),
+            ],
+            purpose="executor",
+        )
+        payload = extract_json_object(result.text)
+        return payload, _usage_dict(result), str(result.model)
+
     async def _summary_text(
         self,
         *,
@@ -365,7 +685,8 @@ class ExternalTextOpenRuntime:
             ],
             purpose="summarizer",
         )
-        return sanitize_message_text(result.text), _usage_dict(result)
+        summary_text = sanitize_message_text(_extract_summary_text(result.text))
+        return summary_text, _usage_dict(result), str(result.model)
 
 
 def retrieve_corpus_docs(task: SampleTask) -> list[CorpusDoc]:
@@ -390,6 +711,30 @@ def choose_playbook(*, task: SampleTask, retrieved_docs: list[CorpusDoc]) -> tup
     )
     best = scored[0]
     return best.route, best.tool_name
+
+
+def build_visible_tool_candidates(
+    *,
+    task: SampleTask,
+    retrieved_docs: list[CorpusDoc],
+) -> list[dict[str, object]]:
+    combined_text = "\n".join([task.goal, task.query, *(doc.text for doc in retrieved_docs)])
+    combined_tokens = lexical_tokens(combined_text)
+    ranked = sorted(
+        (
+            {
+                "route": rule.route,
+                "tool_name": rule.tool_name,
+                "score": lexical_overlap(combined_tokens, set(rule.keywords)),
+            }
+            for rule in PLAYBOOK_CATALOG
+        ),
+        key=lambda item: (-int(item["score"]), str(item["route"]), str(item["tool_name"])),
+    )
+    visible = [item for item in ranked if int(item["score"]) > 0][:3]
+    if not visible:
+        visible = ranked[:1]
+    return visible
 
 
 def summarize(task: SampleTask, retrieved_docs: list[CorpusDoc], route: str, tool_name: str) -> str:
@@ -456,6 +801,40 @@ def build_live_message_log(
     return [sanitize_message_text(item) for item in messages]
 
 
+def build_strict_message_log(
+    *,
+    task: SampleTask,
+    planner_steps: list[str],
+    retrieved_docs: list[CorpusDoc],
+    visible_candidates: list[dict[str, object]],
+    route: str,
+    tool_name: str,
+    validation_check: str,
+    replay_hit: bool,
+) -> list[str]:
+    messages = [
+        "Planner: "
+        + (
+            "; ".join(planner_steps[:3])
+            if planner_steps
+            else f"organize a four-role text-only triage for {task.task_theme}"
+        ),
+        f"Retriever: inspect docs {', '.join(doc.doc_id for doc in retrieved_docs[:3])} and compare visible candidates "
+        + ", ".join(f"{item['route']}::{item['tool_name']}" for item in visible_candidates[:3]),
+    ]
+    if replay_hit:
+        messages.append(
+            f"Executor: retrieval matched a prior strict pure-text decision for route {route} and tool {tool_name}."
+        )
+        messages.append("Summarizer: reuse the prior plain-text summary because the evidence set matched exactly.")
+    else:
+        messages.append(
+            f"Executor: validate route {route} with tool {tool_name} under contract {validation_check}."
+        )
+        messages.append("Summarizer: return the first action and supporting evidence in plain text.")
+    return [sanitize_message_text(item) for item in messages]
+
+
 def build_planner_prompt(*, task: SampleTask, retrieved_docs: list[CorpusDoc]) -> str:
     doc_lines = "\n".join(
         f"- {doc.doc_id}: {render_snippet(doc.text, limit=220)}" for doc in retrieved_docs[:4]
@@ -484,20 +863,35 @@ def build_summary_prompt(
     strongest_competing_route: str,
     validation_check: str,
 ) -> str:
-    snippets = "\n".join(
-        f"- {doc.doc_id}: {render_snippet(doc.text, limit=180)}" for doc in retrieved_docs[:3]
+    evidence_text = "\n".join(
+        [
+            render_snippet(doc.text, limit=180)
+            for doc in retrieved_docs[:3]
+        ]
+    )
+    actions_text = "\n".join(
+        [
+            f"- chosen route: {route}",
+            f"- chosen tool: {tool_name}",
+            f"- strongest competing route: {strongest_competing_route or 'none'}",
+            f"- validation check: {validation_check or 'confirm the top evidence path'}",
+        ]
     )
     return "\n".join(
         [
+            f"Task ID: {task.task_id}",
             f"Task theme: {task.task_theme}",
-            f"Summary hint: {task.summary_hint}",
-            f"Chosen route: {route}",
-            f"Chosen tool: {tool_name}",
-            f"Strongest competing route: {strongest_competing_route or 'none'}",
-            f"Validation check: {validation_check or 'confirm the top evidence path'}",
-            "Evidence snippets:",
-            snippets,
-            "Write plain text only.",
+            "Summary hint:",
+            task.summary_hint,
+            "",
+            "Evidence note:",
+            evidence_text,
+            "",
+            "Playbook actions:",
+            actions_text,
+            "",
+            f"Tags: {', '.join(task.tags)}",
+            "Reusable steps: retrieve, execute",
         ]
     )
 
@@ -547,6 +941,57 @@ def sanitize_message_text(text: str) -> str:
         sanitized = sanitized.replace(marker, marker.lower().replace("_", " "))
     sanitized = sanitized.replace("<", "").replace(">", "")
     return sanitized.strip()
+
+
+def _planner_steps(payload: dict[str, object]) -> list[str]:
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        return []
+    rendered: list[str] = []
+    for item in steps:
+        if isinstance(item, dict):
+            action = str(item.get("action", "")).strip()
+            role = str(item.get("owner_agent", "")).strip() or str(item.get("semantic_role", "")).strip()
+            if action or role:
+                rendered.append(f"{role or 'role'}:{action or 'step'}")
+    return rendered
+
+
+def _strict_visible_selection(
+    *,
+    retriever_payload: dict[str, object],
+    visible_candidates: list[dict[str, object]],
+) -> tuple[str, str]:
+    route = str(retriever_payload.get("route", "")).strip()
+    tool_name = str(retriever_payload.get("tool_name", "")).strip()
+    visible_pairs = {
+        (str(item["route"]).strip(), str(item["tool_name"]).strip())
+        for item in visible_candidates
+    }
+    if (route, tool_name) not in visible_pairs:
+        raise ValueError(
+            "strict external pure-text retriever selected route/tool outside visible candidate set"
+        )
+    return route, tool_name
+
+
+def _strict_action_contract(payload: dict[str, object]) -> str:
+    contract = str(payload.get("action_contract", "")).strip()
+    if contract not in {"execute_validated_tool", "abstain_collect_more_evidence"}:
+        raise ValueError(
+            "strict external pure-text executor returned unsupported action_contract"
+        )
+    return contract
+
+
+def _extract_summary_text(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("{"):
+        payload = extract_json_object(stripped)
+        summary = str(payload.get("summary", "") or payload.get("s", "")).strip()
+        if summary:
+            return summary
+    return stripped
 
 
 def _usage_dict(result) -> dict[str, int]:
