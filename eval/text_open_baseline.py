@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -166,6 +167,12 @@ FORBIDDEN_TEXT_MARKERS = (
 )
 
 
+class ExternalBaselineStageError(RuntimeError):
+    def __init__(self, message: str, *, debug_state: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.debug_state = debug_state
+
+
 class ExternalTextOpenRuntime:
     node_order = ("planner", "retriever", "executor", "summarizer")
 
@@ -192,7 +199,15 @@ class ExternalTextOpenRuntime:
         run_index: int,
     ) -> dict[str, object]:
         if self.data_source in {"strict_pure_text_four_role", "strict_pure_text_four_role_api"}:
-            return await self._run_strict_text_task(task=task, policy=policy, run_index=run_index)
+            try:
+                return await self._run_strict_text_task(task=task, policy=policy, run_index=run_index)
+            except ExternalBaselineStageError:
+                raise
+            except Exception as exc:
+                debug_state = getattr(exc, "debug_state", None)
+                if isinstance(debug_state, dict):
+                    raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
+                raise
         if self.data_source == "live_api_text_only":
             return await self._run_live_text_task(task=task, policy=policy, run_index=run_index)
         return self._run_lexical_stub_task(task=task, policy=policy, run_index=run_index)
@@ -211,9 +226,40 @@ class ExternalTextOpenRuntime:
         retrieved_doc_ids = tuple(doc.doc_id for doc in retrieved_docs)
         usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         role_trace: list[dict[str, object]] = []
+        debug_state: dict[str, Any] = {
+            "task_id": task.task_id,
+            "task_theme": task.task_theme,
+            "normalized_query": normalized_query,
+            "retrieved_doc_ids": list(retrieved_doc_ids),
+            "retrieved_snippets": [
+                {"doc_id": doc.doc_id, "snippet": render_snippet(doc.text)} for doc in retrieved_docs
+            ],
+            "llm_usage": dict(usage),
+            "role_trace": role_trace,
+            "message_log": [],
+            "visible_candidate_count": 0,
+            "visible_candidates": [],
+            "issue_hypotheses": [],
+            "helper_top1_route": "",
+            "helper_top1_tool_name": "",
+            "helper_selected_matches_top1": False,
+            "helper_single_candidate": False,
+            "decision_source": "external_text_four_role_failed",
+            "failure_stage": "planner",
+            "failure_role": "planner",
+            "raw_outputs": {},
+            "parse_status": {},
+        }
 
-        planner_payload, planner_usage, planner_model = await self._planner_outline(task=task)
-        usage = _merge_usage(usage, planner_usage)
+        try:
+            planner_payload, planner_usage, planner_model, planner_raw = await self._planner_outline(task=task)
+            usage = _merge_usage(usage, planner_usage)
+            debug_state["llm_usage"] = dict(usage)
+            debug_state["raw_outputs"]["planner"] = planner_raw
+            debug_state["parse_status"]["planner"] = "parsed"
+        except Exception as exc:
+            debug_state["llm_usage"] = dict(usage)
+            raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
         planner_steps = _planner_steps(planner_payload)
         role_trace.append(
             {
@@ -231,17 +277,33 @@ class ExternalTextOpenRuntime:
             retrieved_docs=retrieved_docs,
             issue_hypotheses=issue_hypotheses,
         )
-        retriever_payload, retriever_usage, retriever_model = await self._retriever_selection(
-            task=task,
-            retrieved_docs=retrieved_docs,
-            issue_hypotheses=issue_hypotheses,
-            visible_candidates=visible_candidates,
-        )
-        usage = _merge_usage(usage, retriever_usage)
-        route, tool_name = _strict_visible_selection(
-            retriever_payload=retriever_payload,
-            visible_candidates=visible_candidates,
-        )
+        debug_state["issue_hypotheses"] = [dict(item) for item in issue_hypotheses]
+        debug_state["visible_candidate_count"] = len(visible_candidates)
+        debug_state["visible_candidates"] = [dict(item) for item in visible_candidates]
+        debug_state["failure_stage"] = "retriever"
+        debug_state["failure_role"] = "retriever"
+        try:
+            retriever_payload, retriever_usage, retriever_model, retriever_raw = await self._retriever_selection(
+                task=task,
+                retrieved_docs=retrieved_docs,
+                issue_hypotheses=issue_hypotheses,
+                visible_candidates=visible_candidates,
+            )
+            usage = _merge_usage(usage, retriever_usage)
+            debug_state["llm_usage"] = dict(usage)
+            debug_state["raw_outputs"]["retriever"] = retriever_raw
+            debug_state["parse_status"]["retriever"] = "parsed"
+        except Exception as exc:
+            debug_state["llm_usage"] = dict(usage)
+            raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
+        try:
+            route, tool_name = _strict_visible_selection(
+                retriever_payload=retriever_payload,
+                visible_candidates=visible_candidates,
+            )
+        except Exception as exc:
+            debug_state["llm_usage"] = dict(usage)
+            raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
         helper_top1 = projected_helper_candidate(issue_hypotheses=issue_hypotheses)
         helper_top1_route = str(helper_top1.get("route", "")).strip()
         helper_top1_tool_name = str(helper_top1.get("tool_name", "")).strip()
@@ -249,6 +311,10 @@ class ExternalTextOpenRuntime:
             route == helper_top1_route and tool_name == helper_top1_tool_name
         )
         helper_single_candidate = len(visible_candidates) == 1
+        debug_state["helper_top1_route"] = helper_top1_route
+        debug_state["helper_top1_tool_name"] = helper_top1_tool_name
+        debug_state["helper_selected_matches_top1"] = helper_selected_matches_top1
+        debug_state["helper_single_candidate"] = helper_single_candidate
         role_trace.append(
             {
                 "role": "retriever",
@@ -305,22 +371,35 @@ class ExternalTextOpenRuntime:
             decision_source = "external_text_four_role_replay"
             skipped_step_count = 2
         else:
-            executor_payload, executor_usage, executor_model = await self._executor_validation(
-                task=task,
-                retrieved_docs=retrieved_docs,
-                visible_candidates=visible_candidates,
-                route=route,
-                tool_name=tool_name,
-            )
-            usage = _merge_usage(usage, executor_usage)
+            debug_state["failure_stage"] = "executor"
+            debug_state["failure_role"] = "executor"
+            try:
+                executor_payload, executor_usage, executor_model, executor_raw = await self._executor_validation(
+                    task=task,
+                    retrieved_docs=retrieved_docs,
+                    visible_candidates=visible_candidates,
+                    route=route,
+                    tool_name=tool_name,
+                )
+                usage = _merge_usage(usage, executor_usage)
+                debug_state["llm_usage"] = dict(usage)
+                debug_state["raw_outputs"]["executor"] = executor_raw
+                debug_state["parse_status"]["executor"] = "parsed"
+            except Exception as exc:
+                debug_state["llm_usage"] = dict(usage)
+                raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
             strongest_competing_route = str(retriever_payload.get("reason", "")).strip()
-            validation_check = _strict_action_contract(executor_payload)
-            route, tool_name = _strict_executor_selection(
-                executor_payload=executor_payload,
-                visible_candidates=visible_candidates,
-                fallback_route=route,
-                fallback_tool_name=tool_name,
-            )
+            try:
+                validation_check = _strict_action_contract(executor_payload)
+                route, tool_name = _strict_executor_selection(
+                    executor_payload=executor_payload,
+                    visible_candidates=visible_candidates,
+                    fallback_route=route,
+                    fallback_tool_name=tool_name,
+                )
+            except Exception as exc:
+                debug_state["llm_usage"] = dict(usage)
+                raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
             helper_selected_matches_top1 = (
                 route == helper_top1_route and tool_name == helper_top1_tool_name
             )
@@ -340,15 +419,24 @@ class ExternalTextOpenRuntime:
                     "helper_single_candidate": helper_single_candidate,
                 }
             )
-            summary_text, summarizer_usage, summarizer_model = await self._summary_text(
-                task=task,
-                retrieved_docs=retrieved_docs,
-                route=route,
-                tool_name=tool_name,
-                strongest_competing_route=strongest_competing_route,
-                validation_check=validation_check,
-            )
-            usage = _merge_usage(usage, summarizer_usage)
+            debug_state["failure_stage"] = "summarizer"
+            debug_state["failure_role"] = "summarizer"
+            try:
+                summary_text, summarizer_usage, summarizer_model, summarizer_raw = await self._summary_text(
+                    task=task,
+                    retrieved_docs=retrieved_docs,
+                    route=route,
+                    tool_name=tool_name,
+                    strongest_competing_route=strongest_competing_route,
+                    validation_check=validation_check,
+                )
+                usage = _merge_usage(usage, summarizer_usage)
+                debug_state["llm_usage"] = dict(usage)
+                debug_state["raw_outputs"]["summarizer"] = summarizer_raw
+                debug_state["parse_status"]["summarizer"] = "parsed"
+            except Exception as exc:
+                debug_state["llm_usage"] = dict(usage)
+                raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
             role_trace.append(
                 {
                     "role": "summarizer",
@@ -397,6 +485,10 @@ class ExternalTextOpenRuntime:
         if any(any(marker in message for marker in FORBIDDEN_TEXT_MARKERS) for message in message_log):
             purity_audit["passed"] = False
             purity_audit["structured_packet_markers_present"] = True
+        debug_state["message_log"] = list(message_log)
+        debug_state["decision_source"] = decision_source
+        debug_state["failure_stage"] = ""
+        debug_state["failure_role"] = ""
         return {
             "task": task,
             "policy": policy,
@@ -546,7 +638,7 @@ class ExternalTextOpenRuntime:
                 strongest_competing_route = str(planner_payload.get("strongest_competing_route", "")).strip()
                 validation_check = str(planner_payload.get("validation_check", "")).strip()
                 decision_source = "live_api_text_only"
-                summary_text, summary_usage, _summary_model = await self._summary_text(
+                summary_text, summary_usage, _summary_model, _summary_raw = await self._summary_text(
                     task=task,
                     retrieved_docs=retrieved_docs,
                     route=route,
@@ -627,7 +719,11 @@ class ExternalTextOpenRuntime:
         payload = extract_json_object(result.text)
         return payload, _usage_dict(result)
 
-    async def _planner_outline(self, *, task: SampleTask) -> tuple[dict[str, object], dict[str, int], str]:
+    async def _planner_outline(
+        self,
+        *,
+        task: SampleTask,
+    ) -> tuple[dict[str, object], dict[str, int], str, str]:
         assert self.llm_client is not None
         prompt = "\n".join(
             [
@@ -662,8 +758,9 @@ class ExternalTextOpenRuntime:
             ],
             purpose="planner",
         )
-        payload = extract_json_object(result.text)
-        return payload, _usage_dict(result), str(result.model)
+        raw_text = result.text
+        payload = extract_json_object(raw_text)
+        return payload, _usage_dict(result), str(result.model), raw_text
 
     async def _retriever_selection(
         self,
@@ -672,7 +769,7 @@ class ExternalTextOpenRuntime:
         retrieved_docs: list[CorpusDoc],
         issue_hypotheses: list[dict[str, object]],
         visible_candidates: list[dict[str, object]],
-    ) -> tuple[dict[str, object], dict[str, int], str]:
+    ) -> tuple[dict[str, object], dict[str, int], str, str]:
         assert self.llm_client is not None
         prompt = "\n".join(
             [
@@ -721,8 +818,9 @@ class ExternalTextOpenRuntime:
             ],
             purpose="retriever",
         )
-        payload = extract_json_object(result.text)
-        return payload, _usage_dict(result), str(result.model)
+        raw_text = result.text
+        payload = extract_json_object(raw_text)
+        return payload, _usage_dict(result), str(result.model), raw_text
 
     async def _executor_validation(
         self,
@@ -732,7 +830,7 @@ class ExternalTextOpenRuntime:
         visible_candidates: list[dict[str, object]],
         route: str,
         tool_name: str,
-    ) -> tuple[dict[str, object], dict[str, int], str]:
+    ) -> tuple[dict[str, object], dict[str, int], str, str]:
         assert self.llm_client is not None
         prompt = "\n".join(
             [
@@ -774,8 +872,9 @@ class ExternalTextOpenRuntime:
             ],
             purpose="executor",
         )
-        payload = extract_json_object(result.text)
-        return payload, _usage_dict(result), str(result.model)
+        raw_text = result.text
+        payload = extract_json_object(raw_text)
+        return payload, _usage_dict(result), str(result.model), raw_text
 
     async def _summary_text(
         self,
@@ -786,7 +885,7 @@ class ExternalTextOpenRuntime:
         tool_name: str,
         strongest_competing_route: str,
         validation_check: str,
-    ) -> tuple[str, dict[str, int]]:
+    ) -> tuple[str, dict[str, int], str, str]:
         assert self.llm_client is not None
         prompt = build_summary_prompt(
             task=task,
@@ -809,8 +908,9 @@ class ExternalTextOpenRuntime:
             ],
             purpose="summarizer",
         )
-        summary_text = sanitize_message_text(_extract_summary_text(result.text))
-        return summary_text, _usage_dict(result), str(result.model)
+        raw_text = result.text
+        summary_text = sanitize_message_text(_extract_summary_text(raw_text))
+        return summary_text, _usage_dict(result), str(result.model), raw_text
 
 
 def retrieve_corpus_docs(task: SampleTask) -> list[CorpusDoc]:

@@ -1470,12 +1470,57 @@ def execute_playbook_step(
             "s2_prior_dependent_action_change": bool(
                 feature_bundle.get("s2_prior_dependent_action_change", False)
             ),
+            "actual_llm_model": os.getenv(
+                "STATEBUS_LLM_DEFAULT_MODEL",
+                os.getenv("STATEBUS_LLM_MODEL", ""),
+            ),
+            "actual_tool_candidates": _actual_tool_candidates_from_feature_bundle(feature_bundle),
+            "actual_tool_catalog": sorted(active_registry.names()),
+            "actual_corpus_scope": sorted(
+                str(doc_id)
+                for doc_id in (
+                    feature_bundle.get("retrieved_doc_ids", [])
+                    or execution.diagnostics.get("retrieved_doc_ids", [])
+                )
+                if str(doc_id).strip()
+            ),
+            "decision_source": str(
+                feature_bundle.get("decision_source", feature_bundle.get("route_source", ""))
+            ).strip(),
+            "semantic_selected_route": str(
+                feature_bundle.get("semantic_selected_route", execution.route)
+            ).strip(),
+            "semantic_selected_tool_name": str(
+                feature_bundle.get("semantic_selected_tool_name", execution.tool_name)
+            ).strip(),
         },
     )
 
 
 def _load_feature_bundle(statepool: StatePool, ref: StateRef) -> dict[str, Any]:
     return _load_structured_bundle(statepool, ref, expected_kind="FEATURE_BUNDLE")
+
+
+def _actual_tool_candidates_from_feature_bundle(feature_bundle: dict[str, Any]) -> list[str]:
+    explicit = [
+        str(item).strip()
+        for item in feature_bundle.get("actual_tool_candidates", [])
+        if str(item).strip()
+    ]
+    if explicit:
+        return explicit
+    derived: list[str] = []
+    for item in feature_bundle.get("tool_candidates", []):
+        if not isinstance(item, dict):
+            continue
+        route = str(item.get("route", "")).strip()
+        tool_name = str(item.get("tool_name", "")).strip()
+        if not route or not tool_name:
+            continue
+        token = f"{route}::{tool_name}"
+        if token not in derived:
+            derived.append(token)
+    return derived
 
 
 def _build_executor_plaintext_handoff(
@@ -2253,6 +2298,7 @@ def _feature_bundle_from_text_whole_lane_handoff(
             pass
     bundle["route_source"] = "headline_natural_language_handoff"
     bundle["route_provenance"] = ["headline_natural_language_handoff"]
+    bundle["actual_tool_candidates"] = _actual_tool_candidates_from_feature_bundle(bundle)
     bundle["transfer_strategy"] = "text_whole_lane"
     return bundle
 
@@ -2269,6 +2315,7 @@ def _feature_bundle_from_strict_pure_text_handoff(
         evidence_text=handoff_text,
         handoff_text=handoff_text,
     )
+    bundle["actual_tool_candidates"] = _actual_tool_candidates_from_feature_bundle(bundle)
     bundle["transfer_strategy"] = "text_strict_pure_lane"
     return bundle
 
