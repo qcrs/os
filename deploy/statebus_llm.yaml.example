@@ -18,6 +18,26 @@ roles:
       thinking:
         type: disabled
 
+  retriever:
+    provider: default
+    model: deepseek-v4-flash
+    json_output: true
+    temperature: 0.0
+    max_tokens: 900
+    extra_body:
+      thinking:
+        type: disabled
+
+  executor:
+    provider: default
+    model: deepseek-v4-flash
+    json_output: true
+    temperature: 0.0
+    max_tokens: 900
+    extra_body:
+      thinking:
+        type: disabled
+
   summarizer:
     provider: default
     model: deepseek-v4-flash

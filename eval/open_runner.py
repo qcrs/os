@@ -1170,6 +1170,23 @@ def _failed_external_text_row(
 ) -> dict[str, object]:
     task_ms = max(1.0, (time.perf_counter() - started) * 1000.0 + 8.0)
     error_text = f"{type(error).__name__}: {error}"
+    debug_state = dict(getattr(error, "debug_state", {}) or {})
+    llm_usage = dict(debug_state.get("llm_usage", {}) or {})
+    prompt_tokens = float(llm_usage.get("prompt_tokens", 0) or 0)
+    completion_tokens = float(llm_usage.get("completion_tokens", 0) or 0)
+    total_tokens = float(llm_usage.get("total_tokens", 0) or 0)
+    message_log = [str(item) for item in debug_state.get("message_log", []) if str(item).strip()]
+    role_trace = [dict(item) for item in debug_state.get("role_trace", []) if isinstance(item, dict)]
+    retrieved_doc_ids = [str(item) for item in debug_state.get("retrieved_doc_ids", []) if str(item).strip()]
+    retrieved_snippets = [
+        dict(item) for item in debug_state.get("retrieved_snippets", []) if isinstance(item, dict)
+    ]
+    visible_candidates = [
+        dict(item) for item in debug_state.get("visible_candidates", []) if isinstance(item, dict)
+    ]
+    issue_hypotheses = [
+        dict(item) for item in debug_state.get("issue_hypotheses", []) if isinstance(item, dict)
+    ]
     purity_audit = {
         "passed": False,
         "no_statebus_contract_used": True,
@@ -1179,7 +1196,7 @@ def _failed_external_text_row(
         "no_hidden_helper_advantage": True,
         "helper_mode": "declared_candidate_generation_only",
         "structured_packet_markers_present": False,
-        "role_count": 0,
+        "role_count": len(role_trace),
     }
     return {
         "task_id": task.task_id,
@@ -1189,14 +1206,14 @@ def _failed_external_text_row(
         "runtime_arm": runtime_arm,
         "open_memory_policy": policy,
         "run_index": run_index,
-        "route": "",
-        "tool_name": "",
+        "route": str(debug_state.get("route", "")),
+        "tool_name": str(debug_state.get("tool_name", "")),
         "expected_route": task.primary_expected_route,
         "expected_tool_name": task.primary_expected_tool,
-        "retrieved_doc_ids": [],
-        "retrieved_snippets": [],
-        "message_log": [],
-        "issue_hypotheses": [],
+        "retrieved_doc_ids": retrieved_doc_ids,
+        "retrieved_snippets": retrieved_snippets,
+        "message_log": message_log,
+        "issue_hypotheses": issue_hypotheses,
         "correctness": {
             "route_exact": False,
             "tool_exact": False,
@@ -1208,8 +1225,8 @@ def _failed_external_text_row(
             "tool_exact_rate": 0.0,
             "exact_match_rate": 0.0,
             "admissible_match_rate": 0.0,
-            "llm_total_tokens": 0.0,
-            "message_count": 0.0,
+            "llm_total_tokens": total_tokens,
+            "message_count": float(len(message_log)),
             "transport_bytes": 0.0,
             "handoff_wire_bytes": 0.0,
             "handoff_payload_bytes": 0.0,
@@ -1223,15 +1240,15 @@ def _failed_external_text_row(
         "artifact_reuse": False,
         "runtime_contract": str(getattr(external_runtime, "runtime_contract", "")),
         "purity_audit": purity_audit,
-        "role_trace": [],
+        "role_trace": role_trace,
         "lexical_fallback_used": False,
         "helper_dominance": False,
-        "visible_candidate_count": 0,
-        "visible_candidates": [],
-        "helper_top1_route": "",
-        "helper_top1_tool_name": "",
-        "helper_selected_matches_top1": False,
-        "helper_single_candidate": False,
+        "visible_candidate_count": int(debug_state.get("visible_candidate_count", 0) or 0),
+        "visible_candidates": visible_candidates,
+        "helper_top1_route": str(debug_state.get("helper_top1_route", "")),
+        "helper_top1_tool_name": str(debug_state.get("helper_top1_tool_name", "")),
+        "helper_selected_matches_top1": bool(debug_state.get("helper_selected_matches_top1", False)),
+        "helper_single_candidate": bool(debug_state.get("helper_single_candidate", False)),
         "native_replay": {
             "hit": False,
             "source": "",
@@ -1245,8 +1262,23 @@ def _failed_external_text_row(
         },
         "statebus_contract_used": False,
         "metadata_oracle_used": False,
-        "decision_source": "external_text_four_role_failed",
+        "decision_source": str(debug_state.get("decision_source", "external_text_four_role_failed")),
         "error": error_text,
+        "failed_role": str(debug_state.get("failure_role", "")),
+        "failed_stage": str(debug_state.get("failure_stage", "")),
+        "llm_usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        },
+        "failure_debug": {
+            "parse_status": dict(debug_state.get("parse_status", {}) or {}),
+            "raw_outputs": {
+                str(role): str(text)
+                for role, text in dict(debug_state.get("raw_outputs", {}) or {}).items()
+                if str(role).strip()
+            },
+        },
     }
 
 

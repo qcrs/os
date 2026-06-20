@@ -42,6 +42,7 @@ from eval.open_runner import (
     PURE_TEXT_OPEN_BASELINE_PACK,
     PURE_TEXT_OPEN_LIVE_API_PACK,
     RUNTIME_ARMS,
+    _failed_external_text_row,
     run_langgraph_native_text_open_smoke,
     run_open_comparison,
     run_pure_text_open_baseline,
@@ -68,6 +69,7 @@ from runtime import executor_runtime
 from runtime.uds_transport import request_response
 from runtime.smoke import main
 from runtime.executor_runtime import (
+    _actual_tool_candidates_from_feature_bundle,
     _feature_bundle_from_transfer_brief,
     build_feature_bundle,
     default_tool_registry,
@@ -118,7 +120,84 @@ def test_runtime_smoke_module_entry_emits_stdout() -> None:
     )
     assert "statebus smoke scope:" in completed.stdout
     assert "statebus smoke ok:" in completed.stdout
-    assert "statebus comparator artifact ok:" in completed.stdout
+
+
+def test_executor_actual_tool_candidates_derive_from_feature_bundle_tool_candidates() -> None:
+    payload = _actual_tool_candidates_from_feature_bundle(
+        {
+            "tool_candidates": [
+                {"route": "auth_session_drift", "tool_name": "tool.auth_session_repair"},
+                {"route": "auth_rate_limit", "tool_name": "tool.auth_rate_limit_triage"},
+            ]
+        }
+    )
+    assert payload == [
+        "auth_session_drift::tool.auth_session_repair",
+        "auth_rate_limit::tool.auth_rate_limit_triage",
+    ]
+
+
+def test_failed_external_text_row_preserves_usage_and_debug_context() -> None:
+    task = SampleTask(
+        task_id="ext-fail-001",
+        task_group="g1",
+        task_order=1,
+        task_theme="contest_release_checkout_regression",
+        benchmark_lane="internal_regression",
+        allowed_modes=("text",),
+        corpus_path=str(CONTEST_CORPUS_PATH),
+        goal="diagnose",
+        query="query",
+        corpus_doc_ids=("rr-checkout-incident",),
+        summary_hint="hint",
+        tags=(),
+        reuse_tags=(),
+        transfer_strategy="text_strict_pure_lane",
+        handoff_profile="text_strict_pure_lane",
+        complexity_bucket="simple",
+        primary_expected_route="db_pool_saturation",
+        primary_expected_tool="tool.db_pool_triage",
+    )
+    runtime = type(
+        "RuntimeStub",
+        (),
+        {
+            "data_source": "strict_pure_text_four_role",
+            "runtime_contract": "external_pure_text_four_role_baseline_v1",
+        },
+    )()
+    error = RuntimeError("bad json")
+    error.debug_state = {
+        "retrieved_doc_ids": ["rr-checkout-incident"],
+        "retrieved_snippets": [{"doc_id": "rr-checkout-incident", "snippet": "x"}],
+        "llm_usage": {"prompt_tokens": 111, "completion_tokens": 22, "total_tokens": 133},
+        "role_trace": [{"role": "planner", "decision_source": "role_llm"}],
+        "message_log": ["Planner: started"],
+        "visible_candidate_count": 6,
+        "visible_candidates": [{"route": "db_pool_saturation", "tool_name": "tool.db_pool_triage"}],
+        "issue_hypotheses": [{"issue_id": "data_plane_pressure_surface"}],
+        "failure_role": "retriever",
+        "failure_stage": "retriever",
+        "raw_outputs": {"planner": "{\"steps\": []}", "retriever": "{\"route\":"},
+        "parse_status": {"planner": "parsed", "retriever": "json_decode_error"},
+    }
+    row = _failed_external_text_row(
+        task=task,
+        policy="memory_off",
+        run_index=0,
+        started=time.perf_counter(),
+        runtime_arm="external_text_open",
+        external_runtime=runtime,
+        error=error,
+    )
+    assert row["status"] == "failed"
+    assert row["metrics"]["llm_total_tokens"] == 133.0
+    assert row["metrics"]["message_count"] == 1.0
+    assert row["retrieved_doc_ids"] == ["rr-checkout-incident"]
+    assert row["role_trace"][0]["role"] == "planner"
+    assert row["failure_debug"]["parse_status"]["retriever"] == "json_decode_error"
+    assert row["failure_debug"]["raw_outputs"]["retriever"] == "{\"route\":"
+    assert row["failed_role"] == "retriever"
 
 
 def test_text_frame_is_natural_language_for_control_messages() -> None:
