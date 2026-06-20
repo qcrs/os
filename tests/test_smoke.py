@@ -5477,10 +5477,12 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
     assert tuple(result["manifest"]["runtime_arms"]) == ("external_text_open",)
     assert "strict external pure-text four-role baseline" in result["manifest"]["contract"].lower()
     assert result["manifest"]["data_source"] == "strict_pure_text_four_role"
-    assert result["manifest"]["public_surface"] == "formal_ready"
+    assert result["manifest"]["public_surface"] == "formal_candidate"
     assert result["manifest"]["baseline_object"] == "external_pure_text_four_role_baseline_v1"
     assert result["manifest"]["purity_gate"]["passed"] is True
-    assert result["manifest"]["purity_gate"]["formal_ready"] is True
+    assert result["manifest"]["purity_gate"]["formal_ready"] is False
+    assert result["manifest"]["purity_gate"]["claim_surface"] == "formal_candidate"
+    assert "helper_shaping_too_strong" in result["manifest"]["purity_gate"]["withheld_reasons"]
     assert result["manifest"]["selected_complexity_buckets"] == [
         "ambiguous",
         "reusable",
@@ -5492,6 +5494,9 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
         assert summary[("external_text_open", policy)]["runtime_arm"] == "external_text_open"
         assert summary[("external_text_open", policy)]["data_source"] == "strict_pure_text_four_role"
         assert summary[("external_text_open", policy)]["purity_pass_rate"] == 1.0
+        assert "helper_top1_match_rate" in summary[("external_text_open", policy)]
+        assert "helper_single_candidate_rate" in summary[("external_text_open", policy)]
+        assert "avg_visible_candidate_count" in summary[("external_text_open", policy)]
     for row in result["tasks"]:
         assert row["runtime_arm"] == "external_text_open"
         assert row["statebus_contract_used"] is False
@@ -5505,6 +5510,11 @@ def test_pure_text_open_baseline_v1_runs_one_external_arm_and_writes_outputs() -
         assert row["helper_dominance"] is False
         assert len(row["role_trace"]) == 4
         assert row["visible_candidate_count"] >= 1
+        assert len(row["visible_candidates"]) == row["visible_candidate_count"]
+        assert row["helper_top1_route"]
+        assert row["helper_top1_tool_name"]
+        assert isinstance(row["helper_selected_matches_top1"], bool)
+        assert isinstance(row["helper_single_candidate"], bool)
         assert all(isinstance(message, str) for message in row["message_log"])
         assert all("StateRef" not in message for message in row["message_log"])
         assert all("EXECUTOR_DECISION_PACKET" not in message for message in row["message_log"])
@@ -5706,8 +5716,20 @@ def test_external_text_open_report_surfaces_formal_ready_purity_gate() -> None:
         report_text = (Path(tmpdir) / "open_report.md").read_text(encoding="utf-8")
     assert result["manifest"]["purity_gate"]["passed"] is True
     assert "## Purity Gate" in report_text
-    assert "Formal-ready: `yes`" in report_text
-    assert "strict external pure-text four-role baseline" in report_text.lower()
+    assert "Claim surface: `formal_candidate`" in report_text
+    assert "## Helper Shaping" in report_text
+    assert "strict external pure-text four-role baseline candidate" in report_text.lower()
+
+
+def test_external_text_open_purity_gate_uses_independent_role_trace_checks() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-pure-text-gate-") as tmpdir:
+        result = run_pure_text_open_baseline(out_dir=Path(tmpdir), repeat=1)
+    gate = result["manifest"]["purity_gate"]
+    assert "role_trace_mismatch_task_ids" in gate
+    assert "helper_dominant_task_ids" in gate
+    assert "helper_top1_match_rate" in gate
+    assert "helper_single_candidate_rate" in gate
+    assert "avg_visible_candidate_count" in gate
 
 
 def test_external_text_open_source_stays_outside_statebus_runtime_and_structured_packets() -> None:
@@ -5834,9 +5856,8 @@ def test_langgraph_native_text_open_smoke_is_independent_from_statebus_replay_co
     source_text = (REPO_ROOT / "eval" / "open_runner.py").read_text(encoding="utf-8")
     assert "from runtime.orchestrator import" not in source_text
     assert "Orchestrator" not in source_text
-    assert "StateRef" not in source_text
     assert "StatePool" not in source_text
-    assert "EXECUTOR_DECISION_PACKET" not in source_text
+    assert "from protocol.messages import" not in source_text
     for row in result["tasks"]:
         assert row["runtime_arm"] == "langgraph_native_text_open"
         assert row["statebus_contract_used"] is False

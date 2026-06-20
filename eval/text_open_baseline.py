@@ -190,6 +190,13 @@ class ExternalTextOpenRuntime:
             retriever_payload=retriever_payload,
             visible_candidates=visible_candidates,
         )
+        helper_top1 = dict(visible_candidates[0]) if visible_candidates else {}
+        helper_top1_route = str(helper_top1.get("route", "")).strip()
+        helper_top1_tool_name = str(helper_top1.get("tool_name", "")).strip()
+        helper_selected_matches_top1 = (
+            route == helper_top1_route and tool_name == helper_top1_tool_name
+        )
+        helper_single_candidate = len(visible_candidates) == 1
         role_trace.append(
             {
                 "role": "retriever",
@@ -200,6 +207,10 @@ class ExternalTextOpenRuntime:
                 "selected_tool_name": tool_name,
                 "candidate_count": len(visible_candidates),
                 "helper_source": "declared_candidate_generation",
+                "helper_top1_route": helper_top1_route,
+                "helper_top1_tool_name": helper_top1_tool_name,
+                "selected_matches_helper_top1": helper_selected_matches_top1,
+                "helper_single_candidate": helper_single_candidate,
             }
         )
 
@@ -261,6 +272,10 @@ class ExternalTextOpenRuntime:
                     "selected_tool_name": tool_name,
                     "action_contract": validation_check,
                     "helper_source": "none",
+                    "helper_top1_route": helper_top1_route,
+                    "helper_top1_tool_name": helper_top1_tool_name,
+                    "selected_matches_helper_top1": helper_selected_matches_top1,
+                    "helper_single_candidate": helper_single_candidate,
                 }
             )
             summary_text, summarizer_usage, summarizer_model = await self._summary_text(
@@ -347,6 +362,11 @@ class ExternalTextOpenRuntime:
             "lexical_fallback_used": False,
             "helper_dominance": False,
             "visible_candidate_count": len(visible_candidates),
+            "visible_candidates": [dict(item) for item in visible_candidates],
+            "helper_top1_route": helper_top1_route,
+            "helper_top1_tool_name": helper_top1_tool_name,
+            "helper_selected_matches_top1": helper_selected_matches_top1,
+            "helper_single_candidate": helper_single_candidate,
         }
 
     def _run_lexical_stub_task(

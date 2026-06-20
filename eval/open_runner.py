@@ -361,7 +361,7 @@ def _run_open_pack(
         "task_count": len(tasks),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "contract": contract,
-        "public_surface": "formal_ready" if task_pack == PURE_TEXT_OPEN_BASELINE_PACK else "audit_only",
+        "public_surface": "audit_only" if task_pack != PURE_TEXT_OPEN_BASELINE_PACK else "pending_purity_gate",
         "single_variable": False,
         "variable_axes": ["runtime_arm", "open_memory_policy"],
         "data_source": data_source
@@ -380,12 +380,13 @@ def _run_open_pack(
     if task_pack == PURE_TEXT_OPEN_BASELINE_PACK:
         manifest["surface_notes"] = [
             "strict external pure-text four-role baseline",
-            "formal-ready external comparator object",
+            "external comparator candidate pending purity hardening verdict",
             "no StateBus typed state or structured packet carrier",
-            "no lexical fallback or hidden helper decision path",
+            "no lexical fallback or hidden helper decision path claimed without gate evidence",
         ]
         manifest["baseline_object"] = STRICT_EXTERNAL_TEXT_BASELINE_OBJECT
         manifest["purity_gate"] = _build_external_purity_gate(rows)
+        manifest["public_surface"] = str(manifest["purity_gate"].get("claim_surface", "formal_candidate"))
     if task_pack == PURE_TEXT_OPEN_LIVE_API_PACK:
         manifest["surface_notes"] = [
             "audit-only external live API baseline",
@@ -695,6 +696,15 @@ def _summarize_rows(*, arm: str, policy: str, rows: list[dict[str, object]]) -> 
         "purity_pass_rate": _mean(
             1.0 if bool(dict(row.get("purity_audit", {})).get("passed", False)) else 0.0 for row in rows
         ),
+        "helper_top1_match_rate": _mean(
+            1.0 if bool(row.get("helper_selected_matches_top1", False)) else 0.0 for row in rows
+        ),
+        "helper_single_candidate_rate": _mean(
+            1.0 if bool(row.get("helper_single_candidate", False)) else 0.0 for row in rows
+        ),
+        "avg_visible_candidate_count": _mean(
+            float(row.get("visible_candidate_count", 0) or 0) for row in rows
+        ),
         **metrics,
     }
 
@@ -724,7 +734,7 @@ def _report_md(result: dict[str, object]) -> str:
         )
     )
     intro = (
-        "This is a formal-ready strict external pure-text four-role baseline. It uses only text-visible role handoffs and records purity gate evidence."
+        "This is a strict external pure-text four-role baseline candidate. It uses only text-visible role handoffs and records independent purity and helper-shaping evidence."
         if manifest["task_pack"] == PURE_TEXT_OPEN_BASELINE_PACK
         else (
             "This is an audit-only external live API pure-text slice. It keeps message logs text-only and does not reuse the StateBus structured contract."
@@ -754,12 +764,12 @@ def _report_md(result: dict[str, object]) -> str:
         "",
         "## Summary",
         "",
-        "| runtime_arm | open_memory_policy | exact_match_rate | llm_total_tokens | message_count | handoff_wire_bytes | replay_hit_rate | skipped_step_count | reuse_gain | task_ms | data_source | purity_pass_rate | artifact_reuse |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |",
+        "| runtime_arm | open_memory_policy | exact_match_rate | llm_total_tokens | message_count | handoff_wire_bytes | replay_hit_rate | skipped_step_count | reuse_gain | task_ms | data_source | purity_pass_rate | helper_top1_match_rate | helper_single_candidate_rate | avg_visible_candidate_count | artifact_reuse |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in result["summary"]:
         lines.append(
-            "| {runtime_arm} | {open_memory_policy} | {exact_match_rate:.2f} | {llm_total_tokens:.2f} | {message_count:.2f} | {handoff_wire_bytes:.2f} | {replay_hit_rate:.2f} | {skipped_step_count:.2f} | {reuse_gain:.2f} | {task_ms:.2f} | {data_source} | {purity_pass_rate:.2f} | {artifact_reuse} |".format(
+            "| {runtime_arm} | {open_memory_policy} | {exact_match_rate:.2f} | {llm_total_tokens:.2f} | {message_count:.2f} | {handoff_wire_bytes:.2f} | {replay_hit_rate:.2f} | {skipped_step_count:.2f} | {reuse_gain:.2f} | {task_ms:.2f} | {data_source} | {purity_pass_rate:.2f} | {helper_top1_match_rate:.2f} | {helper_single_candidate_rate:.2f} | {avg_visible_candidate_count:.2f} | {artifact_reuse} |".format(
                 **row
             )
         )
@@ -771,12 +781,20 @@ def _report_md(result: dict[str, object]) -> str:
                 "## Purity Gate",
                 "",
                 f"- Passed: `{'yes' if bool(purity_gate.get('passed')) else 'no'}`",
-                f"- Formal-ready: `{'yes' if bool(purity_gate.get('formal_ready')) else 'no'}`",
+                f"- Claim surface: `{str(purity_gate.get('claim_surface', 'formal_candidate'))}`",
                 f"- Withheld reasons: `{', '.join(purity_gate.get('withheld_reasons', [])) or 'none'}`",
                 f"- Contaminated task ids: `{', '.join(purity_gate.get('contaminated_task_ids', [])) or 'none'}`",
                 f"- Hidden helper task ids: `{', '.join(purity_gate.get('hidden_helper_task_ids', [])) or 'none'}`",
                 f"- Lexical fallback task ids: `{', '.join(purity_gate.get('lexical_fallback_task_ids', [])) or 'none'}`",
                 f"- Structured marker task ids: `{', '.join(purity_gate.get('structured_marker_task_ids', [])) or 'none'}`",
+                f"- Role-trace mismatch task ids: `{', '.join(purity_gate.get('role_trace_mismatch_task_ids', [])) or 'none'}`",
+                f"- Helper-dominant task ids: `{', '.join(purity_gate.get('helper_dominant_task_ids', [])) or 'none'}`",
+                "",
+                "## Helper Shaping",
+                "",
+                f"- Helper top-1 match rate: `{float(purity_gate.get('helper_top1_match_rate', 0.0)):.2f}`",
+                f"- Helper single-candidate rate: `{float(purity_gate.get('helper_single_candidate_rate', 0.0)):.2f}`",
+                f"- Average visible candidate count: `{float(purity_gate.get('avg_visible_candidate_count', 0.0)):.2f}`",
             ]
         )
     lines.extend(
@@ -787,12 +805,12 @@ def _report_md(result: dict[str, object]) -> str:
             (
                 "- Audit-only external live API baseline."
                 if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
-                else "- Formal-ready external pure-text baseline object. Keep it separate from the frozen internal headline."
+                else "- External pure-text baseline candidate object. Keep it separate from the frozen internal headline until helper shaping is acceptable."
             ),
             (
                 "- Intended to locate weakness in message overhead, tool routing, and replay semantics, not to requalify the frozen headline."
                 if manifest["task_pack"] == PURE_TEXT_OPEN_LIVE_API_PACK
-                else "- It is strict pure-text only and does not inherit StateBus typed-state semantics."
+                else "- It is strict pure-text only and does not inherit StateBus typed-state semantics, but helper shaping still affects claim strength."
             ),
             "- Do not merge this output into `contest_dual_mode_controlled_v3`, `typed_state_mechanism_v3`, or `memory_policy_controlled_v3` claims.",
         ]
@@ -1087,6 +1105,11 @@ def _external_text_row_from_state(
         "lexical_fallback_used": bool(graph_state.get("lexical_fallback_used", False)),
         "helper_dominance": bool(graph_state.get("helper_dominance", False)),
         "visible_candidate_count": int(graph_state.get("visible_candidate_count", 0) or 0),
+        "visible_candidates": [dict(item) for item in graph_state.get("visible_candidates", []) if isinstance(item, dict)],
+        "helper_top1_route": str(graph_state.get("helper_top1_route", "")),
+        "helper_top1_tool_name": str(graph_state.get("helper_top1_tool_name", "")),
+        "helper_selected_matches_top1": bool(graph_state.get("helper_selected_matches_top1", False)),
+        "helper_single_candidate": bool(graph_state.get("helper_single_candidate", False)),
         "native_replay": {
             "hit": replay_hit,
             "source": "native_text_store" if replay_hit else "",
@@ -1110,19 +1133,52 @@ def _build_external_purity_gate(rows: list[dict[str, object]]) -> dict[str, obje
     lexical_fallback_task_ids: list[str] = []
     structured_marker_task_ids: list[str] = []
     wrong_role_count_task_ids: list[str] = []
+    role_trace_mismatch_task_ids: list[str] = []
+    helper_dominant_task_ids: list[str] = []
+    helper_top1_match_count = 0
+    helper_single_candidate_count = 0
+    total_rows = 0
+    visible_candidate_total = 0.0
     for row in rows:
         task_id = str(row.get("task_id", "")).strip()
         purity = dict(row.get("purity_audit", {}) or {})
+        role_trace = [dict(item) for item in row.get("role_trace", []) if isinstance(item, dict)]
+        message_log = [str(item) for item in row.get("message_log", [])]
+        total_rows += 1
+        visible_candidate_total += float(row.get("visible_candidate_count", 0) or 0)
         if not bool(purity.get("passed", False)):
             contaminated_task_ids.append(task_id)
-        if not bool(purity.get("no_hidden_helper_advantage", False)):
+        if not bool(purity.get("no_hidden_helper_advantage", False)) or bool(row.get("helper_dominance", False)):
             hidden_helper_task_ids.append(task_id)
         if not bool(purity.get("no_lexical_fallback", False)) or bool(row.get("lexical_fallback_used", False)):
             lexical_fallback_task_ids.append(task_id)
-        if bool(purity.get("structured_packet_markers_present", False)):
+        if bool(purity.get("structured_packet_markers_present", False)) or any(
+            any(marker in message for marker in ("StateRef", "EXECUTOR_DECISION_PACKET", "<sb-", "</sb-"))
+            for message in message_log
+        ):
             structured_marker_task_ids.append(task_id)
-        if int(purity.get("role_count", 0) or 0) != 4:
+        observed_roles = [str(item.get("role", "")).strip() for item in role_trace]
+        if int(purity.get("role_count", 0) or 0) != 4 or observed_roles != ["planner", "retriever", "executor", "summarizer"]:
             wrong_role_count_task_ids.append(task_id)
+        role_sources = {str(item.get("role", "")).strip(): str(item.get("decision_source", "")).strip() for item in role_trace}
+        row_source = str(row.get("decision_source", "")).strip()
+        row_trace_consistent = (
+            role_sources.get("planner") == "role_llm"
+            and role_sources.get("retriever") == "role_llm"
+            and role_sources.get("executor") in {"role_llm", "native_replay_store"}
+            and role_sources.get("summarizer") in {"role_llm", "native_replay_store"}
+            and row_source in {"external_text_four_role_llm", "external_text_four_role_replay"}
+        )
+        if not row_trace_consistent:
+            role_trace_mismatch_task_ids.append(task_id)
+        helper_single_candidate = bool(row.get("helper_single_candidate", False))
+        helper_top1_match = bool(row.get("helper_selected_matches_top1", False))
+        if helper_single_candidate:
+            helper_single_candidate_count += 1
+        if helper_top1_match:
+            helper_top1_match_count += 1
+        if helper_single_candidate or (helper_top1_match and int(row.get("visible_candidate_count", 0) or 0) <= 2):
+            helper_dominant_task_ids.append(task_id)
     withheld_reasons: list[str] = []
     if contaminated_task_ids:
         withheld_reasons.append("contamination_detected")
@@ -1134,16 +1190,40 @@ def _build_external_purity_gate(rows: list[dict[str, object]]) -> dict[str, obje
         withheld_reasons.append("structured_marker_detected")
     if wrong_role_count_task_ids:
         withheld_reasons.append("four_role_contract_missing")
-    passed = not withheld_reasons
+    if role_trace_mismatch_task_ids:
+        withheld_reasons.append("role_trace_contract_mismatch")
+    helper_top1_match_rate = helper_top1_match_count / total_rows if total_rows else 0.0
+    helper_single_candidate_rate = helper_single_candidate_count / total_rows if total_rows else 0.0
+    avg_visible_candidate_count = visible_candidate_total / total_rows if total_rows else 0.0
+    helper_shaping_high = bool(helper_dominant_task_ids) or helper_single_candidate_rate >= 0.34 or (
+        helper_top1_match_rate >= 0.95
+    )
+    if helper_shaping_high:
+        withheld_reasons.append("helper_shaping_too_strong")
+    passed = not (
+        contaminated_task_ids
+        or hidden_helper_task_ids
+        or lexical_fallback_task_ids
+        or structured_marker_task_ids
+        or wrong_role_count_task_ids
+        or role_trace_mismatch_task_ids
+    )
+    claim_surface = "formal_candidate" if helper_shaping_high or not passed else "formal_ready"
     return {
         "passed": passed,
-        "formal_ready": passed,
+        "formal_ready": claim_surface == "formal_ready",
+        "claim_surface": claim_surface,
         "withheld_reasons": withheld_reasons,
         "contaminated_task_ids": contaminated_task_ids,
         "hidden_helper_task_ids": hidden_helper_task_ids,
         "lexical_fallback_task_ids": lexical_fallback_task_ids,
         "structured_marker_task_ids": structured_marker_task_ids,
         "wrong_role_count_task_ids": wrong_role_count_task_ids,
+        "role_trace_mismatch_task_ids": role_trace_mismatch_task_ids,
+        "helper_dominant_task_ids": helper_dominant_task_ids,
+        "helper_top1_match_rate": helper_top1_match_rate,
+        "helper_single_candidate_rate": helper_single_candidate_rate,
+        "avg_visible_candidate_count": avg_visible_candidate_count,
     }
 
 
