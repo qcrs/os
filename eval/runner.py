@@ -1412,12 +1412,190 @@ def _sorted_kind_tuple(values: list[str]) -> tuple[str, ...]:
     return tuple(sorted(str(value).strip() for value in values if str(value).strip()))
 
 
+ACTUAL_PARITY_FIELDS = (
+    "actual_llm_model",
+    "actual_tool_catalog",
+    "actual_tool_candidates",
+    "actual_corpus_scope",
+)
+
+
+def _normalize_actual_parity_value(field_name: str, value: object) -> object:
+    if field_name == "actual_llm_model":
+        return str(value or "").strip()
+    if isinstance(value, (list, tuple)):
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        return tuple(sorted(dict.fromkeys(normalized)))
+    return tuple()
+
+
+def _empty_cross_lane_actual_parity() -> dict[str, object]:
+    return {
+        "applicable": False,
+        "paired_modes_present": False,
+        "passed": False,
+        "task_count": 0,
+        "shared_task_count": 0,
+        "missing_in_text": [],
+        "missing_in_protocol": [],
+        "mismatch_task_ids": [],
+        "mismatch_counts": {
+            "model": 0,
+            "tool_catalog": 0,
+            "tool_candidates": 0,
+            "corpus_scope": 0,
+        },
+        "tasks": {},
+        "role_mismatch_counts": {},
+    }
+
+
+def _compare_actual_parity_payloads(
+    *,
+    text_payload: dict[str, object],
+    protocol_payload: dict[str, object],
+) -> dict[str, object]:
+    shared_roles = sorted(set(text_payload).intersection(protocol_payload))
+    missing_in_text = sorted(set(protocol_payload).difference(text_payload))
+    missing_in_protocol = sorted(set(text_payload).difference(protocol_payload))
+    role_results: dict[str, object] = {}
+    mismatch_counts = {
+        "model": 0,
+        "tool_catalog": 0,
+        "tool_candidates": 0,
+        "corpus_scope": 0,
+    }
+    role_mismatch_counts: dict[str, int] = {}
+    verdict_passed = not missing_in_text and not missing_in_protocol
+    for role in shared_roles:
+        text_role = dict(text_payload.get(role, {}) or {})
+        protocol_role = dict(protocol_payload.get(role, {}) or {})
+        mismatches: list[dict[str, object]] = []
+        for field_name, mismatch_kind in (
+            ("actual_llm_model", "model"),
+            ("actual_tool_catalog", "tool_catalog"),
+            ("actual_tool_candidates", "tool_candidates"),
+            ("actual_corpus_scope", "corpus_scope"),
+        ):
+            text_value = _normalize_actual_parity_value(field_name, text_role.get(field_name))
+            protocol_value = _normalize_actual_parity_value(field_name, protocol_role.get(field_name))
+            if text_value == protocol_value:
+                continue
+            mismatches.append(
+                {
+                    "kind": mismatch_kind,
+                    "field": field_name,
+                    "text_value": list(text_value)
+                    if isinstance(text_value, tuple)
+                    else text_value,
+                    "protocol_value": list(protocol_value)
+                    if isinstance(protocol_value, tuple)
+                    else protocol_value,
+                }
+            )
+            mismatch_counts[mismatch_kind] += 1
+        role_passed = not mismatches
+        if not role_passed:
+            verdict_passed = False
+            role_mismatch_counts[role] = len(mismatches)
+        role_results[role] = {
+            "passed": role_passed,
+            "mismatches": mismatches,
+            "text_decision_source": str(text_role.get("decision_source", "")).strip(),
+            "protocol_decision_source": str(protocol_role.get("decision_source", "")).strip(),
+        }
+    return {
+        "passed": verdict_passed,
+        "shared_role_count": len(shared_roles),
+        "shared_roles": shared_roles,
+        "missing_in_text": missing_in_text,
+        "missing_in_protocol": missing_in_protocol,
+        "role_results": role_results,
+        "mismatch_counts": mismatch_counts,
+        "role_mismatch_counts": role_mismatch_counts,
+    }
+
+
+def _cross_lane_actual_parity_verdict(
+    *,
+    pack_type: str,
+    task_rows_by_mode: dict[str, list[dict[str, object]]],
+) -> dict[str, object]:
+    verdict = _empty_cross_lane_actual_parity()
+    verdict["applicable"] = pack_type in {
+        "contest_dual_mode_controlled_v3",
+        "contest_honest_headline_v1",
+        "memory_dual_mode_fairness_v3",
+    }
+    def _pair_key(row: dict[str, object]) -> str:
+        case_id = str(row.get("case_id", "")).strip()
+        if case_id:
+            return case_id
+        return str(row.get("task_id", "")).strip()
+
+    text_rows = {
+        _pair_key(row): row
+        for row in task_rows_by_mode.get("text", [])
+        if _pair_key(row) and str(row.get("status", "")).strip() == "completed"
+    }
+    protocol_rows = {
+        _pair_key(row): row
+        for row in task_rows_by_mode.get("protocol", [])
+        if _pair_key(row) and str(row.get("status", "")).strip() == "completed"
+    }
+    verdict["paired_modes_present"] = bool(text_rows) and bool(protocol_rows)
+    verdict["task_count"] = len(text_rows) + len(protocol_rows)
+    shared_task_ids = sorted(set(text_rows).intersection(protocol_rows))
+    verdict["shared_task_count"] = len(shared_task_ids)
+    verdict["missing_in_text"] = sorted(set(protocol_rows).difference(text_rows))
+    verdict["missing_in_protocol"] = sorted(set(text_rows).difference(protocol_rows))
+    verdict["passed"] = bool(verdict["applicable"]) and bool(verdict["paired_modes_present"])
+    if verdict["missing_in_text"] or verdict["missing_in_protocol"]:
+        verdict["passed"] = False
+    tasks: dict[str, object] = {}
+    mismatch_task_ids: list[str] = []
+    mismatch_counts = {
+        "model": 0,
+        "tool_catalog": 0,
+        "tool_candidates": 0,
+        "corpus_scope": 0,
+    }
+    role_mismatch_counts: dict[str, int] = {}
+    for task_id in shared_task_ids:
+        comparison = _compare_actual_parity_payloads(
+            text_payload=dict(text_rows[task_id].get("actual_parity", {}) or {}),
+            protocol_payload=dict(protocol_rows[task_id].get("actual_parity", {}) or {}),
+        )
+        comparison["text_task_id"] = str(text_rows[task_id].get("task_id", "")).strip()
+        comparison["protocol_task_id"] = str(protocol_rows[task_id].get("task_id", "")).strip()
+        comparison["pair_key"] = task_id
+        tasks[task_id] = comparison
+        if not bool(comparison.get("passed")):
+            mismatch_task_ids.append(task_id)
+            verdict["passed"] = False
+        for kind, count in dict(comparison.get("mismatch_counts", {}) or {}).items():
+            mismatch_counts[kind] = mismatch_counts.get(kind, 0) + int(count)
+        for role, count in dict(comparison.get("role_mismatch_counts", {}) or {}).items():
+            role_mismatch_counts[role] = role_mismatch_counts.get(role, 0) + int(count)
+    verdict["tasks"] = tasks
+    verdict["mismatch_task_ids"] = mismatch_task_ids
+    verdict["mismatch_counts"] = mismatch_counts
+    verdict["role_mismatch_counts"] = role_mismatch_counts
+    if not verdict["applicable"]:
+        verdict["passed"] = False
+    return verdict
+
+
 def _object_parity_gate(
     *,
     pack_type: str,
     task_rows_by_mode: dict[str, list[dict[str, object]]],
     text_guard_audit: dict[str, object],
+    cross_lane_actual_parity: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    cross_lane_actual_parity_provided = cross_lane_actual_parity is not None
+    if cross_lane_actual_parity is None:
+        cross_lane_actual_parity = _empty_cross_lane_actual_parity()
     gate = {
         "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"},
         "executor_mainline_object_ok": True,
@@ -1426,6 +1604,10 @@ def _object_parity_gate(
         "text_template_slot_leak_zero": float(text_guard_audit.get("template_slot_leak_rate", 0.0)) == 0.0,
         "text_typed_visibility_zero": float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) == 0.0,
         "text_memory_restore_compat_ok": True,
+        "cross_lane_actual_parity_ok": (
+            True if not cross_lane_actual_parity_provided else bool(cross_lane_actual_parity.get("passed"))
+        ),
+        "cross_lane_actual_parity": cross_lane_actual_parity,
         "failing_task_ids": [],
         "passed": True,
     }
@@ -1485,6 +1667,7 @@ def _object_parity_gate(
             "text_template_slot_leak_zero",
             "text_typed_visibility_zero",
             "text_memory_restore_compat_ok",
+            "cross_lane_actual_parity_ok",
         )
     )
     return gate
@@ -1614,10 +1797,13 @@ def _build_headline_gates(
     withheld_reasons: list[str],
     formal_stability_gate: dict[str, object],
     object_parity_gate: dict[str, object],
+    cross_lane_actual_parity: dict[str, object] | None = None,
     memory_replay_evidence_gate: dict[str, object],
     contest_formal_coverage_gate: dict[str, object],
     headline_memory_replay_effect_gate: dict[str, object] | None = None,
 ) -> dict[str, dict[str, object]]:
+    if cross_lane_actual_parity is None:
+        cross_lane_actual_parity = _empty_cross_lane_actual_parity()
     if headline_memory_replay_effect_gate is None:
         headline_memory_replay_effect_gate = {
             "applicable": False,
@@ -1642,6 +1828,7 @@ def _build_headline_gates(
             "dual_mode_object_parity_failed",
             "executor_mainline_object_failed",
             "summarizer_mainline_object_failed",
+            "cross_lane_actual_parity_failed",
             "text_hidden_field_leak_detected",
             "text_typed_visibility_detected",
             "text_memory_restore_compat_failed",
@@ -1673,6 +1860,7 @@ def _build_headline_gates(
             "withheld_reasons": communication_reasons,
             "formal_stability_gate": formal_stability_gate,
             "object_parity_gate": object_parity_gate,
+            "cross_lane_actual_parity": cross_lane_actual_parity,
             "contest_formal_coverage_gate": contest_formal_coverage_gate,
         },
         "state_authenticity_gate": {
@@ -1697,6 +1885,7 @@ def _build_headline_gates(
             "allowed": object_parity_allowed,
             "withheld_reasons": object_parity_reasons,
             "object_parity_gate": object_parity_gate,
+            "cross_lane_actual_parity": cross_lane_actual_parity,
             "formal_stability_gate": formal_stability_gate,
         },
         "formal_stability_gate": {
@@ -3797,10 +3986,15 @@ def _build_result(
         else {}
     )
     withheld_reasons: list[str] = []
+    cross_lane_actual_parity = _cross_lane_actual_parity_verdict(
+        pack_type=pack_type,
+        task_rows_by_mode=task_rows_by_mode,
+    )
     object_parity_gate = _object_parity_gate(
         pack_type=str(task_set_metadata.get("pack_type", "ad_hoc")),
         task_rows_by_mode=task_rows_by_mode,
         text_guard_audit=text_guard_audit,
+        cross_lane_actual_parity=cross_lane_actual_parity,
     )
     memory_replay_evidence_gate = _memory_replay_evidence_gate(
         pack_type=str(task_set_metadata.get("pack_type", "ad_hoc")),
@@ -3856,6 +4050,8 @@ def _build_result(
                 withheld_reasons.append("contest_repeat_insufficient")
     if pack_type == "memory_dual_mode_fairness_v3" and not bool(object_parity_gate.get("passed")):
         withheld_reasons.append("dual_mode_object_parity_failed")
+    if bool(cross_lane_actual_parity.get("applicable")) and not bool(cross_lane_actual_parity.get("passed")):
+        withheld_reasons.append("cross_lane_actual_parity_failed")
     if memory_replay_evidence_gate["applicable"] and not bool(memory_replay_evidence_gate.get("passed")):
         withheld_reasons.append("memory_replay_expectation_failed")
     if object_parity_gate["applicable"] and not bool(object_parity_gate.get("passed")):
@@ -3984,6 +4180,7 @@ def _build_result(
         withheld_reasons=withheld_reasons,
         formal_stability_gate=formal_stability_gate,
         object_parity_gate=object_parity_gate,
+        cross_lane_actual_parity=cross_lane_actual_parity,
         memory_replay_evidence_gate=memory_replay_evidence_gate,
         headline_memory_replay_effect_gate=headline_memory_replay_effect_gate,
         contest_formal_coverage_gate=contest_coverage_gate,
@@ -4016,6 +4213,7 @@ def _build_result(
             "headline_gates": headline_gates,
             "formal_stability_gate": formal_stability_gate,
             "object_parity_gate": object_parity_gate,
+            "cross_lane_actual_parity": cross_lane_actual_parity,
             "memory_replay_evidence_gate": memory_replay_evidence_gate,
             "headline_memory_replay_effect_gate": headline_memory_replay_effect_gate,
             "contest_formal_coverage_gate": contest_coverage_gate,
@@ -4215,6 +4413,136 @@ def _actual_parity_payload(task_row: dict[str, object]) -> dict[str, object]:
             "decision_source": str(metadata.get("decision_source", "")).strip(),
         }
     return projection
+
+
+def _cross_lane_actual_parity_rows(result: dict[str, object]) -> list[dict[str, object]]:
+    verdict = dict(result.get("manifest", {}).get("cross_lane_actual_parity", {}) or {})
+    task_entries = dict(verdict.get("tasks", {}) or {})
+    rows: list[dict[str, object]] = []
+    for task_id in sorted(task_entries):
+        task_entry = dict(task_entries.get(task_id, {}) or {})
+        for role, role_entry_obj in dict(task_entry.get("role_results", {}) or {}).items():
+            role_entry = dict(role_entry_obj or {})
+            mismatches = list(role_entry.get("mismatches", []) or [])
+            if mismatches:
+                for mismatch_obj in mismatches:
+                    mismatch = dict(mismatch_obj or {})
+                    rows.append(
+                        {
+                            "row_kind": "actual_parity",
+                            "row_id": f"{task_id}:{role}:{str(mismatch.get('kind', '')).strip()}",
+                            "text_message_count": "",
+                            "protocol_message_count": "",
+                            "message_delta": "",
+                            "text_setup_control_bytes": "",
+                            "protocol_setup_control_bytes": "",
+                            "setup_control_bytes_delta": "",
+                            "text_steady_state_control_bytes": "",
+                            "protocol_steady_state_control_bytes": "",
+                            "steady_state_control_bytes_delta": "",
+                            "text_control_bytes": "",
+                            "protocol_control_bytes": "",
+                            "control_bytes_delta": "",
+                            "text_state_bytes": "",
+                            "protocol_state_bytes": "",
+                            "state_bytes_delta": "",
+                            "text_handoff_ref_count": "",
+                            "protocol_handoff_ref_count": "",
+                            "handoff_ref_count_delta": "",
+                            "text_handoff_bytes": "",
+                            "protocol_handoff_bytes": "",
+                            "handoff_bytes_delta": "",
+                            "text_handoff_payload_bytes": "",
+                            "protocol_handoff_payload_bytes": "",
+                            "handoff_payload_bytes_delta": "",
+                            "text_handoff_wire_bytes": "",
+                            "protocol_handoff_wire_bytes": "",
+                            "handoff_wire_bytes_delta": "",
+                            "text_handoff_textual_ref_count": "",
+                            "protocol_handoff_textual_ref_count": "",
+                            "handoff_textual_ref_count_delta": "",
+                            "text_handoff_textual_bytes": "",
+                            "protocol_handoff_textual_bytes": "",
+                            "handoff_textual_bytes_delta": "",
+                            "text_handoff_nontext_ref_count": "",
+                            "protocol_handoff_nontext_ref_count": "",
+                            "handoff_nontext_ref_count_delta": "",
+                            "text_handoff_nontext_bytes": "",
+                            "protocol_handoff_nontext_bytes": "",
+                            "handoff_nontext_bytes_delta": "",
+                            "text_mmap_state_bytes": "",
+                            "protocol_mmap_state_bytes": "",
+                            "mmap_state_bytes_delta": "",
+                            "text_shared_memory_state_bytes": "",
+                            "protocol_shared_memory_state_bytes": "",
+                            "shared_memory_state_bytes_delta": "",
+                            "text_llm_total_tokens": "",
+                            "protocol_llm_total_tokens": "",
+                            "llm_total_tokens_delta": "",
+                            "text_planner_total_tokens": "",
+                            "protocol_planner_total_tokens": "",
+                            "planner_total_tokens_delta": "",
+                            "text_summarizer_total_tokens": "",
+                            "protocol_summarizer_total_tokens": "",
+                            "summarizer_total_tokens_delta": "",
+                            "text_memory_query_count": "",
+                            "protocol_memory_query_count": "",
+                            "memory_query_count_delta": "",
+                            "text_memory_hit_rate": "",
+                            "protocol_memory_hit_rate": "",
+                            "memory_hit_rate_delta": "",
+                            "text_planned_step_count": "",
+                            "protocol_planned_step_count": "",
+                            "planned_step_count_delta": "",
+                            "text_skipped_step_count": "",
+                            "protocol_skipped_step_count": "",
+                            "skipped_step_count_delta": "",
+                            "text_reuse_gain": "",
+                            "protocol_reuse_gain": "",
+                            "reuse_gain_delta": "",
+                            "text_reuse_apply_rate": "",
+                            "protocol_reuse_apply_rate": "",
+                            "reuse_apply_rate_delta": "",
+                            "text_expectation_match_rate": "",
+                            "protocol_expectation_match_rate": "",
+                            "expectation_match_rate_delta": "",
+                            "text_control_bytes_reduction_vs_cold": "",
+                            "protocol_control_bytes_reduction_vs_cold": "",
+                            "control_bytes_reduction_vs_cold_delta": "",
+                            "text_llm_total_tokens_reduction_vs_cold": "",
+                            "protocol_llm_total_tokens_reduction_vs_cold": "",
+                            "llm_total_tokens_reduction_vs_cold_delta": "",
+                            "text_task_ms_reduction_vs_cold": "",
+                            "protocol_task_ms_reduction_vs_cold": "",
+                            "task_ms_reduction_vs_cold_delta": "",
+                            "text_planner_ms": "",
+                            "protocol_planner_ms": "",
+                            "planner_ms_delta": "",
+                            "text_retrieve_ms": "",
+                            "protocol_retrieve_ms": "",
+                            "retrieve_ms_delta": "",
+                            "text_execute_ms": "",
+                            "protocol_execute_ms": "",
+                            "execute_ms_delta": "",
+                            "text_summarize_ms": "",
+                            "protocol_summarize_ms": "",
+                            "summarize_ms_delta": "",
+                            "text_phase_overhead_ms": "",
+                            "protocol_phase_overhead_ms": "",
+                            "phase_overhead_ms_delta": "",
+                            "text_task_ms": "",
+                            "protocol_task_ms": "",
+                            "task_ms_delta": "",
+                        }
+                    )
+            else:
+                rows.append(
+                    {
+                        "row_kind": "actual_parity",
+                        "row_id": f"{task_id}:{role}:pass",
+                    }
+                )
+    return rows
 
 
 def _write_message_breakdown_csv(path: Path, result: dict[str, object]) -> None:
@@ -4458,6 +4786,53 @@ def _write_compare_csv(path: Path, result: dict[str, object]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _append_cross_lane_actual_parity_section(
+    lines: list[str],
+    *,
+    verdict: dict[str, object],
+) -> None:
+    if not bool(verdict.get("applicable")):
+        return
+    lines.extend(
+        [
+            "",
+            "## Cross-Lane Actual Parity",
+            "",
+            f"- Cross-lane actual parity: `{'pass' if bool(verdict.get('passed')) else 'fail'}`",
+            f"- Shared task count: `{int(verdict.get('shared_task_count', 0))}`",
+            f"- Missing in text: `{json.dumps(list(verdict.get('missing_in_text', [])), ensure_ascii=False)}`",
+            f"- Missing in protocol: `{json.dumps(list(verdict.get('missing_in_protocol', [])), ensure_ascii=False)}`",
+            f"- Mismatch task ids: `{json.dumps(list(verdict.get('mismatch_task_ids', [])), ensure_ascii=False)}`",
+            f"- Mismatch counts: `{json.dumps(dict(verdict.get('mismatch_counts', {})), ensure_ascii=False, sort_keys=True)}`",
+            f"- Role mismatch counts: `{json.dumps(dict(verdict.get('role_mismatch_counts', {})), ensure_ascii=False, sort_keys=True)}`",
+        ]
+    )
+    task_entries = dict(verdict.get("tasks", {}) or {})
+    mismatch_task_ids = list(verdict.get("mismatch_task_ids", []) or [])
+    if not mismatch_task_ids:
+        return
+    lines.extend(
+        [
+            "",
+            "| task_id | role | parity | mismatch_kinds |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    for task_id in mismatch_task_ids:
+        task_entry = dict(task_entries.get(task_id, {}) or {})
+        for role, role_entry_obj in dict(task_entry.get("role_results", {}) or {}).items():
+            role_entry = dict(role_entry_obj or {})
+            mismatches = list(role_entry.get("mismatches", []) or [])
+            if not mismatches:
+                continue
+            mismatch_kinds = ",".join(
+                str(dict(item or {}).get("kind", "")).strip() for item in mismatches
+            )
+            lines.append(
+                f"| {task_id} | {role} | {'pass' if bool(role_entry.get('passed')) else 'fail'} | {mismatch_kinds} |"
+            )
 
 
 def _compare_row(
@@ -5266,6 +5641,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
     text_summary = result["summary"].get("text", {})
     text_case_audit = text_summary.get("misfire_audit", {}).get("case_contract", {})
     text_guard_audit = text_summary.get("guard_audit", {})
+    cross_lane_actual_parity = dict(manifest.get("cross_lane_actual_parity", {}) or {})
     if pack_type == "contest_dual_mode_controlled_v3":
         _append_pack_contract_section(
             lines,
@@ -5311,6 +5687,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                     f"{float(check.get('assist_memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
                     f"{int(check.get('run_failure_count', 0))} | {int(check.get('expected_negative_task_failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
                 )
+        _append_cross_lane_actual_parity_section(lines, verdict=cross_lane_actual_parity)
         _append_headline_claim_sections(lines, result=result, summary=result["summary"])
         _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
         _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
@@ -5404,6 +5781,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                     f"{float(check.get('assist_memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
                     f"{int(check.get('run_failure_count', 0))} | {int(check.get('expected_negative_task_failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
                 )
+        _append_cross_lane_actual_parity_section(lines, verdict=cross_lane_actual_parity)
         _append_headline_claim_sections(lines, result=result, summary=result["summary"])
         _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
         _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
@@ -5449,6 +5827,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             lines.append(
                 f"- Formal memory fairness headline withheld: `{','.join(fairness_gate.get('withheld_reasons', [])) or str(manifest.get('withheld_headline_reason', '')).strip() or 'guard_not_met'}`"
             )
+        _append_cross_lane_actual_parity_section(lines, verdict=cross_lane_actual_parity)
         for mode_name in ("text", "protocol"):
             mode_summary = result["summary"].get(mode_name, {})
             memory_policies = _named_summary_lookup(

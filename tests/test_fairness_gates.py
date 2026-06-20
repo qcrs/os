@@ -3,6 +3,7 @@ from __future__ import annotations
 from protocol.messages import Plan, PlanStep
 from eval.fairness_gates import evaluate_execution_fairness_gate, evaluate_plan_fairness_gate
 from eval.metrics import TaskMetrics
+from eval.runner import _build_headline_gates
 
 
 def test_role_usage_metrics_accumulate_by_role() -> None:
@@ -253,3 +254,29 @@ def test_execution_fairness_gate_requires_actual_parity_evidence_and_non_dominan
 
     assert gate.passed is False
     assert gate.helper_dominance_roles == ("retriever",)
+
+
+def test_headline_gates_surface_cross_lane_actual_parity_failure() -> None:
+    gates = _build_headline_gates(
+        pack_type="memory_dual_mode_fairness_v3",
+        withheld_reasons=["cross_lane_actual_parity_failed", "dual_mode_object_parity_failed"],
+        formal_stability_gate={"passed": True},
+        object_parity_gate={"passed": False, "cross_lane_actual_parity_ok": False},
+        cross_lane_actual_parity={
+            "passed": False,
+            "applicable": True,
+            "mismatch_counts": {
+                "model": 1,
+                "tool_catalog": 1,
+                "tool_candidates": 0,
+                "corpus_scope": 0,
+            },
+        },
+        memory_replay_evidence_gate={"applicable": False, "passed": False},
+        contest_formal_coverage_gate={"passed": False},
+    )
+
+    assert gates["object_parity_gate"]["applicable"] is True
+    assert gates["object_parity_gate"]["allowed"] is False
+    assert "cross_lane_actual_parity_failed" in gates["object_parity_gate"]["withheld_reasons"]
+    assert gates["object_parity_gate"]["cross_lane_actual_parity"]["passed"] is False

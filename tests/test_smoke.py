@@ -30,6 +30,7 @@ from agents.sample_agents import (
 from eval.runner import (
     DEFAULT_BENCHMARK_TASK_SET,
     _build_case_contract_audit,
+    _cross_lane_actual_parity_verdict,
     _contest_formal_coverage_gate,
     _mode_order_for_run,
     _summarize_case_contract_rows,
@@ -269,6 +270,9 @@ def test_benchmark_runner_writes_outputs() -> None:
         assert executor_slice["metadata"]["actual_tool_catalog"]
         assert executor_slice["metadata"]["actual_corpus_scope"]
         assert task_run["actual_parity"]["executor"]["actual_llm_model"]
+        assert payload["manifest"]["cross_lane_actual_parity"]["applicable"] is True
+        assert payload["manifest"]["cross_lane_actual_parity"]["shared_task_count"] > 0
+        assert "mismatch_counts" in payload["manifest"]["cross_lane_actual_parity"]
         assert task_run["graph_state"]["fairness_gate"]["passed"] is True
         assert "logical_replay_reuse" in task_run["reuse"]
         assert "physical_blob_reuse" in task_run["reuse"]
@@ -3735,10 +3739,75 @@ def test_object_parity_gate_fails_when_text_restore_visibility_is_incompatible()
             "hidden_field_leak_rate": 0.0,
             "summarizer_typed_visibility_rate": 0.0,
         },
+        cross_lane_actual_parity={
+            "passed": True,
+            "applicable": True,
+        },
     )
     assert gate["text_memory_restore_compat_ok"] is False
     assert gate["passed"] is False
     assert "bad-text-restore-001" in gate["failing_task_ids"]
+
+
+def test_cross_lane_actual_parity_verdict_detects_role_and_field_mismatches() -> None:
+    verdict = _cross_lane_actual_parity_verdict(
+        pack_type="contest_honest_headline_v1",
+        task_rows_by_mode={
+            "text": [
+                {
+                    "task_id": "shared-001",
+                    "status": "completed",
+                    "actual_parity": {
+                        "retriever": {
+                            "actual_llm_model": "model-a",
+                            "actual_tool_catalog": ["tool.search"],
+                            "actual_tool_candidates": ["tool.search"],
+                            "actual_corpus_scope": ["doc-1"],
+                            "decision_source": "role_llm",
+                        },
+                        "executor": {
+                            "actual_llm_model": "model-a",
+                            "actual_tool_catalog": ["tool.exec"],
+                            "actual_tool_candidates": ["tool.exec"],
+                            "actual_corpus_scope": ["doc-2"],
+                            "decision_source": "role_llm",
+                        },
+                    },
+                }
+            ],
+            "protocol": [
+                {
+                    "task_id": "shared-001",
+                    "status": "completed",
+                    "actual_parity": {
+                        "retriever": {
+                            "actual_llm_model": "model-b",
+                            "actual_tool_catalog": ["tool.search", "tool.rank"],
+                            "actual_tool_candidates": ["tool.search"],
+                            "actual_corpus_scope": ["doc-1"],
+                            "decision_source": "role_llm",
+                        },
+                        "executor": {
+                            "actual_llm_model": "model-a",
+                            "actual_tool_catalog": ["tool.exec"],
+                            "actual_tool_candidates": ["tool.exec", "tool.safe"],
+                            "actual_corpus_scope": ["doc-3"],
+                            "decision_source": "role_llm",
+                        },
+                    },
+                }
+            ],
+        },
+    )
+    assert verdict["passed"] is False
+    assert verdict["mismatch_task_ids"] == ["shared-001"]
+    assert verdict["mismatch_counts"]["model"] == 1
+    assert verdict["mismatch_counts"]["tool_catalog"] == 1
+    assert verdict["mismatch_counts"]["tool_candidates"] == 1
+    assert verdict["mismatch_counts"]["corpus_scope"] == 1
+    assert verdict["role_mismatch_counts"]["retriever"] == 2
+    assert verdict["role_mismatch_counts"]["executor"] == 2
+    assert verdict["tasks"]["shared-001"]["role_results"]["retriever"]["passed"] is False
 
 
 def test_memory_replay_evidence_gate_fails_on_expected_replay_mismatch() -> None:
