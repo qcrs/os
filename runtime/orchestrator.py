@@ -834,6 +834,7 @@ class RunContext:
         included_fields: tuple[str, ...] = (),
         omitted_fields: tuple[str, ...] = (),
         helper_visibility: str = "",
+        semantic_trace: dict[str, Any] | None = None,
     ) -> None:
         self.role_trace.append(
             {
@@ -848,6 +849,7 @@ class RunContext:
                 "included_fields": list(included_fields),
                 "omitted_fields": list(omitted_fields),
                 "helper_visibility": helper_visibility,
+                "semantic_trace": dict(semantic_trace or {}),
             }
         )
 
@@ -1651,6 +1653,7 @@ class Orchestrator:
             step=step,
             ctx=ctx,
             input_refs=input_refs,
+            result=result,
         )
         ctx.set_role_context_slice(
             slice_view
@@ -1667,6 +1670,7 @@ class Orchestrator:
             included_fields=slice_view.included_fields,
             omitted_fields=slice_view.omitted_fields,
             helper_visibility=slice_view.helper_visibility,
+            semantic_trace=dict(result.semantic_trace),
         )
 
     @staticmethod
@@ -1687,6 +1691,7 @@ class Orchestrator:
         step: PlanStep,
         ctx: RunContext,
         input_refs: list[StateRef],
+        result: StepResult | None = None,
     ) -> LLMContextSlice:
         contract = ctx.role_contracts[role]
         visibility = contract.visibility_contract
@@ -1724,6 +1729,7 @@ class Orchestrator:
         )
         typed_refs = tuple(input_refs) if contract.consumes_typed_state and carrier not in {"text", "text_whole_lane", "text_brief", "text_packet_minimal", "text_strict_pure_lane", "natural_handoff_text", "inline_text_handoff"} else ()
         visible_text = "\n".join(part for part in visible_text_parts if part)
+        result_for_role = result if result is not None else ctx.result_for_role(role)
         return build_context_slice(
             role=role,
             task_id=ctx.task_id,
@@ -1752,6 +1758,13 @@ class Orchestrator:
                 "step_id": step.step_id,
                 "owner_agent": step.owner_agent,
                 "action": step.action,
+                "actual_llm_model": str(getattr(result_for_role, "payload", {}).get("actual_llm_model", "")) if result_for_role is not None else "",
+                "actual_tool_catalog": list(getattr(result_for_role, "payload", {}).get("actual_tool_catalog", [])) if result_for_role is not None else [],
+                "actual_tool_candidates": list(getattr(result_for_role, "payload", {}).get("actual_tool_candidates", [])) if result_for_role is not None else [],
+                "actual_corpus_scope": list(getattr(result_for_role, "payload", {}).get("actual_corpus_scope", [])) if result_for_role is not None else [],
+                "decision_source": str(getattr(result_for_role, "payload", {}).get("decision_source", "")) if result_for_role is not None else "",
+                "semantic_selected_route": str(getattr(result_for_role, "payload", {}).get("semantic_selected_route", "")) if result_for_role is not None else "",
+                "semantic_selected_tool_name": str(getattr(result_for_role, "payload", {}).get("semantic_selected_tool_name", "")) if result_for_role is not None else "",
             },
         )
 

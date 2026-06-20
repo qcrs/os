@@ -465,6 +465,57 @@ class DeterministicLLMClient:
                 text=json.dumps(summary_payload, ensure_ascii=False, sort_keys=True),
                 model=self.config.role_config("summarizer").model,
             )
+        if purpose == "retriever":
+            payload = (
+                parse_tagged_json(user_content, "sb-retriever-v1")
+                if "<sb-retriever-v1>" in user_content
+                else parse_text_retriever_handoff(user_content)
+            )
+            tool_candidates = [
+                dict(item)
+                for item in payload.get("tool_candidates", [])
+                if isinstance(item, dict)
+            ]
+            selected = tool_candidates[0] if tool_candidates else {
+                "route": "generic_triage",
+                "tool_name": "tool.collect_more_evidence",
+            }
+            retrieved_doc_ids = [str(item) for item in payload.get("retrieved_doc_ids", []) if str(item).strip()]
+            result_payload = {
+                "route": str(selected.get("route", "generic_triage")).strip() or "generic_triage",
+                "tool_name": str(selected.get("tool_name", "tool.collect_more_evidence")).strip() or "tool.collect_more_evidence",
+                "supporting_doc_ids": retrieved_doc_ids[:3],
+                "reason": "selected highest-ranked visible candidate from bounded retriever context",
+                "candidate_rank": 1 if tool_candidates else 0,
+            }
+            return LLMResult(
+                text=json.dumps(result_payload, ensure_ascii=False, sort_keys=True),
+                model=self.config.role_config("retriever").model,
+            )
+        if purpose == "executor":
+            payload = (
+                parse_tagged_json(user_content, "sb-executor-v1")
+                if "<sb-executor-v1>" in user_content
+                else parse_text_executor_handoff(user_content)
+            )
+            validated_tool = str(payload.get("validated_tool_name", "")).strip()
+            validated_route = str(payload.get("validated_route", "")).strip()
+            tool_name = validated_tool or str(payload.get("tool_name", "tool.collect_more_evidence")).strip() or "tool.collect_more_evidence"
+            route = validated_route or str(payload.get("route", "generic_triage")).strip() or "generic_triage"
+            action_contract = (
+                str(payload.get("validated_action_contract", "")).strip()
+                or "execute_validated_tool"
+            )
+            result_payload = {
+                "route": route,
+                "tool_name": tool_name,
+                "action_contract": action_contract,
+                "reason": "executor selected visible validated tool from bounded candidate view",
+            }
+            return LLMResult(
+                text=json.dumps(result_payload, ensure_ascii=False, sort_keys=True),
+                model=self.config.role_config("executor").model,
+            )
         raise ValueError(f"unsupported deterministic llm purpose: {purpose}")
 
     def describe(self) -> dict[str, object]:
@@ -619,6 +670,35 @@ def parse_compact_protocol_summarizer_handoff(text: str) -> dict[str, Any]:
         "actions_text": str(payload.get("a", "")),
         "tags": [str(tag) for tag in payload.get("t", [])],
         "reusable_steps": [str(step_id) for step_id in payload.get("r", [])],
+    }
+
+
+def parse_text_retriever_handoff(text: str) -> dict[str, Any]:
+    visible_candidates = _extract_line_value(text, "Visible candidates:")
+    tool_candidates: list[dict[str, Any]] = []
+    for token in visible_candidates.split(";"):
+        item = str(token).strip()
+        if not item or "::" not in item:
+            continue
+        route, tool_name = item.split("::", 1)
+        route = route.strip()
+        tool_name = tool_name.strip()
+        if route and tool_name:
+            tool_candidates.append({"route": route, "tool_name": tool_name})
+    return {
+        "query": _extract_line_value(text, "Query:"),
+        "retrieved_doc_ids": _split_csv(_extract_line_value(text, "Retrieved docs:")),
+        "tool_candidates": tool_candidates,
+    }
+
+
+def parse_text_executor_handoff(text: str) -> dict[str, Any]:
+    return {
+        "route": _extract_line_value(text, "Route:"),
+        "tool_name": _extract_line_value(text, "Tool:"),
+        "validated_route": _extract_line_value(text, "Validated route:"),
+        "validated_tool_name": _extract_line_value(text, "Validated tool:"),
+        "validated_action_contract": _extract_line_value(text, "Validated action contract:"),
     }
 
 

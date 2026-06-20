@@ -2695,6 +2695,11 @@ async def _run_mode_once(
                     "step_truth": _semantic_step_truth(ctx, graph_result.results),
                     "cas_summary": ctx.statepool.cas_summary(),
                     "graph_state": graph_result.graph_state,
+                    "actual_parity": _actual_parity_payload(
+                        {
+                            "graph_state": graph_result.graph_state,
+                        }
+                    ),
                     "results": _semantic_results_payload(ctx, graph_result.results),
                 }
             else:
@@ -2926,6 +2931,13 @@ async def _run_mode_once(
                 },
                 "step_truth": _semantic_step_truth(ctx, ctx.results),
                 "cas_summary": ctx.statepool.cas_summary(),
+                "actual_parity": _actual_parity_payload(
+                    {
+                        "graph_state": {
+                            "role_context_slices": {},
+                        }
+                    }
+                ),
                 "results": {},
             }
             if progress_callback is not None:
@@ -4185,6 +4197,24 @@ def _write_results(out_dir: Path, result: dict[str, object]) -> None:
     _write_message_breakdown_csv(out_dir / "benchmark_message_breakdown.csv", result)
     (out_dir / "benchmark_message_sizes.md").write_text(_build_message_sizes_md(result), encoding="utf-8")
     (out_dir / "benchmark_report.md").write_text(_build_report(result), encoding="utf-8")
+
+
+def _actual_parity_payload(task_row: dict[str, object]) -> dict[str, object]:
+    graph_state = dict(task_row.get("graph_state", {}) or {})
+    role_slices = dict(graph_state.get("role_context_slices", {}) or {})
+    projection: dict[str, object] = {}
+    for role, slice_payload in role_slices.items():
+        if not isinstance(slice_payload, dict):
+            continue
+        metadata = dict(slice_payload.get("metadata", {}) or {})
+        projection[role] = {
+            "actual_llm_model": str(metadata.get("actual_llm_model", "")).strip(),
+            "actual_tool_catalog": list(metadata.get("actual_tool_catalog", []) or []),
+            "actual_tool_candidates": list(metadata.get("actual_tool_candidates", []) or []),
+            "actual_corpus_scope": list(metadata.get("actual_corpus_scope", []) or []),
+            "decision_source": str(metadata.get("decision_source", "")).strip(),
+        }
+    return projection
 
 
 def _write_message_breakdown_csv(path: Path, result: dict[str, object]) -> None:

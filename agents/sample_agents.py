@@ -50,6 +50,8 @@ from tasks.sample_tasks import TaskSetMetadata
 from tasks.sample_tasks import SampleTask
 
 PROTOCOL_PLANNER_TAG = "sb-plan-v1"
+PROTOCOL_RETRIEVER_TAG = "sb-retriever-v1"
+PROTOCOL_EXECUTOR_TAG = "sb-executor-v1"
 PROTOCOL_SUMMARIZER_TAG = "sb-summary-v1"
 MAX_MEMORY_ASSIST_HINT_CHARS = 160
 MAX_PROTOCOL_SUMMARY_DOC_IDS = 3
@@ -103,6 +105,110 @@ HEADLINE_S1_REFINEMENT_TOOLS_BY_ROUTE = {
 }
 S2_NO_PRIOR_TOOL_NAME = "tool.collect_more_evidence"
 S2_NO_PRIOR_ROUTE = "generic_triage"
+
+
+def _retriever_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
+    if mode == "text":
+        visible_candidates = [
+            f"{str(item.get('route', '')).strip()}::{str(item.get('tool_name', '')).strip()}"
+            for item in payload.get("tool_candidates", [])
+            if isinstance(item, dict)
+            and str(item.get("route", "")).strip()
+            and str(item.get("tool_name", "")).strip()
+        ]
+        user_prompt = (
+            "Retriever handoff for a text-only multi-agent workflow.\n\n"
+            f"Query: {payload['query']}\n"
+            f"Retrieved docs: {', '.join(payload.get('retrieved_doc_ids', []))}\n"
+            f"Visible candidates: {'; '.join(visible_candidates) if visible_candidates else 'none'}\n"
+            f"Visible evidence:\n{payload['evidence_text']}\n"
+        )
+    else:
+        user_prompt = tagged_json_block(
+            PROTOCOL_RETRIEVER_TAG,
+            {
+                "query": payload["query"],
+                "retrieved_doc_ids": list(payload.get("retrieved_doc_ids", [])),
+                "tool_candidates": list(payload.get("tool_candidates", [])),
+                "route_candidates": list(payload.get("route_candidates", [])),
+            },
+        )
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "You are the StateBus Retriever. Output JSON only. "
+                "Select one visible route/tool candidate using only the bounded evidence view. "
+                "Return route, tool_name, supporting_doc_ids, reason, candidate_rank."
+            ),
+        ),
+        ChatMessage(role="user", content=user_prompt),
+    ]
+
+
+def _executor_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
+    if mode == "text":
+        user_prompt = (
+            "Executor handoff for a text-only multi-agent workflow.\n\n"
+            f"Route: {payload.get('route', '')}\n"
+            f"Tool: {payload.get('tool_name', '')}\n"
+            f"Validated route: {payload.get('validated_route', '')}\n"
+            f"Validated tool: {payload.get('validated_tool_name', '')}\n"
+            f"Validated action contract: {payload.get('validated_action_contract', '')}\n"
+        )
+    else:
+        user_prompt = tagged_json_block(
+            PROTOCOL_EXECUTOR_TAG,
+            {
+                "route": payload.get("route", ""),
+                "tool_name": payload.get("tool_name", ""),
+                "validated_route": payload.get("validated_route", ""),
+                "validated_tool_name": payload.get("validated_tool_name", ""),
+                "validated_action_contract": payload.get("validated_action_contract", ""),
+                "tool_candidates": list(payload.get("tool_candidates", [])),
+            },
+        )
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "You are the StateBus Executor. Output JSON only. "
+                "Choose the route/tool/action contract that should drive execution from the visible bounded handoff. "
+                "Return route, tool_name, action_contract, reason."
+            ),
+        ),
+        ChatMessage(role="user", content=user_prompt),
+    ]
+
+
+def _retriever_selection_from_llm_output(output_text: str) -> dict[str, Any]:
+    payload = extract_json_object(output_text)
+    route = str(payload.get("route", "")).strip()
+    tool_name = str(payload.get("tool_name", "")).strip()
+    if not route or not tool_name:
+        raise ValueError(f"retriever output missing route/tool_name: {output_text!r}")
+    return {
+        "route": route,
+        "tool_name": tool_name,
+        "supporting_doc_ids": [str(item).strip() for item in payload.get("supporting_doc_ids", []) if str(item).strip()],
+        "reason": str(payload.get("reason", "")).strip(),
+        "candidate_rank": int(payload.get("candidate_rank", 0) or 0),
+    }
+
+
+def _executor_selection_from_llm_output(output_text: str) -> dict[str, Any]:
+    payload = extract_json_object(output_text)
+    route = str(payload.get("route", "")).strip()
+    tool_name = str(payload.get("tool_name", "")).strip()
+    action_contract = str(payload.get("action_contract", "")).strip()
+    if not route or not tool_name:
+        raise ValueError(f"executor output missing route/tool_name: {output_text!r}")
+    return {
+        "route": route,
+        "tool_name": tool_name,
+        "action_contract": action_contract or "execute_validated_tool",
+        "reason": str(payload.get("reason", "")).strip(),
+    }
 
 
 def _build_memory_assist_lookup_text(
@@ -589,6 +695,8 @@ class PlannerAgent(BaseAgent):
 
 @dataclass
 class RetrieverAgent(BaseAgent):
+    llm_client: LLMClient | None = None
+
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
         preferred_doc_ids = ctx.preferred_corpus_doc_ids(step)
         reuse_signature = ctx.reuse_signature(step)
@@ -647,6 +755,17 @@ class RetrieverAgent(BaseAgent):
             retrieved_hints=retrieved_hints,
             memory_prior=memory_prior,
         )
+        helper_selected_route = str(feature_bundle.get("route", "")).strip()
+        helper_selected_tool = str(feature_bundle.get("tool_name", "")).strip()
+        route_candidates = [
+            {
+                "route": str(item.get("route", "")).strip(),
+                "tool_name": str(item.get("tool_name", "")).strip(),
+                "score": int(item.get("score", 0) or 0),
+            }
+            for item in feature_bundle.get("tool_candidates", [])
+            if isinstance(item, dict)
+        ]
 
         if hits:
             for candidate in hits:
@@ -660,11 +779,35 @@ class RetrieverAgent(BaseAgent):
                     memory_hint_route = candidate_route
                     ctx.note_reuse(candidate, reuse_mode="assist")
                     break
-            if accepted_hit is None:
-                ctx.note_rejected_memory(hits[0])
+        if accepted_hit is None and hits:
+            ctx.note_rejected_memory(hits[0])
 
         reused = accepted_hit is not None
         memory_assist_ids = [] if accepted_hit is None else [accepted_hit.memory_id]
+        active_llm = self.llm_client or DeterministicLLMClient()
+        retriever_messages = _retriever_messages(
+            {
+                "query": str(step.params["query"]),
+                "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
+                "tool_candidates": route_candidates,
+                "route_candidates": route_candidates,
+                "evidence_text": fresh_evidence_text,
+            },
+            mode=str(getattr(ctx, "mode", "protocol")),
+        )
+        retriever_result = await active_llm.complete(retriever_messages, purpose="retriever")
+        ctx.record_llm_result(retriever_result, purpose="retriever")
+        semantic_selection = _retriever_selection_from_llm_output(retriever_result.text)
+        feature_bundle["route"] = semantic_selection["route"]
+        feature_bundle["tool_name"] = semantic_selection["tool_name"]
+        feature_bundle["semantic_selected_route"] = semantic_selection["route"]
+        feature_bundle["semantic_selected_tool_name"] = semantic_selection["tool_name"]
+        feature_bundle["decision_source"] = "retriever_llm_role"
+        feature_bundle["helper_candidate_count"] = len(route_candidates)
+        feature_bundle["helper_selected_directly"] = False
+        feature_bundle["semantic_supporting_doc_ids"] = semantic_selection["supporting_doc_ids"]
+        feature_bundle["semantic_reason"] = semantic_selection["reason"]
+        feature_bundle["semantic_candidate_rank"] = semantic_selection["candidate_rank"]
         assist_hint = ""
         evidence_sections = [fresh_evidence_text]
         if accepted_hit is not None:
@@ -1119,6 +1262,25 @@ class RetrieverAgent(BaseAgent):
             step_id=step.step_id,
             success=True,
             output_state_refs=output_state_refs,
+            semantic_trace={
+                "role": "retriever",
+                "decision_source": "retriever_llm_role",
+                "helper_candidate_count": len(route_candidates),
+                "helper_selected_directly": False,
+                "helper_selected_route": helper_selected_route,
+                "helper_selected_tool_name": helper_selected_tool,
+                "semantic_selected_route": semantic_selection["route"],
+                "semantic_selected_tool_name": semantic_selection["tool_name"],
+                "semantic_reason": semantic_selection["reason"],
+                "llm_model": retriever_result.model,
+                "actual_tool_catalog": default_tool_registry().names(),
+                "actual_tool_candidates": [
+                    f"{item['route']}::{item['tool_name']}"
+                    for item in route_candidates
+                    if item.get("route") and item.get("tool_name")
+                ],
+                "actual_corpus_scope": [doc.doc_id for doc in corpus_docs],
+            },
             payload={
                 "query": step.params["query"],
                 "memory_hits": [hit.memory_id for hit in hits],
@@ -1162,6 +1324,7 @@ class RetrieverAgent(BaseAgent):
                 "feature_route": feature_bundle["route"],
                 "feature_tool_name": feature_bundle["tool_name"],
                 "feature_route_source": feature_bundle["route_source"],
+                "decision_source": feature_bundle["decision_source"],
                 "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
                 "feature_route_confidence": feature_bundle["route_confidence"],
                 "feature_route_provenance": feature_bundle["route_provenance"],
@@ -1173,6 +1336,14 @@ class RetrieverAgent(BaseAgent):
                 "retrieved_doc_ids": [doc.doc_id for doc in corpus_docs],
                 "corpus_doc_count": len(corpus_docs),
                 "memory_hint_route": memory_hint_route,
+                "actual_tool_catalog": default_tool_registry().names(),
+                "actual_tool_candidates": [
+                    f"{item['route']}::{item['tool_name']}"
+                    for item in route_candidates
+                    if item.get("route") and item.get("tool_name")
+                ],
+                "actual_corpus_scope": [doc.doc_id for doc in corpus_docs],
+                "actual_llm_model": retriever_result.model,
                 "channel_snapshot_state_id": (
                     "" if channel_snapshot_ref is None else channel_snapshot_ref.state_id
                 ),
@@ -1208,6 +1379,7 @@ class RetrieverAgent(BaseAgent):
 class ExecutorAgent(BaseAgent):
     transport: str = "local"
     socket_path: str | None = None
+    llm_client: LLMClient | None = None
 
     async def execute_step(self, step: PlanStep, ctx: object) -> StepResult:
         if step.action == "VALIDATE_ROUTE":
@@ -1233,7 +1405,35 @@ class ExecutorAgent(BaseAgent):
             )
         if self._should_use_uds(step):
             return self._execute_via_uds(step, ctx, input_refs)
-        return execute_playbook_step(
+        retrieve_result = ctx.result_for_role("retrieve")
+        retrieve_payload = {} if retrieve_result is None else dict(retrieve_result.payload)
+        validation_payload = {} if validation_packet is None else dict(validation_packet)
+        active_llm = self.llm_client or DeterministicLLMClient()
+        executor_messages = _executor_messages(
+            {
+                "route": str(retrieve_payload.get("feature_route", "")).strip(),
+                "tool_name": str(retrieve_payload.get("feature_tool_name", "")).strip(),
+                "validated_route": str(validation_payload.get("validated_route", "")).strip(),
+                "validated_tool_name": str(validation_payload.get("validated_tool_name", "")).strip(),
+                "validated_action_contract": str(validation_payload.get("validated_action_contract", "")).strip(),
+                "tool_candidates": [
+                    dict(item)
+                    for item in validation_payload.get("validated_tool_candidates", [])
+                    if isinstance(item, dict)
+                ],
+            },
+            mode=str(getattr(ctx, "mode", "protocol")),
+        )
+        semantic_result = await active_llm.complete(executor_messages, purpose="executor")
+        ctx.record_llm_result(semantic_result, purpose="executor")
+        semantic_selection = _executor_selection_from_llm_output(semantic_result.text)
+        if validation_payload:
+            validation_payload["validated_route"] = semantic_selection["route"]
+            validation_payload["validated_tool_name"] = semantic_selection["tool_name"]
+            validation_payload["validated_action_contract"] = semantic_selection["action_contract"]
+            if validation_refs:
+                validation_packet = validation_payload
+        result = execute_playbook_step(
             task_id=ctx.task_id,
             task_theme=ctx.task_theme,
             step=step,
@@ -1250,6 +1450,37 @@ class ExecutorAgent(BaseAgent):
                 else ""
             ),
         )
+        result.semantic_trace = {
+            "role": "executor",
+            "decision_source": "executor_llm_role",
+            "helper_candidate_count": len(validation_payload.get("validated_tool_candidates", [])),
+            "helper_selected_directly": False,
+            "semantic_selected_route": semantic_selection["route"],
+            "semantic_selected_tool_name": semantic_selection["tool_name"],
+            "semantic_action_contract": semantic_selection["action_contract"],
+            "semantic_reason": semantic_selection["reason"],
+            "llm_model": semantic_result.model,
+            "actual_tool_catalog": default_tool_registry().names(),
+            "actual_tool_candidates": [
+                f"{str(item.get('route', '')).strip()}::{str(item.get('tool_name', '')).strip()}"
+                for item in validation_payload.get("validated_tool_candidates", [])
+                if isinstance(item, dict)
+                and str(item.get("route", "")).strip()
+                and str(item.get("tool_name", "")).strip()
+            ],
+            "actual_corpus_scope": [
+                str(item) for item in retrieve_payload.get("retrieved_doc_ids", []) if str(item).strip()
+            ],
+        }
+        result.payload["decision_source"] = "executor_llm_role"
+        result.payload["actual_llm_model"] = semantic_result.model
+        result.payload["actual_tool_catalog"] = default_tool_registry().names()
+        result.payload["actual_tool_candidates"] = result.semantic_trace["actual_tool_candidates"]
+        result.payload["actual_corpus_scope"] = result.semantic_trace["actual_corpus_scope"]
+        result.payload["semantic_selected_route"] = semantic_selection["route"]
+        result.payload["semantic_selected_tool_name"] = semantic_selection["tool_name"]
+        result.payload["semantic_action_contract"] = semantic_selection["action_contract"]
+        return result
 
     @staticmethod
     def _validate_route_step(step: PlanStep, ctx: object) -> StepResult:

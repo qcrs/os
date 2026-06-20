@@ -238,6 +238,70 @@ def test_plan_parser_requires_explicit_semantic_role_for_non_compact_steps() -> 
         _plan_from_llm_output(task, output_text)
 
 
+@pytest.mark.asyncio
+async def test_deterministic_llm_supports_retriever_and_executor_roles() -> None:
+    client = DeterministicLLMClient()
+
+    retriever = await client.complete(
+        [
+            client_message
+            for client_message in [
+                type("Msg", (), {"role": "system", "content": "sys"})(),
+                type(
+                    "Msg",
+                    (),
+                    {
+                        "role": "user",
+                        "content": "<sb-retriever-v1>\n"
+                        + json.dumps(
+                            {
+                                "query": "q",
+                                "retrieved_doc_ids": ["doc-1"],
+                                "tool_candidates": [
+                                    {"route": "cache_invalidation", "tool_name": "tool.cache_invalidation_playbook", "score": 3}
+                                ],
+                                "route_candidates": [
+                                    {"route": "cache_invalidation", "tool_name": "tool.cache_invalidation_playbook", "score": 3}
+                                ],
+                            }
+                        )
+                        + "\n</sb-retriever-v1>",
+                    },
+                )(),
+            ]
+        ],
+        purpose="retriever",
+    )
+    executor = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-executor-v1>\n"
+                    + json.dumps(
+                        {
+                            "route": "cache_invalidation",
+                            "tool_name": "tool.cache_invalidation_playbook",
+                            "validated_route": "cache_invalidation",
+                            "validated_tool_name": "tool.cache_invalidation_playbook",
+                            "validated_action_contract": "execute_validated_tool",
+                            "tool_candidates": [],
+                        }
+                    )
+                    + "\n</sb-executor-v1>",
+                },
+            )(),
+        ],
+        purpose="executor",
+    )
+
+    assert json.loads(retriever.text)["tool_name"] == "tool.cache_invalidation_playbook"
+    assert json.loads(executor.text)["action_contract"] == "execute_validated_tool"
+
+
 class _RepairingPlannerClient:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []

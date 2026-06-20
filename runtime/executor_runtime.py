@@ -22,6 +22,7 @@ DECISION_PACKET_REQUIRED_KEYS = (
     "route",
     "tool_name",
     "route_source",
+    "decision_source",
     "route_confidence",
     "route_provenance",
     "tool_candidates",
@@ -759,6 +760,9 @@ def build_executor_decision_packet(
         "route": str(feature_bundle.get("route", "")).strip(),
         "tool_name": str(feature_bundle.get("tool_name", "")).strip(),
         "route_source": str(feature_bundle.get("route_source", "")).strip(),
+        "decision_source": str(
+            feature_bundle.get("decision_source", feature_bundle.get("route_source", ""))
+        ).strip(),
         "route_confidence": float(feature_bundle.get("route_confidence", 0.0)),
         "route_provenance": [str(item) for item in feature_bundle.get("route_provenance", [])],
         "matched_signals": [str(item) for item in feature_bundle.get("matched_signals", [])],
@@ -786,6 +790,12 @@ def select_tool_name(
     registry: ToolRegistry | None = None,
 ) -> str:
     active_registry = registry or default_tool_registry()
+    semantic_tool_name = str(feature_bundle.get("semantic_selected_tool_name", "")).strip()
+    if semantic_tool_name:
+        try:
+            return active_registry.get(semantic_tool_name).name
+        except KeyError:
+            pass
     for candidate in feature_bundle.get("tool_candidates", []):
         tool_name = str(candidate.get("tool_name", "")).strip()
         if not tool_name:
@@ -859,6 +869,9 @@ def _apply_validation_gate_to_feature_bundle(
         gated["tool_name"] = validated_tool
     if validated_candidates:
         gated["tool_candidates"] = validated_candidates
+        gated["semantic_selected_route"] = selected_candidate["route"]
+        gated["semantic_selected_tool_name"] = selected_candidate["tool_name"]
+        gated["decision_source"] = "executor_llm_role"
     gated["validated_action_contract"] = str(
         validation_packet.get("validated_action_contract", "")
     ).strip()
@@ -2313,6 +2326,8 @@ def _feature_bundle_from_executor_decision_packet(
         "schema": "statebus.feature_bundle.v1",
         "route": route,
         "tool_name": tool_name,
+        "semantic_selected_route": route,
+        "semantic_selected_tool_name": tool_name,
         "query": str(decision_packet.get("query", query_text or "")).strip(),
         "query_terms": [],
         "tags": [],
@@ -2320,6 +2335,8 @@ def _feature_bundle_from_executor_decision_packet(
         "matched_tags": matched_tags,
         "match_score": match_score,
         "route_source": route_source,
+        "decision_source": str(decision_packet.get("decision_source", route_source)).strip()
+        or route_source,
         "route_confidence": float(decision_packet.get("route_confidence", 0.0)),
         "route_provenance": [str(item) for item in decision_packet.get("route_provenance", [])],
         "hint_doc_ids": [str(item) for item in decision_packet.get("hint_doc_ids", [])],
@@ -2348,6 +2365,8 @@ def _validate_executor_decision_packet(
     tool_name = str(packet.get("tool_name", "")).strip()
     if not route or not tool_name:
         raise ValueError("executor decision packet requires non-empty route and tool_name")
+    if not str(packet.get("decision_source", "")).strip():
+        raise ValueError("executor decision packet requires non-empty decision_source")
     if not isinstance(packet.get("retrieved_doc_ids", []), list):
         raise ValueError("executor decision packet retrieved_doc_ids must be a list")
     if not isinstance(packet.get("matched_signals", []), list):
