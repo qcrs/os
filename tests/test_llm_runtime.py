@@ -303,7 +303,7 @@ async def test_deterministic_llm_supports_retriever_and_executor_roles() -> None
 
 
 @pytest.mark.asyncio
-async def test_deterministic_llm_retriever_does_not_force_helper_top1_when_multiple_candidates_are_visible() -> None:
+async def test_deterministic_llm_retriever_uses_neutral_query_affinity_ranking_for_visible_candidates() -> None:
     client = DeterministicLLMClient()
     retriever = await client.complete(
         [
@@ -351,9 +351,9 @@ async def test_deterministic_llm_retriever_does_not_force_helper_top1_when_multi
     )
 
     payload = json.loads(retriever.text)
-    assert payload["candidate_rank"] == 2
-    assert payload["route"] == "auth_session_drift"
-    assert payload["tool_name"] == "tool.auth_session_repair"
+    assert payload["candidate_rank"] == 1
+    assert payload["route"] == "auth_rate_limit"
+    assert payload["tool_name"] == "tool.auth_rate_limit_triage"
 
 
 class _RepairingPlannerClient:
