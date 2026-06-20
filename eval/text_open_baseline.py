@@ -25,6 +25,14 @@ class PlaybookRule:
     keywords: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class IssueHypothesisRule:
+    issue_id: str
+    label: str
+    keywords: tuple[str, ...]
+    route_options: tuple[str, ...]
+
+
 PLAYBOOK_CATALOG = (
     PlaybookRule(
         route="db_pool_saturation",
@@ -107,6 +115,44 @@ PLAYBOOK_CATALOG = (
 
 PLAYBOOK_BY_ROUTE = {item.route: item for item in PLAYBOOK_CATALOG}
 PLAYBOOK_BY_TOOL = {item.tool_name: item for item in PLAYBOOK_CATALOG}
+ISSUE_HYPOTHESIS_CATALOG = (
+    IssueHypothesisRule(
+        issue_id="auth_control_surface",
+        label="Authentication control instability",
+        keywords=("auth", "callback", "issuer", "rotation", "session", "tenant", "jwks"),
+        route_options=("auth_session_drift", "auth_rate_limit"),
+    ),
+    IssueHypothesisRule(
+        issue_id="traffic_shaping_surface",
+        label="Traffic shaping or throttling pressure",
+        keywords=("auth", "rate", "limit", "limiter", "backoff", "throttle", "login"),
+        route_options=("auth_session_drift", "auth_rate_limit"),
+    ),
+    IssueHypothesisRule(
+        issue_id="processing_capacity_surface",
+        label="Processing capacity pressure",
+        keywords=("billing", "queue", "backlog", "worker", "reload", "invoice", "drain"),
+        route_options=("db_pool_saturation", "worker_queue_starvation"),
+    ),
+    IssueHypothesisRule(
+        issue_id="data_plane_pressure_surface",
+        label="Data-plane wait pressure",
+        keywords=("database", "db", "pool", "sql", "query", "wait", "orders", "connection"),
+        route_options=("db_pool_saturation", "worker_queue_starvation"),
+    ),
+    IssueHypothesisRule(
+        issue_id="cache_consistency_surface",
+        label="Cache consistency pressure",
+        keywords=("cache", "stale", "sync", "aggregate", "hook", "freshness", "writer"),
+        route_options=("cache_invalidation", "cache_replica_stale_read"),
+    ),
+    IssueHypothesisRule(
+        issue_id="replica_read_surface",
+        label="Replica lag or stale-read pressure",
+        keywords=("replica", "lag", "stale", "read", "reads", "failover", "reporting"),
+        route_options=("cache_replica_stale_read", "cache_invalidation"),
+    ),
+)
 STRICT_EXTERNAL_TEXT_BASELINE_OBJECT = "external_pure_text_four_role_baseline_v1"
 FORBIDDEN_TEXT_MARKERS = (
     "StateRef",
@@ -179,10 +225,16 @@ class ExternalTextOpenRuntime:
             }
         )
 
-        visible_candidates = build_visible_tool_candidates(task=task, retrieved_docs=retrieved_docs)
+        issue_hypotheses = build_issue_hypotheses(task=task, retrieved_docs=retrieved_docs)
+        visible_candidates = build_visible_tool_candidates(
+            task=task,
+            retrieved_docs=retrieved_docs,
+            issue_hypotheses=issue_hypotheses,
+        )
         retriever_payload, retriever_usage, retriever_model = await self._retriever_selection(
             task=task,
             retrieved_docs=retrieved_docs,
+            issue_hypotheses=issue_hypotheses,
             visible_candidates=visible_candidates,
         )
         usage = _merge_usage(usage, retriever_usage)
@@ -190,7 +242,7 @@ class ExternalTextOpenRuntime:
             retriever_payload=retriever_payload,
             visible_candidates=visible_candidates,
         )
-        helper_top1 = dict(visible_candidates[0]) if visible_candidates else {}
+        helper_top1 = projected_helper_candidate(issue_hypotheses=issue_hypotheses)
         helper_top1_route = str(helper_top1.get("route", "")).strip()
         helper_top1_tool_name = str(helper_top1.get("tool_name", "")).strip()
         helper_selected_matches_top1 = (
@@ -207,6 +259,7 @@ class ExternalTextOpenRuntime:
                 "selected_tool_name": tool_name,
                 "candidate_count": len(visible_candidates),
                 "helper_source": "declared_candidate_generation",
+                "issue_hypothesis_count": len(issue_hypotheses),
                 "helper_top1_route": helper_top1_route,
                 "helper_top1_tool_name": helper_top1_tool_name,
                 "selected_matches_helper_top1": helper_selected_matches_top1,
@@ -372,6 +425,7 @@ class ExternalTextOpenRuntime:
             "helper_dominance": False,
             "visible_candidate_count": len(visible_candidates),
             "visible_candidates": [dict(item) for item in visible_candidates],
+            "issue_hypotheses": [dict(item) for item in issue_hypotheses],
             "helper_top1_route": helper_top1_route,
             "helper_top1_tool_name": helper_top1_tool_name,
             "helper_selected_matches_top1": helper_selected_matches_top1,
@@ -616,6 +670,7 @@ class ExternalTextOpenRuntime:
         *,
         task: SampleTask,
         retrieved_docs: list[CorpusDoc],
+        issue_hypotheses: list[dict[str, object]],
         visible_candidates: list[dict[str, object]],
     ) -> tuple[dict[str, object], dict[str, int], str]:
         assert self.llm_client is not None
@@ -624,6 +679,15 @@ class ExternalTextOpenRuntime:
                 f"Task theme: {task.task_theme}",
                 f"Query: {task.query}",
                 f"Retrieved docs: {', '.join(doc.doc_id for doc in retrieved_docs[:4])}",
+                "Issue hypotheses: " + "; ".join(
+                    (
+                        f"{str(item['issue_id'])}::{str(item['label'])}"
+                        f"|support_terms={','.join(str(term) for term in item.get('support_terms', []))}"
+                        f"|support_docs={','.join(str(doc_id) for doc_id in item.get('supporting_doc_ids', []))}"
+                        f"|route_options={','.join(str(route_id) for route_id in item.get('route_options', []))}"
+                    )
+                    for item in issue_hypotheses
+                ),
                 "Visible candidates: " + "; ".join(
                     f"{str(item['route'])}::{str(item['tool_name'])}"
                     for item in visible_candidates
@@ -631,6 +695,7 @@ class ExternalTextOpenRuntime:
                 "Candidate notes: " + "; ".join(
                     (
                         f"{str(item['route'])}::{str(item['tool_name'])}"
+                        f"|matched_issue_ids={','.join(str(issue_id) for issue_id in item.get('matched_issue_ids', []))}"
                         f"|support_terms={','.join(str(term) for term in item.get('support_terms', []))}"
                         f"|support_doc_count={int(item.get('support_doc_count', 0) or 0)}"
                         f"|support_docs={','.join(str(doc_id) for doc_id in item.get('supporting_doc_ids', []))}"
@@ -638,7 +703,7 @@ class ExternalTextOpenRuntime:
                     for item in visible_candidates
                 ),
                 "Candidate order is alphabetical only. Treat the notes as evidence-backed provenance, not as a ranking.",
-                "Choose the route/tool pair best supported by the retrieved evidence and support terms.",
+                "Use the issue hypotheses only as coarse competing interpretations, then choose the route/tool pair best supported by the retrieved evidence and support terms.",
             ]
         )
         result = await self.llm_client.complete(
@@ -684,6 +749,7 @@ class ExternalTextOpenRuntime:
                 "Candidate notes: " + "; ".join(
                     (
                         f"{str(item['route'])}::{str(item['tool_name'])}"
+                        f"|matched_issue_ids={','.join(str(issue_id) for issue_id in item.get('matched_issue_ids', []))}"
                         f"|support_terms={','.join(str(term) for term in item.get('support_terms', []))}"
                         f"|support_doc_count={int(item.get('support_doc_count', 0) or 0)}"
                         f"|support_docs={','.join(str(doc_id) for doc_id in item.get('supporting_doc_ids', []))}"
@@ -775,54 +841,90 @@ def build_visible_tool_candidates(
     *,
     task: SampleTask,
     retrieved_docs: list[CorpusDoc],
+    issue_hypotheses: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    combined_text = "\n".join([task.goal, task.query, *(doc.text for doc in retrieved_docs)])
-    combined_tokens = lexical_tokens(combined_text)
-    doc_tokens = {
-        doc.doc_id: lexical_tokens(f"{doc.title}\n{doc.text}")
-        for doc in retrieved_docs
-    }
-    ranked = sorted(
-        (
+    del task, retrieved_docs
+    hypothesis_by_route: dict[str, list[dict[str, object]]] = {}
+    for hypothesis in issue_hypotheses:
+        for route_id in hypothesis.get("route_options", []):
+            hypothesis_by_route.setdefault(str(route_id), []).append(hypothesis)
+
+    visible: list[dict[str, object]] = []
+    for rule in PLAYBOOK_CATALOG:
+        matched_hypotheses = hypothesis_by_route.get(rule.route, [])
+        support_terms: list[str] = []
+        supporting_doc_ids: list[str] = []
+        matched_issue_ids: list[str] = []
+        for hypothesis in matched_hypotheses:
+            matched_issue_ids.append(str(hypothesis.get("issue_id", "")).strip())
+            for term in hypothesis.get("support_terms", []):
+                if str(term).strip() and str(term) not in support_terms:
+                    support_terms.append(str(term))
+            for doc_id in hypothesis.get("supporting_doc_ids", []):
+                if str(doc_id).strip() and str(doc_id) not in supporting_doc_ids:
+                    supporting_doc_ids.append(str(doc_id))
+        visible.append(
             {
                 "route": rule.route,
                 "tool_name": rule.tool_name,
-                "score": lexical_overlap(combined_tokens, set(rule.keywords)),
+                "matched_issue_ids": matched_issue_ids,
+                "support_terms": support_terms[:4],
+                "supporting_doc_ids": supporting_doc_ids[:3],
+                "support_doc_count": len(supporting_doc_ids[:3]),
+            }
+        )
+    return sorted(visible, key=lambda item: (str(item["route"]), str(item["tool_name"])))
+
+
+def build_issue_hypotheses(
+    *,
+    task: SampleTask,
+    retrieved_docs: list[CorpusDoc],
+) -> list[dict[str, object]]:
+    combined_text = "\n".join([task.goal, task.query, *(doc.text for doc in retrieved_docs)])
+    combined_tokens = lexical_tokens(combined_text)
+    doc_tokens = {doc.doc_id: lexical_tokens(f"{doc.title}\n{doc.text}") for doc in retrieved_docs}
+    scored = sorted(
+        (
+            {
+                "issue_id": rule.issue_id,
+                "label": rule.label,
+                "support_score": lexical_overlap(combined_tokens, set(rule.keywords)),
+                "route_options": list(rule.route_options),
+                "support_terms": [keyword for keyword in rule.keywords if keyword in combined_tokens][:4],
                 "supporting_doc_ids": [
                     doc.doc_id
                     for doc in retrieved_docs
                     if lexical_overlap(doc_tokens.get(doc.doc_id, set()), set(rule.keywords)) > 0
                 ][:3],
-                "support_terms": [
-                    keyword
-                    for keyword in rule.keywords
-                    if keyword in combined_tokens
-                ][:4],
             }
-            for rule in PLAYBOOK_CATALOG
+            for rule in ISSUE_HYPOTHESIS_CATALOG
         ),
-        key=lambda item: (-int(item["score"]), str(item["route"]), str(item["tool_name"])),
+        key=lambda item: (-int(item["support_score"]), str(item["issue_id"])),
     )
-    visible = [dict(item) for item in ranked if int(item["score"]) > 0]
-    minimum_visible = 4
+    visible = [dict(item) for item in scored if int(item["support_score"]) > 0]
+    minimum_visible = 3
     if len(visible) < minimum_visible:
-        for item in ranked:
-            if any(
-                str(existing["route"]) == str(item["route"])
-                and str(existing["tool_name"]) == str(item["tool_name"])
-                for existing in visible
-            ):
+        for item in scored:
+            if any(str(existing["issue_id"]) == str(item["issue_id"]) for existing in visible):
                 continue
             visible.append(dict(item))
             if len(visible) >= minimum_visible:
                 break
-    for index, item in enumerate(visible, start=1):
-        item["helper_rank"] = index
-        item["support_doc_count"] = len([doc_id for doc_id in item["supporting_doc_ids"] if str(doc_id).strip()])
-    return sorted(
-        visible,
-        key=lambda item: (str(item["route"]), str(item["tool_name"])),
-    )
+    return visible
+
+
+def projected_helper_candidate(*, issue_hypotheses: list[dict[str, object]]) -> dict[str, object]:
+    if not issue_hypotheses:
+        return {}
+    route_options = [str(route_id).strip() for route_id in issue_hypotheses[0].get("route_options", []) if str(route_id).strip()]
+    if not route_options:
+        return {}
+    route = route_options[0]
+    rule = PLAYBOOK_BY_ROUTE.get(route)
+    if rule is None:
+        return {}
+    return {"route": rule.route, "tool_name": rule.tool_name}
 
 
 def summarize(task: SampleTask, retrieved_docs: list[CorpusDoc], route: str, tool_name: str) -> str:

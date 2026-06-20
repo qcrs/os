@@ -1075,6 +1075,7 @@ def _external_text_row_from_state(
         "retrieved_doc_ids": list(retrieved_doc_ids),
         "retrieved_snippets": list(graph_state.get("retrieved_snippets", [])),
         "message_log": message_log,
+        "issue_hypotheses": list(graph_state.get("issue_hypotheses", [])),
         "correctness": {
             "route_exact": route == task.primary_expected_route,
             "tool_exact": tool_name == task.primary_expected_tool,
