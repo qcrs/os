@@ -37,6 +37,7 @@ from eval.runner import (
     _whole_lane_text_guard_payload,
     run_benchmark,
 )
+import eval.runner as runner_module
 from eval.open_runner import (
     OPEN_MEMORY_POLICIES,
     PURE_TEXT_OPEN_BASELINE_PACK,
@@ -199,6 +200,90 @@ def test_failed_external_text_row_preserves_usage_and_debug_context() -> None:
     assert row["failure_debug"]["parse_status"]["retriever"] == "json_decode_error"
     assert row["failure_debug"]["raw_outputs"]["retriever"] == "{\"route\":"
     assert row["failed_role"] == "retriever"
+
+
+def test_run_benchmark_failed_task_preserves_planner_raw_output_and_usage() -> None:
+    bundle = load_task_set_bundle(DEFAULT_BENCHMARK_TASK_SET)
+    task = next(item for item in bundle.tasks if item.supports_mode("protocol"))
+    failing_task = replace(
+        task,
+        task_id="planner-fail-001",
+        task_group="planner_fail_chain",
+        task_order=1,
+        plan_source="llm",
+    )
+
+    class FailingPlannerClient(DeterministicLLMClient):
+        async def complete(self, messages, purpose=""):
+            if purpose == "planner":
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "steps": [
+                                {
+                                    "step_id": "step_1",
+                                    "semantic_role": "retrieve",
+                                    "owner_agent": "retriever",
+                                    "action": "RETRIEVE_EVIDENCE",
+                                    "input_state_refs": [],
+                                    "params": {},
+                                    "depends_on": [],
+                                },
+                                {
+                                    "step_id": "execute",
+                                    "semantic_role": "execute",
+                                    "owner_agent": "executor",
+                                    "action": "EXECUTE_PLAYBOOK",
+                                    "input_state_refs": [],
+                                    "params": {},
+                                    "depends_on": ["step1x"],
+                                },
+                                {
+                                    "step_id": "summarize",
+                                    "semantic_role": "summarize",
+                                    "owner_agent": "summarizer",
+                                    "action": "SUMMARIZE_AND_COMMIT",
+                                    "input_state_refs": [],
+                                    "params": {},
+                                    "depends_on": ["execute"],
+                                },
+                            ]
+                        }
+                    ),
+                    model="deterministic-planner",
+                    usage=LLMUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+                )
+            return await super().complete(messages, purpose=purpose)
+
+    failing_bundle = replace(bundle, tasks=[failing_task])
+    original_loader = runner_module.load_task_set_bundle
+    runner_module.load_task_set_bundle = lambda _: failing_bundle
+    try:
+        with tempfile.TemporaryDirectory(prefix="statebus-planner-fail-") as tmpdir:
+            result = asyncio.run(
+                run_benchmark(
+                    task_set_path="planner_failure_probe",
+                    repeat=1,
+                    modes=("protocol",),
+                    out_dir=Path(tmpdir),
+                    embedder=DeterministicEmbeddingProvider(),
+                    llm_client=FailingPlannerClient(),
+                )
+            )
+    finally:
+        runner_module.load_task_set_bundle = original_loader
+
+    failed = next(
+        task_run
+        for task_run in result["mode_runs"]["protocol"][0]["tasks"]
+        if task_run["status"] == "failed"
+    )
+    assert "unknown step_id" in failed["error"]
+    assert failed["planner_output"]
+    assert failed["failure_debug"]["raw_outputs"]["planner"] == failed["planner_output"]
+    assert "contract_error" in failed["failure_debug"]["parse_status"]["planner"]
+    assert failed["failure_debug"]["planner_validation_error"]
+    assert failed["failure_debug"]["llm_usage"]["total_tokens"] > 0
 
 
 def test_external_retriever_selection_accepts_constrained_alias_keys() -> None:
