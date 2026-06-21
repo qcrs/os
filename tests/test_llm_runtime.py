@@ -10,6 +10,7 @@ from agents.sample_agents import (
     ExecutorAgent,
     PlannerAgent,
     _plan_from_llm_output,
+    _build_protocol_summary_input_packet,
     _planner_messages,
     _summarizer_messages,
     _summary_from_llm_output,
@@ -1291,6 +1292,38 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     assert "Evidence:" not in normalized["summary"]
     assert "Playbook:" not in normalized["summary"]
     assert "Actions:" in normalized["summary"]
+
+
+def test_protocol_summarizer_prompt_avoids_duplicate_top_level_fields() -> None:
+    packet = _build_protocol_summary_input_packet(
+        query="query",
+        route="generic_triage",
+        route_source="protocol",
+        route_confidence=0.91,
+        retrieved_doc_ids=["doc-1", "doc-2"],
+        matched_signals=["signal-a"],
+        actions_text="restart worker",
+        summary_hint="mention rollback",
+        memory_assist_hint="reused prior auth fix",
+    )
+    messages = _summarizer_messages(
+        {
+            "task_id": "task-1",
+            "task_theme": "theme-1",
+            "summary_hint": "mention rollback",
+            "evidence_text": json.dumps(packet, ensure_ascii=False),
+            "actions_text": "restart worker",
+            "tags": ["ops"],
+            "reusable_steps": ["retrieve", "execute"],
+        },
+        mode="protocol",
+    )
+
+    payload = parse_tagged_json(messages[-1].content, "sb-summary-v1")
+    assert set(payload) == {"e", "r", "t"}
+    assert payload["e"]
+    assert payload["r"] == ["retrieve", "execute"]
+    assert payload["t"] == ["ops"]
 
 
 def test_deterministic_llm_emits_validate_step_when_task_contract_requires_it() -> None:
