@@ -746,20 +746,26 @@ class ExternalTextOpenRuntime:
                 task.evidence_text,
                 "",
                 f"Tags: {', '.join(task.tags)}",
+                "",
+                "Return JSON only. Prefer this minimal schema:",
+                '{"steps":[{"semantic_role":"retrieve","owner_agent":"retriever","action":"RETRIEVE_EVIDENCE"},{"semantic_role":"execute","owner_agent":"executor","action":"EXECUTE_VALIDATION"},{"semantic_role":"summarize","owner_agent":"summarizer","action":"SUMMARIZE_FINDINGS"}]}',
             ]
         )
         result = await self.llm_client.complete(
             [
                 ChatMessage(
                     role="system",
-                    content="You are the planner in a strict external pure-text four-role workflow. Return JSON only.",
+                    content=(
+                        "You are the planner in a strict external pure-text four-role workflow. "
+                        "Return JSON only and only the steps schema requested by the user."
+                    ),
                 ),
                 ChatMessage(role="user", content=prompt),
             ],
             purpose="planner",
         )
         raw_text = result.text
-        payload = extract_json_object(raw_text)
+        payload = _strict_planner_payload(extract_json_object(raw_text))
         return payload, _usage_dict(result), str(result.model), raw_text
 
     async def _retriever_selection(
@@ -811,7 +817,7 @@ class ExternalTextOpenRuntime:
                         "You are the retriever in a strict external pure-text workflow. "
                         "Use the visible candidate cards as a bounded comparison set. "
                         "Do not assume any candidate is pre-approved. "
-                        "Return JSON."
+                        "Return JSON with keys route, tool_name, supporting_doc_ids, reason, candidate_rank only."
                     ),
                 ),
                 ChatMessage(role="user", content=prompt),
@@ -865,7 +871,9 @@ class ExternalTextOpenRuntime:
                     role="system",
                     content=(
                         "You are the executor in a strict external pure-text workflow. "
-                        "Independently validate the proposed route/tool pair against the visible evidence and return JSON."
+                        "Independently validate the proposed route/tool pair against the visible evidence and return JSON only. "
+                        "Required keys: route, tool_name, action_contract, reason. "
+                        "action_contract must be execute_validated_tool or abstain_collect_more_evidence."
                     ),
                 ),
                 ChatMessage(role="user", content=prompt),
@@ -1257,8 +1265,31 @@ def _strict_visible_selection(
     retriever_payload: dict[str, object],
     visible_candidates: list[dict[str, object]],
 ) -> tuple[str, str]:
-    route = str(retriever_payload.get("route", "")).strip()
-    tool_name = str(retriever_payload.get("tool_name", "")).strip()
+    route = str(
+        retriever_payload.get(
+            "route",
+            retriever_payload.get(
+                "selected_candidate",
+                retriever_payload.get("validated_route", ""),
+            ),
+        )
+    ).strip()
+    tool_name = str(
+        retriever_payload.get(
+            "tool_name",
+            retriever_payload.get(
+                "tool",
+                retriever_payload.get(
+                    "selected_tool",
+                    retriever_payload.get("validated_tool", ""),
+                ),
+            ),
+        )
+    ).strip()
+    if route:
+        retriever_payload["route"] = route
+    if tool_name:
+        retriever_payload["tool_name"] = tool_name
     if resolved := _resolve_visible_candidate_selection(
         route=route,
         tool_name=tool_name,
@@ -1290,6 +1321,28 @@ def _strict_action_contract(payload: dict[str, object]) -> str:
         )
     payload["action_contract"] = contract
     return contract
+
+
+def _strict_planner_payload(payload: dict[str, object]) -> dict[str, object]:
+    steps = payload.get("steps")
+    if isinstance(steps, list):
+        return payload
+    if all(
+        str(payload.get(key, "")).strip()
+        for key in (
+            "reused_cause_pattern",
+            "competing_explanation_ruled_out",
+            "safest_scoped_action",
+            "post_action_validation_check",
+        )
+    ):
+        payload["steps"] = [
+            {"semantic_role": "retrieve", "owner_agent": "retriever", "action": "RETRIEVE_EVIDENCE"},
+            {"semantic_role": "execute", "owner_agent": "executor", "action": "EXECUTE_VALIDATION"},
+            {"semantic_role": "summarize", "owner_agent": "summarizer", "action": "SUMMARIZE_FINDINGS"},
+        ]
+        return payload
+    raise ValueError("strict external planner payload missing steps")
 
 
 def _strict_executor_selection(

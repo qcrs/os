@@ -49,6 +49,7 @@ from eval.open_runner import (
     run_pure_text_open_live_api_slice,
 )
 from eval.formal_comparator_artifact import build_deterministic_formal_comparator_artifact
+from eval.text_open_baseline import _strict_planner_payload, _strict_visible_selection
 from memory.store import DeterministicEmbeddingProvider, MemoryStore
 from protocol.messages import MemoryCommit, MemoryHit
 from protocol.messages import (
@@ -198,6 +199,39 @@ def test_failed_external_text_row_preserves_usage_and_debug_context() -> None:
     assert row["failure_debug"]["parse_status"]["retriever"] == "json_decode_error"
     assert row["failure_debug"]["raw_outputs"]["retriever"] == "{\"route\":"
     assert row["failed_role"] == "retriever"
+
+
+def test_external_retriever_selection_accepts_constrained_alias_keys() -> None:
+    payload = {
+        "selected_candidate": "auth_session_drift",
+        "tool": "tool.auth_session_repair",
+    }
+    route, tool_name = _strict_visible_selection(
+        retriever_payload=payload,
+        visible_candidates=[
+            {"route": "auth_session_drift", "tool_name": "tool.auth_session_repair"},
+            {"route": "auth_rate_limit", "tool_name": "tool.auth_rate_limit_triage"},
+        ],
+    )
+    assert (route, tool_name) == ("auth_session_drift", "tool.auth_session_repair")
+    assert payload["route"] == "auth_session_drift"
+    assert payload["tool_name"] == "tool.auth_session_repair"
+
+
+def test_external_planner_payload_allows_scoped_four_field_shape() -> None:
+    payload = _strict_planner_payload(
+        {
+            "reused_cause_pattern": "x",
+            "competing_explanation_ruled_out": "y",
+            "safest_scoped_action": "z",
+            "post_action_validation_check": "k",
+        }
+    )
+    assert [step["semantic_role"] for step in payload["steps"]] == [
+        "retrieve",
+        "execute",
+        "summarize",
+    ]
 
 
 def test_text_frame_is_natural_language_for_control_messages() -> None:
