@@ -236,6 +236,10 @@ class RunContext:
     planner_contract_valid_final: bool = False
     planner_one_shot_valid: bool = True
     planner_repair_attempt_count: int = 0
+    planner_last_output: str = ""
+    planner_last_error: str = ""
+    llm_raw_outputs: dict[str, str] = field(default_factory=dict)
+    llm_parse_status: dict[str, str] = field(default_factory=dict)
     blob_fetch_metrics: dict[str, Any] = field(
         default_factory=lambda: {
             "blob_fetch_count": 0,
@@ -767,11 +771,14 @@ class RunContext:
         self.metrics.llm_completion_tokens += result.usage.completion_tokens
         self.metrics.llm_total_tokens += result.usage.total_tokens
         normalized_purpose = (purpose or "").strip().lower()
+        if normalized_purpose:
+            self.llm_raw_outputs[normalized_purpose] = result.text
         if normalized_purpose == "planner":
             self.metrics.planner_llm_request_count += 1
             self.metrics.planner_prompt_tokens += result.usage.prompt_tokens
             self.metrics.planner_completion_tokens += result.usage.completion_tokens
             self.metrics.planner_total_tokens += result.usage.total_tokens
+            self.planner_last_output = result.text
         elif normalized_purpose == "summarizer":
             self.metrics.summarizer_llm_request_count += 1
             self.metrics.summarizer_prompt_tokens += result.usage.prompt_tokens

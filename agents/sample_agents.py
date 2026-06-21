@@ -672,6 +672,10 @@ class PlannerAgent(BaseAgent):
         }
         messages = _planner_messages(planner_input, mode=str(getattr(ctx, "mode", "protocol")))
         last_error = ""
+        if not hasattr(ctx, "llm_parse_status"):
+            setattr(ctx, "llm_parse_status", {})
+        if not hasattr(ctx, "planner_last_error"):
+            setattr(ctx, "planner_last_error", "")
         for attempt in range(MAX_PLANNER_REPAIR_ATTEMPTS + 1):
             result = await self.llm_client.complete(messages, purpose="planner")
             ctx.record_llm_result(result, purpose="planner")
@@ -679,11 +683,14 @@ class PlannerAgent(BaseAgent):
                 ctx.planner_one_shot_valid = attempt == 0
                 ctx.planner_repair_attempt_count = attempt
                 ctx.metrics.planner_repair_attempt_count = attempt
+                ctx.llm_parse_status["planner"] = "parsed"
                 return _plan_from_llm_output(task, result.text, allow_validate_compat=True)
             except ValueError as exc:
                 last_error = str(exc)
                 ctx.planner_contract_valid = False
                 ctx.planner_contract_valid_final = False
+                ctx.planner_last_error = last_error
+                ctx.llm_parse_status["planner"] = f"contract_error:{last_error}"
                 if attempt >= MAX_PLANNER_REPAIR_ATTEMPTS:
                     raise
                 messages = _planner_repair_messages(
@@ -2265,6 +2272,7 @@ def _plan_from_llm_output(
         normalized_steps=normalized_steps,
     ):
         normalized_steps = _insert_validate_compat_step(normalized_steps)
+    normalized_steps = _canonicalize_planner_dependencies(normalized_steps=normalized_steps)
     plan_steps: list[PlanStep] = []
     seen_step_ids: set[str] = set()
     for normalized in normalized_steps:
@@ -2370,6 +2378,42 @@ def _insert_validate_compat_step(normalized_steps: list[dict[str, Any]]) -> list
         if "execute" not in summarize_depends:
             step["depends_on"] = [retrieve_step_id, str(execute_step.get("step_id", "execute")).strip()]
     return augmented
+
+
+def _canonical_planner_step_token(value: object) -> str:
+    token = str(value or "").strip()
+    if not token:
+        return ""
+    return token.replace("_", "").replace("-", "").lower()
+
+
+def _canonicalize_planner_dependencies(
+    *,
+    normalized_steps: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    canonical_to_step_ids: dict[str, list[str]] = {}
+    for step in normalized_steps:
+        step_id = str(step.get("step_id", "")).strip()
+        canonical = _canonical_planner_step_token(step_id)
+        if canonical:
+            canonical_to_step_ids.setdefault(canonical, []).append(step_id)
+
+    rewritten_steps: list[dict[str, Any]] = []
+    for step in normalized_steps:
+        rewritten = dict(step)
+        rewritten_depends: list[str] = []
+        for dep in [str(item).strip() for item in step.get("depends_on", []) if str(item).strip()]:
+            canonical_dep = _canonical_planner_step_token(dep)
+            matches = sorted(set(canonical_to_step_ids.get(canonical_dep, [])))
+            if dep in matches:
+                rewritten_depends.append(dep)
+            elif len(matches) == 1:
+                rewritten_depends.append(matches[0])
+            else:
+                rewritten_depends.append(dep)
+        rewritten["depends_on"] = rewritten_depends
+        rewritten_steps.append(rewritten)
+    return rewritten_steps
 
 
 def _summary_from_llm_output(output_text: str) -> dict[str, Any]:
@@ -2494,6 +2538,8 @@ def _planner_repair_messages(
         f"The plan must cover these semantic roles: {required_roles_text}. "
         "Allowed owner_agent values: retriever, executor, summarizer. "
         "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
+        "Every depends_on entry must exactly reference a step_id that appears in the same output. "
+        "Do not invent dependency ids such as step1 unless that exact step_id exists. "
         "Do not use compact r/x/s shape. "
         "Do not omit semantic_role. Do not use description-only steps. "
         "No markdown."

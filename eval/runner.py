@@ -3194,6 +3194,19 @@ async def _run_mode_once(
                         }
                     }
                 ),
+                "planner_output": str(ctx.planner_last_output or "").strip(),
+                "failure_debug": {
+                    "failed_role": "planner" if ctx.metrics.planner_llm_request_count > 0 else "",
+                    "failure_stage": "planner" if ctx.metrics.planner_llm_request_count > 0 else "",
+                    "parse_status": dict(ctx.llm_parse_status),
+                    "raw_outputs": dict(ctx.llm_raw_outputs),
+                    "planner_validation_error": str(ctx.planner_last_error or run_error).strip(),
+                    "llm_usage": {
+                        "prompt_tokens": int(ctx.metrics.llm_prompt_tokens),
+                        "completion_tokens": int(ctx.metrics.llm_completion_tokens),
+                        "total_tokens": int(ctx.metrics.llm_total_tokens),
+                    },
+                },
                 "results": {},
             }
             if progress_callback is not None:
@@ -3586,6 +3599,7 @@ def _aggregate_mode_runs(runs: list[dict[str, object]], *, pack_type: str = "") 
             "task_id": str(task_run.get("task_id", "")),
             "error": str(task_run.get("error", "")),
             "audit_disable_state_kinds": list(task_run.get("audit_disable_state_kinds", [])),
+            "failure_debug": dict(task_run.get("failure_debug", {}) or {}),
         }
         for run in usable_runs
         for task_run in run["tasks"]

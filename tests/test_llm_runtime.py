@@ -9,6 +9,7 @@ import pytest
 from agents.sample_agents import (
     ExecutorAgent,
     PlannerAgent,
+    _canonicalize_planner_dependencies,
     _plan_from_llm_output,
     _build_protocol_summary_input_packet,
     _planner_messages,
@@ -961,6 +962,87 @@ def test_plan_parser_normalizes_validate_route_dependency_alias_for_summarize() 
     assert [step.step_id for step in plan.steps] == ["retrieve", "validate", "execute", "summarize"]
     summarize = next(step for step in plan.steps if step.semantic_role == "summarize")
     assert summarize.depends_on == ["retrieve", "validate", "execute"]
+
+
+def test_canonicalize_planner_dependencies_maps_unique_step_alias() -> None:
+    canonicalized = _canonicalize_planner_dependencies(
+        normalized_steps=[
+            {"step_id": "step_1", "depends_on": []},
+            {"step_id": "execute", "depends_on": ["step1"]},
+        ]
+    )
+
+    assert canonicalized[1]["depends_on"] == ["step_1"]
+
+
+def test_canonicalize_planner_dependencies_keeps_ambiguous_alias_unresolved() -> None:
+    canonicalized = _canonicalize_planner_dependencies(
+        normalized_steps=[
+            {"step_id": "step_1", "depends_on": []},
+            {"step_id": "step-1", "depends_on": []},
+            {"step_id": "execute", "depends_on": ["step1"]},
+        ]
+    )
+
+    assert canonicalized[2]["depends_on"] == ["step1"]
+
+
+def test_plan_parser_fails_closed_on_ambiguous_dependency_alias() -> None:
+    task = default_task_chain()[0]
+    output_text = json.dumps(
+        {
+            "steps": [
+                {
+                    "step_id": "step_1",
+                    "semantic_role": "retrieve",
+                    "owner_agent": "retriever",
+                    "action": "RETRIEVE_EVIDENCE",
+                    "input_state_refs": [],
+                    "params": {
+                        "query": task.query,
+                        "evidence_text": task.evidence_text,
+                        "tags": list(task.tags),
+                        "allow_memory_reuse": True,
+                    },
+                    "depends_on": [],
+                },
+                {
+                    "step_id": "step-1",
+                    "semantic_role": "validate",
+                    "owner_agent": "executor",
+                    "action": "VALIDATE_ROUTE",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["step_1"],
+                },
+                {
+                    "step_id": "execute",
+                    "semantic_role": "execute",
+                    "owner_agent": "executor",
+                    "action": "EXECUTE_PLAYBOOK",
+                    "input_state_refs": [],
+                    "params": {},
+                    "depends_on": ["step1"],
+                },
+                {
+                    "step_id": "summarize",
+                    "semantic_role": "summarize",
+                    "owner_agent": "summarizer",
+                    "action": "SUMMARIZE_AND_COMMIT",
+                    "input_state_refs": [],
+                    "params": {
+                        "summary_hint": task.summary_hint,
+                        "tags": list(task.tags),
+                    },
+                    "depends_on": ["execute"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="unknown step_id: step1"):
+        _plan_from_llm_output(task, output_text)
 
 
 def test_plan_builder_keeps_runtime_profile_out_of_live_plan_steps() -> None:
