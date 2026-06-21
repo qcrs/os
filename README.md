@@ -176,7 +176,8 @@ v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其�
 
 读法边界：
 
-- `contest_honest_headline_v1` 是当前 contest-facing 正式双模式 headline。`text` 的正式定义是 `text_whole_lane`，读法固定为 `text_whole_lane` vs `state_packet_minimal`。
+- `contest_honest_headline_v1` 已降读为 contest-facing formal-secondary mechanism surface。它保留 `text_whole_lane` vs `state_packet_minimal` 这组 carrier-isolation 对照，用于证明 structured carrier / typed-state minimal packet / frozen purity-parity-stability 边界，不再承担 overall superiority headline。
+- `contest_superiority_headline_v2` 是当前 contest-facing planner-open communication superiority scaffold。它固定为同任务 paired comparator，读法收窄到 `llm_total_tokens`、`task_ms` 与 `quality floor`；当前不承担 memory superiority headline，`cross_lane_actual_parity` 也只读作 diagnostic。
 - `contest_dual_mode_controlled_v3` 降为内部 controlled composite surface。它保留 `text_strict_pure_lane` vs `state_packet_minimal` 这组受控 mainline handoff object，但不再承担 contest-facing pure-text headline。
 - 当前 `contest_dual_mode_controlled_v3` 已收紧为 stronger multi-route formal contract：clean / distractor / ambiguous / reusable 都要求 route 竞争集，且 reusable 显式携带 prior dependency / prior rejection 合同。
 - 当前 contest formal retrieval 按 structure-level clean 读取：formal corpus 不暴露 runtime hint，formal retrieval 不再注入 preferred-doc shortlist，也不再依赖 theme/group bonus 托举 formal 候选空间。
