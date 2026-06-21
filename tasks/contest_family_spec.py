@@ -12,6 +12,7 @@ CONTEST_SPEC_PATH = TASKS_DIR / "contest_family_spec.yaml"
 CONTEST_BENCHMARK_PATH = TASKS_DIR / "contest_dual_mode_controlled_v3_benchmark.yaml"
 CONTEST_CORPUS_PATH = TASKS_DIR / "contest_release_regression_corpus.yaml"
 CONTEST_HONEST_HEADLINE_NAME = "contest_honest_headline_v1_pack"
+CONTEST_SUPERIORITY_HEADLINE_NAME = "contest_superiority_headline_v2_pack"
 
 REQUIRED_DOC_ROLES = {
     "incident",
@@ -182,6 +183,50 @@ def generate_contest_honest_headline_payload(spec: dict[str, Any] | None = None)
             row["evidence_text"] = (
                 "Use only the referenced release artifacts. "
                 "This row is the contest-facing natural-language whole-lane text baseline."
+            )
+        tasks.append(row)
+    return {"task_set": task_set, "tasks": tasks}
+
+
+def generate_contest_superiority_headline_payload(spec: dict[str, Any] | None = None) -> dict[str, Any]:
+    benchmark_payload = generate_contest_benchmark_payload(spec)
+    task_set = dict(benchmark_payload["task_set"])
+    task_set.update(
+        {
+            "name": CONTEST_SUPERIORITY_HEADLINE_NAME,
+            "pack_type": "contest_superiority_headline_v2",
+            "description": (
+                "Contest-facing superiority comparator pack with matched natural whole-lane text "
+                "and minimal typed-state protocol rows on the same contest-release cases, while "
+                "requiring planner-open execution on both lanes."
+            ),
+            "reading_contract": (
+                "Read this pack only as the contest-facing superiority comparator. "
+                "Each pair keeps the same family, query, evidence universe, summary contract, "
+                "and scoring contract fixed; only mode differs, with text using natural whole-lane "
+                "handoff and protocol using the minimal typed-state packet. Planner work must stay "
+                "open on both lanes via plan_source=llm, and S2 replay rows must not be pre-shaped "
+                "through runtime reuse overrides."
+            ),
+            "single_variable": True,
+            "variable_axes": ["mode"],
+            "public_surface": "formal_headline",
+            "plan_source_default": "llm",
+            "evidence_tier": "formal_headline",
+        }
+    )
+    tasks: list[dict[str, Any]] = []
+    for task in benchmark_payload["tasks"]:
+        row = deepcopy(task)
+        row["plan_source"] = "llm"
+        row["expected_reuse_mode"] = "none"
+        row["runtime_reuse_contract"] = "reuse_disabled"
+        if row.get("transfer_strategy") == "text_strict_pure_lane":
+            row["transfer_strategy"] = "text_whole_lane"
+            row["handoff_profile"] = "text_whole_lane"
+            row["evidence_text"] = (
+                "Use only the referenced release artifacts. "
+                "This row is the superiority-facing natural-language whole-lane text comparator."
             )
         tasks.append(row)
     return {"task_set": task_set, "tasks": tasks}

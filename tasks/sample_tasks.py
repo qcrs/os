@@ -18,6 +18,10 @@ from runtime.task_profile import (
     normalize_handoff_profile,
     normalize_transfer_strategy,
 )
+from tasks.contest_family_spec import (
+    CONTEST_BENCHMARK_PATH,
+    generate_contest_superiority_headline_payload,
+)
 
 
 DEFAULT_TASKS_DIR = Path(__file__).resolve().parent
@@ -45,9 +49,17 @@ TASK_SET_ALIASES = {
     "route_corpus_stress_whole_lane_audit_v1": "route_corpus_stress_whole_lane_audit_v1.yaml",
 }
 
+DERIVED_TASK_SET_ENTRYPOINTS = {
+    "contest_superiority_headline_v2": {
+        "base_path": CONTEST_BENCHMARK_PATH,
+        "payload_builder": generate_contest_superiority_headline_payload,
+    },
+}
+
 V3_FORMAL_TASK_PACK_TYPES = (
     "contest_dual_mode_controlled_v3",
     "contest_honest_headline_v1",
+    "contest_superiority_headline_v2",
     "memory_dual_mode_fairness_v3",
     "typed_state_mechanism_v3",
     "external_text_baseline_audit_v3",
@@ -163,6 +175,7 @@ def normalize_task_pack_type(value: object) -> str:
         "": "ad_hoc",
         "contest_dual_mode_controlled_v3": "contest_dual_mode_controlled_v3",
         "contest_honest_headline_v1": "contest_honest_headline_v1",
+        "contest_superiority_headline_v2": "contest_superiority_headline_v2",
         "memory_dual_mode_fairness_v3": "memory_dual_mode_fairness_v3",
         "typed_state_mechanism_v3": "typed_state_mechanism_v3",
         "external_text_baseline_audit_v3": "external_text_baseline_audit_v3",
@@ -483,6 +496,9 @@ def resolve_task_set_path(path: str | Path | None = None) -> Path:
     text = str(path).strip()
     if not text:
         return DEFAULT_TASK_SET.resolve()
+    derived_entry = DERIVED_TASK_SET_ENTRYPOINTS.get(text.lower().replace("-", "_"))
+    if derived_entry is not None:
+        return Path(derived_entry["base_path"]).resolve()
     alias = TASK_SET_ALIASES.get(text.lower())
     if alias is not None:
         return (DEFAULT_TASKS_DIR / alias).resolve()
@@ -502,8 +518,12 @@ def resolve_task_set_path(path: str | Path | None = None) -> Path:
 
 def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
     requested_alias = str(path or "").strip().lower().replace("-", "_")
+    derived_entry = DERIVED_TASK_SET_ENTRYPOINTS.get(requested_alias)
     task_path = resolve_task_set_path(path)
-    payload = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    if derived_entry is not None:
+        payload = derived_entry["payload_builder"]()
+    else:
+        payload = yaml.safe_load(task_path.read_text(encoding="utf-8"))
     metadata_raw: dict[str, object] = {}
     tasks = payload
     if isinstance(payload, dict):
@@ -589,6 +609,62 @@ def _build_contest_honest_headline_bundle(
                 )
             )
     return TaskSetBundle(path=task_path, metadata=headline_metadata, tasks=tuple(transformed))
+
+
+def _build_contest_superiority_headline_bundle(
+    task_path: Path,
+    metadata: TaskSetMetadata,
+    template_tasks: tuple[SampleTask, ...],
+) -> TaskSetBundle:
+    superiority_metadata = replace(
+        metadata,
+        name="contest_superiority_headline_v2_pack",
+        pack_type="contest_superiority_headline_v2",
+        description=(
+            "Contest-facing superiority comparator pack with matched natural whole-lane text "
+            "and minimal typed-state protocol rows on the same contest-release cases, while "
+            "requiring planner-open execution on both lanes."
+        ),
+        reading_contract=(
+            "Read this pack only as the contest-facing superiority comparator. "
+            "Each pair keeps the same family, query, evidence universe, summary contract, "
+            "and scoring contract fixed; only mode differs, with text using natural whole-lane "
+            "handoff and protocol using the minimal typed-state packet. Planner work must stay "
+            "open on both lanes via plan_source=llm, and S2 replay rows must not be pre-shaped "
+            "through runtime reuse overrides."
+        ),
+        single_variable=True,
+        variable_axes=("mode",),
+        public_surface="formal_headline",
+        evidence_tier="formal_headline",
+        plan_source_default="llm",
+    )
+    transformed: list[SampleTask] = []
+    for task in template_tasks:
+        shared_kwargs = {
+            "expected_reuse_mode": "none",
+            "runtime_reuse_contract_override": "",
+            "plan_source": "llm",
+            "task_set_metadata": superiority_metadata,
+        }
+        if task.supports_mode("text"):
+            transformed.append(
+                replace(
+                    task,
+                    transfer_strategy="text_whole_lane",
+                    handoff_profile="text_whole_lane",
+                    evidence_text=(
+                        "Use only the referenced release artifacts. "
+                        "This row is the superiority-facing natural-language whole-lane text comparator."
+                    ),
+                    **shared_kwargs,
+                )
+            )
+        elif task.supports_mode("protocol"):
+            transformed.append(replace(task, **shared_kwargs))
+        else:
+            transformed.append(replace(task, **shared_kwargs))
+    return TaskSetBundle(path=task_path, metadata=superiority_metadata, tasks=tuple(transformed))
 
 
 def _build_typed_state_consumer_sensitivity_bundle(
@@ -1131,7 +1207,11 @@ def _validate_reusable_contract(
 ) -> None:
     if (
         task.complexity_bucket == "reusable"
-        and task_set_metadata.pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"}
+        and task_set_metadata.pack_type in {
+            "contest_dual_mode_controlled_v3",
+            "contest_honest_headline_v1",
+            "contest_superiority_headline_v2",
+        }
     ):
         if not task.required_prior_case_ids:
             raise ValueError(f"{task.task_id}: reusable rows require required_prior_case_ids")
@@ -1150,7 +1230,11 @@ def _validate_formal_pack_task_contract(
         raise ValueError(f"{task.task_id}: formal headline rows require acceptable_routes")
     if task_set_metadata.public_surface == "formal_headline" and not task.acceptable_tools:
         raise ValueError(f"{task.task_id}: formal headline rows require acceptable_tools")
-    if task_set_metadata.pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"}:
+    if task_set_metadata.pack_type in {
+        "contest_dual_mode_controlled_v3",
+        "contest_honest_headline_v1",
+        "contest_superiority_headline_v2",
+    }:
         if task.thickness_setting == "S0":
             raise ValueError(f"{task.task_id}: contest headline rows must not remain at thickness_setting=S0")
         if task.reasoning_hops_min < 2:

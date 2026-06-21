@@ -1431,6 +1431,7 @@ class Orchestrator:
             return build_plan(task)
         # plan_source=llm compiles the plan up front; the resulting DAG still runs
         # through the normal retriever/executor/summarizer step path.
+        # This is the required planner-open path for superiority comparators.
         planner = self.agents.get("planner")
         if planner is None or not hasattr(planner, "plan_task"):
             raise KeyError("planner agent is required for plan_source=llm pre-plan compilation")
