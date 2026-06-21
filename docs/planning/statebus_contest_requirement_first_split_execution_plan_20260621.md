@@ -12,7 +12,8 @@
 
 - 基于赛题原文 `docs/reference/题目.md`
 - 基于当前实现与最新有效 artifact：
-  - `runs/contest_superiority_headline_v2_api_repeat3_20260621_192847/api_repeat3_superiority_v2/benchmark_report.md`
+  - `runs/contest_superiority_headline_v2_api_repeat3_stageb_hotpath/benchmark_report.md`
+  - `runs/contest_superiority_headline_v2_api_repeat3_stageb_hotpath/benchmark_results.json`
 - 用于覆盖旧计划文档里已经被实现状态改写的部分
 
 ---
@@ -97,25 +98,29 @@
 
 参考：
 
-- `runs/contest_superiority_headline_v2_api_repeat3_20260621_192847/api_repeat3_superiority_v2/benchmark_report.md`
+- `runs/contest_superiority_headline_v2_api_repeat3_stageb_hotpath/benchmark_report.md`
 
 ### 3.2 当前 v2 已经出现的正信号
 
 在最新 `repeat=3` 包里：
 
+- `Observed planner sources: llm`
+- `Planner one-shot valid rate = 1.00`
+- `Planner repair attempts = 0 / 120`
 - `protocol llm_total_tokens < text`
 - `control_bytes` 继续更低
 - `wrong_family_rate = 0.00`
-- `exact_match_rate = 0.78`
+- `exact_match_rate = 0.80`
 - `admissible_match_rate = 1.00`，但已明确只读作 safety floor
 
 这说明：
 
 - v2 不是坏对象
 - superiority 主线已经开始被回答
-- 但它还没有闭合
+- planner contract failure 已不再是当前主 blocker
+- 但 communication superiority 还没有闭合
 
-### 3.3 当前 v2 的三个结构性缺口
+### 3.3 当前 v2 的五个结构性缺口
 
 #### 缺口 A：它不能回答 memory superiority
 
@@ -135,6 +140,11 @@
 这不是“结果暂时还没出来”，而是：
 
 - `对象设计上就没让它回答 memory gain`
+- 当前 `repeat=3` 结果里这条线也是空的：
+  - `memory_hits = 0`
+  - `reuse_apply_rate = 0`
+  - `reuse_gain = 0`
+  - `validated_reuse_task_count = 0`
 
 #### 缺口 B：cross-lane actual parity 发散证明的是行为分叉，不是公平性被破坏
 
@@ -159,24 +169,123 @@
 
 - `benchmark fairness 已经失效`
 
-#### 缺口 C：protocol 的 wall-time 被当前 prompt / handoff 形状放大
+最新 `repeat=3` 包里，这个 diagnostic 没有自然收敛：
 
-当前 protocol lane 的慢，不应直接理解成 “typed-state 本身拖慢系统”。
+- mismatch task ids = `10`
+- mismatch counts = `corpus_scope: 20, tool_candidates: 4`
+- role mismatch counts = `executor: 12, retriever: 12`
 
-更接近根因的是：
+因此它现在更像：
 
-1. planner prompt 更压缩，但也更格式敏感
-2. summarizer handoff 仍然带着嵌套结构
-3. protocol summarizer 不是直接看扁平文本，而是先拿结构化 summary packet，再整体 `json.dumps` 成字符串，再嵌进 tagged JSON
+- `行为分叉与高不确定性 case 的 LLM 解释成本共同出现`
 
-这会带来一种典型现象：
+#### 缺口 C：非文本传输机制成立，但效率叙事没有闭合
 
-- token 稍低
-- 但模型解析 wall-time 更高
+当前不能说“非文本传输不行”，因为机制面已经成立：
+
+- `typed_executor_any_consumption_rate = 1.00`
+- `typed_executor_minimal_expected_consumption_rate = 1.00`
+- `executor_expected_kind_match_rate = 1.00`
+- `executor_unexpected_kind_seen_rate = 0.00`
+
+但当前也不能说“结构化通信整体更轻”，因为 protocol 的 handoff 负担并不更低：
+
+- `handoff_wire_bytes`: `407.75 > 222.25`
+- `handoff_payload_bytes`: `5273.47 > 2929.03`
+- `handoff_nontext_bytes`: `3495.77 > 0`
+
+因此当前诚实读法只能是：
+
+- `LLM token / control plane 更省`
+- `总 handoff 负担尚未证明更轻`
+
+#### 缺口 D：protocol 的 wall-time 回退不是偶发抖动，而是当前 communication hot path 的结构性 blocker
+
+当前 protocol lane 的慢，不应直接理解成 “typed-state 本身拖慢系统”，因为主要差额不在 retrieve / execute，而是在 LLM 侧。
+
+最新 `repeat=3` pairwise 统计是：
+
+- `60` 个 text/protocol 成对样本里，protocol 慢了 `45 / 60`
+- `task_ms_delta mean = +346.42ms`
+- `task_ms_delta median = +395.42ms`
+- 分 run 均值分别是：
+  - `run0: +216.28ms`
+  - `run1: +396.41ms`
+  - `run2: +426.58ms`
+
+phase 级差额几乎全堆在：
+
+- `planner_ms_delta mean = +117.01ms`
+- `summarize_ms_delta mean = +231.61ms`
+- `retrieve_ms_delta mean = +2.24ms`
+- `execute_ms_delta mean = +1.28ms`
+
+因此当前主 blocker 不是：
+
+- typed-state I/O
+- retrieval path
+- execute path
+
+而是：
+
+- `planner + summarizer` 的 LLM wall-time
+
+#### 缺口 E：当前结构化协议已经降 token，但还没有降高不确定性任务上的语义重建成本
+
+这里需要和旧问题区分开：
+
+- 旧的 protocol summarizer 双层 `json.dumps` handoff 已经在 Stage B 中移除
+- 当前剩余问题不是“还有那条旧嵌套路径没改”，而是：
+  - `_render_protocol_summary_input_text()` 现在仍是字段清单式 handoff
+  - 它比旧版省 token
+  - 但在 `ambiguous / replay_reusable / distractor / abstention_allowed` 这类高不确定性 case 上，仍要求模型重建证据竞争、保守决策和动作结论之间的关系
+
+这就是为什么会出现：
+
+- token 下降
+- 但 wall-time 尤其 `summarize_ms` 仍系统性更高
+
+当前最重的长尾 case 也支持这个判断：
+
+- `rr-cache-replay_reusable`: `+752.7 / +596.4 / +1476.5 ms`
+- `rr-billing-ambiguous`: `+1234.2 / +684.3 / +329.3 ms`
+- `rr-auth-replay_reusable`: `+17.7 / +662.3 / +1237.1 ms`
+- `rr-checkout-distractor`: `+727.3 / +639.3 / +471.3 ms`
+
+按 case type 看：
+
+- `abstention_allowed`: 平均 `+420.24ms`
+- `bounded_alternative`: 平均 `+272.60ms`
+
+按 task group 看：
+
+- `inventory_rollout_chain`: 平均 `+534.86ms`
+- `billing_queue_chain`: 平均 `+412.95ms`
+- `checkout_release_chain`: 平均 `+376.44ms`
 
 当前热点代码位置：
 
 - `agents/sample_agents.py`
+  - `_planner_messages()`
+  - `_build_protocol_summary_input_packet()`
+  - `_render_protocol_summary_input_text()`
+
+### 3.4 当前阶段判断
+
+当前阶段结论应固定为：
+
+1. Stage A 已完成
+   - 对象分层和 headline 边界已经冻结
+
+2. Stage B 只完成了一半
+   - planner repair 问题已基本收掉
+   - summarizer / planner wall-time 还没有收平
+
+3. Stage C 当前不通过
+   - `repeat=3` 还不能诚实读成 communication superiority 已闭合
+
+4. Stage D 当前不允许进入
+   - 不能进 `repeat=10`
 
 ---
 
@@ -191,13 +300,17 @@
 
 2. 局部 superiority 信号存在
    - 在当前 planner-open paired comparator 上，protocol 的 `control_bytes` 和 `llm_total_tokens` 方向更优
+3. 非文本状态传递机制成立
+   - minimal typed packet 已真实生产、传递、消费
 
 ### 4.2 现在不能说的
 
 1. 不能说 `StateBus 已整体优于 pure-text`
 2. 不能说 `v2 已经覆盖 memory superiority`
 3. 不能说 `总通信负担更低`
-4. 不能说 `open/LangGraph comparison 已经能当 formal 主证据`
+4. 不能说 `当前 structured protocol 已经稳定更快`
+5. 不能说 `当前 comparator 已经是 external traditional pure-text 主证据`
+6. 不能说 `open/LangGraph comparison 已经能当 formal 主证据`
 
 ---
 
@@ -329,15 +442,16 @@
 
 当前要解决的不是“所有性能问题”，而是两类最会污染赛题判断的问题：
 
-1. planner repair 残余
-2. protocol planner / summarizer wall-time 偏高
+1. protocol planner / summarizer wall-time 偏高
+2. 高不确定性 case 上的结构化 handoff 语义重建成本
+3. communication claim boundary 还没有闭合
 
 ### Phase 1A：planner prompt 收口
 
 目标：
 
-- 降低 protocol planner 的格式脆弱性
-- 保持 single-variable 边界不变
+- 只保留 planner 稳定性收益，不再继续把主要精力放在 planner wording 强化上
+- 保持 single-variable 边界尽量不再继续变差
 
 重点文件：
 
@@ -347,7 +461,8 @@
 
 - 保留 text/protocol 都是 `plan_source=llm`
 - 不放宽 DAG 合同
-- 只减少 prompt 的格式敏感性和 repair 触发概率
+- 除非 repeat 验证重新出现 correctness failure，否则不再做大幅 planner prompt 改写
+- 只允许做小的 contract 守护或回归修复
 
 内部工程通过线：
 
@@ -355,21 +470,38 @@
 - `repeat=3` 下 planner repair 尽量压到 `0-1`
 - 不新增 correctness failure
 
+当前状态：
+
+- 已基本达到
+- 当前不再把 planner repair 当主 blocker
+
 ### Phase 1B：protocol summarizer handoff 收口
 
 目标：
 
-- 解决当前 token 下降但 wall-time 不稳的问题
+- 解决当前 token 下降但 wall-time 仍系统性回退的问题
+- 重点不是再压 token，而是压高不确定性 case 的语义重建成本
 
 重点文件：
 
 - `agents/sample_agents.py`
+- `tests/test_llm_runtime.py`
 
 执行要求：
 
-- 扁平化 protocol summarizer handoff
-- 不再把完整 summary packet 先 `json.dumps` 再嵌套传给 summarizer
-- 去掉重复语义字段
+- 保留当前去嵌套成果，不要回退到旧的双层 `json.dumps` 路径
+- 不再把 protocol summarizer handoff 维持成纯字段清单
+- 让 protocol handoff 更接近 text lane 的 sectioned narrative
+- 必须显式表达以下关系，而不是只平铺字段：
+  - 证据竞争
+  - 路由结论
+  - 保守 abstain 条件
+  - 动作结论
+- 优先覆盖最伤的 case：
+  - `ambiguous`
+  - `replay_reusable`
+  - `distractor`
+  - `abstention_allowed`
 - 保持 typed-state minimal consumption contract 不变
 
 内部工程通过线：
@@ -377,6 +509,15 @@
 - `protocol summarize_ms` 收敛
 - `protocol llm_total_tokens < text` 继续成立
 - `task_ms` 不再系统性更差
+
+本阶段 artifact 要求：
+
+- 形成一个简短的 case-focused delta note
+- 明确记录修改前后：
+  - `summarize_ms`
+  - `task_ms`
+  - 高不确定性 case 长尾
+  - `llm_total_tokens`
 
 ### Phase 1C：parity 诊断重构
 
@@ -413,6 +554,11 @@
 - actual parity 继续保留为 diagnostic
 - outcome parity 能帮助判断“分叉是否伤害结果”
 
+优先级说明：
+
+- 这一步低于 Phase 1B
+- 当前不允许为了做 parity 诊断而扩散主实现范围
+
 ## Phase 2：communication superiority 验证梯度
 
 目标：
@@ -440,10 +586,21 @@
 
 - token 优势方向稳定
 - `task_ms` 不再系统性慢
+- 至少不能再出现：
+  - `45 / 60` pair 为正
+  - `median task_ms_delta` 接近 `+395ms`
 - `exact_match_rate` 不明显塌陷
 - `wrong_family_rate = 0`
 - planner repair 已很低
 - actual parity 仍只读作 diagnostic
+
+当前状态：
+
+- 未通过
+- 原因不是 correctness failure，而是：
+  - `protocol task_ms` 系统性更高
+  - `summarize_ms` 仍系统性更高
+  - 当前 communication superiority 仍只到 scaffold
 
 ### Repeat=10 前置条件
 
@@ -453,6 +610,7 @@
 2. planner repair 已很低
 3. planner / summarizer wall-time 未继续系统性偏高
 4. communication superiority 的方向已经稳定
+5. 最新 `repeat=3` 已经能给出可冻结的诚实结论，而不是只给出“仍需继续修 hotpath”
 
 ## Phase 3：单独形成 memory superiority
 
@@ -531,14 +689,15 @@
 
 2. `comm-hotpath`
    - 内容：
-     - planner prompt 收口
-     - summarizer handoff 扁平化
-     - parity 诊断重构
+     - summarizer-first hot path 收口
+     - 仅保留 planner contract 守护
+     - 必要时最小 parity 诊断补充
 
 3. `comm-validation`
    - 内容：
      - `repeat=1 -> repeat=3`
      - 最新 verdict
+     - pairwise / case-type / long-tail delta note
 
 4. `memory-scaffold`
    - 内容：
@@ -639,9 +798,15 @@
 必须同时满足：
 
 - planner repair 已明显下降
-- protocol summarizer handoff 已扁平化
+- protocol summarizer handoff 已从旧嵌套路径退出
+- 高不确定性 case 的 summarizer 语义 handoff 已被重写得更接近 text lane narrative
 - `wrong_family_rate = 0`
 - `protocol llm_total_tokens < text` 仍成立
+
+当前状态：
+
+- 部分通过
+- 剩余 blocker：`summarize_ms / task_ms` 仍系统性偏高
 
 ### Stage C：communication superiority repeat=3
 
@@ -651,6 +816,15 @@
 - `task_ms` 不再系统性恶化
 - `exact_match_rate` 不明显塌陷
 - `cross_lane_actual_parity` 继续只读作 diagnostic
+
+当前状态：
+
+- 未通过
+- 当前 blocker：
+  - `protocol task_ms mean delta = +346.42ms`
+  - `protocol task_ms median delta = +395.42ms`
+  - `planner_ms_delta mean = +117.01ms`
+  - `summarize_ms_delta mean = +231.61ms`
 
 ### Stage D：communication superiority repeat=10
 
