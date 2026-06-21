@@ -1389,6 +1389,19 @@ def _resolve_visible_candidate_selection(
         if resolved := by_canonical_pair.get((canonical_route, canonical_tool)):
             return resolved
 
+    # Allow one constrained normalization for API outputs that omit the stable
+    # "tool." prefix, but only when the route already matches and the suffix
+    # maps to exactly one visible candidate.
+    if canonical_route and canonical_tool:
+        route_suffix_matches = [
+            pair
+            for pair in visible_pairs
+            if canonical_identity_token(pair[0]) == canonical_route
+            and canonical_identity_token(pair[1].split(".", 1)[-1]) == canonical_tool
+        ]
+        if len(route_suffix_matches) == 1:
+            return route_suffix_matches[0]
+
     route_matches = [
         pair for pair in visible_pairs if canonical_route and canonical_identity_token(pair[0]) == canonical_route
     ]
