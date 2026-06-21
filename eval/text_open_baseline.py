@@ -1277,10 +1277,18 @@ def _strict_visible_selection(
 
 def _strict_action_contract(payload: dict[str, object]) -> str:
     contract = str(payload.get("action_contract", "")).strip()
+    if not contract:
+        normalized_route = str(payload.get("route", payload.get("validated_route", ""))).strip()
+        normalized_tool = str(payload.get("tool_name", payload.get("validated_tool", payload.get("validated_tool_name", "")))).strip()
+        if normalized_route and normalized_tool:
+            payload["route"] = normalized_route
+            payload["tool_name"] = normalized_tool
+            contract = "execute_validated_tool"
     if contract not in {"execute_validated_tool", "abstain_collect_more_evidence"}:
         raise ValueError(
             "strict external pure-text executor returned unsupported action_contract"
         )
+    payload["action_contract"] = contract
     return contract
 
 

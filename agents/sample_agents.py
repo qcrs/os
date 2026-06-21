@@ -198,8 +198,10 @@ def _retriever_selection_from_llm_output(output_text: str) -> dict[str, Any]:
 
 def _executor_selection_from_llm_output(output_text: str) -> dict[str, Any]:
     payload = extract_json_object(output_text)
-    route = str(payload.get("route", "")).strip()
-    tool_name = str(payload.get("tool_name", "")).strip()
+    route = str(payload.get("route", payload.get("validated_route", ""))).strip()
+    tool_name = str(
+        payload.get("tool_name", payload.get("validated_tool", payload.get("validated_tool_name", "")))
+    ).strip()
     action_contract = str(payload.get("action_contract", "")).strip()
     if not route or not tool_name:
         raise ValueError(f"executor output missing route/tool_name: {output_text!r}")
@@ -1427,10 +1429,22 @@ class ExecutorAgent(BaseAgent):
         semantic_result = await active_llm.complete(executor_messages, purpose="executor")
         ctx.record_llm_result(semantic_result, purpose="executor")
         semantic_selection = _executor_selection_from_llm_output(semantic_result.text)
+        validated_tool_candidates = [
+            dict(item)
+            for item in validation_payload.get("validated_tool_candidates", [])
+            if isinstance(item, dict)
+        ]
+        if not validated_tool_candidates:
+            validated_tool_candidates = [
+                dict(item)
+                for item in retrieve_payload.get("tool_candidates", [])
+                if isinstance(item, dict)
+            ]
         if validation_payload:
             validation_payload["validated_route"] = semantic_selection["route"]
             validation_payload["validated_tool_name"] = semantic_selection["tool_name"]
             validation_payload["validated_action_contract"] = semantic_selection["action_contract"]
+            validation_payload["validated_tool_candidates"] = validated_tool_candidates
             if validation_refs:
                 validation_packet = validation_payload
         result = execute_playbook_step(
@@ -1463,7 +1477,7 @@ class ExecutorAgent(BaseAgent):
             "actual_tool_catalog": default_tool_registry().names(),
             "actual_tool_candidates": [
                 f"{str(item.get('route', '')).strip()}::{str(item.get('tool_name', '')).strip()}"
-                for item in validation_payload.get("validated_tool_candidates", [])
+                for item in validated_tool_candidates
                 if isinstance(item, dict)
                 and str(item.get("route", "")).strip()
                 and str(item.get("tool_name", "")).strip()
