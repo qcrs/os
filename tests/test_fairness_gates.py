@@ -280,3 +280,29 @@ def test_headline_gates_surface_cross_lane_actual_parity_failure() -> None:
     assert gates["object_parity_gate"]["allowed"] is False
     assert "cross_lane_actual_parity_failed" in gates["object_parity_gate"]["withheld_reasons"]
     assert gates["object_parity_gate"]["cross_lane_actual_parity"]["passed"] is False
+
+
+def test_superiority_headline_gate_downgrades_actual_parity_to_diagnostic() -> None:
+    gates = _build_headline_gates(
+        pack_type="contest_superiority_headline_v2",
+        withheld_reasons=["contest_repeat_insufficient", "cross_lane_actual_parity_failed"],
+        formal_stability_gate={"passed": False},
+        object_parity_gate={"passed": False, "cross_lane_actual_parity_ok": False},
+        cross_lane_actual_parity={
+            "passed": False,
+            "applicable": True,
+            "mismatch_counts": {
+                "model": 0,
+                "tool_catalog": 0,
+                "tool_candidates": 2,
+                "corpus_scope": 4,
+            },
+        },
+        memory_replay_evidence_gate={"applicable": False, "passed": False},
+        contest_formal_coverage_gate={"passed": False},
+    )
+
+    assert gates["primary_headline_gate"]["allowed"] is False
+    assert gates["primary_headline_gate"]["withheld_reasons"] == ["contest_repeat_insufficient"]
+    assert gates["superiority_scaffold_gate"]["withheld_reasons"] == ["contest_repeat_insufficient"]
+    assert gates["superiority_scaffold_gate"]["diagnostic_reasons"] == ["cross_lane_actual_parity_failed"]

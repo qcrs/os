@@ -2492,6 +2492,8 @@ def _planner_repair_messages(
         "Return exactly one top-level key named steps. "
         "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
         f"The plan must cover these semantic roles: {required_roles_text}. "
+        "Allowed owner_agent values: retriever, executor, summarizer. "
+        "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
         "Do not use compact r/x/s shape. "
         "Do not omit semantic_role. Do not use description-only steps. "
         "No markdown."
@@ -2533,14 +2535,12 @@ def _summarizer_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMess
         system_prompt = (
             "You are the StateBus Summarizer. Output JSON only. "
             "Return {\"s\":\"summary\",\"c\":0.95,\"t\":[...],\"r\":[...]} . "
-            "Use concise concrete summary text. No markdown."
+            "Use concise concrete summary text. Treat the tagged packet as the full handoff; do not restate packet keys or duplicate fields. No markdown."
         )
         user_prompt = tagged_json_block(
             PROTOCOL_SUMMARIZER_TAG,
             {
-                "h": payload["summary_hint"],
                 "e": payload["evidence_text"],
-                "a": payload["actions_text"],
                 "t": list(payload["tags"]),
                 "r": list(payload["reusable_steps"]),
             },

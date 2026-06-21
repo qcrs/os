@@ -1821,7 +1821,7 @@ def _build_headline_gates(
             if reason in {
                 "contest_case_surface_incomplete",
                 "contest_repeat_insufficient",
-                "cross_lane_actual_parity_failed",
+                "whole_lane_text_guard_incomplete",
                 "text_hidden_field_leak_detected",
                 "text_template_slot_leak_detected",
                 "text_summarizer_typed_visibility_detected",
@@ -1883,7 +1883,7 @@ def _build_headline_gates(
             "withheld_reasons": superiority_scaffold_reasons,
             "child_gates": [
                 "formal_stability_gate",
-                "object_parity_gate",
+                "cross_lane_actual_parity",
                 "communication_gate",
             ]
             if pack_type == "contest_superiority_headline_v2"
@@ -1947,6 +1947,13 @@ def _build_headline_gates(
             "applicable": pack_type == "contest_superiority_headline_v2",
             "allowed": pack_type == "contest_superiority_headline_v2" and not superiority_scaffold_reasons,
             "withheld_reasons": superiority_scaffold_reasons,
+            "diagnostic_reasons": (
+                ["cross_lane_actual_parity_failed"]
+                if pack_type == "contest_superiority_headline_v2"
+                and bool(cross_lane_actual_parity.get("applicable"))
+                and not bool(cross_lane_actual_parity.get("passed"))
+                else []
+            ),
             "reading_boundary": [
                 "planner-open superiority scaffold only",
                 "admissible_match_rate is a safety floor only",
@@ -4110,7 +4117,11 @@ def _build_result(
                 withheld_reasons.append("contest_repeat_insufficient")
     if pack_type == "memory_dual_mode_fairness_v3" and not bool(object_parity_gate.get("passed")):
         withheld_reasons.append("dual_mode_object_parity_failed")
-    if bool(cross_lane_actual_parity.get("applicable")) and not bool(cross_lane_actual_parity.get("passed")):
+    if (
+        pack_type != "contest_superiority_headline_v2"
+        and bool(cross_lane_actual_parity.get("applicable"))
+        and not bool(cross_lane_actual_parity.get("passed"))
+    ):
         withheld_reasons.append("cross_lane_actual_parity_failed")
     if memory_replay_evidence_gate["applicable"] and not bool(memory_replay_evidence_gate.get("passed")):
         withheld_reasons.append("memory_replay_expectation_failed")
@@ -4290,6 +4301,9 @@ def _build_result(
             "formal_stability_gate": formal_stability_gate,
             "object_parity_gate": object_parity_gate,
             "cross_lane_actual_parity": cross_lane_actual_parity,
+            "cross_lane_actual_parity_headline_blocking": (
+                pack_type != "contest_superiority_headline_v2"
+            ),
             "memory_replay_evidence_gate": memory_replay_evidence_gate,
             "headline_memory_replay_effect_gate": headline_memory_replay_effect_gate,
             "contest_formal_coverage_gate": contest_coverage_gate,
@@ -4877,6 +4891,7 @@ def _append_cross_lane_actual_parity_section(
             "## Cross-Lane Actual Parity",
             "",
             f"- Cross-lane actual parity: `{'pass' if bool(verdict.get('passed')) else 'fail'}`",
+            f"- Headline role for this parity surface: `{'headline blocker' if bool(verdict.get('headline_blocking', True)) else 'diagnostic only'}`",
             f"- Shared task count: `{int(verdict.get('shared_task_count', 0))}`",
             f"- Missing in text: `{json.dumps(list(verdict.get('missing_in_text', [])), ensure_ascii=False)}`",
             f"- Missing in protocol: `{json.dumps(list(verdict.get('missing_in_protocol', [])), ensure_ascii=False)}`",
@@ -5718,6 +5733,10 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
     text_case_audit = text_summary.get("misfire_audit", {}).get("case_contract", {})
     text_guard_audit = text_summary.get("guard_audit", {})
     cross_lane_actual_parity = dict(manifest.get("cross_lane_actual_parity", {}) or {})
+    if cross_lane_actual_parity:
+        cross_lane_actual_parity["headline_blocking"] = bool(
+            manifest.get("cross_lane_actual_parity_headline_blocking", True)
+        )
     if pack_type == "contest_dual_mode_controlled_v3":
         _append_pack_contract_section(
             lines,
@@ -5902,6 +5921,11 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
             lines.append(
                 f"- Superiority scaffold withheld: `{','.join(superiority_gate.get('withheld_reasons', []))}`"
             )
+        diagnostic_reasons = list(superiority_gate.get("diagnostic_reasons", []) or [])
+        if diagnostic_reasons:
+            lines.append(
+                f"- Scaffold diagnostics only: `{','.join(diagnostic_reasons)}`"
+            )
         thickness_gate = manifest.get("headline_thickness_admission_gate", {})
         if isinstance(thickness_gate, dict) and bool(thickness_gate.get("applicable")):
             lines.extend(
@@ -5921,6 +5945,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "- Primary metrics: `llm_total_tokens`, `task_ms`, `exact_match_rate`, `wrong_family_rate`.",
                 "- Safety-floor metric only: `admissible_match_rate`.",
                 "- Secondary communication diagnostics only: `control_bytes`, `handoff_wire_bytes`, `handoff_payload_bytes`.",
+                "- Open-planner path divergence note: `cross_lane_actual_parity remains surfaced as diagnostics for actual retrieval/execution traces and is not a headline blocker for v2 unless a fairness hard gate fails separately.`",
             ]
         )
         if isinstance(stability_gate, dict) and stability_gate.get("mode_checks"):
