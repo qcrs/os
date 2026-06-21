@@ -7,13 +7,14 @@ import asyncio
 import pytest
 
 from agents.sample_agents import (
+    ExecutorAgent,
     PlannerAgent,
     _plan_from_llm_output,
     _planner_messages,
     _summarizer_messages,
     _summary_from_llm_output,
 )
-from protocol.messages import Capability
+from protocol.messages import Capability, CapabilityItem, StepResult
 from runtime.llm import DeterministicLLMClient, LLMConfig
 from runtime.llm import LLMResult, LLMUsage
 from runtime.llm import parse_tagged_json
@@ -300,6 +301,101 @@ async def test_deterministic_llm_supports_retriever_and_executor_roles() -> None
 
     assert json.loads(retriever.text)["tool_name"] == "tool.cache_invalidation_playbook"
     assert json.loads(executor.text)["action_contract"] == "execute_validated_tool"
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_retrieve_payload_tool_candidates_when_validation_candidates_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = ExecutorAgent(
+        agent_id="executor",
+        capability=Capability(
+            agent_id="executor",
+            items=[
+                CapabilityItem(
+                    name="EXECUTE_PLAYBOOK",
+                    kind="action",
+                    input_schema="step",
+                    output_schema="step_result",
+                    accepted_state_kinds=["DENSE_EVIDENCE"],
+                    produced_state_kinds=["TOOL_ARTIFACT"],
+                )
+            ],
+        ),
+        llm_client=DeterministicLLMClient(),
+    )
+
+    retrieve_result = type(
+        "Result",
+        (),
+        {
+            "payload": {
+                "feature_route": "auth_session_drift",
+                "feature_tool_name": "tool.auth_session_repair",
+                "tool_candidates": [
+                    {
+                        "route": "auth_session_drift",
+                        "tool_name": "tool.auth_session_repair",
+                        "score": 7,
+                    },
+                    {
+                        "route": "auth_rate_limit",
+                        "tool_name": "tool.auth_rate_limit_triage",
+                        "score": 6,
+                    },
+                ],
+                "retrieved_doc_ids": ["rr-auth-incident"],
+                "inline_handoff_text": "",
+            }
+        },
+    )()
+
+    class Ctx:
+        task_id = "t1"
+        task_theme = "contest_auth"
+        statepool = None
+        runtime_profile = RuntimeTaskProfile()
+        mode = "text"
+        metrics = type("M", (), {"expected_gate_block_count": 0})()
+        task = default_task_chain()[0]
+
+        def transfer_strategy(self):
+            return "text_strict_pure_lane"
+
+        def step_input_refs(self, step_id):
+            return []
+
+        def record_transfer_inputs(self, refs):
+            return None
+
+        def handoff_profile(self):
+            return "text_strict_pure_lane"
+
+        def result_for_role(self, role):
+            if role == "retrieve":
+                return retrieve_result
+            return None
+
+        def record_llm_result(self, result, purpose):
+            return None
+
+    task = default_task_chain()[0]
+    step = build_plan(task).steps[2]
+
+    monkeypatch.setattr(
+        "agents.sample_agents.execute_playbook_step",
+        lambda **kwargs: StepResult(
+            step_id="execute",
+            success=True,
+            output_state_refs=[],
+            semantic_trace={},
+            payload={},
+        ),
+    )
+
+    result = await agent.execute_step(step, Ctx())
+    assert result.payload["actual_tool_candidates"] == [
+        "auth_session_drift::tool.auth_session_repair",
+        "auth_rate_limit::tool.auth_rate_limit_triage",
+    ]
 
 
 @pytest.mark.asyncio

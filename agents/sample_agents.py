@@ -1330,6 +1330,7 @@ class RetrieverAgent(BaseAgent):
                 "feature_hint_doc_ids": feature_bundle["hint_doc_ids"],
                 "feature_route_confidence": feature_bundle["route_confidence"],
                 "feature_route_provenance": feature_bundle["route_provenance"],
+                "tool_candidates": [dict(item) for item in route_candidates],
                 "memory_prior_applied": feature_bundle["memory_prior_applied"],
                 "memory_candidate_reduction": feature_bundle["memory_candidate_reduction"],
                 "memory_prior_route": feature_bundle["memory_prior_route"],
@@ -1410,6 +1411,11 @@ class ExecutorAgent(BaseAgent):
         retrieve_result = ctx.result_for_role("retrieve")
         retrieve_payload = {} if retrieve_result is None else dict(retrieve_result.payload)
         validation_payload = {} if validation_packet is None else dict(validation_packet)
+        retrieve_tool_candidates = [
+            dict(item)
+            for item in retrieve_payload.get("tool_candidates", [])
+            if isinstance(item, dict)
+        ]
         active_llm = self.llm_client or DeterministicLLMClient()
         executor_messages = _executor_messages(
             {
@@ -1422,7 +1428,7 @@ class ExecutorAgent(BaseAgent):
                     dict(item)
                     for item in validation_payload.get("validated_tool_candidates", [])
                     if isinstance(item, dict)
-                ],
+                ] or retrieve_tool_candidates,
             },
             mode=str(getattr(ctx, "mode", "protocol")),
         )
@@ -1435,11 +1441,7 @@ class ExecutorAgent(BaseAgent):
             if isinstance(item, dict)
         ]
         if not validated_tool_candidates:
-            validated_tool_candidates = [
-                dict(item)
-                for item in retrieve_payload.get("tool_candidates", [])
-                if isinstance(item, dict)
-            ]
+            validated_tool_candidates = retrieve_tool_candidates
         if validation_payload:
             validation_payload["validated_route"] = semantic_selection["route"]
             validation_payload["validated_tool_name"] = semantic_selection["tool_name"]
