@@ -1525,6 +1525,7 @@ def _cross_lane_actual_parity_verdict(
     verdict["applicable"] = pack_type in {
         "contest_dual_mode_controlled_v3",
         "contest_honest_headline_v1",
+        "contest_superiority_headline_v2",
         "memory_dual_mode_fairness_v3",
     }
     def _pair_key(row: dict[str, object]) -> str:
@@ -1597,7 +1598,12 @@ def _object_parity_gate(
     if cross_lane_actual_parity is None:
         cross_lane_actual_parity = _empty_cross_lane_actual_parity()
     gate = {
-        "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"},
+        "applicable": pack_type in {
+            "contest_dual_mode_controlled_v3",
+            "contest_honest_headline_v1",
+            "contest_superiority_headline_v2",
+            "memory_dual_mode_fairness_v3",
+        },
         "executor_mainline_object_ok": True,
         "summarizer_mainline_object_ok": True,
         "text_hidden_field_leak_zero": float(text_guard_audit.get("hidden_field_leak_rate", 0.0)) == 0.0,
@@ -1809,8 +1815,22 @@ def _build_headline_gates(
             "applicable": False,
             "memory_replay_effect_ready": False,
         }
+    superiority_scaffold_reasons = []
+    if pack_type == "contest_superiority_headline_v2":
+        for reason in withheld_reasons:
+            if reason in {
+                "contest_case_surface_incomplete",
+                "contest_repeat_insufficient",
+                "cross_lane_actual_parity_failed",
+                "text_hidden_field_leak_detected",
+                "text_template_slot_leak_detected",
+                "text_summarizer_typed_visibility_detected",
+            }:
+                superiority_scaffold_reasons.append(reason)
     communication_reasons = (
-        list(withheld_reasons) if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"} else []
+        list(withheld_reasons)
+        if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "contest_superiority_headline_v2"}
+        else []
     )
     state_authenticity_reasons = []
     if pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}:
@@ -1837,7 +1857,7 @@ def _build_headline_gates(
                 object_parity_reasons.append(reason)
         if not bool(formal_stability_gate.get("passed")):
             object_parity_reasons.append("formal_stability_gate_failed")
-    communication_allowed = pack_type == "contest_honest_headline_v1" and not communication_reasons
+    communication_allowed = pack_type in {"contest_honest_headline_v1", "contest_superiority_headline_v2"} and not communication_reasons
     state_authenticity_allowed = (
         pack_type in {"typed_state_mechanism_v3", "typed_state_authenticity_v3"}
         and not state_authenticity_reasons
@@ -1854,8 +1874,23 @@ def _build_headline_gates(
         and not object_parity_reasons
     )
     return {
+        "primary_headline_gate": {
+            "applicable": pack_type == "contest_superiority_headline_v2",
+            "gate_name": (
+                "superiority_scaffold_gate" if pack_type == "contest_superiority_headline_v2" else ""
+            ),
+            "allowed": pack_type == "contest_superiority_headline_v2" and not superiority_scaffold_reasons,
+            "withheld_reasons": superiority_scaffold_reasons,
+            "child_gates": [
+                "formal_stability_gate",
+                "object_parity_gate",
+                "communication_gate",
+            ]
+            if pack_type == "contest_superiority_headline_v2"
+            else [],
+        },
         "communication_gate": {
-            "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"},
+            "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "contest_superiority_headline_v2"},
             "allowed": communication_allowed,
             "withheld_reasons": communication_reasons,
             "formal_stability_gate": formal_stability_gate,
@@ -1889,10 +1924,35 @@ def _build_headline_gates(
             "formal_stability_gate": formal_stability_gate,
         },
         "formal_stability_gate": {
-            "applicable": pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"},
+            "applicable": pack_type in {
+                "contest_dual_mode_controlled_v3",
+                "contest_honest_headline_v1",
+                "contest_superiority_headline_v2",
+                "memory_dual_mode_fairness_v3",
+            },
             "allowed": bool(formal_stability_gate.get("passed")),
-            "withheld_reasons": list(withheld_reasons) if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"} else [],
+            "withheld_reasons": (
+                list(withheld_reasons)
+                if pack_type in {
+                    "contest_dual_mode_controlled_v3",
+                    "contest_honest_headline_v1",
+                    "contest_superiority_headline_v2",
+                    "memory_dual_mode_fairness_v3",
+                }
+                else []
+            ),
             "formal_stability_gate": formal_stability_gate,
+        },
+        "superiority_scaffold_gate": {
+            "applicable": pack_type == "contest_superiority_headline_v2",
+            "allowed": pack_type == "contest_superiority_headline_v2" and not superiority_scaffold_reasons,
+            "withheld_reasons": superiority_scaffold_reasons,
+            "reading_boundary": [
+                "planner-open superiority scaffold only",
+                "admissible_match_rate is a safety floor only",
+                "not a mechanism object",
+                "not a memory headline",
+            ],
         },
     }
 
@@ -4042,7 +4102,7 @@ def _build_result(
     if pack_type == "typed_state_full_rich_audit_v3":
         if float(protocol_transfer_truth.get("typed_executor_full_rich_audit_consumption_rate", 0.0)) <= 0.0:
             withheld_reasons.append("full_rich_audit_state_not_consumed")
-    if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1"}:
+    if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "contest_superiority_headline_v2"}:
         if not bool(contest_coverage_gate.get("passed")):
             if not bool(contest_coverage_gate.get("surface_complete")):
                 withheld_reasons.append("contest_case_surface_incomplete")
@@ -4077,7 +4137,12 @@ def _build_result(
         "passed": False,
         "mode_checks": {},
     }
-    if pack_type in {"contest_dual_mode_controlled_v3", "contest_honest_headline_v1", "memory_dual_mode_fairness_v3"}:
+    if pack_type in {
+        "contest_dual_mode_controlled_v3",
+        "contest_honest_headline_v1",
+        "contest_superiority_headline_v2",
+        "memory_dual_mode_fairness_v3",
+    }:
         mode_checks: dict[str, object] = {}
         for mode_name, mode_summary, mode_stability in (
             ("text", summary.get("text", {}), text_stability),
@@ -4185,6 +4250,16 @@ def _build_result(
         headline_memory_replay_effect_gate=headline_memory_replay_effect_gate,
         contest_formal_coverage_gate=contest_coverage_gate,
     )
+    primary_headline_gate = (
+        headline_gates.get("primary_headline_gate", {})
+        if isinstance(headline_gates, dict)
+        else {}
+    )
+    headline_allowed = not withheld_reasons
+    headline_withheld_reason = ",".join(withheld_reasons)
+    if pack_type == "contest_superiority_headline_v2":
+        headline_allowed = bool(primary_headline_gate.get("allowed"))
+        headline_withheld_reason = ",".join(primary_headline_gate.get("withheld_reasons", []))
     return {
         "manifest": {
             "task_set_path": str(Path(task_set_path)),
@@ -4208,8 +4283,9 @@ def _build_result(
             ),
             "benchmark_version": str(task_set_metadata.get("benchmark_version", "v3")),
             "historical_pack_type": str(task_set_metadata.get("historical_pack_type", "")),
-            "state_transfer_headline_allowed": not withheld_reasons,
-            "withheld_headline_reason": ",".join(withheld_reasons),
+            "state_transfer_headline_allowed": headline_allowed,
+            "withheld_headline_reason": headline_withheld_reason,
+            "primary_headline_gate_name": str(primary_headline_gate.get("gate_name", "")).strip(),
             "headline_gates": headline_gates,
             "formal_stability_gate": formal_stability_gate,
             "object_parity_gate": object_parity_gate,
@@ -5526,7 +5602,7 @@ def _append_headline_claim_sections(
             "## Structured-vs-Text By Reuse Axis",
             "",
             "- Audit note: `fresh_retrieval best isolates structured-vs-text communication and orchestration deltas; step_skipping includes replay effects.`",
-            "- Memory note: `assist tiers are diagnostic support rows; validated_replay and exact_replay are the headline memory rows.`",
+            "- Memory note: `reuse-axis rows are diagnostic support here unless the active pack is an explicit memory object.`",
             "- State-transfer note: `the dedicated typed-handoff table below separates wire bytes from payload bytes; only wire bytes should be read as communication overhead.`",
             "",
             "| reuse_axis | text_control_bytes | protocol_control_bytes | control_bytes_delta | text_planner_tokens | protocol_planner_tokens | planner_tokens_delta | text_summarizer_tokens | protocol_summarizer_tokens | summarizer_tokens_delta | text_llm_total_tokens | protocol_llm_total_tokens | llm_total_tokens_delta | text_task_ms | protocol_task_ms | task_ms_delta |",
@@ -5578,7 +5654,7 @@ def _append_headline_claim_sections(
     state_transfer_scope_note = (
         "this v3 state-transfer read compares the strict pure-text formal lane against protocol minimal state packets on the same controlled tasks."
     )
-    if pack_type == "contest_honest_headline_v1":
+    if pack_type in {"contest_honest_headline_v1", "contest_superiority_headline_v2"}:
         text_lane_label = "text_whole_lane"
         state_transfer_scope_note = (
             "this contest-facing v3 state-transfer read compares natural whole-lane text against protocol minimal state packets on the same controlled tasks."
@@ -5793,6 +5869,92 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "- This pack is the contest-facing honest dual-mode formal headline.",
                 "- Formal headline reads `text_whole_lane` vs `state_packet_minimal` only.",
                 "- `text_strict_pure_lane` remains an internal controlled text lane and is not the contest-facing baseline.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+    if pack_type == "contest_superiority_headline_v2":
+        primary_gate = manifest.get("headline_gates", {}).get("primary_headline_gate", {})
+        superiority_gate = manifest.get("headline_gates", {}).get("superiority_scaffold_gate", {})
+        communication_gate = manifest.get("headline_gates", {}).get("communication_gate", {})
+        stability_gate = manifest.get("headline_gates", {}).get("formal_stability_gate", {})
+        _append_pack_contract_section(
+            lines,
+            contract="contest-facing superiority comparator pack; keep task object, evidence universe, summary contract, and scoring contract fixed, then change only mode between natural whole-lane text and protocol minimal state packets while requiring planner-open execution on both lanes.",
+            single_variable="text_whole_lane vs state_packet_minimal on the same contest-release cases under plan_source=llm.",
+        )
+        lines.extend(
+            [
+                "",
+                "## Contest Superiority Headline V2",
+                "",
+                f"- Whole-lane text guard pass rate: `{float(text_guard_audit.get('whole_lane_text_guard_pass_rate', 0.0)):.2f}`",
+                f"- Hidden field leak rate: `{float(text_guard_audit.get('hidden_field_leak_rate', 0.0)):.2f}`",
+                f"- Summarizer typed visibility rate: `{float(text_guard_audit.get('summarizer_typed_visibility_rate', 0.0)):.2f}`",
+                f"- Object parity gate: `{'pass' if bool(manifest.get('object_parity_gate', {}).get('passed')) else 'not_yet'}`",
+                f"- Primary headline gate: `{str(primary_gate.get('gate_name', '')).strip() or 'superiority_scaffold_gate'}`",
+                f"- Superiority scaffold gate: `{'pass' if bool(superiority_gate.get('allowed')) else 'withheld'}`",
+                f"- Formal stability gate: `{'pass' if bool(stability_gate.get('allowed', manifest.get('formal_stability_gate', {}).get('passed'))) else 'not_yet'}`",
+                f"- Communication sub-gate: `{'pass' if bool(communication_gate.get('allowed')) else 'withheld'}`",
+                "- Reading boundary: `this pack is the superiority comparator scaffold; admissible_match_rate stays a safety floor and does not by itself prove superiority.`",
+            ]
+        )
+        if superiority_gate.get("withheld_reasons"):
+            lines.append(
+                f"- Superiority scaffold withheld: `{','.join(superiority_gate.get('withheld_reasons', []))}`"
+            )
+        thickness_gate = manifest.get("headline_thickness_admission_gate", {})
+        if isinstance(thickness_gate, dict) and bool(thickness_gate.get("applicable")):
+            lines.extend(
+                [
+                    f"- Headline thickness admission gate: `{'pass' if bool(thickness_gate.get('admission_ready')) else 'not_yet'}`",
+                    f"- Static thickness contract: `{'pass' if bool(thickness_gate.get('static_contract_complete')) else 'not_yet'}`",
+                    f"- Runtime admission floor: `{'pass' if bool(thickness_gate.get('runtime_shape_ready')) else 'not_yet'}`",
+                ]
+            )
+        lines.extend(
+            [
+                "",
+                "## Superiority Reading Contract",
+                "",
+                "- Gate order: `first read superiority_scaffold_gate, then read stability / parity / communication as child gates.`",
+                "- Object boundary: `planner-open overall superiority scaffold only; memory reuse remains a formal-secondary object.`",
+                "- Primary metrics: `llm_total_tokens`, `task_ms`, `exact_match_rate`, `wrong_family_rate`.",
+                "- Safety-floor metric only: `admissible_match_rate`.",
+                "- Secondary communication diagnostics only: `control_bytes`, `handoff_wire_bytes`, `handoff_payload_bytes`.",
+            ]
+        )
+        if isinstance(stability_gate, dict) and stability_gate.get("mode_checks"):
+            lines.extend(
+                [
+                    "",
+                    "## Formal Stability Gate",
+                    "",
+                    "| mode | required_repeat | run_count | message_count_mean | state_transfer_count_mean | assist_memory_hit_rate_mean | task_ms_mean | run_failure_count | expected_negative_task_failure_count | passed |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+                ]
+            )
+            for mode_name in ("text", "protocol"):
+                check = stability_gate.get("mode_checks", {}).get(mode_name)
+                if not isinstance(check, dict):
+                    continue
+                lines.append(
+                    f"| {mode_name} | {int(stability_gate.get('required_repeat', 10))} | {int(check.get('run_count', 0))} | "
+                    f"{float(check.get('message_count_mean', 0.0)):.2f} | {float(check.get('state_transfer_count_mean', 0.0)):.2f} | "
+                    f"{float(check.get('assist_memory_hit_rate_mean', 0.0)):.2f} | {float(check.get('task_ms_mean', 0.0)):.2f} | "
+                    f"{int(check.get('run_failure_count', 0))} | {int(check.get('expected_negative_task_failure_count', 0))} | {'yes' if bool(check.get('passed')) else 'no'} |"
+                )
+        _append_cross_lane_actual_parity_section(lines, verdict=cross_lane_actual_parity)
+        _append_headline_claim_sections(lines, result=result, summary=result["summary"])
+        _append_case_contract_primary_metrics(lines, audit=protocol_case_audit, include_wrong_family=True)
+        _append_transfer_truth_summary(lines, truth=protocol_transfer_truth)
+        lines.extend(
+            [
+                "",
+                "## Stopline",
+                "",
+                "- This pack is the contest-facing superiority comparator scaffold.",
+                "- Do not merge `admissible_match_rate` into the primary superiority verdict.",
+                "- `contest_honest_headline_v1` remains a mechanism object and is not overwritten by this pack.",
             ]
         )
         return "\n".join(lines) + "\n"
@@ -6485,6 +6647,9 @@ def _build_report(result: dict[str, object]) -> str:
         lines.append(
             "- Pack boundary: `support evidence only; do not promote this pack into formal communication/state_transfer/memory headline claims without a separate controlled rerun`"
         )
+    primary_headline_gate_name = str(manifest.get("primary_headline_gate_name", "")).strip()
+    if primary_headline_gate_name:
+        lines.append(f"- Primary headline gate: `{primary_headline_gate_name}`")
     if not bool(manifest.get("state_transfer_headline_allowed", True)):
         lines.append(
             f"- Headline status: `withheld` ({str(manifest.get('withheld_headline_reason', '')).strip() or 'guard_not_met'})"
