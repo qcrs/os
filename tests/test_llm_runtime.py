@@ -12,7 +12,9 @@ from agents.sample_agents import (
     _canonicalize_planner_dependencies,
     _plan_from_llm_output,
     _build_protocol_summary_input_packet,
+    _planner_repair_messages,
     _planner_messages,
+    _render_protocol_summary_input_text,
     _summarizer_messages,
     _summary_from_llm_output,
 )
@@ -1393,7 +1395,7 @@ def test_protocol_summarizer_prompt_avoids_duplicate_top_level_fields() -> None:
             "task_id": "task-1",
             "task_theme": "theme-1",
             "summary_hint": "mention rollback",
-            "evidence_text": json.dumps(packet, ensure_ascii=False),
+            "evidence_text": _render_protocol_summary_input_text(packet),
             "actions_text": "restart worker",
             "tags": ["ops"],
             "reusable_steps": ["retrieve", "execute"],
@@ -1402,10 +1404,106 @@ def test_protocol_summarizer_prompt_avoids_duplicate_top_level_fields() -> None:
     )
 
     payload = parse_tagged_json(messages[-1].content, "sb-summary-v1")
-    assert set(payload) == {"e", "r", "t"}
+    assert set(payload) == {"a", "e", "h", "r", "t"}
+    assert payload["h"] == "mention rollback"
+    assert payload["a"] == "restart worker"
     assert payload["e"]
     assert payload["r"] == ["retrieve", "execute"]
     assert payload["t"] == ["ops"]
+    assert '"schema"' not in messages[-1].content
+    assert '{"schema"' not in payload["e"]
+
+
+def test_render_protocol_summary_input_text_is_flat_text_handoff() -> None:
+    packet = _build_protocol_summary_input_packet(
+        query="query",
+        route="db_pool_saturation",
+        route_source="protocol",
+        route_confidence=0.91,
+        retrieved_doc_ids=["doc-1", "doc-2", "doc-3", "doc-4"],
+        matched_signals=["signal-a", "signal-b", "signal-c", "signal-d", "signal-e"],
+        actions_text="restart worker\nverify pool cap\nrecheck queue depth",
+        summary_hint="mention rollback boundary",
+        memory_assist_hint="reused prior auth fix",
+    )
+
+    rendered = _render_protocol_summary_input_text(packet)
+
+    assert rendered.startswith("Query: query\n")
+    assert "Route: db_pool_saturation" in rendered
+    assert "Route source: protocol" in rendered
+    assert "Route confidence: 0.91" in rendered
+    assert "Retrieved docs: doc-1, doc-2, doc-3" in rendered
+    assert "doc-4" not in rendered
+    assert "Matched signals: signal-a, signal-b, signal-c, signal-d" in rendered
+    assert "signal-e" not in rendered
+    assert "Summary hint: mention rollback boundary" in rendered
+    assert "Actions:\nrestart worker\nverify pool cap\nrecheck queue depth" in rendered
+    assert "reused prior auth fix" in rendered
+    assert '"schema"' not in rendered
+    assert '{"schema"' not in rendered
+    assert '\\"schema\\"' not in rendered
+
+
+def test_protocol_planner_prompts_bias_canonical_steps_without_relaxing_contract() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    protocol_messages = _planner_messages(
+        {
+            "task_id": task.task_id,
+            "task_group": task.task_group,
+            "task_theme": task.task_theme,
+            "goal": task.goal,
+            "query": task.query,
+            "evidence_text": task.evidence_text,
+            "tags": list(task.tags),
+            "summary_hint": task.summary_hint,
+            "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
+        },
+        mode="protocol",
+    )
+    text_messages = _planner_messages(
+        {
+            "task_id": task.task_id,
+            "task_group": task.task_group,
+            "task_theme": task.task_theme,
+            "goal": task.goal,
+            "query": task.query,
+            "evidence_text": task.evidence_text,
+            "tags": list(task.tags),
+            "summary_hint": task.summary_hint,
+            "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
+        },
+        mode="text",
+    )
+    repair_messages = _planner_repair_messages(
+        base_messages=protocol_messages,
+        invalid_output='{"steps":[{"step_id":"step1"}]}',
+        validation_error="planner step missing semantic_role",
+        required_plan_semantic_roles=list(task.required_plan_semantic_roles),
+    )
+
+    protocol_system = protocol_messages[0].content
+    text_system = text_messages[0].content
+    repair_prompt = repair_messages[-1].content
+
+    assert "Prefer canonical step_id values retrieve, validate, execute, summarize" in protocol_system
+    assert 'depends_on=[] for retrieve' in protocol_system
+    assert 'depends_on=["retrieve","execute"] for summarize' in protocol_system
+    assert 'Return only {"steps":[...]}' in protocol_system
+    assert "Do not omit semantic_role on any step." in protocol_system
+    assert "No markdown." in protocol_system
+
+    assert "Prefer canonical step_id values retrieve, validate, execute, summarize" in repair_prompt
+    assert "Every depends_on entry must exactly reference a step_id that appears in the same output." in repair_prompt
+    assert "Do not use compact r/x/s shape." in repair_prompt
+
+    assert "Planner brief for a text-only multi-agent workflow." in text_messages[-1].content
+    assert "You are the StateBus Planner in a text-only collaboration baseline." in text_system
+    assert "Prefer canonical step_id values retrieve, validate, execute, summarize" not in text_system
 
 
 def test_deterministic_llm_emits_validate_step_when_task_contract_requires_it() -> None:
