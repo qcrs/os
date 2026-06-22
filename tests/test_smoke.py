@@ -576,12 +576,12 @@ def test_active_v3_pack_aliases_all_load_with_explicit_metadata() -> None:
     loaded["typed_state_consumer_sensitivity_v3"] = load_task_set_bundle(
         "typed_state_consumer_sensitivity_v3"
     )
-    assert len(loaded) == 17
+    assert len(loaded) == 20
     assert all(bundle.metadata.pack_type != "ad_hoc" for bundle in loaded.values())
     assert all(bundle.metadata.public_surface for bundle in loaded.values())
     assert all(bundle.metadata.evidence_tier for bundle in loaded.values())
     assert all(bundle.metadata.variable_axes for bundle in loaded.values())
-    assert all(bundle.metadata.plan_source_default == "yaml" for bundle in loaded.values())
+    assert {bundle.metadata.plan_source_default for bundle in loaded.values()} <= {"yaml", "llm"}
 
 
 def test_contest_family_spec_generates_committed_benchmark_and_corpus() -> None:
@@ -676,6 +676,9 @@ def test_task_pack_aliases_and_support_only_flags() -> None:
     expectations = {
         "default": ("contest_dual_mode_controlled_v3", False, False, False, 40),
         "contest_dual_mode_controlled_v3": ("contest_dual_mode_controlled_v3", False, False, False, 40),
+        "superiority_comm_v1": ("superiority_comm_v1", False, False, False, 24),
+        "superiority_memory_v1": ("superiority_memory_v1", False, False, True, 20),
+        "uncertainty_audit_v1": ("uncertainty_audit_v1", False, True, False, 30),
         "memory_dual_mode_fairness_v3": ("memory_dual_mode_fairness_v3", False, True, False, 40),
         "typed_state_mechanism_v3": ("typed_state_mechanism_v3", False, False, True, 8),
         "external_text_baseline_audit_v3": ("external_text_baseline_audit_v3", False, True, False, 4),
@@ -700,6 +703,9 @@ def test_task_pack_aliases_and_support_only_flags() -> None:
 def test_pack_metadata_exposes_single_variable_and_variable_axes() -> None:
     fairness = load_task_set_bundle("memory_dual_mode_fairness_v3").metadata
     contest = load_task_set_bundle("contest_dual_mode_controlled_v3").metadata
+    communication = load_task_set_bundle("superiority_comm_v1").metadata
+    memory_mainline = load_task_set_bundle("superiority_memory_v1").metadata
+    uncertainty = load_task_set_bundle("uncertainty_audit_v1").metadata
     mechanism = load_task_set_bundle("typed_state_mechanism_v3").metadata
     authenticity = load_task_set_bundle("typed_state_authenticity_v3").metadata
     external_text = load_task_set_bundle("external_text_baseline_audit_v3").metadata
@@ -712,6 +718,20 @@ def test_pack_metadata_exposes_single_variable_and_variable_axes() -> None:
     assert contest.single_variable is False
     assert contest.variable_axes == ("mode", "handoff_object")
     assert contest.public_surface == "formal_headline"
+
+    assert communication.single_variable is True
+    assert communication.variable_axes == ("mode",)
+    assert communication.public_surface == "formal_headline"
+    assert communication.plan_source_default == "llm"
+
+    assert memory_mainline.single_variable is True
+    assert memory_mainline.variable_axes == ("mode",)
+    assert memory_mainline.public_surface == "formal_secondary_memory"
+
+    assert uncertainty.single_variable is True
+    assert uncertainty.variable_axes == ("mode",)
+    assert uncertainty.public_surface == "audit_only"
+    assert uncertainty.plan_source_default == "llm"
 
     assert mechanism.single_variable is True
     assert mechanism.variable_axes == ("handoff_object",)

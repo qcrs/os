@@ -13,6 +13,9 @@ CONTEST_BENCHMARK_PATH = TASKS_DIR / "contest_dual_mode_controlled_v3_benchmark.
 CONTEST_CORPUS_PATH = TASKS_DIR / "contest_release_regression_corpus.yaml"
 CONTEST_HONEST_HEADLINE_NAME = "contest_honest_headline_v1_pack"
 CONTEST_SUPERIORITY_HEADLINE_NAME = "contest_superiority_headline_v2_pack"
+SUPERIORITY_COMMUNICATION_MAINLINE_NAME = "superiority_comm_v1_pack"
+SUPERIORITY_MEMORY_MAINLINE_NAME = "superiority_memory_v1_pack"
+UNCERTAINTY_AUDIT_NAME = "uncertainty_audit_v1_pack"
 
 REQUIRED_DOC_ROLES = {
     "incident",
@@ -232,6 +235,148 @@ def generate_contest_superiority_headline_payload(spec: dict[str, Any] | None = 
     return {"task_set": task_set, "tasks": tasks}
 
 
+def generate_superiority_comm_v1_payload(spec: dict[str, Any] | None = None) -> dict[str, Any]:
+    benchmark_payload = generate_contest_benchmark_payload(spec)
+    task_set = dict(benchmark_payload["task_set"])
+    task_set.update(
+        {
+            "name": SUPERIORITY_COMMUNICATION_MAINLINE_NAME,
+            "pack_type": "superiority_comm_v1",
+            "description": (
+                "Contest-facing communication mainline pack with planner-open whole-lane text and "
+                "minimal typed-state protocol rows on a reduced clean/distractor/limited-ambiguous "
+                "case surface."
+            ),
+            "reading_contract": (
+                "Read this pack only as the communication mainline. It answers token, task_ms, "
+                "and quality-floor questions under plan_source=llm while excluding replay-reusable "
+                "rows from the headline object. Memory superiority remains out of scope here."
+            ),
+            "claim_lanes": ["communication"],
+            "single_variable": True,
+            "variable_axes": ["mode"],
+            "public_surface": "formal_headline",
+            "plan_source_default": "llm",
+            "evidence_tier": "formal_headline",
+        }
+    )
+    selected_case_ids = _communication_mainline_case_ids(benchmark_payload["tasks"])
+    tasks: list[dict[str, Any]] = []
+    for task in benchmark_payload["tasks"]:
+        row = deepcopy(task)
+        if str(row.get("case_id", "")).strip() not in selected_case_ids:
+            continue
+        row["benchmark_lane"] = "communication"
+        row["plan_source"] = "llm"
+        row["expected_reuse_mode"] = "none"
+        row["runtime_reuse_contract"] = "reuse_disabled"
+        if row.get("transfer_strategy") == "text_strict_pure_lane":
+            row["transfer_strategy"] = "text_whole_lane"
+            row["handoff_profile"] = "text_whole_lane"
+            row["evidence_text"] = (
+                "Use only the referenced release artifacts. "
+                "This row is the communication-mainline natural-language whole-lane text comparator."
+            )
+        tasks.append(row)
+    return {"task_set": task_set, "tasks": tasks}
+
+
+def generate_superiority_memory_v1_payload(spec: dict[str, Any] | None = None) -> dict[str, Any]:
+    benchmark_payload = generate_contest_benchmark_payload(spec)
+    task_set = dict(benchmark_payload["task_set"])
+    task_set.update(
+        {
+            "name": SUPERIORITY_MEMORY_MAINLINE_NAME,
+            "pack_type": "superiority_memory_v1",
+            "description": (
+                "Formal-secondary memory mainline scaffold with seed plus reusable follow-up rows "
+                "for each contest family, preserving real prior-case dependencies."
+            ),
+            "reading_contract": (
+                "Read this pack only as the memory mainline scaffold. It is the entrypoint for "
+                "reuse_gain, skipped_step_count, task_ms, and quality-floor reading, and it does "
+                "not stand in for the communication headline."
+            ),
+            "claim_lanes": ["memory"],
+            "single_variable": True,
+            "variable_axes": ["mode"],
+            "public_surface": "formal_secondary_memory",
+            "plan_source_default": "llm",
+            "evidence_tier": "formal_secondary",
+        }
+    )
+    allowed_case_ids = _memory_mainline_case_ids(benchmark_payload["tasks"])
+    tasks: list[dict[str, Any]] = []
+    for task in benchmark_payload["tasks"]:
+        row = deepcopy(task)
+        case_id = str(row.get("case_id", "")).strip()
+        if case_id not in allowed_case_ids:
+            continue
+        row["benchmark_lane"] = "memory"
+        row["plan_source"] = "llm"
+        if str(row.get("complexity_bucket", "")).strip() == "reusable":
+            row["expected_reuse_mode"] = "skip_execute"
+            row["runtime_reuse_contract"] = "validated_replay"
+        else:
+            row["expected_reuse_mode"] = "none"
+            row["runtime_reuse_contract"] = "reuse_disabled"
+        if row.get("transfer_strategy") == "text_strict_pure_lane":
+            row["transfer_strategy"] = "text_whole_lane"
+            row["handoff_profile"] = "text_whole_lane"
+            row["evidence_text"] = (
+                "Use only the referenced release artifacts. "
+                "This row is the memory-mainline whole-lane text comparator."
+            )
+        tasks.append(row)
+    return {"task_set": task_set, "tasks": tasks}
+
+
+def generate_uncertainty_audit_v1_payload(spec: dict[str, Any] | None = None) -> dict[str, Any]:
+    benchmark_payload = generate_contest_benchmark_payload(spec)
+    task_set = dict(benchmark_payload["task_set"])
+    task_set.update(
+        {
+            "name": UNCERTAINTY_AUDIT_NAME,
+            "pack_type": "uncertainty_audit_v1",
+            "description": (
+                "Audit-only uncertainty pack covering ambiguous, replay-reusable, and a small "
+                "distractor slice to diagnose planner-open divergence without reblocking the "
+                "headline object."
+            ),
+            "reading_contract": (
+                "Read this pack only as uncertainty audit support. It is for actual-parity, "
+                "decision-outcome, and long-tail wall-time diagnostics, not for formal superiority "
+                "headline claims."
+            ),
+            "claim_lanes": ["communication"],
+            "single_variable": True,
+            "variable_axes": ["mode"],
+            "public_surface": "audit_only",
+            "plan_source_default": "llm",
+            "evidence_tier": "audit_only",
+        }
+    )
+    selected_case_ids = _uncertainty_audit_case_ids(benchmark_payload["tasks"])
+    tasks: list[dict[str, Any]] = []
+    for task in benchmark_payload["tasks"]:
+        row = deepcopy(task)
+        if str(row.get("case_id", "")).strip() not in selected_case_ids:
+            continue
+        row["benchmark_lane"] = "communication"
+        row["plan_source"] = "llm"
+        row["expected_reuse_mode"] = "none"
+        row["runtime_reuse_contract"] = "reuse_disabled"
+        if row.get("transfer_strategy") == "text_strict_pure_lane":
+            row["transfer_strategy"] = "text_whole_lane"
+            row["handoff_profile"] = "text_whole_lane"
+            row["evidence_text"] = (
+                "Use only the referenced release artifacts. "
+                "This row is the uncertainty-audit whole-lane text comparator."
+            )
+        tasks.append(row)
+    return {"task_set": task_set, "tasks": tasks}
+
+
 def generate_contest_corpus_payload(spec: dict[str, Any] | None = None) -> dict[str, Any]:
     loaded = load_contest_family_spec() if spec is None else deepcopy(spec)
     docs: list[dict[str, Any]] = []
@@ -261,6 +406,62 @@ def _case_order(family: dict[str, Any]) -> list[str]:
     ordered = [key for key in preferred if key in available]
     ordered.extend(key for key in available if key not in ordered)
     return ordered
+
+
+def _communication_mainline_case_ids(tasks: list[dict[str, Any]]) -> set[str]:
+    grouped: dict[str, dict[str, str]] = {}
+    for row in tasks:
+        task_group = str(row.get("task_group", "")).strip()
+        complexity = str(row.get("complexity_bucket", "")).strip()
+        case_id = str(row.get("case_id", "")).strip()
+        if task_group and complexity and case_id:
+            grouped.setdefault(task_group, {})[complexity] = case_id
+    ordered_groups = sorted(grouped)
+    selected = {
+        grouped[group]["simple"]
+        for group in ordered_groups
+        if "simple" in grouped[group]
+    }
+    selected.update(
+        grouped[group]["distractor"]
+        for group in ordered_groups
+        if "distractor" in grouped[group]
+    )
+    selected.update(
+        grouped[group]["ambiguous"]
+        for group in ordered_groups[:2]
+        if "ambiguous" in grouped[group]
+    )
+    return selected
+
+
+def _memory_mainline_case_ids(tasks: list[dict[str, Any]]) -> set[str]:
+    selected: set[str] = set()
+    for row in tasks:
+        complexity = str(row.get("complexity_bucket", "")).strip()
+        if complexity in {"simple", "reusable"}:
+            case_id = str(row.get("case_id", "")).strip()
+            if case_id:
+                selected.add(case_id)
+    return selected
+
+
+def _uncertainty_audit_case_ids(tasks: list[dict[str, Any]]) -> set[str]:
+    grouped_distractors: dict[str, str] = {}
+    selected: set[str] = set()
+    for row in tasks:
+        task_group = str(row.get("task_group", "")).strip()
+        complexity = str(row.get("complexity_bucket", "")).strip()
+        case_id = str(row.get("case_id", "")).strip()
+        if not case_id:
+            continue
+        if complexity in {"ambiguous", "reusable"}:
+            selected.add(case_id)
+        elif complexity == "distractor" and task_group and task_group not in grouped_distractors:
+            grouped_distractors[task_group] = case_id
+    for task_group in sorted(grouped_distractors):
+        selected.add(grouped_distractors[task_group])
+    return selected
 
 
 def _validate_contest_family_spec(

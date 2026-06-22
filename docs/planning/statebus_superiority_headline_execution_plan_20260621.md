@@ -13,6 +13,14 @@
 - 当前 `contest_honest_headline_v1` 不再继续按“整体优势 headline”抢救
 - 当前阶段先冻结对象分层、判题合同与执行顺序
 - 未经显式修订，不应边实现边改变本文件主判断
+- `2026-06-22` 更新：本文件现在只保留为退出旧 headline 的历史理由说明；当前 active execution contract 已迁到：
+  - `docs/planning/statebus_contest_requirement_first_split_execution_plan_20260621.md`
+  - `docs/planning/statebus_taskset_requirement_alignment_design_20260621.md`
+- 当前 repo 主对象已拆成：
+  - `superiority_comm_v1`
+  - `superiority_memory_v1`
+  - `uncertainty_audit_v1`
+- `contest_superiority_headline_v2` 只保留历史过渡 scaffold 读法，不再是当前主 API 对象
 
 ---
 
@@ -36,6 +44,12 @@
 2. 当前 formal headline 最大问题不是某个局部 bug，而是对象目标错位
 3. 当前最需要冻结的是赛题过关合同，而不是继续先改代码
 4. 只有在合同、审计和新对象设计都冻结后，才进入最小代码修改
+
+补充说明：
+
+- 上述“新对象设计”在当前 repo 中已经以 split taskset 形式落地
+- 因此本文件后续关于 `contest_superiority_headline_v2` 的设计段落，只能读作 pre-split rationale
+- 当前下一步 API 只允许 `superiority_comm_v1 repeat=1`
 
 ---
 
@@ -105,6 +119,22 @@
 
 - 这些对象可以支撑“机制成立”
 - 不直接支撑“整体 superiority”
+
+### 3.2 当前 split 后的主对象边界
+
+当前 split 之后的 active 读法固定为：
+
+- `superiority_comm_v1`
+  - 当前 communication mainline
+- `superiority_memory_v1`
+  - formal-secondary memory scaffold
+- `uncertainty_audit_v1`
+  - audit-only
+
+`contest_superiority_headline_v2` 只保留为：
+
+- historical superiority scaffold
+- hotpath blocker reference
 
 ### 3.2 赛题主对象
 
