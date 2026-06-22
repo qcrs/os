@@ -13,6 +13,11 @@
 - 基于 `docs/planning/statebus_superiority_headline_execution_plan_20260621.md` 落地
 - 当前不授权修改 benchmark 主实现
 - 当前不恢复 `contest_honest_headline_v1` 作为整体 superiority headline
+- `2026-06-22` 更新：split taskset 已落地后，本合同的四行判题表需要按对象拆读：
+  - `superiority_comm_v1` 只读 communication 行
+  - `superiority_memory_v1` 只读 memory reuse 行
+  - `uncertainty_audit_v1` 保持 audit-only
+  - `contest_superiority_headline_v2` 只保留历史 scaffold 说明
 
 ---
 
@@ -65,6 +70,20 @@
 当前临时命名固定为：
 
 - `contest_superiority_headline_v2`
+
+当前 split 之后不再允许由单一 active pack 同时承担四行判题表。
+
+当前对象映射固定为：
+
+- `superiority_comm_v1`
+  - 读取 `llm_total_tokens / task_ms / quality floor`
+- `superiority_memory_v1`
+  - 读取 `memory reuse`
+  - 当前仍是 formal-secondary memory scaffold，不是 overall superiority closure
+- `uncertainty_audit_v1`
+  - 不进 headline
+
+`contest_superiority_headline_v2` 只保留为历史过渡 scaffold，不再作为当前主 API 对象。
 
 ---
 

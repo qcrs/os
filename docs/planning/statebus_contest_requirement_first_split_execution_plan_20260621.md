@@ -15,6 +15,11 @@
   - `runs/contest_superiority_headline_v2_api_repeat3_stageb_hotpath/benchmark_report.md`
   - `runs/contest_superiority_headline_v2_api_repeat3_stageb_hotpath/benchmark_results.json`
 - 用于覆盖旧计划文档里已经被实现状态改写的部分
+- `2026-06-22` 起，repo 内 taskset split 已经落地为：
+  - `superiority_comm_v1`
+  - `superiority_memory_v1`
+  - `uncertainty_audit_v1`
+- `contest_superiority_headline_v2` 现在只保留为历史过渡 scaffold / blocker reference，不再是当前主 API 对象
 
 ---
 
@@ -76,9 +81,9 @@
 
 ## 3. 当前最新事实
 
-### 3.1 当前最接近赛题主问题的对象
+### 3.1 当前最接近赛题主问题的历史过渡对象
 
-当前最接近赛题主问题的对象是：
+当前最接近赛题主问题、但已经降为历史过渡说明的对象是：
 
 - `contest_superiority_headline_v2`
 
@@ -119,6 +124,30 @@
 - superiority 主线已经开始被回答
 - planner contract failure 已不再是当前主 blocker
 - 但 communication superiority 还没有闭合
+
+当前它只保留两个用途：
+
+- 解释为什么 repo 需要从单一 headline pack 正式拆到三对象
+- 保留 hotpath blocker 的历史来源，不再作为当前 formal API 主对象
+
+### 3.2 当前 repo 内已经落地的主对象
+
+当前 repo 的主对象已经迁移为：
+
+1. `superiority_comm_v1`
+   - 当前唯一 communication mainline
+   - 只回答 `llm_total_tokens / task_ms / quality floor`
+   - 保持 `plan_source=llm`
+
+2. `superiority_memory_v1`
+   - 当前 formal-secondary memory scaffold
+   - 保持 `plan_source=llm`
+   - 只读作 memory mainline scaffold，不读作 overall superiority closure
+
+3. `uncertainty_audit_v1`
+   - 当前 audit-only uncertainty surface
+   - 不进 headline
+   - 不重新抬成 blocker
 
 ### 3.3 当前 v2 的五个结构性缺口
 
@@ -277,15 +306,23 @@ phase 级差额几乎全堆在：
 1. Stage A 已完成
    - 对象分层和 headline 边界已经冻结
 
-2. Stage B 只完成了一半
-   - planner repair 问题已基本收掉
-   - summarizer / planner wall-time 还没有收平
+2. taskset split 已完成首轮实现
+   - `superiority_comm_v1 / superiority_memory_v1 / uncertainty_audit_v1` 已在 task/bundle/runner surface 落地
+   - `contest_superiority_headline_v2` 不再承担当前主对象角色
 
-3. Stage C 当前不通过
-   - `repeat=3` 还不能诚实读成 communication superiority 已闭合
+3. split consistency fix 已完成
+   - `superiority_memory_v1` 已统一到 planner-open
+   - memory gate 已要求真实 effect
+   - `uncertainty_audit_v1` payload / bundle surface 已同构
 
-4. Stage D 当前不允许进入
-   - 不能进 `repeat=10`
+4. 当前还不能 freeze communication superiority
+   - 历史 `repeat=3` 仍不能诚实读成 communication superiority 已闭合
+   - 这也是为什么下一轮只允许最小 `superiority_comm_v1 repeat=1`
+
+5. 当前不允许进入
+   - `superiority_comm_v1 repeat=3`
+   - `repeat=10`
+   - `superiority_memory_v1` API 主线
 
 ---
 
@@ -330,9 +367,13 @@ phase 级差额几乎全堆在：
 它们不能再直接当当前唯一执行合同，原因有二：
 
 1. 它们把 `contest_superiority_headline_v2` 讲得过大，默认它要同时回答 communication + memory
-2. 后续实现和最新 artifact 已经明确把 v2 缩窄成：
-   - `planner-open overall superiority scaffold only`
-   - `memory reuse remains a formal-secondary object`
+2. 后续实现已经把当前 repo 主对象正式拆成：
+   - `superiority_comm_v1`
+   - `superiority_memory_v1`
+   - `uncertainty_audit_v1`
+3. `contest_superiority_headline_v2` 现在只保留为：
+   - `historical superiority scaffold`
+   - `hotpath blocker reference`
 
 ---
 
@@ -387,8 +428,10 @@ phase 级差额几乎全堆在：
 
 当前状态：
 
-- `contest_superiority_headline_v2` 只能诚实承担 `superiority_comm scaffold`
-- `superiority_memory` 仍未形成正式 paired object
+- `superiority_comm_v1` 已是当前 communication mainline
+- `superiority_memory_v1` 已是当前 formal-secondary memory scaffold
+- `uncertainty_audit_v1` 已是当前 audit-only surface
+- `contest_superiority_headline_v2` 只保留历史过渡说明价值
 
 ### 6.3 外部开放比较组
 
@@ -406,7 +449,7 @@ phase 级差额几乎全堆在：
 
 ## 7. 最新推荐执行顺序
 
-## Phase 0：冻结边界
+## Phase 0：保持 split 边界冻结
 
 目标：
 
@@ -415,10 +458,12 @@ phase 级差额几乎全堆在：
 本阶段结论必须统一为：
 
 1. `contest_honest_headline_v1 = mechanism object`
-2. `contest_superiority_headline_v2 = superiority_comm scaffold`
-3. `memory superiority` 需要单独对象
-4. `open_system_comparison_v1` 不进 formal 主证据
-5. 当前不进 `repeat=10`
+2. `contest_superiority_headline_v2 = historical scaffold only`
+3. `superiority_comm_v1 = communication mainline`
+4. `superiority_memory_v1 = formal-secondary memory scaffold`
+5. `uncertainty_audit_v1 = audit only`
+6. `open_system_comparison_v1` 不进 formal 主证据
+7. 当前不进 `repeat=10`
 
 本阶段产出：
 
@@ -434,144 +479,57 @@ phase 级差额几乎全堆在：
 
 - 团队内部不再把一个对象同时读成 communication + memory + open comparison
 
-## Phase 1：先把 communication superiority 收干净
+## Phase 1：先做 split/doc sync 与归因隔离
 
 目标：
 
-- 先把当前 `contest_superiority_headline_v2` 收成一个可信的 `superiority_comm scaffold`
+- 让文档、taskset、runner 与测试都承认 split 后边界
+- 不把 hotpath 脏改动混进 split checkpoint
+- 不在归因不干净时提前跑 API
 
-当前要解决的不是“所有性能问题”，而是两类最会污染赛题判断的问题：
+本阶段要求：
 
-1. protocol planner / summarizer wall-time 偏高
-2. 高不确定性 case 上的结构化 handoff 语义重建成本
-3. communication claim boundary 还没有闭合
-
-### Phase 1A：planner prompt 收口
-
-目标：
-
-- 只保留 planner 稳定性收益，不再继续把主要精力放在 planner wording 强化上
-- 保持 single-variable 边界尽量不再继续变差
-
-重点文件：
-
-- `agents/sample_agents.py`
-
-执行要求：
-
-- 保留 text/protocol 都是 `plan_source=llm`
-- 不放宽 DAG 合同
-- 除非 repeat 验证重新出现 correctness failure，否则不再做大幅 planner prompt 改写
-- 只允许做小的 contract 守护或回归修复
-
-内部工程通过线：
-
-- `planner one-shot valid rate >= 0.99`
-- `repeat=3` 下 planner repair 尽量压到 `0-1`
-- 不新增 correctness failure
-
-当前状态：
-
-- 已基本达到
-- 当前不再把 planner repair 当主 blocker
-
-### Phase 1B：protocol summarizer handoff 收口
-
-目标：
-
-- 解决当前 token 下降但 wall-time 仍系统性回退的问题
-- 重点不是再压 token，而是压高不确定性 case 的语义重建成本
-
-重点文件：
-
-- `agents/sample_agents.py`
-- `tests/test_llm_runtime.py`
-
-执行要求：
-
-- 保留当前去嵌套成果，不要回退到旧的双层 `json.dumps` 路径
-- 不再把 protocol summarizer handoff 维持成纯字段清单
-- 让 protocol handoff 更接近 text lane 的 sectioned narrative
-- 必须显式表达以下关系，而不是只平铺字段：
-  - 证据竞争
-  - 路由结论
-  - 保守 abstain 条件
-  - 动作结论
-- 优先覆盖最伤的 case：
-  - `ambiguous`
-  - `replay_reusable`
-  - `distractor`
-  - `abstention_allowed`
-- 保持 typed-state minimal consumption contract 不变
-
-内部工程通过线：
-
-- `protocol summarize_ms` 收敛
-- `protocol llm_total_tokens < text` 继续成立
-- `task_ms` 不再系统性更差
-
-本阶段 artifact 要求：
-
-- 形成一个简短的 case-focused delta note
-- 明确记录修改前后：
-  - `summarize_ms`
-  - `task_ms`
-  - 高不确定性 case 长尾
-  - `llm_total_tokens`
-
-### Phase 1C：parity 诊断重构
-
-目标：
-
-- 保留 diagnostic 价值，但不再被中间行为痕迹带偏
-
-当前保留：
-
-- `cross_lane_actual_parity`
-
-新增建议：
-
-- `decision_outcome_parity`
-
-新诊断只比较：
-
-- `semantic_selected_route`
-- `semantic_selected_tool_name`
-- 最终 correctness / exact / wrong_family
-
-而不再拿以下中间痕迹作为 superiority stopline：
-
-- `actual_corpus_scope`
-- `actual_tool_candidates`
-
-重点文件：
-
-- `eval/runner.py`
-- 必要时 `runtime/orchestrator.py`
+1. `contest_superiority_headline_v2` 明确退到历史过渡说明
+2. `superiority_comm_v1` 明确成为当前唯一 communication mainline
+3. `superiority_memory_v1` 明确保持 formal-secondary memory scaffold
+4. `uncertainty_audit_v1` 明确保持 audit-only
+5. split/doc checkpoint 不混入 `agents/sample_agents.py` / `tests/test_llm_runtime.py`
 
 通过标准：
 
-- actual parity 继续保留为 diagnostic
-- outcome parity 能帮助判断“分叉是否伤害结果”
+- 文档合同与实现边界一致
+- split 改动可单独 checkpoint
+- hotpath 改动继续隔离
 
-优先级说明：
-
-- 这一步低于 Phase 1B
-- 当前不允许为了做 parity 诊断而扩散主实现范围
-
-## Phase 2：communication superiority 验证梯度
+## Phase 2：本地验证
 
 目标：
 
-- 只在对象热路径收口后再扩大 repeat
+- 在 host 环境下确认 split/mainline 改动本地干净
+- 不先跑 API
 
 验证顺序固定：
 
-1. `source deploy/activate_statebus_host.sh && python -m pytest -q`
-2. `source deploy/activate_statebus_host.sh && python -m runtime.smoke`
-3. API `repeat=1`
-4. API `repeat=3`
-5. API `repeat=10`
+1. `source deploy/activate_statebus_host.sh && python -m pytest -q tests/test_taskset_mainline_split.py tests/test_smoke.py`
+2. `source deploy/activate_statebus_host.sh && python -m pytest -q`
+3. `source deploy/activate_statebus_host.sh && python -m runtime.smoke`
+
+通过标准：
+
+- split regression 通过
+- smoke 通过
+- `superiority_comm_v1` surface 没被 split 修补破坏
+
+## Phase 3：最小 communication API
+
+目标：
+
+- 在归因干净前提下，只允许最小 `superiority_comm_v1 repeat=1`
+- 不自动推进到 `repeat=3`
+
+验证顺序固定：
+
+1. `source deploy/activate_statebus_host.sh && python -m eval.runner --task-set superiority_comm_v1 --repeat 1 --modes text,protocol --llm-mode api --llm-config deploy/statebus_llm.yaml.local --out runs/superiority_comm_v1_api_repeat1_post_split_docsync --quiet-progress`
 
 ### Repeat=1 通过线
 
@@ -579,83 +537,29 @@ phase 级差额几乎全堆在：
 - planner token 非零
 - `protocol llm_total_tokens < text`
 - `protocol task_ms` 不显著更差
-- planner repair 尽量为 0
 - `wrong_family_rate = 0`
-
-### Repeat=3 通过线
-
-- token 优势方向稳定
-- `task_ms` 不再系统性慢
-- 至少不能再出现：
-  - `45 / 60` pair 为正
-  - `median task_ms_delta` 接近 `+395ms`
 - `exact_match_rate` 不明显塌陷
-- `wrong_family_rate = 0`
-- planner repair 已很低
-- actual parity 仍只读作 diagnostic
 
-当前状态：
+读法边界：
 
-- 未通过
-- 原因不是 correctness failure，而是：
-  - `protocol task_ms` 系统性更高
-  - `summarize_ms` 仍系统性更高
-  - 当前 communication superiority 仍只到 scaffold
+- 只读 communication mainline
+- 不从这里读取 memory superiority
+- `cross_lane_actual_parity` 继续只读作 diagnostic
+- repeat=1 正结果不自动升级成 repeat=3/10 readiness
 
-### Repeat=10 前置条件
+## Phase 4：communication repeat=3 以后再说
 
-只有以下条件同时满足，才进入 `repeat=10`：
+只有在 `superiority_comm_v1 repeat=1` 方向正确、且归因继续干净时，才允许重新讨论 `repeat=3`。
 
-1. `repeat=3` 无 correctness failure
-2. planner repair 已很低
-3. planner / summarizer wall-time 未继续系统性偏高
-4. communication superiority 的方向已经稳定
-5. 最新 `repeat=3` 已经能给出可冻结的诚实结论，而不是只给出“仍需继续修 hotpath”
+## Phase 5：memory mainline 继续保持 scaffold
 
-## Phase 3：单独形成 memory superiority
+当前固定读法：
 
-目标：
+- `superiority_memory_v1` 是 planner-open 的 formal-secondary memory scaffold
+- 它要求真实 effect
+- 它当前不是 overall superiority closure
 
-- 正式补上赛题第三轴
-
-当前禁止做法：
-
-- 继续假装 `contest_superiority_headline_v2` 已经覆盖 memory gain
-
-必须新增：
-
-- 一个真正的 `superiority_memory` paired object
-
-设计要求：
-
-1. 同 family
-2. 同 scorer
-3. 同 planner-open
-4. 同 text / protocol carrier 对照
-5. 启用真实连续任务 reuse
-6. 不允许 override 式“预塑造 replay 成功”
-
-重点文件：
-
-- `tasks/contest_family_spec.py`
-- `tasks/sample_tasks.py`
-- 必要时 `eval/runner.py`
-
-主指标：
-
-- `reuse_gain`
-- `skipped_step_count`
-- `task_ms`
-- `exact_match_rate`
-- `wrong_family_rate`
-
-通过标准：
-
-- 非零 reuse 证据
-- 对应真实时间或步骤下降
-- 不是“命中记忆但没省任何东西”
-
-## Phase 4：最后才做 open / LangGraph 外部比较
+## Phase 6：最后才做 open / LangGraph 外部比较
 
 目标：
 
@@ -695,13 +599,12 @@ phase 级差额几乎全堆在：
 
 3. `comm-validation`
    - 内容：
-     - `repeat=1 -> repeat=3`
-     - 最新 verdict
-     - pairwise / case-type / long-tail delta note
+     - 先只允许 `superiority_comm_v1 repeat=1`
+     - 不自动升级到 `repeat=3`
 
 4. `memory-scaffold`
    - 内容：
-     - `superiority_memory` 正式对象
+     - `superiority_memory_v1` scaffold 继续收口
 
 5. `memory-validation`
    - 内容：
@@ -808,33 +711,35 @@ phase 级差额几乎全堆在：
 - 部分通过
 - 剩余 blocker：`summarize_ms / task_ms` 仍系统性偏高
 
-### Stage C：communication superiority repeat=3
+### Stage C：superiority_comm_v1 repeat=1
 
 必须同时满足：
 
-- `repeat=3` 无 correctness failure
-- `task_ms` 不再系统性恶化
+- `Observed planner sources: llm`
+- planner token 非零
+- `protocol llm_total_tokens < text`
+- `protocol task_ms` 不显著更差
+- `wrong_family_rate = 0`
 - `exact_match_rate` 不明显塌陷
 - `cross_lane_actual_parity` 继续只读作 diagnostic
 
 当前状态：
 
-- 未通过
-- 当前 blocker：
-  - `protocol task_ms mean delta = +346.42ms`
-  - `protocol task_ms median delta = +395.42ms`
-  - `planner_ms_delta mean = +117.01ms`
-  - `summarize_ms_delta mean = +231.61ms`
+- 待运行
+- 前置条件是：
+  - split/doc checkpoint 已完成
+  - 本地验证已通过
+  - hotpath 脏改动未混入 split 归因
 
-### Stage D：communication superiority repeat=10
+### Stage D：superiority_comm_v1 repeat=3
 
-只有在 Stage C 已通过后才允许进入。
+只有在 Stage C 已通过、且 repeat=1 方向正确时才允许进入。
 
 ### Stage E：memory superiority object 成形
 
 必须同时满足：
 
-- paired object 已存在
+- `superiority_memory_v1` scaffold 已存在
 - reuse 不再是 override 造出来的结果
 - 指标已能直接读 `reuse_gain / skipped_step_count / task_ms`
 

@@ -21,6 +21,9 @@ from runtime.task_profile import (
 from tasks.contest_family_spec import (
     CONTEST_BENCHMARK_PATH,
     generate_contest_superiority_headline_payload,
+    generate_superiority_comm_v1_payload,
+    generate_superiority_memory_v1_payload,
+    generate_uncertainty_audit_v1_payload,
 )
 
 
@@ -47,6 +50,9 @@ TASK_SET_ALIASES = {
     "route_corpus_stress_audit_v1": "route_corpus_stress_audit_v1_benchmark.yaml",
     "pure_text_open_live_api_slice_v1": "pure_text_open_live_api_slice_v1.yaml",
     "route_corpus_stress_whole_lane_audit_v1": "route_corpus_stress_whole_lane_audit_v1.yaml",
+    "superiority_comm_v1": "contest_dual_mode_controlled_v3_benchmark.yaml",
+    "superiority_memory_v1": "contest_dual_mode_controlled_v3_benchmark.yaml",
+    "uncertainty_audit_v1": "contest_dual_mode_controlled_v3_benchmark.yaml",
 }
 
 DERIVED_TASK_SET_ENTRYPOINTS = {
@@ -54,12 +60,27 @@ DERIVED_TASK_SET_ENTRYPOINTS = {
         "base_path": CONTEST_BENCHMARK_PATH,
         "payload_builder": generate_contest_superiority_headline_payload,
     },
+    "superiority_comm_v1": {
+        "base_path": CONTEST_BENCHMARK_PATH,
+        "payload_builder": generate_superiority_comm_v1_payload,
+    },
+    "superiority_memory_v1": {
+        "base_path": CONTEST_BENCHMARK_PATH,
+        "payload_builder": generate_superiority_memory_v1_payload,
+    },
+    "uncertainty_audit_v1": {
+        "base_path": CONTEST_BENCHMARK_PATH,
+        "payload_builder": generate_uncertainty_audit_v1_payload,
+    },
 }
 
 V3_FORMAL_TASK_PACK_TYPES = (
     "contest_dual_mode_controlled_v3",
     "contest_honest_headline_v1",
     "contest_superiority_headline_v2",
+    "superiority_comm_v1",
+    "superiority_memory_v1",
+    "uncertainty_audit_v1",
     "memory_dual_mode_fairness_v3",
     "typed_state_mechanism_v3",
     "external_text_baseline_audit_v3",
@@ -176,6 +197,9 @@ def normalize_task_pack_type(value: object) -> str:
         "contest_dual_mode_controlled_v3": "contest_dual_mode_controlled_v3",
         "contest_honest_headline_v1": "contest_honest_headline_v1",
         "contest_superiority_headline_v2": "contest_superiority_headline_v2",
+        "superiority_comm_v1": "superiority_comm_v1",
+        "superiority_memory_v1": "superiority_memory_v1",
+        "uncertainty_audit_v1": "uncertainty_audit_v1",
         "memory_dual_mode_fairness_v3": "memory_dual_mode_fairness_v3",
         "typed_state_mechanism_v3": "typed_state_mechanism_v3",
         "external_text_baseline_audit_v3": "external_text_baseline_audit_v3",
@@ -537,6 +561,12 @@ def load_task_set_bundle(path: str | Path | None = None) -> TaskSetBundle:
     )
     if requested_alias == "contest_honest_headline_v1":
         return _build_contest_honest_headline_bundle(task_path, metadata, loaded_tasks)
+    if requested_alias == "superiority_comm_v1":
+        return _build_superiority_comm_v1_bundle(task_path, metadata, loaded_tasks)
+    if requested_alias == "superiority_memory_v1":
+        return _build_superiority_memory_v1_bundle(task_path, metadata, loaded_tasks)
+    if requested_alias == "uncertainty_audit_v1":
+        return _build_uncertainty_audit_v1_bundle(task_path, metadata, loaded_tasks)
     if requested_alias == "typed_state_consumer_sensitivity_v3":
         return _build_typed_state_consumer_sensitivity_bundle(task_path, metadata, loaded_tasks)
     if requested_alias == "pure_text_open_live_api_slice_v1" or metadata.pack_type == "pure_text_open_live_api_slice_v1":
@@ -665,6 +695,177 @@ def _build_contest_superiority_headline_bundle(
         else:
             transformed.append(replace(task, **shared_kwargs))
     return TaskSetBundle(path=task_path, metadata=superiority_metadata, tasks=tuple(transformed))
+
+
+def _build_superiority_comm_v1_bundle(
+    task_path: Path,
+    metadata: TaskSetMetadata,
+    template_tasks: tuple[SampleTask, ...],
+) -> TaskSetBundle:
+    communication_metadata = replace(
+        metadata,
+        name="superiority_comm_v1_pack",
+        pack_type="superiority_comm_v1",
+        description=(
+            "Contest-facing communication mainline pack with planner-open whole-lane text and "
+            "minimal typed-state protocol rows on a reduced clean/distractor/limited-ambiguous case surface."
+        ),
+        reading_contract=(
+            "Read this pack only as the communication mainline. It answers token, task_ms, "
+            "and quality-floor questions under plan_source=llm while excluding replay-reusable "
+            "rows from the headline object. Memory superiority remains out of scope here."
+        ),
+        claim_lanes=("communication",),
+        single_variable=True,
+        variable_axes=("mode",),
+        public_surface="formal_headline",
+        evidence_tier="formal_headline",
+        plan_source_default="llm",
+    )
+    transformed: list[SampleTask] = []
+    for task in template_tasks:
+        if task.complexity_bucket == "reusable":
+            continue
+        if task.complexity_bucket == "ambiguous" and task.task_group not in {
+            "auth_rotation_chain",
+            "billing_queue_chain",
+        }:
+            continue
+        shared_kwargs = {
+            "benchmark_lane": "communication",
+            "expected_reuse_mode": "none",
+            "runtime_reuse_contract_override": "reuse_disabled",
+            "plan_source": "llm",
+            "task_set_metadata": communication_metadata,
+        }
+        if task.supports_mode("text"):
+            transformed.append(
+                replace(
+                    task,
+                    transfer_strategy="text_whole_lane",
+                    handoff_profile="text_whole_lane",
+                    evidence_text=(
+                        "Use only the referenced release artifacts. "
+                        "This row is the communication-mainline natural-language whole-lane text comparator."
+                    ),
+                    **shared_kwargs,
+                )
+            )
+        else:
+            transformed.append(replace(task, **shared_kwargs))
+    return TaskSetBundle(path=task_path, metadata=communication_metadata, tasks=tuple(transformed))
+
+
+def _build_superiority_memory_v1_bundle(
+    task_path: Path,
+    metadata: TaskSetMetadata,
+    template_tasks: tuple[SampleTask, ...],
+) -> TaskSetBundle:
+    memory_metadata = replace(
+        metadata,
+        name="superiority_memory_v1_pack",
+        pack_type="superiority_memory_v1",
+        description=(
+            "Formal-secondary memory mainline scaffold with seed plus reusable follow-up rows "
+            "for each contest family, preserving real prior-case dependencies."
+        ),
+        reading_contract=(
+            "Read this pack only as the memory mainline scaffold. It is the entrypoint for "
+            "reuse_gain, skipped_step_count, task_ms, and quality-floor reading, and it does "
+            "not stand in for the communication headline."
+        ),
+        claim_lanes=("memory",),
+        single_variable=True,
+        variable_axes=("mode",),
+        public_surface="formal_secondary_memory",
+        evidence_tier="formal_secondary",
+        plan_source_default="llm",
+    )
+    transformed: list[SampleTask] = []
+    for task in template_tasks:
+        if task.complexity_bucket not in {"simple", "reusable"}:
+            continue
+        shared_kwargs = {
+            "benchmark_lane": "memory",
+            "plan_source": "llm",
+            "task_set_metadata": memory_metadata,
+        }
+        if task.complexity_bucket == "reusable":
+            shared_kwargs["expected_reuse_mode"] = "skip_execute"
+            shared_kwargs["runtime_reuse_contract_override"] = "validated_replay"
+        else:
+            shared_kwargs["expected_reuse_mode"] = "none"
+            shared_kwargs["runtime_reuse_contract_override"] = "reuse_disabled"
+        if task.supports_mode("text"):
+            transformed.append(
+                replace(
+                    task,
+                    transfer_strategy="text_whole_lane",
+                    handoff_profile="text_whole_lane",
+                    evidence_text=(
+                        "Use only the referenced release artifacts. "
+                        "This row is the memory-mainline whole-lane text comparator."
+                    ),
+                    **shared_kwargs,
+                )
+            )
+        else:
+            transformed.append(replace(task, **shared_kwargs))
+    return TaskSetBundle(path=task_path, metadata=memory_metadata, tasks=tuple(transformed))
+
+
+def _build_uncertainty_audit_v1_bundle(
+    task_path: Path,
+    metadata: TaskSetMetadata,
+    template_tasks: tuple[SampleTask, ...],
+) -> TaskSetBundle:
+    audit_metadata = replace(
+        metadata,
+        name="uncertainty_audit_v1_pack",
+        pack_type="uncertainty_audit_v1",
+        description=(
+            "Audit-only uncertainty pack covering ambiguous, replay-reusable, and a small distractor "
+            "slice to diagnose planner-open divergence without reblocking the headline object."
+        ),
+        reading_contract=(
+            "Read this pack only as uncertainty audit support. It is for actual-parity, "
+            "decision-outcome, and long-tail wall-time diagnostics, not for formal superiority headline claims."
+        ),
+        claim_lanes=("communication",),
+        single_variable=True,
+        variable_axes=("mode",),
+        public_surface="audit_only",
+        evidence_tier="audit_only",
+        plan_source_default="llm",
+    )
+    transformed: list[SampleTask] = []
+    for task in template_tasks:
+        include = task.complexity_bucket in {"ambiguous", "reusable", "distractor"}
+        if not include:
+            continue
+        shared_kwargs = {
+            "benchmark_lane": "communication",
+            "expected_reuse_mode": "none",
+            "runtime_reuse_contract_override": "reuse_disabled",
+            "plan_source": "llm",
+            "task_set_metadata": audit_metadata,
+        }
+        if task.supports_mode("text"):
+            transformed.append(
+                replace(
+                    task,
+                    transfer_strategy="text_whole_lane",
+                    handoff_profile="text_whole_lane",
+                    evidence_text=(
+                        "Use only the referenced release artifacts. "
+                        "This row is the uncertainty-audit whole-lane text comparator."
+                    ),
+                    **shared_kwargs,
+                )
+            )
+        else:
+            transformed.append(replace(task, **shared_kwargs))
+    return TaskSetBundle(path=task_path, metadata=audit_metadata, tasks=tuple(transformed))
 
 
 def _build_typed_state_consumer_sensitivity_bundle(
@@ -1211,6 +1412,7 @@ def _validate_reusable_contract(
             "contest_dual_mode_controlled_v3",
             "contest_honest_headline_v1",
             "contest_superiority_headline_v2",
+            "superiority_memory_v1",
         }
     ):
         if not task.required_prior_case_ids:
@@ -1234,6 +1436,8 @@ def _validate_formal_pack_task_contract(
         "contest_dual_mode_controlled_v3",
         "contest_honest_headline_v1",
         "contest_superiority_headline_v2",
+        "superiority_comm_v1",
+        "superiority_memory_v1",
     }:
         if task.thickness_setting == "S0":
             raise ValueError(f"{task.task_id}: contest headline rows must not remain at thickness_setting=S0")
