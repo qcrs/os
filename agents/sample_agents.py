@@ -1862,7 +1862,7 @@ class SummarizerAgent(BaseAgent):
                 ),
             )
         elif mode != "text" and transfer_strategy != "text_whole_lane":
-            summary_evidence_text = json.dumps(
+            summary_evidence_text = _render_protocol_summary_input_text(
                 _build_protocol_summary_input_packet(
                     query=str(retrieve_result.payload.get("query", "")),
                     route=str(execute_result.payload.get("route", "")),
@@ -1881,8 +1881,7 @@ class SummarizerAgent(BaseAgent):
                     actions_text=actions_text,
                     summary_hint=str(step.params["summary_hint"]),
                     memory_assist_hint=str(retrieve_result.payload.get("memory_assist_hint", "")),
-                ),
-                ensure_ascii=False,
+                )
             )
         summary_input = {
             "task_id": ctx.task_id,
@@ -2496,6 +2495,8 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
             f"The plan must cover these semantic roles: {required_roles_text}. "
             "Do not omit semantic_role on any step. Do not substitute description fields for params or semantic_role. "
+            "Prefer canonical step_id values retrieve, validate, execute, summarize when those roles appear. "
+            "Use depends_on=[] for retrieve, depends_on=[\"retrieve\"] for validate, depends_on=[\"retrieve\"] or [\"retrieve\",\"validate\"] for execute, and depends_on=[\"retrieve\",\"execute\"] for summarize. "
             "Do not emit replay labels, corpus filters, or tool-route hints. "
             "No markdown."
         )
@@ -2538,6 +2539,8 @@ def _planner_repair_messages(
         f"The plan must cover these semantic roles: {required_roles_text}. "
         "Allowed owner_agent values: retriever, executor, summarizer. "
         "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
+        "Prefer canonical step_id values retrieve, validate, execute, summarize. "
+        "Use depends_on=[] for retrieve, depends_on=[\"retrieve\"] for validate, depends_on=[\"retrieve\"] or [\"retrieve\",\"validate\"] for execute, and depends_on=[\"retrieve\",\"execute\"] for summarize. "
         "Every depends_on entry must exactly reference a step_id that appears in the same output. "
         "Do not invent dependency ids such as step1 unless that exact step_id exists. "
         "Do not use compact r/x/s shape. "
@@ -2586,7 +2589,9 @@ def _summarizer_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMess
         user_prompt = tagged_json_block(
             PROTOCOL_SUMMARIZER_TAG,
             {
+                "h": payload["summary_hint"],
                 "e": payload["evidence_text"],
+                "a": payload["actions_text"],
                 "t": list(payload["tags"]),
                 "r": list(payload["reusable_steps"]),
             },
@@ -2999,6 +3004,38 @@ def _build_protocol_summary_input_packet(
         "summary_hint": summary_hint.strip(),
         "memory_assist_hint": memory_assist_hint.strip(),
     }
+
+
+def _render_protocol_summary_input_text(packet: dict[str, Any]) -> str:
+    doc_ids = ", ".join(
+        str(item).strip()
+        for item in packet.get("retrieved_doc_ids", [])[:MAX_PROTOCOL_SUMMARY_DOC_IDS]
+        if str(item).strip()
+    ) or "none"
+    matched_signals = ", ".join(
+        str(item).strip()
+        for item in packet.get("matched_signals", [])[:MAX_PROTOCOL_SUMMARY_SIGNALS]
+        if str(item).strip()
+    ) or "none"
+    parts = [
+        f"Query: {str(packet.get('query', '')).strip()}",
+        f"Route: {str(packet.get('route', 'generic_triage')).strip() or 'generic_triage'}",
+        f"Route source: {str(packet.get('route_source', 'protocol')).strip() or 'protocol'}",
+        f"Route confidence: {float(packet.get('route_confidence', 0.0) or 0.0):.2f}",
+        f"Retrieved docs: {doc_ids}",
+        f"Matched signals: {matched_signals}",
+    ]
+    memory_assist_hint = str(packet.get("memory_assist_hint", "")).strip()
+    if memory_assist_hint:
+        parts.append(memory_assist_hint)
+    summary_hint = str(packet.get("summary_hint", "")).strip()
+    if summary_hint:
+        parts.append(f"Summary hint: {summary_hint}")
+    actions_text = str(packet.get("actions_text", "")).strip()
+    if actions_text:
+        parts.append("Actions:")
+        parts.append(actions_text)
+    return "\n".join(parts)
 
 
 def _resolve_runtime_corpus_hints(*, ctx: object, corpus_docs: list[object]) -> list[dict[str, str]]:

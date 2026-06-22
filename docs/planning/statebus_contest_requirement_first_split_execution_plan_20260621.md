@@ -20,6 +20,13 @@
   - `superiority_memory_v1`
   - `uncertainty_audit_v1`
 - `contest_superiority_headline_v2` 现在只保留为历史过渡 scaffold / blocker reference，不再是当前主 API 对象
+- `2026-06-22` 的 `superiority_comm_v1 repeat=3 post_gatefix` 已确认：
+  - coverage false negative 已消失
+  - 当前 formal blocker 仍只有 `contest_repeat_insufficient`
+  - token 优势稳定，但 `task_ms` 仍是 protocol 略慢
+  - planner repair 不再是主 latency blocker
+  - 下一步只收 `summarizer` handoff / summary shape
+  - 在 summarizer latency 没收平前，不进入 `repeat=10`，也不切到 memory / open 主线
 
 ---
 
