@@ -117,11 +117,21 @@ def test_runner_reports_respect_new_mainline_split_boundaries() -> None:
     assert communication_result["manifest"]["task_pack_type"] == "superiority_comm_v1"
     assert communication_result["manifest"]["task_set_claim_lanes"] == ["communication"]
     assert communication_result["manifest"]["cross_lane_actual_parity_headline_blocking"] is False
+    assert communication_result["manifest"]["contest_formal_coverage_gate"]["benchmark_lane"] == "communication"
+    assert communication_result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 12
+    assert communication_result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
+    assert communication_result["manifest"]["contest_formal_coverage_gate"]["repeat_sufficient"] is False
+    assert communication_result["manifest"]["headline_gates"]["communication_gate"]["withheld_reasons"] == [
+        "contest_repeat_insufficient"
+    ]
     assert "## Communication Mainline" in communication_report
     assert "memory superiority remains out of scope" in communication_report
 
     assert memory_result["manifest"]["task_pack_type"] == "superiority_memory_v1"
     assert memory_result["manifest"]["task_set_claim_lanes"] == ["memory"]
+    assert memory_result["manifest"]["contest_formal_coverage_gate"]["benchmark_lane"] == "memory"
+    assert memory_result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 10
+    assert memory_result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
     assert "## Memory Mainline Scaffold" in memory_report
     assert "## Memory Mainline Metrics" in memory_report
     assert "This pack is only the memory mainline scaffold" in memory_report
@@ -131,6 +141,9 @@ def test_runner_reports_respect_new_mainline_split_boundaries() -> None:
     assert uncertainty_result["manifest"]["task_pack_type"] == "uncertainty_audit_v1"
     assert uncertainty_result["manifest"]["task_set_public_surface"] == "audit_only"
     assert uncertainty_result["manifest"]["cross_lane_actual_parity_headline_blocking"] is False
+    assert uncertainty_result["manifest"]["contest_formal_coverage_gate"]["benchmark_lane"] == "communication"
+    assert uncertainty_result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 15
+    assert uncertainty_result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
     assert "## Uncertainty Audit" in uncertainty_report
     assert "diagnostic-only" in uncertainty_report
 

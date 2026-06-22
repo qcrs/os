@@ -6491,7 +6491,7 @@ def test_contest_dual_mode_controlled_v3_repeat_one_does_not_pass_formal_stabili
 
 def test_contest_formal_coverage_gate_distinguishes_surface_from_repeat() -> None:
     bundle = load_task_set_bundle("contest_honest_headline_v1")
-    gate_full = _contest_formal_coverage_gate(list(bundle.tasks), repeat=1)
+    gate_full = _contest_formal_coverage_gate(list(bundle.tasks), repeat=1, pack_type="contest_honest_headline_v1")
     assert gate_full["surface_complete"] is True
     assert gate_full["repeat_sufficient"] is False
     assert gate_full["passed"] is False
@@ -6501,10 +6501,28 @@ def test_contest_formal_coverage_gate_distinguishes_surface_from_repeat() -> Non
         for task in bundle.tasks
         if not str(task.task_id).startswith(("rr-cache-", "rr-deploy-"))
     ]
-    gate_reduced = _contest_formal_coverage_gate(reduced_tasks, repeat=10)
+    gate_reduced = _contest_formal_coverage_gate(
+        reduced_tasks,
+        repeat=10,
+        pack_type="contest_honest_headline_v1",
+    )
     assert gate_reduced["surface_complete"] is False
     assert gate_reduced["repeat_sufficient"] is True
     assert gate_reduced["passed"] is False
+
+    communication_bundle = load_task_set_bundle("superiority_comm_v1")
+    gate_comm = _contest_formal_coverage_gate(
+        list(communication_bundle.tasks),
+        repeat=1,
+        pack_type="superiority_comm_v1",
+    )
+    assert gate_comm["benchmark_lane"] == "communication"
+    assert gate_comm["matched_pair_count"] == 12
+    assert gate_comm["required_pair_count"] == 12
+    assert gate_comm["complexity_bucket_coverage"] == ["ambiguous", "distractor", "simple"]
+    assert gate_comm["surface_complete"] is True
+    assert gate_comm["repeat_sufficient"] is False
+    assert gate_comm["passed"] is False
 
 
 def test_text_strict_pure_lane_consumes_explicit_handoff_without_executor_reroute() -> None:
