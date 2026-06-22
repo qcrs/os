@@ -12,10 +12,10 @@
 |------|------|
 | 任务 | Task A（LangGraph 框架分析）+ Task B（改进系统设计） |
 | Agent | planner → retriever ×3（并行） → executor → summarizer |
-| LLM | DeepSeek Chat（via api.deepseek.com） |
-| Embedding | DashScope text-embedding-v4（1024 维） |
+| LLM | OpenAI 兼容 Chat 后端（实验原始记录使用 DeepSeek；当前代码也支持本地 Transformers） |
+| Embedding | DashScope `text-embedding-v4`（1024 维）或 `LocalHashEmbeddings` fallback |
 | 记忆 | InMemoryStore + 语义检索 |
-| 运行环境 | Docker `langgraph-demo`，Python 3.11 |
+| 运行环境 | Python 3.11；历史实验曾使用 Docker，当前仓库可在 `/data/mingwei/SynapseX` 直接运行 |
 
 ### 1.3 对照设计
 
@@ -152,20 +152,25 @@ structured 模式 token 更少的原因：
 ## 五、可复现步骤
 
 ```bash
-# 1. 启动容器
-docker start langgraph-demo
+cd /data/mingwei/SynapseX
 
-# 2. 同步代码
-docker cp /data/mingwei/langgraph/examples/multi_agent_demo/. langgraph-demo:/demo/
+# 方式 A：本地 Transformers 后端
+export CHAT_BACKEND=transformers
+export CHAT_MODEL=qwen3-8b
+export LOCAL_MODEL_PATH=/data/models/Qwen3-8B
+export LOCAL_MODEL_DEVICE=cuda:0
 
-# 3. 运行实验
-docker exec langgraph-demo bash -lc '
-  export DEEPSEEK_API_KEY="sk-cb5c286c1f484374a23b295b1a573224"
-  export DASHSCOPE_API_KEY="sk-e992f9a937724b63980e13a05008435d"
-  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
-  cd /demo
-  python3 -u run_demo.py
-'
+# 方式 B：OpenAI 兼容后端
+# export CHAT_BACKEND=openai
+# export CHAT_API_KEY="你的 Chat API key"
+# export CHAT_BASE_URL="https://api.deepseek.com"
+# export CHAT_MODEL="deepseek-chat"
+
+# 可选：启用 DashScope embedding；不设置则使用 LocalHashEmbeddings
+# export DASHSCOPE_API_KEY="你的 DashScope API key"
+
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+python -u run_demo.py
 ```
 
 输出包含：

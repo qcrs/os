@@ -58,8 +58,8 @@ def main():
 
     # Check API keys
     if os.getenv("CHAT_BACKEND", "").lower() != "transformers":
-        if not os.getenv("DEEPSEEK_API_KEY"):
-            print("[ERROR] DEEPSEEK_API_KEY not set. Exiting.")
+        if not os.getenv("CHAT_API_KEY") and not os.getenv("DEEPSEEK_API_KEY"):
+            print("[ERROR] CHAT_API_KEY/DEEPSEEK_API_KEY not set. Exiting.")
             sys.exit(1)
 
     # Load saved text results

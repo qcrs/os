@@ -34,10 +34,10 @@
 
 | API | 作用 | Demo 中的使用位置 |
 |-----|------|------------------|
-| `InMemoryStore` | 进程内 KV 存储，支持语义搜索 | `memory.py` — 创建共享 Store 实例 |
-| `InMemoryStore(index={...})` | 配置向量索引，启用语义搜索 | `memory.py` — CharacterEmbeddings + 50 维向量 |
+| `InMemoryStore` | 运行期 KV 存储，支持语义搜索 | `memory.py` — 创建共享 Store 实例，并从 JSONL 长期记忆加载历史 MemoryUnit |
+| `InMemoryStore(index={...})` | 配置向量索引，启用语义搜索 | `memory.py` — DashScope `text-embedding-v4` 或 `LocalHashEmbeddings`，默认 1024 维 |
 | `BaseStore` | Store 抽象接口 | `agents.py` — 所有 Agent 函数的 store 参数类型 |
-| `store.put(ns, key, value)` | 写入存储 | `memory.py` — 所有 Agent 写入计划/文档/分析/摘要 |
+| `store.put(ns, key, value)` | 写入运行期 Store | `memory.py` — 所有 Agent 写入计划/文档/分析/摘要，同时追加保存到 `.memory/shared_memory.jsonl` |
 | `store.get(ns, key)` | 按 key 读取 | `memory.py` — 按需获取已存储内容 |
 | `store.search(ns, query=..., limit=...)` | 语义向量搜索 | `memory.py` + `run_demo.py` — 跨任务记忆检索 |
 
@@ -51,10 +51,11 @@
 
 | 组件 | 作用 | Demo 中的使用位置 |
 |------|------|------------------|
-| `ChatOpenAI` | LLM 调用（DeepSeek V4 兼容 OpenAI 接口） | `models.py` — 所有 Agent 调用 LLM |
+| `ChatOpenAI` | OpenAI 兼容 Chat 调用（默认 DeepSeek 配置） | `models.py` — `CHAT_BACKEND=openai` 时所有 Agent 调用 |
+| `LocalTransformersChatModel` | 本地 Transformers Chat 调用，并可捕获 pre-generation hidden state | `models.py` — `CHAT_BACKEND=transformers` 时使用 |
 | `SystemMessage` / `HumanMessage` | 消息格式 | `agents.py` — 构造 LLM 输入 |
 | `JsonOutputParser` | JSON 输出解析 | `agents.py` — planner/executor/summarizer 解析 LLM 输出 |
-| `Embeddings` | 向量嵌入基类 | `memory.py` — CharacterEmbeddings 实现 |
+| `Embeddings` | 向量嵌入基类 | `memory.py` — `DashScopeEmbeddings` / `LocalHashEmbeddings` 实现 |
 
 ## 六、LangGraph 特性覆盖总结
 
@@ -65,7 +66,7 @@
 │  图编排           │  StateGraph + add_node/edge      │
 │  动态扇出         │  Send + add_conditional_edges    │
 │  结构化状态       │  TypedDict + Annotated reducer   │
-│  共享记忆         │  InMemoryStore + 语义搜索        │
+│  共享记忆         │  InMemoryStore + JSONL 长期记忆  │
 │  编译执行         │  compile() + invoke()            │
 └──────────────────┴──────────────────────────────────┘
 ```

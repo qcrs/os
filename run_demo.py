@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """Multi-Agent Research System Demo
 
-Demonstrates 6 requirements using LangGraph + DeepSeek V4:
+Demonstrates 6 requirements using LangGraph with OpenAI-compatible or local Transformers chat backends:
 
 1. 3+ Agents: planner, retriever (parallel), executor, summarizer
 2. Structured communication: AgentMessage protocol with action types
-3. Non-text state: embedding vectors passed directly between agents
+3. Non-text state: ContextPacket compression, embedding vectors, and optional hidden state transfer
 4. Shared memory: InMemoryStore with semantic search
 5. 2 related task groups: B reuses A's memory
 6. Performance metrics: dual-mode comparison (text vs structured)
 
 Usage:
-    export DEEPSEEK_API_KEY="your-deepseek-key-here"
-    export DASHSCOPE_API_KEY="your-dashscope-key-here"
+    export CHAT_BACKEND=transformers
+    export LOCAL_MODEL_PATH=/data/models/Qwen3-8B
+    python run_demo.py
+
+    # Or use an OpenAI-compatible endpoint:
+    export CHAT_BACKEND=openai
+    export CHAT_API_KEY="your-chat-api-key"
     python run_demo.py
 """
 
@@ -169,20 +174,20 @@ def main():
     """Run the full multi-agent demo with dual-mode comparison."""
     print("=" * 70)
     print("Multi-Agent Research System Demo")
-    print("LangGraph + DeepSeek V4 | Dual-Mode Comparison")
+    print("LangGraph Multi-Agent Demo | Dual-Mode Comparison")
     print("=" * 70)
 
     # Check API key
-    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
-    if not deepseek_api_key:
-        print("\n[WARNING] DEEPSEEK_API_KEY not set.")
+    chat_api_key = os.getenv("CHAT_API_KEY", os.getenv("DEEPSEEK_API_KEY", ""))
+    if os.getenv("CHAT_BACKEND", "openai").lower() != "transformers" and not chat_api_key:
+        print("\n[WARNING] CHAT_API_KEY/DEEPSEEK_API_KEY not set for OpenAI-compatible backend.")
         print("  The demo will run but LLM calls will fail.")
-        print("  Set it with: export DEEPSEEK_API_KEY='your-key'")
+        print("  Set it with: export CHAT_API_KEY='your-key'")
         print()
     dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")
     if not dashscope_api_key:
         print("\n[WARNING] DASHSCOPE_API_KEY not set.")
-        print("  The demo requires it for text-embedding-v4 semantic memory.")
+        print("  DashScope text-embedding-v4 is optional; LocalHashEmbeddings fallback will be used.")
         print("  Set it with: export DASHSCOPE_API_KEY='your-key'")
         print()
 

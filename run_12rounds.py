@@ -8,7 +8,7 @@ previous rounds. Compares text mode vs structured mode on:
   - Task completion quality (key findings count, analysis depth, memory reuse)
 
 Usage:
-    cd /demo
+    cd /data/mingwei/SynapseX
     unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
     python run_12rounds.py
 """
@@ -238,13 +238,13 @@ def print_quality_comparison(text_results: list[dict], struct_results: list[dict
 def main():
     print("=" * 80)
     print("12-Round Continuous Task Dual-Mode Comparison")
-    print("LangGraph + DeepSeek V4 | Chained Memory Tasks")
+    print("LangGraph Multi-Agent Demo | Chained Memory Tasks")
     print("=" * 80)
 
     # Check API keys (skip for local transformers backend)
     if os.getenv("CHAT_BACKEND", "").lower() != "transformers":
-        if not os.getenv("DEEPSEEK_API_KEY"):
-            print("[ERROR] DEEPSEEK_API_KEY not set. Exiting.")
+        if not os.getenv("CHAT_API_KEY") and not os.getenv("DEEPSEEK_API_KEY"):
+            print("[ERROR] CHAT_API_KEY/DEEPSEEK_API_KEY not set. Exiting.")
             sys.exit(1)
     if not os.getenv("DASHSCOPE_API_KEY"):
         print("[WARNING] DASHSCOPE_API_KEY not set. Embedding will use fallback.")

@@ -1,7 +1,7 @@
 # 赛题 9 完成情况评估
 
-> 基于 `/data/mingwei/langgraph/docs/openos/race9.md` 赛题要求，对照当前 demo 实现逐项评估。
-> 最后更新：2026-06-11（结构化通信协议 + 双模式对比 + 性能实验已完成）
+> 基于 `/data/mingwei/SynapseX/docs/openos/race9.md` 赛题要求，对照当前 demo 实现逐项评估。
+> 最后更新：2026-06-20（统一 MemoryUnit schema + 跨任务记忆复用实验已完成）
 
 ## 一、具体要求完成情况
 
@@ -11,12 +11,12 @@
 | 2 | 结构化通信协议（动作类型、输入参数、返回结果、能力描述、握手、能力发现、协议映射）| ✅ | `protocol.py`: ActionType(6种)、AgentMessage(dataclass)、AgentCard、AgentRegistry | — |
 | 3 | 同时支持"纯文本模式"和"结构化协议模式"，可复现对比 | ✅ | `run_demo.py`: Phase 1 text → reset → Phase 2 structured → Phase 3 对比表 | — |
 | 4 | 非文本中间状态传递（embedding/语义向量/隐藏状态）| ✅ | retriever 生成 1024 维 embedding → `embedding_payloads` State 字段 → executor 接收并用于选择 `context_packets` | — |
-| 5 | 共享记忆模块（记忆 ID、来源 Agent、创建时间、任务主题、摘要描述）| ⚠️ | InMemoryStore + namespace/key/value，有基本元数据（来源 Agent、任务组、类型、时间戳）| 缺统一的记忆单元格式，元数据不完整 |
-| 6 | 按关键词/标签/语义相似度检索历史记忆，跨任务复用 | ✅ | `store.search()` 语义搜索，Task B 复用 Task A 记忆 | — |
+| 5 | 共享记忆模块（记忆 ID、来源 Agent、创建时间、任务主题、摘要描述）| ✅ | `memory.py` 将写入内容统一包装为 `MemoryUnit`，显式保存 `memory_id/source_agent/created_at/task_topic/summary_description/tags/payload/evidence_refs` | — |
+| 6 | 按关键词/标签/语义相似度检索历史记忆，跨任务复用 | ✅ | `store_search()`、`store_search_by_keywords()`、`store_search_by_tags()`、`store_search_memories()`；复用实验 `Precision@1=100%`、`Recall@3=100%` | — |
 | 7 | ≥2 组关联性连续任务 | ✅ | Task A（LangGraph 分析）+ Task B（系统设计），有内容关联 | — |
 | 8 | 统计 Agent 间消息次数、token/字符开销、非文本传递次数及规模、单任务耗时、记忆命中率、整体性能提升 | ✅ | `metrics.py`: message_log、record_message()、summary_dict()、report() 通信指标区块 | — |
-| 9 | 系统架构含：多 Agent 运行时、协议解析与调度、状态交换、共享记忆存储与检索、评测模块 | ⚠️ | 运行时(Pregel)、调度(StateGraph)、状态交换(Channel)、记忆(InMemoryStore)、协议(protocol.py) | 缺独立评测模块 |
-| 10 | 稳定执行 ≥10 轮连续任务 | ❌ | 只跑 2 轮（Task A + Task B）× 2 模式 = 4 次执行 | 缺 10 轮循环执行 |
+| 9 | 系统架构含：多 Agent 运行时、协议解析与调度、状态交换、共享记忆存储与检索、评测模块 | ✅ | 运行时(Pregel)、调度(StateGraph)、状态交换(Channel)、记忆(InMemoryStore)、协议(protocol.py)、实验脚本(`run_memory_reuse_experiment.py`/12轮脚本) | — |
+| 10 | 稳定执行 ≥10 轮连续任务 | ✅ | `run_12rounds.py` 与 `run_structured_only.py` 已支持 12 轮连续任务，结果见 `experiment_12rounds.md` | — |
 | 11 | 提交：源码、设计文档、部署文档、实验报告、演示视频 | ⚠️ | 有源码、how_to_run、features_in_demo、structured_comm_protocol、performance_experiment | 缺演示视频 |
 | 12 | 鼓励 CodeAct（LLM 生成代码沙箱执行）| ❌ | 未实现 | 非必选 |
 
@@ -69,6 +69,19 @@
 | 共享记忆命中率 | `memory_reuse_hits` / 总查询 | report + 对比表 |
 | 整体性能提升 | `print_comparison()` 差值计算 | 对比表 |
 
+### 2.5 统一共享记忆单元（requirements #5/#6）
+
+**文件**: `memory.py`、`run_memory_reuse_experiment.py`
+
+| 组件 | 实现 | 说明 |
+|------|------|------|
+| `make_memory_unit()` | 统一包装所有 Store value | 显式生成 `memory_id`、`source_agent`、`created_at`、`task_topic`、`summary_description`、`tags`、`payload` |
+| `evidence_refs` | 从 `analysis.evidence` 与 `selected_doc_keys` 提取 | 支持后续任务追溯证据链 |
+| `store_search_by_keywords()` | 本地关键词过滤 | 支持按摘要、主题、正文和 tags 精确匹配 |
+| `store_search_by_tags()` | 规范化标签过滤 | 支持不同 Agent 按标签复用历史记忆 |
+| `store_search_memories()` | 语义召回 + 关键词/标签过滤 | 作为跨任务复用的推荐入口 |
+| 复用实验 | `docs/openos/memory_reuse_experiment.md` | 在 `SynapseX-wmw` 容器内验证准确性与效率 |
+
 ## 三、实验数据（已验证）
 
 ### 3.1 LLM Token 对比（核心指标）
@@ -103,40 +116,61 @@
 - **协议字符不消耗 LLM token**: 3,061 协议字符由 Python 代码生成
 - **净效果**: 实测 -1,656 tokens (-10.2%)
 
+### 3.5 跨任务记忆复用实验
+
+| 指标 | 结果 |
+|------|------|
+| 运行容器 | `SynapseX-wmw` |
+| 代码路径 | `/data/mingwei/SynapseX` |
+| 实验脚本 | `run_memory_reuse_experiment.py` |
+| 实验报告 | `docs/openos/memory_reuse_experiment.md` |
+| 结果 JSON | `docs/openos/memory_reuse_experiment_results.json` |
+| MemoryUnit schema 通过率 | 100% |
+| Precision@1 | 100% |
+| Recall@3 | 100% |
+| MRR | 100% |
+| 平均语义检索耗时 | 0.5955 ms |
+| 平均关键词检索耗时 | 0.0301 ms |
+| 平均标签检索耗时 | 0.0311 ms |
+| 平均混合摘要检索耗时 | 0.8757 ms |
+| 平均混合分析检索耗时 | 1.1887 ms |
+
+实验设计为 Task A 写入 MemoryUnit 相关计划、文档、分析和总结，Task B 通过语义、关键词、标签、混合检索复用 Task A 记忆，同时加入 AutoGen、CrewAI、vector-db 和 graph scheduling 干扰项。结果表明当前共享记忆模块可在包含干扰记忆的条件下稳定命中目标摘要和证据链。
+
 ## 四、评分细则对照
 
 | 评分维度 | 分值 | 当前状态 | 预估得分 |
 |---------|------|---------|---------|
 | 通信效率（token 节省）| 25 分 | 实测 -1,656 tokens (-10.2%)，有 LLM usage 逐调用数据 | ~20/25 |
 | 状态传递创新 | 20 分 | embedding 非文本传递已实现（1024 维向量，6 次传递，0 LLM token） | ~16/20 |
-| 记忆复用效果 | 20 分 | Store + 语义搜索 + 跨任务复用，命中率稳定 | ~16/20 |
-| 系统完整性 | 20 分 | 4 Agent + 图编排 + 协议 + 记忆 + 性能指标，缺评测模块 | ~16/20 |
+| 记忆复用效果 | 20 分 | 统一 MemoryUnit schema + 语义/关键词/标签/混合检索；复用实验 Precision@1=100% | ~19/20 |
+| 系统完整性 | 20 分 | 4 Agent + 图编排 + 协议 + 记忆 + 性能指标 + 可复现实验脚本 | ~18/20 |
 | 实验验证 | 15 分 | 双模式对比 + LLM token 逐调用统计 + 可复现步骤 | ~13/15 |
-| **合计** | **100 分** | | **~81/100** |
+| **合计** | **100 分** | | **~88/100** |
 
 ## 五、差距分析
 
-### 完成的（8/12）
+### 完成的（10/12）
 1. ✅ ≥3 Agent 协同运行（4 个 Agent）
 2. ✅ 结构化通信协议（ActionType + AgentMessage + AgentCard + AgentRegistry）
 3. ✅ 双模式对比实验（text vs structured，可复现）
-4. ✅ 非文本状态传递（embedding 1024 维向量）
-5. ✅ 语义检索 + 跨任务记忆复用
-6. ✅ ≥2 组关联任务
-7. ✅ 完整性能指标统计（LLM token 逐调用、消息次数、协议字符、embedding 传递、耗时、命中率）
-8. ✅ 系统架构基本完整（运行时 + 调度 + 状态 + 记忆 + 协议）
+4. ✅ 非文本状态传递（embedding 1024 维向量 + hidden state 通道）
+5. ✅ 统一 MemoryUnit schema（显式元数据 + payload + evidence_refs）
+6. ✅ 语义/关键词/标签/混合检索 + 跨任务记忆复用
+7. ✅ ≥2 组关联任务
+8. ✅ 完整性能指标统计（LLM token 逐调用、消息次数、协议字符、embedding 传递、耗时、命中率）
+9. ✅ 系统架构基本完整（运行时 + 调度 + 状态 + 记忆 + 协议 + 实验脚本）
+10. ✅ 12 轮连续任务脚本与结果文档
 
-### 部分完成的（2/12）
-9. ⚠️ 共享记忆模块 — 有 Store 但元数据格式不够统一
-10. ⚠️ 提交内容 — 缺演示视频
+### 部分完成的（1/12）
+11. ⚠️ 提交内容 — 缺演示视频
 
-### 未完成的（2/12）
-11. ❌ ≥10 轮连续执行（当前 2 轮 × 2 模式）
+### 未完成的（1/12）
 12. ❌ CodeAct（非必选）
 
 ## 六、关键改进
 
-相比上一版评估（~42/100 → ~81/100，+39 分）：
+相比上一版评估（~42/100 → ~88/100，+46 分）：
 
 | 改进项 | 新增文件 | 分值提升 |
 |--------|---------|---------|
@@ -144,13 +178,13 @@
 | 双模式对比 | `run_demo.py` 重写 | +8 分（实验验证） |
 | 非文本状态传递 | `agents.py` + `graph.py` 改造 | +11 分（状态传递创新） |
 | 性能指标统计 | `metrics.py` 扩展（含 LLM token 逐调用） | +3 分（系统完整性） |
+| 统一 MemoryUnit 与复用实验 | `memory.py` + `run_memory_reuse_experiment.py` + `memory_reuse_experiment.md` | +7 分（记忆复用 + 系统完整性） |
 
 ## 七、提分建议
 
 | 优先级 | 改进项 | 预计提分 |
 |--------|--------|---------|
-| P0 | 跑 ≥10 轮连续任务，验证稳定性 | +3 分 |
-| P0 | 补充实验报告（已有 performance_experiment.md） | +2 分 |
-| P1 | 完善共享记忆元数据格式 | +2 分 |
-| P1 | 录制演示视频 | +3 分 |
-| P2 | 独立评测模块 | +2 分 |
+| P0 | 录制演示视频 | +3 分 |
+| P1 | 将 `InMemoryStore` 替换或扩展为持久化向量/文档存储 | +2 分 |
+| P1 | 扩大跨任务记忆复用实验规模和干扰集 | +2 分 |
+| P2 | 实现 CodeAct 沙箱执行链路 | +2 分 |

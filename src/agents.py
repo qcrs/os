@@ -247,14 +247,22 @@ Return ONLY valid JSON with this exact format:
 
     plan = parsed.get("plan", "")
     sub_queries = _normalize_sub_queries(query, parsed.get("sub_queries", []))
+    plan_memory_id = f"plan_{task_group}_{hash_text(query)}"
 
     # Write plan to shared memory
-    store_put(store, NS_PLANS, f"plan_{task_group}", {
+    store_put(store, NS_PLANS, plan_memory_id, {
         "text": plan,
         "sub_queries": sub_queries,
         "query": query,
         "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
-    })
+    },
+        memory_type="plan",
+        source_agent="planner",
+        task_group=task_group,
+        task_topic=query,
+        summary=plan,
+        tags=["plan", "planner", task_group],
+    )
 
     duration = time.perf_counter() - t0
     metrics.record_timing("node_planner", duration)
@@ -350,7 +358,14 @@ Return your response as plain text (3-5 paragraphs)."""),
         "text": doc_text,
         "sub_query": sub_query,
         "task_group": task_group,
-    })
+    },
+        memory_type="document",
+        source_agent="retriever",
+        task_group=task_group,
+        task_topic=sub_query,
+        summary=summarize_text(doc_text, 240),
+        tags=["document", "retriever", task_group, *sub_query.split()[:6]],
+    )
 
     document_payload = {
         "doc_key": doc_key,
@@ -665,12 +680,13 @@ Return ONLY valid JSON:
     analysis = parsed.get("analysis", "")
     evidence = parsed.get("evidence", [])
     analysis_digest = summarize_text(analysis, 520)
+    analysis_memory_id = f"analysis_{task_group}_{hash_text(query or plan)}"
     selected_doc_keys = [
         item.get("doc_key")
         for item in (verified_packets if verified_packets else selected_documents)
     ]
 
-    store_put(store, NS_ANALYSIS, f"analysis_{task_group}", {
+    store_put(store, NS_ANALYSIS, analysis_memory_id, {
         "text": analysis,
         "digest": analysis_digest,
         "evidence": evidence,
@@ -679,7 +695,14 @@ Return ONLY valid JSON:
         "context_verification": verification_summary,
         "hidden_guidance": hidden_guidance,
         "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
-    })
+    },
+        memory_type="analysis",
+        source_agent="executor",
+        task_group=task_group,
+        task_topic=query,
+        summary=analysis_digest,
+        tags=["analysis", "executor", task_group],
+    )
 
     duration = time.perf_counter() - t0
     metrics.record_timing("node_executor", duration)
@@ -883,15 +906,23 @@ Evidence:
     summary = parsed.get("summary", "")
     key_findings = parsed.get("key_findings", [])
     recommendations = parsed.get("recommendations", [])
+    summary_memory_id = f"summary_{task_group}_{hash_text(query or summary)}"
 
-    store_put(store, NS_SUMMARIES, f"summary_{task_group}", {
+    store_put(store, NS_SUMMARIES, summary_memory_id, {
         "text": summary,
         "key_findings": key_findings,
         "recommendations": recommendations,
         "query": query,
         "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
         "hidden_guidance": hidden_guidance,
-    })
+    },
+        memory_type="summary",
+        source_agent="summarizer",
+        task_group=task_group,
+        task_topic=query,
+        summary=summary,
+        tags=["summary", "summarizer", task_group],
+    )
 
     duration = time.perf_counter() - t0
     metrics.record_timing("node_summarizer", duration)

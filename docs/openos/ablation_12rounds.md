@@ -20,14 +20,14 @@ ENABLE_HIDDEN_STATE_TRANSFER=1 # 隐藏状态特征通道
 
 | 项目 | 配置 |
 |------|------|
-| 容器 | `multi-agent_wmw_ablation` |
+| 历史运行容器 | `multi-agent_wmw_ablation`（已删除，当前复现实验请使用 `SynapseX-wmw`） |
 | 模型 | `/data/models/Qwen3-8B` |
 | 推理后端 | Hugging Face `transformers` |
 | 通信链路 | `planner → retriever × 3 → executor → summarizer` |
 | 任务轮数 | 12 轮连续任务 |
 | 每组 LLM 调用 | 72 次 |
-| 输出目录 | `examples/multi_agent_demo/ablation_results/` |
-| 汇总文件 | `examples/multi_agent_demo/ablation_results/summary.json` |
+| 输出目录 | `ablation_results/` |
+| 汇总文件 | `ablation_results/summary.json` |
 
 说明：本次实验使用本地 Qwen3-8B，`embedding` 在无外部 API key 时使用本地 fallback；五组实验依次运行，因此 wall-clock 时间会受 GPU 负载、采样输出长度和运行顺序影响。
 
@@ -138,9 +138,9 @@ ENABLE_HIDDEN_STATE_TRANSFER=1 # 隐藏状态特征通道
 
 | 文件 | 内容 |
 |------|------|
-| `examples/multi_agent_demo/ablation_results/text_baseline.json` | 纯文本基线结果 |
-| `examples/multi_agent_demo/ablation_results/context_only.json` | 只开启 context packets 的结果 |
-| `examples/multi_agent_demo/ablation_results/context_embedding.json` | context + embedding 结果 |
-| `examples/multi_agent_demo/ablation_results/context_hidden.json` | context + hidden state 结果 |
-| `examples/multi_agent_demo/ablation_results/all_three.json` | 三通道全开结果 |
-| `examples/multi_agent_demo/ablation_results/summary.json` | 本文使用的汇总结果 |
+| `ablation_results/text_baseline.json` | 纯文本基线结果 |
+| `ablation_results/context_only.json` | 只开启 context packets 的结果 |
+| `ablation_results/context_embedding.json` | context + embedding 结果 |
+| `ablation_results/context_hidden.json` | context + hidden state 结果 |
+| `ablation_results/all_three.json` | 三通道全开结果 |
+| `ablation_results/summary.json` | 本文使用的汇总结果 |

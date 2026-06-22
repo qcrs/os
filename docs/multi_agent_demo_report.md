@@ -678,30 +678,57 @@ score = 0.65 * hidden_score + 0.25 * lexical + 0.10 * coverage
 
 ---
 
-## 七、Docker 环境信息
+## 七、运行环境信息
 
-```
-镜像: hub.oepkgs.net/openeuler/openeuler:24.03-lts-sp3
-Python: 3.11
-依赖:
-  - langgraph 1.2.4
-  - langchain-core 1.4.1
-  - langchain-openai 1.2.2
-  - openai 2.41.0
+当前仓库路径：`/data/mingwei/SynapseX`。
+
+基础依赖：
+
+```text
+langgraph
+langchain-core
+langchain-openai
+dashscope
+numpy
 ```
 
-**运行命令**：
+本地 Transformers 后端额外依赖：
+
+```text
+transformers
+torch
+accelerate
+```
+
+推荐运行命令：
+
 ```bash
-docker exec -w /demo langgraph-demo python3 run_demo.py
+cd /data/mingwei/SynapseX
+export CHAT_BACKEND=transformers
+export CHAT_MODEL=qwen3-8b
+export LOCAL_MODEL_PATH=/data/models/Qwen3-8B
+export LOCAL_MODEL_DEVICE=cuda:0
+python -u run_demo.py
+```
+
+如果使用 OpenAI 兼容后端：
+
+```bash
+cd /data/mingwei/SynapseX
+export CHAT_BACKEND=openai
+export CHAT_API_KEY="你的 Chat API key"
+export CHAT_BASE_URL="https://api.deepseek.com"
+export CHAT_MODEL="deepseek-chat"
+python -u run_demo.py
 ```
 
 ---
 
-## 八、需求完成情况评估（诚实说明）
+## 八、需求完成情况评估（以当前代码为准）
 
 ### 8.1 原始需求拆解
 
-原始需求包含 6 大项，每项有具体的子要求。以下逐项对照实际实现情况。
+原始需求包含 6 大项，每项有具体的子要求。以下逐项对照当前 `src/` 和根目录运行脚本的实现情况。
 
 ---
 
@@ -715,11 +742,11 @@ docker exec -w /demo langgraph-demo python3 run_demo.py
 |--------|---------|
 | ≥3 个 Agent | ✅ 4 个：planner、retriever（×3 并行）、executor、summarizer |
 | 覆盖规划角色 | ✅ planner 节点，拆解查询为子任务 |
-| 覆盖检索角色 | ✅ retriever 节点，×3 并行检索 |
-| 覆盖执行角色 | ✅ executor 节点，分析文档提取证据 |
+| 覆盖检索角色 | ✅ retriever 节点，按 planner 输出的子查询并行运行 |
+| 覆盖执行角色 | ✅ executor 节点，选择上下文、分析文档并提取证据 |
 | 覆盖总结角色 | ✅ summarizer 节点，汇总输出最终报告 |
 
-**实现方式**：LangGraph 原生的 `StateGraph` + `Send` fan-out，完全原生支持。
+**实现方式**：`src/graph.py` 使用 `StateGraph`、`Send` fan-out 和 `Annotated[list, operator.add]` fan-in。
 
 ---
 
@@ -729,58 +756,35 @@ docker exec -w /demo langgraph-demo python3 run_demo.py
 
 | 子要求 | 实现情况 |
 |--------|---------|
-| 结构化协议 | ✅ TypedDict 定义状态 schema |
-| 替代自然语言 | ✅ 节点间传递的是类型化字段，不是自由文本消息 |
-| 协议可解析 | ✅ 由 LangGraph Channel 系统自动解析和路由 |
+| 结构化协议 | ✅ `AgentMessage`、`ActionType`、`AgentCard`、`AgentRegistry` |
+| 替代自然语言透传 | ✅ Structured 模式通过 `messages`、`context_packets`、`embedding_payloads`、`hidden_state_payloads` 传递结构化载荷 |
+| 协议可解析 | ✅ `ResearchState` 使用 `TypedDict`，并由 LangGraph Channel/reducer 聚合并行分支 |
+| 能力发现 | ✅ `create_default_registry()` 预注册 4 个 Agent 能力 |
 
-**实现方式**：
-
-```python
-class ResearchState(TypedDict, total=False):
-    query: str                                    # 文本字段
-    plan: str                                     # 文本字段
-    sub_queries: list[str]                        # 列表字段
-    documents: Annotated[list[str], operator.add] # 累积字段
-    analysis: str                                 # 文本字段
-    evidence: list[dict]                          # 结构化字段
-    summary: str                                  # 文本字段
-    key_findings: list[str]                       # 列表字段
-```
-
-LangGraph 原生支持，Channel 系统自动处理状态路由。
+**实现方式**：`src/protocol.py` 定义协议数据结构，`src/agents.py` 在 structured 模式构造消息与载荷，`src/graph.py` 定义状态字段和 reducer。
 
 ---
 
 #### ③ 实现非文本中间状态传递机制（embedding/语义向量/隐藏状态）
 
-**状态：❌ 未真正实现**
+**状态：✅ 已实现，且三通道可独立开关**
 
 | 子要求 | 实现情况 | 说明 |
 |--------|---------|------|
-| embedding 传递 | ❌ | Channel 传递的是字符串，不是向量 |
-| 语义向量传递 | ❌ | 没有在节点间传递 embedding 向量 |
-| 隐藏状态传递 | ❌ | 大模型 hidden state 无法通过 Channel 传递 |
+| embedding 传递 | ✅ | `retriever` 生成 `embedding_payloads`，`executor` 接收并用于 context/document 排序 |
+| 语义向量传递 | ✅ | 有 `DASHSCOPE_API_KEY` 时使用 DashScope `text-embedding-v4`，否则用 `LocalHashEmbeddings` fallback |
+| hidden state 传递 | ✅ | `CHAT_BACKEND=transformers` 且 `ENABLE_HIDDEN_STATE_TRANSFER=1` 时捕获 pre-generation hidden state |
+| 文本压缩证据通道 | ✅ | `ContextPacket` 携带摘要、证据片段、引用、hash 校验和 Store key |
 
-**我做了什么（为什么说"未真正实现"）**：
+三类通道由环境变量独立控制：
 
-- 我用 `InMemoryStore` 的语义搜索功能来**模拟**非文本状态传递
-- Retriever 写文档到 Store，Executor 从 Store 语义搜索
-- 但 Store 是**共享记忆**（需求 ④），不是**中间状态传递**
-- Channel 层面传递的仍然是字符串（plan、analysis、summary）
+```bash
+ENABLE_CONTEXT_PACKETS=1
+ENABLE_EMBEDDING_TRANSFER=1
+ENABLE_HIDDEN_STATE_TRANSFER=1
+```
 
-**为什么 LangGraph 没有这个功能**：
-
-1. LangGraph 是**编排框架**，负责节点调度和状态管理
-2. Channel 设计为传递任意 Python 对象（`Any` 类型），理论上可以传向量
-3. 但没有内置的 embedding 化管道（文本 → 向量 → 传递 → 解码）
-4. hidden state 传播需要深度集成模型内部结构，这超出编排框架的职责
-5. 目前主流商业 API（DeepSeek、OpenAI、Claude）均不支持暴露中间层 hidden state
-
-**要真正实现需要**：
-
-- 自定义 `EmbeddingChannel` 类型，自动将文本转为向量再传递
-- 在节点内部直接传递 numpy/tensor 对象（LangGraph 允许，但需自己实现 embedding 逻辑）
-- 集成支持 hidden state 暴露的模型 API（目前不存在）
+实现边界：OpenAI 兼容商业 API 不暴露模型 hidden state，因此 hidden state 只在本地 Transformers 后端可用；OpenAI 兼容后端仍可使用 `AgentMessage`、`ContextPacket` 和 embedding 通道。
 
 ---
 
@@ -790,91 +794,71 @@ LangGraph 原生支持，Channel 系统自动处理状态路由。
 
 | 子要求 | 实现情况 |
 |--------|---------|
-| 记忆存储 | ✅ `store.put(namespace, key, value)` — 12 次写入 |
-| 记忆检索 | ✅ `store.search(namespace, query=...)` — 21 次语义搜索 |
-| 记忆复用 | ✅ Task B 检索 Task A 的总结 — 7 次命中 |
-| 跨任务共享 | ✅ 两组任务共享同一个 InMemoryStore |
-| 语义搜索 | ✅ CharacterEmbeddings + cosine 相似度 |
+| 记忆存储 | ✅ `store.put(namespace, key, value)` |
+| 记忆检索 | ✅ `store.search(namespace, query=..., limit=...)` |
+| 记忆复用 | ✅ Task B / 后续轮次可检索前序摘要、计划、文档和分析 |
+| 跨任务共享 | ✅ 同一次 graph 构建返回的 Store 在连续任务中复用 |
+| 语义搜索 | ✅ `InMemoryStore(index=...)` + `DashScopeEmbeddings` / `LocalHashEmbeddings` |
 
-**实现方式**：LangGraph 原生的 `InMemoryStore` + `IndexConfig` 语义搜索。
+命名空间：`("plans",)`、`("docs",)`、`("analysis",)`、`("summaries",)`。
 
 ---
 
 #### ⑤ 至少设计 2 组关联性连续任务进行验证
 
-**状态：⚠️ 部分实现**
+**状态：✅ 实现**
 
 | 子要求 | 实现情况 | 说明 |
 |--------|---------|------|
-| ≥2 组关联任务 | ✅ | Task A（框架分析）→ Task B（系统设计） |
-| 关联性 | ✅ | B 复用 A 的记忆（7 次命中） |
-| 连续性 | ✅ | B 在 A 之后执行，依赖 A 的结果 |
-| 验证"减少重复计算" | ❌ | 没有对比实验（有记忆 vs 无记忆） |
-| 验证"降低协作开销" | ❌ | 没有对比实验 |
-| 验证"提升任务效率" | ❌ | 没有对比实验 |
-
-**缺失部分**：
-
-原始要求是"验证结构化通信、非文本状态传递和共享记忆复用在**减少重复计算、降低协作开销和提升任务效率方面的实际效果**"。这需要**对比实验**：
-
-- 对照组：无共享记忆，每轮独立执行
-- 实验组：有共享记忆，复用历史结果
-- 对比指标：时延、token 消耗、命中率
-
-当前 demo 只跑了 2 轮任务，没有对比实验。
+| ≥2 组关联任务 | ✅ | `run_demo.py` 跑 Task A（框架分析）→ Task B（系统设计） |
+| 关联性 | ✅ | Task B 查询明确依赖 Task A 的分析结果 |
+| 连续性 | ✅ | Task B 在同一 Store 上接续执行 |
+| ≥10 轮稳定执行 | ✅ | `run_12rounds.py` 定义并运行 12 轮连续任务 |
+| 结构化消融 | ✅ | `ablation_results/` 保存 context、embedding、hidden state 等组合结果 |
 
 ---
 
 #### ⑥ 提供通信开销、任务时延、记忆复用等方面的性能对比数据
 
-**状态：❌ 大部分未实现**
+**状态：✅ 实现**
 
 | 子要求 | 实现情况 | 说明 |
 |--------|---------|------|
-| **Agent 间消息次数** | ❌ 未统计 | 需要记录每次 Channel 读写 |
-| **文本通信 token/字符开销** | ❌ 未统计 | 需要统计每次 LLM 调用的 input/output token |
-| **非文本状态传递次数及数据规模** | ❌ 未实现 | 需求 ③ 未实现，此项无法统计 |
-| **单任务总耗时** | ✅ 已实现 | Task A: 23.27s, Task B: 23.07s |
-| **共享记忆命中率** | ✅ 已实现 | 7 次命中 |
-| **整体性能提升情况** | ❌ 未实现 | 需要对比实验（10 轮有记忆 vs 10 轮无记忆） |
-| **评测模块** | ❌ 未实现 | 需要独立的评测模块统计和对比所有指标 |
-| **稳定执行不少于 10 轮** | ❌ 只跑了 2 轮 | 需要循环执行 10+ 轮并收集统计数据 |
+| Agent 间消息次数 | ✅ | `metrics.record_message()` 统计 `AgentMessage` 数量、action 分布 |
+| 文本通信 token/字符开销 | ✅ | `metrics.record_tokens()` 统计 LLM input/output tokens；消息 params/result 字符数也被统计 |
+| 非文本状态传递次数及数据规模 | ✅ | 统计 embedding transfer、hidden-state transfer、维度和 payload 收发计数 |
+| 单任务总耗时 | ✅ | `run_demo.py` / `run_12rounds.py` 记录 task duration |
+| 共享记忆命中 | ✅ | `store_search()` 与脚本层计数记录 memory reuse |
+| 整体性能对比 | ✅ | `run_demo.py` 输出 Text vs Structured；`run_12rounds.py` 输出 12 轮对比并保存 JSON |
+| Context 压缩效果 | ✅ | `metrics.record_compression()` 统计 original/compressed/saved chars |
+
+注意：`memory_reuse_hits` 是多处搜索命中累计值，`memory_reuse_attempts` 是脚本层手动计数；并行 retriever 节点耗时会被相加，因此不等同于 wall-clock 时间。
 
 ---
 
 ### 8.3 系统架构模块对照
 
-原始要求："系统架构中至少应包含多 Agent 运行时、协议解析与调度模块、状态交换模块、共享记忆存储与检索模块和评测模块"
+原始要求：系统架构中至少应包含多 Agent 运行时、协议解析与调度模块、状态交换模块、共享记忆存储与检索模块和评测模块。
 
 | 模块 | 实现情况 | 说明 |
 |------|---------|------|
-| 多 Agent 运行时 | ✅ | LangGraph Pregel 引擎，4 个 Agent 并行执行 |
-| 协议解析与调度模块 | ✅ | Channel 系统自动解析 TypedDict 状态，Pregel 调度 |
-| 状态交换模块 | ✅ | Channel（LastValue / BinaryOperatorAggregate） |
-| 共享记忆存储与检索模块 | ✅ | InMemoryStore + CharacterEmbeddings 语义搜索 |
-| **评测模块** | ❌ | 未实现 |
+| 多 Agent 运行时 | ✅ | LangGraph Pregel 引擎，4 个 Agent 节点，retriever 并行 fan-out |
+| 协议解析与调度模块 | ✅ | `AgentMessage` / `ActionType` + `StateGraph` 路由 |
+| 状态交换模块 | ✅ | `ResearchState` + LangGraph Channel / reducer |
+| 共享记忆存储与检索模块 | ✅ | `InMemoryStore` + `DashScopeEmbeddings` / `LocalHashEmbeddings` |
+| 评测模块 | ✅ | `src/metrics.py` + `run_demo.py` / `run_12rounds.py` 对比输出 |
 
 ---
 
 ### 8.4 总结
 
-| # | 需求 | 完成状态 | 缺失项 |
-|---|------|---------|--------|
-| ① | ≥3 Agent 协同 | ✅ 完全实现 | — |
-| ② | 结构化通信协议 | ✅ 完全实现 | — |
-| ③ | 非文本中间状态传递 | ❌ 未实现 | Channel 传字符串，不是向量；LangGraph 无原生支持 |
-| ④ | 共享记忆模块 | ✅ 完全实现 | — |
-| ⑤ | 2 组关联任务验证 | ⚠️ 部分实现 | 缺对比实验（有记忆 vs 无记忆） |
-| ⑥ | 性能对比数据 | ❌ 大部分未实现 | 缺：消息次数、token 开销、非文本传递统计、评测模块、10 轮执行 |
+| # | 需求 | 完成状态 | 当前实现 |
+|---|------|---------|----------|
+| ① | ≥3 Agent 协同 | ✅ 完全实现 | planner / retriever / executor / summarizer |
+| ② | 结构化通信协议 | ✅ 完全实现 | AgentMessage、ActionType、AgentCard、ContextPacket |
+| ③ | 非文本中间状态传递 | ✅ 完全实现 | embedding_payloads、hidden_state_payloads、context_packets |
+| ④ | 共享记忆模块 | ✅ 完全实现 | InMemoryStore + namespace + semantic search |
+| ⑤ | 2 组/多轮关联任务验证 | ✅ 完全实现 | `run_demo.py` A/B；`run_12rounds.py` 12 轮 |
+| ⑥ | 性能对比数据 | ✅ 完全实现 | tokens、时延、消息、压缩、embedding/hidden、记忆复用 |
 
-**6 项需求中，3 项完全实现，1 项部分实现，2 项未实现。**
-
-**未实现的根本原因**：
-
-1. **需求 ③**：LangGraph 是编排框架，Channel 传的是 Python 对象（字符串/字典），不涉及 embedding 向量化或模型 hidden state。这需要模型推理框架支持或自定义 Channel 类型。
-
-2. **需求 ⑥**：demo 代码只实现了基础的时延测量，缺少：
-   - 消息计数器（统计 Channel 读写次数）
-   - token 统计（需要 hook LLM 调用的 usage 字段）
-   - 对比实验（需要跑 10 轮有记忆 + 10 轮无记忆）
-   - 评测模块（需要独立的统计和对比逻辑）
+当前版本已覆盖 6 项需求。主要边界是：真实 hidden state 依赖本地 Transformers 后端；OpenAI 兼容 API 后端只能使用结构化消息、上下文压缩与 embedding 通道，不能从商业 API 取得模型内部隐藏层。

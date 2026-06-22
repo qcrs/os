@@ -41,6 +41,16 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-v4")
 EMBEDDING_DIMS = int(os.getenv("EMBEDDING_DIMS", "1024"))
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "10"))
 
+# Persistent shared memory configuration.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PERSISTENT_MEMORY_ENABLED = os.getenv("PERSISTENT_MEMORY_ENABLED", "1").lower() in {
+    "1", "true", "yes", "on"
+}
+PERSISTENT_MEMORY_PATH = os.getenv(
+    "PERSISTENT_MEMORY_PATH",
+    os.path.join(PROJECT_ROOT, ".memory", "shared_memory.jsonl"),
+)
+
 # Store namespaces
 NS_PLANS = ("plans",)
 NS_DOCS = ("docs",)

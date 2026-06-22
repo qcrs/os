@@ -1,6 +1,6 @@
 # 多智能体隐藏状态特征传递机制说明
 
-本文档说明当前 `examples/multi_agent_demo` 中狭义隐藏状态特征在 Agent 间的工作方式，包括生成方式、传递方式、接收方式和后续使用方式。
+本文档说明当前仓库根目录 demo 中狭义隐藏状态特征在 Agent 间的工作方式，包括生成方式、传递方式、接收方式和后续使用方式。
 
 ## 1. 当前定位
 
@@ -13,9 +13,9 @@
 - 触发开关：`CHAT_BACKEND=transformers`、`ENABLE_HIDDEN_STATE_TRANSFER=1`
 - 独立开关：`ENABLE_CONTEXT_PACKETS=1` 控制文本压缩包，`ENABLE_EMBEDDING_TRANSFER=1` 控制语义向量传递，`ENABLE_HIDDEN_STATE_TRANSFER=1` 控制隐藏状态传递
 - 主要传递对象：`planner_hidden_state`、`hidden_state_payloads`
-- 下游使用方式：开启 context packet 时按 `doc_key/ref_id` 关联 hidden payload 后执行 context packet 重排、prompt 裁剪；关闭时对 raw documents 做 hidden-state routing
+- 下游使用方式：开启 context packet 时按 `doc_key/ref_id` 关联 hidden payload 后执行 context packet 重排、prompt 裁剪；关闭时对 raw documents 做 hidden-state routing。这里的 hidden state 只提供排序/裁剪信号，不会给 `context_packets` 本身追加新的可读“意图文本”。
 
-需要说明的是，当前实现已经让下游 Agent 使用隐藏状态特征做路由和上下文选择，但还没有把 hidden state 注入到下游模型内部的 KV cache、attention、prefix embedding 或中间层中。
+需要说明的是，当前实现已经让下游 Agent 使用隐藏状态特征做路由和上下文选择，但还没有把 hidden state 注入到下游模型内部的 KV cache、attention、prefix embedding 或中间层中，也没有把 hidden vector 解码成新的自然语言意图说明后加入 `context_packets`。
 
 ## 2. 总体数据流
 
@@ -50,7 +50,7 @@ Executor
 Summarizer
    │
    ├─ 接收 hidden_guidance
-   ├─ 按 selected_doc_keys 和 hidden 分数控制摘要重点
+   ├─ 看到 selected_doc_keys / avg_hidden_score 等路由摘要
    └─ 输出最终 summary / key_findings
 ```
 
@@ -62,7 +62,7 @@ Summarizer
 
 相关代码：
 
-- `examples/multi_agent_demo/models.py`
+- `src/models.py`
 - `LocalTransformersChatModel`
 - `_capture_pre_generation_hidden_state()`
 
@@ -339,13 +339,13 @@ hidden_guidance = state.get("hidden_guidance", {})
 _record_hidden_state_received("summarizer", planner_hidden_state)
 ```
 
-其中 `hidden_guidance` 是 `Executor` 基于 hidden-state routing 产生的下游控制信息。
+其中 `hidden_guidance` 是 `Executor` 基于 hidden-state routing 产生的路由摘要。它只描述“选中了哪些 doc_key、跳过了多少候选、平均 hidden 分数是多少”，不是从 hidden vector 还原出的语义意图文本。
 
 ## 7. 后续使用方式
 
-### 7.1 Retriever：生成检索意图 hidden state 和 intent_alignment
+### 7.1 Retriever：生成检索 prompt hidden state 和 intent_alignment
 
-`Retriever` 不再只是接收 `planner_hidden_state`，还会在生成检索文本之前捕获自己的 `retriever_intent_hidden_state`。
+`Retriever` 不再只是接收 `planner_hidden_state`，还会在生成检索文本之前捕获自己的 `retriever_intent_hidden_state`。这里变量名里的 `intent` 表示“Retriever prompt 在隐空间中的任务表示”，不是显式自然语言意图，也不是额外写入 `context_packet.summary` 或 `evidence_spans` 的内容。
 
 ```text
 sub_query
@@ -380,7 +380,7 @@ hidden_state_payload = {
 context_packet["hidden_state_ref"] = doc_key
 ```
 
-这个步骤的作用是把 Retriever 在生成文本前的检索意图和 Planner 规划意图之间的隐空间相似度显式化。
+这个步骤的作用是把 Planner prompt hidden vector 与 Retriever prompt hidden vector 之间的隐空间相似度显式化。它提供的是 `intent_alignment` / `hidden_score` 这样的排序特征，而不是给下游 LLM 增加新的可读意图信息。
 
 ### 7.2 Executor：hidden-state routing 和 context packet 重排
 
@@ -429,7 +429,7 @@ score = 0.65 * hidden_score
 HIDDEN_STATE_CONTEXT_TOP_K=2
 ```
 
-也就是说，如果有 3 个 Retriever 输出的 context packet，Executor 默认只让 hidden-state 排名前 2 的进入后续 prompt。
+也就是说，如果有 3 个 Retriever 输出的 context packet，Executor 默认只让 hidden-state 分数较高的前 2 个进入后续 prompt。被选中的 packet 文本内容仍然来自原始 `summary` / `evidence_spans`；hidden state 改变的是选择顺序和裁剪范围，不改变 packet 内的证据文本。
 
 ### 7.3 Executor：hidden-guided prompt 裁剪
 
@@ -447,7 +447,7 @@ HIDDEN_STATE_EVIDENCE_CHARS=120
 每条 evidence 最多 120 字符
 ```
 
-这样 hidden state 带来的直接收益不是“凭空提高模型智力”，而是：
+这样 hidden state 带来的直接收益不是“凭空提高模型智力”，也不是“向 context packet 注入意图信息”，而是：
 
 ```text
 更少上下文进入 Executor prompt

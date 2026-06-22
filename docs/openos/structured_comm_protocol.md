@@ -1,7 +1,7 @@
 # 结构化通信协议设计与实现（简化 A2A 借鉴）
 
 > 基于 Google A2A（Agent-to-Agent Protocol）简化，适配 LangGraph 图编排场景。
-> 已落地实现，代码位于 `/data/mingwei/langgraph/examples/multi_agent_demo/`。
+> 已落地实现，代码位于 `/data/mingwei/SynapseX/`。
 
 ## 一、设计目标
 
@@ -542,7 +542,7 @@ hidden_state 负责“符合当前 Agent 意图”
 - **三通道均被实际使用**：context packet 36 次、embedding 36 次、hidden state payload 36 次
 - **时间基本持平**：+2.9s (+0.46%)
 
-结果文件：`examples/multi_agent_demo/results_12rounds.json`。
+结果文件：`results_12rounds.json`。
 
 ## 八、文件改动清单
 

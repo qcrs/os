@@ -71,7 +71,7 @@ LOCAL_MODEL_PATH=/data/models/Qwen3-8B
 
 这说明三通道结构化通信协议在本次 12 轮本地 Qwen3-8B 实验中确实节省了 LLM token；其中 `context_packets` 提供压缩文本证据，`embedding_payloads` 提供语义排序信号，`hidden_state_payloads` 提供 Planner/Retriever 意图对齐信号。
 
-结果文件：`examples/multi_agent_demo/results_12rounds.json`。
+结果文件：`results_12rounds.json`。
 
 ---
 
@@ -100,11 +100,11 @@ LOCAL_MODEL_PATH=/data/models/Qwen3-8B
 
 ### 测试环境
 
-- **模型**: DeepSeek V4 (deepseek-v4-flash)
-- **Embedding**: DashScope text-embedding-v4 (1024 维)
+- **模型**: 历史记录为 DeepSeek V4；当前代码默认 OpenAI 兼容 `deepseek-chat`，也支持 `CHAT_BACKEND=transformers` 本地 Qwen3-8B
+- **Embedding**: DashScope `text-embedding-v4`（1024 维）或 `LocalHashEmbeddings` fallback
 - **框架**: LangGraph StateGraph + InMemoryStore
-- **运行环境**: Docker 容器 `langgraph-demo`
-- **代码位置**: `examples/multi_agent_demo/run_12rounds.py`
+- **运行环境**: 当前仓库路径 `/data/mingwei/SynapseX`；历史记录曾使用 Docker 容器
+- **代码位置**: `run_12rounds.py`
 
 ### 协议版本
 
@@ -245,14 +245,14 @@ v3 版本引入**检索式上下文压缩协议**：
 ## 复现方法
 
 ```bash
-docker start langgraph-demo
-docker exec langgraph-demo bash -c '
-  export DEEPSEEK_API_KEY="your-key"
-  export DASHSCOPE_API_KEY="your-key"
-  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
-  cd /demo
-  python3 -u run_12rounds.py
-'
+cd /data/mingwei/SynapseX
+export CHAT_BACKEND=transformers
+export CHAT_MODEL=qwen3-8b
+export LOCAL_MODEL_PATH=/data/models/Qwen3-8B
+export LOCAL_MODEL_DEVICE=cuda:0
+# export DASHSCOPE_API_KEY="你的 DashScope API key"  # 可选；不设置则使用 LocalHashEmbeddings
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+python -u run_12rounds.py
 ```
 
-结果保存至 `/demo/results_12rounds.json`。
+结果保存至 `results_12rounds.json`。
