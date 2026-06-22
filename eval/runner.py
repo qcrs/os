@@ -2010,33 +2010,83 @@ def _build_headline_gates(
     }
 
 
-def _contest_formal_coverage_gate(tasks: list[SampleTask], repeat: int) -> dict[str, object]:
-    state_transfer_tasks = [task for task in tasks if task.benchmark_lane == "state_transfer"]
-    case_ids = sorted({task.case_id or task.task_id for task in state_transfer_tasks})
-    families = sorted({task.task_theme for task in state_transfer_tasks})
-    buckets = sorted({task.complexity_bucket for task in state_transfer_tasks})
+def _contest_formal_coverage_gate(
+    tasks: list[SampleTask],
+    repeat: int,
+    *,
+    pack_type: str = "",
+) -> dict[str, object]:
+    coverage_profiles = {
+        "contest_dual_mode_controlled_v3": {
+            "benchmark_lane": "state_transfer",
+            "required_buckets": {"simple", "distractor", "ambiguous", "reusable"},
+            "required_pair_count": 20,
+        },
+        "contest_honest_headline_v1": {
+            "benchmark_lane": "state_transfer",
+            "required_buckets": {"simple", "distractor", "ambiguous", "reusable"},
+            "required_pair_count": 20,
+        },
+        "contest_superiority_headline_v2": {
+            "benchmark_lane": "state_transfer",
+            "required_buckets": {"simple", "distractor", "ambiguous", "reusable"},
+            "required_pair_count": 20,
+        },
+        "superiority_comm_v1": {
+            "benchmark_lane": "communication",
+            "required_buckets": {"simple", "distractor", "ambiguous"},
+            "required_pair_count": 12,
+        },
+        "superiority_memory_v1": {
+            "benchmark_lane": "memory",
+            "required_buckets": {"simple", "reusable"},
+            "required_pair_count": 10,
+        },
+        "uncertainty_audit_v1": {
+            "benchmark_lane": "communication",
+            "required_buckets": {"distractor", "ambiguous", "reusable"},
+            "required_pair_count": 15,
+        },
+    }
+    profile = coverage_profiles.get(
+        pack_type,
+        {
+            "benchmark_lane": "state_transfer",
+            "required_buckets": {"simple", "distractor", "ambiguous", "reusable"},
+            "required_pair_count": 20,
+        },
+    )
+    contest_lane_tasks = [
+        task for task in tasks if task.benchmark_lane == str(profile["benchmark_lane"]).strip()
+    ]
+    case_ids = sorted({task.case_id or task.task_id for task in contest_lane_tasks})
+    families = sorted({task.task_theme for task in contest_lane_tasks})
+    buckets = sorted({task.complexity_bucket for task in contest_lane_tasks})
     text_case_ids = {
         task.case_id or task.task_id
-        for task in state_transfer_tasks
+        for task in contest_lane_tasks
         if task.supports_mode("text")
     }
     protocol_case_ids = {
         task.case_id or task.task_id
-        for task in state_transfer_tasks
+        for task in contest_lane_tasks
         if task.supports_mode("protocol")
     }
     matched_pair_count = len(text_case_ids & protocol_case_ids)
-    required_buckets = {"simple", "distractor", "ambiguous", "reusable"}
+    required_buckets = set(profile["required_buckets"])
+    required_pair_count = int(profile["required_pair_count"])
     surface_complete = (
         len(families) >= 5
         and set(buckets) == required_buckets
-        and matched_pair_count == 20
+        and matched_pair_count == required_pair_count
     )
     repeat_sufficient = repeat >= 10
     return {
+        "benchmark_lane": str(profile["benchmark_lane"]).strip(),
         "family_coverage": len(families),
         "complexity_bucket_coverage": buckets,
         "matched_pair_count": matched_pair_count,
+        "required_pair_count": required_pair_count,
         "repeat": repeat,
         "text_case_count": len(text_case_ids),
         "protocol_case_count": len(protocol_case_ids),
@@ -4148,7 +4198,7 @@ def _build_result(
             withheld_reasons.append("text_template_slot_leak_detected")
         if float(text_guard_audit.get("summarizer_typed_visibility_rate", 0.0)) > 0.0:
             withheld_reasons.append("text_summarizer_typed_visibility_detected")
-    contest_coverage_gate = _contest_formal_coverage_gate(tasks, repeat)
+    contest_coverage_gate = _contest_formal_coverage_gate(tasks, repeat, pack_type=pack_type)
     thickness_admission_gate = _headline_thickness_admission_gate(tasks)
     s1_runtime_behavior_gate = _headline_s1_runtime_behavior_gate(
         [row for rows in task_rows_by_mode.values() for row in rows]
