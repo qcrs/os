@@ -1235,7 +1235,8 @@ def test_text_mode_uses_natural_language_prompts() -> None:
     )
     validate_payload = parse_tagged_json(validate_messages[-1].content, "sb-plan-v1")
     assert validate_payload["rr"] == ["retrieve", "validate", "execute", "summarize"]
-    assert "Return only {\"steps\":[...]}" in validate_messages[0].content
+    assert "Return compact protocol plan JSON with top-level keys r, x, s." in validate_messages[0].content
+    assert "Do not emit a top-level steps array." in validate_messages[0].content
 
     summary_messages = _summarizer_messages(
         {
@@ -1333,22 +1334,25 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     )
     planner_result = asyncio.run(client.complete(planner_messages, purpose="planner"))
     planner_payload = json.loads(planner_result.text)
-    if "steps" in planner_payload:
-        assert [step["semantic_role"] for step in planner_payload["steps"]] == [
-            "retrieve",
-            "validate",
-            "execute",
-            "summarize",
-        ]
-    else:
-        assert set(planner_payload) == {"r", "s", "x"}
-        assert "reuse" not in planner_payload["r"]
-        assert "erm" not in planner_payload["r"]
-        assert "cd" not in planner_payload["r"]
-        assert "rrc" not in planner_payload["r"]
-        assert "sig" not in planner_payload["r"]
-    assert _plan_from_llm_output(task, planner_result.text) == build_plan(task)
+    assert set(planner_payload) == {"r", "s", "x"}
+    assert "reuse" not in planner_payload["r"]
+    assert "erm" not in planner_payload["r"]
+    assert "cd" not in planner_payload["r"]
+    assert "rrc" not in planner_payload["r"]
+    assert "sig" not in planner_payload["r"]
     parsed_plan = _plan_from_llm_output(task, planner_result.text)
+    assert [step.semantic_role for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    assert [step.depends_on for step in parsed_plan.steps] == [
+        [],
+        ["retrieve"],
+        ["retrieve", "validate"],
+        ["retrieve", "execute"],
+    ]
     assert parsed_plan.steps[0].params["allow_memory_reuse"] is True
     assert "expected_reuse_mode" not in parsed_plan.steps[0].params
     assert "runtime_reuse_contract" not in parsed_plan.steps[0].params
@@ -1376,6 +1380,328 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     assert "Evidence:" not in normalized["summary"]
     assert "Playbook:" not in normalized["summary"]
     assert "Actions:" in normalized["summary"]
+
+
+def test_deterministic_protocol_planner_validate_path_uses_compact_shape() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    client = DeterministicLLMClient()
+    planner_messages = _planner_messages(
+        {
+            "task_id": task.task_id,
+            "task_group": task.task_group,
+            "task_theme": task.task_theme,
+            "goal": task.goal,
+            "query": task.query,
+            "evidence_text": task.evidence_text,
+            "tags": list(task.tags),
+            "summary_hint": task.summary_hint,
+            "required_plan_semantic_roles": list(task.required_plan_semantic_roles),
+        },
+        mode="protocol",
+    )
+
+    planner_result = asyncio.run(client.complete(planner_messages, purpose="planner"))
+    planner_payload = json.loads(planner_result.text)
+
+    assert set(planner_payload) == {"r", "s", "x"}
+    assert planner_payload["x"]["vsid"] == "validate"
+    assert planner_payload["x"]["vrole"] == "validate"
+    assert planner_payload["x"]["vowner"] == "executor"
+    assert planner_payload["x"]["vaction"] == "VALIDATE_ROUTE"
+    assert planner_payload["x"]["vdep"] == ["retrieve"]
+    assert planner_payload["x"]["dep"] == ["retrieve", "validate"]
+
+    parsed_plan = _plan_from_llm_output(task, planner_result.text)
+    assert [step.semantic_role for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    assert [step.depends_on for step in parsed_plan.steps] == [
+        [],
+        ["retrieve"],
+        ["retrieve", "validate"],
+        ["retrieve", "execute"],
+    ]
+
+
+def test_compact_protocol_planner_skeleton_falls_back_to_task_payload() -> None:
+    task = default_task_chain()[0]
+    output_text = json.dumps(
+        {
+            "r": {
+                "sid": "retrieve",
+                "role": "retrieve",
+                "owner": "retriever",
+                "action": "RETRIEVE_EVIDENCE",
+                "dep": [],
+            },
+            "x": {
+                "sid": "execute",
+                "role": "execute",
+                "owner": "executor",
+                "action": "EXECUTE_PLAYBOOK",
+                "dep": ["retrieve", "validate"],
+                "vsid": "validate",
+                "vrole": "validate",
+                "vowner": "executor",
+                "vaction": "VALIDATE_ROUTE",
+                "vdep": ["retrieve"],
+            },
+            "s": {
+                "sid": "summarize",
+                "role": "summarize",
+                "owner": "summarizer",
+                "action": "SUMMARIZE_AND_COMMIT",
+                "dep": ["retrieve", "execute"],
+            },
+        }
+    )
+
+    parsed_plan = _plan_from_llm_output(task, output_text)
+
+    retrieve_step = parsed_plan.steps[0]
+    summarize_step = parsed_plan.steps[-1]
+    assert retrieve_step.params["query"] == task.query
+    assert retrieve_step.params["evidence_text"] == task.evidence_text
+    assert retrieve_step.params["tags"] == list(task.tags)
+    assert summarize_step.params["summary_hint"] == task.summary_hint
+    assert summarize_step.params["tags"] == list(task.tags)
+
+
+def test_validate_compact_protocol_planner_skeleton_preserves_validate_dag_and_payload() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    output_text = json.dumps(
+        {
+            "r": {
+                "sid": "retrieve",
+                "role": "retrieve",
+                "owner": "retriever",
+                "action": "RETRIEVE_EVIDENCE",
+                "dep": [],
+            },
+            "x": {
+                "sid": "execute",
+                "role": "execute",
+                "owner": "executor",
+                "action": "EXECUTE_PLAYBOOK",
+                "dep": ["retrieve", "validate"],
+                "vsid": "validate",
+                "vrole": "validate",
+                "vowner": "executor",
+                "vaction": "VALIDATE_ROUTE",
+                "vdep": ["retrieve"],
+            },
+            "s": {
+                "sid": "summarize",
+                "role": "summarize",
+                "owner": "summarizer",
+                "action": "SUMMARIZE_AND_COMMIT",
+                "dep": ["retrieve", "execute"],
+            },
+        }
+    )
+
+    parsed_plan = _plan_from_llm_output(task, output_text)
+
+    assert [step.semantic_role for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    assert [step.depends_on for step in parsed_plan.steps] == [
+        [],
+        ["retrieve"],
+        ["retrieve", "validate"],
+        ["retrieve", "execute"],
+    ]
+    assert parsed_plan.steps[0].params["query"] == task.query
+    assert parsed_plan.steps[0].params["evidence_text"] == task.evidence_text
+    assert parsed_plan.steps[-1].params["summary_hint"] == task.summary_hint
+
+
+def test_compact_protocol_planner_accepts_full_key_aliases_and_nested_validate_block() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    output_text = json.dumps(
+        {
+            "r": {
+                "step_id": "retrieve",
+                "semantic_role": "retrieve",
+                "owner_agent": "retriever",
+                "action": "RETRIEVE_EVIDENCE",
+                "depends_on": [],
+                "query": task.query,
+                "evidence_text": task.evidence_text,
+                "tags": list(task.tags),
+            },
+            "x": {
+                "step_id": "execute",
+                "semantic_role": "execute",
+                "owner_agent": "executor",
+                "action": "EXECUTE_PLAYBOOK",
+                "depends_on": ["retrieve", "validate"],
+                "validate": {
+                    "step_id": "validate",
+                    "semantic_role": "validate",
+                    "owner_agent": "executor",
+                    "action": "VALIDATE_ROUTE",
+                    "depends_on": ["retrieve"],
+                },
+            },
+            "s": {
+                "step_id": "summarize",
+                "semantic_role": "summarize",
+                "owner_agent": "summarizer",
+                "action": "SUMMARIZE_AND_COMMIT",
+                "depends_on": ["retrieve", "execute"],
+                "summary_hint": task.summary_hint,
+                "tags": list(task.tags),
+            },
+        }
+    )
+
+    parsed_plan = _plan_from_llm_output(task, output_text)
+
+    assert [step.semantic_role for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    assert [step.depends_on for step in parsed_plan.steps] == [
+        [],
+        ["retrieve"],
+        ["retrieve", "validate"],
+        ["retrieve", "execute"],
+    ]
+    assert parsed_plan.steps[0].params["query"] == task.query
+    assert parsed_plan.steps[-1].params["summary_hint"] == task.summary_hint
+
+
+def test_compact_protocol_planner_normalizes_agent_noun_semantic_role_aliases() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    output_text = json.dumps(
+        {
+            "r": {
+                "sid": "retrieve",
+                "role": "retriever",
+                "owner": "retriever",
+                "action": "RETRIEVE_EVIDENCE",
+                "dep": [],
+            },
+            "x": {
+                "sid": "execute",
+                "role": "executor",
+                "owner": "executor",
+                "action": "EXECUTE_PLAYBOOK",
+                "dep": ["retrieve", "validate"],
+                "vsid": "validate",
+                "vrole": "validator",
+                "vowner": "executor",
+                "vaction": "VALIDATE_ROUTE",
+                "vdep": ["retrieve"],
+            },
+            "s": {
+                "sid": "summarize",
+                "role": "summarizer",
+                "owner": "summarizer",
+                "action": "SUMMARIZE_AND_COMMIT",
+                "dep": ["retrieve", "execute"],
+            },
+        }
+    )
+
+    parsed_plan = _plan_from_llm_output(task, output_text)
+
+    assert [step.semantic_role for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    assert [step.depends_on for step in parsed_plan.steps] == [
+        [],
+        ["retrieve"],
+        ["retrieve", "validate"],
+        ["retrieve", "execute"],
+    ]
+
+
+def test_compact_protocol_planner_repairs_swapped_validate_and_execute_slots() -> None:
+    task = next(
+        item
+        for item in load_task_set_bundle("planner_support_v3").tasks
+        if item.task_id == "planner-support-auth-llm-002"
+    )
+    output_text = json.dumps(
+        {
+            "r": {
+                "sid": "retrieve",
+                "role": "retrieve",
+                "owner": "retriever",
+                "action": "RETRIEVE_EVIDENCE",
+                "dep": [],
+            },
+            "x": {
+                "sid": "validate",
+                "role": "validate",
+                "owner": "executor",
+                "action": "VALIDATE_ROUTE",
+                "dep": ["retrieve"],
+                "vsid": "execute",
+                "vrole": "execute",
+                "vowner": "executor",
+                "vaction": "EXECUTE_PLAYBOOK",
+                "vdep": ["retrieve", "validate"],
+            },
+            "s": {
+                "sid": "summarize",
+                "role": "summarize",
+                "owner": "summarizer",
+                "action": "SUMMARIZE_AND_COMMIT",
+                "dep": ["retrieve", "execute"],
+            },
+        }
+    )
+
+    parsed_plan = _plan_from_llm_output(task, output_text)
+
+    assert [step.semantic_role for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    assert [step.step_id for step in parsed_plan.steps] == [
+        "retrieve",
+        "validate",
+        "execute",
+        "summarize",
+    ]
+    assert [step.depends_on for step in parsed_plan.steps] == [
+        [],
+        ["retrieve"],
+        ["retrieve", "validate"],
+        ["retrieve", "execute"],
+    ]
 
 
 def test_protocol_summarizer_prompt_avoids_duplicate_top_level_fields() -> None:
@@ -1429,17 +1755,18 @@ def test_render_protocol_summary_input_text_is_flat_text_handoff() -> None:
 
     rendered = _render_protocol_summary_input_text(packet)
 
-    assert rendered.startswith("Query: query\n")
-    assert "Route: db_pool_saturation" in rendered
-    assert "Route source: protocol" in rendered
-    assert "Route confidence: 0.91" in rendered
-    assert "Retrieved docs: doc-1, doc-2, doc-3" in rendered
+    assert rendered.startswith("q: query\n")
+    assert "route: db_pool_saturation" in rendered
+    assert "src: protocol" not in rendered
+    assert "conf: 0.91" not in rendered
+    assert "docs: doc-1, doc-2, doc-3" in rendered
     assert "doc-4" not in rendered
-    assert "Matched signals: signal-a, signal-b, signal-c, signal-d" in rendered
+    assert "signals: signal-a, signal-b, signal-c, signal-d" in rendered
     assert "signal-e" not in rendered
-    assert "Summary hint: mention rollback boundary" in rendered
-    assert "Actions:\nrestart worker\nverify pool cap\nrecheck queue depth" in rendered
-    assert "reused prior auth fix" in rendered
+    assert "mention rollback boundary" not in rendered
+    assert "restart worker" not in rendered
+    assert "verify pool cap" not in rendered
+    assert "mem: reused prior auth fix" in rendered
     assert '"schema"' not in rendered
     assert '{"schema"' not in rendered
     assert '\\"schema\\"' not in rendered
@@ -1484,6 +1811,7 @@ def test_protocol_planner_prompts_bias_canonical_steps_without_relaxing_contract
         invalid_output='{"steps":[{"step_id":"step1"}]}',
         validation_error="planner step missing semantic_role",
         required_plan_semantic_roles=list(task.required_plan_semantic_roles),
+        mode="protocol",
     )
 
     protocol_system = protocol_messages[0].content
@@ -1491,15 +1819,27 @@ def test_protocol_planner_prompts_bias_canonical_steps_without_relaxing_contract
     repair_prompt = repair_messages[-1].content
 
     assert "Prefer canonical step_id values retrieve, validate, execute, summarize" in protocol_system
+    assert "Allowed semantic_role values exactly: retrieve, validate, execute, summarize." in protocol_system
+    assert "Do not use retriever, validator, executor, or summarizer as semantic_role values." in protocol_system
+    assert "The x slot body itself must encode execute, and the vsid/vrole/vowner/vaction/vdep fields must encode validate." in protocol_system
+    assert "Do not swap execute and validate between the x slot body and the nested v* fields." in protocol_system
     assert 'depends_on=[] for retrieve' in protocol_system
     assert 'depends_on=["retrieve","execute"] for summarize' in protocol_system
-    assert 'Return only {"steps":[...]}' in protocol_system
-    assert "Do not omit semantic_role on any step." in protocol_system
+    assert "Return compact protocol plan JSON with top-level keys r, x, s." in protocol_system
+    assert "Inside each slot prefer compact keys sid, role, owner, action, dep; include q, e, t in r and h, t in s." in protocol_system
+    assert "Do not emit a top-level steps array." in protocol_system
+    assert "Do not omit semantic_role on any encoded step." in protocol_system
     assert "No markdown." in protocol_system
 
     assert "Prefer canonical step_id values retrieve, validate, execute, summarize" in repair_prompt
-    assert "Every depends_on entry must exactly reference a step_id that appears in the same output." in repair_prompt
-    assert "Do not use compact r/x/s shape." in repair_prompt
+    assert "Allowed semantic_role values exactly: retrieve, validate, execute, summarize." in repair_prompt
+    assert "Do not use retriever, validator, executor, or summarizer as semantic_role values." in repair_prompt
+    assert "The x slot body itself must encode execute, and the vsid/vrole/vowner/vaction/vdep fields must encode validate." in repair_prompt
+    assert "Do not swap execute and validate between the x slot body and the nested v* fields." in repair_prompt
+    assert "Inside each slot prefer compact keys sid, role, owner, action, dep; include q, e, t in r and h, t in s." in repair_prompt
+    assert "Every depends_on entry must exactly reference a step_id implied by the compact output." in repair_prompt
+    assert "Return top-level keys r, x, s only." in repair_prompt
+    assert "Do not emit a top-level steps array." in repair_prompt
 
     assert "Planner brief for a text-only multi-agent workflow." in text_messages[-1].content
     assert "You are the StateBus Planner in a text-only collaboration baseline." in text_system
@@ -1529,6 +1869,9 @@ def test_deterministic_llm_emits_validate_step_when_task_contract_requires_it() 
     )
 
     planner_result = asyncio.run(client.complete(planner_messages, purpose="planner"))
+    planner_payload = json.loads(planner_result.text)
+    assert set(planner_payload) == {"r", "s", "x"}
+    assert planner_payload["x"]["vsid"] == "validate"
     parsed_plan = _plan_from_llm_output(task, planner_result.text)
 
     assert [step.semantic_role for step in parsed_plan.steps] == [

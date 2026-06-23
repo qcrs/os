@@ -20,6 +20,7 @@ import yaml
 from agents.base_agent import BaseAgent
 from agents.sample_agents import (
     _build_memory_assist_hint,
+    _plan_from_llm_output,
     _build_protocol_summary_handoff,
     _build_text_whole_lane_retriever_handoff,
     _strip_text_whole_lane_evidence_text,
@@ -3298,6 +3299,142 @@ def test_reusable_dependency_gate_allows_matching_prior_commit() -> None:
         ctx.session.cleanup()
 
 
+def test_superiority_memory_v1_reusable_rows_accept_prior_contract_validated_replay() -> None:
+    bundle = load_task_set_bundle("superiority_memory_v1")
+    by_task_id = {task.task_id: task for task in bundle.tasks}
+    seed = by_task_id["rr-checkout-clean-protocol-001"]
+    followup = by_task_id["rr-checkout-replay_reusable-protocol-001"]
+
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-mainline-replay-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="superiority_memory_v1",
+                repeat=1,
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+
+    protocol_tasks = {
+        task["task_id"]: task
+        for task in result["mode_runs"]["protocol"][0]["tasks"]
+    }
+    seed_row = protocol_tasks[seed.task_id]
+    followup_row = protocol_tasks[followup.task_id]
+
+    assert seed_row["status"] == "completed"
+    assert seed_row["reuse"]["mode"] == "none"
+    assert seed_row["metrics"]["replay_probe_hits"] == 0
+
+    assert followup_row["status"] == "completed"
+    assert followup_row["expected_reuse_mode"] == "skip_execute"
+    assert followup_row["runtime_reuse_contract"] == "validated_replay"
+    assert followup_row["metrics"]["replay_probe_hits"] >= 1
+    assert followup_row["graph_state"]["memory_hit_ids"]
+    assert followup_row["reuse"]["mode"] == "skip_execute"
+    assert followup_row["reuse"]["memory_id"]
+    assert followup_row["metrics"]["skipped_step_count"] > 0
+    assert followup_row["metrics"]["reuse_gain"] > 0
+    assert followup_row["reuse_validation"]["matched_expectation"] is True
+
+
+def test_superiority_memory_v1_reusable_rows_fail_closed_on_fresh_route_divergence(monkeypatch) -> None:
+    bundle = load_task_set_bundle("superiority_memory_v1")
+    by_task_id = {task.task_id: task for task in bundle.tasks}
+    seed = by_task_id["rr-checkout-clean-protocol-001"]
+    followup = by_task_id["rr-checkout-replay_reusable-protocol-001"]
+    agents = build_sample_agents_with_executor(llm_client=DeterministicLLMClient())
+    retriever = agents["retriever"]
+    original_execute_step = retriever.execute_step
+
+    async def diverging_retriever_execute_step(step: PlanStep, ctx: object) -> StepResult:
+        result = await original_execute_step(step, ctx)
+        if getattr(ctx, "task_id", "") != followup.task_id:
+            return result
+        replay_bundle = {
+            "schema": "statebus.replay_eligibility_bundle.v1",
+            "query": result.payload.get("query", ""),
+            "route": "worker_queue_starvation",
+            "route_source": "lexical_match",
+            "route_confidence": 0.95,
+            "route_provenance": ["corpus_metadata", "lexical"],
+            "retrieved_doc_ids": list(result.payload.get("retrieved_doc_ids", [])),
+            "feature_fresh_evidence_sha256": str(
+                result.payload.get(
+                    "feature_fresh_evidence_sha256",
+                    result.payload.get("feature_evidence_sha256", ""),
+                )
+            ).strip(),
+        }
+        replay_ref = ctx.put_replay_eligibility_state(
+            state_id=f"{step.step_id}-fresh-route-diverged-replay",
+            replay_eligibility_bundle=replay_bundle,
+            metadata={
+                "query": replay_bundle["query"],
+                "feature_route": "worker_queue_starvation",
+                "feature_route_source": "lexical_match",
+                "feature_route_confidence": 0.95,
+                "feature_route_provenance": ["corpus_metadata", "lexical"],
+                "retrieved_doc_ids": replay_bundle["retrieved_doc_ids"],
+                "feature_fresh_evidence_sha256": replay_bundle["feature_fresh_evidence_sha256"],
+            },
+        )
+        result.output_state_refs = [
+            ref for ref in result.output_state_refs if ref.kind != "REPLAY_ELIGIBILITY_BUNDLE"
+        ] + [replay_ref]
+        result.payload["feature_route"] = "worker_queue_starvation"
+        result.payload["feature_route_source"] = "lexical_match"
+        result.payload["feature_route_confidence"] = 0.95
+        result.payload["feature_route_provenance"] = ["corpus_metadata", "lexical"]
+        return result
+
+    monkeypatch.setattr(retriever, "execute_step", diverging_retriever_execute_step)
+
+    orchestrator = Orchestrator(agents)
+
+    with tempfile.TemporaryDirectory(prefix="statebus-memory-mainline-failclosed-") as tmpdir:
+        root = Path(tmpdir)
+        ctx_seed = Orchestrator.create_context(
+            mode="protocol",
+            task_id=seed.task_id,
+            task_group=seed.task_group,
+            task_theme=seed.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=seed.runtime_profile,
+            task_corpus_doc_ids=seed.corpus_doc_ids,
+            task_corpus_path=seed.corpus_path,
+        )
+        asyncio.run(orchestrator.run_task(seed, ctx_seed))
+        ctx_followup = Orchestrator.create_context(
+            mode="protocol",
+            task_id=followup.task_id,
+            task_group=followup.task_group,
+            task_theme=followup.task_theme,
+            state_root=root / "state",
+            memory_db_path=root / "memory.sqlite3",
+            embedder=DeterministicEmbeddingProvider(),
+            runtime_profile=followup.runtime_profile,
+            task_corpus_doc_ids=followup.corpus_doc_ids,
+            task_corpus_path=followup.corpus_path,
+        )
+        results = asyncio.run(orchestrator.run_task(followup, ctx_followup))
+        retrieve_payload = results["retrieve"].payload
+        assert retrieve_payload["feature_route"] == "worker_queue_starvation"
+        assert followup.expected_reuse_mode == "skip_execute"
+        assert ctx_followup.reuse_mode == "none"
+        assert ctx_followup.reuse_hit is None
+        assert ctx_followup.metrics.skipped_step_count == 0
+        assert ctx_followup.metrics.reuse_gain == 0.0
+        assert ctx_followup.reuse_mode != followup.expected_reuse_mode
+        ctx_seed.memory_store.close()
+        ctx_seed.session.cleanup()
+        ctx_followup.memory_store.close()
+        ctx_followup.session.cleanup()
+
+
 def test_s2_prior_dependency_changes_admissible_action_boundary() -> None:
     task = next(
         task
@@ -3590,6 +3727,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(case_id="rr-auth-clean"),
@@ -3598,6 +3738,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(rejected_routes=["auth_rate_limit"]),
@@ -3606,6 +3749,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(evidence_refs=[]),
@@ -3614,6 +3760,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(evidence_refs=[incompatible_ref]),
@@ -3622,6 +3771,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(evidence_refs=[non_artifact_ref]),
@@ -3630,6 +3782,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(replay_class="assist"),
@@ -3638,6 +3793,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(),
@@ -3646,6 +3804,9 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"execute"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="worker_queue_starvation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         assert not Orchestrator._matches_headline_s2_prior_replay(
             hit=make_hit(),
@@ -3654,6 +3815,20 @@ def test_s2_replay_negative_controls_require_prior_contract_and_replay_artifact(
             reusable_steps={"retrieve"},
             route_confidence=0.95,
             route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="db_pool_saturation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
+        )
+        assert not Orchestrator._matches_headline_s2_prior_replay(
+            hit=make_hit(),
+            task=task,
+            feature_route="db_pool_saturation",
+            reusable_steps={"execute"},
+            route_confidence=0.95,
+            route_provenance=["corpus_metadata", "lexical"],
+            fresh_route="worker_queue_starvation",
+            fresh_route_confidence=0.95,
+            fresh_route_provenance=["corpus_metadata", "lexical"],
         )
         ctx.memory_store.close()
         ctx.session.cleanup()
@@ -3878,6 +4053,82 @@ def test_executor_decision_packet_is_replay_compatible_for_state_packet_minimal_
     finally:
         ctx.memory_store.close()
         ctx.session.cleanup()
+
+
+def test_state_packet_minimal_retrieve_decision_packet_metadata_uses_task_query_when_compact_payload_is_skeleton() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-compact-skeleton-retrieve-") as tmpdir:
+        task = next(
+            item
+            for item in load_task_set_bundle("superiority_comm_v1").tasks
+            if item.task_id == "rr-auth-clean-protocol-001"
+        )
+        pool = StatePool(Path(tmpdir) / "state")
+        memory_store = MemoryStore(Path(tmpdir) / "memory.sqlite3", embedder=DeterministicEmbeddingProvider())
+        memory_store.init_schema()
+        session = RunSession(mode="protocol")
+        ctx = RunContext(
+            mode="protocol",
+            trace_id="compact-skeleton-trace",
+            task_id=task.task_id,
+            task_group=task.task_group,
+            task_theme=task.task_theme,
+            session=session,
+            statepool=pool,
+            memory_store=memory_store,
+            runtime_profile=RuntimeTaskProfile(transfer_strategy="state_packet_minimal"),
+        )
+        ctx.task = task
+        try:
+            skeleton_output = json.dumps(
+                {
+                    "r": {
+                        "sid": "retrieve",
+                        "role": "retrieve",
+                        "owner": "retriever",
+                        "action": "RETRIEVE_EVIDENCE",
+                        "dep": [],
+                    },
+                    "x": {
+                        "sid": "execute",
+                        "role": "execute",
+                        "owner": "executor",
+                        "action": "EXECUTE_PLAYBOOK",
+                        "dep": ["retrieve", "validate"],
+                        "vsid": "validate",
+                        "vrole": "validate",
+                        "vowner": "executor",
+                        "vaction": "VALIDATE_ROUTE",
+                        "vdep": ["retrieve"],
+                    },
+                    "s": {
+                        "sid": "summarize",
+                        "role": "summarize",
+                        "owner": "summarizer",
+                        "action": "SUMMARIZE_AND_COMMIT",
+                        "dep": ["retrieve", "execute"],
+                    },
+                }
+            )
+            plan = _plan_from_llm_output(task, skeleton_output)
+            retrieve_step = next(step for step in plan.steps if step.semantic_role == "retrieve")
+
+            retriever = build_sample_agents_with_executor(llm_client=DeterministicLLMClient())["retriever"]
+            result = asyncio.run(retriever.execute_step(retrieve_step, ctx))
+
+            decision_ref = next(ref for ref in result.output_state_refs if ref.kind == "EXECUTOR_DECISION_PACKET")
+            assert decision_ref.metadata["query"] == task.query
+            assert str(decision_ref.metadata["query"]).strip()
+            registry = default_state_contract_registry()
+            contract = registry.validate_state_ref(
+                decision_ref,
+                producer_agent="retriever",
+                consumer_agent="executor",
+                statepool=ctx.statepool,
+            )
+            assert contract.kind == "EXECUTOR_DECISION_PACKET"
+        finally:
+            ctx.memory_store.close()
+            ctx.session.cleanup()
 
 
 def test_executor_decision_packet_requires_non_empty_route_provenance() -> None:
