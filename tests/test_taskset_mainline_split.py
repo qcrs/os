@@ -123,9 +123,9 @@ def test_runner_reports_respect_new_mainline_split_boundaries() -> None:
     assert communication_result["manifest"]["contest_formal_coverage_gate"]["matched_pair_count"] == 12
     assert communication_result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
     assert communication_result["manifest"]["contest_formal_coverage_gate"]["repeat_sufficient"] is False
-    assert communication_result["manifest"]["headline_gates"]["communication_gate"]["withheld_reasons"] == [
-        "contest_repeat_insufficient"
-    ]
+    assert communication_result["manifest"]["contest_formal_coverage_gate"]["passed"] is True
+    assert communication_result["manifest"]["headline_gates"]["communication_gate"]["allowed"] is True
+    assert communication_result["manifest"]["headline_gates"]["communication_gate"]["withheld_reasons"] == []
     assert "## Communication Mainline" in communication_report
     assert "memory superiority remains out of scope" in communication_report
 

@@ -5,6 +5,11 @@
 执行方式：live API, repeat=`3`, serialized（时序串行，一次只跑一个 task）
 
 > 当前定位：历史结果解读 / v1-v2 背景材料。本文保留旧 pack 名称、`text_brief -> state_ref` 读法和历史 repeat=3 数据，不能替代当前 v3 active surface。当前 v3 结论请优先看 `README.md`、`tasks/README.md` 和 `docs/reports/task_design_and_mode_comparison.md`，并以 active v3 pack 的 manifest/report/gate 为准。
+>
+> 还要额外注意三条历史边界：
+> 1. 文中关于 `formal_controlled` / `open_validation` 的 pack 组织是历史阶段对象，不是当前 active headline 结构。
+> 2. 文中出现的 “Planner 不干活”、“Retriever/Executor 不调 LLM” 只适用于当时的特定历史 pack，不代表当前实现。
+> 3. 当前 active communication headline 是 `superiority_comm_v1`，不是本文中的旧 headline/旧 aggregate surface。
 
 ---
 
@@ -19,7 +24,7 @@
 3. **跑多轮取平均**——repeat=3，消除 API 波动
 4. **多个 pack 分别验证不同主张**——不能把所有问题混在一个实验里回答
 
-**受控包（`formal_controlled`）是什么**：固定所有变量，只让通信格式不同。Plan 来自 YAML 文件（不调 LLM 生成），Planner 不干活。目的：**排除 Plan 变异性的干扰，让 text vs protocol 的差异纯粹来自通信格式。**
+**受控包（`formal_controlled`）是什么**：这是历史阶段对象。它固定所有变量，只让通信格式不同；当时 Plan 来自 YAML 文件，因此当时那个对象里 Planner 不参与 LLM 规划。这个描述只适用于该历史包，不能外推到当前 active communication headline。
 
 **开放包（`open_validation`）是什么**：放开变量，让 Planner 真调 LLM 生成 Plan，测试 route 歧义处理、低信度拒绝等边界行为。目的：**证明系统在开放场景下也能正常工作，不是只会跑脚本化的假动作。** 标记为 `support_only`——不参与正式 headline claim，只做答辩佐证。
 
@@ -65,7 +70,7 @@
 |------|------|---------|--------|
 | `control_bytes` | 控制面字节数 | Agent 间协议消息（Plan/PlanStep/StepResult/Ack 等）全部序列化后的总字节数。**通信开销的核心指标** | ↓ 越小越好。text/proto 的差异就是"纯通信格式"省的 |
 | `state_bytes` | 状态面字节数 | StatePool 中所有 StateRef payload 的总字节数。**不是通信量**——是本地 mmap 文件大小 | 一般不看绝对值，只看 text/proto 是否有异常差异 |
-| `llm_total_tokens` | LLM 总 token | 调用 API 消耗的 token 总数。受控包里 = Summarizer 的 token（Planner 不干活） | ↓ 越小越省钱省时 |
+| `llm_total_tokens` | LLM 总 token | 调用 API 消耗的 token 总数。在本文对应的历史受控包里，主要来自 Summarizer，因为当时 Planner 不参与 LLM 规划 | ↓ 越小越省钱省时 |
 | `task_ms` | 单任务耗时（毫秒） | 从 task 开始到结束的墙上时间 | ↓ 越小越快 |
 | `memory_hit_rate` | 记忆命中率 | 查共享记忆时找到结果的比例。1.0=每次都命中 | 命中≠收益——assist 有命中无加速 |
 | `skipped_step_count` | 跳过步骤数 | 因 replay 匹配成功跳过的 step 数。>0 说明记忆复用触发了跳步 | 只在 `replay_enabled` 策略下有意义 |
@@ -304,7 +309,7 @@ state_ref              5,988   216       4,481     786       3,695    4,455ms
 
 ## 七、Summarizer token 为什么会省——机制解释
 
-受控包中 `llm_total_tokens` 100% 来自 Summarizer（`planner_requests`=0，Retriever/Executor 不调 LLM）。
+在本文对应的历史受控包里，`llm_total_tokens` 主要来自 Summarizer；这是当时对象的历史计量前提，不代表当前实现。
 
 ```
                  text 模式                         protocol 模式
@@ -331,7 +336,7 @@ Token 消耗:      ≈ 500+ token                     ≈ 200+ token
 
 ## 八、`open_validation`（开放验证包，support-only）—— 为什么要有这个包
 
-**问题**：formal_controlled 包里 Planner 不干活（plan 来自 YAML），那评委问"你们的 Planner 真的会规划吗"怎么办？
+**问题**：在这个历史 `formal_controlled` 对象里，Planner 不参与 LLM 规划（plan 来自 YAML）；那评委问"你们的 Planner 真的会规划吗"怎么办？
 
 **实验设计**：15 个 task，包含 3 个 `plan_source=llm` 的 task（Planner 真调 LLM 生成 plan）、route 歧义诊断 task、Executor 低信度 abstain task、replay 边界拒绝 task。
 
