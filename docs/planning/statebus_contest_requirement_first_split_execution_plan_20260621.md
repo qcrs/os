@@ -640,6 +640,210 @@ communication 线的历史读法固定为：
 - memory 当前没有阻塞 communication closure 的问题
 - open surface 当前仍只是展示层
 
+## Phase 8：final evidence program
+
+这一阶段的目标不是继续做局部 hotfix，而是把当前已经拆开的
+`headline / support / audit / delivery`
+四层证据重新收束成赛题最终可交付的单一路线。
+
+当前最缺的不是某一个新 patch，也不是某一个新的 rerun，而是：
+
+- communication 正向 headline 如何正式进入 closure judgment
+- typed-state formal-secondary support 如何转化成赛题“非文本状态传递”评分项的最终说服力
+- memory effect evidence 是否需要升级到更强的 superiority read
+- repeat=`10` 与 openEuler 交付验证何时进入执行面
+
+这一阶段固定要回答五件事：
+
+1. communication authoritative closure read
+2. memory line 最终定位
+3. repeat=`10` transition contract
+4. openEuler posterior validation contract
+5. final report claim boundary
+
+这一阶段首先是 evidence choreography，不是 hotpath optimization。
+
+## Phase 9：repeat=10 transition contract
+
+当前默认仍然：
+
+- 不进入 `repeat=10`
+
+但这条 stopline 不能被误读成“永远不做 repeat=10”。当前真正缺的是进入条件。
+
+先固定两个层级：
+
+- `Communication gate`
+  - 是 communication 主对象自己的 object-level closure gate
+  - 回答 `superiority_comm_v1` 能否从 `withheld` 释放到 `pass`
+- `Formal stability gate`
+  - 是更高一级的 stability / repeat-depth gate
+  - 只有在 communication object 已冻结并释放后，才有资格进入
+
+只有当以下条件同时满足时，才允许讨论 repeat=`10`：
+
+1. communication closure audit 已完成
+   - authoritative `repeat=3` 仍保持：
+     - `llm_total_tokens_delta < 0`
+     - `task_ms_delta <= 0`
+     - planner `1.00 / 0 repair`
+
+2. communication read boundary 已冻结
+   - residual 是否仍主要是 `summarize_ms`
+   - parity divergence 是否仍只属 diagnostic
+   - 没有新的 current-branch contract drift
+
+3. repeat=`10` 的对象定义已明确
+   - 是 communication-only stability validation
+   - 还是 final delivery precheck
+
+4. 没有新的 communication contract-level patch 正在试验中
+   - repeat=`10` 不用于消化未冻结 hotfix
+
+如果这些条件未满足：
+
+- 不拿 “想更安心” 当进入 repeat=`10` 的理由
+- 不拿 support surface 去替 communication headline 补 gate
+
+### Phase 9.1：当前 communication closure criteria
+
+当前 communication object 要从 `withheld -> pass`，至少还要同时满足：
+
+1. object freeze
+   - `superiority_comm_v1` 继续作为唯一 active communication headline
+   - 不重写 task object、runner、scorer、task wording
+
+2. `repeat=1` + authoritative `repeat=3` 一致正向
+   - `llm_total_tokens_delta < 0`
+   - `task_ms_delta <= 0`
+   - 不允许 support artifact 与 authoritative artifact 方向冲突
+
+3. quality floor 稳定
+   - `wrong_family_rate = 0`
+   - `exact_match_rate` 不塌
+   - `route_exact_rate` 不退化
+
+4. planner stability 不再是 residual
+   - 当前 artifact family 下读到 `1.00 / 0 repair`
+   - 不再存在 live API planner contract break
+
+5. no unexpected failures
+   - protocol lane 可稳定跑完
+   - 无 unexpected task failure、contract fail、shared task loss
+
+6. bounded residual
+   - 当前 residual 若仍存在，必须被限制在不会污染 headline 的局部残差
+   - 当前允许的主残差是 bounded `summarize_ms`
+
+7. diagnostic parity isolation
+   - `rr-billing-clean` 这类 parity surface 继续只按 diagnostic only 读取
+   - 不能回流成 correctness blocker
+
+执行上固定为一张 release ledger：
+
+| item | source-of-truth | release rule |
+| --- | --- | --- |
+| active object | `superiority_comm_v1` repeat=3 authoritative artifact | object 名称与 reading contract 不变 |
+| support consistency | `repeat=1` support artifact | 不得与 authoritative artifact 方向冲突 |
+| aggregate direction | report + compare | `llm_total_tokens_delta < 0` 且 `task_ms_delta <= 0` |
+| planner stability | report + raw row audit | `1.00 / 0 repair`，且无 live planner contract break |
+| quality floor | report primary metrics | `wrong_family_rate = 0`，`route_exact_rate` 不退化，`exact_match_rate` 不新塌 |
+| failure hygiene | report + results | unexpected failure / row loss / contract fail 为 `0` |
+| residual shape | phase-level compare + row audit | residual 只剩 bounded `summarize_ms`，不重新扩散成 multi-axis instability |
+| parity role | report parity section | 继续 diagnostic only，不得回流 headline blocker |
+
+只有这张 ledger 全部被当前 artifact family 填满，才允许把 communication 从 `withheld` 写成 `pass`。
+
+### Phase 9.2：memory final role decision
+
+`superiority_memory_v1` 当前最终角色固定为：
+
+- final report 里的 required secondary verdict
+
+不是：
+
+- communication headline
+- appendix-only optional note
+- overall superiority closure surrogate
+
+当前正式允许写入 final report 的内容只有：
+
+1. `runtime replay effect established`
+2. `exact-replay-backed effect established`
+
+当前正式不允许写入的内容：
+
+1. `memory superiority established`
+2. `overall superiority established`
+3. `memory line can backfill communication headline`
+
+如果未来要把 memory 从 required secondary verdict 再升格，缺的证据要分三类单独补：
+
+1. net savings evidence
+2. stability evidence
+3. safety evidence
+
+### Phase 9.3：typed-state final role decision
+
+typed-state 这条赛题轴当前最终角色固定为：
+
+- final report 里的 required secondary state-transfer verdict
+
+不是：
+
+- current active communication headline
+- appendix-like architecture note
+- memory line 的附属说明
+
+当前正式允许写入 final report 的内容只有：
+
+1. `non-text state-transfer mechanism established`
+2. `minimal typed packet is genuinely produced, transferred, received, and consumed`
+3. `missing/wrong decision packet causes expected failure or misfire`
+
+当前正式不允许写入的内容：
+
+1. `typed-state line already proves communication superiority`
+2. `typed-state line can replace communication closure`
+3. `typed-state mechanism alone proves overall contest closure`
+
+当前 primary evidence 固定读取：
+
+- `runs/typed_state_consumer_sensitivity_v3_api_repeat1_current_branch_refresh_20260623/*`
+- `runs/typed_state_mechanism_v3_api_repeat1_current_branch_refresh_20260623/*`
+
+如果未来要把 typed-state 从 required secondary state-transfer verdict 再升格，缺的不是更多 mechanism narration，而是：
+
+1. score-facing convergence wording
+2. delivery-phase carry-through evidence
+3. 与 communication / memory 的 final-report stitching contract
+
+## Phase 10：openEuler posterior validation
+
+openEuler 轴当前不是 benchmark 主线，但它是赛题交付的硬约束：
+
+- 最终代码需在 `openEuler 24.03-LTS-SP3` 上编译、运行、测试
+
+因此它必须被明确放进最终程序，而不是继续停留在“以后再说”。
+
+固定顺序：
+
+1. 先完成 current Linux host 下的 evidence closure
+2. 再进入 openEuler posterior validation
+3. openEuler 验证通过后，才允许把 final delivery wording 写成“交付 ready”
+
+openEuler 这一阶段至少要覆盖：
+
+1. 环境建立
+2. 基础可运行性
+   - `pytest`
+   - `runtime.smoke`
+   - 至少一条 current benchmark runnable path
+3. benchmark 复现边界
+4. 文档与部署面
+
+这一阶段仍不重开 Docker / nsjail / VM 路线争论；openEuler 只按 posterior delivery validation 读取。
+
 ---
 
 ## 8. 当前最推荐的提交顺序
@@ -669,9 +873,27 @@ communication 线的历史读法固定为：
      - 先 `repeat=1`
      - 再决定是否升 `repeat=3`
 
-5. `memory-followup`
+5. `final-evidence-program`
    - 内容：
-     - 只在 communication 阶段判断完成后再继续
+     - 定义 final claim boundary
+     - 定义 repeat=`10` 进入条件
+     - 定义 openEuler posterior validation 程序
+     - 明确 memory 与 typed-state 的 final-report role 是否保持 secondary 或需要升级 read
+
+6. `memory-followup`
+   - 内容：
+     - 只在 final evidence program 允许其升格时再继续
+
+7. `repeat10-if-authorized`
+   - 内容：
+     - 仅在 transition contract 满足后
+     - 跑 serialized repeat=`10`
+     - 不承担未冻结 hotfix 的消化责任
+
+8. `openeuler-posterior-validation`
+   - 内容：
+     - benchmark closure 后进入
+     - 只读 final delivery compatibility
 
 ---
 
@@ -687,12 +909,15 @@ communication 线的历史读法固定为：
 8. 不在没有新 communication contract 代码变更时重复跑同一个 headline 包
 9. 不先做 external pure-text baseline / text helper ablation / route-corpus stress / LangGraph-open comparison
 10. 不把 `admissible_match_rate` 当 superiority 结论
+11. 不把 current split evidence 直接拼接成 final delivery claim，而不经过 final evidence program
+12. 不把 openEuler 交付要求继续无限后置
 
 ---
 
 ## 10. 一句话执行路线
 
-先把实验程序拆成 `headline` 与 `support` 两层：
-communication headline 暂停新增 rerun、先做 closure audit；
-typed-state support 先刷新 current-branch 证据，优先 `typed_state_consumer_sensitivity_v3`，再 `typed_state_mechanism_v3`；
-在 support 补齐之前，不转 memory 主线，不做 external/open 扩展，不做更高 repeat。
+先把实验程序拆成 `headline`、`support`、`audit`、`delivery` 四层：
+communication headline 先做 closure audit；
+typed-state 与 memory 继续保持 formal-secondary / support 分层；
+然后补 final evidence program，定义 repeat=`10` 与 openEuler 的进入条件；
+在这些条件冻结前，不做更高 repeat，不做交付级 claim。

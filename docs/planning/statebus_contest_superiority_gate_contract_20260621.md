@@ -192,6 +192,111 @@
 3. `quality floor` 守住
 4. `memory reuse` 有真实收益
 
+### 5.1 Communication gate 与 Formal stability gate 的分工
+
+这两个 gate 不是一回事。
+
+`Communication gate` 的角色固定为：
+
+- object-level closure gate
+- 只判断 `superiority_comm_v1` 是否已经满足 communication 主对象的释放条件
+- 通过后只表示 communication 主对象可以结束 `withheld -> pass`
+- 不自动等于 `repeat=10` 已完成
+
+`Formal stability gate` 的角色固定为：
+
+- 更高一级的 stability / repeat-depth gate
+- 只在 object-level closure 条件已经冻结且满足后，才有资格进入
+- 通过后才允许把对象读成更强的 formal stability result
+
+### 5.2 `Communication gate: withheld -> pass` 的冻结条件
+
+`Communication gate` 不能只因为 aggregate 数值正向就释放。
+
+它必须按固定 artifact 组读取，而不是按印象释放：
+
+- authoritative artifact：
+  - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_report.md`
+  - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_results.json`
+  - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_compare.csv`
+- support artifact：
+  - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/*`
+  - 如需 current-branch support refresh，可补充读取：
+    - `runs/superiority_comm_v1_api_repeat1_post_protocol_summarizer_authority_split_hotfix/*`
+    - 但该路径名只按 current-baseline repeat=1 support 读取，不按 authority-split code active 读取
+
+至少要同时满足以下条件：
+
+1. object freeze 已完成
+   - communication task object、evidence universe、summary contract、scoring contract 都已冻结
+   - 当前 active communication 对象仍是 `superiority_comm_v1`
+
+2. `repeat=1` support artifact 与 authoritative `repeat=3` artifact 一致正向
+   - `llm_total_tokens_delta < 0`
+   - `task_ms_delta <= 0`
+   - 不允许 `repeat=1` 正向、`repeat=3` 反转
+
+3. quality floor 守住
+   - `wrong_family_rate = 0`
+   - `route_exact_rate` 不掉
+   - `exact_match_rate` 不出现明显塌陷
+
+4. planner stability 已收平
+   - 当前 artifact family 下应达到 `Planner one-shot valid rate = 1.00`
+   - `Planner repair attempts = 0`
+   - 不再把 planner runnable correctness 当 residual 主轴
+
+5. no unexpected failures
+   - protocol lane 可完整跑完
+   - 不存在 unexpected task failure / contract fail / row loss
+
+6. residual 已被约束到 bounded residual
+   - 若仍有 residual，必须是已隔离、已命名、不会污染 headline 读法的剩余项
+   - 当前 communication 残差允许表现为 bounded `summarize_ms` residual，但不能重新扩散成 planner break 或 multi-axis instability
+
+7. diagnostic parity 已隔离
+   - `cross_lane_actual_parity` 只能按 diagnostic only 读取
+   - 单点 parity divergence 不能升级成 headline blocker，前提是它不污染质量 floor 与 shared task coverage
+
+若要真正把 `withheld -> pass` 写进 report 或 final claim boundary，执行判定时必须逐项落表：
+
+| gate item | required read |
+| --- | --- |
+| object freeze | active communication object 仍是 `superiority_comm_v1`，且没有新的 task/scorer/summary contract drift |
+| repeat consistency | authoritative `repeat=3` 与 support `repeat=1` 同向满足 `llm_total_tokens_delta < 0` 与 `task_ms_delta <= 0` |
+| quality floor | `wrong_family_rate = 0`，`route_exact_rate` 不退化，`exact_match_rate` 不出现新塌陷 |
+| planner stability | `Planner one-shot valid rate = 1.00` 且 `Planner repair attempts = 0` |
+| failure hygiene | `unexpected task failure / contract fail / row loss = 0` |
+| residual boundary | residual 只剩已命名且 bounded 的局部项；当前只允许 bounded `summarize_ms` residual |
+| parity isolation | parity surface 仍是 diagnostic only，且不污染 shared coverage / quality floor |
+
+只要上述任一项没有被当前 artifact 明确满足，`Communication gate` 就维持 `withheld`。
+
+### 5.3 `repeat=10` 准入合同
+
+`repeat=10` 不是“更安心再跑一次”。
+
+它只能在以下前提全部满足后进入：
+
+1. `Communication gate` 已冻结并满足
+2. `Formal stability gate` 的唯一剩余问题确实只是 repeat depth
+3. 没有新的 communication contract-level hotfix 正在消化
+4. `repeat=10` 的目的被明确限定为 formal stability adjudication
+
+因此：
+
+- `repeat=10` 不用于消化未冻结 hotfix
+- `repeat=10` 不用于替代 communication closure audit
+- `repeat=10` 不用于把 support surface 强行抬成 headline
+
+进入前还必须固定一个执行问题：
+
+- `repeat=10` 到底是：
+  - communication-only stability validation
+  - 还是 final delivery precheck
+
+在这个对象定义未冻结前，`repeat=10` 继续视为 not admitted。
+
 ---
 
 ## 6. 失败标准
