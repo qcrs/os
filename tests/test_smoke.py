@@ -6773,7 +6773,34 @@ def test_contest_formal_coverage_gate_distinguishes_surface_from_repeat() -> Non
     assert gate_comm["complexity_bucket_coverage"] == ["ambiguous", "distractor", "simple"]
     assert gate_comm["surface_complete"] is True
     assert gate_comm["repeat_sufficient"] is False
-    assert gate_comm["passed"] is False
+    assert gate_comm["passed"] is True
+
+
+def test_superiority_comm_v1_repeat_one_keeps_communication_gate_open_while_formal_stability_stays_not_yet() -> None:
+    with tempfile.TemporaryDirectory(prefix="statebus-superiority-comm-repeat1-") as tmpdir:
+        result = asyncio.run(
+            run_benchmark(
+                task_set_path="superiority_comm_v1",
+                repeat=1,
+                modes=("text", "protocol"),
+                out_dir=Path(tmpdir),
+                embedder=DeterministicEmbeddingProvider(),
+                llm_client=DeterministicLLMClient(),
+            )
+        )
+        report_text = (Path(tmpdir) / "benchmark_report.md").read_text(encoding="utf-8")
+
+    assert result["manifest"]["task_pack_type"] == "superiority_comm_v1"
+    assert result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
+    assert result["manifest"]["contest_formal_coverage_gate"]["repeat_sufficient"] is False
+    assert result["manifest"]["contest_formal_coverage_gate"]["passed"] is True
+    assert result["manifest"]["headline_gates"]["communication_gate"]["allowed"] is True
+    assert result["manifest"]["headline_gates"]["communication_gate"]["withheld_reasons"] == []
+    assert result["manifest"]["formal_stability_gate"]["repeat_satisfied"] is False
+    assert result["manifest"]["formal_stability_gate"]["passed"] is False
+    assert result["manifest"]["withheld_headline_reason"] == ""
+    assert "Communication gate: `pass`" in report_text
+    assert "Formal stability gate: `not_yet`" in report_text
 
 
 def test_text_strict_pure_lane_consumes_explicit_handoff_without_executor_reroute() -> None:
