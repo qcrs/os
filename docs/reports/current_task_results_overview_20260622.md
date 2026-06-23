@@ -36,19 +36,8 @@
 当前审计时的 worktree 事实：
 
 - branch：`feat/taskset-mainline-split`
-- dirty communication draft：
-  - `agents/sample_agents.py`
-  - `runtime/llm.py`
-  - `tests/test_llm_runtime.py`
-  - `tests/test_smoke.py`
-- dirty memory hardening：
-  - `runtime/orchestrator.py`
-  - `tasks/sample_tasks.py`
-  - `eval/runner.py`
-  - `tests/test_taskset_mainline_split.py`
 - dirty docs / summary：
   - `docs/planning/statebus_contest_requirement_first_split_execution_plan_20260621.md`
-  - `docs/reports/current_architecture_overview_20260622.md`
   - `docs/reports/current_task_results_overview_20260622.md`
 
 读法边界：
@@ -66,6 +55,10 @@
    - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_report.md`
    - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_results.json`
    - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_compare.csv`
+   - repeat=`1` support：
+     - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_report.md`
+     - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_results.json`
+     - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_compare.csv`
 2. memory mainline
    - `runs/superiority_memory_v1_api_repeat3_post_replay_contract_hardening/benchmark_report.md`
    - `runs/superiority_memory_v1_api_repeat3_post_replay_contract_hardening/benchmark_results.json`
@@ -120,6 +113,7 @@
 1. communication line
    - `token advantage stable`
    - `quality floor stable`
+   - `repeat=1` 下正向信号未反转
    - `repeat=3` 下已有 planner-led latency positive signal
    - `communication gate = withheld`
    - `formal stability gate = not_yet`
@@ -138,6 +132,7 @@
 
 `superiority_comm_v1` 当前只能释放以下结论：
 
+- `repeat=1` 与 `repeat=3` 都没有反转回旧 negative readout
 - `protocol llm_total_tokens < text`
 - `wrong_family_rate = 0.00`
 - `exact_match_rate = 0.75`
@@ -206,6 +201,7 @@ token 侧则是稳定下降：
 - 当前主收益仍首先来自 planner
 - summarizer token 侧已不再是主问题，但 `summarize_ms` 仍略高
 - `retrieve` 不是当前主拖累项
+- planner 现在可以读成当前 artifact family 下已收平，但不能单独升级成 closure released
 
 #### 当前 residual blocker
 
@@ -222,6 +218,7 @@ token 侧则是稳定下降：
    - `summarizer_total_tokens_delta = -106.39`
    - `summarize_ms_delta = +46.60`
    - 当前 protocol summarizer 不再在 token 上落后，但 wall-time 仍略高
+   - 因此当前 residual 主读法是 schema-native consumption 仍不完整，而不是 token trimming 不够
 
 2. parity divergence
    - 历史 `post_summarizer_field_trim` 还有 `6` 个 mismatch case
@@ -405,11 +402,36 @@ simple rows 则是：
 - StateBus 已有 formal-secondary 非文本状态传递证据
 - 该证据回答“是否真实生成、传递、接收、消费”
 - 该证据当前不等于 communication headline
+- `2026-06-23` current-branch API refresh 已补进现行证据面：
+  - `runs/typed_state_consumer_sensitivity_v3_api_repeat1_current_branch_refresh_20260623/benchmark_report.md`
+  - `runs/typed_state_consumer_sensitivity_v3_api_repeat1_current_branch_refresh_20260623/benchmark_results.json`
+  - `runs/typed_state_mechanism_v3_api_repeat1_current_branch_refresh_20260623/benchmark_report.md`
+  - `runs/typed_state_mechanism_v3_api_repeat1_current_branch_refresh_20260623/benchmark_results.json`
 
 本文修正点：
 
 - 不再让 typed-state 只出现在架构说明里
 - 明确把它放回当前结果地图
+
+#### 这轮 refresh 实际补齐了什么
+
+1. `typed_state_consumer_sensitivity_v3`
+   - `minimal-baseline` 稳定完成
+   - `minimal-missing-decision` 按合同稳定 failure
+   - `minimal-wrong-decision` 表现为稳定 tool misfire
+   - rich helper disable 仍只显示 support/audit 级轻度影响
+   - `unexpected_task_failure_count = 0`
+   - 主证据仍是：
+     - `missing_decision_failure_rate = 1.00`
+     - `wrong_decision_mistool_rate = 1.00`
+     - expected negative controls 按合同触发
+
+2. `typed_state_mechanism_v3`
+   - single-variable contract 仍保持
+   - `route_exact_rate = 1.00`
+   - `tool_exact_rate = 1.00`
+   - `handoff_textual_bytes` 相比 `natural_handoff_text` 下降
+   - 这仍只能读作 protocol-only formal-secondary mechanism surface
 
 ---
 
@@ -486,17 +508,24 @@ memory 主问题当前不是 accept path 断裂了，而是：
 
 下一阶段只给一个主方向：
 
-> 先补 current-branch 的 typed-state support refresh，
-> 再基于现有 communication `repeat=1 / repeat=3` artifacts 做 closure audit，
+> typed-state support refresh 已经完成，
+> 现在回到 communication closure audit，
+> 只基于现有 communication `repeat=1 / repeat=3` artifacts 做严格审读；
 > 只有出现新的 communication contract 代码变化时才重新开 communication rerun。
+
+当前这个 closure audit 的冻结结论：
+
+- ready for closure claim：`no`
+- ready for rerun if new contract changes appear：`yes`
+- 当前不再新增 rerun，也不再重复 typed-state support refresh
 
 ### 5.1 为什么必须是这个方向
 
 因为：
 
 1. communication headline 的方向已经通过 `repeat=1` 和 `repeat=3` 证明“没有反转”
-2. 当前最缺的是 current-branch 下赛题 `非文本状态传递` support refresh，而不是继续重复同一 communication headline 包
-3. typed-state support 补齐后，communication 才能进入更干净的 closure audit，而不是靠重复 rerun 代替 support proof
+2. current-branch 下的 typed-state support refresh 现在已经补齐，不再是未完成前置项
+3. 因此当前最该做的是 communication closure audit，而不是继续重复 support refresh 或继续新增 headline rerun
 4. 当前 communication residual 已收缩成：
    - `summarize_ms` 轻度正残差
    - `rr-billing-clean` 单点 parity diagnostic
@@ -510,29 +539,21 @@ memory 主问题当前不是 accept path 断裂了，而是：
    - 不把当前 dirty worktree 当已冻结结论
    - 不混入 communication rerun、memory rerun、VM、Docker、nsjail、openEuler、external
 2. 默认不改代码
-3. 先刷新 `typed_state_consumer_sensitivity_v3`
-   - 只跑 `protocol`
-   - 先 `repeat=1`
-   - 重点读 `minimal-baseline / minimal-missing-decision / minimal-wrong-decision`
-4. 若 consumer sensitivity 结果干净，再刷新 `typed_state_mechanism_v3`
-   - 同样只跑 `protocol`
-   - 只读 handoff object 机制，不读 communication headline
-5. 刷新完 support 后，再回到 communication closure audit
-   - 只审现有 `repeat=1 / repeat=3`
-   - 不新增 rerun，除非 communication contract 又有新代码变化
+3. 直接回到 communication closure audit
+   - 只审现有 communication `repeat=1 / repeat=3` authoritative artifacts
+   - 不新增 rerun
+4. 重点只回答三件事
+   - planner `1.00 / 0 repair` 是否已经足够视作稳定
+   - summarizer residual 是否已收缩到 `summarize_ms` 主残差
+   - `rr-billing-clean` 是否仍只是 diagnostic parity
+5. 只有在 closure audit 暴露新的 communication contract 问题时，才允许重开 communication rerun
 
 ### 5.3 下一轮的通过标准
 
 下一轮不是要“直接宣布 closure”，而是要先满足：
 
-1. `typed_state_consumer_sensitivity_v3`
-   - `minimal-baseline` 稳定通过
-   - `minimal-missing-decision` 出现 failure 或明确 misfire
-   - `minimal-wrong-decision` 出现 route/tool 偏移
-2. `typed_state_mechanism_v3`
-   - `state_packet_minimal` 保住 route/tool 语义
-   - handoff textual bytes 相比 `natural_handoff_text` 下降
-3. communication 仍只读作：
+1. typed-state support 现在只作为 formal-secondary support proof 使用，不再重复刷新
+2. communication 仍只读作：
    - `llm_total_tokens_delta < 0`
    - `task_ms_delta <= 0`
    - planner `1.00 / 0 repair`
@@ -578,5 +599,11 @@ memory 主问题当前不是 accept path 断裂了，而是：
 - communication：`token yes, latency signal yes, closure no`
 - memory：`replay effect yes, latency no`
 - typed-state：`mechanism yes, headline no`
+
+当前文档冻结后的 stopline：
+
+- 不再新增 communication rerun
+- 不再重复 typed-state support refresh
+- 只有出现新的 communication contract-level change 时，才允许最小 `repeat=1` rerun
 
 这就是当前最严格、最可辩护、也是后续执行必须服从的读法。

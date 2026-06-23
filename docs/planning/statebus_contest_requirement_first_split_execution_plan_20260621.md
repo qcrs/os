@@ -75,6 +75,12 @@
 - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_results.json`
 - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_compare.csv`
 
+当前 communication repeat=`1` support artifact：
+
+- `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_report.md`
+- `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_results.json`
+- `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_compare.csv`
+
 当前 communication 历史对比只用于因果链：
 
 - `runs/superiority_comm_v1_api_repeat3_post_gatefix/*`
@@ -94,23 +100,10 @@
 
 - `feat/taskset-mainline-split`
 
-当前 worktree 非干净，且至少包含三类未冻结改动：
+当前 worktree 非干净，但当前冻结边界只剩 docs：
 
-1. communication contract / tests
-   - `agents/sample_agents.py`
-   - `runtime/llm.py`
-   - `tests/test_llm_runtime.py`
-   - `tests/test_smoke.py`
-
-2. memory / runner / taskset
-   - `runtime/orchestrator.py`
-   - `eval/runner.py`
-   - `tasks/sample_tasks.py`
-   - `tests/test_taskset_mainline_split.py`
-
-3. docs
+1. docs
    - 本文
-   - `docs/reports/current_architecture_overview_20260622.md`
    - `docs/reports/current_task_results_overview_20260622.md`
 
 读法边界固定：
@@ -290,6 +283,11 @@ communication 线的历史读法固定为：
 
 - 已有非文本状态传递机制证据
 - 已证明 protocol executor 真实消费 minimal typed packet
+- `2026-06-23` current-branch API refresh 已补齐：
+  - `runs/typed_state_consumer_sensitivity_v3_api_repeat1_current_branch_refresh_20260623/benchmark_report.md`
+  - `runs/typed_state_consumer_sensitivity_v3_api_repeat1_current_branch_refresh_20260623/benchmark_results.json`
+  - `runs/typed_state_mechanism_v3_api_repeat1_current_branch_refresh_20260623/benchmark_report.md`
+  - `runs/typed_state_mechanism_v3_api_repeat1_current_branch_refresh_20260623/benchmark_results.json`
 - 这条线当前不进入 active headline
 
 ---
@@ -358,16 +356,12 @@ communication 线的历史读法固定为：
 
 当前仍未解决的问题不是 retrieval 或 typed-state I/O，而是：
 
-1. planner 仍有 repair 噪声
-   - 虽然大部分 paired rows planner 现在更快
-   - 但 contract one-shot validity 还没完全收平
-
-2. summarizer 仍不是完全 schema-native
+1. summarizer 仍不是完全 schema-native
    - executor 边界是 typed
    - summarizer 仍要消费 text projection / compact preview
    - 结构化 packet 虽然已增强，但还没彻底消除解释成本
 
-3. parity 单点 divergence 仍在
+2. parity 单点 divergence 仍在
    - `rr-billing-clean` 仍有 text/protocol corpus scope 分叉
 
 ---
@@ -538,6 +532,30 @@ communication 线的历史读法固定为：
 - `typed_state_authenticity_v3`
   - 回答：legacy-compat 下 text-shadow / state-packet 的语义一致性冗余
 
+当前 fresh refresh 结果已经成立：
+
+1. `typed_state_consumer_sensitivity_v3`
+   - `repeat=1` current-branch refresh 已完成
+   - `minimal-baseline` 完成
+   - `minimal-missing-decision` 按合同稳定 failure
+   - `minimal-wrong-decision` 表现为稳定 tool misfire，而非 route drift
+   - rich helper disable 仍只显示 support/audit 级轻度影响
+   - `unexpected_task_failure_count = 0`
+   - 主证据仍是：
+     - `missing_decision_failure_rate = 1.00`
+     - `wrong_decision_mistool_rate = 1.00`
+     - expected negative controls 按合同触发
+
+2. `typed_state_mechanism_v3`
+   - `repeat=1` current-branch refresh 已完成
+   - single-variable contract 仍保持
+   - `route_exact_rate = 1.00`
+   - `tool_exact_rate = 1.00`
+   - `handoff_textual_bytes` 相比 `natural_handoff_text` 下降
+   - 这条证据仍只读作 protocol-only formal-secondary mechanism surface
+
+这两条 current-branch refresh 现在都可引用，但仍只属于 formal-secondary support，不得上读成 communication headline closure proof。
+
 通过标准：
 
 1. `typed_state_consumer_sensitivity_v3`
@@ -574,6 +592,16 @@ communication 线的历史读法固定为：
 2. summarizer residual 是否已经收缩到 `summarize_ms` 主残差
 3. `rr-billing-clean` 是否仍只是 diagnostic parity
 
+当前 Phase 4 已可读作完成，下一步回到 Phase 5 communication closure audit。
+
+当前 closure audit 的冻结判断：
+
+- `repeat=1` 与 `repeat=3` 都保持 positive signal
+- planner 已收平到当前 artifact family 下的 `1.00 / 0 repair`
+- 但 “planner 收平” 不等于 formal closure released
+- ready for closure claim：`no`
+- ready for rerun if new contract changes appear：`yes`
+
 只有在这些都过关后，才允许讨论更高 repeat 或更高层级结论。
 
 ## Phase 6：communication API rerun 只在有新改动时再做
@@ -596,6 +624,7 @@ communication 线的历史读法固定为：
 
 - 不重复跑同一个 headline 包
 - 不把 rerun 次数本身当作实验推进
+- 当前主动作只是冻结文档口径，不再新增 rerun
 
 ## Phase 7：communication 之后，才轮到 memory / open
 
