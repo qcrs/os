@@ -1419,6 +1419,8 @@ def _validate_reusable_contract(
             raise ValueError(f"{task.task_id}: reusable rows require required_prior_case_ids")
         if not task.required_prior_rejections:
             raise ValueError(f"{task.task_id}: reusable rows require required_prior_rejections")
+        if not task.required_prior_routes:
+            raise ValueError(f"{task.task_id}: reusable rows require required_prior_routes")
 
 
 def _validate_formal_pack_task_contract(

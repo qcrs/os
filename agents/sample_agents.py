@@ -698,6 +698,7 @@ class PlannerAgent(BaseAgent):
                     invalid_output=result.text,
                     validation_error=last_error,
                     required_plan_semantic_roles=list(task.required_plan_semantic_roles),
+                    mode=str(getattr(ctx, "mode", "protocol")),
                 )
         raise ValueError(last_error or f"planner failed to produce a valid plan for {task.task_id}")
 
@@ -2488,16 +2489,25 @@ def _planner_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage
     else:
         system_prompt = (
             "You are the StateBus Planner. Output JSON only. "
-            "Return only {\"steps\":[...]}. "
-            "Emit a 3-5 step executable DAG. "
-            "Every explicit step object must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
+            "Return compact protocol plan JSON with top-level keys r, x, s. "
+            "Emit a 3-5 step executable DAG encoded through those compact slots. "
+            "The retrieve slot r must carry the retrieve step. "
+            "The execute slot x must carry the execute step and, when validate is required, also carry validate metadata via vsid, vrole, vowner, vaction, vdep. "
+            "The x slot body itself must encode execute, and the vsid/vrole/vowner/vaction/vdep fields must encode validate. "
+            "Do not swap execute and validate between the x slot body and the nested v* fields. "
+            "The summarize slot s must carry the summarize step. "
+            "Inside each slot prefer compact keys sid, role, owner, action, dep; include q, e, t in r and h, t in s. "
+            "The role and vrole fields are semantic_role labels, not agent labels. "
+            "Allowed semantic_role values exactly: retrieve, validate, execute, summarize. "
+            "Do not use retriever, validator, executor, or summarizer as semantic_role values. "
             "Allowed owner_agent values: retriever, executor, summarizer. "
             "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
             f"The plan must cover these semantic roles: {required_roles_text}. "
-            "Do not omit semantic_role on any step. Do not substitute description fields for params or semantic_role. "
+            "Do not omit semantic_role on any encoded step. Do not substitute description fields for params or semantic_role. "
             "Prefer canonical step_id values retrieve, validate, execute, summarize when those roles appear. "
             "Use depends_on=[] for retrieve, depends_on=[\"retrieve\"] for validate, depends_on=[\"retrieve\"] or [\"retrieve\",\"validate\"] for execute, and depends_on=[\"retrieve\",\"execute\"] for summarize. "
             "Do not emit replay labels, corpus filters, or tool-route hints. "
+            "Do not emit a top-level steps array. "
             "No markdown."
         )
         user_prompt = tagged_json_block(
@@ -2523,6 +2533,7 @@ def _planner_repair_messages(
     invalid_output: str,
     validation_error: str,
     required_plan_semantic_roles: list[str],
+    mode: str = "text",
 ) -> list[ChatMessage]:
     required_roles = [
         str(role).strip().lower()
@@ -2530,23 +2541,48 @@ def _planner_repair_messages(
         if str(role).strip()
     ]
     required_roles_text = ", ".join(required_roles) if required_roles else "retrieve, execute, summarize"
-    repair_prompt = (
-        "The previous planner output failed contract validation. "
-        f"Validation error: {validation_error}. "
-        "Regenerate the full plan from scratch as JSON only. "
-        "Return exactly one top-level key named steps. "
-        "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
-        f"The plan must cover these semantic roles: {required_roles_text}. "
-        "Allowed owner_agent values: retriever, executor, summarizer. "
-        "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
-        "Prefer canonical step_id values retrieve, validate, execute, summarize. "
-        "Use depends_on=[] for retrieve, depends_on=[\"retrieve\"] for validate, depends_on=[\"retrieve\"] or [\"retrieve\",\"validate\"] for execute, and depends_on=[\"retrieve\",\"execute\"] for summarize. "
-        "Every depends_on entry must exactly reference a step_id that appears in the same output. "
-        "Do not invent dependency ids such as step1 unless that exact step_id exists. "
-        "Do not use compact r/x/s shape. "
-        "Do not omit semantic_role. Do not use description-only steps. "
-        "No markdown."
-    )
+    if mode == "protocol":
+        repair_prompt = (
+            "The previous planner output failed contract validation. "
+            f"Validation error: {validation_error}. "
+            "Regenerate the full plan from scratch as compact protocol JSON only. "
+            "Return top-level keys r, x, s only. "
+            "Encode retrieve in r, execute in x, summarize in s, and if validate is required encode it in x via vsid, vrole, vowner, vaction, vdep. "
+            "The x slot body itself must encode execute, and the vsid/vrole/vowner/vaction/vdep fields must encode validate. "
+            "Do not swap execute and validate between the x slot body and the nested v* fields. "
+            "Inside each slot prefer compact keys sid, role, owner, action, dep; include q, e, t in r and h, t in s. "
+            "The role and vrole fields are semantic_role labels, not agent labels. "
+            "Allowed semantic_role values exactly: retrieve, validate, execute, summarize. "
+            "Do not use retriever, validator, executor, or summarizer as semantic_role values. "
+            f"The plan must cover these semantic roles: {required_roles_text}. "
+            "Allowed owner_agent values: retriever, executor, summarizer. "
+            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
+            "Prefer canonical step_id values retrieve, validate, execute, summarize. "
+            "Use depends_on=[] for retrieve, depends_on=[\"retrieve\"] for validate, depends_on=[\"retrieve\"] or [\"retrieve\",\"validate\"] for execute, and depends_on=[\"retrieve\",\"execute\"] for summarize. "
+            "Every depends_on entry must exactly reference a step_id implied by the compact output. "
+            "Do not invent dependency ids such as step1 unless that exact compact step_id exists. "
+            "Do not emit a top-level steps array. "
+            "Do not omit semantic_role. Do not use description-only steps. "
+            "No markdown."
+        )
+    else:
+        repair_prompt = (
+            "The previous planner output failed contract validation. "
+            f"Validation error: {validation_error}. "
+            "Regenerate the full plan from scratch as JSON only. "
+            "Return exactly one top-level key named steps. "
+            "Each step must include step_id, semantic_role, owner_agent, action, input_state_refs, params, depends_on. "
+            f"The plan must cover these semantic roles: {required_roles_text}. "
+            "Allowed owner_agent values: retriever, executor, summarizer. "
+            "Allowed action values: RETRIEVE_EVIDENCE, EXECUTE_PLAYBOOK, SUMMARIZE_AND_COMMIT, VALIDATE_ROUTE. "
+            "Prefer canonical step_id values retrieve, validate, execute, summarize. "
+            "Use depends_on=[] for retrieve, depends_on=[\"retrieve\"] for validate, depends_on=[\"retrieve\"] or [\"retrieve\",\"validate\"] for execute, and depends_on=[\"retrieve\",\"execute\"] for summarize. "
+            "Every depends_on entry must exactly reference a step_id that appears in the same output. "
+            "Do not invent dependency ids such as step1 unless that exact step_id exists. "
+            "Do not use compact r/x/s shape. "
+            "Do not omit semantic_role. Do not use description-only steps. "
+            "No markdown."
+        )
     return [
         *base_messages,
         ChatMessage(role="assistant", content=invalid_output),
@@ -2608,59 +2644,150 @@ def _compact_planner_output_to_steps(payload: dict[str, Any]) -> list[dict[str, 
     summarize = dict(payload.get("s") or {})
     if not retrieve and not summarize and "steps" not in payload:
         raise ValueError(f"planner output missing steps: {payload!r}")
+    retrieve_params_payload = dict(retrieve.get("params") or {})
+    summarize_params_payload = dict(summarize.get("params") or {})
+    validate_payload = execute.get("validate", execute.get("v"))
+    validate = dict(validate_payload) if isinstance(validate_payload, dict) else {}
+
+    def _slot_value(slot: dict[str, Any], *keys: str, default: Any = None) -> Any:
+        for key in keys:
+            if key in slot:
+                return slot.get(key)
+        return default
+
+    execute_role = _normalize_planner_step_alias(
+        _slot_value(execute, "role", "semantic_role", default="")
+    ).strip().lower()
+    validate_role = _normalize_planner_step_alias(
+        _slot_value(validate, "role", "semantic_role", "vrole", default=execute.get("vrole", ""))
+    ).strip().lower()
+    if execute_role == "validate" and validate_role == "execute":
+        execute_body = dict(execute)
+        for key in ("vsid", "vrole", "vowner", "vaction", "vdep"):
+            execute.pop(key, None)
+        execute = {
+            "sid": execute_body.get("vsid", "execute"),
+            "role": execute_body.get("vrole", "execute"),
+            "owner": execute_body.get("vowner", "executor"),
+            "action": execute_body.get("vaction", "EXECUTE_PLAYBOOK"),
+            "dep": execute_body.get("vdep", ["retrieve", "validate"]),
+        }
+        validate = {
+            "sid": execute_body.get("sid", execute_body.get("step_id", "validate")),
+            "role": execute_body.get("role", execute_body.get("semantic_role", "validate")),
+            "owner": execute_body.get("owner", execute_body.get("owner_agent", "executor")),
+            "action": execute_body.get("action", "VALIDATE_ROUTE"),
+            "dep": execute_body.get("dep", execute_body.get("depends_on", ["retrieve"])),
+        }
+
     retrieve_params: dict[str, Any] = {
-        "query": retrieve.get("q", ""),
-        "evidence_text": retrieve.get("e", ""),
-        "tags": list(retrieve.get("t", [])),
+        "query": _slot_value(retrieve, "q", "query", default=retrieve_params_payload.get("query", "")),
+        "evidence_text": _slot_value(
+            retrieve,
+            "e",
+            "evidence_text",
+            default=retrieve_params_payload.get("evidence_text", ""),
+        ),
+        "tags": list(
+            _slot_value(retrieve, "t", "tags", default=retrieve_params_payload.get("tags", [])) or []
+        ),
         "allow_memory_reuse": True,
     }
     summarize_params: dict[str, Any] = {
-        "summary_hint": summarize.get("h", ""),
-        "tags": list(summarize.get("t", [])),
+        "summary_hint": _slot_value(
+            summarize,
+            "h",
+            "summary_hint",
+            default=summarize_params_payload.get("summary_hint", ""),
+        ),
+        "tags": list(
+            _slot_value(summarize, "t", "tags", default=summarize_params_payload.get("tags", [])) or []
+        ),
     }
-    has_validate_step = any(key in execute for key in ("vsid", "vowner", "vaction", "vdep"))
+    has_validate_step = bool(validate) or any(
+        key in execute for key in ("vsid", "vrole", "vowner", "vaction", "vdep")
+    )
     steps = [
         {
-            "step_id": retrieve.get("sid", "retrieve"),
-            "semantic_role": retrieve.get("role", "retrieve"),
-            "owner_agent": retrieve.get("owner", "retriever"),
-            "action": retrieve.get("action", "RETRIEVE_EVIDENCE"),
-            "depends_on": retrieve.get("dep", []),
+            "step_id": _slot_value(retrieve, "sid", "step_id", default="retrieve"),
+            "semantic_role": _slot_value(retrieve, "role", "semantic_role", default="retrieve"),
+            "owner_agent": _slot_value(retrieve, "owner", "owner_agent", default="retriever"),
+            "action": _slot_value(retrieve, "action", default="RETRIEVE_EVIDENCE"),
+            "depends_on": _slot_value(retrieve, "dep", "depends_on", default=[]),
             "params": retrieve_params,
         }
     ]
     if has_validate_step:
         steps.append(
             {
-                "step_id": execute.get("vsid", "validate"),
-                "semantic_role": execute.get("vrole", "validate"),
-                "owner_agent": execute.get("vowner", "executor"),
-                "action": execute.get("vaction", "VALIDATE_ROUTE"),
-                "depends_on": execute.get("vdep", ["retrieve"]),
+                "step_id": _slot_value(validate, "sid", "step_id", "vsid", default=execute.get("vsid", "validate")),
+                "semantic_role": _slot_value(
+                    validate,
+                    "role",
+                    "semantic_role",
+                    "vrole",
+                    default=execute.get("vrole", "validate"),
+                ),
+                "owner_agent": _slot_value(
+                    validate,
+                    "owner",
+                    "owner_agent",
+                    "vowner",
+                    default=execute.get("vowner", "executor"),
+                ),
+                "action": _slot_value(
+                    validate,
+                    "action",
+                    "vaction",
+                    default=execute.get("vaction", "VALIDATE_ROUTE"),
+                ),
+                "depends_on": _slot_value(
+                    validate,
+                    "dep",
+                    "depends_on",
+                    "vdep",
+                    default=execute.get("vdep", ["retrieve"]),
+                ),
                 "params": {},
             }
         )
     steps.extend(
         [
             {
-                "step_id": execute.get("sid", "execute"),
-                "semantic_role": execute.get("role", "execute"),
-                "owner_agent": execute.get("owner", "executor"),
-                "action": execute.get("action", "EXECUTE_PLAYBOOK"),
-                "depends_on": execute.get("dep", ["retrieve", "validate"] if has_validate_step else ["retrieve"]),
+                "step_id": _slot_value(execute, "sid", "step_id", default="execute"),
+                "semantic_role": _slot_value(execute, "role", "semantic_role", default="execute"),
+                "owner_agent": _slot_value(execute, "owner", "owner_agent", default="executor"),
+                "action": _slot_value(execute, "action", default="EXECUTE_PLAYBOOK"),
+                "depends_on": _slot_value(
+                    execute,
+                    "dep",
+                    "depends_on",
+                    default=["retrieve", "validate"] if has_validate_step else ["retrieve"],
+                ),
                 "params": execute,
             },
             {
-                "step_id": summarize.get("sid", "summarize"),
-                "semantic_role": summarize.get("role", "summarize"),
-                "owner_agent": summarize.get("owner", "summarizer"),
-                "action": summarize.get("action", "SUMMARIZE_AND_COMMIT"),
-                "depends_on": summarize.get("dep", ["retrieve", "execute"]),
+                "step_id": _slot_value(summarize, "sid", "step_id", default="summarize"),
+                "semantic_role": _slot_value(summarize, "role", "semantic_role", default="summarize"),
+                "owner_agent": _slot_value(summarize, "owner", "owner_agent", default="summarizer"),
+                "action": _slot_value(summarize, "action", default="SUMMARIZE_AND_COMMIT"),
+                "depends_on": _slot_value(summarize, "dep", "depends_on", default=["retrieve", "execute"]),
                 "params": summarize_params,
             },
         ]
     )
     return steps
+
+
+def _planner_param_fallback(raw_params: dict[str, Any], key: str, fallback: Any) -> Any:
+    value = raw_params.get(key)
+    if value is None:
+        return fallback
+    if isinstance(value, str) and not value.strip():
+        return fallback
+    if isinstance(value, list) and not value:
+        return fallback
+    return value
 
 
 def _repair_common_planner_binding_confusions(step: dict[str, Any]) -> dict[str, Any]:
@@ -2682,12 +2809,16 @@ def _normalize_planner_step_alias(value: object) -> str:
     lowered = text.lower()
     alias_map = {
         "retrieve": "retrieve",
+        "retriever": "retrieve",
         "retrieve_evidence": "retrieve",
         "validate": "validate",
+        "validator": "validate",
         "validate_route": "validate",
         "execute": "execute",
+        "executor": "execute",
         "execute_playbook": "execute",
         "summarize": "summarize",
+        "summarizer": "summarize",
         "summarize_and_commit": "summarize",
     }
     return alias_map.get(lowered, text)
@@ -2719,7 +2850,7 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
     step_id = _normalize_planner_step_alias(raw_step_id)
     if nested_step_alias:
         step_id = normalized_step_aliases.get(nested_step_alias, nested_step_alias)
-    semantic_role = str(
+    semantic_role = _normalize_planner_step_alias(
         normalized.get("semantic_role", normalized.get("role", nested_step_alias))
     ).strip().lower()
     owner_agent = str(normalized.get("owner_agent", normalized.get("owner", ""))).strip().lower()
@@ -2732,7 +2863,7 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
             "action": action,
         }
     )
-    semantic_role = str(normalized.get("semantic_role", "")).strip().lower()
+    semantic_role = _normalize_planner_step_alias(normalized.get("semantic_role", "")).strip().lower()
     owner_agent = str(normalized.get("owner_agent", "")).strip().lower()
     action = str(normalized.get("action", "")).strip().upper()
     if owner_agent not in ALLOWED_PLANNER_OWNER_AGENTS:
@@ -2758,23 +2889,25 @@ def _normalize_planner_step(step: object, *, task: SampleTask) -> dict[str, Any]
     params = dict(raw_params)
     if action == "RETRIEVE_EVIDENCE":
         params = {
-            "query": raw_params.get("query", task.query),
-            "evidence_text": raw_params.get("evidence_text", task.evidence_text),
-            "tags": raw_params.get("tags", list(task.tags)),
-            "allow_memory_reuse": raw_params.get("allow_memory_reuse", True),
-            "audit_disable_state_kinds": raw_params.get(
+            "query": _planner_param_fallback(raw_params, "query", task.query),
+            "evidence_text": _planner_param_fallback(raw_params, "evidence_text", task.evidence_text),
+            "tags": _planner_param_fallback(raw_params, "tags", list(task.tags)),
+            "allow_memory_reuse": _planner_param_fallback(raw_params, "allow_memory_reuse", True),
+            "audit_disable_state_kinds": _planner_param_fallback(
+                raw_params,
                 "audit_disable_state_kinds",
                 list(task.audit_disable_state_kinds),
             ),
-            "audit_text_helper_mode": raw_params.get(
+            "audit_text_helper_mode": _planner_param_fallback(
+                raw_params,
                 "audit_text_helper_mode",
                 task.audit_text_helper_mode,
             ),
         }
     elif action == "SUMMARIZE_AND_COMMIT":
         params = {
-            "summary_hint": raw_params.get("summary_hint", task.summary_hint),
-            "tags": raw_params.get("tags", list(task.tags)),
+            "summary_hint": _planner_param_fallback(raw_params, "summary_hint", task.summary_hint),
+            "tags": _planner_param_fallback(raw_params, "tags", list(task.tags)),
         }
     raw_depends_on = [str(item) for item in normalized.get("depends_on", []) or []]
     role_by_numeric_index = {
@@ -3011,30 +3144,23 @@ def _render_protocol_summary_input_text(packet: dict[str, Any]) -> str:
         str(item).strip()
         for item in packet.get("retrieved_doc_ids", [])[:MAX_PROTOCOL_SUMMARY_DOC_IDS]
         if str(item).strip()
-    ) or "none"
+    )
     matched_signals = ", ".join(
         str(item).strip()
         for item in packet.get("matched_signals", [])[:MAX_PROTOCOL_SUMMARY_SIGNALS]
         if str(item).strip()
-    ) or "none"
+    )
     parts = [
-        f"Query: {str(packet.get('query', '')).strip()}",
-        f"Route: {str(packet.get('route', 'generic_triage')).strip() or 'generic_triage'}",
-        f"Route source: {str(packet.get('route_source', 'protocol')).strip() or 'protocol'}",
-        f"Route confidence: {float(packet.get('route_confidence', 0.0) or 0.0):.2f}",
-        f"Retrieved docs: {doc_ids}",
-        f"Matched signals: {matched_signals}",
+        f"q: {str(packet.get('query', '')).strip()}",
+        f"route: {str(packet.get('route', 'generic_triage')).strip() or 'generic_triage'}",
     ]
+    if doc_ids:
+        parts.append(f"docs: {doc_ids}")
+    if matched_signals:
+        parts.append(f"signals: {matched_signals}")
     memory_assist_hint = str(packet.get("memory_assist_hint", "")).strip()
     if memory_assist_hint:
-        parts.append(memory_assist_hint)
-    summary_hint = str(packet.get("summary_hint", "")).strip()
-    if summary_hint:
-        parts.append(f"Summary hint: {summary_hint}")
-    actions_text = str(packet.get("actions_text", "")).strip()
-    if actions_text:
-        parts.append("Actions:")
-        parts.append(actions_text)
+        parts.append(f"mem: {memory_assist_hint}")
     return "\n".join(parts)
 
 

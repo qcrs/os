@@ -71,6 +71,8 @@ def test_taskset_split_bundles_load_with_expected_metadata_and_case_surface() ->
     assert all(task.plan_source == "llm" for task in memory.tasks)
     assert {task.complexity_bucket for task in memory.tasks} == {"simple", "reusable"}
     assert all(task.required_prior_case_ids for task in memory.tasks if task.complexity_bucket == "reusable")
+    assert all(task.required_prior_rejections for task in memory.tasks if task.complexity_bucket == "reusable")
+    assert all(task.required_prior_routes for task in memory.tasks if task.complexity_bucket == "reusable")
 
     assert uncertainty.metadata.pack_type == "uncertainty_audit_v1"
     assert uncertainty.metadata.audit_only is True
@@ -134,6 +136,9 @@ def test_runner_reports_respect_new_mainline_split_boundaries() -> None:
     assert memory_result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
     assert "## Memory Mainline Scaffold" in memory_report
     assert "## Memory Mainline Metrics" in memory_report
+    assert "## Replay Effect Gate" in memory_report
+    assert "Real-effect requirement" in memory_report
+    assert "assist_memory_hit_rate or memory_hit_rate alone does not count" in memory_report
     assert "This pack is only the memory mainline scaffold" in memory_report
     replay_gate = memory_result["manifest"]["headline_gates"]["memory_replay_gate"]["memory_replay_evidence_gate"]
     assert replay_gate["effect_required"] is True

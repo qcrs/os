@@ -6147,6 +6147,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
         stability_gate = manifest.get("headline_gates", {}).get("formal_stability_gate", {})
         protocol_aggregate = protocol_summary.get("aggregate", {})
         text_aggregate = text_summary.get("aggregate", {})
+        replay_gate = memory_gate.get("memory_replay_evidence_gate", {}) if isinstance(memory_gate, dict) else {}
         _append_pack_contract_section(
             lines,
             contract="formal-secondary memory mainline scaffold; keep family, evidence universe, and prior-dependency contract fixed, then compare text_whole_lane against state_packet_minimal on seed plus reusable follow-up rows.",
@@ -6160,6 +6161,8 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 f"- Memory replay gate: `{'pass' if bool(memory_gate.get('allowed')) else 'withheld'}`",
                 f"- Formal stability gate: `{'pass' if bool(stability_gate.get('allowed', manifest.get('formal_stability_gate', {}).get('passed'))) else 'not_yet'}`",
                 "- Reading boundary: `this pack is the memory mainline scaffold; it is not the communication headline and does not answer overall superiority by itself.`",
+                "- Real-effect requirement: `validated_replay rows must show expected reuse mode plus non-zero skipped_step_count and positive reuse_gain in the same run.`",
+                "- Non-claim boundary: `assist_memory_hit_rate or memory_hit_rate alone does not count as memory superiority evidence here.`",
                 "",
                 "## Memory Mainline Metrics",
                 "",
@@ -6167,6 +6170,13 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
                 f"| text | {float(text_aggregate.get('skipped_step_count', 0.0)):.2f} | {float(text_aggregate.get('reuse_gain', 0.0)):.2f} | {float(text_aggregate.get('validated_reuse_task_count', 0.0)):.2f} | {float(text_aggregate.get('task_ms', 0.0)):.2f} | {float(text_case_audit.get('exact_match_rate', 0.0)):.2f} | {float(text_case_audit.get('wrong_family_rate', 0.0)):.2f} |",
                 f"| protocol | {float(protocol_aggregate.get('skipped_step_count', 0.0)):.2f} | {float(protocol_aggregate.get('reuse_gain', 0.0)):.2f} | {float(protocol_aggregate.get('validated_reuse_task_count', 0.0)):.2f} | {float(protocol_aggregate.get('task_ms', 0.0)):.2f} | {float(protocol_case_audit.get('exact_match_rate', 0.0)):.2f} | {float(protocol_case_audit.get('wrong_family_rate', 0.0)):.2f} |",
+                "",
+                "## Replay Effect Gate",
+                "",
+                f"- Expected reusable rows: `{int(replay_gate.get('expected_rows', 0))}`",
+                f"- Reuse-mode matched rows: `{int(replay_gate.get('matched_rows', 0))}`",
+                f"- Effect-matched rows: `{int(replay_gate.get('effect_matched_rows', 0))}`",
+                f"- Positive reuse-gain row count: `{int(replay_gate.get('reuse_gain_positive_count', 0))}`",
             ]
         )
         if memory_gate.get("withheld_reasons"):
@@ -6179,6 +6189,7 @@ def _build_specialized_pack_report(result: dict[str, object]) -> str | None:
                 "## Stopline",
                 "",
                 "- This pack is only the memory mainline scaffold for reuse-centered reading.",
+                "- Do not backfill this claim from assist-style memory hits, communication token wins, or headline wording alone.",
                 "- If reuse evidence does not materialize here, do not backfill the claim from `contest_superiority_headline_v2` or `superiority_comm_v1`.",
             ]
         )

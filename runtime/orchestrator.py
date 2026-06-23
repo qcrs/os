@@ -1874,13 +1874,16 @@ class Orchestrator:
         stored_proof_hash = stored_replay_blob_hash or stored_replay_certificate_hash
         fresh_proof_hash = fresh_replay_blob_hash or fresh_replay_certificate_hash
         reusable_steps = {str(step_id).strip() for step_id in (hit.reusable_steps or []) if str(step_id).strip()}
-        if Orchestrator._matches_headline_s2_prior_replay(
+        if Orchestrator._matches_formal_prior_contract_replay(
             hit=hit,
             task=getattr(ctx, "task", None),
             feature_route=feature_route,
             reusable_steps=reusable_steps,
             route_confidence=stored_route_confidence,
             route_provenance=stored_route_provenance,
+            fresh_route=fresh_route,
+            fresh_route_confidence=fresh_route_confidence,
+            fresh_route_provenance=fresh_route_provenance,
         ):
             return True
         return (
@@ -1909,6 +1912,63 @@ class Orchestrator:
         )
 
     @staticmethod
+    def _matches_formal_prior_contract_replay(
+        *,
+        hit: MemoryHit,
+        task: object | None,
+        feature_route: str,
+        reusable_steps: set[str],
+        route_confidence: float,
+        route_provenance: list[str],
+        fresh_route: str,
+        fresh_route_confidence: float,
+        fresh_route_provenance: list[str],
+    ) -> bool:
+        if task is None:
+            return False
+        pack_type = str(getattr(getattr(task, "task_set_metadata", None), "pack_type", "")).strip()
+        if pack_type not in {"contest_honest_headline_v1", "superiority_memory_v1"}:
+            return False
+        if (
+            str(getattr(task, "thickness_setting", "")).strip() != "S2"
+            and str(getattr(task, "complexity_bucket", "")).strip() != "reusable"
+        ):
+            return False
+        match_contract = Orchestrator._prior_contract_replay_match(
+            hit=hit,
+            task=task,
+            feature_route=feature_route,
+        )
+        required_routes = {
+            str(item).strip()
+            for item in getattr(task, "required_prior_routes", ())
+            if str(item).strip()
+        }
+        return (
+            match_contract
+            and bool(fresh_route)
+            and fresh_route == feature_route
+            and (not required_routes or fresh_route in required_routes)
+            and "execute" in reusable_steps
+            and _replay_class_allows(hit.replay_class, required="validated_replay")
+            and _route_is_replay_eligible(
+                route_confidence=route_confidence,
+                route_provenance=route_provenance,
+                minimum_confidence=0.70,
+            )
+            and _route_is_replay_eligible(
+                route_confidence=fresh_route_confidence,
+                route_provenance=fresh_route_provenance,
+                minimum_confidence=0.70,
+            )
+            and any(
+                ref.kind == "TOOL_ARTIFACT"
+                and bool(ref.metadata.get("channel_replay_compatible", True))
+                for ref in hit.evidence_state_refs
+            )
+        )
+
+    @staticmethod
     def _matches_headline_s2_prior_replay(
         *,
         hit: MemoryHit,
@@ -1917,13 +1977,30 @@ class Orchestrator:
         reusable_steps: set[str],
         route_confidence: float,
         route_provenance: list[str],
+        fresh_route: str,
+        fresh_route_confidence: float,
+        fresh_route_provenance: list[str],
     ) -> bool:
-        if (
-            str(getattr(getattr(task, "task_set_metadata", None), "pack_type", "")).strip()
-            != "contest_honest_headline_v1"
-        ):
-            return False
-        if str(getattr(task, "thickness_setting", "")).strip() != "S2":
+        return Orchestrator._matches_formal_prior_contract_replay(
+            hit=hit,
+            task=task,
+            feature_route=feature_route,
+            reusable_steps=reusable_steps,
+            route_confidence=route_confidence,
+            route_provenance=route_provenance,
+            fresh_route=fresh_route,
+            fresh_route_confidence=fresh_route_confidence,
+            fresh_route_provenance=fresh_route_provenance,
+        )
+
+    @staticmethod
+    def _prior_contract_replay_match(
+        *,
+        hit: MemoryHit,
+        task: object | None,
+        feature_route: str,
+    ) -> bool:
+        if task is None:
             return False
         required_case_ids = {
             str(item).strip()
@@ -1952,18 +2029,6 @@ class Orchestrator:
             and bool(required_routes)
             and feature_route in required_routes
             and (not required_rejections or required_rejections.issubset(source_rejections))
-            and "execute" in reusable_steps
-            and _replay_class_allows(hit.replay_class, required="validated_replay")
-            and _route_is_replay_eligible(
-                route_confidence=route_confidence,
-                route_provenance=route_provenance,
-                minimum_confidence=0.70,
-            )
-            and any(
-                ref.kind == "TOOL_ARTIFACT"
-                and bool(ref.metadata.get("channel_replay_compatible", True))
-                for ref in hit.evidence_state_refs
-            )
         )
 
     def _matches_skip_retrieve_execute(
