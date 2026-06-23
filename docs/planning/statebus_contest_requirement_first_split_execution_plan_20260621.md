@@ -71,9 +71,9 @@
 
 当前 communication 主读法：
 
-- `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_report.md`
-- `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_results.json`
-- `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_compare.csv`
+- `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_report.md`
+- `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_results.json`
+- `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_compare.csv`
 
 当前 communication repeat=`1` support artifact：
 
@@ -157,7 +157,7 @@
 - `token advantage stable`
 - `quality floor stable`
 - `repeat=3` 下当前 worktree 已出现 planner-led latency positive signal
-- 但 `communication gate` 仍是 `withheld`
+- 且 `communication gate` 已是 `pass`
 - `formal stability gate` 仍是 `not_yet`
 - 因此 `latency superiority closed` 仍不能说
 
@@ -165,20 +165,20 @@
 
 | 指标 | text | protocol | delta(protocol - text) |
 | --- | ---: | ---: | ---: |
-| `llm_total_tokens` | `1318.36` | `1192.39` | `-125.97` |
-| `planner_total_tokens` | `906.25` | `886.67` | `-19.58` |
-| `summarizer_total_tokens` | `412.11` | `305.72` | `-106.39` |
-| `task_ms` | `4452.67` | `3961.38` | `-491.29` |
-| `planner_ms` | `2905.55` | `2373.18` | `-532.37` |
-| `retrieve_ms` | `46.70` | `51.18` | `+4.48` |
-| `summarize_ms` | `1283.74` | `1330.35` | `+46.60` |
+| `llm_total_tokens` | `1363.33` | `1193.83` | `-169.50` |
+| `planner_total_tokens` | `951.11` | `886.67` | `-64.44` |
+| `summarizer_total_tokens` | `412.22` | `307.17` | `-105.06` |
+| `task_ms` | `4429.63` | `3968.14` | `-461.49` |
+| `planner_ms` | `2939.50` | `2325.48` | `-614.02` |
+| `retrieve_ms` | `46.56` | `55.98` | `+9.42` |
+| `summarize_ms` | `1213.56` | `1363.43` | `+149.86` |
 
 当前 row-level paired 事实：
 
 - `36` 组 text/protocol 配对里：
   - `planner` one-shot validity 已收平到 `1.00`
   - planner repair attempts 已收平到 `0`
-  - `rr-billing-clean` 仍是唯一 cross-lane parity diagnostic
+  - parity diagnostic 当前是 `rr-auth-distractor` 与 `rr-billing-clean`
   - `summarizer_total_tokens` 已转成 protocol 更低
   - `summarize_ms` 仍保持 protocol 略高
 
@@ -228,22 +228,28 @@ communication 线的历史读法固定为：
    - summarizer token 侧也转为 protocol 更低
    - 但 formal closure 仍未完成
 
+8. `repeat=3 post_gate_semantics_split`
+   - authoritative communication artifact 已切到新 gate semantics
+   - `Communication gate` 已从 `withheld` 释放成 `pass`
+   - `Formal stability gate` 仍保持 `not_yet`
+   - parity diagnostic 从单点 `rr-billing-clean` 更新为 `rr-auth-distractor + rr-billing-clean`
+
 ### 3.3 Communication 当前还剩什么问题
 
 当前 communication 线剩余问题固定为三类：
 
 1. formal closure 还没完成
-   - report 自身仍写 `Communication gate: withheld`
+   - report 自身现在写 `Communication gate: pass`
    - report 自身仍写 `Formal stability gate: not_yet`
-   - 因此当前还不能把它升级成正式 headline closure
+   - 因此当前 communication 主对象已释放，但仍不能把它升级成 formal stability closure
 
 2. summarizer residual 仍存在
-   - `summarizer_total_tokens_delta = -106.39`
-   - `summarize_ms_delta = +46.60`
+   - `summarizer_total_tokens_delta = -105.06`
+   - `summarize_ms_delta = +149.86`
    - 这说明 token 侧已不再是主 blocker，但 protocol summarizer wall-time 仍略高
 
 3. cross-lane actual parity 仍有单点 divergence
-   - `rr-billing-clean` 仍是唯一 mismatch case
+   - `rr-auth-distractor` 与 `rr-billing-clean` 是当前 mismatch cases
    - 当前仍只能按 diagnostic only 读取
 
 ### 3.4 Memory
@@ -403,12 +409,13 @@ communication 线的历史读法固定为：
 
 本阶段必须统一为：
 
-1. `superiority_comm_v1` 当前 authoritative artifact 已切到 `repeat=3 post_rerun_after_summarizer_patch_rollback_20260623`
+1. `superiority_comm_v1` 当前 authoritative artifact 已切到 `repeat=3 post_gate_semantics_split`
 2. communication 现在是：
    - token yes
    - quality yes
    - latency positive signal yes
-   - formal closure no
+   - communication gate pass
+   - formal stability no
 3. `superiority_memory_v1` 仍是 formal-secondary effect object
 4. typed-state 仍是 formal-secondary mechanism object
 5. `contest_superiority_headline_v2` 只保留历史参考价值
@@ -432,7 +439,7 @@ communication 线的历史读法固定为：
 3. 把当前 residual 明确写成：
    - planner stability
    - summarizer schema-native consumption
-   - parity single-point divergence
+   - parity diagnostic divergence
 
 通过标准：
 
@@ -481,7 +488,7 @@ communication 线的历史读法固定为：
    - 不是再做字段修剪式 token 优化
 
 3. parity 单点 divergence
-   - 追 `rr-billing-clean` 的 corpus_scope 分叉
+   - 追 `rr-auth-distractor` 与 `rr-billing-clean` 的 corpus_scope 分叉
    - 目标是确认它是 benign diagnostic 还是仍会污染 fairness readout
 
 通过标准：
@@ -577,7 +584,7 @@ communication 线的历史读法固定为：
 
 必须同时检查：
 
-1. report gate 是否仍 withheld
+1. communication gate 是否继续保持 `pass` 且 formal stability 仍是 `not_yet`
 2. 当前 `repeat=1` 与 `repeat=3` 是否都保持：
    - `llm_total_tokens_delta < 0`
    - `task_ms_delta <= 0`
@@ -590,7 +597,7 @@ communication 线的历史读法固定为：
 
 1. planner stability 是否已经稳定到 `1.00 / 0 repair`
 2. summarizer residual 是否已经收缩到 `summarize_ms` 主残差
-3. `rr-billing-clean` 是否仍只是 diagnostic parity
+3. `rr-auth-distractor` 与 `rr-billing-clean` 是否仍只属 diagnostic parity
 
 当前 Phase 4 已可读作完成，下一步回到 Phase 5 communication closure audit。
 
@@ -708,6 +715,9 @@ communication 线的历史读法固定为：
 ### Phase 9.1：当前 communication closure criteria
 
 当前 communication object 要从 `withheld -> pass`，至少还要同时满足：
+当前 communication object 已经完成 `withheld -> pass`；当前更高一级剩余的是 `Formal stability gate`。
+
+历史上从 `withheld -> pass` 需要同时满足：
 
 1. object freeze
    - `superiority_comm_v1` 继续作为唯一 active communication headline
@@ -736,7 +746,7 @@ communication 线的历史读法固定为：
    - 当前允许的主残差是 bounded `summarize_ms`
 
 7. diagnostic parity isolation
-   - `rr-billing-clean` 这类 parity surface 继续只按 diagnostic only 读取
+   - `rr-auth-distractor`、`rr-billing-clean` 这类 parity surface 继续只按 diagnostic only 读取
    - 不能回流成 correctness blocker
 
 执行上固定为一张 release ledger：
@@ -752,7 +762,7 @@ communication 线的历史读法固定为：
 | residual shape | phase-level compare + row audit | residual 只剩 bounded `summarize_ms`，不重新扩散成 multi-axis instability |
 | parity role | report parity section | 继续 diagnostic only，不得回流 headline blocker |
 
-只有这张 ledger 全部被当前 artifact family 填满，才允许把 communication 从 `withheld` 写成 `pass`。
+当前 `post_gate_semantics_split` artifact 已经满足这张 ledger，因此 communication 现行读法已是 `pass`；但这不自动放行 `Formal stability gate`。
 
 ### Phase 9.2：memory final role decision
 

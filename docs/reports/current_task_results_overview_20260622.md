@@ -52,9 +52,9 @@
 当前正式主读法只认这两组：
 
 1. communication mainline
-   - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_report.md`
-   - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_results.json`
-   - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_compare.csv`
+   - `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_report.md`
+   - `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_results.json`
+   - `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_compare.csv`
    - repeat=`1` support：
      - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_report.md`
      - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/benchmark_results.json`
@@ -115,7 +115,7 @@
    - `quality floor stable`
    - `repeat=1` 下正向信号未反转
    - `repeat=3` 下已有 planner-led latency positive signal
-   - `communication gate = withheld`
+   - `communication gate = pass`
    - `formal stability gate = not_yet`
 2. memory line
    - `runtime replay effect established`
@@ -140,32 +140,34 @@
 - `route_exact_rate = 1.00`
 - `admissible_match_rate = 1.00`
 - `repeat=3` 下已出现 planner-led latency positive signal
-- 但 `communication gate` 仍是 `withheld`
+- 且 `communication gate` 已转为 `pass`
 - 但 `formal stability gate` 仍是 `not_yet`
 
 authoritative repeat=`3` headline 指标：
 
 | 指标 | text | protocol | delta(protocol - text) |
 | --- | ---: | ---: | ---: |
-| `llm_total_tokens` | `1318.36` | `1192.39` | `-125.97` |
-| `planner_total_tokens` | `906.25` | `886.67` | `-19.58` |
-| `summarizer_total_tokens` | `412.11` | `305.72` | `-106.39` |
-| `task_ms` | `4452.67` | `3961.38` | `-491.29` |
-| `planner_ms` | `2905.55` | `2373.18` | `-532.37` |
-| `retrieve_ms` | `46.70` | `51.18` | `+4.48` |
-| `summarize_ms` | `1283.74` | `1330.35` | `+46.60` |
+| `llm_total_tokens` | `1363.33` | `1193.83` | `-169.50` |
+| `planner_total_tokens` | `951.11` | `886.67` | `-64.44` |
+| `summarizer_total_tokens` | `412.22` | `307.17` | `-105.06` |
+| `task_ms` | `4429.63` | `3968.14` | `-461.49` |
+| `planner_ms` | `2939.50` | `2325.48` | `-614.02` |
+| `retrieve_ms` | `46.56` | `55.98` | `+9.42` |
+| `summarize_ms` | `1213.56` | `1363.43` | `+149.86` |
 
 因此：
 
 - token win：`yes`
 - repeat=`3` planner-led latency positive signal：`yes`
-- headline closure：`withheld`
+- communication gate：`pass`
+- formal stability gate：`not_yet`
 
 当前 gate 读法也必须分开：
 
 - `Communication gate`
   - object-level closure gate
-  - 当前之所以仍是 `withheld`，不是因为 aggregate 不正向，而是因为 closure criteria 还没有被正式释放成 `pass`
+  - 当前 authoritative artifact 已经释放成 `pass`
+  - 这表示 communication 主对象已经结束 `withheld -> pass`
 - `Formal stability gate`
   - repeat-depth / stability gate
   - 当前仍是 `not_yet`
@@ -182,6 +184,7 @@ communication 的当前因果链应读成：
 | `post_summarizer_field_trim` | `+420.95` | `+179.32` | `-1.41` | `+252.13` | `-224.33` |
 | `post_compact_payload_fallback_fix` | `-942.13` | `-1069.31` | `+6.28` | `+131.53` | `-249.28` |
 | `post_rerun_after_summarizer_patch_rollback_20260623` | `-491.29` | `-532.37` | `+4.48` | `+46.60` | `-125.97` |
+| `post_gate_semantics_split` | `-461.49` | `-614.02` | `+9.42` | `+149.86` | `-169.50` |
 
 固定判断：
 
@@ -199,12 +202,12 @@ authoritative `repeat=3` 一共 `36` 组 text/protocol 配对；当前应首先�
 - `llm_total_tokens_delta < 0`
 - `task_ms_delta < 0`
 - `summarizer_total_tokens_delta < 0`
-- `summarize_ms_delta > 0` 但只剩轻度正残差
+- `summarize_ms_delta > 0` 且当前仍是 bounded 正残差
 
 token 侧则是稳定下降：
 
-- `planner_total_tokens_delta = -19.58`
-- `llm_total_tokens_delta = -125.97`
+- `planner_total_tokens_delta = -64.44`
+- `llm_total_tokens_delta = -169.50`
 
 这说明：
 
@@ -220,20 +223,20 @@ token 侧则是稳定下降：
 
 - planner 已经收平，不再是当前主 residual
 - summarizer 仍然是剩余 slow side
-- 单点 parity divergence 已缩到 `rr-billing-clean`
+- parity divergence 当前已扩成 `rr-auth-distractor` 与 `rr-billing-clean`
 - formal closure 仍未完成
 
 更具体地说：
 
 1. summarizer residual
-   - `summarizer_total_tokens_delta = -106.39`
-   - `summarize_ms_delta = +46.60`
+   - `summarizer_total_tokens_delta = -105.06`
+   - `summarize_ms_delta = +149.86`
    - 当前 protocol summarizer 不再在 token 上落后，但 wall-time 仍略高
    - 因此当前 residual 主读法是 schema-native consumption 仍不完整，而不是 token trimming 不够
 
 2. parity divergence
    - 历史 `post_summarizer_field_trim` 还有 `6` 个 mismatch case
-   - 当前 authoritative artifact 只剩 `rr-billing-clean`
+   - 当前 authoritative artifact 是 `rr-auth-distractor` 与 `rr-billing-clean`
    - 这说明 parity surface 已显著收敛，但仍需保留 diagnostic read boundary
 
 #### 为什么不该继续沿当前 summarizer micro-tune 线推进
@@ -263,7 +266,7 @@ token 侧则是稳定下降：
 6. residual 已被约束为 bounded residual
 7. diagnostic parity 继续隔离为 diagnostic only
 
-这解释了为什么当前虽然 aggregate 已正向，gate 仍不能只靠正向 delta 自动释放。
+这组条件现在已经被当前 authoritative artifact 满足，因此 `Communication gate` 已经从 `withheld` 释放为 `pass`；但这不改变 `Formal stability gate = not_yet`。
 
 实际 release 时必须按固定 ledger 执行，而不是按“整体感觉”释放：
 
@@ -616,8 +619,8 @@ memory 主问题当前不是 accept path 断裂了，而是：
 3. 因此当前最该做的是 communication closure audit，而不是继续重复 support refresh 或继续新增 headline rerun
 4. 当前 communication residual 已收缩成：
    - `summarize_ms` 轻度正残差
-   - `rr-billing-clean` 单点 parity diagnostic
-   - formal gate 仍 withheld / not_yet
+   - `rr-auth-distractor` 与 `rr-billing-clean` 两点 parity diagnostic
+   - communication gate 已 `pass`，formal stability gate 仍 `not_yet`
 
 ### 5.2 具体怎么干
 
@@ -633,7 +636,7 @@ memory 主问题当前不是 accept path 断裂了，而是：
 4. 重点只回答三件事
    - planner `1.00 / 0 repair` 是否已经足够视作稳定
    - summarizer residual 是否已收缩到 `summarize_ms` 主残差
-   - `rr-billing-clean` 是否仍只是 diagnostic parity
+   - `rr-auth-distractor` 与 `rr-billing-clean` 是否仍只属 diagnostic parity
 5. 只有在 closure audit 暴露新的 communication contract 问题时，才允许重开 communication rerun
 
 ### 5.3 下一轮的通过标准
@@ -645,13 +648,14 @@ memory 主问题当前不是 accept path 断裂了，而是：
    - `llm_total_tokens_delta < 0`
    - `task_ms_delta <= 0`
    - planner `1.00 / 0 repair`
-   - closure 仍 withheld / not_yet
+   - communication gate = `pass`
+   - formal stability gate = `not_yet`
 
 ### 5.4 当前真正缺的不是 patch，而是 final evidence program
 
 当前证据状态已经不是“机制没做出来”，而是：
 
-- communication headline 有正向 signal，但 closure 仍 withheld / not_yet
+- communication headline 有正向 signal，communication gate 已 `pass`，但 formal stability 仍 `not_yet`
 - typed-state support 已成立，但仍停在 formal-secondary
 - memory effect 已成立，但仍未进入更强 superiority read
 - repeat=`10` 与 openEuler 这两条 final delivery axis 还没有进入执行面

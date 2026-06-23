@@ -216,9 +216,9 @@
 它必须按固定 artifact 组读取，而不是按印象释放：
 
 - authoritative artifact：
-  - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_report.md`
-  - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_results.json`
-  - `runs/superiority_comm_v1_api_repeat3_post_rerun_after_summarizer_patch_rollback_20260623/benchmark_compare.csv`
+  - `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_report.md`
+  - `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_results.json`
+  - `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/benchmark_compare.csv`
 - support artifact：
   - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/*`
   - 如需 current-branch support refresh，可补充读取：
@@ -256,7 +256,8 @@
 
 7. diagnostic parity 已隔离
    - `cross_lane_actual_parity` 只能按 diagnostic only 读取
-   - 单点 parity divergence 不能升级成 headline blocker，前提是它不污染质量 floor 与 shared task coverage
+   - 当前 diagnostic parity divergence 至少包括 `rr-auth-distractor` 与 `rr-billing-clean`
+   - 只要它不污染质量 floor 与 shared task coverage，就不能升级成 headline blocker
 
 若要真正把 `withheld -> pass` 写进 report 或 final claim boundary，执行判定时必须逐项落表：
 
@@ -270,7 +271,7 @@
 | residual boundary | residual 只剩已命名且 bounded 的局部项；当前只允许 bounded `summarize_ms` residual |
 | parity isolation | parity surface 仍是 diagnostic only，且不污染 shared coverage / quality floor |
 
-只要上述任一项没有被当前 artifact 明确满足，`Communication gate` 就维持 `withheld`。
+当前 `post_gate_semantics_split` authoritative artifact 已满足上述条件，因此 `Communication gate` 现行读法应为 `pass`；`Formal stability gate` 仍独立保持 `not_yet`。
 
 ### 5.3 `repeat=10` 准入合同
 
