@@ -116,14 +116,22 @@ benchmark 运行主入口在：
 
 - `eval/runner.py`
 
-默认 CLI task-set 当前指向：
+默认 CLI `--task-set` 读取的是
+`tasks/contest_dual_mode_controlled_v3_benchmark.yaml` 这份 benchmark 文件；
+它会物化多个 named pack。当前最常用、且与现行读法直接相关的对象包括：
 
 - `contest_dual_mode_controlled_v3`
-  - 当前内部 controlled composite dual-mode surface
+  - 当前内部 controlled composite surface
   - 同任务双模式对照：`text_strict_pure_lane` vs `state_packet_minimal`
 - `contest_honest_headline_v1`
-  - 当前 contest-facing 正式 dual-mode headline
+  - 当前历史保留的 carrier-isolation / mechanism object
   - 同任务双模式对照：`text_whole_lane` vs `state_packet_minimal`
+- `superiority_comm_v1`
+  - 当前 active communication headline object
+  - 读法收窄到 `llm_total_tokens`、`task_ms` 与 `quality floor`
+- `superiority_memory_v1`
+  - 当前 formal-secondary memory effect object
+  - 最终角色是 final report required secondary verdict
 
 v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其中重点支持入口包括：
 
@@ -158,33 +166,39 @@ v3 deterministic/local 综合检查入口会覆盖 12 个 active v3 pack；其�
 
 这些历史报告保留了 v1/v2 pack 名称、旧任务数或旧运行包数据时，只能作为背景材料；当前 v3 formal 结论以 active v3 pack 的 manifest/report/gate 为准。
 
-当前 active benchmark surface 使用 13 个 v3 pack：
+当前 registry 里保留多组 v3 named packs；当前正式可引用的主对象应按
+`headline / secondary / audit` 分层来读，而不是再把所有 pack 混成一个 headline。
 
-- `contest_dual_mode_controlled_v3`
-- `contest_honest_headline_v1`
-- `memory_dual_mode_fairness_v3`
+当前直接相关的对象至少包括：
+
+- `superiority_comm_v1`
+- `superiority_memory_v1`
 - `typed_state_mechanism_v3`
+- `typed_state_consumer_sensitivity_v3`
+- `contest_honest_headline_v1`
+- `contest_dual_mode_controlled_v3`
+- `planner_support_v3`
+- `memory_policy_controlled_v3`
+- `memory_reuse_v3`
 - `external_text_baseline_audit_v3`
 - `text_definition_audit_v3`
 - `typed_state_authenticity_v3`
 - `typed_state_full_rich_audit_v3`
 - `carrier_microbench_v3`
-- `memory_reuse_v3`
-- `memory_policy_controlled_v3`
-- `planner_support_v3`
-- `typed_state_consumer_sensitivity_v3`
 
 读法边界：
 
-- `contest_honest_headline_v1` 已降读为 contest-facing formal-secondary mechanism surface。它保留 `text_whole_lane` vs `state_packet_minimal` 这组 carrier-isolation 对照，用于证明 structured carrier / typed-state minimal packet / frozen purity-parity-stability 边界，不再承担 overall superiority headline。
-- `contest_superiority_headline_v2` 是当前 contest-facing planner-open communication superiority scaffold。它固定为同任务 paired comparator，读法收窄到 `llm_total_tokens`、`task_ms` 与 `quality floor`；当前不承担 memory superiority headline，`cross_lane_actual_parity` 也只读作 diagnostic。
+- `superiority_comm_v1` 是当前 active communication headline object。它只回答 communication 的 `llm_total_tokens`、`task_ms` 与 `quality floor`；当前仍要区分 `Communication gate` 与 `Formal stability gate`，不能把正向 aggregate 自动上读成 closure。
+- `superiority_memory_v1` 是当前 formal-secondary memory effect object。它回答 replay effect 是否成立；当前最终角色是 final report required secondary verdict，不承担 communication headline，也不承担 overall superiority closure。
+- `typed_state_mechanism_v3` 与 `typed_state_consumer_sensitivity_v3` 一起承担当前 non-text state-transfer formal-secondary evidence。它们回答 minimal typed packet 是否被真实生成、传递、接收、消费，以及缺失/错误 packet 是否会触发 failure 或 misfire；当前最终角色应读成 required secondary state-transfer verdict。
+- `contest_honest_headline_v1` 已降读为历史保留的 carrier-isolation / mechanism object。它保留 `text_whole_lane` vs `state_packet_minimal` 这组对照，用于证明 structured carrier / typed-state minimal packet / frozen purity-parity-stability 边界，不再承担 overall superiority headline。
+- `contest_superiority_headline_v2` 只保留历史 scaffold 参考价值；当前 communication source-of-truth 不再从它读取。
 - `contest_dual_mode_controlled_v3` 降为内部 controlled composite surface。它保留 `text_strict_pure_lane` vs `state_packet_minimal` 这组受控 mainline handoff object，但不再承担 contest-facing pure-text headline。
 - 当前 `contest_dual_mode_controlled_v3` 已收紧为 stronger multi-route formal contract：clean / distractor / ambiguous / reusable 都要求 route 竞争集，且 reusable 显式携带 prior dependency / prior rejection 合同。
 - 当前 contest formal retrieval 按 structure-level clean 读取：formal corpus 不暴露 runtime hint，formal retrieval 不再注入 preferred-doc shortlist，也不再依赖 theme/group bonus 托举 formal 候选空间。
 - `text_strict_pure_lane` 仍是 StateBus runtime 内部的 strict text lane：executor 不接 typed state ref，但仍复用同一套 lexical route/tool helper path 与 playbook executor。
 - `text_whole_lane` 现在同时承担 contest-facing natural-language whole-lane text headline object；它仍不是 external traditional pure-text multi-agent baseline。
 - `memory_dual_mode_fairness_v3` 是保留的 dual-mode fairness/object-parity surface；不承担 replay proof。
-- `typed_state_mechanism_v3` 只回答 `natural_handoff_text` vs `state_packet_minimal(DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET)` 是否真实生产、传递、消费；不读成 dual-mode headline，也不读成 replay 结论。
 - `external_text_baseline_audit_v3` 是独立 external text baseline audit surface；先做 audit-only，不并入 contest headline 或 typed-state 机制 claim。
 - `text_definition_audit_v3` 只负责 executor-boundary inline text 审计，不负责 formal headline。
 - `typed_state_authenticity_v3` 只保留 legacy compatibility surface；正式机制 claim 优先读 `typed_state_mechanism_v3`。

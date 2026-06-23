@@ -121,6 +121,7 @@
    - `runtime replay effect established`
    - `latency superiority not proven`
    - `overall superiority not proven`
+   - final role = `required secondary verdict`
 3. typed-state line
    - `mechanism established as formal-secondary`
    - `not missing`
@@ -159,6 +160,16 @@ authoritative repeat=`3` headline 指标：
 - token win：`yes`
 - repeat=`3` planner-led latency positive signal：`yes`
 - headline closure：`withheld`
+
+当前 gate 读法也必须分开：
+
+- `Communication gate`
+  - object-level closure gate
+  - 当前之所以仍是 `withheld`，不是因为 aggregate 不正向，而是因为 closure criteria 还没有被正式释放成 `pass`
+- `Formal stability gate`
+  - repeat-depth / stability gate
+  - 当前仍是 `not_yet`
+  - 它不能被简化成 communication headline 自己的 closure gate
 
 #### 历史优化链的真实读法
 
@@ -240,6 +251,35 @@ token 侧则是稳定下降：
 - 不进入 `repeat=10`
 - 不拿 memory line 或 external line 替 communication 补锅
 
+#### communication closure criteria 当前冻结口径
+
+当前若要把 `Communication gate: withheld -> pass`，必须同时满足以下冻结条件：
+
+1. object freeze 继续保持
+2. `repeat=1` support 与 authoritative `repeat=3` 一致正向
+3. quality floor 稳定
+4. planner stability 已收平到 `1.00 / 0 repair`
+5. no unexpected failures
+6. residual 已被约束为 bounded residual
+7. diagnostic parity 继续隔离为 diagnostic only
+
+这解释了为什么当前虽然 aggregate 已正向，gate 仍不能只靠正向 delta 自动释放。
+
+实际 release 时必须按固定 ledger 执行，而不是按“整体感觉”释放：
+
+| item | 当前要求 |
+| --- | --- |
+| active object | 仍是 `superiority_comm_v1` |
+| support consistency | `repeat=1` 与 authoritative `repeat=3` 同向正向 |
+| aggregate direction | `llm_total_tokens_delta < 0` 且 `task_ms_delta <= 0` |
+| planner stability | `Planner one-shot valid rate = 1.00` 且 `Planner repair attempts = 0` |
+| quality floor | `wrong_family_rate = 0`，`route_exact_rate` 不退化，`exact_match_rate` 不新塌 |
+| failure hygiene | unexpected failure / row loss / contract fail 为 `0` |
+| residual shape | 只剩 bounded `summarize_ms` residual |
+| parity role | 仍是 diagnostic only |
+
+在这张 ledger 没被当前 artifact family 填满前，headline closure 继续读作 `withheld`。
+
 ### 3.3 Memory Deep Audit
 
 #### preclosure -> accept fix -> contract hardening 因果链
@@ -292,6 +332,7 @@ simple rows 则是：
 - `runtime effect closure established`
 - `reusable rows stably realize skip_execute`
 - `memory line is formal-secondary`
+- `memory line is a required secondary verdict in the final report`
 
 当前不能保留的强说法：
 
@@ -341,6 +382,53 @@ simple rows 则是：
 - replay effect 已真实发生
 - step skipping 已稳定发生
 - latency superiority 仍未闭合
+
+#### memory final role decision
+
+当前 `superiority_memory_v1` 的最终角色不应再写成：
+
+- appendix-like optional support
+- communication headline substitute
+
+应固定为：
+
+- final report required secondary verdict
+
+#### typed-state final role decision
+
+当前 typed-state line 的最终角色也不应停留在“只有机制证据”这一级描述。
+
+应固定为：
+
+- final report required secondary state-transfer verdict
+
+当前正式能说：
+
+1. `non-text state-transfer mechanism established`
+2. `minimal typed packet genuinely consumed`
+3. `missing/wrong packet causes expected failure or misfire`
+
+当前正式不能说：
+
+1. `typed-state already proves communication closure`
+2. `typed-state can replace communication headline`
+3. `typed-state alone proves overall contest closure`
+
+当前允许正式写的内容：
+
+1. `runtime replay effect established`
+2. `exact-replay-backed effect established`
+
+当前不允许正式写的内容：
+
+1. `memory superiority established`
+2. `overall superiority established`
+
+如果以后要升格，缺的证据应明确拆成：
+
+1. net savings evidence
+2. stability evidence
+3. safety evidence
 
 #### Top-Level `reuse` 与 `results.execute.reuse` 的读法
 
@@ -559,6 +647,41 @@ memory 主问题当前不是 accept path 断裂了，而是：
    - planner `1.00 / 0 repair`
    - closure 仍 withheld / not_yet
 
+### 5.4 当前真正缺的不是 patch，而是 final evidence program
+
+当前证据状态已经不是“机制没做出来”，而是：
+
+- communication headline 有正向 signal，但 closure 仍 withheld / not_yet
+- typed-state support 已成立，但仍停在 formal-secondary
+- memory effect 已成立，但仍未进入更强 superiority read
+- repeat=`10` 与 openEuler 这两条 final delivery axis 还没有进入执行面
+
+因此当前最缺的不是某一个新的 hotfix，而是：
+
+- 如何把 `headline / support / audit / delivery` 四层证据重新排成赛题最终可交付程序
+
+### 5.5 下一阶段的核心 transition design
+
+当前下一阶段最该做的，不是继续改 code hotpath，而是冻结三条 transition contract：
+
+1. communication -> repeat=`10`
+2. split evidence -> final claim
+3. benchmark closure -> openEuler delivery validation
+
+### 5.6 当前最缺口径
+
+如果必须只挑一个最缺项，当前最缺的是：
+
+- 一套从 current split evidence 到 final delivery verdict 的 staged closure program
+
+它不是 rerun，不是 patch，也不是 support refresh，而是：
+
+1. communication authoritative closure read
+2. memory 最终定位
+3. repeat=`10` 进入条件
+4. openEuler posterior validation 进入条件
+5. final report claim boundary
+
 ---
 
 ## 6. 当前明确不该做什么
@@ -573,6 +696,7 @@ memory 主问题当前不是 accept path 断裂了，而是：
 - 不把 `cross_lane_actual_parity` 或 `uncertainty_audit_v1` 混成 headline
 - 不改 VM / openEuler / Docker / nsjail 路线
 - 不通过改 task object / scorer / wording 去“救” communication latency
+- 不在没有 final evidence program 的情况下直接拼接 final delivery claim
 
 ---
 
@@ -592,18 +716,22 @@ memory 主问题当前不是 accept path 断裂了，而是：
    - 正式不能说：overall superiority
 3. typed-state line
    - 正式能说：formal-secondary mechanism established
+   - 正式能说：final report required secondary state-transfer verdict
    - 正式不能说：当前 active headline 就是它
 
 一句话收口：
 
 - communication：`token yes, latency signal yes, closure no`
-- memory：`replay effect yes, latency no`
+- memory：`replay effect yes, required secondary verdict yes, latency no`
 - typed-state：`mechanism yes, headline no`
+- delivery：`host runnable yes, repeat=10 no, openEuler no`
 
 当前文档冻结后的 stopline：
 
 - 不再新增 communication rerun
 - 不再重复 typed-state support refresh
 - 只有出现新的 communication contract-level change 时，才允许最小 `repeat=1` rerun
+- `repeat=10` 只在 communication closure criteria 已冻结并满足后，才允许作为 formal stability adjudication 进入
+- 在 repeat=`10` transition contract 与 openEuler posterior validation contract 冻结前，不进入 final delivery claim
 
 这就是当前最严格、最可辩护、也是后续执行必须服从的读法。
