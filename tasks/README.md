@@ -1,28 +1,62 @@
 # Tasks
 
-当前正式 benchmark 入口只保留 v3 pack。
+当前文件是任务包和 benchmark object 的索引文档。它回答三件事：
 
-默认 CLI pack：
+1. 当前有哪些正式 pack / object。
+2. 每个 object 回答什么，不回答什么。
+3. 哪些 object 只是历史或 audit，不应混成当前主结论。
 
-- `contest_dual_mode_controlled_v3_benchmark.yaml`
-  - `contest_dual_mode_controlled_v3`
-  - 默认 formal surface
-  - 同任务对象下只改 `mode + handoff_profile`
+当前 active headline / support / audit 口径应优先以：
 
-重点支持/audit pack：
+- `docs/reports/current_task_results_overview_20260622.md`
+- `docs/planning/statebus_contest_requirement_first_split_execution_plan_20260621.md`
+- 对应 authoritative `runs/*/benchmark_report.md`
 
-- `memory_dual_mode_fairness_v3_benchmark.yaml`
-  - `memory_dual_mode_fairness_v3`
-  - dual-mode fairness/object-parity audit surface，不承担 replay proof
-  - 同任务对象下只改 `mode + memory policy + compatible restore object class`
-- `typed_state_mechanism_v3_benchmark.yaml`
+为准。
+
+## 1. 当前主对象分层
+
+当前 object 应按 `headline / formal-secondary / audit / historical` 分层读取。
+
+### headline
+
+- `superiority_comm_v1`
+  - 当前 active communication headline
+  - 只回答 communication 的 `llm_total_tokens`、`task_ms` 与 `quality floor`
+
+### formal-secondary
+
+- `superiority_memory_v1`
+  - replay effect / exact-replay-backed effect
 - `typed_state_mechanism_v3`
-  - protocol-only formal-secondary 机制包
-  - 同任务对象下固定 `mode=protocol` 与 `runtime_reuse_contract=reuse_disabled`，只改 `natural_handoff_text` vs `state_packet_minimal`
-- `external_text_baseline_audit_v3_benchmark.yaml`
-  - `external_text_baseline_audit_v3`
-  - 独立 external text baseline audit surface
-  - 不并入 formal headline
+  - protocol-only typed-state mechanism surface
+- `typed_state_consumer_sensitivity_v3`
+  - minimal decision packet consumer sensitivity / destructive negative control
+- `planner_support_v3`
+  - planner support surface
+- `memory_policy_controlled_v3`
+  - protocol-only memory policy attribution
+- `memory_reuse_v3`
+  - protocol-only replay proof surface
+
+### audit
+
+- `memory_dual_mode_fairness_v3`
+- `external_text_baseline_audit_v3`
+- `text_definition_audit_v3`
+- `carrier_microbench_v3`
+- `typed_state_full_rich_audit_v3`
+
+### historical / legacy
+
+- `contest_honest_headline_v1`
+  - 历史 frozen formal headline / carrier-isolation object
+- `contest_dual_mode_controlled_v3`
+  - 当前只读 internal controlled composite surface
+- `typed_state_authenticity_v3`
+  - legacy compatibility surface
+
+## 2. 正式 v3 packs
 
 正式 v3 packs：
 
@@ -57,23 +91,18 @@
   - `typed_state_consumer_sensitivity_v3`
   - minimal decision packet consumer-sensitivity / negative-control support surface
 
-说明：
+## 3. 读法边界
 
-- 正式 README、默认 CLI、正式 smoke、正式 report 只认以上 13 个 v3 对象。
-- 主动脚本入口是 `scripts/run_v3_comprehensive_check.py`；`scripts/run_v2_*` 只保留归档/考古用途，默认拒绝运行。
-- `contest_honest_headline_v1` 是当前 contest-facing formal dual-mode surface，headline baseline 为 `text_whole_lane` vs `state_packet_minimal`。
-- `contest_dual_mode_controlled_v3` 是内部 controlled composite surface，保留 `text_strict_pure_lane` vs `state_packet_minimal` 的 mainline handoff 对照，不再承担 contest-facing pure-text headline。
-- `memory_dual_mode_fairness_v3` 是保留 pack；当前只读 dual-mode fairness/object parity，不承担 replay proof。
-- `typed_state_mechanism_v3` 只读 protocol-only `natural_handoff_text` vs `state_packet_minimal` 机制真实性；不读成 dual-mode headline。
-- `external_text_baseline_audit_v3` 只读独立 external text baseline 审计；不并入当前正式 headline。
-- `memory_policy_controlled_v3` 只读 protocol + state_packet_minimal 固定后的 memory policy 单变量归因。
-- `typed_state_authenticity_v3` 只保留 legacy compatibility surface，正式机制 claim 仍优先读 `typed_state_mechanism_v3`。
-- `text_definition_audit_v3` 只读 boundary 定义，不读成 formal headline。
-- `carrier_microbench_v3` 只读 engineering audit。
-- `typed_state_consumer_sensitivity_v3` 只读 minimal `EXECUTOR_DECISION_PACKET` 消费与负控降级，不升格为 typed-state 机制主 headline。
-- 当前 formal v3 已切 surface，但系统机制真实性仍在审计中。
-- 若 `state_packet_minimal` 的 `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 未被 executor 真实消费，`typed_state_mechanism_v3` 必须 withheld。
-- `contest_dual_mode_controlled_v3` 当前按 stronger multi-route formal contract 读取：clean / distractor / ambiguous / reusable 都要求 route 竞争集，且 reusable 要显式携带 prior dependency 合同。
-- 当前 contest formal retrieval 按 structure-level clean 读取：formal corpus 不暴露 runtime hint，formal retrieval 不再注入 preferred-doc shortlist，也不再依赖 theme/group bonus 托举候选空间。
-- 若 `memory_dual_mode_fairness_v3` 的 text restore 兼容性或 object parity gate 未过，不得输出 audit fairness 通过结论。
-- `tasks/state_ref_consumer_sensitivity_audit_benchmark.yaml` 是 mechanism audit pack；既逐类关闭 rich typed-state ref 审计 helper-path 复用，也对 minimal packet 做缺包/错包负控。
+- `superiority_comm_v1` 是当前 active communication headline，当前 formal 读法不再从 `contest_honest_headline_v1` 读取。
+- `superiority_memory_v1` 只回答 replay effect，不回答 memory superiority 或 overall superiority。
+- `typed_state_mechanism_v3` 与 `typed_state_consumer_sensitivity_v3` 一起组成当前 non-text state-transfer formal-secondary evidence。
+- `contest_honest_headline_v1` 是历史 frozen object，可用于展示历史对照与机制边界，但不是当前 active source-of-truth。
+- `contest_dual_mode_controlled_v3` 是内部 controlled composite surface，不再承担 contest-facing pure-text headline。
+- `tasks/state_ref_consumer_sensitivity_audit_benchmark.yaml` 是 mechanism audit pack；它既做 rich helper visibility audit，也做 minimal packet 缺包/错包负控。
+
+## 4. 入口脚本
+
+- `scripts/run_v3_comprehensive_check.py`
+  - 当前 v3 deterministic/local 综合检查入口
+- `scripts/run_v2_*`
+  - archived / archaeology only

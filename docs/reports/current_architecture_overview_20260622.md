@@ -52,6 +52,23 @@ TaskSet YAML / bundle
       -> benchmark_report.md / benchmark_results.json / compare CSV
 ```
 
+当前最应该给新人看的，不是“模块树”，而是这条真实主流程：
+
+```text
+Task
+  -> Planner
+  -> Retriever
+  -> [validate]
+  -> Executor
+  -> Summarizer
+  -> Scorer / Memory
+
+其中：
+- StatePool 承载中间 typed state
+- MemoryStore 承载跨任务记忆
+- replay gate 位于 retrieve 和 execute 之间
+```
+
 更具体地说：
 
 - `eval/runner.py` 是 benchmark 主入口，不只是“跑任务”，还负责 pack metadata、单变量边界、跨 mode 聚合和 claim gate。
@@ -213,6 +230,12 @@ TaskSet YAML / bundle
 
 它当前把“从 query 到 route/tool 候选，再到 typed handoff”的大部分上游结构都生产出来。
 
+需要明确一条当前实现边界：
+
+- Retriever 不应再被写成“纯工具型、完全不调 LLM”
+- 当前实现里它会在检索和候选生成之后进入较窄的 retriever-role LLM contract
+- 现有 report 里没有单独拆出 `retriever_total_tokens`
+
 ### 5.3 Executor
 
 `ExecutorAgent` 负责两类事：
@@ -234,6 +257,12 @@ TaskSet YAML / bundle
 - 远端 transport 适配
 - typed/text handoff 的最终消费验证
 
+同样需要明确：
+
+- Executor 当前也会进入 executor-role LLM contract
+- 现有 report 里没有单独拆出 `executor_total_tokens`
+- 因此不能把“只有 planner/summarizer 用 LLM”写成当前实现事实
+
 ### 5.4 Summarizer
 
 `SummarizerAgent` 负责：
@@ -246,6 +275,22 @@ TaskSet YAML / bundle
 它既是控制面面向人的出口，也是记忆面的主要写入口。
 
 当前 memory 的真实沉淀发生在这里，而不是在 Retriever 那里“顺手记一下”。
+
+---
+
+## 5.5 `text` 和 `protocol` 的主要分叉点
+
+当前主分叉不在抽象“模式切换”，而在 `Retriever -> Executor` 这一段：
+
+- `text_whole_lane`
+  - 上游把主要执行语义组织成自然语言 handoff
+  - 下游再从文本中恢复 route/tool/evidence 关系
+- `state_packet_minimal`
+  - 上游把主要执行语义写成 `DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET`
+  - 控制面只传 `StateRef`
+  - 下游优先消费结构化字段
+
+这也是当前 communication / typed-state 两条说明线最该共用的一张图。
 
 ---
 
@@ -560,7 +605,7 @@ Plan 当前不是靠固定 step 名字驱动，而是靠：
 1. `README.md`
 2. `docs/constraints/current_host_and_migration.md`
 3. `docs/constraints/current_feature_scope.md`
-4. `docs/reports/architecture_and_data_flow.md`
+4. `docs/reports/statebus_system_method_task_and_results_explainer.md`
 5. `runtime/orchestrator.py`
 6. `runtime/langgraph_adapter.py`
 7. `protocol/messages.py`

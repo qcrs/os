@@ -2,10 +2,13 @@
 
 日期：`2026-06-13`
 
-> 2026-06-18 update: `contest_honest_headline_v1` 已冻结为 current formal headline。
-> 主证据为 `/home/qcrs/statebus/runs/contest_honest_headline_goal3_repeat_api_r10_20260618_151845/`。
-> 该 artifact 已通过 API repeat=10、formal stability、object parity、S1 runtime behavior、S2 prior action、headline memory replay effect。
-> 后续解释优先读取 `docs/reports/final_claim_matrix_and_freeze_20260618.md`。
+> 当前定位：历史 pack-map / 旧主线设计说明，不是当前 active communication source-of-truth。
+> 本文主要帮助读者理解早期 v3 pack 分工，仍以 `contest_honest_headline_v1` 为主线。
+> 当前 communication headline 已切到 `superiority_comm_v1`；最新正式读法请优先看：
+> `docs/reports/statebus_system_method_task_and_results_explainer.md`
+> `docs/reports/current_task_results_overview_20260622.md`
+
+> 注意：本文中的 pack 数量、主线对象和 frozen 口径主要反映历史阶段，不应直接当作当前 source-of-truth。
 
 ## 一、正式 Pack 地图
 
@@ -29,7 +32,7 @@
 
 ## 二、state-transfer 读法边界
 
-- `contest_honest_headline_v1`：contest-facing formal dual-mode headline。`text` 的正式定义是 `text_whole_lane`。
+- `contest_honest_headline_v1`：历史 frozen formal dual-mode object。`text` 的正式定义是 `text_whole_lane`。
 - `contest_dual_mode_controlled_v3`：internal controlled composite surface。`text` 的正式定义是 `text_strict_pure_lane`，不读成赛题 pure-text headline。
 - `memory_dual_mode_fairness_v3`：kept pack；只读 dual-mode fairness/object parity，不承担 replay proof。
 - `typed_state_mechanism_v3`：只读 protocol-side `natural_handoff_text` vs `state_packet_minimal` 机制真实性，不读成 dual-mode headline、external text baseline 或 replay efficiency。
@@ -44,8 +47,8 @@
 
 ## 三、当前 stopline
 
-- `contest_honest_headline_v1` 当前已满足 contest pair coverage、whole-lane text guard、formal stability gate、S1/S2 runtime gate 和 headline memory replay effect gate。它应冻结为 current formal headline，而不是继续随意改动。
-- `typed_state_mechanism_v3` 仍可作为 secondary/audit 机制真实性 surface，但 current 主线 claim 优先读取 frozen headline 的 API repeat=10 artifact。
+- `contest_honest_headline_v1` 在历史阶段下曾承担 frozen formal headline 角色；当前应只作为历史 frozen object 读取，而不是继续回灌到 active communication 主线。
+- `typed_state_mechanism_v3` 仍可作为 secondary/audit 机制真实性 surface，但当前主线 claim 不再优先读取 frozen headline 的 API repeat=10 artifact。
 - `contest_dual_mode_controlled_v3` 不再承担 contest-facing headline；它只保留内部 controlled composite 解释面。
 - `memory_dual_mode_fairness_v3` 只有在 text restore 兼容性与 object parity gate 同时通过时才能保留 audit fairness surface。
 - `carrier_microbench_v3`、`text_definition_audit_v3` 与 `external_text_baseline_audit_v3` 都不得被 aggregate 文本包装成“纯文本 vs structured”总结论。
