@@ -1,0 +1,64 @@
+task_set:
+  name: memory_pack
+  pack_type: memory
+  description: Controlled protocol-only pack for memory-off, assist-only, and replay-enabled reuse comparisons.
+  reading_contract: Read this pack as the formal memory claim pack only; assist-only rows are diagnostic and the replay-enabled row is the headline candidate.
+  claim_lanes: [memory]
+
+tasks:
+  - task_id: memory-cache-001
+    task_group: memory_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    goal: Use the cited cache docs to triage the incident and recommend the first action.
+    query: validated replay inventory counts stay stale after a sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay, cache-replica-false]
+    evidence_text: Use only the referenced corpus docs; this pack compares memory policies under fixed protocol execution.
+    tags: [cache, inventory, sync-window, memory, cold-start]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      Return three concise points only: the most likely cause, the competing
+      explanation ruled out by the cited docs, and the first action.
+
+  - task_id: memory-cache-002
+    task_group: memory_lane
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    goal: Use the cited cache docs to triage the incident and recommend the first action.
+    query: validated replay inventory counts stay stale after a sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay, cache-replica-false]
+    evidence_text: Use only the referenced corpus docs; this pack compares memory policies under fixed protocol execution.
+    tags: [cache, inventory, sync-window, memory, assist-only]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      Return three concise points only: the most likely cause, the competing
+      explanation ruled out by the cited docs, and the first action.
+
+  - task_id: memory-cache-003
+    task_group: memory_lane
+    task_order: 3
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    allowed_modes: [protocol]
+    goal: Use the cited cache docs to triage the incident and recommend the first action.
+    query: validated replay inventory counts stay stale after a sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay, cache-replica-false]
+    evidence_text: Use only the referenced corpus docs; this pack compares memory policies under fixed protocol execution.
+    tags: [cache, inventory, sync-window, memory, replay-enabled]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      Return three concise points only: the most likely cause, the competing
+      explanation ruled out by the cited docs, and the first action.

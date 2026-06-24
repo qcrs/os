@@ -1,0 +1,644 @@
+task_set:
+  name: planner_support_v3_pack
+  pack_type: planner_support_v3
+  description: V3 formal-secondary planner-support pack that compares yaml and llm
+    planning under matched protocol state_packet_minimal rows.
+  reading_contract: Read this pack only as the v3 planner-support surface. Planner
+    openness is a separate protocol-only claim from communication medium and typed-state
+    authenticity. At least two llm rows must explicitly validate the route before execution.
+  claim_lanes:
+  - communication
+  single_variable: true
+  variable_axes:
+  - plan_source
+  public_surface: formal_secondary_planner
+  plan_source_default: yaml
+  evidence_tier: formal_secondary
+  benchmark_version: v3
+tasks:
+- task_id: planner-support-checkout-yaml-001
+  task_group: planner_support_v3_lane
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  plan_source: yaml
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose the checkout canary regression with
+    a fixed yaml plan control row.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders
+    query after rollout
+  corpus_doc_ids:
+  - rr-checkout-incident
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - planner-support
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  expected_route: db_pool_saturation
+  expected_tool_name: tool.db_pool_triage
+  expected_top_doc_id: rr-checkout-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-checkout-yaml-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-checkout-llm-001
+  task_group: planner_support_v3_lane
+  task_order: 2
+  task_theme: contest_release_checkout_regression
+  plan_source: llm
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose the checkout canary regression with
+    an llm-generated plan row.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders
+    query after rollout
+  corpus_doc_ids:
+  - rr-checkout-incident
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - planner-support
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  expected_route: db_pool_saturation
+  expected_tool_name: tool.db_pool_triage
+  expected_top_doc_id: rr-checkout-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-checkout-llm-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-auth-yaml-001
+  task_group: planner_support_v3_lane
+  task_order: 3
+  task_theme: contest_release_auth_rotation
+  plan_source: yaml
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose auth callback failures after metadata
+    rotation with a fixed yaml plan control row.
+  query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated
+    callback verification failures
+  corpus_doc_ids:
+  - rr-auth-incident
+  - rr-auth-metrics
+  - rr-auth-logs
+  - rr-auth-rate-limit-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - auth
+  - session
+  - jwks
+  - planner-support
+  reuse_tags:
+  - release
+  - auth
+  - session
+  expected_reuse_mode: none
+  expected_route: auth_session_drift
+  expected_tool_name: tool.auth_session_repair
+  expected_top_doc_id: rr-auth-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-auth-yaml-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: auth_session_drift
+  primary_expected_route: auth_session_drift
+  primary_expected_tool: tool.auth_session_repair
+  acceptable_routes:
+  - auth_session_drift
+  acceptable_tools:
+  - tool.auth_session_repair
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-auth-llm-001
+  task_group: planner_support_v3_lane
+  task_order: 4
+  task_theme: contest_release_auth_rotation
+  plan_source: llm
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose auth callback failures after metadata
+    rotation with an llm-generated plan row.
+  query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated
+    callback verification failures
+  corpus_doc_ids:
+  - rr-auth-incident
+  - rr-auth-metrics
+  - rr-auth-logs
+  - rr-auth-rate-limit-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - auth
+  - session
+  - jwks
+  - planner-support
+  reuse_tags:
+  - release
+  - auth
+  - session
+  expected_reuse_mode: none
+  expected_route: auth_session_drift
+  expected_tool_name: tool.auth_session_repair
+  expected_top_doc_id: rr-auth-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-auth-llm-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: auth_session_drift
+  primary_expected_route: auth_session_drift
+  primary_expected_tool: tool.auth_session_repair
+  acceptable_routes:
+  - auth_session_drift
+  acceptable_tools:
+  - tool.auth_session_repair
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-cache-yaml-001
+  task_group: planner_support_v3_lane
+  task_order: 5
+  task_theme: contest_release_inventory_rollout
+  plan_source: yaml
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose stale inventory after the rollout with
+    a fixed yaml plan control row.
+  query: inventory rollout region shows stale inventory after batch sync with dropped
+    aggregate invalidation rate
+  corpus_doc_ids:
+  - rr-cache-incident
+  - rr-cache-metrics
+  - rr-cache-logs
+  - rr-cache-replica-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - inventory
+  - cache
+  - invalidation
+  - planner-support
+  reuse_tags:
+  - release
+  - inventory
+  - cache
+  expected_reuse_mode: none
+  expected_route: cache_invalidation
+  expected_tool_name: tool.cache_invalidation_playbook
+  expected_top_doc_id: rr-cache-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-cache-yaml-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: cache_invalidation
+  primary_expected_route: cache_invalidation
+  primary_expected_tool: tool.cache_invalidation_playbook
+  acceptable_routes:
+  - cache_invalidation
+  acceptable_tools:
+  - tool.cache_invalidation_playbook
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-cache-llm-001
+  task_group: planner_support_v3_lane
+  task_order: 6
+  task_theme: contest_release_inventory_rollout
+  plan_source: llm
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose stale inventory after the rollout with
+    an llm-generated plan row.
+  query: inventory rollout region shows stale inventory after batch sync with dropped
+    aggregate invalidation rate
+  corpus_doc_ids:
+  - rr-cache-incident
+  - rr-cache-metrics
+  - rr-cache-logs
+  - rr-cache-replica-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - inventory
+  - cache
+  - invalidation
+  - planner-support
+  reuse_tags:
+  - release
+  - inventory
+  - cache
+  expected_reuse_mode: none
+  expected_route: cache_invalidation
+  expected_tool_name: tool.cache_invalidation_playbook
+  expected_top_doc_id: rr-cache-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-cache-llm-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: cache_invalidation
+  primary_expected_route: cache_invalidation
+  primary_expected_tool: tool.cache_invalidation_playbook
+  acceptable_routes:
+  - cache_invalidation
+  acceptable_tools:
+  - tool.cache_invalidation_playbook
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-billing-yaml-001
+  task_group: planner_support_v3_lane
+  task_order: 7
+  task_theme: contest_release_billing_queue
+  plan_source: yaml
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose the billing worker backlog with a fixed
+    yaml plan control row.
+  query: billing webhook release shows worker queue backlog and tls reload stall while
+    database symptoms are being cited
+  corpus_doc_ids:
+  - rr-billing-incident
+  - rr-billing-metrics
+  - rr-billing-logs
+  - rr-billing-db-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - billing
+  - worker
+  - queue
+  - planner-support
+  reuse_tags:
+  - release
+  - billing
+  - worker
+  expected_reuse_mode: none
+  expected_route: worker_queue_starvation
+  expected_tool_name: tool.worker_queue_triage
+  expected_top_doc_id: rr-billing-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-billing-yaml-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: worker_queue_starvation
+  primary_expected_route: worker_queue_starvation
+  primary_expected_tool: tool.worker_queue_triage
+  acceptable_routes:
+  - worker_queue_starvation
+  acceptable_tools:
+  - tool.worker_queue_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-billing-llm-001
+  task_group: planner_support_v3_lane
+  task_order: 8
+  task_theme: contest_release_billing_queue
+  plan_source: llm
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose the billing worker backlog with an llm-generated
+    plan row.
+  query: billing webhook release shows worker queue backlog and tls reload stall while
+    database symptoms are being cited
+  corpus_doc_ids:
+  - rr-billing-incident
+  - rr-billing-metrics
+  - rr-billing-logs
+  - rr-billing-db-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - billing
+  - worker
+  - queue
+  - planner-support
+  reuse_tags:
+  - release
+  - billing
+  - worker
+  expected_reuse_mode: none
+  expected_route: worker_queue_starvation
+  expected_tool_name: tool.worker_queue_triage
+  expected_top_doc_id: rr-billing-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-billing-llm-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: worker_queue_starvation
+  primary_expected_route: worker_queue_starvation
+  primary_expected_tool: tool.worker_queue_triage
+  acceptable_routes:
+  - worker_queue_starvation
+  acceptable_tools:
+  - tool.worker_queue_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-deploy-yaml-001
+  task_group: planner_support_v3_lane
+  task_order: 9
+  task_theme: contest_release_deployment_config_drift
+  plan_source: yaml
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose deployment config drift with a fixed
+    yaml plan control row.
+  query: deployment drift canary shard shows pool cap mismatch sql wait growth and
+    rollout config divergence
+  corpus_doc_ids:
+  - rr-deploy-incident
+  - rr-deploy-metrics
+  - rr-deploy-logs
+  - rr-deploy-worker-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - deployment
+  - config
+  - database
+  - planner-support
+  reuse_tags:
+  - release
+  - deployment
+  - config
+  expected_reuse_mode: none
+  expected_route: db_pool_saturation
+  expected_tool_name: tool.db_pool_triage
+  expected_top_doc_id: rr-deploy-incident
+  summary_hint: Return root cause, strongest competing explanation ruled out, first
+    action, and validation check.
+  case_id: planner-support-deploy-yaml-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-deploy-llm-001
+  task_group: planner_support_v3_lane
+  task_order: 10
+  task_theme: contest_release_deployment_config_drift
+  plan_source: llm
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose deployment config drift with an llm-generated
+    four-step plan row that explicitly validates the route before execution.
+  query: deployment drift canary shard shows pool cap mismatch sql wait growth and
+    rollout config divergence; validate the route before execution and explain the strongest competing hypothesis you ruled out.
+  corpus_doc_ids:
+  - rr-deploy-incident
+  - rr-deploy-metrics
+  - rr-deploy-logs
+  - rr-deploy-worker-false
+  evidence_text: This support task compares fixed yaml control against Planner LLM
+    plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - deployment
+  - config
+  - database
+  - planner-support
+  reuse_tags:
+  - release
+  - deployment
+  - config
+  expected_reuse_mode: none
+  expected_route: db_pool_saturation
+  expected_tool_name: tool.db_pool_triage
+  expected_top_doc_id: rr-deploy-incident
+  summary_hint: Return validated route, strongest competing explanation ruled out,
+    first action, and validation check.
+  case_id: planner-support-deploy-llm-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple
+- task_id: planner-support-auth-llm-002
+  task_group: planner_support_v3_lane
+  task_order: 11
+  task_theme: contest_release_auth_rotation
+  plan_source: llm
+  benchmark_lane: internal_regression
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the same runtime path to diagnose auth callback failures with an llm-generated four-step plan row that explicitly validates the route before execution.
+  query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated callback verification failures; validate the route before execution and explain the strongest competing hypothesis you ruled out.
+  corpus_doc_ids:
+  - rr-auth-incident
+  - rr-auth-metrics
+  - rr-auth-logs
+  - rr-auth-ambiguous
+  evidence_text: This support task compares fixed yaml control against Planner LLM plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+  tags:
+  - release
+  - auth
+  - session
+  - jwks
+  - planner-support
+  reuse_tags:
+  - release
+  - auth
+  - session
+  expected_reuse_mode: none
+  expected_route: auth_session_drift
+  expected_tool_name: tool.auth_session_repair
+  expected_top_doc_id: rr-auth-incident
+  summary_hint: Return validated route, strongest competing explanation ruled out, first action, and validation check.
+  case_id: planner-support-auth-llm-002
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: auth_session_drift
+  primary_expected_route: auth_session_drift
+  primary_expected_tool: tool.auth_session_repair
+  acceptable_routes:
+  - auth_session_drift
+  acceptable_tools:
+  - tool.auth_session_repair
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  required_plan_semantic_roles:
+  - retrieve
+  - validate
+  - execute
+  - summarize
+  handoff_profile: protocol_minimal_state_packet
+  summary_contract: actions_plus_evidence
+  complexity_bucket: simple

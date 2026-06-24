@@ -1,0 +1,114 @@
+tasks:
+  - task_id: diag-retrieval-weak-route-cache-invalidation-001
+    task_group: session_chain
+    task_order: 1
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that a weak cache-family query still leans toward the invalidation route when the preferred in-family doc points there.
+    query: inventory stale counts
+    corpus_doc_ids: [session-auth-anchor, latency-db-anchor, cache-invalid-anchor]
+    evidence_text: This retrieval diagnostic uses wrong-family task context and a thin cache-family query; the remaining route decision should lean toward the preferred invalidation doc.
+    tags: [cache, inventory]
+    reuse_tags: [cache, inventory]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should keep the invalidation route on top
+      because the weak cache-family query leaves room for the preferred
+      in-family invalidation doc to dominate.
+
+  - task_id: diag-retrieval-weak-route-cache-replica-001
+    task_group: session_chain
+    task_order: 2
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the same weak cache-family query flips toward the replica route when the preferred in-family doc points there.
+    query: inventory stale counts
+    corpus_doc_ids: [session-auth-anchor, latency-db-anchor, cache-replica-false]
+    evidence_text: This retrieval diagnostic keeps the same wrong-family task context and thin cache-family query, but switches the in-family preferred doc to the replica path.
+    tags: [cache, inventory]
+    reuse_tags: [cache, inventory]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should flip to the replica route because the
+      weak cache-family query leaves route choice sensitive to the preferred
+      in-family doc.
+
+  - task_id: diag-retrieval-weak-route-latency-db-001
+    task_group: cache_chain
+    task_order: 3
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that a weak latency-family query still leans toward the DB route when the preferred in-family doc points there.
+    query: release-17 latency issue
+    corpus_doc_ids: [cache-invalid-anchor, session-auth-anchor, latency-db-anchor]
+    evidence_text: This retrieval diagnostic uses wrong-family task context and a thin latency-family query; the remaining route decision should lean toward the preferred DB doc.
+    tags: [latency]
+    reuse_tags: [latency]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should keep the DB route on top because the
+      weak latency-family query leaves room for the preferred in-family DB doc
+      to dominate.
+
+  - task_id: diag-retrieval-weak-route-latency-worker-001
+    task_group: cache_chain
+    task_order: 4
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the same weak latency-family query flips toward the worker route when the preferred in-family doc points there.
+    query: release-17 latency issue
+    corpus_doc_ids: [cache-invalid-anchor, session-auth-anchor, latency-worker-false]
+    evidence_text: This retrieval diagnostic keeps the same wrong-family task context and thin latency-family query, but switches the in-family preferred doc to the worker path.
+    tags: [latency]
+    reuse_tags: [latency]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should flip to the worker route because the
+      weak latency-family query leaves route choice sensitive to the preferred
+      in-family doc.
+
+  - task_id: diag-retrieval-weak-route-session-drift-001
+    task_group: latency_chain
+    task_order: 5
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that a weak auth-family query still leans toward the session-drift route when the preferred in-family doc points there.
+    query: login failures callback issue
+    corpus_doc_ids: [latency-db-anchor, cache-invalid-anchor, session-auth-anchor]
+    evidence_text: This retrieval diagnostic uses wrong-family task context and a thin auth-family query; the remaining route decision should lean toward the preferred session-drift doc.
+    tags: [auth, session]
+    reuse_tags: [auth, session]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should keep the session-drift route on top
+      because the weak auth-family query leaves room for the preferred
+      in-family session-drift doc to dominate.
+
+  - task_id: diag-retrieval-weak-route-session-rate-limit-001
+    task_group: latency_chain
+    task_order: 6
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the same weak auth-family query flips toward the rate-limit route when the preferred in-family doc points there.
+    query: login failures callback issue
+    corpus_doc_ids: [latency-db-anchor, cache-invalid-anchor, session-rate-limit-false]
+    evidence_text: This retrieval diagnostic keeps the same wrong-family task context and thin auth-family query, but switches the in-family preferred doc to the rate-limit path.
+    tags: [auth, session]
+    reuse_tags: [auth, session]
+    expected_reuse_mode: none
+    summary_hint: >
+      This retrieval diagnostic should flip to the rate-limit route because the
+      weak auth-family query leaves route choice sensitive to the preferred
+      in-family doc.

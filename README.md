@@ -1,88 +1,100 @@
-# SynapseX - 面向多智能体协作的低开销通信、状态传递与共享记忆机制
+# StateBus Snapshot
 
-基于 LangGraph 框架的多智能体研究系统，支持 OpenAI 兼容 Chat 后端（默认 DeepSeek）和本地 Transformers 后端（默认模型路径 `/data/models/Qwen3-8B`）。
+这个仓库分支是从 `statebus/project` 同步出来的精简快照，用于对外阅读、复核当前实现与最新正式结果。
 
-## 功能覆盖
+当前同步来源：
 
-| # | 需求 | 实现方式 |
-|---|------|---------|
-| 1 | ≥3 Agent 协同（规划/检索/执行/总结） | 4 个 Agent 节点：planner → retriever(s) → executor → summarizer |
-| 2 | 结构化通信协议 | TypedDict 状态 + Channel 系统（LastValue / BinaryOperatorAggregate） |
-| 3 | 非文本中间状态传递 | Hidden state 传递 + Context Packet 压缩 + Embedding 向量 |
-| 4 | 共享记忆模块 | InMemoryStore + JSONL 长期记忆，支持 put/get/search 与进程重启后加载 |
-| 5 | ≥2 组关联连续任务 | `run_demo.py` 跑 A/B 两组关联任务；`run_12rounds.py` 跑 12 轮连续任务 |
-| 6 | 性能对比数据 | TEXT vs STRUCTURED 模式对比（tokens、时延、findings） |
+- source repo: `/home/qcrs/statebus/project`
+- source branch: `feat/taskset-mainline-split`
+- source revision: `99685b6`
 
-## 快速开始
+## 先看什么
+
+如果你第一次读这个项目，建议按下面顺序看：
+
+1. `docs/reports/statebus_system_method_task_and_results_explainer.md`
+2. `docs/reader_guide/README.md`
+3. `docs/reports/current_task_results_overview_20260622.md`
+4. `docs/reports/current_architecture_overview_20260622.md`
+5. `docs/reference/题目.md`
+
+## 当前正式读法
+
+当前 active headline 只有：
+
+- `superiority_comm_v1`
+
+当前 formal-secondary support 包括：
+
+- `typed_state_mechanism_v3`
+- `typed_state_consumer_sensitivity_v3`
+- `superiority_memory_v1`
+
+当前必须明确区分：
+
+- `Communication gate`
+- `Formal stability gate`
+
+## 这份快照保留了什么
+
+1. 核心实现代码
+   - `agents/`
+   - `runtime/`
+   - `protocol/`
+   - `statepool/`
+   - `memory/`
+   - `eval/`
+   - `tasks/`
+   - `scripts/`
+   - `deploy/`
+   - `tests/`
+2. 当前主阅读面
+   - `docs/reader_guide/`
+   - `docs/reports/statebus_system_method_task_and_results_explainer.md`
+   - `docs/reports/current_task_results_overview_20260622.md`
+   - `docs/reports/current_architecture_overview_20260622.md`
+   - `docs/reference/题目.md`
+3. 最小实验结果集
+   - `runs/superiority_comm_v1_api_repeat3_post_gate_semantics_split/`
+   - `runs/superiority_comm_v1_api_repeat1_post_summarizer_schema_native_contract_repair/`
+   - `runs/typed_state_consumer_sensitivity_v3_api_repeat1_current_branch_refresh_20260623/`
+   - `runs/typed_state_mechanism_v3_api_repeat1_current_branch_refresh_20260623/`
+   - `runs/superiority_memory_v1_api_repeat3_post_replay_contract_hardening/`
+
+每个 `runs/*` 目录只保留三个核心文件：
+
+- `benchmark_report.md`
+- `benchmark_results.json`
+- `benchmark_compare.csv`
+
+## 这份快照故意没有保留什么
+
+为了避免历史噪音和超大体积，这里没有同步：
+
+- 全量 `runs/` 历史产物
+- `third_party/`
+- `docs/analysis/`
+- `docs/progress/`
+- `docs/review/`
+- 其他历史审计、草稿和冻结前提示材料
+
+## 基础命令
+
+环境激活：
 
 ```bash
-# 1. 安装基础依赖（DashScope 用于高质量 embedding；不设置 key 时使用本地 fallback）
-pip install langgraph langchain-core langchain-openai dashscope numpy
-
-# 2A. 选择本地 Transformers 后端（默认 /data/models/Qwen3-8B）
-pip install transformers torch accelerate
-export CHAT_BACKEND=transformers
-export CHAT_MODEL=qwen3-8b
-export LOCAL_MODEL_PATH=/data/models/Qwen3-8B
-export LOCAL_MODEL_DEVICE=cuda:0
-
-# 2B. 或选择 OpenAI 兼容后端（默认 DeepSeek 配置）
-# export CHAT_BACKEND=openai
-# export CHAT_API_KEY="your-chat-api-key"
-# export CHAT_BASE_URL="https://api.deepseek.com"
-# export CHAT_MODEL="deepseek-chat"
-
-# 可选：启用 DashScope text-embedding-v4；不设置则使用 LocalHashEmbeddings
-# export DASHSCOPE_API_KEY="your-dashscope-key"
-
-# 3. 运行 demo
-cd /data/mingwei/SynapseX
-python run_demo.py
+source deploy/activate_statebus_host.sh
 ```
 
-## 架构图
+基础验证：
 
-```
-Task A:
-  query → [planner] ──Send──→ [retriever_1 ∥ retriever_2 ∥ retriever_3]
-                                    │              │              │
-                                    └──────────────┴──────────────┘
-                                                    │ (operator.add)
-                                              [executor] → [summarizer] → output
-                                                    │              │
-                                                 Store           Store
-                                               (analysis)     (summaries)
-
-Task B (shares same Store):
-  query → [planner] ←──reads── Store(summaries from A)
-              │
-              └──→ [retriever(s)] → [executor] → [summarizer] → output
+```bash
+python -m pytest -q
+python -m runtime.smoke
 ```
 
-## 文件结构
+benchmark 主入口：
 
+```bash
+python -m eval.runner
 ```
-├── src/                    # 核心代码
-│   ├── agents.py           # 4 个 Agent 实现（planner/retriever/executor/summarizer）
-│   ├── config.py           # 配置常量（模型路径、环境变量）
-│   ├── graph.py            # StateGraph 定义（节点、边、Send fan-out）
-│   ├── memory.py           # InMemoryStore + JSONL 持久化共享记忆
-│   ├── models.py           # Chat 后端封装（OpenAI 兼容接口 / Transformers）
-│   ├── metrics.py          # 性能度量工具
-│   └── protocol.py         # 结构化通信协议（AgentMessage、ContextPacket）
-├── run_demo.py             # 主运行脚本（2 组关联任务）
-├── run_12rounds.py         # 12 轮实验脚本（TEXT vs STRUCTURED 对比）
-├── run_structured_only.py  # 仅 STRUCTURED 模式测试
-├── docs/                   # 项目文档
-│   └── openos/             # 详细技术文档
-├── langgraph/              # LangGraph 框架（git submodule）
-└── README.md               # 本文件
-```
-
-## 关键 LangGraph 特性使用
-
-- **StateGraph**: `graph.py` — TypedDict 状态 + `add_node` / `add_edge`
-- **Send**: `graph.py` — `fan_out_retrieval()` 动态并行派发
-- **Channel**: 自动 — `operator.add` reducer 实现文档累积
-- **InMemoryStore + JSONL 持久化**: `memory.py` — 跨任务共享记忆、语义搜索、进程重启后加载历史记忆
-- **BaseStore 注入**: `agents.py` — 节点函数签名 `store: BaseStore` 自动注入
