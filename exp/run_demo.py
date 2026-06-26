@@ -3,7 +3,7 @@
 
 Demonstrates 6 requirements using LangGraph with OpenAI-compatible or local Transformers chat backends:
 
-1. 3+ Agents: planner, retriever (parallel), executor, summarizer
+1. 3+ Agents: planner, researcher (parallel), analyst, executor, summarizer
 2. Structured communication: AgentMessage protocol with action types
 3. Non-text state: ContextPacket compression, embedding vectors, and optional hidden state transfer
 4. Shared memory: InMemoryStore with semantic search
@@ -56,16 +56,22 @@ def run_task_group(graph, store, task_group: str, query: str, mode: str = "text"
     print(f"    Plan: {result.get('plan', 'N/A')[:120]}...")
     print(f"    Sub-queries: {result.get('sub_queries', [])}")
 
-    print(f"\n  [Retrievers] (parallel fan-out)")
+    print(f"\n  [Researchers] (parallel fan-out)")
     docs = result.get("documents", [])
-    print(f"    Retrieved {len(docs)} document(s)")
+    print(f"    Generated {len(docs)} research document(s)")
     for i, doc in enumerate(docs[:2]):
         print(f"    Doc {i+1}: {doc[:80]}...")
 
-    print(f"\n  [Executor]")
+    print(f"\n  [Analyst]")
     print(f"    Analysis: {result.get('analysis', 'N/A')[:120]}...")
     evidence = result.get("evidence", [])
     print(f"    Evidence: {len(evidence)} item(s)")
+
+
+    print(f"\n  [Executor]")
+    execution_result = result.get("execution_result", {})
+    print(f"    CodeAct OK: {execution_result.get('ok', False)}")
+    print(f"    Metrics: {execution_result.get('metrics', {})}")
 
     print(f"\n  [Summarizer]")
     print(f"    Summary: {result.get('summary', 'N/A')[:120]}...")
@@ -257,7 +263,7 @@ def main():
     print(f"{'='*70}")
     print("""
   Protocol: A2A-inspired AgentMessage
-  - ActionType enum: plan, retrieve, analyze, summarize, query_memory, store_memory
+  - ActionType enum: plan, research, analyze, execute, summarize, query_memory, store_memory
   - AgentMessage: {msg_id, timestamp, source, target, action, params, result, embedding}
   - AgentCard: {name, description, actions, input_schema, output_schema}
   - AgentRegistry: capability discovery via discover(action)
@@ -270,7 +276,8 @@ def main():
     Agent → LLM → code wraps into AgentMessage → state.messages → next Agent
     + action type: what to do (ActionType enum)
     + structured params/result: key-value dicts (not free text)
-    + embedding: retriever → executor via embedding_payloads field
+    + embedding: researcher → analyst via embedding_payloads field
+    + CodeAct: analyst → executor via execution_result field
     + Store reference: large text stored, only key passed in message
     """)
 

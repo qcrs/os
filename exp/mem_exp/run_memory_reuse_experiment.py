@@ -121,7 +121,7 @@ def seed_memories(store: Any) -> list[MemoryWrite]:
             },
             {
                 "memory_type": "document",
-                "source_agent": "retriever",
+                "source_agent": "researcher",
                 "task_group": "A_memory_schema",
                 "task_topic": task_topic,
                 "summary": "MemoryUnit 必备元数据字段与证据链引用格式。",
@@ -144,7 +144,7 @@ def seed_memories(store: Any) -> list[MemoryWrite]:
             },
             {
                 "memory_type": "document",
-                "source_agent": "retriever",
+                "source_agent": "researcher",
                 "task_group": "A_memory_schema",
                 "task_topic": task_topic,
                 "summary": "语义、关键词、标签和混合检索支持后续 Agent 复用记忆。",
@@ -183,7 +183,7 @@ def seed_memories(store: Any) -> list[MemoryWrite]:
             },
             {
                 "memory_type": "analysis",
-                "source_agent": "executor",
+                "source_agent": "analyst",
                 "task_group": "A_memory_schema",
                 "task_topic": task_topic,
                 "summary": "结论：统一 MemoryUnit 元数据完整，后续任务应先检索摘要再复用证据链。",
@@ -275,7 +275,7 @@ def seed_memories(store: Any) -> list[MemoryWrite]:
             },
             {
                 "memory_type": "document",
-                "source_agent": "retriever",
+                "source_agent": "researcher",
                 "task_group": "distractor_vector_db",
                 "task_topic": "Vector database benchmark",
                 "summary": "向量数据库性能干扰文档。",
@@ -294,7 +294,7 @@ def seed_memories(store: Any) -> list[MemoryWrite]:
             },
             {
                 "memory_type": "analysis",
-                "source_agent": "executor",
+                "source_agent": "analyst",
                 "task_group": "distractor_scheduling",
                 "task_topic": "Graph scheduling",
                 "summary": "图调度分析干扰项。",

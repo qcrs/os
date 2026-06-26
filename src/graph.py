@@ -1,7 +1,7 @@
 """StateGraph definition for the multi-agent research system.
 
 Architecture:
-  planner → [retriever_1 ∥ retriever_2 ∥ retriever_3] → executor → summarizer
+  planner → [researcher_1 ∥ researcher_2 ∥ researcher_3] → analyst → executor → summarizer
 
 Supports two communication modes:
   - "text": natural language passthrough (original behavior)
@@ -15,7 +15,7 @@ from typing import Annotated, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from agents import executor, planner, retriever, summarizer
+from agent import analyst, executor, planner, researcher, summarizer
 from memory import create_store
 
 
@@ -39,7 +39,7 @@ class ResearchState(TypedDict, total=False):
     planner_hidden_state: dict
     planner_hidden_state_summary: dict
 
-    # Retriever output (accumulates via operator.add)
+    # Researcher output (accumulates via operator.add)
     documents: Annotated[list[str], operator.add]
 
     # Structured mode: raw document metadata for non-text ranking when compression is disabled
@@ -48,11 +48,20 @@ class ResearchState(TypedDict, total=False):
     # Structured mode: compact context packets instead of full document passthrough
     context_packets: Annotated[list[dict], operator.add]
 
-    # Executor output
+    # Analyst output
     analysis: str
+    analysis_digest: str
+    candidate_answers: dict[str, str]
     evidence: list[dict]
     selected_context_packets: list[dict]
     hidden_guidance: dict
+
+    # Executor output
+    execution_code: str
+    execution_result: dict
+    execution_summary: str
+    final_answer: str
+    extracted_answers: dict[str, str]
 
     # Summarizer output
     summary: str
@@ -61,20 +70,20 @@ class ResearchState(TypedDict, total=False):
     # Structured mode: AgentMessage stream (accumulates via operator.add)
     messages: Annotated[list[dict], operator.add]
 
-    # Structured mode: non-text embedding transfer (retriever → executor)
-    # Each payload is {doc_key, vector, dims}; reducer accumulates parallel retrievers.
+    # Structured mode: non-text embedding transfer (researcher → analyst)
+    # Each payload is {doc_key, vector, dims}; reducer accumulates parallel researchers.
     embedding_payloads: Annotated[list[dict], operator.add]
 
-    # Structured mode: non-text hidden-state transfer (retriever → executor)
+    # Structured mode: non-text hidden-state transfer (researcher → analyst)
     # Each payload is {ref_id, doc_key, source_agent, scope, hidden_state}.
     hidden_state_payloads: Annotated[list[dict], operator.add]
 
 
-# ─── Fan-out function for parallel retrieval ───
+# ─── Fan-out function for parallel research ───
 
 
-def fan_out_retrieval(state: ResearchState) -> list[Send]:
-    """Dynamic fan-out: dispatch each sub-query to a parallel retriever.
+def fan_out_research(state: ResearchState) -> list[Send]:
+    """Dynamic fan-out: dispatch each sub-query to a parallel researcher.
 
     Uses Send (LangGraph primitive) for structured communication —
     each Send packet carries a typed dict, not free-form text.
@@ -85,7 +94,7 @@ def fan_out_retrieval(state: ResearchState) -> list[Send]:
     planner_hidden_state = state.get("planner_hidden_state")
 
     return [
-        Send("retriever", {
+        Send("researcher", {
             "sub_query": sq,
             "task_group": task_group,
             "mode": mode,
@@ -93,6 +102,10 @@ def fan_out_retrieval(state: ResearchState) -> list[Send]:
         })
         for sq in sub_queries
     ]
+
+
+# Backward-compatible name for older docs/scripts that import it directly.
+fan_out_retrieval = fan_out_research
 
 
 # ─── Build the graph ───
@@ -111,22 +124,24 @@ def build_graph(mode: str = "text"):
 
     builder = StateGraph(ResearchState)
 
-    # Add 4 agent nodes
+    # Add 5 agent nodes
     builder.add_node("planner", planner)
-    builder.add_node("retriever", retriever)
+    builder.add_node("researcher", researcher)
+    builder.add_node("analyst", analyst)
     builder.add_node("executor", executor)
     builder.add_node("summarizer", summarizer)
 
     # Wire the graph
     builder.add_edge(START, "planner")
 
-    # Planner → parallel retrievers (via Send fan-out)
-    builder.add_conditional_edges("planner", fan_out_retrieval, ["retriever"])
+    # Planner → parallel researchers (via Send fan-out)
+    builder.add_conditional_edges("planner", fan_out_research, ["researcher"])
 
-    # All retrievers → executor (fan-in via Annotated[list, operator.add])
-    builder.add_edge("retriever", "executor")
+    # All researchers → analyst (fan-in via Annotated[list, operator.add])
+    builder.add_edge("researcher", "analyst")
 
-    # Executor → summarizer → END
+    # Analyst → executor → summarizer → END
+    builder.add_edge("analyst", "executor")
     builder.add_edge("executor", "summarizer")
     builder.add_edge("summarizer", END)
 

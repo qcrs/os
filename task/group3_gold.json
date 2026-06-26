@@ -1,0 +1,84 @@
+{
+  "737": [
+    [
+      "mean_income",
+      "45.22"
+    ],
+    [
+      "std_dev_income",
+      "35.24"
+    ]
+  ],
+  "738": [
+    [
+      "is_normal",
+      "Not Normal"
+    ]
+  ],
+  "739": [
+    [
+      "correlation_coefficient",
+      "0.86"
+    ]
+  ],
+  "740": [
+    [
+      "outliers",
+      "1"
+    ]
+  ],
+  "741": [
+    [
+      "addedfeature",
+      "ratio"
+    ]
+  ],
+  "506": [
+    [
+      "average_reviews",
+      "1013.53"
+    ]
+  ],
+  "507": [
+    [
+      "total_hotels",
+      "46"
+    ]
+  ],
+  "508": [
+    [
+      "correlation_coefficient",
+      "0.176"
+    ]
+  ],
+  "513": [
+    [
+      "above4_correlation",
+      "-0.28"
+    ],
+    [
+      "below3_correlation",
+      "0.15"
+    ],
+    [
+      "between3and4_correlation",
+      "0.04"
+    ]
+  ],
+  "510": [
+    [
+      "brand_with_highest_average_star_rating",
+      "Preferred Hotels & Resorts"
+    ]
+  ],
+  "514": [
+    [
+      "lower_city_count",
+      "4"
+    ],
+    [
+      "higher_city_count",
+      "0"
+    ]
+  ]
+}

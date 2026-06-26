@@ -378,6 +378,7 @@ Retriever 的三类结构化载荷如下。
         "covered_terms": [...],
         "missing_terms": [...],
         "requires_full_doc_lookup": False,
+        "coverage_warning": False,
         "intent_alignment": 0.91,
     },
     "full_doc_ref": {
@@ -385,7 +386,19 @@ Retriever 的三类结构化载荷如下。
         "key": doc_key,
         "text_hash": "...",
     },
-    "verification": {...},
+    "verification": {
+        "reliable": True,
+        "full_doc_hash_matches": True,
+        "evidence_count": 4,
+        "valid_ref_count": 4,
+        "invalid_refs": [],
+        "query_coverage": 0.67,
+        "coverage_warning": False,
+        "covered_terms": [...],
+        "missing_terms": [...],
+        "requires_full_doc_lookup": False,
+        "reliability_basis": "structural",
+    },
     "score": 0.0,
 }
 ```
@@ -395,7 +408,8 @@ Retriever 的三类结构化载荷如下。
 - 不传完整文档，只传摘要、证据片段、引用和校验信息。
 - 完整文档保留在 Store 中，通过 `full_doc_ref.key` 回查。
 - `embedding_ref` 与 `hidden_state_ref` 只保存引用，不把向量或 hidden state 嵌入文本包。
-- `verification` 用于保证 evidence span 可以回溯到原始文档。
+- `verification` 只把结构可追溯性作为硬门控：证据 span 的 offset、文本和 hash 必须能回溯到 Store 中的原始文档。
+- `query_coverage` 仍会计算并写入 `coverage_warning`，但只作为诊断和排序弱信号，不再因为覆盖度低而强制回退到原文截取。
 
 #### 4.3.3 embedding_payload
 
@@ -532,16 +546,49 @@ else:
 }
 ```
 
-#### 4.5.2 校验与回补
+#### 4.5.2 压缩验证与回补
 
-代码位置：`src/agents.py:763`
+代码位置：`src/protocol.py:406`、`src/agents.py:763`
 
-`_verify_and_rehydrate_packets()` 会根据 `doc_key` 从 Store 取回完整文档，并调用 `verify_context_packet()` 检查：
+压缩验证被重新设计为“结构硬校验 + 覆盖度软诊断”。旧逻辑把 `query_coverage` 当作可靠性门控，导致 LLM 生成的短证据、同义改写或统计任务描述即使 offset/hash 正确，也会因为词面覆盖不足被全部判定不可靠，进而 100% rehydrate 到原文截取。新逻辑只在证据不可追溯时回补原文。
 
-- `full_doc_ref.text_hash` 是否匹配原文。
-- `evidence_spans` 的 `char_start` / `char_end` 是否有效。
-- evidence 文本 hash 是否能对应原文片段。
-- query coverage 是否足够。
+`_verify_and_rehydrate_packets()` 的处理顺序如下：
+
+1. 根据 `packet.doc_key` 从 Store 的 `NS_DOCS` 取回完整 `doc_text`。
+2. 如果 Store 中没有完整文档，标记 `reliable=False`、`requires_full_doc_lookup=True`、`reason="missing_full_document"`，并计入 `failed`。
+3. 如果文档存在，调用 `verify_context_packet(packet, doc_text, query_text=query_text)` 做结构校验。
+4. `verification.reliable=True` 时直接使用压缩证据，并计入 `context_packets_reliable`。
+5. 只有 `verification.reliable=False` 且 Store 有原文时，才调用 `_rehydrate_packet_from_store()` 追加有限长度 fallback evidence，并计入 `context_packets_rehydrated`。
+
+`verify_context_packet()` 的硬校验项：
+
+| 校验项 | 通过条件 | 失败原因 |
+|--------|----------|----------|
+| 完整文档 hash | `full_doc_ref.text_hash == hash(doc_text)` | `full_doc_hash_matches=False` |
+| span 范围 | `char_start` / `char_end` 存在、非负、递增且不越界 | `invalid_range` / `range_out_of_bounds` |
+| span 文本 | `doc_text[char_start:char_end]` 规范化后等于 `evidence.text` | `text_or_hash_mismatch` |
+| span hash | 如果 `source_ref.text_hash` 存在，则必须等于原文片段 hash | `text_or_hash_mismatch` |
+| summary-only 包 | 没有 evidence 时，允许非空 `summary` + 完整文档 hash 匹配 | `reliability_basis="structural"` |
+
+可靠性判定：
+
+```python
+has_evidence = bool(evidence_spans)
+all_refs_valid = has_evidence and valid_ref_count == len(evidence_spans) and not invalid_refs
+summary_only_valid = not has_evidence and bool(summary_text) and full_doc_hash_matches
+structural_valid = all_refs_valid or summary_only_valid
+coverage_warning = query_coverage < min_query_coverage
+reliable = structural_valid
+requires_full_doc_lookup = not reliable
+```
+
+关键点：
+
+- `query_coverage` 仍由 `_query_coverage()` 计算，返回 `covered_terms`、`missing_terms` 和覆盖率。
+- `coverage_warning=True` 只说明词面覆盖偏低，不代表压缩证据不可用。
+- `query_coverage` 仍作为 `select_context_packets()` 的低权重排序信号，但不会触发 rehydrate。
+- `requires_full_doc_lookup` 现在只由结构可靠性决定，即 `not reliable`。
+- 这让压缩文本对 LLM 生成文本、统计描述、同义表达更宽容，同时保留 offset/hash 级别的可追溯安全边界。
 
 如果 packet 不可靠但完整文档存在，则 `_rehydrate_packet_from_store()` 会追加一个有限长度的 fallback evidence：
 
@@ -549,12 +596,19 @@ else:
 {
     "span_id": "rehydrated_full_doc_head",
     "text": fallback_text,
-    "source_ref": {...},
+    "score": 0.0,
+    "matched_terms": [],
+    "source_ref": {
+        "doc_key": packet.get("doc_key"),
+        "char_start": 0,
+        "char_end": len(fallback_source),
+        "text_hash": hash_text(fallback_text),
+    },
     "retrieval_method": "store_rehydration",
 }
 ```
 
-这样既避免全文无条件透传，又保证压缩证据不足时仍有安全回补路径。
+这样既避免全文无条件透传，又保证压缩证据的 offset/hash 不可信时仍有安全回补路径。
 
 #### 4.5.3 Prompt 渲染
 
@@ -742,11 +796,11 @@ summarizer
 - `summary`：压缩摘要。
 - `evidence_spans`：和子查询相关的证据片段。
 - `tags`：关键词标签。
-- `retrieval_diagnostics`：覆盖度、缺失词、是否需要全文回查。
+- `retrieval_diagnostics`：覆盖度、缺失词、coverage warning 和是否需要全文回查。
 - `full_doc_ref`：完整原文引用。
 - `verification`：证据可靠性检查结果。
 
-Executor 最终只把选中 evidence 渲染进 prompt，而不是传完整文档。
+Executor 最终只把选中 evidence 渲染进 prompt，而不是传完整文档。压缩验证不再要求证据片段词面覆盖所有 query terms；覆盖度只影响诊断和排序，不影响结构可靠性。
 
 ### 8.4 非文本状态传递
 
@@ -768,7 +822,12 @@ Embedding 和 hidden state 不作为自然语言拼接，而是作为结构化 p
 - `char_start` / `char_end`
 - `verification`
 
-Executor 在使用前会从 Store 取回完整文档进行校验。若压缩证据不足，则用 Store 中原文生成有限长度 fallback evidence。
+Executor 在使用前会从 Store 取回完整文档进行校验。当前可靠性边界是“证据可追溯到原文”，而不是“证据词面覆盖查询”。因此：
+
+- offset/hash/text 全部对齐时，packet 被视为 `reliable=True`。
+- `query_coverage` 低时只设置 `coverage_warning=True`，不会触发全文回补。
+- Store 缺失原文、span 越界、文本或 hash 不匹配时，才视为不可可靠。
+- 不可靠但 Store 有原文时，用 Store 中原文生成有限长度 fallback evidence。
 
 ### 8.6 可回退设计
 

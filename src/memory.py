@@ -34,8 +34,9 @@ MAX_MEMORY_SUMMARY_CHARS = 360
 MAX_MEMORY_TAGS = 12
 NAMESPACE_MEMORY_DEFAULTS = {
     ("plans",): ("plan", "planner"),
-    ("docs",): ("document", "retriever"),
-    ("analysis",): ("analysis", "executor"),
+    ("docs",): ("document", "researcher"),
+    ("analysis",): ("analysis", "analyst"),
+    ("executions",): ("execution", "executor"),
     ("summaries",): ("summary", "summarizer"),
 }
 

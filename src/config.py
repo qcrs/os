@@ -55,6 +55,7 @@ PERSISTENT_MEMORY_PATH = os.getenv(
 NS_PLANS = ("plans",)
 NS_DOCS = ("docs",)
 NS_ANALYSIS = ("analysis",)
+NS_EXECUTIONS = ("executions",)
 NS_SUMMARIES = ("summaries",)
 
 # Task group IDs

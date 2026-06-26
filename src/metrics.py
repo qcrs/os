@@ -252,9 +252,9 @@ class Metrics:
             "hidden_state_payloads_sent": self.counters.get("hidden_state_payloads_sent", 0),
             "hidden_state_payloads_received": self.counters.get("hidden_state_payloads_received", 0),
             "hidden_state_produced_planner": self.counters.get("hidden_state_produced_planner", 0),
-            "hidden_state_produced_retriever": self.counters.get("hidden_state_produced_retriever", 0),
-            "hidden_state_used_executor_context_ranking": self.counters.get(
-                "hidden_state_used_executor_context_ranking", 0
+            "hidden_state_produced_researcher": self.counters.get("hidden_state_produced_researcher", 0),
+            "hidden_state_used_analyst_context_ranking": self.counters.get(
+                "hidden_state_used_analyst_context_ranking", 0
             ),
             "hidden_state_used_summarizer_guidance": self.counters.get(
                 "hidden_state_used_summarizer_guidance", 0

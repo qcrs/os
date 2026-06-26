@@ -1,0 +1,84 @@
+{
+  "scenario_id": "retail_replenishment_2026_01_01",
+  "units": {
+    "distance": "km",
+    "weight": "kg",
+    "volume": "m3",
+    "money": "CNY",
+    "time_zone": "local"
+  },
+  "products": {
+    "P1": {"name": "rice_box", "unit_weight_kg": 2.0, "unit_volume_m3": 0.010, "unit_margin_cny": 30},
+    "P2": {"name": "tea_pack", "unit_weight_kg": 1.0, "unit_volume_m3": 0.006, "unit_margin_cny": 25},
+    "P3": {"name": "snack_bag", "unit_weight_kg": 0.5, "unit_volume_m3": 0.004, "unit_margin_cny": 18}
+  },
+  "warehouses": {
+    "North": {"inventory": {"P1": 130, "P2": 90, "P3": 80}},
+    "South": {"inventory": {"P1": 70, "P2": 140, "P3": 130}}
+  },
+  "stores": {
+    "S1": {"priority": 85, "deadline": "10:00", "demand": {"P1": 60, "P2": 50, "P3": 30}},
+    "S2": {"priority": 90, "deadline": "09:30", "demand": {"P1": 80, "P2": 70, "P3": 60}},
+    "S3": {"priority": 70, "deadline": "09:45", "demand": {"P1": 40, "P2": 90, "P3": 70}},
+    "S4": {"priority": 95, "deadline": "09:00", "demand": {"P1": 50, "P2": 40, "P3": 80}}
+  },
+  "warehouse_store_distance_km": {
+    "North": {"S1": 18, "S2": 22, "S3": 35, "S4": 42},
+    "South": {"S1": 40, "S2": 28, "S3": 16, "S4": 12}
+  },
+  "store_store_distance_km": {
+    "S1-S2": 10,
+    "S1-S3": 30,
+    "S1-S4": 36,
+    "S2-S3": 24,
+    "S2-S4": 26,
+    "S3-S4": 14
+  },
+  "vehicles": {
+    "V1": {"start": "North", "max_weight_kg": 500, "max_volume_m3": 3.0, "fixed_cost_cny": 80, "variable_cost_cny_per_km": 1.2, "planned_route": ["North", "S1", "S2", "North"]},
+    "V2": {"start": "South", "max_weight_kg": 450, "max_volume_m3": 2.5, "fixed_cost_cny": 80, "variable_cost_cny_per_km": 1.1, "planned_route": ["South", "S4", "S1", "South"]},
+    "V3": {"start": "South", "max_weight_kg": 300, "max_volume_m3": 2.0, "fixed_cost_cny": 60, "variable_cost_cny_per_km": 1.0, "planned_route": ["South", "S3", "South"]}
+  },
+  "operating_rules": {
+    "priority_order": "higher priority first; tie break by store id ascending",
+    "sku_processing_order": ["P1", "P2", "P3"],
+    "fulfillment_rule": "For each SKU independently, allocate total available inventory to stores by priority order until stock is exhausted.",
+    "source_rule": "For each store in priority order and for each SKU in sku_processing_order, source fulfilled units from the nearest warehouse with remaining SKU inventory; tie break by warehouse name ascending.",
+    "speed_kmph": 50,
+    "departure_time": "08:30",
+    "service_minutes_per_store": 15,
+    "sla_rule": "A store is on time only if all planned shipments to that store arrive no later than the store deadline.",
+    "late_penalty_cny_per_minute": 50,
+    "rounding": "Report money to 2 decimals, distances to 1 decimal when needed, minutes to 1 decimal when needed, and times as HH:MM:SS. Do not round intermediate inventory units."
+  },
+  "disruption": {
+    "id": "D1",
+    "description": "Road South-S4 is closed from 08:30 to 09:30.",
+    "affected_vehicle": "V2",
+    "no_mitigation_route": ["South", "S3", "S4", "S1", "South"],
+    "pass_through_stores_without_service": ["S3"]
+  },
+  "mitigation_options": {
+    "A_overtime_early_dispatch": {
+      "description": "Dispatch V2 at 08:10 and use the disruption detour route South-S3-S4-S1-South. S3 is pass-through only.",
+      "v2_departure_time": "08:10",
+      "v2_route": ["South", "S3", "S4", "S1", "South"],
+      "extra_cost_cny": 180
+    },
+    "B_charter_microvan": {
+      "description": "Use a charter microvan for South->S4 via an unaffected 20 km local road at 08:30; V2 only serves South->S1->South.",
+      "charter_capacity_weight_kg": 250,
+      "charter_capacity_volume_m3": 1.2,
+      "charter_route_km": 20,
+      "charter_fixed_cost_cny": 220,
+      "charter_variable_cost_cny_per_km": 2.0,
+      "v2_route": ["South", "S1", "South"]
+    },
+    "C_no_mitigation": {
+      "description": "Use the disruption detour route without early dispatch or charter support.",
+      "v2_departure_time": "08:30",
+      "v2_route": ["South", "S3", "S4", "S1", "South"]
+    }
+  }
+}
+

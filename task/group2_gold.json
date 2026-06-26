@@ -1,0 +1,112 @@
+{
+  "55": [
+    [
+      "mean_cases",
+      "2081990"
+    ]
+  ],
+  "58": [
+    [
+      "percentage_cases_min",
+      "36.45"
+    ],
+    [
+      "percentage_deaths_max",
+      "38.79"
+    ]
+  ],
+  "56": [
+    [
+      "max_deaths_country",
+      "Nigeria"
+    ],
+    [
+      "max_deaths_year",
+      "2010"
+    ]
+  ],
+  "57": [
+    [
+      "correlation_coefficient",
+      "0.97"
+    ]
+  ],
+  "59": [
+    [
+      "country_name",
+      "Congo"
+    ]
+  ],
+  "62": [
+    [
+      "mean_no_of_deaths_with_outliers",
+      "10149.43"
+    ],
+    [
+      "mean_no_of_deaths_without_outliers",
+      "5949.08"
+    ]
+  ],
+  "446": [
+    [
+      "mean_windspeed",
+      "5.979"
+    ]
+  ],
+  "450": [
+    [
+      "monthly_avg_windspeed",
+      "{'month_1': 7.17, 'month_2': 6.53, 'month_3': 5.9, 'month_4': 6.69, 'month_5': 5.43, 'month_6': 5.82, 'month_7': 5.13, 'month_8': 5.72, 'month_9': 5.69, 'month_10': 6.57, 'month_11': 5.79, 'month_12': 5.52}"
+    ]
+  ],
+  "449": [
+    [
+      "normal_distribution",
+      "no"
+    ]
+  ],
+  "451": [
+    [
+      "missing_values_per_column",
+      "{'DATE TIME': 0, 'WINDSPEED': 594, 'DIR': 0, 'GUSTS': 594, 'AT': 590, 'BARO': 594, 'RELHUM': 8736, 'VIS': 8736}"
+    ]
+  ],
+  "447": [
+    [
+      "number_of_outliers",
+      "111"
+    ]
+  ],
+  "452": [
+    [
+      "relationship_type",
+      "none"
+    ],
+    [
+      "p_value",
+      "0.6756"
+    ],
+    [
+      "correlation_coefficient",
+      "-0.08"
+    ]
+  ],
+  "453": [
+    [
+      "mean_wind_pre",
+      "5.98"
+    ],
+    [
+      "mean_atmos_temp_pre",
+      "52.47"
+    ],
+    [
+      "mean_atmos_temp_post",
+      "52.47"
+    ],
+    [
+      "mean_wind_post",
+      "5.85"
+    ]
+  ]
+}

@@ -30,8 +30,10 @@ DEFAULT_HIDDEN_STATE_TOP_K = 2
 class ActionType(str, Enum):
     """Action types for inter-agent communication."""
     PLAN = "plan"
+    RESEARCH = "research"
     RETRIEVE = "retrieve"
     ANALYZE = "analyze"
+    EXECUTE = "execute"
     SUMMARIZE = "summarize"
     QUERY_MEMORY = "query_memory"
     STORE_MEMORY = "store_memory"
@@ -114,7 +116,7 @@ def make_message(
 
 
 def make_document_key(task_group: str, sub_query: str, doc_text: str) -> str:
-    """Create a stable Store key for a retrieved document."""
+    """Create a stable Store key for generated research material."""
     digest = hashlib.sha256()
     digest.update(_normalize_text(task_group).encode("utf-8"))
     digest.update(b"\0")
@@ -196,6 +198,12 @@ def build_context_packet(
         packet["compressed_chars"] / max(len(doc_text), 1), 4
     )
     packet["verification"] = verify_context_packet(packet, doc_text, query_text=sub_query)
+    packet["retrieval_diagnostics"]["requires_full_doc_lookup"] = packet["verification"][
+        "requires_full_doc_lookup"
+    ]
+    packet["retrieval_diagnostics"]["coverage_warning"] = packet["verification"][
+        "coverage_warning"
+    ]
     return packet
 
 
@@ -209,7 +217,7 @@ def select_context_packets(
     planner_hidden_state: dict | None = None,
     top_k: int = DEFAULT_CONTEXT_TOP_K,
 ) -> list[dict]:
-    """Select the most relevant compact packets for an executor prompt.
+    """Select the most relevant compact packets for an analyst prompt.
 
     Hidden vectors arrive through the independent hidden_state_payloads channel
     and are associated to packets by doc_key/ref_id. This keeps hidden-state
@@ -285,7 +293,7 @@ def select_document_payloads(
     """Select raw documents with non-text signals when compression is disabled.
 
     Embedding transfer and hidden-state transfer stay independent from context
-    packet compression: if compact packets are disabled, Executor can still rank
+    packet compression: if compact packets are disabled, the analyst can still rank
     full documents before constructing its prompt.
     """
     candidates = []
@@ -404,11 +412,19 @@ def verify_context_packet(
     query_text: str | None = None,
     min_query_coverage: float = DEFAULT_MIN_QUERY_COVERAGE,
 ) -> dict:
-    """Verify compact evidence against the full document text."""
+    """Verify compact evidence against the full document text.
+
+    Exact offsets and hashes must still line up with the stored document.
+    Query overlap is treated as a soft diagnostic so short answer-style packets
+    are not forced back into full-document fallback when the compression is
+    otherwise structurally correct.
+    """
     evidence_spans = packet.get("evidence_spans", []) or []
     invalid_refs = []
     valid_ref_count = 0
     full_text_hash = _hash_text(doc_text)
+    full_doc_hash_matches = packet.get("full_doc_ref", {}).get("text_hash") == full_text_hash
+    summary_text = _normalize_text(packet.get("summary", ""))
 
     for evidence in evidence_spans:
         source_ref = evidence.get("source_ref", {}) or {}
@@ -444,20 +460,25 @@ def verify_context_packet(
         evidence_spans=evidence_spans,
         summary=packet.get("summary", ""),
     )
-    all_refs_valid = valid_ref_count == len(evidence_spans) and not invalid_refs
     has_evidence = bool(evidence_spans)
-    reliable = all_refs_valid and has_evidence and query_coverage >= min_query_coverage
+    all_refs_valid = has_evidence and valid_ref_count == len(evidence_spans) and not invalid_refs
+    summary_only_valid = not has_evidence and bool(summary_text) and full_doc_hash_matches
+    structural_valid = all_refs_valid or summary_only_valid
+    coverage_warning = query_coverage < min_query_coverage
+    reliable = structural_valid
 
     return {
         "reliable": reliable,
-        "full_doc_hash_matches": packet.get("full_doc_ref", {}).get("text_hash") == full_text_hash,
+        "full_doc_hash_matches": full_doc_hash_matches,
         "evidence_count": len(evidence_spans),
         "valid_ref_count": valid_ref_count,
         "invalid_refs": invalid_refs,
         "query_coverage": query_coverage,
+        "coverage_warning": coverage_warning,
         "covered_terms": covered_terms,
         "missing_terms": missing_terms,
         "requires_full_doc_lookup": not reliable,
+        "reliability_basis": "structural" if reliable else "fallback",
     }
 
 
@@ -886,6 +907,11 @@ class AgentCard:
 class AgentRegistry:
     """Global agent capability registry — supports capability discovery."""
 
+    _ACTION_ALIASES = {
+        ActionType.RETRIEVE.value: ActionType.RESEARCH.value,
+    }
+    _NAME_ALIASES = {"retriever": "researcher"}
+
     def __init__(self):
         self._cards: dict[str, AgentCard] = {}
 
@@ -895,10 +921,12 @@ class AgentRegistry:
 
     def discover(self, action: str) -> list[AgentCard]:
         """Discover agents that support a given action."""
+        action = self._ACTION_ALIASES.get(action, action)
         return [c for c in self._cards.values() if action in c.actions]
 
     def get_card(self, name: str) -> AgentCard | None:
         """Get a specific agent's capability card."""
+        name = self._NAME_ALIASES.get(name, name)
         return self._cards.get(name)
 
     def list_all(self) -> list[AgentCard]:
@@ -938,9 +966,9 @@ def create_default_registry() -> AgentRegistry:
     ))
 
     registry.register(AgentCard(
-        name="retriever",
-        description="Retrieves documents and emits compact context packets",
-        actions=[ActionType.RETRIEVE.value],
+        name="researcher",
+        description="Generates source material and emits compact context packets",
+        actions=[ActionType.RESEARCH.value],
         input_schema={"sub_query": "str", "task_group": "str"},
         output_schema={
             "doc_key": "str",
@@ -953,7 +981,7 @@ def create_default_registry() -> AgentRegistry:
     ))
 
     registry.register(AgentCard(
-        name="executor",
+        name="analyst",
         description="Selects compact context packets and produces structured analysis",
         actions=[ActionType.ANALYZE.value],
         input_schema={
@@ -965,6 +993,7 @@ def create_default_registry() -> AgentRegistry:
         output_schema={
             "analysis": "str",
             "analysis_digest": "str",
+            "candidate_answers": "dict[str, str]",
             "evidence": "list[dict]",
         },
         supports_embedding=True,
@@ -972,10 +1001,35 @@ def create_default_registry() -> AgentRegistry:
     ))
 
     registry.register(AgentCard(
+        name="executor",
+        description="Runs a bounded CodeAct step and emits machine-evaluation answers",
+        actions=[ActionType.EXECUTE.value],
+        input_schema={
+            "analysis": "str",
+            "evidence": "list[dict]",
+            "selected_context_packets": "list[dict]",
+        },
+        output_schema={
+            "execution_code": "str",
+            "execution_result": "dict",
+            "execution_summary": "str",
+            "final_answer": "str",
+            "extracted_answers": "dict[str, str]",
+        },
+        supports_embedding=False,
+        supports_hidden_state=True,
+    ))
+
+    registry.register(AgentCard(
         name="summarizer",
         description="Produces final summary with key findings",
         actions=[ActionType.SUMMARIZE.value],
-        input_schema={"analysis": "str", "evidence": "list[dict]"},
+        input_schema={
+            "analysis": "str",
+            "evidence": "list[dict]",
+            "execution_result": "dict",
+            "execution_summary": "str",
+        },
         output_schema={"summary": "str", "key_findings": "list[str]"},
         supports_embedding=False,
         supports_hidden_state=True,
