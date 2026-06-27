@@ -35,3 +35,33 @@ class BenchmarkRunReport:
     def eligible_for_headline(self) -> bool:
         return self.quality_floor.quality_floor_pass
 
+
+@dataclass(frozen=True)
+class BenchmarkCaseReport:
+    task_id: str
+    task_family: str
+    quality_floor: QualityFloorResult
+    replay_class: str
+    telemetry_event_count: int
+    output_artifact_hash: str
+    output_artifact_path: str
+    workspace_root: str
+    metrics: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def eligible_for_headline(self) -> bool:
+        return self.quality_floor.quality_floor_pass
+
+
+@dataclass(frozen=True)
+class BenchmarkFamilyReport:
+    suite_id: str
+    layer: BenchmarkLayer
+    task_family: str
+    cases: tuple[BenchmarkCaseReport, ...]
+    aggregated_metrics: dict[str, float] = field(default_factory=dict)
+    report_path: str = ""
+
+    @property
+    def eligible_for_headline(self) -> bool:
+        return bool(self.cases) and all(case.eligible_for_headline for case in self.cases)

@@ -128,6 +128,27 @@ class ControlPlaneLoopbackServer:
                 )
             ]
 
+        required_errors: list[str] = []
+        if not getattr(message, "workspace_root", "").strip():
+            required_errors.append("workspace_root_missing")
+        if not getattr(message, "input_manifest_hash", "").strip():
+            required_errors.append("input_manifest_hash_missing")
+        if not getattr(message, "output_contract_version", "").strip():
+            required_errors.append("output_contract_version_missing")
+        if not tuple(getattr(message, "state_refs", ())):
+            required_errors.append("state_refs_missing")
+        if not tuple(getattr(message, "artifact_refs", ())):
+            required_errors.append("artifact_refs_missing")
+        if required_errors:
+            return [
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="invalid_exec_request",
+                    error_detail=",".join(required_errors),
+                    failed_at_ns=0,
+                )
+            ]
+
         state_refs = tuple(getattr(message, "state_refs", ()))
         artifact_refs = tuple(getattr(message, "artifact_refs", ()))
         return [
