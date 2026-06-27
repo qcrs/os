@@ -78,9 +78,12 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     )
     assert len(suite_report.layer_reports) == 4
     assert suite_report.layer_reports[0].layer.value == "L0"
-    assert suite_report.layer_reports[0].missing_reason == "layer_scaffold_not_executed_yet"
-    assert suite_report.layer_reports[2].missing_reason == "layer_scaffold_not_executed_yet"
+    assert suite_report.layer_reports[0].missing_reason == ""
+    assert suite_report.layer_reports[1].profile.structured_control_enabled is True
+    assert suite_report.layer_reports[2].profile.semantic_pruning_enabled is True
     assert suite_report.layer_reports[3].eligible_for_headline is True
+    assert suite_report.layer_reports[0].cases[0].replay_class == "assist"
+    assert suite_report.waterfall_metrics["L2_semantic_state_transfer_count"] == 2.0
 
     payload = json.loads(Path(suite_report.report_path).read_text(encoding="utf-8"))
     assert payload["suite_id"] == "suite-sample-test"

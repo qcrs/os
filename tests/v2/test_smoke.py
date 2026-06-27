@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from v2.runtime.smoke import run_smoke
+from v2.runtime.smoke import SmokeLayerConfig, run_smoke
 
 
 def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
@@ -37,3 +37,21 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     output_payload = json.loads(Path(result.output_artifact_path).read_text(encoding="utf-8"))
     assert output_payload["task_id"] == "smoke-task"
     assert output_payload["summary_text"].endswith("summary ready")
+
+
+def test_v2_smoke_l0_layer_disables_semantic_state_and_replay(tmp_path: Path) -> None:
+    result = run_smoke(
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        layer_config=SmokeLayerConfig(
+            layer_name="L0",
+            structured_control_enabled=False,
+            semantic_pruning_enabled=False,
+            replay_enabled=False,
+        ),
+    )
+    assert result.replay_class == "assist"
+    assert result.task_metrics["semantic_state_transfer_count"] == 0.0
+    assert result.task_metrics["artifact_reuse_count"] == 0.0
+    assert result.lineage_view.semantic_state_ids == ()
