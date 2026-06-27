@@ -32,6 +32,7 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert Path(result.telemetry_path).exists()
     assert result.session_state == "GC_DONE"
     assert result.task_metrics["heartbeat_count"] == 1.0
+    assert result.lineage_view.verified_artifact_ids == ("artifact-smoke",)
 
     output_payload = json.loads(Path(result.output_artifact_path).read_text(encoding="utf-8"))
     assert output_payload["task_id"] == "smoke-task"

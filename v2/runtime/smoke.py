@@ -36,9 +36,11 @@ from v2.runtime import (
     ReplayPolicy,
     RuntimeSupervisor,
     TaskCompiler,
+    TaskLineageView,
     TelemetryEmitter,
     TelemetryEvent,
     WorkspaceManager,
+    build_task_lineage_view,
 )
 from v2.state import JsonContractStore, RefRegistryQuery
 from v2.utils import sha256_digest
@@ -68,6 +70,7 @@ class SmokeResult:
     telemetry_path: str
     task_metrics: dict[str, float]
     session_state: str
+    lineage_view: TaskLineageView
     telemetry_event_count: int
 
 
@@ -433,12 +436,19 @@ def run_smoke(
                     + len(materialized_outputs.files)
                     + 4
                 ),
+                "candidate_artifact_count": 0.0,
+                "verified_artifact_count": 1.0,
                 **registry_summary,
             },
         )
     )
     task_metrics = telemetry.summarize_task(task_id)
     session_snapshot = supervisor.snapshot("step-execute")
+    lineage_view = build_task_lineage_view(
+        task_id=task_id,
+        semantic_states=[semantic_ref],
+        artifacts=list(artifacts.artifacts.values()),
+    )
     telemetry_path = layout.logs_dir / "telemetry.json"
     telemetry_path.write_text(
         json.dumps(
@@ -489,6 +499,7 @@ def run_smoke(
         telemetry_path=str(telemetry_path),
         task_metrics=task_metrics,
         session_state=session_snapshot.state,
+        lineage_view=lineage_view,
         telemetry_event_count=len(telemetry.events),
     )
 def main() -> None:
@@ -513,6 +524,7 @@ def main() -> None:
     print(f"output_artifact_hash={result.output_artifact_hash}")
     print(f"telemetry_path={result.telemetry_path}")
     print(f"session_state={result.session_state}")
+    print(f"lineage_verified_artifact_count={len(result.lineage_view.verified_artifact_ids)}")
     print(f"task_metric_keys={','.join(sorted(result.task_metrics.keys()))}")
     print(f"telemetry_event_count={result.telemetry_event_count}")
 
