@@ -1,0 +1,16 @@
+{
+  "task_id": "benchmark-sample-1",
+  "task_family": "financial_report_analysis",
+  "expected_artifact_type": "json",
+  "request_text": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "compare_metric",
+    "required_outputs": [
+      "summary_text"
+    ],
+    "arguments": {
+      "ticker": "ACME",
+      "quarter": "2026Q1"
+    }
+  }
+}

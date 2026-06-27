@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 import json
+from pathlib import Path
 
 from v2.control import (
     AckReceived,
@@ -15,7 +15,7 @@ from v2.control import (
     SuccessResult,
 )
 from v2.contracts import RuntimeCompatibilitySignature, StorageKind, TaskCompilerInput, TaskMode
-from v2.provenance import DeterministicFanInBuilder, EvidenceCandidate
+from v2.provenance import DeterministicFanInBuilder, EvidenceCandidate, manifest_to_dict
 from v2.refs import (
     ExecutionArtifactRef,
     HydrateManifest,
@@ -39,10 +39,12 @@ from v2.runtime import (
     WorkspaceManager,
 )
 from v2.state import JsonContractStore
+from v2.utils import sha256_digest
 
 
 @dataclass(frozen=True)
 class SmokeResult:
+    task_id: str
     compiler_status: str
     supervisor_state: str
     response_sequence: tuple[str, ...]
@@ -53,6 +55,15 @@ class SmokeResult:
     reloaded_pack_id: str
     reloaded_input_manifest_hash: str
     reloaded_artifact_manifest_hash: str
+    workspace_root: str
+    canonical_task_spec_path: str
+    input_manifest_path: str
+    artifact_manifest_path: str
+    evidence_pack_path: str
+    hydrate_manifest_path: str
+    output_artifact_path: str
+    output_artifact_hash: str
+    telemetry_path: str
     telemetry_event_count: int
 
 
@@ -78,8 +89,12 @@ def run_smoke(
     if compiler_result.canonical_task_spec is None:
         raise RuntimeError("smoke path requires compiled canonical task spec")
 
+    quarter = str(compiler_result.canonical_task_spec.arguments.get("quarter", "unknown"))
+    ticker = str(compiler_result.canonical_task_spec.arguments.get("ticker", "UNKNOWN"))
+    normalized_quarter = quarter.lower()
+
     locator = TextSpanLocator(
-        source_doc_hash="sha256:doc-acme-q1",
+        source_doc_hash=f"sha256:doc-{ticker.lower()}-{normalized_quarter}",
         canonical_text_id="chunk-1",
         start_char=0,
         end_char=42,
@@ -87,7 +102,7 @@ def run_smoke(
     )
     hydrate_manifest = HydrateManifest(
         manifest_id="manifest-smoke",
-        source_doc_hashes=("sha256:doc-acme-q1",),
+        source_doc_hashes=(f"sha256:doc-{ticker.lower()}-{normalized_quarter}",),
         entries=(
             HydrateManifestEntry(
                 row_idx=0,
@@ -101,13 +116,13 @@ def run_smoke(
     )
     evidence_pack = DeterministicFanInBuilder().build(
         pack_id="pack-smoke",
-        task_id="smoke-task",
+        task_id=task_id,
         text_candidates=[
             EvidenceCandidate(
                 item_id="ctx-1",
                 bucket="semantic_context",
                 locator=locator,
-                rendered_text="Revenue increased for ACME in 2026Q1.",
+                rendered_text=f"Revenue increased for {ticker} in {quarter}.",
                 source_name="semantic",
                 rank=1,
             )
@@ -121,21 +136,17 @@ def run_smoke(
         length=128,
         blob_hash="sha256:state-smoke",
         manifest_id=hydrate_manifest.manifest_hash,
-        source_doc_hashes=("sha256:doc-acme-q1",),
+        source_doc_hashes=(f"sha256:doc-{ticker.lower()}-{normalized_quarter}",),
     )
 
     workspace = WorkspaceManager(workspace_root)
-    layout = workspace.layout_for_task(task_id)
-    for directory in (
-        layout.root,
-        layout.inputs_dir,
-        layout.outputs_dir,
-        layout.logs_dir,
-        layout.tmp_dir,
-        layout.script_dir,
-        layout.manifest_dir,
-    ):
-        directory.mkdir(parents=True, exist_ok=True)
+    layout = workspace.ensure_layout(task_id)
+    materialized_task_spec = workspace.write_json(
+        layout,
+        "inputs/canonical_task_spec.json",
+        compiler_result.canonical_task_spec.canonical_payload(),
+        logical_name="canonical_task_spec",
+    )
 
     input_manifest = InputManifest(
         task_id=task_id,
@@ -152,6 +163,21 @@ def run_smoke(
         ),
     )
     artifacts = ArtifactLifecycleManager()
+    output_payload = {
+        "task_id": task_id,
+        "task_family": compiler_result.canonical_task_spec.task_family,
+        "intent_op": compiler_result.canonical_task_spec.intent_op,
+        "arguments": dict(sorted(compiler_result.canonical_task_spec.arguments.items())),
+        "summary_text": (
+            f"ACME {compiler_result.canonical_task_spec.arguments.get('quarter', 'unknown')} "
+            f"compare_metric summary ready"
+        ),
+        "evidence_pack_hash": evidence_pack.pack_hash,
+    }
+    output_rendered = (json.dumps(output_payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+    output_artifact_hash = sha256_digest(output_rendered)
     artifact_manifest = ArtifactOutputManifest(
         task_id=task_id,
         step_id="step-execute",
@@ -160,10 +186,26 @@ def run_smoke(
                 artifact_name="summary_json",
                 artifact_type="json",
                 relpath="outputs/result.json",
-                size_bytes=64,
-                sha256="sha256:artifact-smoke",
+                size_bytes=len(output_rendered),
+                sha256=output_artifact_hash,
             ),
         ),
+    )
+    materialized_inputs = workspace.materialize_input_bundle(
+        layout,
+        input_manifest,
+        payload_by_name={"canonical_evidence_pack": evidence_pack.canonical_payload()},
+    )
+    materialized_hydrate_manifest = workspace.write_json(
+        layout,
+        "inputs/hydrate_manifest.json",
+        manifest_to_dict(hydrate_manifest),
+        logical_name="hydrate_manifest",
+    )
+    materialized_outputs = workspace.materialize_output_bundle(
+        layout,
+        artifact_manifest,
+        payload_by_name={"summary_json": output_payload},
     )
     artifacts.register_candidate(
         ExecutionArtifactRef(
@@ -173,8 +215,8 @@ def run_smoke(
             artifact_type="json",
             root_id="workspace-root",
             relpath="outputs/result.json",
-            blob_hash="sha256:artifact-smoke",
-            size_bytes=64,
+            blob_hash=output_artifact_hash,
+            size_bytes=len(output_rendered),
             produced_by="executor",
             manifest_hash=artifact_manifest.manifest_hash,
         )
@@ -274,7 +316,11 @@ def run_smoke(
                     attempt_id="attempt-1",
                     event_type="STEP_COMPLETED",
                     role="executor",
-                    metrics={"control_bytes": float(len(loopback_message.header.trace_id)), "reuse_gain": 1.0},
+                    metrics={
+                        "control_bytes": float(len(loopback_message.header.trace_id)),
+                        "reuse_gain": 1.0,
+                        "output_bytes": float(len(output_rendered)),
+                    },
                 )
             )
 
@@ -318,11 +364,46 @@ def run_smoke(
             trace_id="trace-smoke",
             task_id=task_id,
             event_type="TASK_SUMMARY_METRICS",
-            metrics={"artifact_count": 1.0, "telemetry_events": 1.0},
+            metrics={
+                "artifact_count": 1.0,
+                "telemetry_events": 1.0,
+                "workspace_files": float(
+                    len(materialized_inputs.files)
+                    + len(materialized_outputs.files)
+                    + 4
+                ),
+            },
         )
+    )
+    telemetry_path = layout.logs_dir / "telemetry.json"
+    telemetry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": event.event_id,
+                    "trace_id": event.trace_id,
+                    "task_id": event.task_id,
+                    "step_id": event.step_id,
+                    "attempt_id": event.attempt_id,
+                    "event_type": event.event_type,
+                    "role": event.role,
+                    "severity": event.severity,
+                    "metrics": dict(event.metrics),
+                    "payload": dict(event.payload),
+                    "schema_version": event.schema_version,
+                }
+                for event in telemetry.events
+            ],
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
     return SmokeResult(
+        task_id=task_id,
         compiler_status=compiler_result.status.value,
         supervisor_state=supervisor.steps["step-execute"].state.value,
         response_sequence=tuple(response_sequence),
@@ -333,6 +414,15 @@ def run_smoke(
         reloaded_pack_id=reloaded_pack.pack_id,
         reloaded_input_manifest_hash=reloaded_input_manifest.manifest_hash,
         reloaded_artifact_manifest_hash=reloaded_artifact_manifest.manifest_hash,
+        workspace_root=str(layout.root),
+        canonical_task_spec_path=str(materialized_task_spec.path),
+        input_manifest_path=str(materialized_inputs.manifest_path),
+        artifact_manifest_path=str(materialized_outputs.manifest_path),
+        evidence_pack_path=str((layout.root / input_manifest.inputs[0].relpath)),
+        hydrate_manifest_path=str(materialized_hydrate_manifest.path),
+        output_artifact_path=str(materialized_outputs.files[0].path),
+        output_artifact_hash=output_artifact_hash,
+        telemetry_path=str(telemetry_path),
         telemetry_event_count=len(telemetry.events),
     )
 
@@ -353,6 +443,11 @@ def main() -> None:
     print(f"reloaded_pack_id={result.reloaded_pack_id}")
     print(f"reloaded_input_manifest_hash={result.reloaded_input_manifest_hash}")
     print(f"reloaded_artifact_manifest_hash={result.reloaded_artifact_manifest_hash}")
+    print(f"workspace_root={result.workspace_root}")
+    print(f"canonical_task_spec_path={result.canonical_task_spec_path}")
+    print(f"output_artifact_path={result.output_artifact_path}")
+    print(f"output_artifact_hash={result.output_artifact_hash}")
+    print(f"telemetry_path={result.telemetry_path}")
     print(f"telemetry_event_count={result.telemetry_event_count}")
 
 

@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from v2.contracts import RefStatus
 from v2.refs import ExecutionArtifactRef
-from v2.utils import sha256_digest
+from v2.utils import sha256_digest, stable_json_dumps
 
 
 class ArtifactCommitState(StrEnum):
@@ -82,6 +83,11 @@ class InputManifest:
     def manifest_hash(self) -> str:
         return sha256_digest(self.canonical_payload())
 
+    def snapshot_payload(self) -> dict[str, object]:
+        payload = self.canonical_payload()
+        payload["manifest_hash"] = self.manifest_hash
+        return payload
+
 
 @dataclass(frozen=True)
 class ArtifactOutputManifest:
@@ -100,6 +106,32 @@ class ArtifactOutputManifest:
     def manifest_hash(self) -> str:
         return sha256_digest(self.canonical_payload())
 
+    def snapshot_payload(self) -> dict[str, object]:
+        payload = self.canonical_payload()
+        payload["manifest_hash"] = self.manifest_hash
+        return payload
+
+
+@dataclass(frozen=True)
+class MaterializedFile:
+    logical_name: str
+    relpath: str
+    path: Path
+    sha256: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class MaterializedInputBundle:
+    files: tuple[MaterializedFile, ...]
+    manifest_path: Path
+
+
+@dataclass(frozen=True)
+class MaterializedOutputBundle:
+    files: tuple[MaterializedFile, ...]
+    manifest_path: Path
+
 
 @dataclass
 class WorkspaceManager:
@@ -116,6 +148,81 @@ class WorkspaceManager:
             tmp_dir=root / "tmp",
             script_dir=root / "script",
             manifest_dir=root / "manifest",
+        )
+
+    def ensure_layout(self, task_id: str) -> WorkspaceLayout:
+        layout = self.layout_for_task(task_id)
+        for directory in (
+            layout.root,
+            layout.inputs_dir,
+            layout.outputs_dir,
+            layout.logs_dir,
+            layout.tmp_dir,
+            layout.script_dir,
+            layout.manifest_dir,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
+        return layout
+
+    def materialize_input_bundle(
+        self,
+        layout: WorkspaceLayout,
+        manifest: InputManifest,
+        payload_by_name: dict[str, Any],
+    ) -> MaterializedInputBundle:
+        files = tuple(
+            self.write_json(layout, item.relpath, payload_by_name[item.name], logical_name=item.name)
+            for item in manifest.inputs
+        )
+        manifest_file = self.write_json(
+            layout,
+            f"manifest/{manifest.step_id}.input_manifest.json",
+            manifest.snapshot_payload(),
+            logical_name="input_manifest",
+        )
+        return MaterializedInputBundle(files=files, manifest_path=manifest_file.path)
+
+    def materialize_output_bundle(
+        self,
+        layout: WorkspaceLayout,
+        manifest: ArtifactOutputManifest,
+        payload_by_name: dict[str, Any],
+    ) -> MaterializedOutputBundle:
+        files = tuple(
+            self.write_json(
+                layout,
+                item.relpath,
+                payload_by_name[item.artifact_name],
+                logical_name=item.artifact_name,
+            )
+            for item in manifest.outputs
+        )
+        manifest_file = self.write_json(
+            layout,
+            f"manifest/{manifest.step_id}.artifact_output_manifest.json",
+            manifest.snapshot_payload(),
+            logical_name="artifact_output_manifest",
+        )
+        return MaterializedOutputBundle(files=files, manifest_path=manifest_file.path)
+
+    def write_json(
+        self,
+        layout: WorkspaceLayout,
+        relpath: str,
+        payload: Any,
+        *,
+        logical_name: str,
+    ) -> MaterializedFile:
+        rendered = (stable_json_dumps(payload) + "\n").encode("utf-8")
+        path = layout.root / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(rendered)
+        return MaterializedFile(
+            logical_name=logical_name,
+            relpath=relpath,
+            path=path,
+            sha256=sha256_digest(rendered),
+            size_bytes=len(rendered),
         )
 
 

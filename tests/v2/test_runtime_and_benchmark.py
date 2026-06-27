@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from v2.benchmark import BenchmarkLayer, BenchmarkRunReport, QualityFloorResult
 from v2.contracts import (
@@ -21,6 +22,10 @@ from v2.runtime import (
     TelemetryEmitter,
     TelemetryEvent,
     WorkspaceManager,
+    ArtifactManifestItem,
+    ArtifactOutputManifest,
+    InputManifest,
+    InputManifestItem,
 )
 from v2.refs import ExecutionArtifactRef
 
@@ -136,6 +141,56 @@ def test_workspace_and_artifact_lifecycle_keep_candidate_verified_invalidated_st
     assert invalidated.verification_state.value == "invalidated"
 
 
+def test_workspace_materializes_input_and_output_contract_files(tmp_path: Path) -> None:
+    workspace = WorkspaceManager(tmp_path)
+    layout = workspace.ensure_layout("task-1")
+    input_manifest = InputManifest(
+        task_id="task-1",
+        step_id="step-1",
+        workspace_root=str(layout.root),
+        inputs=(
+            InputManifestItem(
+                name="canonical_evidence_pack",
+                artifact_type="json",
+                relpath="inputs/evidence_pack.json",
+                blob_hash="hash-evidence",
+                source_ref_id="state-1",
+            ),
+        ),
+    )
+    output_manifest = ArtifactOutputManifest(
+        task_id="task-1",
+        step_id="step-1",
+        outputs=(
+            ArtifactManifestItem(
+                artifact_name="summary_json",
+                artifact_type="json",
+                relpath="outputs/result.json",
+                size_bytes=12,
+                sha256="hash-output",
+            ),
+        ),
+    )
+
+    materialized_inputs = workspace.materialize_input_bundle(
+        layout,
+        input_manifest,
+        payload_by_name={"canonical_evidence_pack": {"pack_id": "pack-1"}},
+    )
+    materialized_outputs = workspace.materialize_output_bundle(
+        layout,
+        output_manifest,
+        payload_by_name={"summary_json": {"summary_text": "ok"}},
+    )
+
+    assert materialized_inputs.files[0].path.exists()
+    assert materialized_outputs.files[0].path.exists()
+    input_snapshot = json.loads(materialized_inputs.manifest_path.read_text(encoding="utf-8"))
+    output_snapshot = json.loads(materialized_outputs.manifest_path.read_text(encoding="utf-8"))
+    assert input_snapshot["manifest_hash"] == input_manifest.manifest_hash
+    assert output_snapshot["manifest_hash"] == output_manifest.manifest_hash
+
+
 def test_telemetry_summary_and_quality_floor_report_are_formal_objects() -> None:
     emitter = TelemetryEmitter()
     emitter.emit(
@@ -170,4 +225,3 @@ def test_telemetry_summary_and_quality_floor_report_are_formal_objects() -> None
         metrics={"latency_ms": 10.0},
     )
     assert report.eligible_for_headline is True
-

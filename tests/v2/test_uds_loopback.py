@@ -32,3 +32,21 @@ def test_control_plane_uds_worker_harness_sequence(tmp_path: Path) -> None:
     ]
     assert responses[-1].artifact_refs[0].ref_kind == "execution_artifact"
     assert responses[-1].output_contract_version == "output-v1"
+
+
+def test_control_plane_uds_worker_harness_rejects_missing_exec_metadata(tmp_path: Path) -> None:
+    message = ExecRequest(
+        header=ControlHeader(
+            trace_id="trace-uds",
+            task_id="task-uds",
+            step_id="step-uds",
+            attempt_id="attempt-1",
+            target_role="executor",
+            timeout_ms=1000,
+            event_type=EventType.REQ_EXEC,
+        ),
+    )
+
+    responses = ControlPlaneLoopbackServer(tmp_path / "control.sock").exchange_sequence(message)
+    assert [response.header.event_type.name for response in responses] == ["RES_ERR"]
+    assert "workspace_root_missing" in responses[0].error_detail
