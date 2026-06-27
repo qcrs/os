@@ -14,7 +14,7 @@ from v2.benchmark.models import (
     QualityFloorResult,
 )
 from v2.runtime import TelemetryEmitter, TelemetryEvent
-from v2.runtime.smoke import SmokeResult, run_smoke
+from v2.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
 from v2.utils import stable_json_dumps
 
 
@@ -43,6 +43,34 @@ LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
     BenchmarkLayer.L3: BenchmarkLayerProfile(
         layer=BenchmarkLayer.L3,
         description="full replay stack",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=True,
+    ),
+}
+
+
+LAYER_SMOKE_CONFIGS: dict[BenchmarkLayer, SmokeLayerConfig] = {
+    BenchmarkLayer.L0: SmokeLayerConfig(
+        layer_name="L0",
+        structured_control_enabled=False,
+        semantic_pruning_enabled=False,
+        replay_enabled=False,
+    ),
+    BenchmarkLayer.L1: SmokeLayerConfig(
+        layer_name="L1",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=False,
+        replay_enabled=False,
+    ),
+    BenchmarkLayer.L2: SmokeLayerConfig(
+        layer_name="L2",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=False,
+    ),
+    BenchmarkLayer.L3: SmokeLayerConfig(
+        layer_name="L3",
         structured_control_enabled=True,
         semantic_pruning_enabled=True,
         replay_enabled=True,
@@ -184,6 +212,7 @@ def run_minimal_benchmark(
         socket_path=socket_path,
         request_text=sample.request_text,
         task_id=sample.task_id,
+        layer_config=LAYER_SMOKE_CONFIGS[BenchmarkLayer.L3],
     )
     return smoke, _report_from_smoke(sample, smoke)
 
@@ -198,23 +227,6 @@ def run_minimal_benchmark_family(
     layer: BenchmarkLayer = BenchmarkLayer.L3,
 ) -> BenchmarkFamilyReport:
     profile = LAYER_PROFILES[layer]
-    if layer is not BenchmarkLayer.L3:
-        report_path = runtime_root / "benchmark_reports" / f"{suite_id}-{layer.value}.json"
-        family_report = BenchmarkFamilyReport(
-            suite_id=suite_id,
-            layer=layer,
-            task_family=samples[0].task_family if samples else "financial_report_analysis",
-            profile=profile,
-            cases=(),
-            aggregated_metrics={},
-            telemetry_summary={},
-            report_path=str(report_path),
-            missing_reason="layer_scaffold_not_executed_yet",
-        )
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(stable_json_dumps(_family_report_to_dict(family_report)) + "\n", encoding="utf-8")
-        return family_report
-
     cases: list[BenchmarkCaseReport] = []
     suite_emitter = TelemetryEmitter()
     for sample in samples:
@@ -224,6 +236,7 @@ def run_minimal_benchmark_family(
             socket_path=socket_path.with_name(f"{socket_path.stem}-{sample.task_id}{socket_path.suffix}"),
             request_text=sample.request_text,
             task_id=sample.task_id,
+            layer_config=LAYER_SMOKE_CONFIGS[layer],
         )
         cases.append(_case_from_smoke(sample, smoke))
         suite_emitter.emit(
@@ -279,8 +292,13 @@ def run_minimal_benchmark_suite(
     )
     waterfall_metrics = {
         "L0_case_count": float(len(layer_reports[0].cases)),
-        "L1_missing": 1.0 if layer_reports[1].missing_reason else 0.0,
-        "L2_missing": 1.0 if layer_reports[2].missing_reason else 0.0,
+        "L0_raw_evidence_bytes_seen_by_llm": layer_reports[0].telemetry_summary.get(
+            "raw_evidence_bytes_seen_by_llm", 0.0
+        ),
+        "L1_control_bytes": layer_reports[1].telemetry_summary.get("control_bytes", 0.0),
+        "L2_semantic_state_transfer_count": layer_reports[2].telemetry_summary.get(
+            "semantic_state_transfer_count", 0.0
+        ),
         "L3_quality_floor_pass_count": layer_reports[3].aggregated_metrics.get("quality_floor_pass_count", 0.0),
     }
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}-suite.json"

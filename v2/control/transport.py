@@ -156,13 +156,15 @@ class ControlPlaneLoopbackServer:
             ]
 
         required_errors: list[str] = []
+        runtime_reuse_contract = getattr(message, "runtime_reuse_contract", "")
+        semantic_state_optional = "no_semantic_state" in runtime_reuse_contract
         if not getattr(message, "workspace_root", "").strip():
             required_errors.append("workspace_root_missing")
         if not getattr(message, "input_manifest_hash", "").strip():
             required_errors.append("input_manifest_hash_missing")
         if not getattr(message, "output_contract_version", "").strip():
             required_errors.append("output_contract_version_missing")
-        if not tuple(getattr(message, "state_refs", ())):
+        if not semantic_state_optional and not tuple(getattr(message, "state_refs", ())):
             required_errors.append("state_refs_missing")
         if not tuple(getattr(message, "artifact_refs", ())):
             required_errors.append("artifact_refs_missing")
@@ -176,7 +178,6 @@ class ControlPlaneLoopbackServer:
                 )
             ]
 
-        runtime_reuse_contract = getattr(message, "runtime_reuse_contract", "")
         if "force_trap" in runtime_reuse_contract:
             return [
                 AckReceived(header=replace(header, event_type=EventType.ACK_RECV), acked_at_ns=1),
