@@ -12,6 +12,7 @@ from v2.refs import (
     TextSpanLocator,
 )
 from v2.runtime import ArtifactManifestItem, ArtifactOutputManifest
+from v2.runtime import InputManifest, InputManifestItem
 from v2.state import JsonContractStore
 
 
@@ -84,12 +85,27 @@ def test_json_contract_store_persists_registry_and_sidecars(tmp_path: Path) -> N
             ),
         ),
     )
+    input_manifest = InputManifest(
+        task_id="task-1",
+        step_id="step-1",
+        workspace_root="/tmp/task-1",
+        inputs=(
+            InputManifestItem(
+                name="evidence_pack",
+                artifact_type="json",
+                relpath="inputs/evidence_pack.json",
+                blob_hash=evidence_pack.pack_hash,
+                source_ref_id="state-1",
+            ),
+        ),
+    )
 
     store = JsonContractStore(tmp_path / "contracts")
     persisted = store.persist_contract_bundle(
         registry_entries=[semantic_ref.registry_entry(), artifact_ref.registry_entry()],
         hydrate_manifest=hydrate_manifest,
         evidence_pack=evidence_pack,
+        input_manifest=input_manifest,
         artifact_manifest=artifact_manifest,
     )
 
@@ -97,14 +113,17 @@ def test_json_contract_store_persists_registry_and_sidecars(tmp_path: Path) -> N
     reloaded_artifact = store.get_ref_registry_entry("artifact-1")
     reloaded_manifest = store.read_hydrate_manifest(hydrate_manifest.manifest_hash)
     reloaded_pack = store.read_evidence_pack(evidence_pack.pack_hash)
+    reloaded_input_manifest = store.read_input_manifest(input_manifest.manifest_hash)
     reloaded_output_manifest = store.read_artifact_output_manifest(artifact_manifest.manifest_hash)
 
     assert persisted.registry_path.exists()
     assert persisted.hydrate_manifest_path is not None and persisted.hydrate_manifest_path.exists()
     assert persisted.evidence_pack_path is not None and persisted.evidence_pack_path.exists()
+    assert persisted.input_manifest_path is not None and persisted.input_manifest_path.exists()
     assert persisted.artifact_manifest_path is not None and persisted.artifact_manifest_path.exists()
     assert reloaded_semantic.ref_id == "state-1"
     assert reloaded_artifact.ref_id == "artifact-1"
     assert reloaded_manifest.manifest_id == "manifest-1"
     assert reloaded_pack.pack_id == "pack-1"
+    assert reloaded_input_manifest.inputs[0].source_ref_id == "state-1"
     assert reloaded_output_manifest.outputs[0].artifact_name == "result"

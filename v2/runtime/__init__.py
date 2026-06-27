@@ -7,6 +7,8 @@ from v2.runtime.workspace import (
     ArtifactLifecycleManager,
     ArtifactManifestItem,
     ArtifactOutputManifest,
+    InputManifest,
+    InputManifestItem,
     WorkspaceLayout,
     WorkspaceManager,
 )
@@ -16,6 +18,8 @@ __all__ = [
     "ArtifactLifecycleManager",
     "ArtifactManifestItem",
     "ArtifactOutputManifest",
+    "InputManifest",
+    "InputManifestItem",
     "ReplayAdmissibilityGate",
     "ReplayCandidate",
     "ReplayDecision",
