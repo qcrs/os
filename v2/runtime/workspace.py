@@ -46,6 +46,44 @@ class ArtifactManifestItem:
 
 
 @dataclass(frozen=True)
+class InputManifestItem:
+    name: str
+    artifact_type: str
+    relpath: str
+    blob_hash: str
+    source_ref_id: str
+
+    def canonical_payload(self) -> dict[str, str]:
+        return {
+            "name": self.name,
+            "artifact_type": self.artifact_type,
+            "relpath": self.relpath,
+            "blob_hash": self.blob_hash,
+            "source_ref_id": self.source_ref_id,
+        }
+
+
+@dataclass(frozen=True)
+class InputManifest:
+    task_id: str
+    step_id: str
+    workspace_root: str
+    inputs: tuple[InputManifestItem, ...]
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "task_id": self.task_id,
+            "step_id": self.step_id,
+            "workspace_root": self.workspace_root,
+            "inputs": [item.canonical_payload() for item in self.inputs],
+        }
+
+    @property
+    def manifest_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
+
+@dataclass(frozen=True)
 class ArtifactOutputManifest:
     task_id: str
     step_id: str

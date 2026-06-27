@@ -27,6 +27,8 @@ from v2.runtime import (
     ArtifactLifecycleManager,
     ArtifactManifestItem,
     ArtifactOutputManifest,
+    InputManifest,
+    InputManifestItem,
     ReplayAdmissibilityGate,
     ReplayCandidate,
     ReplayPolicy,
@@ -49,6 +51,7 @@ class SmokeResult:
     registry_path: str
     reloaded_manifest_id: str
     reloaded_pack_id: str
+    reloaded_input_manifest_hash: str
     reloaded_artifact_manifest_hash: str
     telemetry_event_count: int
 
@@ -123,6 +126,31 @@ def run_smoke(
 
     workspace = WorkspaceManager(workspace_root)
     layout = workspace.layout_for_task(task_id)
+    for directory in (
+        layout.root,
+        layout.inputs_dir,
+        layout.outputs_dir,
+        layout.logs_dir,
+        layout.tmp_dir,
+        layout.script_dir,
+        layout.manifest_dir,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    input_manifest = InputManifest(
+        task_id=task_id,
+        step_id="step-execute",
+        workspace_root=str(layout.root),
+        inputs=(
+            InputManifestItem(
+                name="canonical_evidence_pack",
+                artifact_type="json",
+                relpath="inputs/evidence_pack.json",
+                blob_hash=evidence_pack.pack_hash,
+                source_ref_id=semantic_ref.state_id,
+            ),
+        ),
+    )
     artifacts = ArtifactLifecycleManager()
     artifact_manifest = ArtifactOutputManifest(
         task_id=task_id,
@@ -158,14 +186,23 @@ def run_smoke(
         registry_entries=[semantic_ref.registry_entry(), verified_artifact.registry_entry()],
         hydrate_manifest=hydrate_manifest,
         evidence_pack=evidence_pack,
+        input_manifest=input_manifest,
         artifact_manifest=artifact_manifest,
     )
 
-    reloaded_state_entry, reloaded_artifact_entry, reloaded_manifest, reloaded_pack, reloaded_artifact_manifest = (
+    (
+        reloaded_state_entry,
+        reloaded_artifact_entry,
+        reloaded_manifest,
+        reloaded_pack,
+        reloaded_input_manifest,
+        reloaded_artifact_manifest,
+    ) = (
         store.load_contract_bundle(
             state_ref_id="state-smoke",
             artifact_ref_id="artifact-smoke",
             evidence_pack_hash=evidence_pack.pack_hash,
+            input_manifest_hash=input_manifest.manifest_hash,
         )
     )
 
@@ -189,7 +226,7 @@ def run_smoke(
         runtime_reuse_contract="benchmark_strict:exact_replay_allowed",
         output_contract_version="output-v1",
         workspace_root=str(layout.root),
-        input_manifest_hash=artifact_manifest.manifest_hash,
+        input_manifest_hash=reloaded_input_manifest.manifest_hash,
     )
     responses = ControlPlaneLoopbackServer(socket_path).exchange_sequence(loopback_message)
 
@@ -262,6 +299,8 @@ def run_smoke(
         raise RuntimeError("hydrate manifest mismatch after disk reload")
     if reloaded_pack.pack_id != evidence_pack.pack_id:
         raise RuntimeError("evidence pack mismatch after disk reload")
+    if reloaded_input_manifest.manifest_hash != input_manifest.manifest_hash:
+        raise RuntimeError("input manifest mismatch after disk reload")
     replay = ReplayAdmissibilityGate().decide(
         compiler_result=compiler_result,
         policy=ReplayPolicy(True, True, True),
@@ -292,6 +331,7 @@ def run_smoke(
         registry_path=str(bundle.registry_path),
         reloaded_manifest_id=reloaded_manifest.manifest_id,
         reloaded_pack_id=reloaded_pack.pack_id,
+        reloaded_input_manifest_hash=reloaded_input_manifest.manifest_hash,
         reloaded_artifact_manifest_hash=reloaded_artifact_manifest.manifest_hash,
         telemetry_event_count=len(telemetry.events),
     )
@@ -311,6 +351,7 @@ def main() -> None:
     print(f"registry_path={result.registry_path}")
     print(f"reloaded_manifest_id={result.reloaded_manifest_id}")
     print(f"reloaded_pack_id={result.reloaded_pack_id}")
+    print(f"reloaded_input_manifest_hash={result.reloaded_input_manifest_hash}")
     print(f"reloaded_artifact_manifest_hash={result.reloaded_artifact_manifest_hash}")
     print(f"telemetry_event_count={result.telemetry_event_count}")
 

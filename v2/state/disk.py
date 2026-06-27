@@ -12,7 +12,12 @@ from v2.provenance import (
     manifest_to_dict,
 )
 from v2.refs import CanonicalEvidencePack, HydrateManifest
-from v2.runtime.workspace import ArtifactManifestItem, ArtifactOutputManifest
+from v2.runtime.workspace import (
+    ArtifactManifestItem,
+    ArtifactOutputManifest,
+    InputManifest,
+    InputManifestItem,
+)
 from v2.utils import stable_json_dumps
 
 
@@ -25,6 +30,7 @@ class PersistedContractPaths:
     registry_path: Path
     hydrate_manifest_path: Path | None = None
     evidence_pack_path: Path | None = None
+    input_manifest_path: Path | None = None
     artifact_manifest_path: Path | None = None
 
 
@@ -57,6 +63,10 @@ class JsonContractStore:
     @property
     def artifact_manifest_dir(self) -> Path:
         return self.root / "manifests" / "artifacts"
+
+    @property
+    def input_manifest_dir(self) -> Path:
+        return self.root / "manifests" / "inputs"
 
     def put_ref_registry_entry(self, entry: RefRegistryEntry) -> Path:
         payload = self._read_registry_payload()
@@ -107,11 +117,22 @@ class JsonContractStore:
         self._write_json(path, self._artifact_manifest_to_dict(manifest))
         return path
 
+    def write_input_manifest(self, manifest: InputManifest) -> Path:
+        path = self.input_manifest_dir / f"{manifest.manifest_hash}.json"
+        self._write_json(path, self._input_manifest_to_dict(manifest))
+        return path
+
     def read_artifact_output_manifest(self, manifest_hash: str) -> ArtifactOutputManifest:
         path = self.artifact_manifest_dir / f"{manifest_hash}.json"
         if not path.exists():
             raise RefManifestMissingError(f"artifact manifest missing: {manifest_hash}")
         return self._artifact_manifest_from_dict(self._read_json(path))
+
+    def read_input_manifest(self, manifest_hash: str) -> InputManifest:
+        path = self.input_manifest_dir / f"{manifest_hash}.json"
+        if not path.exists():
+            raise RefManifestMissingError(f"input manifest missing: {manifest_hash}")
+        return self._input_manifest_from_dict(self._read_json(path))
 
     def persist_contract_bundle(
         self,
@@ -119,6 +140,7 @@ class JsonContractStore:
         registry_entries: list[RefRegistryEntry],
         hydrate_manifest: HydrateManifest,
         evidence_pack: CanonicalEvidencePack,
+        input_manifest: InputManifest,
         artifact_manifest: ArtifactOutputManifest,
     ) -> PersistedContractPaths:
         for entry in registry_entries:
@@ -127,6 +149,7 @@ class JsonContractStore:
             registry_path=self.registry_path,
             hydrate_manifest_path=self.write_hydrate_manifest(hydrate_manifest),
             evidence_pack_path=self.write_evidence_pack(evidence_pack),
+            input_manifest_path=self.write_input_manifest(input_manifest),
             artifact_manifest_path=self.write_artifact_output_manifest(artifact_manifest),
         )
 
@@ -136,15 +159,24 @@ class JsonContractStore:
         state_ref_id: str,
         artifact_ref_id: str,
         evidence_pack_hash: str,
-    ) -> tuple[RefRegistryEntry, RefRegistryEntry, HydrateManifest, CanonicalEvidencePack, ArtifactOutputManifest]:
+        input_manifest_hash: str,
+    ) -> tuple[
+        RefRegistryEntry,
+        RefRegistryEntry,
+        HydrateManifest,
+        CanonicalEvidencePack,
+        InputManifest,
+        ArtifactOutputManifest,
+    ]:
         state_entry = self.get_ref_registry_entry(state_ref_id)
         artifact_entry = self.get_ref_registry_entry(artifact_ref_id)
         if not artifact_entry.manifest_hash:
             raise RefManifestMissingError(f"artifact manifest hash missing for ref: {artifact_ref_id}")
         hydrate_manifest = self.read_hydrate_manifest(state_entry.manifest_hash)
         evidence_pack = self.read_evidence_pack(evidence_pack_hash)
+        input_manifest = self.read_input_manifest(input_manifest_hash)
         artifact_manifest = self.read_artifact_output_manifest(artifact_entry.manifest_hash)
-        return state_entry, artifact_entry, hydrate_manifest, evidence_pack, artifact_manifest
+        return state_entry, artifact_entry, hydrate_manifest, evidence_pack, input_manifest, artifact_manifest
 
     def _read_registry_payload(self) -> dict[str, dict[str, str]]:
         if not self.registry_path.exists():
@@ -157,6 +189,15 @@ class JsonContractStore:
             "step_id": manifest.step_id,
             "manifest_hash": manifest.manifest_hash,
             "outputs": [item.canonical_payload() for item in manifest.outputs],
+        }
+
+    def _input_manifest_to_dict(self, manifest: InputManifest) -> dict[str, object]:
+        return {
+            "task_id": manifest.task_id,
+            "step_id": manifest.step_id,
+            "workspace_root": manifest.workspace_root,
+            "manifest_hash": manifest.manifest_hash,
+            "inputs": [item.canonical_payload() for item in manifest.inputs],
         }
 
     def _artifact_manifest_from_dict(self, payload: dict[str, object]) -> ArtifactOutputManifest:
@@ -174,6 +215,24 @@ class JsonContractStore:
             task_id=str(payload.get("task_id", "")),
             step_id=str(payload.get("step_id", "")),
             outputs=outputs,
+        )
+
+    def _input_manifest_from_dict(self, payload: dict[str, object]) -> InputManifest:
+        inputs = tuple(
+            InputManifestItem(
+                name=str(item["name"]),
+                artifact_type=str(item["artifact_type"]),
+                relpath=str(item["relpath"]),
+                blob_hash=str(item["blob_hash"]),
+                source_ref_id=str(item["source_ref_id"]),
+            )
+            for item in payload.get("inputs", [])
+        )
+        return InputManifest(
+            task_id=str(payload.get("task_id", "")),
+            step_id=str(payload.get("step_id", "")),
+            workspace_root=str(payload.get("workspace_root", "")),
+            inputs=inputs,
         )
 
     def _write_json(self, path: Path, payload: object) -> None:

@@ -18,4 +18,5 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert result.artifact_state == "verified"
     assert result.reloaded_manifest_id == "manifest-smoke"
     assert result.reloaded_pack_id == "pack-smoke"
+    assert result.reloaded_input_manifest_hash
     assert result.telemetry_event_count == 4
