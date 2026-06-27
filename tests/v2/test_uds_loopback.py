@@ -18,6 +18,10 @@ def test_control_plane_uds_worker_harness_sequence(tmp_path: Path) -> None:
         ),
         state_refs=(RefHandle(ref_id="state-1", ref_kind="semantic_state"),),
         artifact_refs=(RefHandle(ref_id="artifact-1", ref_kind="execution_artifact"),),
+        runtime_reuse_contract="benchmark_strict:exact_replay_allowed",
+        output_contract_version="output-v1",
+        workspace_root="/statebus/workspaces/task-uds",
+        input_manifest_hash="sha256:artifact-manifest",
     )
 
     responses = ControlPlaneLoopbackServer(tmp_path / "control.sock").exchange_sequence(message)
@@ -27,3 +31,4 @@ def test_control_plane_uds_worker_harness_sequence(tmp_path: Path) -> None:
         "RES_SUCC",
     ]
     assert responses[-1].artifact_refs[0].ref_kind == "execution_artifact"
+    assert responses[-1].output_contract_version == "output-v1"

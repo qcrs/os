@@ -29,6 +29,10 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
         ),
         state_refs=(RefHandle(ref_id="state-1", ref_kind="semantic_state"),),
         artifact_refs=(RefHandle(ref_id="artifact-1", ref_kind="execution_artifact"),),
+        runtime_reuse_contract="benchmark_strict:exact_replay_allowed",
+        output_contract_version="output-v1",
+        workspace_root="/statebus/workspaces/task-1",
+        input_manifest_hash="sha256:manifest",
     )
 
     parsed = deframe_control_message(frame_control_message(message))
@@ -37,4 +41,5 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
     assert parsed.state_refs[0].ref_kind == "semantic_state"
     assert parsed.artifact_refs[0].ref_kind == "execution_artifact"
     assert parsed.reuse_policy.allow_validated_replay is True
-
+    assert parsed.runtime_reuse_contract == "benchmark_strict:exact_replay_allowed"
+    assert parsed.workspace_root == "/statebus/workspaces/task-1"

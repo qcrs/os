@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from v2.benchmark.models import BenchmarkLayer, BenchmarkRunReport, QualityFloorResult
 from v2.runtime.smoke import SmokeResult, run_smoke
+from v2.utils import stable_json_dumps
 
 
 @dataclass(frozen=True)
@@ -13,6 +15,19 @@ class MinimalBenchmarkSample:
     request_text: str
     expected_artifact_type: str = "json"
     task_family: str = "financial_report_analysis"
+
+    @classmethod
+    def from_path(cls, path: Path) -> "MinimalBenchmarkSample":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        request_text = payload["request_text"]
+        if not isinstance(request_text, str):
+            request_text = stable_json_dumps(request_text)
+        return cls(
+            task_id=str(payload["task_id"]),
+            request_text=request_text,
+            expected_artifact_type=str(payload.get("expected_artifact_type", "json")),
+            task_family=str(payload.get("task_family", "financial_report_analysis")),
+        )
 
 
 def run_minimal_benchmark(
@@ -26,6 +41,8 @@ def run_minimal_benchmark(
         workspace_root=workspace_root,
         runtime_root=runtime_root,
         socket_path=socket_path,
+        request_text=sample.request_text,
+        task_id=sample.task_id,
     )
     quality_floor = QualityFloorResult(
         quality_floor_pass=smoke.compiler_status == "compiled" and smoke.artifact_state == "verified",
@@ -49,12 +66,8 @@ def run_minimal_benchmark(
 
 
 def main() -> None:
-    sample = MinimalBenchmarkSample(
-        task_id="benchmark-sample-1",
-        request_text=(
-            '{"task_family":"financial_report_analysis","intent_op":"compare_metric",'
-            '"required_outputs":["summary_text"],"arguments":{"ticker":"ACME","quarter":"2026Q1"}}'
-        ),
+    sample = MinimalBenchmarkSample.from_path(
+        Path(__file__).with_name("samples") / "minimal_financial_report_sample.json"
     )
     smoke, report = run_minimal_benchmark(
         sample=sample,

@@ -142,7 +142,7 @@ class ControlPlaneLoopbackServer:
                 header=replace(header, event_type=EventType.RES_SUCC),
                 state_refs=state_refs,
                 artifact_refs=artifact_refs,
-                output_contract_version="output-v1",
+                output_contract_version=getattr(message, "output_contract_version", "") or "output-v1",
                 completed_at_ns=3,
-                ),
-            ]
+            ),
+        ]

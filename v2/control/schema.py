@@ -135,6 +135,26 @@ def build_control_file_descriptor() -> descriptor_pb2.FileDescriptorProto:
                         label=FieldDescriptor.LABEL_REPEATED,
                         type_name=f".{PACKAGE}.RefHandle",
                     ),
+                    _field(
+                        name="runtime_reuse_contract",
+                        number=5,
+                        field_type=FieldDescriptor.TYPE_STRING,
+                    ),
+                    _field(
+                        name="output_contract_version",
+                        number=6,
+                        field_type=FieldDescriptor.TYPE_STRING,
+                    ),
+                    _field(
+                        name="workspace_root",
+                        number=7,
+                        field_type=FieldDescriptor.TYPE_STRING,
+                    ),
+                    _field(
+                        name="input_manifest_hash",
+                        number=8,
+                        field_type=FieldDescriptor.TYPE_STRING,
+                    ),
                 ],
             ),
             _message(
@@ -351,4 +371,3 @@ _POOL.AddSerializedFile(build_control_file_descriptor().SerializeToString())
 def message_class(name: str) -> type:
     descriptor = _POOL.FindMessageTypeByName(f"{PACKAGE}.{name}")
     return message_factory.GetMessageClass(descriptor)
-

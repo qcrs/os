@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import json
 
 from v2.control import (
     AckReceived,
@@ -57,11 +58,14 @@ def run_smoke(
     workspace_root: Path,
     runtime_root: Path,
     socket_path: Path,
+    request_text: str | None = None,
+    task_id: str = "smoke-task",
 ) -> SmokeResult:
     compiler = TaskCompiler()
     compiler_result = compiler.compile(
         TaskCompilerInput(
-            request_text=(
+            request_text=request_text
+            or (
                 '{"task_family":"financial_report_analysis","intent_op":"compare_metric",'
                 '"required_outputs":["summary_text"],"arguments":{"ticker":"ACME","quarter":"2026Q1"}}'
             ),
@@ -118,10 +122,10 @@ def run_smoke(
     )
 
     workspace = WorkspaceManager(workspace_root)
-    workspace.layout_for_task("smoke-task")
+    layout = workspace.layout_for_task(task_id)
     artifacts = ArtifactLifecycleManager()
     artifact_manifest = ArtifactOutputManifest(
-        task_id="smoke-task",
+        task_id=task_id,
         step_id="step-execute",
         outputs=(
             ArtifactManifestItem(
@@ -136,7 +140,7 @@ def run_smoke(
     artifacts.register_candidate(
         ExecutionArtifactRef(
             artifact_id="artifact-smoke",
-            task_id="smoke-task",
+            task_id=task_id,
             step_id="step-execute",
             artifact_type="json",
             root_id="workspace-root",
@@ -166,12 +170,12 @@ def run_smoke(
     )
 
     supervisor = RuntimeSupervisor()
-    supervisor.register(task_id="smoke-task", step_id="step-execute", attempt_id="attempt-1", role="executor")
+    supervisor.register(task_id=task_id, step_id="step-execute", attempt_id="attempt-1", role="executor")
     supervisor.dispatch("step-execute")
 
     header = ControlHeader(
         trace_id="trace-smoke",
-        task_id="smoke-task",
+        task_id=task_id,
         step_id="step-execute",
         attempt_id="attempt-1",
         target_role="executor",
@@ -182,6 +186,10 @@ def run_smoke(
         header=header,
         state_refs=(RefHandle(ref_id=reloaded_state_entry.ref_id, ref_kind="semantic_state"),),
         artifact_refs=(RefHandle(ref_id=reloaded_artifact_entry.ref_id, ref_kind="execution_artifact"),),
+        runtime_reuse_contract="benchmark_strict:exact_replay_allowed",
+        output_contract_version="output-v1",
+        workspace_root=str(layout.root),
+        input_manifest_hash=artifact_manifest.manifest_hash,
     )
     responses = ControlPlaneLoopbackServer(socket_path).exchange_sequence(loopback_message)
 
@@ -194,7 +202,7 @@ def run_smoke(
             telemetry.emit(
                 TelemetryEvent.create(
                     trace_id="trace-smoke",
-                    task_id="smoke-task",
+                    task_id=task_id,
                     step_id="step-execute",
                     attempt_id="attempt-1",
                     event_type="STEP_ACKED",
@@ -207,7 +215,7 @@ def run_smoke(
             telemetry.emit(
                 TelemetryEvent.create(
                     trace_id="trace-smoke",
-                    task_id="smoke-task",
+                    task_id=task_id,
                     step_id="step-execute",
                     attempt_id="attempt-1",
                     event_type="STEP_RUNNING",
@@ -224,7 +232,7 @@ def run_smoke(
             telemetry.emit(
                 TelemetryEvent.create(
                     trace_id="trace-smoke",
-                    task_id="smoke-task",
+                    task_id=task_id,
                     step_id="step-execute",
                     attempt_id="attempt-1",
                     event_type="STEP_COMPLETED",
@@ -269,7 +277,7 @@ def run_smoke(
     telemetry.emit(
         TelemetryEvent.create(
             trace_id="trace-smoke",
-            task_id="smoke-task",
+            task_id=task_id,
             event_type="TASK_SUMMARY_METRICS",
             metrics={"artifact_count": 1.0, "telemetry_events": 1.0},
         )
