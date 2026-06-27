@@ -6,6 +6,7 @@ from pathlib import Path
 
 from v2.contracts import RefStatus
 from v2.refs import ExecutionArtifactRef
+from v2.utils import sha256_digest
 
 
 class ArtifactCommitState(StrEnum):
@@ -34,12 +35,32 @@ class ArtifactManifestItem:
     size_bytes: int
     sha256: str
 
+    def canonical_payload(self) -> dict[str, str | int]:
+        return {
+            "artifact_name": self.artifact_name,
+            "artifact_type": self.artifact_type,
+            "relpath": self.relpath,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+        }
+
 
 @dataclass(frozen=True)
 class ArtifactOutputManifest:
     task_id: str
     step_id: str
     outputs: tuple[ArtifactManifestItem, ...]
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "task_id": self.task_id,
+            "step_id": self.step_id,
+            "outputs": [item.canonical_payload() for item in self.outputs],
+        }
+
+    @property
+    def manifest_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
 
 
 @dataclass
@@ -91,4 +112,3 @@ class ArtifactLifecycleManager:
         )
         self.artifacts[artifact_id] = invalidated
         return invalidated
-

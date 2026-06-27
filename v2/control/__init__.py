@@ -17,10 +17,12 @@ from v2.control.messages import (
     encode_control_message,
     frame_control_message,
 )
+from v2.control.transport import ControlPlaneLoopbackServer, recv_control_message, send_control_message
 
 __all__ = [
     "AckReceived",
     "CancelCommand",
+    "ControlPlaneLoopbackServer",
     "ControlHeader",
     "ErrorResult",
     "EventType",
@@ -36,4 +38,6 @@ __all__ = [
     "deframe_control_message",
     "encode_control_message",
     "frame_control_message",
+    "recv_control_message",
+    "send_control_message",
 ]
