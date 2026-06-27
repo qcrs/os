@@ -54,6 +54,8 @@ def test_minimal_benchmark_family_runs_and_persists_report(tmp_path: Path) -> No
     assert family_report.eligible_for_headline is True
     assert family_report.aggregated_metrics["case_count"] == 2.0
     assert family_report.aggregated_metrics["quality_floor_pass_count"] == 2.0
+    assert family_report.telemetry_summary["artifact_count"] == 2.0
+    assert family_report.cases[0].session_state == "GC_DONE"
     assert family_report.cases[0].output_artifact_hash != family_report.cases[1].output_artifact_hash
 
     report_path = Path(family_report.report_path)
@@ -61,4 +63,5 @@ def test_minimal_benchmark_family_runs_and_persists_report(tmp_path: Path) -> No
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["suite_id"] == "family-suite-test"
     assert payload["aggregated_metrics"]["case_count"] == 2.0
+    assert payload["telemetry_summary"]["artifact_count"] == 2.0
     assert len(payload["cases"]) == 2

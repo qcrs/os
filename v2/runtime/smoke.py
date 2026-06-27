@@ -10,11 +10,13 @@ from v2.control import (
     ControlPlaneLoopbackServer,
     EventType,
     ExecRequest,
+    Heartbeat,
     RefHandle,
     RunStart,
     SuccessResult,
+    TrapFatal,
 )
-from v2.contracts import RuntimeCompatibilitySignature, StorageKind, TaskCompilerInput, TaskMode
+from v2.contracts import RefKind, RefStatus, RuntimeCompatibilitySignature, StorageKind, TaskCompilerInput, TaskMode
 from v2.provenance import DeterministicFanInBuilder, EvidenceCandidate, manifest_to_dict
 from v2.refs import (
     ExecutionArtifactRef,
@@ -38,7 +40,7 @@ from v2.runtime import (
     TelemetryEvent,
     WorkspaceManager,
 )
-from v2.state import JsonContractStore
+from v2.state import JsonContractStore, RefRegistryQuery
 from v2.utils import sha256_digest
 
 
@@ -64,6 +66,8 @@ class SmokeResult:
     output_artifact_path: str
     output_artifact_hash: str
     telemetry_path: str
+    task_metrics: dict[str, float]
+    session_state: str
     telemetry_event_count: int
 
 
@@ -302,6 +306,20 @@ def run_smoke(
                     metrics={"run_start_count": 1.0},
                 )
             )
+        elif isinstance(response, Heartbeat):
+            supervisor.heartbeat("step-execute")
+            telemetry.emit(
+                TelemetryEvent.create(
+                    trace_id="trace-smoke",
+                    task_id=task_id,
+                    step_id="step-execute",
+                    attempt_id="attempt-1",
+                    event_type="STEP_HEARTBEAT",
+                    role="executor",
+                    payload={"worker_state": response.worker_state},
+                    metrics={"heartbeat_count": 1.0},
+                )
+            )
         elif isinstance(response, SuccessResult):
             if response.artifact_refs[0].ref_id != reloaded_artifact_entry.ref_id:
                 raise RuntimeError("worker harness returned unexpected artifact ref")
@@ -323,6 +341,22 @@ def run_smoke(
                     },
                 )
             )
+        elif isinstance(response, TrapFatal):
+            supervisor.trap("step-execute", response.error_detail)
+            telemetry.emit(
+                TelemetryEvent.create(
+                    trace_id="trace-smoke",
+                    task_id=task_id,
+                    step_id="step-execute",
+                    attempt_id="attempt-1",
+                    event_type="STEP_TRAPPED",
+                    role="executor",
+                    severity="error",
+                    payload={"trap_reason": response.trap_reason},
+                    metrics={"trap_count": 1.0},
+                )
+            )
+            raise RuntimeError(response.error_detail)
 
     candidate = ReplayCandidate(
         candidate_id="candidate-smoke",
@@ -355,6 +389,33 @@ def run_smoke(
         input_artifact_hashes=("sha256:input-smoke",),
         output_contract_version="output-v1",
     )
+    registry_summary = {
+        "semantic_state_ref_count": float(
+            len(store.query_ref_registry(RefRegistryQuery(ref_kind=RefKind.SEMANTIC_STATE)))
+        ),
+        "verified_artifact_ref_count": float(
+            len(
+                store.query_ref_registry(
+                    RefRegistryQuery(ref_kind=RefKind.EXECUTION_ARTIFACT, status=RefStatus.VERIFIED)
+                )
+            )
+        ),
+    }
+    telemetry.emit(
+        TelemetryEvent.create(
+            trace_id="trace-smoke",
+            task_id=task_id,
+            step_id="step-execute",
+            attempt_id="attempt-1",
+            event_type="REPLAY_DECIDED",
+            role="runtime_supervisor",
+            payload={"replay_class": replay.replay_class.value, "decision_source": replay.reason},
+            metrics={
+                "skipped_step_count": float(replay.skipped_step_count),
+                "reuse_gain": 1.0 if replay.replay_class.value == "exact_replay" else 0.0,
+            },
+        )
+    )
 
     supervisor.gc_pending("step-execute")
     supervisor.gc_done("step-execute")
@@ -372,9 +433,12 @@ def run_smoke(
                     + len(materialized_outputs.files)
                     + 4
                 ),
+                **registry_summary,
             },
         )
     )
+    task_metrics = telemetry.summarize_task(task_id)
+    session_snapshot = supervisor.snapshot("step-execute")
     telemetry_path = layout.logs_dir / "telemetry.json"
     telemetry_path.write_text(
         json.dumps(
@@ -423,10 +487,10 @@ def run_smoke(
         output_artifact_path=str(materialized_outputs.files[0].path),
         output_artifact_hash=output_artifact_hash,
         telemetry_path=str(telemetry_path),
+        task_metrics=task_metrics,
+        session_state=session_snapshot.state,
         telemetry_event_count=len(telemetry.events),
     )
-
-
 def main() -> None:
     result = run_smoke(
         workspace_root=Path("/tmp/statebus-v2-smoke/workspaces"),
@@ -448,6 +512,8 @@ def main() -> None:
     print(f"output_artifact_path={result.output_artifact_path}")
     print(f"output_artifact_hash={result.output_artifact_hash}")
     print(f"telemetry_path={result.telemetry_path}")
+    print(f"session_state={result.session_state}")
+    print(f"task_metric_keys={','.join(sorted(result.task_metrics.keys()))}")
     print(f"telemetry_event_count={result.telemetry_event_count}")
 
 

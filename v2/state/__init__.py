@@ -1,4 +1,9 @@
-from v2.state.disk import JsonContractStore, PersistedContractPaths, RefManifestMissingError
+from v2.state.disk import (
+    JsonContractStore,
+    PersistedContractPaths,
+    RefManifestMissingError,
+    RefRegistryQuery,
+)
 from v2.state.store import LayeredStateStore, LayeredStoragePolicy, StorageDecision
 
 __all__ = [
@@ -7,5 +12,6 @@ __all__ = [
     "LayeredStoragePolicy",
     "PersistedContractPaths",
     "RefManifestMissingError",
+    "RefRegistryQuery",
     "StorageDecision",
 ]

@@ -13,7 +13,7 @@ from v2.refs import (
 )
 from v2.runtime import ArtifactManifestItem, ArtifactOutputManifest
 from v2.runtime import InputManifest, InputManifestItem
-from v2.state import JsonContractStore
+from v2.state import JsonContractStore, RefRegistryQuery
 
 
 def test_json_contract_store_persists_registry_and_sidecars(tmp_path: Path) -> None:
@@ -127,3 +127,5 @@ def test_json_contract_store_persists_registry_and_sidecars(tmp_path: Path) -> N
     assert reloaded_pack.pack_id == "pack-1"
     assert reloaded_input_manifest.inputs[0].source_ref_id == "state-1"
     assert reloaded_output_manifest.outputs[0].artifact_name == "result"
+    assert store.query_ref_registry(RefRegistryQuery(ref_kind=reloaded_semantic.ref_kind))[0].ref_id == "state-1"
+    assert store.query_ref_registry(RefRegistryQuery(status=RefStatus.VERIFIED))[0].ref_id == "artifact-1"

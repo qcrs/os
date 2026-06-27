@@ -14,7 +14,7 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     )
     assert result.compiler_status == "compiled"
     assert result.supervisor_state == "GC_DONE"
-    assert result.response_sequence == ("ACK_RECV", "RUN_START", "RES_SUCC")
+    assert result.response_sequence == ("ACK_RECV", "RUN_START", "HEARTBEAT", "RES_SUCC")
     assert result.replay_class == "exact_replay"
     assert result.artifact_state == "verified"
     assert result.reloaded_manifest_id == "manifest-smoke"
@@ -22,7 +22,7 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert result.reloaded_input_manifest_hash
     assert result.canonical_task_spec_path
     assert result.output_artifact_hash
-    assert result.telemetry_event_count == 4
+    assert result.telemetry_event_count == 6
     assert Path(result.canonical_task_spec_path).exists()
     assert Path(result.input_manifest_path).exists()
     assert Path(result.artifact_manifest_path).exists()
@@ -30,6 +30,8 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert Path(result.hydrate_manifest_path).exists()
     assert Path(result.output_artifact_path).exists()
     assert Path(result.telemetry_path).exists()
+    assert result.session_state == "GC_DONE"
+    assert result.task_metrics["heartbeat_count"] == 1.0
 
     output_payload = json.loads(Path(result.output_artifact_path).read_text(encoding="utf-8"))
     assert output_payload["task_id"] == "smoke-task"

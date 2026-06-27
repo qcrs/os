@@ -34,6 +34,16 @@ class PersistedContractPaths:
     artifact_manifest_path: Path | None = None
 
 
+@dataclass(frozen=True)
+class RefRegistryQuery:
+    ref_kind: RefKind | None = None
+    status: RefStatus | None = None
+    storage_kind: StorageKind | None = None
+    manifest_hash: str = ""
+    root_id: str = ""
+    relpath_prefix: str = ""
+
+
 @dataclass
 class JsonContractStore:
     root: Path
@@ -77,18 +87,28 @@ class JsonContractStore:
     def get_ref_registry_entry(self, ref_id: str) -> RefRegistryEntry:
         payload = self._read_registry_payload()
         item = dict(payload[ref_id])
-        return RefRegistryEntry(
-            ref_id=str(item["ref_id"]),
-            ref_kind=RefKind(item["ref_kind"]),
-            storage_kind=StorageKind(item["storage_kind"]),
-            status=RefStatus(item["status"]),
-            blob_hash=str(item.get("blob_hash", "")),
-            manifest_hash=str(item.get("manifest_hash", "")),
-            root_id=str(item.get("root_id", "")),
-            relpath=str(item.get("relpath", "")),
-            workspace_relpath=str(item.get("workspace_relpath", "")),
-            schema_version=str(item.get("schema_version", "")),
-        )
+        return self._registry_entry_from_payload(item)
+
+    def query_ref_registry(self, query: RefRegistryQuery | None = None) -> list[RefRegistryEntry]:
+        query = query or RefRegistryQuery()
+        payload = self._read_registry_payload()
+        matches: list[RefRegistryEntry] = []
+        for item in payload.values():
+            entry = self._registry_entry_from_payload(item)
+            if query.ref_kind is not None and entry.ref_kind != query.ref_kind:
+                continue
+            if query.status is not None and entry.status != query.status:
+                continue
+            if query.storage_kind is not None and entry.storage_kind != query.storage_kind:
+                continue
+            if query.manifest_hash and entry.manifest_hash != query.manifest_hash:
+                continue
+            if query.root_id and entry.root_id != query.root_id:
+                continue
+            if query.relpath_prefix and not entry.relpath.startswith(query.relpath_prefix):
+                continue
+            matches.append(entry)
+        return sorted(matches, key=lambda entry: entry.ref_id)
 
     def write_hydrate_manifest(self, manifest: HydrateManifest) -> Path:
         path = self.sidecar_hydrate_dir / f"{manifest.manifest_hash}.json"
@@ -182,6 +202,20 @@ class JsonContractStore:
         if not self.registry_path.exists():
             return {}
         return dict(self._read_json(self.registry_path))
+
+    def _registry_entry_from_payload(self, item: dict[str, object]) -> RefRegistryEntry:
+        return RefRegistryEntry(
+            ref_id=str(item["ref_id"]),
+            ref_kind=RefKind(item["ref_kind"]),
+            storage_kind=StorageKind(item["storage_kind"]),
+            status=RefStatus(item["status"]),
+            blob_hash=str(item.get("blob_hash", "")),
+            manifest_hash=str(item.get("manifest_hash", "")),
+            root_id=str(item.get("root_id", "")),
+            relpath=str(item.get("relpath", "")),
+            workspace_relpath=str(item.get("workspace_relpath", "")),
+            schema_version=str(item.get("schema_version", "")),
+        )
 
     def _artifact_manifest_to_dict(self, manifest: ArtifactOutputManifest) -> dict[str, object]:
         return {

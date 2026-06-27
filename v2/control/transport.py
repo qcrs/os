@@ -8,11 +8,14 @@ from pathlib import Path
 
 from v2.control.messages import (
     AckReceived,
+    CancelCommand,
     ControlMessage,
     ErrorResult,
     EventType,
+    Heartbeat,
     RunStart,
     SuccessResult,
+    TrapFatal,
     deframe_control_message,
     frame_control_message,
 )
@@ -113,8 +116,32 @@ class ControlPlaneLoopbackServer:
                     break
         finally:
             client.close()
-            thread.join(timeout=2.0)
+        thread.join(timeout=2.0)
         return responses
+
+    def drive_session(
+        self,
+        message: ControlMessage,
+        *,
+        command: ControlMessage | None = None,
+    ) -> list[ControlMessage]:
+        responses = self.exchange_sequence(message)
+        if command is None:
+            return responses
+        if isinstance(command, CancelCommand):
+            responses.append(
+                ErrorResult(
+                    header=replace(command.header, event_type=EventType.RES_ERR),
+                    error_code="cancelled_by_supervisor",
+                    error_detail=command.reason,
+                    failed_at_ns=command.issued_at_ns,
+                )
+            )
+            return responses
+        if isinstance(command, Heartbeat):
+            responses.append(command)
+            return responses
+        raise TypeError(f"unsupported command for loopback session: {type(command)!r}")
 
     def _worker_harness_sequence(self, message: ControlMessage) -> list[ControlMessage]:
         header = message.header
@@ -149,6 +176,29 @@ class ControlPlaneLoopbackServer:
                 )
             ]
 
+        runtime_reuse_contract = getattr(message, "runtime_reuse_contract", "")
+        if "force_trap" in runtime_reuse_contract:
+            return [
+                AckReceived(header=replace(header, event_type=EventType.ACK_RECV), acked_at_ns=1),
+                RunStart(
+                    header=replace(header, event_type=EventType.RUN_START),
+                    started_at_ns=2,
+                    heartbeat_interval_ms=2000,
+                    lease_timeout_ms=6000,
+                ),
+                Heartbeat(
+                    header=replace(header, event_type=EventType.HEARTBEAT),
+                    sent_at_ns=3,
+                    worker_state="running",
+                ),
+                TrapFatal(
+                    header=replace(header, event_type=EventType.TRAP_FATAL),
+                    trap_reason="worker_harness_forced_trap",
+                    error_detail="runtime_reuse_contract requested trap",
+                    trapped_at_ns=4,
+                ),
+            ]
+
         state_refs = tuple(getattr(message, "state_refs", ()))
         artifact_refs = tuple(getattr(message, "artifact_refs", ()))
         return [
@@ -159,11 +209,16 @@ class ControlPlaneLoopbackServer:
                 heartbeat_interval_ms=2000,
                 lease_timeout_ms=6000,
             ),
+            Heartbeat(
+                header=replace(header, event_type=EventType.HEARTBEAT),
+                sent_at_ns=3,
+                worker_state="running",
+            ),
             SuccessResult(
                 header=replace(header, event_type=EventType.RES_SUCC),
                 state_refs=state_refs,
                 artifact_refs=artifact_refs,
                 output_contract_version=getattr(message, "output_contract_version", "") or "output-v1",
-                completed_at_ns=3,
+                completed_at_ns=4,
             ),
         ]

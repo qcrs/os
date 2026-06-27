@@ -110,9 +110,11 @@ def test_runtime_supervisor_enforces_lifecycle_transitions() -> None:
     assert supervisor.dispatch("step-1").state == StepLifecycleState.DISPATCHED
     assert supervisor.ack("step-1").state == StepLifecycleState.ACKED
     assert supervisor.run_start("step-1").state == StepLifecycleState.RUNNING
+    assert supervisor.heartbeat("step-1").last_heartbeat_ns > 0
     assert supervisor.complete("step-1").state == StepLifecycleState.COMPLETED
     assert supervisor.gc_pending("step-1").state == StepLifecycleState.GC_PENDING
     assert supervisor.gc_done("step-1").state == StepLifecycleState.GC_DONE
+    assert supervisor.snapshot("step-1").state == "GC_DONE"
 
 
 def test_workspace_and_artifact_lifecycle_keep_candidate_verified_invalidated_states() -> None:
@@ -212,6 +214,7 @@ def test_telemetry_summary_and_quality_floor_report_are_formal_objects() -> None
     summary = emitter.summarize_task("task-1")
     assert summary["reuse_gain"] == 0.25
     assert summary["control_bytes"] == 1024.0
+    assert emitter.summarize_suite(["task-1"])["skipped_step_count"] == 2.0
 
     report = BenchmarkRunReport(
         layer=BenchmarkLayer.L2,
