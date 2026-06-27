@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 
 from v2.contracts import StepLifecycleState
 
@@ -13,6 +14,29 @@ class StepRuntimeRecord:
     role: str
     state: StepLifecycleState = StepLifecycleState.PENDING
     last_error: str = ""
+    acked_at_ns: int = 0
+    started_at_ns: int = 0
+    last_heartbeat_ns: int = 0
+    completed_at_ns: int = 0
+    cancelled_at_ns: int = 0
+    trapped_at_ns: int = 0
+    gc_done_at_ns: int = 0
+
+
+@dataclass(frozen=True)
+class WorkerSessionSnapshot:
+    task_id: str
+    step_id: str
+    attempt_id: str
+    role: str
+    state: str
+    acked_at_ns: int
+    started_at_ns: int
+    last_heartbeat_ns: int
+    completed_at_ns: int
+    cancelled_at_ns: int
+    trapped_at_ns: int
+    last_error: str
 
 
 @dataclass
@@ -56,28 +80,66 @@ class RuntimeSupervisor:
         return self._transition(step_id, StepLifecycleState.DISPATCHED)
 
     def ack(self, step_id: str) -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.ACKED)
+        record = self._transition(step_id, StepLifecycleState.ACKED)
+        record.acked_at_ns = time.time_ns()
+        return record
 
     def run_start(self, step_id: str) -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.RUNNING)
+        record = self._transition(step_id, StepLifecycleState.RUNNING)
+        now = time.time_ns()
+        record.started_at_ns = now
+        record.last_heartbeat_ns = now
+        return record
+
+    def heartbeat(self, step_id: str) -> StepRuntimeRecord:
+        record = self.steps[step_id]
+        if record.state not in {StepLifecycleState.ACKED, StepLifecycleState.RUNNING}:
+            raise ValueError(f"cannot record heartbeat for state {record.state.value}")
+        record.last_heartbeat_ns = time.time_ns()
+        return record
 
     def complete(self, step_id: str) -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.COMPLETED)
+        record = self._transition(step_id, StepLifecycleState.COMPLETED)
+        record.completed_at_ns = time.time_ns()
+        return record
 
     def fail(self, step_id: str, error: str) -> StepRuntimeRecord:
         return self._transition(step_id, StepLifecycleState.FAILED, error)
 
     def trap(self, step_id: str, error: str) -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.TRAPPED, error)
+        record = self._transition(step_id, StepLifecycleState.TRAPPED, error)
+        record.trapped_at_ns = time.time_ns()
+        return record
 
     def cancel(self, step_id: str, error: str = "") -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.CANCELLED, error)
+        record = self._transition(step_id, StepLifecycleState.CANCELLED, error)
+        record.cancelled_at_ns = time.time_ns()
+        return record
 
     def gc_pending(self, step_id: str) -> StepRuntimeRecord:
         return self._transition(step_id, StepLifecycleState.GC_PENDING)
 
     def gc_done(self, step_id: str) -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.GC_DONE)
+        record = self._transition(step_id, StepLifecycleState.GC_DONE)
+        record.gc_done_at_ns = time.time_ns()
+        return record
+
+    def snapshot(self, step_id: str) -> WorkerSessionSnapshot:
+        record = self.steps[step_id]
+        return WorkerSessionSnapshot(
+            task_id=record.task_id,
+            step_id=record.step_id,
+            attempt_id=record.attempt_id,
+            role=record.role,
+            state=record.state.value,
+            acked_at_ns=record.acked_at_ns,
+            started_at_ns=record.started_at_ns,
+            last_heartbeat_ns=record.last_heartbeat_ns,
+            completed_at_ns=record.completed_at_ns,
+            cancelled_at_ns=record.cancelled_at_ns,
+            trapped_at_ns=record.trapped_at_ns,
+            last_error=record.last_error,
+        )
 
     def _transition(
         self,
@@ -93,4 +155,3 @@ class RuntimeSupervisor:
         if error:
             record.last_error = error
         return record
-

@@ -1,6 +1,6 @@
 from v2.runtime.compiler import TaskCompiler
 from v2.runtime.replay import ReplayAdmissibilityGate, ReplayCandidate, ReplayDecision, ReplayPolicy
-from v2.runtime.supervisor import RuntimeSupervisor, StepRuntimeRecord
+from v2.runtime.supervisor import RuntimeSupervisor, StepRuntimeRecord, WorkerSessionSnapshot
 from v2.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from v2.runtime.workspace import (
     ArtifactCommitState,
@@ -35,6 +35,7 @@ __all__ = [
     "TaskCompiler",
     "TelemetryEmitter",
     "TelemetryEvent",
+    "WorkerSessionSnapshot",
     "WorkspaceLayout",
     "WorkspaceManager",
 ]

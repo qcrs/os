@@ -46,6 +46,7 @@ class BenchmarkCaseReport:
     output_artifact_hash: str
     output_artifact_path: str
     workspace_root: str
+    session_state: str = ""
     metrics: dict[str, float] = field(default_factory=dict)
 
     @property
@@ -60,6 +61,7 @@ class BenchmarkFamilyReport:
     task_family: str
     cases: tuple[BenchmarkCaseReport, ...]
     aggregated_metrics: dict[str, float] = field(default_factory=dict)
+    telemetry_summary: dict[str, float] = field(default_factory=dict)
     report_path: str = ""
 
     @property

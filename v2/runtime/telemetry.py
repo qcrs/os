@@ -67,9 +67,15 @@ class TelemetryEmitter:
 
     def summarize_task(self, task_id: str) -> dict[str, float]:
         relevant = [event for event in self.events if event.task_id == task_id]
+        return self._summarize_events(relevant)
+
+    def summarize_suite(self, task_ids: list[str]) -> dict[str, float]:
+        relevant = [event for event in self.events if event.task_id in set(task_ids)]
+        return self._summarize_events(relevant)
+
+    def _summarize_events(self, events: list[TelemetryEvent]) -> dict[str, float]:
         totals: dict[str, float] = {}
-        for event in relevant:
+        for event in events:
             for key, value in event.metrics.items():
                 totals[key] = totals.get(key, 0.0) + float(value)
         return totals
-
