@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package statebus.v2.control;
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  REQ_EXEC = 1;
+  ACK_RECV = 2;
+  RUN_START = 3;
+  HEARTBEAT = 4;
+  RES_SUCC = 5;
+  RES_ERR = 6;
+  CMD_CANCEL = 7;
+  TRAP_FATAL = 8;
+  CMD_GC = 9;
+}
+
+message ControlHeader {
+  string trace_id = 1;
+  string task_id = 2;
+  string step_id = 3;
+  string attempt_id = 4;
+  string target_role = 5;
+  uint32 timeout_ms = 6;
+  string schema_version = 7;
+  EventType event_type = 8;
+}
+
+message RefHandle {
+  string ref_id = 1;
+  string ref_kind = 2;
+}
+
+message ReusePolicy {
+  bool allow_assist = 1;
+  bool allow_validated_replay = 2;
+  bool allow_exact_replay = 3;
+}
+
+message ExecRequest {
+  ControlHeader header = 1;
+  ReusePolicy reuse_policy = 2;
+  repeated RefHandle state_refs = 3;
+  repeated RefHandle artifact_refs = 4;
+}
+
+message AckReceived {
+  ControlHeader header = 1;
+  int64 acked_at_ns = 2;
+}
+
+message RunStart {
+  ControlHeader header = 1;
+  int64 started_at_ns = 2;
+  uint32 heartbeat_interval_ms = 3;
+  uint32 lease_timeout_ms = 4;
+}
+
+message Heartbeat {
+  ControlHeader header = 1;
+  int64 sent_at_ns = 2;
+  string worker_state = 3;
+}
+
+message SuccessResult {
+  ControlHeader header = 1;
+  repeated RefHandle state_refs = 2;
+  repeated RefHandle artifact_refs = 3;
+  string output_contract_version = 4;
+  int64 completed_at_ns = 5;
+}
+
+message ErrorResult {
+  ControlHeader header = 1;
+  string error_code = 2;
+  string error_detail = 3;
+  int64 failed_at_ns = 4;
+}
+
+message CancelCommand {
+  ControlHeader header = 1;
+  string reason = 2;
+  int64 issued_at_ns = 3;
+}
+
+message TrapFatal {
+  ControlHeader header = 1;
+  string trap_reason = 2;
+  string error_detail = 3;
+  int64 trapped_at_ns = 4;
+}
+
+message GarbageCollectCommand {
+  ControlHeader header = 1;
+  repeated string ref_ids = 2;
+  int64 issued_at_ns = 3;
+}
+
+message ControlEnvelope {
+  oneof body {
+    ExecRequest req_exec = 1;
+    AckReceived ack_recv = 2;
+    RunStart run_start = 3;
+    Heartbeat heartbeat = 4;
+    SuccessResult res_succ = 5;
+    ErrorResult res_err = 6;
+    CancelCommand cmd_cancel = 7;
+    TrapFatal trap_fatal = 8;
+    GarbageCollectCommand cmd_gc = 9;
+  }
+}
