@@ -26,6 +26,7 @@ from v2.runtime import (
     ArtifactOutputManifest,
     InputManifest,
     InputManifestItem,
+    build_task_lineage_view,
 )
 from v2.refs import ExecutionArtifactRef
 
@@ -141,6 +142,9 @@ def test_workspace_and_artifact_lifecycle_keep_candidate_verified_invalidated_st
     assert verified.verification_state.value == "verified"
     invalidated = lifecycle.mark_invalidated("artifact-1")
     assert invalidated.verification_state.value == "invalidated"
+
+    lineage = build_task_lineage_view(task_id="task-1", semantic_states=[], artifacts=[verified])
+    assert lineage.verified_artifact_ids == ("artifact-1",)
 
 
 def test_workspace_materializes_input_and_output_contract_files(tmp_path: Path) -> None:

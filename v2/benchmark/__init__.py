@@ -6,7 +6,9 @@ from v2.benchmark.models import (
     BenchmarkCaseReport,
     BenchmarkFamilyReport,
     BenchmarkLayer,
+    BenchmarkLayerProfile,
     BenchmarkRunReport,
+    BenchmarkSuiteReport,
     QualityFloorResult,
 )
 
@@ -17,12 +19,15 @@ __all__ = [
     "BenchmarkLayer",
     "BenchmarkCaseReport",
     "BenchmarkFamilyReport",
+    "BenchmarkLayerProfile",
     "BenchmarkRunReport",
+    "BenchmarkSuiteReport",
     "MinimalBenchmarkSample",
     "QualityFloorResult",
     "load_sample_family",
     "run_minimal_benchmark_family",
     "run_minimal_benchmark",
+    "run_minimal_benchmark_suite",
 ]
 
 
@@ -32,12 +37,14 @@ def __getattr__(name: str) -> Any:
         "run_minimal_benchmark",
         "load_sample_family",
         "run_minimal_benchmark_family",
+        "run_minimal_benchmark_suite",
     }:
         from v2.benchmark.minimal_runner import (
             MinimalBenchmarkSample,
             load_sample_family,
             run_minimal_benchmark_family,
             run_minimal_benchmark,
+            run_minimal_benchmark_suite,
         )
 
         exports = {
@@ -45,6 +52,7 @@ def __getattr__(name: str) -> Any:
             "load_sample_family": load_sample_family,
             "run_minimal_benchmark_family": run_minimal_benchmark_family,
             "run_minimal_benchmark": run_minimal_benchmark,
+            "run_minimal_benchmark_suite": run_minimal_benchmark_suite,
         }
         return exports[name]
     raise AttributeError(name)

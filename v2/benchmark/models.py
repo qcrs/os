@@ -14,6 +14,15 @@ class BenchmarkLayer(StrEnum):
 
 
 @dataclass(frozen=True)
+class BenchmarkLayerProfile:
+    layer: BenchmarkLayer
+    description: str
+    structured_control_enabled: bool
+    semantic_pruning_enabled: bool
+    replay_enabled: bool
+
+
+@dataclass(frozen=True)
 class QualityFloorResult:
     quality_floor_pass: bool
     deterministic_checks_passed: bool
@@ -59,11 +68,22 @@ class BenchmarkFamilyReport:
     suite_id: str
     layer: BenchmarkLayer
     task_family: str
+    profile: BenchmarkLayerProfile
     cases: tuple[BenchmarkCaseReport, ...]
     aggregated_metrics: dict[str, float] = field(default_factory=dict)
     telemetry_summary: dict[str, float] = field(default_factory=dict)
     report_path: str = ""
+    missing_reason: str = ""
 
     @property
     def eligible_for_headline(self) -> bool:
-        return bool(self.cases) and all(case.eligible_for_headline for case in self.cases)
+        return not self.missing_reason and bool(self.cases) and all(case.eligible_for_headline for case in self.cases)
+
+
+@dataclass(frozen=True)
+class BenchmarkSuiteReport:
+    suite_id: str
+    task_family: str
+    layer_reports: tuple[BenchmarkFamilyReport, ...]
+    waterfall_metrics: dict[str, float] = field(default_factory=dict)
+    report_path: str = ""

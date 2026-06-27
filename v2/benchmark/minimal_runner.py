@@ -8,12 +8,46 @@ from v2.benchmark.models import (
     BenchmarkCaseReport,
     BenchmarkFamilyReport,
     BenchmarkLayer,
+    BenchmarkLayerProfile,
     BenchmarkRunReport,
+    BenchmarkSuiteReport,
     QualityFloorResult,
 )
 from v2.runtime import TelemetryEmitter, TelemetryEvent
 from v2.runtime.smoke import SmokeResult, run_smoke
 from v2.utils import stable_json_dumps
+
+
+LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
+    BenchmarkLayer.L0: BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L0,
+        description="pure text cold baseline",
+        structured_control_enabled=False,
+        semantic_pruning_enabled=False,
+        replay_enabled=False,
+    ),
+    BenchmarkLayer.L1: BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L1,
+        description="typed control only",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=False,
+        replay_enabled=False,
+    ),
+    BenchmarkLayer.L2: BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L2,
+        description="typed control plus semantic pruning",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=False,
+    ),
+    BenchmarkLayer.L3: BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L3,
+        description="full replay stack",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=True,
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -58,7 +92,7 @@ def _quality_floor_from_smoke(smoke: SmokeResult) -> QualityFloorResult:
 
 def _report_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> BenchmarkRunReport:
     return BenchmarkRunReport(
-        layer=BenchmarkLayer.L0,
+        layer=BenchmarkLayer.L3,
         task_family=sample.task_family,
         quality_floor=_quality_floor_from_smoke(smoke),
         metrics={
@@ -83,6 +117,7 @@ def _case_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> Benc
         metrics={
             **dict(sorted(smoke.task_metrics.items())),
             "response_count": float(len(smoke.response_sequence)),
+            "lineage_verified_artifact_count": float(len(smoke.lineage_view.verified_artifact_ids)),
         },
     )
 
@@ -92,7 +127,14 @@ def _family_report_to_dict(report: BenchmarkFamilyReport) -> dict[str, object]:
         "suite_id": report.suite_id,
         "layer": report.layer.value,
         "task_family": report.task_family,
+        "profile": {
+            "description": report.profile.description,
+            "structured_control_enabled": report.profile.structured_control_enabled,
+            "semantic_pruning_enabled": report.profile.semantic_pruning_enabled,
+            "replay_enabled": report.profile.replay_enabled,
+        },
         "eligible_for_headline": report.eligible_for_headline,
+        "missing_reason": report.missing_reason,
         "aggregated_metrics": dict(sorted(report.aggregated_metrics.items())),
         "telemetry_summary": dict(sorted(report.telemetry_summary.items())),
         "cases": [
@@ -120,6 +162,15 @@ def _family_report_to_dict(report: BenchmarkFamilyReport) -> dict[str, object]:
     }
 
 
+def _suite_report_to_dict(report: BenchmarkSuiteReport) -> dict[str, object]:
+    return {
+        "suite_id": report.suite_id,
+        "task_family": report.task_family,
+        "waterfall_metrics": dict(sorted(report.waterfall_metrics.items())),
+        "layers": [_family_report_to_dict(layer_report) for layer_report in report.layer_reports],
+    }
+
+
 def run_minimal_benchmark(
     *,
     sample: MinimalBenchmarkSample,
@@ -144,7 +195,26 @@ def run_minimal_benchmark_family(
     runtime_root: Path,
     socket_path: Path,
     suite_id: str = "minimal-family",
+    layer: BenchmarkLayer = BenchmarkLayer.L3,
 ) -> BenchmarkFamilyReport:
+    profile = LAYER_PROFILES[layer]
+    if layer is not BenchmarkLayer.L3:
+        report_path = runtime_root / "benchmark_reports" / f"{suite_id}-{layer.value}.json"
+        family_report = BenchmarkFamilyReport(
+            suite_id=suite_id,
+            layer=layer,
+            task_family=samples[0].task_family if samples else "financial_report_analysis",
+            profile=profile,
+            cases=(),
+            aggregated_metrics={},
+            telemetry_summary={},
+            report_path=str(report_path),
+            missing_reason="layer_scaffold_not_executed_yet",
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(stable_json_dumps(_family_report_to_dict(family_report)) + "\n", encoding="utf-8")
+        return family_report
+
     cases: list[BenchmarkCaseReport] = []
     suite_emitter = TelemetryEmitter()
     for sample in samples:
@@ -172,11 +242,12 @@ def run_minimal_benchmark_family(
     }
     telemetry_summary = suite_emitter.summarize_suite([case.task_id for case in cases])
     task_family = cases[0].task_family if cases else "financial_report_analysis"
-    report_path = runtime_root / "benchmark_reports" / f"{suite_id}.json"
+    report_path = runtime_root / "benchmark_reports" / f"{suite_id}-{layer.value}.json"
     family_report = BenchmarkFamilyReport(
         suite_id=suite_id,
-        layer=BenchmarkLayer.L0,
+        layer=layer,
         task_family=task_family,
+        profile=profile,
         cases=tuple(cases),
         aggregated_metrics=aggregated_metrics,
         telemetry_summary=telemetry_summary,
@@ -185,6 +256,44 @@ def run_minimal_benchmark_family(
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(stable_json_dumps(_family_report_to_dict(family_report)) + "\n", encoding="utf-8")
     return family_report
+
+
+def run_minimal_benchmark_suite(
+    *,
+    samples: list[MinimalBenchmarkSample],
+    workspace_root: Path,
+    runtime_root: Path,
+    socket_path: Path,
+    suite_id: str = "minimal-suite",
+) -> BenchmarkSuiteReport:
+    layer_reports = tuple(
+        run_minimal_benchmark_family(
+            samples=samples,
+            workspace_root=workspace_root / layer.value,
+            runtime_root=runtime_root / layer.value,
+            socket_path=socket_path.with_name(f"{socket_path.stem}-{layer.value}{socket_path.suffix}"),
+            suite_id=suite_id,
+            layer=layer,
+        )
+        for layer in BenchmarkLayer
+    )
+    waterfall_metrics = {
+        "L0_case_count": float(len(layer_reports[0].cases)),
+        "L1_missing": 1.0 if layer_reports[1].missing_reason else 0.0,
+        "L2_missing": 1.0 if layer_reports[2].missing_reason else 0.0,
+        "L3_quality_floor_pass_count": layer_reports[3].aggregated_metrics.get("quality_floor_pass_count", 0.0),
+    }
+    report_path = runtime_root / "benchmark_reports" / f"{suite_id}-suite.json"
+    suite_report = BenchmarkSuiteReport(
+        suite_id=suite_id,
+        task_family=samples[0].task_family if samples else "financial_report_analysis",
+        layer_reports=layer_reports,
+        waterfall_metrics=waterfall_metrics,
+        report_path=str(report_path),
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(stable_json_dumps(_suite_report_to_dict(suite_report)) + "\n", encoding="utf-8")
+    return suite_report
 
 
 def main() -> None:
@@ -202,6 +311,13 @@ def main() -> None:
         workspace_root=Path("/tmp/statebus-v2-benchmark-family/workspaces"),
         runtime_root=Path("/tmp/statebus-v2-benchmark-family/runtime"),
         socket_path=Path("/tmp/statebus-v2-benchmark-family/control.sock"),
+        layer=BenchmarkLayer.L3,
+    )
+    suite = run_minimal_benchmark_suite(
+        samples=load_sample_family(Path(__file__).with_name("samples") / "minimal_family"),
+        workspace_root=Path("/tmp/statebus-v2-benchmark-suite/workspaces"),
+        runtime_root=Path("/tmp/statebus-v2-benchmark-suite/runtime"),
+        socket_path=Path("/tmp/statebus-v2-benchmark-suite/control.sock"),
     )
     print(f"task_id={sample.task_id}")
     print(f"quality_floor_pass={report.quality_floor.quality_floor_pass}")
@@ -210,6 +326,8 @@ def main() -> None:
     print(f"family_case_count={len(family.cases)}")
     print(f"family_quality_floor_pass_count={int(family.aggregated_metrics['quality_floor_pass_count'])}")
     print(f"family_report_path={family.report_path}")
+    print(f"suite_layer_count={len(suite.layer_reports)}")
+    print(f"suite_report_path={suite.report_path}")
 
 
 if __name__ == "__main__":

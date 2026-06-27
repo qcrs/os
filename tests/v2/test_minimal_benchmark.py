@@ -8,6 +8,7 @@ from v2.benchmark import (
     load_sample_family,
     run_minimal_benchmark,
     run_minimal_benchmark_family,
+    run_minimal_benchmark_suite,
 )
 
 
@@ -29,7 +30,7 @@ def test_minimal_benchmark_runs_formal_sample(tmp_path: Path) -> None:
         socket_path=tmp_path / "control.sock",
     )
     assert smoke.compiler_status == "compiled"
-    assert report.layer.value == "L0"
+    assert report.layer.value == "L3"
     assert report.quality_floor.quality_floor_pass is True
     assert report.eligible_for_headline is True
 
@@ -65,3 +66,22 @@ def test_minimal_benchmark_family_runs_and_persists_report(tmp_path: Path) -> No
     assert payload["aggregated_metrics"]["case_count"] == 2.0
     assert payload["telemetry_summary"]["artifact_count"] == 2.0
     assert len(payload["cases"]) == 2
+
+
+def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -> None:
+    suite_report = run_minimal_benchmark_suite(
+        samples=load_sample_family(Path("v2/benchmark/samples/minimal_family")),
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        suite_id="suite-sample-test",
+    )
+    assert len(suite_report.layer_reports) == 4
+    assert suite_report.layer_reports[0].layer.value == "L0"
+    assert suite_report.layer_reports[0].missing_reason == "layer_scaffold_not_executed_yet"
+    assert suite_report.layer_reports[2].missing_reason == "layer_scaffold_not_executed_yet"
+    assert suite_report.layer_reports[3].eligible_for_headline is True
+
+    payload = json.loads(Path(suite_report.report_path).read_text(encoding="utf-8"))
+    assert payload["suite_id"] == "suite-sample-test"
+    assert len(payload["layers"]) == 4
