@@ -116,6 +116,72 @@ def manifest_from_dict(payload: dict[str, Any]) -> HydrateManifest:
     )
 
 
+def evidence_item_to_dict(item: EvidenceItem) -> dict[str, Any]:
+    return {
+        "item_id": item.item_id,
+        "bucket": item.bucket,
+        "locator": None if item.locator is None else locator_to_dict(item.locator),
+        "rendered_text": item.rendered_text,
+        "source_name": item.source_name,
+        "rank": item.rank,
+        "score": item.score,
+        "metadata": dict(sorted(item.metadata.items())),
+    }
+
+
+def evidence_item_from_dict(payload: dict[str, Any]) -> EvidenceItem:
+    locator_payload = payload.get("locator")
+    locator = None if locator_payload is None else locator_from_dict(dict(locator_payload))
+    return EvidenceItem(
+        item_id=str(payload.get("item_id", "")),
+        bucket=str(payload.get("bucket", "")),
+        locator=locator,
+        rendered_text=str(payload.get("rendered_text", "")),
+        source_name=str(payload.get("source_name", "")),
+        rank=int(payload.get("rank", 0)),
+        score=float(payload.get("score", 0.0)),
+        metadata=dict(payload.get("metadata", {})),
+    )
+
+
+def evidence_pack_to_dict(pack: CanonicalEvidencePack) -> dict[str, Any]:
+    return {
+        "pack_id": pack.pack_id,
+        "task_id": pack.task_id,
+        "source_doc_hashes": list(pack.source_doc_hashes),
+        "hard_facts": [evidence_item_to_dict(item) for item in pack.hard_facts],
+        "structured_evidence": [evidence_item_to_dict(item) for item in pack.structured_evidence],
+        "semantic_contexts": [evidence_item_to_dict(item) for item in pack.semantic_contexts],
+        "lexical_hints": [evidence_item_to_dict(item) for item in pack.lexical_hints],
+        "conflicts": [evidence_item_to_dict(item) for item in pack.conflicts],
+        "budget_meta": dict(sorted(pack.budget_meta.items())),
+        "pack_hash": pack.pack_hash,
+        "schema_version": pack.schema_version,
+    }
+
+
+def evidence_pack_from_dict(payload: dict[str, Any]) -> CanonicalEvidencePack:
+    return CanonicalEvidencePack(
+        pack_id=str(payload.get("pack_id", "")),
+        task_id=str(payload.get("task_id", "")),
+        source_doc_hashes=tuple(payload.get("source_doc_hashes", [])),
+        hard_facts=tuple(evidence_item_from_dict(item) for item in payload.get("hard_facts", [])),
+        structured_evidence=tuple(
+            evidence_item_from_dict(item) for item in payload.get("structured_evidence", [])
+        ),
+        semantic_contexts=tuple(
+            evidence_item_from_dict(item) for item in payload.get("semantic_contexts", [])
+        ),
+        lexical_hints=tuple(
+            evidence_item_from_dict(item) for item in payload.get("lexical_hints", [])
+        ),
+        conflicts=tuple(evidence_item_from_dict(item) for item in payload.get("conflicts", [])),
+        budget_meta=dict(payload.get("budget_meta", {})),
+        pack_hash=str(payload.get("pack_hash", "")),
+        schema_version=str(payload.get("schema_version", "")),
+    )
+
+
 @dataclass
 class HydrationRegistry:
     text_spans: dict[str, str] = field(default_factory=dict)
@@ -284,4 +350,3 @@ class DeterministicFanInBuilder:
             )
             for candidate_id, (score, candidate) in ranked
         ]
-
