@@ -10,9 +10,6 @@ from langgraph.store.base import BaseStore
 from config import (
     ENABLE_CONTEXT_PACKETS,
     ENABLE_EMBEDDING_TRANSFER,
-    HIDDEN_STATE_CONTEXT_TOP_K,
-    HIDDEN_STATE_EVIDENCE_CHARS,
-    HIDDEN_STATE_EVIDENCE_PER_DOC,
     NS_ANALYSIS,
     NS_DOCS,
 )
@@ -30,13 +27,7 @@ from protocol import (
     verify_context_packet,
 )
 
-from .shared import (
-    _get_mode,
-    _hidden_guidance_from_packets,
-    _hidden_guidance_prompt,
-    _hidden_state_summary,
-    _record_hidden_state_received,
-)
+from .shared import _get_mode
 
 
 # ─── Analyst Agent ───
@@ -57,17 +48,11 @@ def analyst(state: dict, store: BaseStore) -> dict:
     document_payloads = state.get("document_payloads", [])
     context_packets = state.get("context_packets", [])
     embedding_payloads = state.get("embedding_payloads", [])
-    hidden_state_payloads = state.get("hidden_state_payloads", [])
     task_group = state.get("task_group", "default")
-    planner_hidden_state = state.get("planner_hidden_state")
-    _record_hidden_state_received("analyst", planner_hidden_state)
 
     use_embeddings = mode == "structured" and ENABLE_EMBEDDING_TRANSFER and bool(embedding_payloads)
     if use_embeddings:
         metrics.increment("embedding_received", len(embedding_payloads))
-    if hidden_state_payloads and mode == "structured":
-        metrics.increment("hidden_state_payloads_received", len(hidden_state_payloads))
-
     # Search for prior analyses (memory reuse)
     prior_analyses = store_search(store, NS_ANALYSIS, plan, limit=2)
     prior_context = ""
@@ -88,8 +73,6 @@ def analyst(state: dict, store: BaseStore) -> dict:
         "failed": 0,
         "missing_docs": [],
     }
-    candidate_count = len(context_packets) if context_packets else len(document_payloads or documents)
-    hidden_guidance = {"used": False, "candidate_packets": candidate_count, "selected_packets": 0}
     query_text = f"{query}\n{plan}"
     query_embedding = None
     if use_embeddings:
@@ -108,26 +91,8 @@ def analyst(state: dict, store: BaseStore) -> dict:
             query_text=query_text,
             query_embedding=query_embedding,
             embedding_payloads=embedding_payloads if use_embeddings else None,
-            hidden_state_payloads=hidden_state_payloads,
-            planner_hidden_state=planner_hidden_state,
-            top_k=HIDDEN_STATE_CONTEXT_TOP_K if planner_hidden_state else 3,
+            top_k=3,
         )
-        hidden_guidance = _hidden_guidance_from_packets(
-            selected_packets,
-            candidate_count=len(context_packets),
-            top_k=HIDDEN_STATE_CONTEXT_TOP_K if planner_hidden_state else 3,
-        )
-        if hidden_guidance.get("used"):
-            metrics.increment("hidden_state_used_analyst_context_ranking")
-            metrics.increment("hidden_state_context_packets_skipped", hidden_guidance["skipped_packets"])
-            selected_doc_keys = set(hidden_guidance.get("selected_doc_keys", []))
-            skipped_chars = sum(
-                packet.get("original_chars", 0)
-                for packet in context_packets
-                if packet.get("doc_key") not in selected_doc_keys
-            )
-            metrics.increment("hidden_state_context_chars_skipped", skipped_chars)
-            hidden_guidance["skipped_original_chars"] = skipped_chars
         verified_packets, verification_summary = _verify_and_rehydrate_packets(
             selected_packets,
             store=store,
@@ -137,14 +102,7 @@ def analyst(state: dict, store: BaseStore) -> dict:
         metrics.increment("context_packets_reliable", verification_summary["reliable"])
         metrics.increment("context_packets_rehydrated", verification_summary["rehydrated"])
         metrics.increment("context_packets_failed", verification_summary["failed"])
-        if hidden_guidance.get("used"):
-            docs_text = format_context_for_prompt(
-                verified_packets,
-                evidence_per_doc=HIDDEN_STATE_EVIDENCE_PER_DOC,
-                max_evidence_chars=HIDDEN_STATE_EVIDENCE_CHARS,
-            )
-        else:
-            docs_text = format_context_for_prompt(verified_packets)
+        docs_text = format_context_for_prompt(verified_packets)
         original_chars = sum(p.get("original_chars", 0) for p in selected_packets)
         compressed_chars = len(docs_text)
         if original_chars:
@@ -163,29 +121,10 @@ def analyst(state: dict, store: BaseStore) -> dict:
                 query_text=query_text,
                 query_embedding=query_embedding,
                 embedding_payloads=embedding_payloads if use_embeddings else None,
-                hidden_state_payloads=hidden_state_payloads,
-                planner_hidden_state=planner_hidden_state,
-                top_k=HIDDEN_STATE_CONTEXT_TOP_K if planner_hidden_state else 3,
+                top_k=3,
             )
             if selected_documents:
                 docs_text = "\n---\n".join(doc.get("text", "") for doc in selected_documents)
-                hidden_guidance = _hidden_guidance_from_packets(
-                    selected_documents,
-                    candidate_count=len(document_payloads or documents),
-                    top_k=HIDDEN_STATE_CONTEXT_TOP_K if planner_hidden_state else 3,
-                    candidate_type="documents",
-                )
-                if hidden_guidance.get("used"):
-                    metrics.increment("hidden_state_used_analyst_context_ranking")
-                    metrics.increment("hidden_state_context_packets_skipped", hidden_guidance["skipped_packets"])
-                    selected_doc_keys = set(hidden_guidance.get("selected_doc_keys", []))
-                    skipped_chars = sum(
-                        doc.get("original_chars", 0)
-                        for doc in (document_payloads or selected_documents)
-                        if doc.get("doc_key") not in selected_doc_keys
-                    )
-                    metrics.increment("hidden_state_context_chars_skipped", skipped_chars)
-                    hidden_guidance["skipped_original_chars"] = skipped_chars
             else:
                 docs_text = "\n---\n".join(documents) if documents else "No documents available."
             context_label = "Ranked documents" if selected_documents else "Documents"
@@ -224,7 +163,7 @@ Return ONLY valid JSON:
   ],
   "confidence": 0.85
 }}"""),
-        HumanMessage(content=f"Original query: {query}\nRequired answer fields: {required_answer_fields}\nExpected answer format: {answer_format or 'N/A'}\nPlan: {plan}{_hidden_guidance_prompt(hidden_guidance)}\n\n{context_label}:\n{docs_text}"
+        HumanMessage(content=f"Original query: {query}\nRequired answer fields: {required_answer_fields}\nExpected answer format: {answer_format or 'N/A'}\nPlan: {plan}\n\n{context_label}:\n{docs_text}"
                      + (f"\n\nPrior analyses:\n{prior_context}" if prior_context else "")),
     ]
 
@@ -263,8 +202,6 @@ Return ONLY valid JSON:
         "plan": plan,
         "selected_doc_keys": selected_doc_keys,
         "context_verification": verification_summary,
-        "hidden_guidance": hidden_guidance,
-        "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
     },
         memory_type="analysis",
         source_agent="analyst",
@@ -282,11 +219,7 @@ Return ONLY valid JSON:
         "analysis_digest": analysis_digest,
         "candidate_answers": candidate_answers,
         "evidence": evidence,
-        "hidden_guidance": hidden_guidance,
     }
-    if planner_hidden_state:
-        result["planner_hidden_state"] = planner_hidden_state
-
     if mode == "structured":
         msg = make_message(
             source="analyst", target="executor",
@@ -297,8 +230,6 @@ Return ONLY valid JSON:
                 "context_packet_count": len(context_packets),
                 "verified_packet_count": len(verified_packets),
                 "answer_fields": required_answer_fields,
-                "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
-                "hidden_guidance": hidden_guidance,
             },
             result={
                 "analysis_digest": analysis_digest,
@@ -306,18 +237,14 @@ Return ONLY valid JSON:
                 "evidence_count": len(evidence),
                 "context_reliable": verification_summary["reliable"],
                 "context_rehydrated": verification_summary["rehydrated"],
-                "hidden_state_used": hidden_guidance.get("used", False),
             },
             task_group=task_group,
-            hidden_state=planner_hidden_state,
         )
         metrics.record_message(
             source="analyst", target="executor", action="analyze",
             param_chars=len(plan) + sum(len(str(doc_key)) for doc_key in selected_doc_keys),
             result_chars=len(analysis_digest) + len(str(len(evidence))),
             has_embedding=False,
-            has_hidden_state=planner_hidden_state is not None,
-            hidden_state_dims=planner_hidden_state.get("dims", 0) if planner_hidden_state else 0,
         )
         result["messages"] = [msg.to_dict()]
         result["selected_context_packets"] = verified_packets
@@ -327,7 +254,6 @@ Return ONLY valid JSON:
                 for doc in selected_documents
             ]
         result["context_verification"] = verification_summary
-        result["hidden_guidance"] = hidden_guidance
 
     return result
 

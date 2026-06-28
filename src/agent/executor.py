@@ -15,7 +15,7 @@ from memory import store_put
 from metrics import metrics
 from protocol import ActionType, hash_text, make_message, summarize_text
 
-from .shared import _get_mode, _hidden_state_summary, _record_hidden_state_received
+from .shared import _get_mode
 
 
 SAFE_BUILTINS = {
@@ -109,15 +109,11 @@ def executor(state: dict, store: BaseStore) -> dict:
     candidate_answers = state.get("candidate_answers", {})
     evidence = state.get("evidence", [])
     selected_context_packets = state.get("selected_context_packets", [])
-    hidden_guidance = state.get("hidden_guidance", {})
     task_group = state.get("task_group", "default")
-    planner_hidden_state = state.get("planner_hidden_state")
-    _record_hidden_state_received("executor", planner_hidden_state)
 
     code = _build_codeact_program(
         evidence=evidence,
         selected_context_packets=selected_context_packets,
-        hidden_guidance=hidden_guidance,
         analysis=analysis,
     )
     execution_result = _run_safe_python(code)
@@ -142,8 +138,6 @@ def executor(state: dict, store: BaseStore) -> dict:
         "execution_summary": execution_summary,
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
-        "hidden_guidance": hidden_guidance,
-        "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
     },
         memory_type="execution",
         source_agent="executor",
@@ -163,9 +157,6 @@ def executor(state: dict, store: BaseStore) -> dict:
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
     }
-    if planner_hidden_state:
-        result["planner_hidden_state"] = planner_hidden_state
-
     if mode == "structured":
         msg = make_message(
             source="executor", target="summarizer",
@@ -174,7 +165,6 @@ def executor(state: dict, store: BaseStore) -> dict:
                 "analysis_chars": len(analysis),
                 "evidence_count": len(evidence),
                 "selected_context_count": len(selected_context_packets),
-                "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
             },
             result={
                 "execution_ok": execution_result["ok"],
@@ -184,15 +174,12 @@ def executor(state: dict, store: BaseStore) -> dict:
                 "metric_count": len(execution_result.get("metrics", {})),
             },
             task_group=task_group,
-            hidden_state=planner_hidden_state,
         )
         metrics.record_message(
             source="executor", target="summarizer", action="execute",
             param_chars=len(analysis_digest) + len(str(len(evidence))),
             result_chars=len(execution_summary) + len(final_answer),
             has_embedding=False,
-            has_hidden_state=planner_hidden_state is not None,
-            hidden_state_dims=planner_hidden_state.get("dims", 0) if planner_hidden_state else 0,
         )
         result["messages"] = [msg.to_dict()]
 
@@ -305,7 +292,6 @@ def _build_codeact_program(
     *,
     evidence: list[dict],
     selected_context_packets: list[dict],
-    hidden_guidance: dict,
     analysis: str,
 ) -> str:
     """Build deterministic CodeAct code from structured state."""
@@ -326,16 +312,10 @@ def _build_codeact_program(
         }
         for packet in selected_context_packets
     ]
-    hidden_payload = {
-        "used": bool(hidden_guidance.get("used", False)),
-        "selected_packets": int(hidden_guidance.get("selected_packets", 0) or 0),
-        "candidate_packets": int(hidden_guidance.get("candidate_packets", 0) or 0),
-    }
 
     return textwrap.dedent(f"""
     evidence = {repr(evidence_payload)}
     packets = {repr(packet_payload)}
-    hidden_guidance = {repr(hidden_payload)}
     analysis_text = {repr(str(analysis))}
 
     doc_keys = sorted(set(item["doc_key"] for item in evidence if item["doc_key"]))
@@ -351,7 +331,6 @@ def _build_codeact_program(
         "reliable_packets": reliable_packets,
         "rehydrated_packets": rehydrated_packets,
         "coverage_ratio": coverage_ratio,
-        "hidden_routing_used": hidden_guidance["used"],
         "analysis_chars": len(analysis_text),
     }}
     print("CodeAct metrics:", metrics)

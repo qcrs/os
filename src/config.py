@@ -18,14 +18,24 @@ LOCAL_MODEL_PATH = os.getenv("LOCAL_MODEL_PATH", "/data/models/Qwen3-8B")
 LOCAL_MODEL_DEVICE = os.getenv("LOCAL_MODEL_DEVICE", "cuda:0")
 LOCAL_MODEL_DTYPE = os.getenv("LOCAL_MODEL_DTYPE", "bfloat16")
 LOCAL_TRANSFORMERS_MAX_NEW_TOKENS = int(os.getenv("LOCAL_TRANSFORMERS_MAX_NEW_TOKENS", "768"))
-LOCAL_HIDDEN_POOLING = os.getenv("LOCAL_HIDDEN_POOLING", "last_token")
-LOCAL_HIDDEN_ROUND_DECIMALS = int(os.getenv("LOCAL_HIDDEN_ROUND_DECIMALS", "6"))
+
+# vLLM cache-handoff backend configuration. vLLM does not expose a stable
+# public raw-KV handle to application code; the cache mode therefore passes a
+# prefix cache handle while vLLM manages the actual KV cache internally.
+VLLM_MODEL_PATH = os.getenv("VLLM_MODEL_PATH", LOCAL_MODEL_PATH)
+VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "8192"))
+VLLM_MAX_NUM_SEQS = int(os.getenv("VLLM_MAX_NUM_SEQS", "16"))
+VLLM_MAX_NUM_BATCHED_TOKENS = int(os.getenv("VLLM_MAX_NUM_BATCHED_TOKENS", "4096"))
+VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.85"))
+VLLM_TENSOR_PARALLEL_SIZE = int(os.getenv("VLLM_TENSOR_PARALLEL_SIZE", "1"))
+VLLM_DTYPE = os.getenv("VLLM_DTYPE", LOCAL_MODEL_DTYPE)
+VLLM_MAX_NEW_TOKENS = int(os.getenv("VLLM_MAX_NEW_TOKENS", "384"))
+VLLM_TRUST_REMOTE_CODE = os.getenv("VLLM_TRUST_REMOTE_CODE", "1").lower() in {"1", "true", "yes"}
+VLLM_ENABLE_PREFIX_CACHING = os.getenv("VLLM_ENABLE_PREFIX_CACHING", "1").lower() in {"1", "true", "yes"}
+VLLM_ENFORCE_EAGER = os.getenv("VLLM_ENFORCE_EAGER", "0").lower() in {"1", "true", "yes"}
+
 ENABLE_CONTEXT_PACKETS = os.getenv("ENABLE_CONTEXT_PACKETS", "1").lower() in {"1", "true", "yes"}
 ENABLE_EMBEDDING_TRANSFER = os.getenv("ENABLE_EMBEDDING_TRANSFER", "1").lower() in {"1", "true", "yes"}
-ENABLE_HIDDEN_STATE_TRANSFER = os.getenv("ENABLE_HIDDEN_STATE_TRANSFER", "1").lower() in {"1", "true", "yes"}
-HIDDEN_STATE_CONTEXT_TOP_K = int(os.getenv("HIDDEN_STATE_CONTEXT_TOP_K", "2"))
-HIDDEN_STATE_EVIDENCE_PER_DOC = int(os.getenv("HIDDEN_STATE_EVIDENCE_PER_DOC", "1"))
-HIDDEN_STATE_EVIDENCE_CHARS = int(os.getenv("HIDDEN_STATE_EVIDENCE_CHARS", "120"))
 
 # Backward-compatible names used by older scripts/docs.
 DEEPSEEK_API_KEY = CHAT_API_KEY

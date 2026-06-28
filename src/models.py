@@ -13,8 +13,6 @@ from config import (
     CHAT_BASE_URL,
     CHAT_DISABLE_THINKING,
     CHAT_MODEL,
-    LOCAL_HIDDEN_POOLING,
-    LOCAL_HIDDEN_ROUND_DECIMALS,
     LOCAL_MODEL_DEVICE,
     LOCAL_MODEL_DTYPE,
     LOCAL_MODEL_PATH,
@@ -25,22 +23,11 @@ _TRANSFORMERS_LOCK = Lock()
 
 
 class LocalTransformersChatModel:
-    """Minimal local Transformers chat wrapper with optional hidden-state capture."""
+    """Minimal local Transformers chat wrapper."""
 
-    def __init__(self, temperature: float = 0.7, capture_hidden: bool = False):
+    def __init__(self, temperature: float = 0.7):
         self.temperature = temperature
-        self.capture_hidden = capture_hidden
         self.model_name = CHAT_MODEL
-
-    def _make_hidden_state_payload(self, tokenizer, model, inputs: dict, input_tokens: int) -> dict | None:
-        if not self.capture_hidden:
-            return None
-        return _capture_pre_generation_hidden_state(
-            tokenizer=tokenizer,
-            model=model,
-            inputs=inputs,
-            input_tokens=input_tokens,
-        )
 
     def invoke(self, messages: list[BaseMessage]) -> AIMessage:
         with _TRANSFORMERS_LOCK:
@@ -63,10 +50,6 @@ class LocalTransformersChatModel:
 
             import torch
 
-            hidden_state_payload = self._make_hidden_state_payload(
-                tokenizer, model, inputs, input_tokens
-            )
-
             with torch.inference_mode():
                 generated = model.generate(**inputs, **generation_kwargs)
             sequences = generated.sequences
@@ -79,8 +62,6 @@ class LocalTransformersChatModel:
             "model_name": self.model_name,
             "backend": "transformers",
         }
-        if hidden_state_payload is not None:
-            response_metadata["hidden_state_payload"] = hidden_state_payload
 
         return AIMessage(
             content=content,
@@ -153,75 +134,11 @@ def _strip_thinking(content: str) -> str:
     return content.split("</think>", 1)[1].strip()
 
 
-def _capture_pre_generation_hidden_state(
-    *,
-    tokenizer,
-    model,
-    inputs: dict,
-    input_tokens: int,
-) -> dict:
-    """Capture the last-layer hidden state before the first generated token."""
-    import hashlib
-    import math
-    import torch
 
-    with torch.inference_mode():
-        outputs = model(**inputs, output_hidden_states=True, use_cache=False)
-
-    last_hidden = outputs.hidden_states[-1][0]
-    attention_mask = inputs.get("attention_mask")
-    if attention_mask is None:
-        attention_mask = torch.ones_like(inputs["input_ids"])
-    attention_mask = attention_mask[0].to(last_hidden.dtype)
-    sequence_length = int(attention_mask.sum().item())
-    hidden_sequence_length = int(last_hidden.shape[0])
-    if sequence_length <= 0:
-        sequence_length = hidden_sequence_length
-    sequence_length = min(sequence_length, hidden_sequence_length)
-
-    if LOCAL_HIDDEN_POOLING == "mean":
-        hidden_slice = last_hidden[:sequence_length]
-        pooled = hidden_slice.mean(dim=0)
-        pooled_token_span = "prompt_tokens"
-    else:
-        pooled = last_hidden[sequence_length - 1]
-        pooled_token_span = "prompt_last_token"
-
-    pooled = pooled.detach().float().cpu()
-    norm = math.sqrt(float(torch.dot(pooled, pooled)))
-    vector = [round(float(value), LOCAL_HIDDEN_ROUND_DECIMALS) for value in pooled.tolist()]
-    token_ids = inputs["input_ids"][0, :sequence_length].detach().cpu().tolist()
-    token_fingerprint = ",".join(str(token_id) for token_id in token_ids)
-    source_token_hash = hashlib.sha256(token_fingerprint.encode("utf-8")).hexdigest()[:16]
-    return {
-        "kind": "transformer_hidden_state",
-        "capture_stage": "pre_generation",
-        "source": "prompt",
-        "prediction_target": "next_token",
-        "model": CHAT_MODEL,
-        "model_path": LOCAL_MODEL_PATH,
-        "layer": -1,
-        "pooling": LOCAL_HIDDEN_POOLING,
-        "pooled_token_span": pooled_token_span,
-        "dims": len(vector),
-        "norm": round(norm, 6),
-        "dtype": "float32_serialized",
-        "vector": vector,
-        "source_token_hash": source_token_hash,
-        "source_text_hash": source_token_hash,
-        "input_tokens": input_tokens,
-        "output_tokens": 0,
-        "next_token_index": sequence_length,
-    }
-
-
-def get_model(temperature: float = 0.7, capture_hidden: bool = False):
+def get_model(temperature: float = 0.7):
     """Get the configured chat model instance."""
     if CHAT_BACKEND == "transformers":
-        return LocalTransformersChatModel(
-            temperature=temperature,
-            capture_hidden=capture_hidden,
-        )
+        return LocalTransformersChatModel(temperature=temperature)
 
     extra_body = None
     if CHAT_DISABLE_THINKING:

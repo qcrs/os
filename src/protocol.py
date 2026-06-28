@@ -24,7 +24,6 @@ DEFAULT_SUMMARY_CHARS = 360
 DEFAULT_EVIDENCE_CHARS = 180
 DEFAULT_MIN_QUERY_COVERAGE = 0.35
 DEFAULT_MIN_EVIDENCE_SCORE = 0.05
-DEFAULT_HIDDEN_STATE_TOP_K = 2
 
 
 class ActionType(str, Enum):
@@ -61,7 +60,6 @@ class AgentMessage:
     task_group: str
     round_id: int
     status: str = "success"
-    hidden_state: dict | None = None
 
     def to_dict(self) -> dict:
         """Serialize to dict for state passing."""
@@ -96,7 +94,6 @@ def make_message(
     round_id: int = 0,
     embedding: list | None = None,
     status: str = "success",
-    hidden_state: dict | None = None,
 ) -> AgentMessage:
     """Factory to create an AgentMessage with auto-generated id and timestamp."""
     return AgentMessage(
@@ -111,7 +108,6 @@ def make_message(
         task_group=task_group,
         round_id=round_id,
         status=status,
-        hidden_state=hidden_state,
     )
 
 
@@ -213,17 +209,9 @@ def select_context_packets(
     query_text: str,
     query_embedding: list[float] | None = None,
     embedding_payloads: list[dict] | None = None,
-    hidden_state_payloads: list[dict] | None = None,
-    planner_hidden_state: dict | None = None,
     top_k: int = DEFAULT_CONTEXT_TOP_K,
 ) -> list[dict]:
-    """Select the most relevant compact packets for an analyst prompt.
-
-    Hidden vectors arrive through the independent hidden_state_payloads channel
-    and are associated to packets by doc_key/ref_id. This keeps hidden-state
-    transfer separate from context packet compression without pretending it is
-    injected into downstream model internals.
-    """
+    """Select the most relevant compact packets for an analyst prompt."""
     vector_by_key = {}
     for payload in embedding_payloads or []:
         if isinstance(payload, dict):
@@ -232,8 +220,6 @@ def select_context_packets(
             if key and isinstance(vector, list):
                 vector_by_key[key] = vector
 
-    hidden_state_by_key = _hidden_state_payloads_by_key(hidden_state_payloads)
-    planner_vector = _hidden_state_vector(planner_hidden_state)
     scored_packets = []
     for packet in packets:
         doc_key = packet.get("doc_key", "")
@@ -246,21 +232,9 @@ def select_context_packets(
             if doc_vector:
                 vector_score = cosine_similarity(query_embedding, doc_vector)
 
-        hidden_score = None
-        packet_hidden_payload = hidden_state_by_key.get(doc_key) or hidden_state_by_key.get(
-            packet.get("hidden_state_ref", "")
-        )
-        packet_hidden_vector = _hidden_state_vector(packet_hidden_payload)
-        if planner_vector and packet_hidden_vector:
-            hidden_score = cosine_similarity(planner_vector, packet_hidden_vector)
-
         diagnostics = packet.get("retrieval_diagnostics", {})
         coverage = float(diagnostics.get("query_coverage", 0.0) or 0.0)
-        if hidden_score is not None and vector_score is not None:
-            score = 0.45 * hidden_score + 0.35 * vector_score + 0.15 * lexical + 0.05 * coverage
-        elif hidden_score is not None:
-            score = 0.65 * hidden_score + 0.25 * lexical + 0.1 * coverage
-        elif vector_score is None:
+        if vector_score is None:
             score = 0.8 * lexical + 0.2 * coverage
         else:
             score = 0.65 * vector_score + 0.25 * lexical + 0.1 * coverage
@@ -270,7 +244,6 @@ def select_context_packets(
         enriched["score_components"] = {
             "lexical": round(float(lexical), 4),
             "vector": round(float(vector_score), 4) if vector_score is not None else None,
-            "hidden_state": round(float(hidden_score), 4) if hidden_score is not None else None,
             "coverage": round(float(coverage), 4),
         }
         scored_packets.append(enriched)
@@ -286,16 +259,9 @@ def select_document_payloads(
     query_text: str,
     query_embedding: list[float] | None = None,
     embedding_payloads: list[dict] | None = None,
-    hidden_state_payloads: list[dict] | None = None,
-    planner_hidden_state: dict | None = None,
     top_k: int = DEFAULT_CONTEXT_TOP_K,
 ) -> list[dict]:
-    """Select raw documents with non-text signals when compression is disabled.
-
-    Embedding transfer and hidden-state transfer stay independent from context
-    packet compression: if compact packets are disabled, the analyst can still rank
-    full documents before constructing its prompt.
-    """
+    """Select raw documents with optional embedding signals when compression is disabled."""
     candidates = []
     seen_texts = set()
     for payload in document_payloads or []:
@@ -320,8 +286,6 @@ def select_document_payloads(
             if key and isinstance(vector, list):
                 vector_by_key[key] = vector
 
-    hidden_state_by_key = _hidden_state_payloads_by_key(hidden_state_payloads)
-    planner_vector = _hidden_state_vector(planner_hidden_state)
     scored_documents = []
     for candidate in candidates:
         doc_key = candidate.get("doc_key", "")
@@ -342,19 +306,7 @@ def select_document_payloads(
             if doc_vector:
                 vector_score = cosine_similarity(query_embedding, doc_vector)
 
-        hidden_score = None
-        doc_hidden_payload = hidden_state_by_key.get(doc_key) or hidden_state_by_key.get(
-            candidate.get("hidden_state_ref", "")
-        )
-        doc_hidden_vector = _hidden_state_vector(doc_hidden_payload)
-        if planner_vector and doc_hidden_vector:
-            hidden_score = cosine_similarity(planner_vector, doc_hidden_vector)
-
-        if hidden_score is not None and vector_score is not None:
-            score = 0.45 * hidden_score + 0.35 * vector_score + 0.2 * lexical
-        elif hidden_score is not None:
-            score = 0.7 * hidden_score + 0.3 * lexical
-        elif vector_score is not None:
+        if vector_score is not None:
             score = 0.75 * vector_score + 0.25 * lexical
         else:
             score = lexical
@@ -364,7 +316,6 @@ def select_document_payloads(
         enriched["score_components"] = {
             "lexical": round(float(lexical), 4),
             "vector": round(float(vector_score), 4) if vector_score is not None else None,
-            "hidden_state": round(float(hidden_score), 4) if hidden_score is not None else None,
         }
         scored_documents.append(enriched)
 
@@ -680,12 +631,9 @@ def lexical_relevance(query_text: str, packet: dict) -> float:
 
 def _score_sort_key(item: dict) -> tuple:
     components = item.get("score_components", {}) or {}
-    hidden_score = components.get("hidden_state")
     vector_score = components.get("vector")
     return (
         item.get("score", 0.0),
-        hidden_score is not None,
-        float(hidden_score) if hidden_score is not None else -1.0,
         vector_score is not None,
         float(vector_score) if vector_score is not None else -1.0,
     )
@@ -703,29 +651,6 @@ def cosine_similarity(left_vector: list[float], right_vector: list[float]) -> fl
         return 0.0
     return dot / (norm_left * norm_right)
 
-
-def _hidden_state_payloads_by_key(payloads: list[dict] | None) -> dict[str, dict]:
-    by_key = {}
-    for payload in payloads or []:
-        if not isinstance(payload, dict):
-            continue
-        hidden_state = payload.get("hidden_state")
-        if not isinstance(hidden_state, dict):
-            hidden_state = payload
-        for key_name in ("ref_id", "doc_key", "hidden_state_ref"):
-            key = payload.get(key_name)
-            if key:
-                by_key[str(key)] = hidden_state
-    return by_key
-
-
-def _hidden_state_vector(payload: dict | None) -> list[float] | None:
-    if not isinstance(payload, dict):
-        return None
-    vector = payload.get("vector")
-    if not isinstance(vector, list):
-        return None
-    return vector
 
 
 def _normalize_text(text: str) -> str:
@@ -901,7 +826,6 @@ class AgentCard:
     input_schema: dict
     output_schema: dict
     supports_embedding: bool = False
-    supports_hidden_state: bool = False
 
 
 class AgentRegistry:
@@ -938,10 +862,7 @@ class AgentRegistry:
         lines = ["Agent Registry:"]
         for card in self._cards.values():
             emb = "✓" if card.supports_embedding else "✗"
-            hidden = "✓" if card.supports_hidden_state else "✗"
-            lines.append(
-                f"  [{card.name}] actions={card.actions}, embedding={emb}, hidden_state={hidden}"
-            )
+            lines.append(f"  [{card.name}] actions={card.actions}, embedding={emb}")
             lines.append(f"    {card.description}")
         return "\n".join(lines)
 
@@ -959,10 +880,8 @@ def create_default_registry() -> AgentRegistry:
         output_schema={
             "plan": "str",
             "sub_queries": "list[str]",
-            "planner_hidden_state": "dict",
         },
         supports_embedding=False,
-        supports_hidden_state=True,
     ))
 
     registry.register(AgentCard(
@@ -974,10 +893,8 @@ def create_default_registry() -> AgentRegistry:
             "doc_key": "str",
             "context_packet": "dict",
             "embedding_payload": "{doc_key: str, vector: list[float]}",
-            "hidden_state_payload": "{ref_id: str, doc_key: str, hidden_state: dict}",
         },
         supports_embedding=True,
-        supports_hidden_state=True,
     ))
 
     registry.register(AgentCard(
@@ -988,7 +905,6 @@ def create_default_registry() -> AgentRegistry:
             "plan": "str",
             "context_packets": "list[dict]",
             "embedding_payloads": "list[dict]",
-            "hidden_state_payloads": "list[dict]",
         },
         output_schema={
             "analysis": "str",
@@ -997,7 +913,6 @@ def create_default_registry() -> AgentRegistry:
             "evidence": "list[dict]",
         },
         supports_embedding=True,
-        supports_hidden_state=True,
     ))
 
     registry.register(AgentCard(
@@ -1017,7 +932,6 @@ def create_default_registry() -> AgentRegistry:
             "extracted_answers": "dict[str, str]",
         },
         supports_embedding=False,
-        supports_hidden_state=True,
     ))
 
     registry.register(AgentCard(
@@ -1032,7 +946,6 @@ def create_default_registry() -> AgentRegistry:
         },
         output_schema={"summary": "str", "key_findings": "list[str]"},
         supports_embedding=False,
-        supports_hidden_state=True,
     ))
 
     return registry

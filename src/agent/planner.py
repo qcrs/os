@@ -6,13 +6,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.store.base import BaseStore
 
-from config import ENABLE_HIDDEN_STATE_TRANSFER, NS_PLANS, NS_SUMMARIES
+from config import NS_PLANS, NS_SUMMARIES
 from memory import store_put, store_search
 from metrics import metrics
 from models import get_model
 from protocol import ActionType, hash_text, make_message
 
-from .shared import _extract_hidden_state, _get_mode, _hidden_state_summary, _normalize_sub_queries
+from .shared import _get_mode, _normalize_sub_queries
 
 
 # ─── Planner Agent ───
@@ -42,18 +42,14 @@ def planner(state: dict, store: BaseStore) -> dict:
         )
         metrics.increment("memory_reuse_hits")
 
-    capture_hidden = mode == "structured" and ENABLE_HIDDEN_STATE_TRANSFER
-    model = get_model(
-        temperature=0.5,
-        capture_hidden=capture_hidden,
-    )
+    model = get_model(temperature=0.5)
     parser = JsonOutputParser()
 
     messages = [
         SystemMessage(content="""You are a research planner. Given a research query,
 break it down into a structured plan with exactly 3 specific sub-queries for information retrieval.
-The 3 sub-queries should cover complementary aspects so downstream hidden-state
-routing can rank and prune context packets.
+The 3 sub-queries should cover complementary aspects for downstream context
+packet ranking and pruning.
 
 Return ONLY valid JSON with this exact format:
 {
@@ -65,9 +61,6 @@ Return ONLY valid JSON with this exact format:
     ]
 
     response = model.invoke(messages)
-    planner_hidden_state = _extract_hidden_state(response)
-    if planner_hidden_state:
-        metrics.increment("hidden_state_produced_planner")
     # Record LLM token usage
     if hasattr(response, "usage_metadata") and response.usage_metadata:
         um = response.usage_metadata
@@ -93,7 +86,6 @@ Return ONLY valid JSON with this exact format:
         "text": plan,
         "sub_queries": sub_queries,
         "query": query,
-        "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
     },
         memory_type="plan",
         source_agent="planner",
@@ -110,9 +102,6 @@ Return ONLY valid JSON with this exact format:
         "plan": plan,
         "sub_queries": sub_queries,
     }
-    if planner_hidden_state:
-        result["planner_hidden_state"] = planner_hidden_state
-
     if mode == "structured":
         msg = make_message(
             source="planner", target="researcher",
@@ -121,17 +110,13 @@ Return ONLY valid JSON with this exact format:
             result={
                 "plan": plan,
                 "sub_queries": sub_queries,
-                "hidden_state": _hidden_state_summary(planner_hidden_state),
             },
             task_group=task_group,
-            hidden_state=planner_hidden_state,
         )
         metrics.record_message(
             source="planner", target="researcher", action="plan",
             param_chars=len(query), result_chars=len(plan) + sum(len(s) for s in sub_queries),
             has_embedding=False,
-            has_hidden_state=planner_hidden_state is not None,
-            hidden_state_dims=planner_hidden_state.get("dims", 0) if planner_hidden_state else 0,
         )
         result["messages"] = [msg.to_dict()]
 

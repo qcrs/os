@@ -12,7 +12,7 @@ from metrics import metrics
 from models import get_model
 from protocol import ActionType, hash_text, make_message
 
-from .shared import _get_mode, _hidden_guidance_prompt, _hidden_state_summary, _record_hidden_state_received
+from .shared import _get_mode
 
 
 # ─── Summarizer Agent ───
@@ -36,10 +36,7 @@ def summarizer(state: dict, store: BaseStore) -> dict:
     execution_result = state.get("execution_result", {})
     final_answer = state.get("final_answer", "")
     extracted_answers = state.get("extracted_answers", {})
-    hidden_guidance = state.get("hidden_guidance", {})
     task_group = state.get("task_group", "default")
-    planner_hidden_state = state.get("planner_hidden_state")
-    _record_hidden_state_received("summarizer", planner_hidden_state)
 
     model = get_model(temperature=0.5)
     parser = JsonOutputParser()
@@ -70,7 +67,7 @@ Return ONLY valid JSON:
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"""Original query: {query}
 {format_instruction}
-Research plan: {plan}{_hidden_guidance_prompt(hidden_guidance)}
+Research plan: {plan}
 Analysis: {analysis_for_prompt}
 Evidence:
 {evidence_text}
@@ -106,8 +103,6 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
         "execution_result": execution_result,
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
-        "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
-        "hidden_guidance": hidden_guidance,
     },
         memory_type="summary",
         source_agent="summarizer",
@@ -126,12 +121,6 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
     }
-    if planner_hidden_state:
-        result["planner_hidden_state_summary"] = _hidden_state_summary(planner_hidden_state)
-    if hidden_guidance.get("used"):
-        metrics.increment("hidden_state_used_summarizer_guidance")
-        result["hidden_guidance"] = hidden_guidance
-
     if mode == "structured":
         msg = make_message(
             source="summarizer", target="output",
@@ -140,24 +129,18 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
                 "analysis_chars": len(analysis_for_prompt),
                 "evidence_count": len(evidence),
                 "execution_summary_chars": len(execution_summary),
-                "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
-                "hidden_guidance": hidden_guidance,
             },
             result={
                 "summary_chars": len(summary),
                 "final_answer_chars": len(final_answer),
                 "finding_count": len(key_findings),
-                "hidden_state_used": hidden_guidance.get("used", False),
             },
             task_group=task_group,
-            hidden_state=planner_hidden_state,
         )
         metrics.record_message(
             source="summarizer", target="output", action="summarize",
             param_chars=len(analysis_for_prompt) + len(execution_text), result_chars=len(summary),
             has_embedding=False,
-            has_hidden_state=planner_hidden_state is not None,
-            hidden_state_dims=planner_hidden_state.get("dims", 0) if planner_hidden_state else 0,
         )
         result["messages"] = [msg.to_dict()]
 

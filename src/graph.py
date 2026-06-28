@@ -16,6 +16,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from agent import analyst, executor, planner, researcher, summarizer
+from agent.cache_agents import (
+    analyst_cache,
+    context_prefill,
+    executor_cache,
+    planner_cache,
+    researcher_cache,
+    summarizer_cache,
+)
 from memory import create_store
 
 
@@ -30,14 +38,13 @@ class ResearchState(TypedDict, total=False):
     """
     # Input
     query: str
+    source_context: str
     task_group: str
-    mode: str  # "text" | "structured"
+    mode: str  # "text" | "structured" | "cache"
 
     # Planner output
     plan: str
     sub_queries: list[str]
-    planner_hidden_state: dict
-    planner_hidden_state_summary: dict
 
     # Researcher output (accumulates via operator.add)
     documents: Annotated[list[str], operator.add]
@@ -54,7 +61,6 @@ class ResearchState(TypedDict, total=False):
     candidate_answers: dict[str, str]
     evidence: list[dict]
     selected_context_packets: list[dict]
-    hidden_guidance: dict
 
     # Executor output
     execution_code: str
@@ -74,9 +80,17 @@ class ResearchState(TypedDict, total=False):
     # Each payload is {doc_key, vector, dims}; reducer accumulates parallel researchers.
     embedding_payloads: Annotated[list[dict], operator.add]
 
-    # Structured mode: non-text hidden-state transfer (researcher → analyst)
-    # Each payload is {ref_id, doc_key, source_agent, scope, hidden_state}.
-    hidden_state_payloads: Annotated[list[dict], operator.add]
+
+    # Cache mode: vLLM prefix-cache handoff state. The actual KV tensors stay
+    # inside vLLM; agents pass only lightweight cache handles and trace metadata.
+    active_cache: dict
+    source_cache: dict
+    planner_cache: dict
+    researcher_cache: dict
+    analyst_cache: dict
+    executor_cache: dict
+    summary_cache: dict
+    cache_trace: Annotated[list[dict], operator.add]
 
 
 # ─── Fan-out function for parallel research ───
@@ -91,14 +105,11 @@ def fan_out_research(state: ResearchState) -> list[Send]:
     sub_queries = state.get("sub_queries", [state.get("query", "")])
     task_group = state.get("task_group", "default")
     mode = state.get("mode", "text")
-    planner_hidden_state = state.get("planner_hidden_state")
-
     return [
         Send("researcher", {
             "sub_query": sq,
             "task_group": task_group,
             "mode": mode,
-            "planner_hidden_state": planner_hidden_state,
         })
         for sq in sub_queries
     ]
@@ -106,6 +117,7 @@ def fan_out_research(state: ResearchState) -> list[Send]:
 
 # Backward-compatible name for older docs/scripts that import it directly.
 fan_out_retrieval = fan_out_research
+
 
 
 # ─── Build the graph ───
@@ -148,4 +160,32 @@ def build_graph(mode: str = "text"):
     # Compile with shared store
     graph = builder.compile(store=store)
 
+    return graph, store
+
+
+def build_cache_graph():
+    """Build a linear vLLM prefix-cache handoff graph.
+
+    The cache graph is intentionally linear because vLLM KV cache state is tied
+    to a single token prefix and cannot be merged across parallel branches.
+    """
+    store = create_store()
+
+    builder = StateGraph(ResearchState)
+    builder.add_node("context_prefill", context_prefill)
+    builder.add_node("planner", planner_cache)
+    builder.add_node("researcher", researcher_cache)
+    builder.add_node("analyst", analyst_cache)
+    builder.add_node("executor", executor_cache)
+    builder.add_node("summarizer", summarizer_cache)
+
+    builder.add_edge(START, "context_prefill")
+    builder.add_edge("context_prefill", "planner")
+    builder.add_edge("planner", "researcher")
+    builder.add_edge("researcher", "analyst")
+    builder.add_edge("analyst", "executor")
+    builder.add_edge("executor", "summarizer")
+    builder.add_edge("summarizer", END)
+
+    graph = builder.compile(store=store)
     return graph, store

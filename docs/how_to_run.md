@@ -44,7 +44,7 @@ python -m pip install transformers torch accelerate
 如果要使用仓库内的 LangGraph 子模块版本，而不是 PyPI 版本，可安装本地包：
 
 ```bash
-python -m pip install -e langgraph/libs/checkpoint -e langgraph/libs/langgraph
+python -m pip install -e third_party/langgraph/libs/checkpoint -e third_party/langgraph/libs/langgraph
 ```
 
 ## 长期共享记忆
@@ -82,7 +82,7 @@ export DASHSCOPE_API_KEY="你的 DashScope API key"
 python -u run_demo.py
 ```
 
-`CHAT_BACKEND=transformers` 时，脚本不会要求 `DEEPSEEK_API_KEY`。Structured 模式下如果 `ENABLE_HIDDEN_STATE_TRANSFER=1`，planner/researcher 会捕获本地模型 pre-generation hidden state 并通过 `planner_hidden_state` / `hidden_state_payloads` 传递。
+`CHAT_BACKEND=transformers` 时，脚本不会要求 `DEEPSEEK_API_KEY`。Structured 模式只传递 `AgentMessage`、`context_packets` 和 `embedding_payloads`。
 
 ## 方式二：OpenAI 兼容后端
 
@@ -104,7 +104,7 @@ export DASHSCOPE_API_KEY="你的 DashScope API key"
 python -u run_demo.py
 ```
 
-OpenAI 兼容后端不会产生真实 Transformers hidden state；结构化模式仍会传递 `AgentMessage`、`context_packets` 和 `embedding_payloads`。
+结构化模式会传递 `AgentMessage`、`context_packets` 和 `embedding_payloads`；模型级中间状态复用请使用 trueKV/KV cache 实验路径。
 
 ### 使用本机 vLLM / Qwen3-8B OpenAI 兼容接口
 
@@ -145,15 +145,11 @@ Structured 模式下有三类可独立开关的结构化载荷：
 ```bash
 export ENABLE_CONTEXT_PACKETS=1       # researcher 构造压缩文本证据包，analyst 使用 compact evidence
 export ENABLE_EMBEDDING_TRANSFER=1    # researcher 生成 embedding_payloads，analyst 可用于排序
-export ENABLE_HIDDEN_STATE_TRANSFER=1 # 本地 Transformers 后端捕获并传递 hidden state
 ```
 
 相关细粒度参数：
 
 ```bash
-export HIDDEN_STATE_CONTEXT_TOP_K=2
-export HIDDEN_STATE_EVIDENCE_PER_DOC=1
-export HIDDEN_STATE_EVIDENCE_CHARS=120
 export EMBEDDING_MODEL=text-embedding-v4
 export EMBEDDING_DIMS=1024
 export EMBEDDING_BATCH_SIZE=10
@@ -166,7 +162,7 @@ export EMBEDDING_BATCH_SIZE=10
 ### 实验口径
 
 - **Protocol A**：`mode=text`，纯文本传输。
-- **Protocol B**：`mode=structured`，只启用压缩文本 `context_packets`，关闭 embedding / hidden-state 两个非文本通道。
+- **Protocol B**：`mode=structured`，只启用压缩文本 `context_packets`，关闭 embedding 非文本通道。
 - **记忆隔离**：实验时设置 `PERSISTENT_MEMORY_ENABLED=0`，避免历史 `.memory` 影响结果。
 - **模型后端**：推荐使用 vLLM OpenAI-compatible API 跑 `/data/models/Qwen3-8B`，比直接 Transformers 加载更快。
 - **评测来源**：只比较 executor 输出的 `extracted_answers`；`summary` 不参与自动评测。
@@ -186,7 +182,6 @@ EXPERIMENT_CONTAINER=SynapseX-wang \
 PERSISTENT_MEMORY_ENABLED=0 \
 ENABLE_CONTEXT_PACKETS=0 \
 ENABLE_EMBEDDING_TRANSFER=0 \
-ENABLE_HIDDEN_STATE_TRANSFER=0 \
 python3 -u task/run_group1_single.py --mode text \
   > exp/comm_exp/task1_protocol_a_text.json \
   2> exp/comm_exp/task1_protocol_a_text.log
@@ -207,7 +202,6 @@ EXPERIMENT_CONTAINER=SynapseX-wang \
 PERSISTENT_MEMORY_ENABLED=0 \
 ENABLE_CONTEXT_PACKETS=1 \
 ENABLE_EMBEDDING_TRANSFER=0 \
-ENABLE_HIDDEN_STATE_TRANSFER=0 \
 python3 -u task/run_group1_single.py --mode structured \
   > exp/comm_exp/task1_protocol_b_structured.json \
   2> exp/comm_exp/task1_protocol_b_structured.log
@@ -273,7 +267,9 @@ SynapseX/
 ├── run_structured_only.py  # 12 轮 Structured-only 实验
 ├── ablation_results/       # 消融实验结果
 ├── docs/                   # 项目文档
-├── langgraph/              # LangGraph 子模块
+├── third_party/            # 外部源码子模块
+│   ├── langgraph/          # LangGraph 子模块
+│   └── vllm/               # vLLM 子模块
 └── README.md
 ```
 
@@ -296,7 +292,6 @@ run_demo.py
     │   ├─ analyst 选择并验证 context packet 后生成 analysis/candidate_answers
     │   ├─ executor 生成 execution artifact 和机器评测用 final_answer/extracted_answers
     │   ├─ summarizer 生成自然语言总结，不作为机器评测来源
-    │   └─ 本地 Transformers 后端可传递 hidden state
     │
     └─ Phase 3: 输出 Text vs Structured 指标对比
 ```

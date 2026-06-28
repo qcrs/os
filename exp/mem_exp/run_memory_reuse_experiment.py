@@ -610,7 +610,7 @@ def build_environment() -> dict[str, Any]:
             "langchain-core": package_version("langchain-core"),
             "langchain-openai": package_version("langchain-openai"),
             "numpy": package_version("numpy"),
-            "langgraph": "local-source: langgraph/libs/langgraph",
+            "langgraph": "local-source: third_party/langgraph/libs/langgraph",
         },
     }
 

@@ -29,8 +29,7 @@ class Metrics:
 
     def record_message(self, source: str, target: str, action: str,
                        param_chars: int, result_chars: int,
-                       has_embedding: bool, embedding_dims: int = 0,
-                       has_hidden_state: bool = False, hidden_state_dims: int = 0):
+                       has_embedding: bool, embedding_dims: int = 0):
         """Record an inter-agent message for communication overhead tracking."""
         self.message_log.append({
             "source": source,
@@ -40,8 +39,6 @@ class Metrics:
             "result_chars": result_chars,
             "has_embedding": has_embedding,
             "embedding_dims": embedding_dims,
-            "has_hidden_state": has_hidden_state,
-            "hidden_state_dims": hidden_state_dims,
             "timestamp": time.time(),
         })
 
@@ -167,10 +164,6 @@ class Metrics:
             lines.append(f"  Embedding transfers: {len(emb_msgs)}")
             if emb_msgs:
                 lines.append(f"  Embedding dims: {emb_msgs[0]['embedding_dims']}")
-            hidden_msgs = [m for m in self.message_log if m.get("has_hidden_state")]
-            lines.append(f"  Hidden-state transfers: {len(hidden_msgs)}")
-            if hidden_msgs:
-                lines.append(f"  Hidden-state dims: {hidden_msgs[0]['hidden_state_dims']}")
             # Per-action breakdown
             actions = {}
             for m in self.message_log:
@@ -248,23 +241,6 @@ class Metrics:
             "param_chars": sum(m["param_chars"] for m in self.message_log),
             "result_chars": sum(m["result_chars"] for m in self.message_log),
             "embedding_transfers": sum(1 for m in self.message_log if m["has_embedding"]),
-            "hidden_state_transfers": sum(1 for m in self.message_log if m.get("has_hidden_state")),
-            "hidden_state_payloads_sent": self.counters.get("hidden_state_payloads_sent", 0),
-            "hidden_state_payloads_received": self.counters.get("hidden_state_payloads_received", 0),
-            "hidden_state_produced_planner": self.counters.get("hidden_state_produced_planner", 0),
-            "hidden_state_produced_researcher": self.counters.get("hidden_state_produced_researcher", 0),
-            "hidden_state_used_analyst_context_ranking": self.counters.get(
-                "hidden_state_used_analyst_context_ranking", 0
-            ),
-            "hidden_state_used_summarizer_guidance": self.counters.get(
-                "hidden_state_used_summarizer_guidance", 0
-            ),
-            "hidden_state_context_packets_skipped": self.counters.get(
-                "hidden_state_context_packets_skipped", 0
-            ),
-            "hidden_state_context_chars_skipped": self.counters.get(
-                "hidden_state_context_chars_skipped", 0
-            ),
             "context_packets_enabled": self.counters.get("context_packets_enabled", 0),
             "context_packets_disabled": self.counters.get("context_packets_disabled", 0),
             "embedding_received": self.counters.get("embedding_received", 0),

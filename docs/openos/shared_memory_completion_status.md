@@ -83,7 +83,7 @@
 
 | Agent | Namespace | 写入内容 | MemoryUnit 类型 | race9.md 对应内容 | 代码位置 |
 |-------|-----------|----------|-----------------|-------------------|----------|
-| Planner | `plans` | `plan`、`sub_queries`、`query`、planner hidden-state 摘要 | `plan` | 策略、中间结果、任务主题 | `src/agents.py:252` |
+| Planner | `plans` | `plan`、`sub_queries`、`query`、plan 与 sub_queries | `plan` | 策略、中间结果、任务主题 | `src/agents.py:252` |
 | Retriever | `docs` | `doc_text`、`sub_query`、`task_group` | `document` | 中间结果、证据材料 | `src/agents.py:355` |
 | Executor | `analysis` | `analysis`、`digest`、`evidence`、`selected_doc_keys`、verification 信息 | `analysis` | 证据链、结论、中间结果 | `src/agents.py:689` |
 | Summarizer | `summaries` | `summary`、`key_findings`、`recommendations`、`query` | `summary` | 摘要、结论、经验性建议 | `src/agents.py:911` |
@@ -126,7 +126,7 @@ Retriever 生成文档后调用 `make_document_key()` 得到 `doc_key`，并通�
    - `evidence_spans`：与子查询相关的短证据片段。
    - `full_doc_ref`：namespace、key、全文 hash，用于校验。
    - `original_chars` / `compressed_chars` / `compression_ratio`：压缩统计。
-3. Executor 收到多个 `context_packet` 后，先用 `select_context_packets()` 选择少量相关 packet；默认有 hidden state 时取 `HIDDEN_STATE_CONTEXT_TOP_K=2`，否则取 3。
+3. Executor 收到多个 `context_packet` 后，先用 `select_context_packets()` 选择少量相关 packet，默认取 top-3。
 4. Executor 的 `_verify_and_rehydrate_packets()` 会用 `doc_key` 执行 `store_get(store, NS_DOCS, doc_key)`，在 Python 层读取全文做 hash、offset 和证据一致性校验。这个读取过程不进入 LLM prompt，因此不消耗模型输入 token。
 5. 如果 packet 可靠，Executor 调用 `format_context_for_prompt()`，只把形如 `[doc_key#span_id] 短证据片段` 的内容放进 LLM prompt；metadata、hash、offset、diagnostics 都留在 Python 数据结构里。
 6. 如果 packet 不可靠，才会从 Store 回源补充一个受限 fallback，目前 `_rehydrate_packet_from_store()` 只取全文开头约 360 字符，而不是把完整文档注入 prompt。
@@ -134,8 +134,8 @@ Retriever 生成文档后调用 `make_document_key()` 得到 `doc_key`，并通�
 所以 token 节省来自四点：
 
 - **引用代替全文传递**：Agent 间消息主要传 `doc_key`、摘要、证据片段和统计信息，不传完整 `doc_text`。
-- **先排序再选取**：Executor 通过 lexical / embedding / hidden-state 信号选少量 packet，而不是把所有检索文档都交给 LLM。
-- **证据片段压缩**：最终 prompt 中通常只包含每篇文档的少量 evidence span；hidden-state 路径下默认每篇 1 条、每条约 120 字符。
+- **先排序再选取**：Executor 通过 lexical / embedding 信号选少量 packet，而不是把所有检索文档都交给 LLM。
+- **证据片段压缩**：最终 prompt 中通常只包含每篇文档的少量 evidence span。
 - **校验在 Python 层完成**：全文回源用于程序校验和必要补片段，不等于全文进入 LLM 上下文。
 
 边界条件：如果关闭 `ENABLE_CONTEXT_PACKETS`，或进入 fallback raw-document 路径，Executor 会使用 `select_document_payloads()` 对原始文档排序后再拼接文档正文，此时 token 节省会明显下降。因此当前大量节省 token 的主要实现点是 `context_packet + doc_key 引用 + evidence span 渲染`，不是单独的 `doc_key` 本身。
@@ -209,7 +209,6 @@ Executor 分析完成后写入 `NS_ANALYSIS`，payload 中包含：
 - `evidence`: 证据列表
 - `selected_doc_keys`: 选中的文档 key
 - `context_verification`: 上下文校验信息
-- `hidden_guidance`: hidden-state 选择信息
 
 `make_memory_unit()` 会进一步从 `evidence` 和 `selected_doc_keys` 中提取 `evidence_refs`，因此证据链有结构化引用。
 

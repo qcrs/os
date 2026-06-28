@@ -19,7 +19,7 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 - **多 Agent 协作**：`planner`、`researcher`、`analyst`、`executor`、`summarizer` 五个真实节点。
 - **结构化通信协议**：`AgentMessage`、`ActionType`、`AgentCard`、`AgentRegistry`。
 - **Context Packet 压缩**：把 researcher 生成的大段材料压缩为可校验、可回溯的上下文包。
-- **非文本状态传递**：embedding payload 和本地 Transformers hidden-state payload。
+- **非文本状态传递**：structured 模式仅保留 embedding payload；真正的模型中间状态传递由 trueKV/KV cache 路径实现。
 - **共享记忆机制**：基于 LangGraph `InMemoryStore`，并支持 JSONL 长期记忆。
 - **CodeAct Executor**：在 `analyst` 后执行受限 Python 代码，生成 `execution_result` 和 `execution_summary`。
 - **实验入口**：包含基础 demo、通信协议对比实验、memory reuse 实验和任务评测脚本。
@@ -30,8 +30,8 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 
 | Agent | 位置 | 主要职责 | 主要输出 |
 |---|---|---|---|
-| `planner` | 第 1 步 | 理解 query，生成研究计划和 3 个子查询 | `plan`、`sub_queries`、`planner_hidden_state` |
-| `researcher` | 第 2 步，并行 | 根据每个 sub-query 生成研究材料，写入 Store，并打包 context packet | `documents`、`context_packets`、`embedding_payloads`、`hidden_state_payloads` |
+| `planner` | 第 1 步 | 理解 query，生成研究计划和 3 个子查询 | `plan`、`sub_queries` |
+| `researcher` | 第 2 步，并行 | 根据每个 sub-query 生成研究材料，写入 Store，并打包 context packet | `documents`、`context_packets`、`embedding_payloads` |
 | `analyst` | 第 3 步 | 选择上下文、校验证据、必要时 rehydrate，并生成结构化分析 | `analysis`、`analysis_digest`、`evidence`、`selected_context_packets` |
 | `executor` | 第 4 步 | 执行受限 CodeAct，对 analyst 的分析和证据做统计检查 | `execution_code`、`execution_result`、`execution_summary` |
 | `summarizer` | 第 5 步 | 综合 plan、analysis、evidence 和 execution artifact，输出最终总结 | `summary`、`key_findings`、`recommendations` |
@@ -46,7 +46,7 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 |---|---|
 | [`../src/agent/`](../src/agent/) | 五个 Agent 的拆分实现和 agent 工作流说明 |
 | [`../src/agent/planner.py`](../src/agent/planner.py) | 任务规划与子查询生成 |
-| [`../src/agent/researcher.py`](../src/agent/researcher.py) | 研究材料生成、context packet 打包、embedding/hidden-state payload 生成 |
+| [`../src/agent/researcher.py`](../src/agent/researcher.py) | 研究材料生成、context packet 打包、embedding payload 生成 |
 | [`../src/agent/analyst.py`](../src/agent/analyst.py) | 上下文选择、证据校验、rehydrate、结构化分析 |
 | [`../src/agent/executor.py`](../src/agent/executor.py) | 受限 CodeAct 执行与 metrics artifact 生成 |
 | [`../src/agent/summarizer.py`](../src/agent/summarizer.py) | 最终总结生成 |
@@ -54,7 +54,7 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 | [`../src/protocol.py`](../src/protocol.py) | `AgentMessage`、`ActionType`、Context Packet、Agent Registry |
 | [`../src/memory.py`](../src/memory.py) | Store、MemoryUnit、JSONL 长期记忆、检索工具 |
 | [`../src/models.py`](../src/models.py) | OpenAI-compatible 和 Transformers Chat 后端封装 |
-| [`../src/metrics.py`](../src/metrics.py) | token、时延、通信、压缩和 hidden-state 指标统计 |
+| [`../src/metrics.py`](../src/metrics.py) | token、时延、通信、压缩和 embedding 指标统计 |
 | [`../src/config.py`](../src/config.py) | 环境变量、模型、命名空间和功能开关 |
 
 ---
@@ -65,7 +65,7 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 |---|---|
 | [`how_to_run.md`](how_to_run.md) | 运行方式、依赖安装、后端选择、环境变量、入口脚本说明 |
 | [`langgraph_features_in_demo.md`](langgraph_features_in_demo.md) | SynapseX 中用到的 LangGraph / LangChain 能力说明 |
-| [`openos/communication/structured_communication_protocol.md`](openos/communication/structured_communication_protocol.md) | 结构化通信协议、Context Packet、embedding 和 hidden-state 通道说明 |
+| [`openos/communication/structured_communication_protocol.md`](openos/communication/structured_communication_protocol.md) | 结构化通信协议、Context Packet 和 embedding 通道说明 |
 | [`openos/memory/memory_mechanism.md`](openos/memory/memory_mechanism.md) | 共享记忆机制、MemoryUnit schema、检索与持久化说明 |
 | [`openos/memory_reuse_experiment.md`](openos/memory_reuse_experiment.md) | memory reuse 实验设计与结果记录 |
 | [`openos/shared_memory_completion_status.md`](openos/shared_memory_completion_status.md) | 共享记忆模块完成度核查 |
@@ -130,7 +130,7 @@ planner / researcher / analyst / executor / summarizer
 
 | Namespace | 写入 Agent | 内容 |
 |---|---|---|
-| `("plans",)` | `planner` | plan、sub_queries、planner hidden-state summary |
+| `("plans",)` | `planner` | plan、sub_queries |
 | `("docs",)` | `researcher` | 完整研究材料、sub_query、document metadata |
 | `("analysis",)` | `analyst` | analysis、analysis_digest、evidence、selected_doc_keys |
 | `("executions",)` | `executor` | execution_code、execution_result、execution_summary |
@@ -145,7 +145,6 @@ planner / researcher / analyst / executor / summarizer
 ```bash
 export ENABLE_CONTEXT_PACKETS=1
 export ENABLE_EMBEDDING_TRANSFER=1
-export ENABLE_HIDDEN_STATE_TRANSFER=1
 ```
 
 Chat 后端可以选择：

@@ -5,19 +5,13 @@ import time
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.store.base import BaseStore
 
-from config import ENABLE_CONTEXT_PACKETS, ENABLE_EMBEDDING_TRANSFER, ENABLE_HIDDEN_STATE_TRANSFER, NS_DOCS
+from config import ENABLE_CONTEXT_PACKETS, ENABLE_EMBEDDING_TRANSFER, NS_DOCS
 from memory import store_put, store_search
 from metrics import metrics
 from models import get_model
 from protocol import ActionType, build_context_packet, hash_text, make_document_key, make_message, summarize_text
 
-from .shared import (
-    _extract_hidden_state,
-    _get_mode,
-    _hidden_state_alignment,
-    _hidden_state_summary,
-    _record_hidden_state_received,
-)
+from .shared import _get_mode
 
 
 # ─── Researcher Agent ───
@@ -36,11 +30,7 @@ def researcher(state: dict, store: BaseStore) -> dict:
 
     sub_query = state.get("sub_query", state.get("query", ""))
     task_group = state.get("task_group", "default")
-    planner_hidden_state = state.get("planner_hidden_state")
-    _record_hidden_state_received("researcher", planner_hidden_state)
-
-    capture_hidden = mode == "structured" and ENABLE_HIDDEN_STATE_TRANSFER
-    model = get_model(temperature=0.3, capture_hidden=capture_hidden)
+    model = get_model(temperature=0.3)
 
     messages = [
         SystemMessage(content="""You are a research source-material generator. Given a sub-query,
@@ -50,12 +40,6 @@ Return your response as plain text (3-5 paragraphs)."""),
     ]
 
     response = model.invoke(messages)
-    researcher_intent_hidden_state = _extract_hidden_state(response)
-    intent_alignment = _hidden_state_alignment(planner_hidden_state, researcher_intent_hidden_state)
-    if researcher_intent_hidden_state:
-        metrics.increment("hidden_state_produced_researcher")
-    if intent_alignment is not None:
-        metrics.increment("hidden_state_alignment_scored_researcher")
     # Record LLM token usage
     if hasattr(response, "usage_metadata") and response.usage_metadata:
         um = response.usage_metadata
@@ -95,21 +79,6 @@ Return your response as plain text (3-5 paragraphs)."""),
         "text_hash": hash_text(doc_text),
         "original_chars": len(doc_text),
     }
-    hidden_state_payload = None
-    if researcher_intent_hidden_state:
-        hidden_state_payload = {
-            "ref_id": doc_key,
-            "doc_key": doc_key,
-            "source_agent": "researcher",
-            "target_agent": "analyst",
-            "scope": "research_intent",
-            "sub_query": sub_query,
-            "intent_alignment": intent_alignment,
-            "hidden_state": researcher_intent_hidden_state,
-        }
-        document_payload["hidden_state_ref"] = doc_key
-        document_payload["intent_alignment"] = intent_alignment
-
     # Search for related prior documents (memory reuse)
     related = store_search(store, NS_DOCS, sub_query, limit=3)
     related_docs = [r.value.get("text", "") for r in related if r.key != doc_key]
@@ -132,12 +101,7 @@ Return your response as plain text (3-5 paragraphs)."""),
         result_payload = {
             "doc_key": doc_key,
             "document_chars": len(doc_text),
-            "planner_hidden_state": _hidden_state_summary(planner_hidden_state),
-            "researcher_intent_hidden_state": _hidden_state_summary(researcher_intent_hidden_state),
-            "intent_alignment": intent_alignment,
         }
-        if hidden_state_payload:
-            result_payload["hidden_state_ref"] = doc_key
         result = {"messages": []}
         result_chars = len(doc_text) + len(doc_key)
 
@@ -150,10 +114,6 @@ Return your response as plain text (3-5 paragraphs)."""),
                 task_group=task_group,
                 embedding_ref=doc_key,
             )
-            if hidden_state_payload:
-                context_packet["hidden_state_ref"] = doc_key
-                context_packet["intent_alignment"] = intent_alignment
-                context_packet["retrieval_diagnostics"]["intent_alignment"] = intent_alignment
             result_payload.update({
                 "summary": context_packet["summary"],
                 "evidence_count": len(context_packet["evidence_spans"]),
@@ -184,7 +144,6 @@ Return your response as plain text (3-5 paragraphs)."""),
             result=result_payload,
             task_group=task_group,
             embedding=embedding,
-            hidden_state=planner_hidden_state,
         )
         metrics.record_message(
             source="researcher", target="analyst", action="research",
@@ -192,15 +151,10 @@ Return your response as plain text (3-5 paragraphs)."""),
             result_chars=result_chars,
             has_embedding=embedding is not None,
             embedding_dims=len(embedding) if embedding else 0,
-            has_hidden_state=planner_hidden_state is not None,
-            hidden_state_dims=planner_hidden_state.get("dims", 0) if planner_hidden_state else 0,
         )
         result["messages"] = [msg.to_dict()]
         if embedding_payload:
             result["embedding_payloads"] = [embedding_payload]
-        if hidden_state_payload:
-            result["hidden_state_payloads"] = [hidden_state_payload]
-            metrics.increment("hidden_state_payloads_sent")
         return result
 
     return {

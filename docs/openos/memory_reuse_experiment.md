@@ -27,12 +27,12 @@
 | `langchain-core` | `1.4.8` |
 | `langchain-openai` | `1.3.2` |
 | `numpy` | `2.4.6` |
-| `langgraph` | `local-source: langgraph/libs/langgraph` |
+| `langgraph` | `local-source: third_party/langgraph/libs/langgraph` |
 
 复现实验命令：
 
 ```bash
-docker exec -w /data/mingwei/SynapseX SynapseX-wmw bash -lc 'unset DASHSCOPE_API_KEY http_proxy https_proxy HTTP_PROXY HTTPS_PROXY; PYTHONPATH=/data/mingwei/SynapseX/src:/data/mingwei/SynapseX/langgraph/libs/langgraph:/data/mingwei/SynapseX/langgraph/libs/checkpoint python3 -u run_memory_reuse_experiment.py'
+docker exec -w /data/mingwei/SynapseX SynapseX-wmw bash -lc 'unset DASHSCOPE_API_KEY http_proxy https_proxy HTTP_PROXY HTTPS_PROXY; PYTHONPATH=/data/mingwei/SynapseX/src:/data/mingwei/SynapseX/third_party/langgraph/libs/langgraph:/data/mingwei/SynapseX/third_party/langgraph/libs/checkpoint python3 -u run_memory_reuse_experiment.py'
 ```
 
 实验原始 JSON 结果保存于 `docs/openos/memory_reuse_experiment_results.json`。

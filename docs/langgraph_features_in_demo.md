@@ -52,7 +52,7 @@
 | 组件 | 作用 | Demo 中的使用位置 |
 |------|------|------------------|
 | `ChatOpenAI` | OpenAI 兼容 Chat 调用（默认 DeepSeek 配置） | `models.py` — `CHAT_BACKEND=openai` 时所有 Agent 调用 |
-| `LocalTransformersChatModel` | 本地 Transformers Chat 调用，并可捕获 pre-generation hidden state | `models.py` — `CHAT_BACKEND=transformers` 时使用 |
+| `LocalTransformersChatModel` | 本地 Transformers Chat 调用 | `models.py` — `CHAT_BACKEND=transformers` 时使用 |
 | `SystemMessage` / `HumanMessage` | 消息格式 | `agents.py` — 构造 LLM 输入 |
 | `JsonOutputParser` | JSON 输出解析 | `agents.py` — planner/executor/summarizer 解析 LLM 输出 |
 | `Embeddings` | 向量嵌入基类 | `memory.py` — `DashScopeEmbeddings` / `LocalHashEmbeddings` 实现 |

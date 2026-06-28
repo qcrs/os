@@ -38,3 +38,8 @@ Thumbs.db
 
 # Persistent shared memory
 .memory/
+
+# trueKV runtime artifacts
+exp/kv_cache_exp/**/true_kv_shared_storage/
+exp/kv_cache_exp/**/__pycache__/
+exp/kv_cache_exp/**/*.pyc

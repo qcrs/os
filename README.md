@@ -81,7 +81,9 @@ Task B (shares same Store):
 ├── run_structured_only.py  # 仅 STRUCTURED 模式测试
 ├── docs/                   # 项目文档
 │   └── openos/             # 详细技术文档
-├── langgraph/              # LangGraph 框架（git submodule）
+├── third_party/            # 外部源码子模块
+│   ├── langgraph/          # LangGraph 框架（git submodule）
+│   └── vllm/               # vLLM 推理框架（git submodule）
 └── README.md               # 本文件
 ```
 
