@@ -1,0 +1,150 @@
+{
+  "R01": {
+    "priority_order": ["S4", "S2", "S1", "S3"],
+    "sku_totals": {
+      "P1": {"demand": 230, "inventory": 200, "gap": 30},
+      "P2": {"demand": 250, "inventory": 230, "gap": 20},
+      "P3": {"demand": 240, "inventory": 210, "gap": 30}
+    },
+    "total_demand_units": 720,
+    "total_inventory_units": 640,
+    "total_gap_units": 80
+  },
+  "R02": {
+    "fulfilled": {
+      "S1": {"P1": 60, "P2": 50, "P3": 30},
+      "S2": {"P1": 80, "P2": 70, "P3": 60},
+      "S3": {"P1": 10, "P2": 70, "P3": 40},
+      "S4": {"P1": 50, "P2": 40, "P3": 80}
+    },
+    "unmet": {
+      "S1": {"P1": 0, "P2": 0, "P3": 0},
+      "S2": {"P1": 0, "P2": 0, "P3": 0},
+      "S3": {"P1": 30, "P2": 20, "P3": 30},
+      "S4": {"P1": 0, "P2": 0, "P3": 0}
+    },
+    "store_fill_units": {"S1": 140, "S2": 210, "S3": 120, "S4": 170},
+    "sku_unmet_totals": {"P1": 30, "P2": 20, "P3": 30}
+  },
+  "R03": {
+    "source_allocations": {
+      "South": {
+        "S4": {"P1": 50, "P2": 40, "P3": 80},
+        "S1": {"P1": 10, "P2": 30, "P3": 10},
+        "S3": {"P1": 10, "P2": 70, "P3": 40}
+      },
+      "North": {
+        "S2": {"P1": 80, "P2": 70, "P3": 60},
+        "S1": {"P1": 50, "P2": 20, "P3": 20}
+      }
+    },
+    "warehouse_remaining_inventory": {
+      "North": {"P1": 0, "P2": 0, "P3": 0},
+      "South": {"P1": 0, "P2": 0, "P3": 0}
+    }
+  },
+  "R04": {
+    "lane_metrics": {
+      "South->S4": {"units": 170, "weight_kg": 180.0, "volume_m3": 1.06, "gross_margin_cny": 3940},
+      "North->S2": {"units": 210, "weight_kg": 260.0, "volume_m3": 1.46, "gross_margin_cny": 5230},
+      "North->S1": {"units": 90, "weight_kg": 130.0, "volume_m3": 0.70, "gross_margin_cny": 2360},
+      "South->S1": {"units": 50, "weight_kg": 55.0, "volume_m3": 0.32, "gross_margin_cny": 1230},
+      "South->S3": {"units": 120, "weight_kg": 110.0, "volume_m3": 0.68, "gross_margin_cny": 2770}
+    },
+    "totals": {"units": 640, "weight_kg": 735.0, "volume_m3": 4.22, "gross_margin_cny": 15530}
+  },
+  "R05": {
+    "vehicle_loads": {
+      "V1": {"lanes": ["North->S1", "North->S2"], "weight_kg": 390.0, "volume_m3": 2.16, "capacity_pass": true},
+      "V2": {"lanes": ["South->S4", "South->S1"], "weight_kg": 235.0, "volume_m3": 1.38, "capacity_pass": true},
+      "V3": {"lanes": ["South->S3"], "weight_kg": 110.0, "volume_m3": 0.68, "capacity_pass": true}
+    },
+    "all_capacity_pass": true
+  },
+  "R06": {
+    "route_metrics": {
+      "V1": {"route": ["North", "S1", "S2", "North"], "distance_km": 50, "arrivals": {"S1": "08:51:36", "S2": "09:18:36"}, "return_time": "10:00:00", "route_cost_cny": 140.0},
+      "V2": {"route": ["South", "S4", "S1", "South"], "distance_km": 88, "arrivals": {"S4": "08:44:24", "S1": "09:42:36"}, "return_time": "10:45:36", "route_cost_cny": 176.8},
+      "V3": {"route": ["South", "S3", "South"], "distance_km": 32, "arrivals": {"S3": "08:49:12"}, "return_time": "09:23:24", "route_cost_cny": 92.0}
+    },
+    "baseline_total_route_cost_cny": 408.8,
+    "store_arrival_latest": {"S1": "09:42:36", "S2": "09:18:36", "S3": "08:49:12", "S4": "08:44:24"},
+    "on_time_by_store": {"S1": true, "S2": true, "S3": true, "S4": true},
+    "all_on_time": true
+  },
+  "R07": {
+    "disrupted_v2": {
+      "route": ["South", "S3", "S4", "S1", "South"],
+      "distance_km": 106,
+      "arrivals": {"S4": "09:06:00", "S1": "10:04:12"},
+      "return_time": "11:07:12",
+      "route_cost_cny": 196.6
+    },
+    "late_minutes_by_store": {"S1": 4.2, "S2": 0.0, "S3": 0.0, "S4": 6.0},
+    "late_penalty_cny": 510.0,
+    "no_mitigation_route_cost_cny": 428.6,
+    "no_mitigation_total_cost_cny": 938.6
+  },
+  "R08": {
+    "option_costs": {
+      "A_overtime_early_dispatch": {
+        "route_cost_cny": 428.6,
+        "extra_cost_cny": 180.0,
+        "late_penalty_cny": 0.0,
+        "total_cost_cny": 608.6,
+        "route_distance_km": 188,
+        "all_on_time": true
+      },
+      "B_charter_microvan": {
+        "route_cost_cny": 400.0,
+        "extra_cost_cny": 260.0,
+        "late_penalty_cny": 0.0,
+        "total_cost_cny": 660.0,
+        "route_distance_km": 150,
+        "all_on_time": true
+      },
+      "C_no_mitigation": {
+        "route_cost_cny": 428.6,
+        "extra_cost_cny": 0.0,
+        "late_penalty_cny": 510.0,
+        "total_cost_cny": 938.6,
+        "route_distance_km": 188,
+        "all_on_time": false
+      }
+    },
+    "selected_option": "A_overtime_early_dispatch",
+    "selected_total_cost_cny": 608.6,
+    "selected_route_distance_km": 188,
+    "selected_all_on_time": true
+  },
+  "R09": {
+    "kpi": {
+      "demand_units": 720,
+      "fulfilled_units": 640,
+      "unmet_units": 80,
+      "unit_fill_rate": 0.8889,
+      "lost_margin_cny": 1940,
+      "gross_margin_cny": 15530,
+      "logistics_total_cost_cny": 608.6,
+      "net_contribution_cny": 14921.4,
+      "on_time_stores": 4,
+      "total_stores": 4,
+      "on_time_store_rate": 1.0
+    }
+  },
+  "R10": {
+    "scenario_id": "retail_replenishment_2026_01_01",
+    "priority_order": ["S4", "S2", "S1", "S3"],
+    "sku_gap_totals": {"P1": 30, "P2": 20, "P3": 30},
+    "capacity_pass": true,
+    "baseline_all_on_time": true,
+    "selected_option": "A_overtime_early_dispatch",
+    "selected_total_cost_cny": 608.6,
+    "fulfilled_units": 640,
+    "gross_margin_cny": 15530,
+    "net_contribution_cny": 14921.4,
+    "selected_route_distance_km": 188,
+    "checksum": 806624
+  }
+}
+

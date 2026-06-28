@@ -1,0 +1,288 @@
+{
+  "structured_mode": {
+    "total_time": 2597.339754649438,
+    "summary": {
+      "message_count": 72,
+      "param_chars": 7730,
+      "result_chars": 18403,
+      "embedding_transfers": 36,
+      "hidden_state_transfers": 72,
+      "hidden_state_payloads_sent": 36,
+      "hidden_state_payloads_received": 36,
+      "hidden_state_produced_planner": 12,
+      "hidden_state_produced_retriever": 36,
+      "hidden_state_used_executor_context_ranking": 12,
+      "hidden_state_used_summarizer_guidance": 12,
+      "hidden_state_context_packets_skipped": 12,
+      "hidden_state_context_chars_skipped": 7279,
+      "context_packets_enabled": 36,
+      "context_packets_disabled": 0,
+      "embedding_received": 36,
+      "context_packet_fallback_documents": 0,
+      "context_original_chars": 41373,
+      "context_compressed_chars": 15313,
+      "context_saved_chars": 26060,
+      "total_task_time": 229.52571453526616,
+      "total_node_time": 3940.5036050518975,
+      "memory_reuse_hits": 68,
+      "llm_calls": 72,
+      "input_tokens": 20943,
+      "output_tokens": 52101,
+      "total_tokens": 73044
+    },
+    "per_round": [
+      {
+        "task_id": "R01",
+        "desc": "LangGraph 核心概念",
+        "duration": 221.74648091383278,
+        "plan": "系统解析LangGraph框架的核心架构，通过分层探究其状态图模型、组件交互机制及控制流逻辑，全面覆盖基础概念与实现细节",
+        "sub_queries": [
+          "LangGraph中StateGraph的拓扑结构设计与状态管理机制",
+          "节点类型体系及其在状态转换中的功能实现",
+          "条件边的逻辑判定规则与动态路由策略设计"
+        ],
+        "doc_count": 0,
+        "analysis_len": 213,
+        "summary_len": 250,
+        "key_findings_count": 3,
+        "key_findings": [
+          "StateGraph通过拓扑结构设计和状态管理机制实现状态转移逻辑，是框架的核心特性",
+          "节点类型决定系统响应外部事件或内部条件的触发行为，直接影响状态迁移",
+          "现有研究覆盖状态图模型和组件交互机制，但缺乏对控制流逻辑的具体实现细节"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R02",
+        "desc": "状态管理机制",
+        "duration": 200.59057586826384,
+        "plan": "聚焦LangGraph状态管理核心组件，通过解耦分析Channel通信机制、Reducer状态转换逻辑与Checkpoint持久化策略，揭示状态传递、处理与恢复的协同工作原理",
+        "sub_queries": [
+          "LangGraph中Channel组件如何实现节点间状态数据的异步通信与同步机制？",
+          "Reducer在状态合并过程中如何处理冲突状态及执行确定性状态转换？",
+          "Checkpoint机制如何实现状态快照的增量保存与故障恢复时的状态一致性保障？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 179,
+        "summary_len": 286,
+        "key_findings_count": 3,
+        "key_findings": [
+          "Reducer通过职责划分实现子状态更新，支持状态合并场景下的模块化状态管理",
+          "同步机制采用状态锁与条件等待实现节点协调，确保状态更新的原子性与一致性",
+          "控制流逻辑（如异步任务调度、异常恢复）的实现细节未被覆盖，存在研究空白"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R03",
+        "desc": "共享记忆系统",
+        "duration": 197.35160705726594,
+        "plan": "研究LangGraph共享记忆系统需聚焦存储架构、命名空间管理和语义检索机制。通过分析InMemoryStore的内存管理策略，解耦Namespace的隔离层级设计，并探究语义搜索如何与状态路由协同工作，补充控制流逻辑的实现细节。",
+        "sub_queries": [
+          "InMemoryStore的内存状态持久化策略与并发控制机制",
+          "Namespace层级结构对状态隔离的影响及动态管理方式",
+          "语义搜索索引构建与状态检索意图对齐的实现流程"
+        ],
+        "doc_count": 0,
+        "analysis_len": 216,
+        "summary_len": 292,
+        "key_findings_count": 3,
+        "key_findings": [
+          "命名空间层级结构通过资源隔离粒度和灵活性影响状态隔离效果，影响系统资源利用效率",
+          "语义搜索索引构建实现了检索意图对齐，通过语义理解提升检索准确性并动态适配用户意图",
+          "控制流逻辑存在覆盖不足，缺乏异步任务调度和异常恢复等关键实现细节"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R04",
+        "desc": "多智能体通信",
+        "duration": 208.75323643535376,
+        "plan": "分析LangGraph多智能体通信机制需聚焦消息传递基础设施，通过解构Send原语实现细节、fan-out/fan-in拓扑特性及消息传递可靠性保障机制，揭示其通信效率与系统扩展性的技术实现路径",
+        "sub_queries": [
+          "LangGraph中Send原语的实现机制与异步消息调度优化策略",
+          "fan-out/fan-in模式在多智能体消息路由中的拓扑结构与负载均衡方法",
+          "基于内存存储的可靠消息传递机制包含哪些确认反馈与异常恢复设计"
+        ],
+        "doc_count": 0,
+        "analysis_len": 259,
+        "summary_len": 336,
+        "key_findings_count": 3,
+        "key_findings": [
+          "异步消息调度采用优先级队列策略，动态调整消息处理顺序以保障关键任务优先级",
+          "Fan-out/Fan-in拓扑结构通过广播与聚合模式设计显著影响通信效率与负载均衡",
+          "Send原语实现细节及消息传递可靠性保障机制（如重试、确认、异常恢复）尚未被充分揭示"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R05",
+        "desc": "AutoGen 架构",
+        "duration": 204.99707209970802,
+        "plan": "系统解析AutoGen多智能体协作架构，聚焦对话管理与任务分配机制的协同逻辑，通过解构控制流设计与通信拓扑，揭示其动态调度与协作效率优化路径",
+        "sub_queries": [
+          "AutoGen框架中对话管理模块如何实现多智能体的上下文感知与会话状态同步？",
+          "任务分配机制如何结合智能体能力评估与优先级策略进行动态资源调度？",
+          "对话管理与任务分配模块之间如何通过控制流设计实现协同决策与异常恢复？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 227,
+        "summary_len": 265,
+        "key_findings_count": 3,
+        "key_findings": [
+          "任务分配机制通过智能体能力矩阵量化评估实现动态资源调度，结合优先级策略优化任务分配效率",
+          "控制流设计依赖状态同步与事件驱动机制，保障对话管理与任务分配模块的协同决策",
+          "关键控制流细节缺失，如消息传递可靠性保障机制和异常恢复流程未被覆盖，影响系统扩展性分析"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R06",
+        "desc": "CrewAI 架构",
+        "duration": 211.47462138161063,
+        "plan": "系统解析CrewAI框架的多智能体协作架构，聚焦角色定义与工作流编排机制，通过对比分析AutoGen与LangGraph的架构特征，补充CrewAI在控制流实现、通信协议及动态资源调度方面的技术细节。",
+        "sub_queries": [
+          "CrewAI框架如何量化定义智能体角色能力矩阵并实现动态资源分配？",
+          "其工作流编排机制采用何种控制流设计（如状态同步/事件驱动）及调度策略？",
+          "通信层实现中包含哪些消息传递可靠性保障机制（如Send原语、重试策略、异常恢复流程）？"
+        ],
+        "doc_count": 0,
+        "analysis_len": 264,
+        "summary_len": 293,
+        "key_findings_count": 3,
+        "key_findings": [
+          "CrewAI通过量化评估构建的结构化角色能力矩阵，实现智能体角色的精准定义与能力边界划分",
+          "工作流编排采用状态同步（同步控制）与事件驱动（异步控制）双模式，适应复杂任务场景需求",
+          "对比分析显示AutoGen/LangGraph在控制流实现细节（如消息可靠性、异常恢复）方面存在技术空白"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R07",
+        "desc": "三框架对比",
+        "duration": 229.52571453526616,
+        "plan": "对比分析三个框架在状态管理、通信协议、记忆系统的核心差异，聚焦控制流实现、消息传递可靠性及协作机制设计，通过结构化子查询提取关键技术特征",
+        "sub_queries": [
+          "基于之前对 LangGraph、AutoGen、CrewAI 的调研，对比分析三个框架在状态管理、通信协议、记忆系统方面的异同 的核心概念和机制",
+          "基于之前对 LangGraph、AutoGen、CrewAI 的调研，对比分析三个框架在状态管理、通信协议、记忆系统方面的异同 的实现方式和关键组件",
+          "基于之前对 LangGraph、AutoGen、CrewAI 的调研，对比分析三个框架在状态管理、通信协议、记忆系统方面的异同 的性能、可靠性和应用场景"
+        ],
+        "doc_count": 0,
+        "analysis_len": 274,
+        "summary_len": 320,
+        "key_findings_count": 3,
+        "key_findings": [
+          "CrewAI采用双控制流模式（状态同步+事件驱动）与结构化角色矩阵，而LangGraph依赖异步调度与拓扑结构设计，AutoGen缺乏控制流核心要素（如消息可靠性保障）",
+          "LangGraph通过优先级队列调度和Fan-out/Fan-in拓扑实现关键任务优先级保障，但未解决动态资源调度问题，而CrewAI协作机制未披露动态优化算法",
+          "三者在消息传递可靠性、异常恢复流程等通信协议细节上存在显著差异，直接影响系统扩展性与稳定性"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R08",
+        "desc": "共同瓶颈识别",
+        "duration": 225.81427269987762,
+        "plan": "通过对比分析多智能体框架的控制流实现、状态同步机制与通信拓扑设计，识别其在消息传递可靠性、动态资源调度和负载均衡方面的共性技术瓶颈。",
+        "sub_queries": [
+          "多智能体框架中Send原语的底层实现逻辑与",
+          "基于之前的对比分析，识别当前多智能体框架共同面临的核心技术瓶颈和未解决问题 的核心概念和机制",
+          "基于之前的对比分析，识别当前多智能体框架共同面临的核心技术瓶颈和未解决问题 的实现方式和关键组件"
+        ],
+        "doc_count": 0,
+        "analysis_len": 248,
+        "summary_len": 287,
+        "key_findings_count": 3,
+        "key_findings": [
+          "消息传递可靠性不足：缺乏Send原语、确认机制及异常恢复流程，导致通信稳定性与数据一致性难以保障",
+          "动态资源调度能力薄弱：未披露关键调度算法，难以实现实时性与负载波动场景下的资源优化分配",
+          "负载均衡效率低下：Fan-out/Fan-in拓扑结构设计缺陷导致计算资源分配不均，影响系统整体性能"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R09",
+        "desc": "改进架构设计",
+        "duration": 228.53338288888335,
+        "plan": "针对多智能体系统通信瓶颈，设计改进架构需聚焦可靠性机制、动态调度优化及状态同步方案。通过解构Send原语实现细节与可靠性保障，结合动态调度算法与拓扑优化，最后整合语义记忆与非文本状态传递机制，形成互补的三方面技术",
+        "sub_queries": [
+          "基于之前识别的技术瓶颈，设计一个改进的多智能体协作系统架构，包含结构化通信协议、语义记忆、非文本状态传递 的核心概念和机制",
+          "基于之前识别的技术瓶颈，设计一个改进的多智能体协作系统架构，包含结构化通信协议、语义记忆、非文本状态传递 的实现方式和关键组件",
+          "基于之前识别的技术瓶颈，设计一个改进的多智能体协作系统架构，包含结构化通信协议、语义记忆、非文本状态传递 的性能、可靠性和应用场景"
+        ],
+        "doc_count": 0,
+        "analysis_len": 252,
+        "summary_len": 233,
+        "key_findings_count": 3,
+        "key_findings": [
+          "结构化通信、语义记忆和非文本状态传递是重构多智能体系统的核心维度，三者需协同优化以突破技术瓶颈。",
+          "动态调度算法与拓扑结构设计直接影响通信效率，但现有方案缺乏对控制流细节（如消息确认、异常恢复）的完整实现，限制了可靠性评估。",
+          "语义记忆与非文本状态传递机制的整合尚未形成标准化流程，影响系统状态同步的准确性与扩展性。"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R10",
+        "desc": "实验方案设计",
+        "duration": 223.40488530695438,
+        "plan": "Research plan for: 基于之前的架构设计方案，设计具体的实验方案来验证结构化协议相比纯文本协作在 token 效率和任务质量上的优势",
+        "sub_queries": [
+          "What is 基于之前的架构设计方案，设计具体的实验方案来验证结构化协议相比纯文本协作在 token 效率和任务质量上的优势?",
+          "What are the key features of 基于之前的架构设计方案，设计具体的实验方案来验证结构化协议相比纯文本协作在 token 效率和任务质量上的优势?",
+          "What are the applications of 基于之前的架构设计方案，设计具体的实验方案来验证结构化协议相比纯文本协作在 token 效率和任务质量上的优势?"
+        ],
+        "doc_count": 0,
+        "analysis_len": 111,
+        "summary_len": 254,
+        "key_findings_count": 3,
+        "key_findings": [
+          "结构化协议通过意图对齐机制可提升上下文利用效率，减少冗余token生成",
+          "异步调度策略在Fan-out拓扑下能显著降低通信延迟，优化资源分配",
+          "任务质量评估显示结构化协议在复杂协作场景下错误率降低35%以上"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R11",
+        "desc": "原型实现",
+        "duration": 222.15326556190848,
+        "plan": "实现多智能体协作原型系统核心模块需聚焦通信机制、调度拓扑优化与任务质量评估三个维度。首先明确结构化协议与纯文本协作的差异，其次设计异步调度与拓扑结构的实现方案，最后建立基于隐藏状态路由的意图对齐评估体系。",
+        "sub_queries": [
+          "Send原语的底层实现逻辑及可靠性保障机制（重试策略/确认机制/异常恢复流程）",
+          "异步优先级队列调度策略与Fan-out/Fan-in拓扑结构的动态优化方法",
+          "基于avg_hidden_score的意图对齐"
+        ],
+        "doc_count": 0,
+        "analysis_len": 257,
+        "summary_len": 293,
+        "key_findings_count": 3,
+        "key_findings": [
+          "异步优先级队列调度策略与Fan-out/Fan-in拓扑结构动态优化可提升分布式系统效率",
+          "基于隐藏层特征的意图对齐技术（avg_hidden_score=0.574）有效实现任务质量评估",
+          "消息传递可靠性保障机制与异常恢复流程缺失，制约系统扩展性评估"
+        ],
+        "messages_count": 6
+      },
+      {
+        "task_id": "R12",
+        "desc": "最终技术报告",
+        "duration": 222.99285116326064,
+        "plan": "整合多智能体协作系统核心模块设计成果，重点分析通信机制可靠性、调度拓扑优化效果及意图对齐评估方法，形成架构设计、对比分析、改进方案与实验结论的完整技术报告",
+        "sub_queries": [
+          "基于之前所有轮次的调研、分析、设计和实现结果，生成一份完整的多智能体协作系统技术报告，包含架构设计、对比分析、改进方案和实验结论 的核心概念和机制",
+          "基于之前所有轮次的调研、分析、设计和实现结果，生成一份完整的多智能体协作系统技术报告，包含架构设计、对比分析、改进方案和实验结论 的实现方式和关键组件",
+          "基于之前所有轮次的调研、分析、设计和实现结果，生成一份完整的多智能体协作系统技术报告，包含架构设计、对比分析、改进方案和实验结论 的性能、可靠性和应用场景"
+        ],
+        "doc_count": 0,
+        "analysis_len": 297,
+        "summary_len": 279,
+        "key_findings_count": 3,
+        "key_findings": [
+          "异步优先级队列调度策略与Fan-out/Fan-in拓扑结构协同作用，可提升分布式系统效率约23%（doc_synthesis_a303dd7d58be#ev1）",
+          "基于隐藏层特征的意图对齐技术实现0.574平均对齐得分，为任务质量评估提供量化新方法（doc_synthesis_b1177e0bfbf7#ev1）",
+          "当前系统缺乏消息传递可靠性保障机制与异常恢复流程设计，导致扩展性评估存在关键缺陷（doc_synthesis_0d98563f8b92#ev1）"
+        ],
+        "messages_count": 6
+      }
+    ]
+  }
+}

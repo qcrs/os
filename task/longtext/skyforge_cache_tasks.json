@@ -1,0 +1,334 @@
+{
+  "group": "LongText Cache Group: Skyforge Courier 连续小游戏设计",
+  "total_rounds": 10,
+  "csv_files": [],
+  "source_context_file": "task/longtext/skyforge_rules.md",
+  "recommended_mode": "cache",
+  "cache_rationale": "十轮任务共享同一份长规则文档，并且每轮都基于前一轮设计继续扩展，适合 ContextPrefillAgent 先缓存长文档，后续 Agent 只追加当前轮短指令和上一轮状态。最终第 10 轮要求生成可运行 Python 游戏文件和配套玩法文档，二者保存到同一文件夹；长规则文档与前 9 轮状态在最终代码/文档生成时会被反复引用，适合 cache/trueKV 模式复用上下文。",
+  "tasks": [
+    {
+      "round": 1,
+      "id": 9001,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "基于 Skyforge Courier 长规则文档，设计第 1 轮 MVP：只实现地图、玩家移动、一个核心订单和交付成功判定。要求不要引入天气、道具、升级或复杂评分。",
+      "constraints": "必须复用文档中的术语和数据结构建议。输出需要包含 GameConfig、LevelState、PlayerState、OrderState 的最小字段；说明 12x12 地图如何表示；说明 workshop、air、cloud_wall、customer 四类 tile 的行为；给出核心订单从 created 到 delivered 的状态变化；列出至少 5 个测试点。不要写完整代码，只写可交给实现 Agent 的设计规格。",
+      "answer_format": "@round[1] @feature_scope[mvp_movement_delivery] @depends_on[none] @new_systems[map,movement,core_order,delivery] @deliverable[design_spec]",
+      "level": "medium",
+      "concepts": [
+        "Long Context Reuse",
+        "Game MVP",
+        "State Design"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "首轮建立最小可玩闭环，后续所有轮次都基于该 MVP 扩展。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 2,
+      "id": 9002,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 1 轮 MVP 基础上，加入 time_left、stamina 和基础 RunSummary 结算。玩家每移动一步消耗时间和体力，至少完成一个核心订单才算成功。",
+      "constraints": "必须保留第 1 轮的地图、移动和交付接口，不允许重写状态模型。说明新增字段的默认值、每回合更新顺序、体力为 0 时的行为、时间归零时的成功/失败判定。结算只需要 delivered_core_count、elapsed_steps、remaining_stamina、success 四个字段。列出至少 6 个测试点，并指出哪些测试复用第 1 轮。",
+      "answer_format": "@round[2] @feature_scope[time_stamina_summary] @depends_on[1] @new_systems[time_left,stamina,run_summary] @deliverable[incremental_spec]",
+      "level": "medium",
+      "concepts": [
+        "Incremental Design",
+        "Resource Management",
+        "State Transition"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1
+        ],
+        "note": "复用第1轮移动和交付，新增时间/体力/结算。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 3,
+      "id": 9003,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 2 轮基础上，加入 wind_lane 风道和更严格的 cloud_wall 障碍规则，让路线选择成为核心玩法。",
+      "constraints": "必须说明 wind_lane 的 direction 属性、进入风道后的自动推动顺序、撞到 cloud_wall 或地图边界时的处理、风道移动是否消耗额外体力。必须给出一个 12x12 示例地图片段，展示玩家可以利用风道更快到达 customer。保留第 2 轮 time_left 和 stamina 规则。列出至少 7 个测试点，包括风道推动、风道撞墙、风道链式触发是否允许。",
+      "answer_format": "@round[3] @feature_scope[wind_lane_obstacles] @depends_on[1,2] @new_systems[wind_lane,cloud_wall_collision,route_choice] @deliverable[incremental_spec]",
+      "level": "medium",
+      "concepts": [
+        "Map Mechanics",
+        "Movement Rules",
+        "Path Planning"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2
+        ],
+        "note": "复用移动/时间/体力，加入风道导致下游 Agent 需要理解已有状态更新顺序。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 4,
+      "id": 9004,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 3 轮基础上，加入 storm 雷暴、shield 护盾和 fragile 包裹损坏规则。玩家经过雷暴时先扣护盾，护盾为 0 再扣体力，脆弱包裹可能损坏。",
+      "constraints": "必须保留 wind_lane 与 storm 的交互：如果风道把玩家推入 storm，仍触发一次 storm 风险。说明 shield 字段、package fragility 字段、damaged 状态、迟到和损坏同时发生时的交付奖励优先级。随机损坏必须可测试：设计中要允许注入 deterministic random seed 或 mock risk roll。列出至少 8 个测试点。",
+      "answer_format": "@round[4] @feature_scope[storm_shield_fragility] @depends_on[1,2,3] @new_systems[storm,shield,package_damage,risk_roll] @deliverable[incremental_spec]",
+      "level": "hard",
+      "concepts": [
+        "Risk System",
+        "Deterministic Testing",
+        "Rule Interaction"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2,
+          3
+        ],
+        "note": "加入风险系统，需要继承前序移动、风道、体力和交付判定。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 5,
+      "id": 9005,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 4 轮基础上，加入多订单、cargo_slots 货舱容量和出发前订单选择。玩家不能一次携带所有订单，必须在核心、普通、奖励订单之间取舍。",
+      "constraints": "必须说明订单字段 priority、weight、deadline、reward_coins、reward_rep 如何影响选择。cargo_slots 基础为 2，weight 可以占用 1 或 2 格。到达 customer 后自动交付当前携带且匹配的订单，多个订单同一 customer 时优先交付即将超时的核心订单。必须描述未携带订单、携带但未交付订单、迟到订单、损坏订单的结算差异。列出至少 8 个测试点。",
+      "answer_format": "@round[5] @feature_scope[multi_order_cargo_selection] @depends_on[1,2,3,4] @new_systems[cargo_slots,order_selection,priority_delivery] @deliverable[incremental_spec]",
+      "level": "hard",
+      "concepts": [
+        "Inventory Constraints",
+        "Order Prioritization",
+        "Decision Making"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "note": "多订单依赖前序交付、deadline、storm damage 和结算规则。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 6,
+      "id": 9006,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 5 轮基础上，加入 supply 补给站和三个局内道具：battery、shield_cell、parcel_wrap。道具要服务于体力、护盾和脆弱包裹风险管理。",
+      "constraints": "必须说明 supply tile 的触发方式、是否一次性、恢复上限、道具库存限制。battery 恢复体力但不能超过上限；shield_cell 恢复护盾但不能超过上限；parcel_wrap 保护一个 fragile 包裹免受一次 storm 损坏。必须说明道具使用时机：手动使用还是自动触发。保留 cargo_slots 规则，道具不占 cargo slot，最多携带 2 个道具。列出至少 8 个测试点。",
+      "answer_format": "@round[6] @feature_scope[supply_items] @depends_on[1,2,3,4,5] @new_systems[supply,battery,shield_cell,parcel_wrap] @deliverable[incremental_spec]",
+      "level": "hard",
+      "concepts": [
+        "Item System",
+        "Recovery Rules",
+        "Risk Mitigation"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "note": "道具直接复用体力、护盾、脆弱包裹和多订单状态。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 7,
+      "id": 9007,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 6 轮基础上，加入 weather_script 天气预报和动态事件：顺风、乱流、雷暴增强。天气必须提前提示，不能突然制造不可避开的失败。",
+      "constraints": "必须说明 weather_script 的数据结构、每回合应用顺序、UI 预报字段、动态 blocked tile 的生成和消失规则。顺风会让部分 wind_lane 推动距离 +1；乱流会把少量 air 临时变为 blocked；雷暴增强会扩大 storm 风险范围。必须保留 deterministic 测试能力，动态事件要能用固定 seed 复现。列出至少 9 个测试点。",
+      "answer_format": "@round[7] @feature_scope[weather_forecast_dynamic_events] @depends_on[1,2,3,4,5,6] @new_systems[weather_script,forecast,temporary_blocked,storm_intensity] @deliverable[incremental_spec]",
+      "level": "hard",
+      "concepts": [
+        "Dynamic Events",
+        "Forecast UI",
+        "Deterministic Simulation"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "note": "动态天气依赖风道、雷暴、补给和测试种子等前序设计。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 8,
+      "id": 9008,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 7 轮基础上，加入局后升级系统和跨局成长：体力上限、护盾上限、cargo_slots、风道掌控、雷暴抗性五类升级。",
+      "constraints": "必须说明 UpgradeState 数据结构、金币消耗、升级前置条件、升级如何修改 GameConfig 或 PlayerState 初始值。风道掌控允许玩家选择是否接受 wind_lane 推动；雷暴抗性让 storm 体力伤害 -1 但不能低于 1。必须说明升级不能破坏旧关卡，未购买升级时行为应与第 7 轮一致。列出至少 9 个测试点。",
+      "answer_format": "@round[8] @feature_scope[post_run_upgrades_progression] @depends_on[1,2,3,4,5,6,7] @new_systems[upgrade_state,coin_costs,wind_control,storm_resistance] @deliverable[incremental_spec]",
+      "level": "hard",
+      "concepts": [
+        "Progression System",
+        "Backward Compatibility",
+        "Config Overrides"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "note": "升级系统修改多个前序机制的初始值和行为，需要强上下文连续性。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 9,
+      "id": 9009,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "在第 8 轮基础上，完善评分、评价等级和结算报告。结算需要解释玩家为什么得到 S/A/B/C/F，并给出下一局升级建议。",
+      "constraints": "必须实现文档中的核心订单、普通订单、奖励订单、准时倍率、路线效率、风险处理、迟到、损坏、事故扣分。说明 route_efficiency 如何用实际步数和理论最短路径估算；如果没有路径算法实现，允许用预先计算 shortest_path_steps。RunSummary 必须包含 score、grade、grade_reason、coin_delta、rep_delta、upgrade_suggestion。列出至少 10 个测试点。",
+      "answer_format": "@round[9] @feature_scope[scoring_grades_run_report] @depends_on[1,2,3,4,5,6,7,8] @new_systems[score,grade,route_efficiency,upgrade_suggestion] @deliverable[incremental_spec]",
+      "level": "hard",
+      "concepts": [
+        "Scoring System",
+        "Explainable Summary",
+        "Path Efficiency"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "note": "评分汇总所有前序机制，是 cache 模式连续状态复用的强场景。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      }
+    },
+    {
+      "round": 10,
+      "id": 9010,
+      "source_context_file": "task/longtext/skyforge_rules.md",
+      "question": "整合前 9 轮，产出 Skyforge Courier 的最终可交付版本。最终交付物必须保存到同一个文件夹中，包含两个文件：1) skyforge_courier_game.py：完整单文件 Python 终端小游戏，可直接用 python3 运行并在终端游玩；2) GAMEPLAY.md：配套游戏玩法文档，说明目标、操作、系统规则、评分和试玩建议。游戏程序必须包含地图渲染、移动输入、时间体力、风道/云墙、雷暴/护盾、包裹损坏、多订单货舱、补给道具、动态天气、升级、评分结算。",
+      "constraints": "必须明确引用前 9 轮的系统：地图移动、时间体力、风道障碍、雷暴护盾、包裹损坏、多订单货舱、补给道具、动态天气、升级、评分结算。最终回答必须只包含两个文件块，顺序固定为：### skyforge_courier_game.py 的 ```python fenced code block，然后 ### GAMEPLAY.md 的 ```markdown fenced block。不要输出两个文件块之外的解释文字。Python 代码只能使用标准库，必须有 if __name__ == '__main__': main()，必须能通过 python3 -m py_compile，必须通过 input() 接收 w/a/s/d/q 等终端指令，必须包含 update_turn、resolve_tile_effect、deliver_orders、calculate_summary、render_map、main 函数。GAMEPLAY.md 必须包含：运行命令 python3 skyforge_courier_game.py、控制说明、地图符号说明、订单/货舱/补给/天气/升级/评分规则、胜负条件、至少 1 条新手试玩路线建议。实验或 Agent 保存产物时，必须把 skyforge_courier_game.py 和 GAMEPLAY.md 放到同一个文件夹，例如 skyforge_courier_release/。answer tags 以 Python 注释形式放在 skyforge_courier_game.py 文件末尾，同时在 GAMEPLAY.md 末尾用 HTML 注释重复一份。",
+      "answer_format": "@round[10] @feature_scope[playable_python_game_with_manual] @depends_on[1,2,3,4,5,6,7,8,9] @new_systems[integration,terminal_ui,playable_loop,gameplay_manual,file_packaging] @deliverable[python_game_file+gameplay_manual_same_folder]",
+      "intent": "finalize",
+      "level": "hard",
+      "concepts": [
+        "System Integration",
+        "Terminal Game",
+        "Python Implementation",
+        "Playable Prototype"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "note": "最终整合任务强依赖全部前序设计，并要求生成可执行 Python 终端游戏，是最适合 cache 模式的连续长上下文任务。",
+        "is_cross_csv": false,
+        "requires_source_context": true,
+        "cache_suitable": true
+      },
+      "final_artifacts": {
+        "output_directory": "skyforge_courier_release",
+        "same_folder_required": true,
+        "files": [
+          {
+            "path": "skyforge_courier_game.py",
+            "type": "python_source",
+            "must_run_with": "python3 skyforge_courier_game.py",
+            "requirements": [
+              "single-file terminal game",
+              "Python standard library only",
+              "uses input() controls for w/a/s/d movement and q quit",
+              "contains main(), update_turn(), resolve_tile_effect(), deliver_orders(), calculate_summary()",
+              "passes python3 -m py_compile skyforge_courier_game.py"
+            ]
+          },
+          {
+            "path": "GAMEPLAY.md",
+            "type": "gameplay_manual",
+            "requirements": [
+              "explains story goal and win/loss conditions",
+              "lists controls and turn flow",
+              "documents tiles, orders, cargo, supplies, weather, upgrades, scoring and grades",
+              "includes quick-start run command and at least one sample route/playthrough tip"
+            ]
+          }
+        ],
+        "final_answer_format": "最终轮必须输出两个 fenced blocks，并用文件名标题标识：\n### skyforge_courier_game.py\n```python\n...\n```\n### GAMEPLAY.md\n```markdown\n...\n```\n实验脚本应将两个文件保存到同一个输出文件夹中。"
+      }
+    }
+  ],
+  "final_deliverable_contract": {
+    "output_directory": "skyforge_courier_release",
+    "same_folder_required": true,
+    "files": [
+      {
+        "path": "skyforge_courier_game.py",
+        "type": "python_source",
+        "must_run_with": "python3 skyforge_courier_game.py",
+        "requirements": [
+          "single-file terminal game",
+          "Python standard library only",
+          "uses input() controls for w/a/s/d movement and q quit",
+          "contains main(), update_turn(), resolve_tile_effect(), deliver_orders(), calculate_summary()",
+          "passes python3 -m py_compile skyforge_courier_game.py"
+        ]
+      },
+      {
+        "path": "GAMEPLAY.md",
+        "type": "gameplay_manual",
+        "requirements": [
+          "explains story goal and win/loss conditions",
+          "lists controls and turn flow",
+          "documents tiles, orders, cargo, supplies, weather, upgrades, scoring and grades",
+          "includes quick-start run command and at least one sample route/playthrough tip"
+        ]
+      }
+    ],
+    "final_answer_format": "最终轮必须输出两个 fenced blocks，并用文件名标题标识：\n### skyforge_courier_game.py\n```python\n...\n```\n### GAMEPLAY.md\n```markdown\n...\n```\n实验脚本应将两个文件保存到同一个输出文件夹中。"
+  }
+}

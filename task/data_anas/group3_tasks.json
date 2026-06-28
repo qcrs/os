@@ -1,0 +1,216 @@
+{
+  "group": "Group 3: 信用卡+酒店 跨CSV",
+  "total_rounds": 11,
+  "csv_files": [
+    "Credit.csv",
+    "hotel_data.csv"
+  ],
+  "tasks": [
+    {
+      "round": 1,
+      "id": 737,
+      "csv_file": "Credit.csv",
+      "question": "Calculate the mean and standard deviation of the \"Income\" column in the Credit.csv file.",
+      "constraints": "Calculate the mean and standard deviation using built-in functions in Python's pandas library. Round the outputs to two decimal places.",
+      "answer_format": "@mean_income[mean_value], @std_dev_income[std_dev_value] where \"mean_value\" and \"std_dev_value\" are the calculated mean and standard deviation of the \"Income\" column, respectively. Both should be rounded to two decimal places.",
+      "level": "easy",
+      "concepts": [
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "计算Income的mean+std",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 2,
+      "id": 738,
+      "csv_file": "Credit.csv",
+      "question": "Check if the distribution of the \"Age\" column in the Credit.csv file adheres to a normal distribution.",
+      "constraints": "Use the Shapiro-Wilk test from scipy.stats library to test for normality. Use a significance level (alpha) of 0.05. If the p-value is less than the significance level, declare that the distribution is not normal. Otherwise, declare that the distribution is normal.",
+      "answer_format": "@is_normal[is_normal] where \"is_normal\" is a string that can be either \"Normal\" or \"Not Normal\" based on the Shapiro-Wilk test result.",
+      "level": "medium",
+      "concepts": [
+        "Distribution Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "检验Age正态性(Shapiro-Wilk)",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 3,
+      "id": 739,
+      "csv_file": "Credit.csv",
+      "question": "Determine the correlation coefficient between the \"Limit\" and \"Balance\" columns in the Credit.csv file.",
+      "constraints": "Calculate the Pearson correlation coefficient to represent the correlation. Round the result to two decimal places.",
+      "answer_format": "@correlation_coefficient[correlation_value] where \"correlation_value\" is the calculated Pearson correlation coefficient between \"Limit\" and \"Balance\", rounded to two decimal places.",
+      "level": "medium",
+      "concepts": [
+        "Correlation Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "Limit和Balance相关系数",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 4,
+      "id": 740,
+      "csv_file": "Credit.csv",
+      "question": "Identify any outliers in the \"Balance\" column of the Credit.csv file using the Z-score method.",
+      "constraints": "Define an outlier to be any data point that falls more than 3 standard deviations from the mean. Use the formula Z = (X - μ) / σ where X is a data point, μ is the mean, and σ is the standard deviation.",
+      "answer_format": "@outliers[outliers_count], where \"outliers_count\" is an integer indicating the total number of outliers identified.",
+      "level": "medium",
+      "concepts": [
+        "Outlier Detection",
+        "Comprehensive Data Preprocessing"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1
+        ],
+        "note": "Balance异常值Z-score → 复用Q737的统计方法",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 5,
+      "id": 741,
+      "csv_file": "Credit.csv",
+      "question": "Create a new feature in the Credit.csv file by calculating the ratio of \"Balance\" to \"Limit\" for each individual.",
+      "constraints": "Calculate the ratio as Balance / Limit. For any individual with a Limit of zero, their ratio should be defined as zero to avoid division by zero.",
+      "answer_format": "@addedfeature[ratio], where \"ratio\" refers to the newly created column containing the ratio of balance to limit for each individual, with a precision of two decimal places for each individual's ratio data.",
+      "level": "medium",
+      "concepts": [
+        "Feature Engineering",
+        "Comprehensive Data Preprocessing"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          3
+        ],
+        "note": "创建Balance/Limit比率 → 基于Q739的相关性",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 6,
+      "id": 506,
+      "csv_file": "hotel_data.csv",
+      "question": "1. What is the average number of reviews per hotel in the dataset?",
+      "constraints": "Calculate the mean reviews per hotel from the entire dataset. Round your result to two decimal places.",
+      "answer_format": "@average_reviews[average] where \"average\" is a number rounded to two decimal places, and representing the average number of reviews per hotel.",
+      "level": "easy",
+      "concepts": [
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1
+        ],
+        "note": "平均reviews → 复用CSV-A的mean模板(Q737)",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 7,
+      "id": 507,
+      "csv_file": "hotel_data.csv",
+      "question": "2. Are there any hotels in the dataset that have a star rating of 5? If yes, how many hotels have a star rating of 5?",
+      "constraints": "Count only hotels that have a star rating exactly equal to 5. This count value should be a non-negative integer.",
+      "answer_format": "@total_hotels[count] where \"count\" is a non-negative integer representing the total number of hotels with a star rating of 5.",
+      "level": "easy",
+      "concepts": [
+        "Distribution Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "5星酒店数量 → 简单筛选计数",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 8,
+      "id": 508,
+      "csv_file": "hotel_data.csv",
+      "question": "3. Is there a correlation between the number of reviews a hotel has received and its bubble score? If yes, what is the correlation coefficient?",
+      "constraints": "Calculate the Pearson correlation coefficient between review count and bubble score. Consider the correlation to be significant if its absolute value is greater than 0.5. Round your result to three decimal places.",
+      "answer_format": "@correlation_coefficient[r_value] where \"r_value\" is a number between -1 and 1, rounded to three decimal places, representing the correlation between the review count and the bubble score.",
+      "level": "medium",
+      "concepts": [
+        "Correlation Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          3
+        ],
+        "note": "reviews-bubble_score相关性 → 复用CSV-A的corr方法(Q739)",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 9,
+      "id": 513,
+      "csv_file": "hotel_data.csv",
+      "question": "2. Among the hotels with a star rating, what is the correlation between the number of reviews a hotel has received and its bubble score? Do hotels with higher star ratings tend to have higher bubble scores and more reviews?",
+      "constraints": "Calculate the correlation coefficient using the Pearson method. Consider only non-null values. Report the correlation separately for hotels with star ratings below 3, between 3 and 4, and above 4.",
+      "answer_format": "@below3_correlation[correlation_value1], @between3and4_correlation[correlation_value2], @above4_correlation[correlation_value3], where each \"correlation_value\" is a float between -1 and 1, rounded to two decimal places.",
+      "level": "medium",
+      "concepts": [
+        "Correlation Analysis",
+        "Distribution Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          8,
+          7
+        ],
+        "note": "按星级分组的相关性 → 复用Q508整体corr+Q507星级分析",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 10,
+      "id": 510,
+      "csv_file": "hotel_data.csv",
+      "question": "2. Which hotel brand has the highest average star rating among hotels with at least 100 reviews?",
+      "constraints": "Only consider hotel brands that have at least 10 hotels in the dataset. Do not include hotels without a brand or without a star rating in the calculation. If there is a tie, return the brand with the largest number of hotels in the dataset. Calculate the average using Arithmetic Mean (Sum of observations / Number of observations).",
+      "answer_format": "@brand_with_highest_average_star_rating[brand_name]\nwhere \"brand_name\" is the name of the hotel brand as a string.",
+      "level": "medium",
+      "concepts": [
+        "Summary Statistics",
+        "Feature Engineering"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "最高评分品牌(filter+groupby) → 复用CSV-A分组思路",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 11,
+      "id": 514,
+      "csv_file": "hotel_data.csv",
+      "question": "3. What is the average review count for hotels in each city? Are there any cities where the average review count is significantly higher or lower compared to the overall average review count of all hotels?",
+      "constraints": "Calculate the average review count for each city. Compare the results to the overall average review count. Report cities where the average review count is more or less than twice the overall average.",
+      "answer_format": "@higher_city_count[number_of_higher_cities], @lower_city_count[number_of_lower_cities], where \"number_of_higher_cities\" and \"number_of_lower_cities\" are positive integers representing the number of cities meeting the corresponding criteria.",
+      "level": "medium",
+      "concepts": [
+        "Summary Statistics",
+        "Distribution Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          6,
+          1
+        ],
+        "note": "各城市均值vs整体均值 → 复用Q506的整体均值+Q737方法",
+        "is_cross_csv": true
+      }
+    }
+  ]
+}
