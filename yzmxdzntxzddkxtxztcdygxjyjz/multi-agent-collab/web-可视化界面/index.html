@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multi-Agent Collaboration Console</title>
+  <style>
+    :root {
+      --bg: #eef4f7;
+      --ink: #172033;
+      --muted: #65748a;
+      --soft: #f7fafc;
+      --panel: rgba(255, 255, 255, 0.86);
+      --line: #d8e3ea;
+      --nav: #0f172a;
+      --nav-2: #162235;
+      --blue: #2563eb;
+      --cyan: #0891b2;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --shadow: 0 22px 48px rgba(15, 23, 42, 0.12);
+      --shadow-soft: 0 12px 28px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% 10%, rgba(8, 145, 178, 0.16), transparent 30%),
+        radial-gradient(circle at 88% 0%, rgba(37, 99, 235, 0.14), transparent 28%),
+        linear-gradient(135deg, #f8fbfd 0%, var(--bg) 100%);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input, select { font: inherit; }
+
+    .app {
+      display: grid;
+      grid-template-columns: 276px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      background: linear-gradient(180deg, var(--nav) 0%, #101b2d 58%, #0b1220 100%);
+      color: #dbeafe;
+      padding: 24px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      box-shadow: 18px 0 40px rgba(15, 23, 42, 0.16);
+    }
+
+    .brand {
+      padding: 10px 12px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .brand-mark {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 14px;
+      color: #fff;
+      background: linear-gradient(135deg, #2563eb, #0f766e);
+      box-shadow: 0 14px 26px rgba(37, 99, 235, 0.3);
+      font-weight: 800;
+    }
+
+    .brand h1 {
+      margin: 0;
+      color: #fff;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .brand p {
+      margin: 9px 0 0;
+      color: #9fb2cc;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav button {
+      width: 100%;
+      height: 46px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: #cbd5e1;
+      text-align: left;
+      padding: 0 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .nav button span:first-child {
+      width: 24px;
+      text-align: center;
+      color: #8fb3da;
+      font-weight: 700;
+    }
+
+    .nav button.active,
+    .nav button:hover {
+      background: rgba(37, 99, 235, 0.95);
+      color: #fff;
+      box-shadow: 0 12px 22px rgba(37, 99, 235, 0.26);
+    }
+
+    .nav button.active span:first-child,
+    .nav button:hover span:first-child {
+      color: #fff;
+    }
+
+    .runtime-card {
+      margin-top: auto;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.055);
+    }
+
+    .runtime-card h3 {
+      margin: 0 0 10px;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    .runtime-card div {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      font-size: 12px;
+      color: #cbd5e1;
+      margin: 9px 0;
+    }
+
+    .runtime-card strong { color: #fff; }
+
+    .main {
+      min-width: 0;
+      padding: 26px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 22px;
+      min-height: 154px;
+      margin-bottom: 18px;
+      padding: 24px 26px;
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      border-radius: 18px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.88), rgba(247,250,252,0.76)),
+        linear-gradient(135deg, rgba(8,145,178,0.12), rgba(37,99,235,0.08));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: 26px;
+      bottom: 18px;
+      width: 320px;
+      height: 86px;
+      background:
+        linear-gradient(90deg, transparent 0 8%, rgba(8, 145, 178, 0.2) 8% 10%, transparent 10% 23%, rgba(37, 99, 235, 0.22) 23% 25%, transparent 25% 46%, rgba(22, 163, 74, 0.22) 46% 48%, transparent 48% 100%);
+      opacity: .7;
+      pointer-events: none;
+    }
+
+    .hero h2 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+
+    .hero p {
+      max-width: 720px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 250px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      height: 40px;
+      padding: 0 15px;
+      background: rgba(255,255,255,0.9);
+      color: var(--ink);
+      cursor: pointer;
+      box-shadow: 0 5px 12px rgba(15, 23, 42, 0.04);
+    }
+
+    .btn.primary {
+      border-color: var(--blue);
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #fff;
+      box-shadow: 0 12px 22px rgba(37, 99, 235, 0.24);
+    }
+
+    .btn:hover { transform: translateY(-1px); }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .metric {
+      position: relative;
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid rgba(216, 227, 234, 0.86);
+      border-radius: 14px;
+      padding: 17px;
+      box-shadow: var(--shadow-soft);
+      min-height: 116px;
+      backdrop-filter: blur(12px);
+    }
+
+    .metric::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: var(--accent, var(--blue));
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 13px;
+      font-size: 31px;
+      line-height: 1;
+    }
+
+    .metric small {
+      display: block;
+      margin-top: 11px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.24fr) minmax(350px, 0.76fr);
+      gap: 14px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(216, 227, 234, 0.9);
+      border-radius: 14px;
+      box-shadow: var(--shadow-soft);
+      min-width: 0;
+      overflow: hidden;
+      backdrop-filter: blur(12px);
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border-bottom: 1px solid var(--line);
+      padding: 15px 17px;
+      background: rgba(248, 250, 252, 0.68);
+    }
+
+    .panel-head h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .panel-body { padding: 17px; }
+
+    .agent-map {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 18px;
+      min-height: 332px;
+      align-content: center;
+    }
+
+    .agent {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.95), rgba(248,250,252,0.92));
+      cursor: pointer;
+      position: relative;
+      min-height: 140px;
+      transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .agent::after {
+      content: "";
+      position: absolute;
+      right: 15px;
+      top: 15px;
+      width: 30px;
+      height: 30px;
+      border-radius: 10px;
+      background: var(--agent-color, #dbeafe);
+      opacity: .86;
+    }
+
+    .agent:hover, .agent.selected {
+      border-color: var(--blue);
+      transform: translateY(-3px);
+      box-shadow: 0 18px 30px rgba(37, 99, 235, 0.13);
+    }
+
+    .agent h4 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .agent p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      padding-right: 34px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 25px;
+      padding: 0 10px;
+      border-radius: 13px;
+      background: #dcfce7;
+      color: #15803d;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .detail-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(248, 250, 252, 0.85);
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .detail-card h4 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .detail-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 190px auto;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .input, .select {
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0 12px;
+      background: #fff;
+      color: var(--ink);
+      min-width: 0;
+      outline: none;
+    }
+
+    .input:focus, .select:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.16);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      overflow: hidden;
+      border-radius: 10px;
+    }
+
+    th, td {
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      color: #334155;
+      font-weight: 700;
+      background: #f4f7fa;
+    }
+
+    td { color: #475569; }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 25px;
+      border-radius: 13px;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #e0f2fe;
+      color: #0369a1;
+      white-space: nowrap;
+    }
+
+    .tag.done { background: #dcfce7; color: #15803d; }
+    .tag.run { background: #fef3c7; color: #b45309; }
+    .tag.fail { background: #fee2e2; color: #b91c1c; }
+
+    .log {
+      background:
+        linear-gradient(180deg, rgba(15,23,42,0.98), rgba(17,24,39,0.98));
+      border-radius: 12px;
+      padding: 15px;
+      color: #dbeafe;
+      font-family: Consolas, "Microsoft YaHei", monospace;
+      font-size: 12px;
+      line-height: 1.78;
+      min-height: 330px;
+      overflow: auto;
+      white-space: pre-wrap;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
+
+    .memory-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .memory-item {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 13px;
+      background: rgba(248, 250, 252, 0.86);
+      cursor: pointer;
+      transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease;
+    }
+
+    .memory-item:hover {
+      border-color: var(--cyan);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 22px rgba(8, 145, 178, 0.12);
+    }
+
+    .memory-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .memory-item p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .bars { display: grid; gap: 17px; }
+
+    .bar-row label {
+      display: flex;
+      justify-content: space-between;
+      color: #475569;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .bar-track {
+      height: 13px;
+      border-radius: 7px;
+      background: #e2e8f0;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: var(--w);
+      background: var(--c);
+      border-radius: inherit;
+      transition: width .25s ease;
+    }
+
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; }
+      .metrics, .grid { grid-template-columns: 1fr; }
+      .form { grid-template-columns: 1fr; }
+      .hero { align-items: flex-start; flex-direction: column; }
+      .actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <h1>MACS Console</h1>
+        <p>Multi-Agent Collaboration System</p>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button class="active" data-view="overview"><span>01</span><span>运行总览</span></button>
+        <button data-view="tasks"><span>02</span><span>任务调度</span></button>
+        <button data-view="protocol"><span>03</span><span>协议消息</span></button>
+        <button data-view="memory"><span>04</span><span>共享记忆</span></button>
+        <button data-view="metrics"><span>05</span><span>性能评测</span></button>
+      </nav>
+      <div class="runtime-card">
+        <h3>运行状态</h3>
+        <div><span>Runtime</span><strong id="runtimeState">running</strong></div>
+        <div><span>Transport</span><strong>Local</strong></div>
+        <div><span>Agents</span><strong>4 online</strong></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="hero">
+        <div>
+          <h2 id="pageTitle">运行总览</h2>
+          <p id="pageDesc">展示 Agent 拓扑、任务状态、共享记忆与核心性能指标，用于观察多智能体协作系统的端到端运行过程。</p>
+        </div>
+        <div class="actions">
+          <button class="btn" id="toggleRuntime">暂停运行</button>
+          <button class="btn primary" id="simulateTask">模拟协作任务</button>
+        </div>
+      </header>
+
+      <section class="metrics" aria-label="关键指标">
+        <div class="metric" style="--accent:#2563eb"><span>Message Count</span><strong id="messageCount">18</strong><small>结构化协议消息</small></div>
+        <div class="metric" style="--accent:#16a34a"><span>Token Saved</span><strong id="tokenSaved">52%</strong><small>相对纯文本模式</small></div>
+        <div class="metric" style="--accent:#0891b2"><span>Memory Hit Rate</span><strong id="memoryRate">45%</strong><small>共享记忆命中率</small></div>
+        <div class="metric" style="--accent:#d97706"><span>Task Duration</span><strong id="taskDuration">1.26s</strong><small>端到端任务耗时</small></div>
+      </section>
+
+      <section class="view active" id="overview">
+        <div class="grid">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Agent 协作拓扑</h3>
+              <span class="tag done">online</span>
+            </div>
+            <div class="panel-body">
+              <div class="agent-map" id="agentMap">
+                <article class="agent selected" style="--agent-color:#dbeafe" data-agent="Planner Agent" data-role="任务规划与拆解" data-cap="plan_task, split_steps">
+                  <h4>Planner Agent</h4>
+                  <p>分析任务目标，拆解执行步骤，组织后续 Agent 协作顺序。</p>
+                  <span class="status">idle</span>
+                </article>
+                <article class="agent" style="--agent-color:#dcfce7" data-agent="Retriever Agent" data-role="信息检索与记忆查询" data-cap="retrieve_documents, query_memory">
+                  <h4>Retriever Agent</h4>
+                  <p>检索任务上下文，查询共享记忆，补充执行所需信息。</p>
+                  <span class="status">idle</span>
+                </article>
+                <article class="agent" style="--agent-color:#ffedd5" data-agent="Executor Agent" data-role="动作执行与工具调用" data-cap="execute_action, call_tool">
+                  <h4>Executor Agent</h4>
+                  <p>根据规划和检索结果执行具体动作，生成任务中间结果。</p>
+                  <span class="status">idle</span>
+                </article>
+                <article class="agent" style="--agent-color:#cffafe" data-agent="Summarizer Agent" data-role="结果整合与摘要生成" data-cap="summarize_result, save_summary">
+                  <h4>Summarizer Agent</h4>
+                  <p>整合不同阶段输出，形成最终结果，并生成记忆摘要。</p>
+                  <span class="status">idle</span>
+                </article>
+              </div>
+            </div>
+          </div>
+
+          <aside class="panel">
+            <div class="panel-head">
+              <h3>Agent 详情</h3>
+              <span class="tag">selected</span>
+            </div>
+            <div class="panel-body">
+              <div class="detail-card"><h4 id="agentName">Planner Agent</h4><p id="agentRole">任务规划与拆解</p></div>
+              <div class="detail-card"><h4>注册能力</h4><p id="agentCap">plan_task, split_steps</p></div>
+              <div class="detail-card"><h4>最近消息</h4><p id="agentMessage">CAPABILITY_RESPONSE 已返回，等待 ACTION_REQUEST。</p></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="tasks">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>任务提交与调度</h3>
+            <span class="tag run">TaskScheduler</span>
+          </div>
+          <div class="panel-body">
+            <div class="form">
+              <input class="input" id="taskInput" value="分析多 Agent 协作流程并生成摘要" />
+              <select class="select" id="targetAgent">
+                <option>Planner Agent</option>
+                <option>Retriever Agent</option>
+                <option>Executor Agent</option>
+                <option>Summarizer Agent</option>
+              </select>
+              <button class="btn primary" id="submitTask">提交任务</button>
+            </div>
+            <table>
+              <thead><tr><th>任务 ID</th><th>目标 Agent</th><th>任务内容</th><th>状态</th><th>耗时</th></tr></thead>
+              <tbody id="taskTable">
+                <tr><td>task_7f2a91c3</td><td>Executor Agent</td><td>analyze request and generate collaboration result</td><td><span class="tag done">completed</span></td><td>1.26s</td></tr>
+                <tr><td>task_33c0a1bd</td><td>Retriever Agent</td><td>query related memory</td><td><span class="tag run">running</span></td><td>0.58s</td></tr>
+                <tr><td>task_991fe07a</td><td>Planner Agent</td><td>split user task</td><td><span class="tag">queued</span></td><td>-</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="protocol">
+        <div class="grid">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>结构化协议消息流</h3>
+              <button class="btn" id="clearLog">清空日志</button>
+            </div>
+            <div class="panel-body">
+              <div class="log" id="protocolLog">[HANDSHAKE] planner_agent_001 -> retriever_agent_001
+[ACK] retriever_agent_001 -> planner_agent_001
+[CAPABILITY_QUERY] planner_agent_001 requests supported capabilities
+[CAPABILITY_RESPONSE] retrieve_documents, query_memory
+[ACTION_REQUEST] execute retrieve_documents(top_k=5)
+[ACTION_RESULT] status=success, documents=3
+[MEMORY_SAVE] memory_id=mem_8ad3f21e
+</div>
+            </div>
+          </div>
+          <aside class="panel">
+            <div class="panel-head">
+              <h3>协议帧信息</h3>
+              <span class="tag">MessagePack</span>
+            </div>
+            <div class="panel-body">
+              <div class="detail-card"><h4>Header</h4><p>Magic=0xABCD, Version=0x01, Type=ACTION_REQUEST</p></div>
+              <div class="detail-card"><h4>Payload</h4><p>action, parameters, context, task_id, metadata</p></div>
+              <div class="detail-card"><h4>Checksum</h4><p>CRC32 校验消息完整性，降低异常帧影响。</p></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="memory">
+        <div class="grid">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>共享记忆检索</h3>
+              <span class="tag done">Vector Search</span>
+            </div>
+            <div class="panel-body">
+              <div class="form" style="grid-template-columns:minmax(0,1fr) auto;">
+                <input class="input" id="memoryQuery" value="multi-agent protocol optimization" />
+                <button class="btn primary" id="searchMemory">检索记忆</button>
+              </div>
+              <div class="memory-list" id="memoryList">
+                <div class="memory-item"><strong>mem_8ad3f21e · score 0.88</strong><p>来源 Executor Agent，主题 collaboration_demo，保存任务执行结果与摘要。</p></div>
+                <div class="memory-item"><strong>mem_4c91a622 · score 0.76</strong><p>来源 Retriever Agent，记录结构化协议检索相关上下文。</p></div>
+                <div class="memory-item"><strong>mem_ba3020cf · score 0.71</strong><p>来源 Summarizer Agent，保存多 Agent 协作流程总结。</p></div>
+              </div>
+            </div>
+          </div>
+          <aside class="panel">
+            <div class="panel-head">
+              <h3>记忆详情</h3>
+              <span class="tag done">hit</span>
+            </div>
+            <div class="panel-body">
+              <div class="detail-card"><h4>来源 Agent</h4><p id="memorySource">Executor Agent</p></div>
+              <div class="detail-card"><h4>复用内容</h4><p id="memoryDetail">复用历史任务中的执行结果、摘要和语义向量，减少重复检索。</p></div>
+              <div class="detail-card"><h4>命中统计</h4><p>hit_count=3, confidence=0.90, similarity=0.88</p></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="metrics">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>性能评测与指标统计</h3>
+            <button class="btn" id="refreshMetrics">刷新指标</button>
+          </div>
+          <div class="panel-body">
+            <div class="bars">
+              <div class="bar-row"><label><span>通信数据量下降</span><strong id="barText1">56%</strong></label><div class="bar-track"><div class="bar-fill" id="bar1" style="--w:56%;--c:#2563eb"></div></div></div>
+              <div class="bar-row"><label><span>Token 节省率</span><strong id="barText2">52%</strong></label><div class="bar-track"><div class="bar-fill" id="bar2" style="--w:52%;--c:#16a34a"></div></div></div>
+              <div class="bar-row"><label><span>任务耗时降低</span><strong id="barText3">38%</strong></label><div class="bar-track"><div class="bar-fill" id="bar3" style="--w:38%;--c:#d97706"></div></div></div>
+              <div class="bar-row"><label><span>共享记忆命中率</span><strong id="barText4">45%</strong></label><div class="bar-track"><div class="bar-fill" id="bar4" style="--w:45%;--c:#0891b2"></div></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const viewText = {
+      overview: ["运行总览", "展示 Agent 拓扑、任务状态、共享记忆与核心性能指标，用于观察多智能体协作系统的端到端运行过程。"],
+      tasks: ["任务调度", "提交模拟任务，查看任务队列状态和调度结果。"],
+      protocol: ["协议消息", "观察握手、能力查询、动作请求、结果返回和记忆保存消息。"],
+      memory: ["共享记忆", "检索历史记忆，查看语义命中结果与复用内容。"],
+      metrics: ["性能评测", "统计通信开销、Token 节省率、任务耗时和记忆命中率。"]
+    };
+
+    const navButtons = document.querySelectorAll(".nav button");
+    const views = document.querySelectorAll(".view");
+    const pageTitle = document.getElementById("pageTitle");
+    const pageDesc = document.getElementById("pageDesc");
+    const protocolLog = document.getElementById("protocolLog");
+    let taskCounter = 4;
+    let running = true;
+
+    navButtons.forEach(button => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.view;
+        navButtons.forEach(item => item.classList.remove("active"));
+        button.classList.add("active");
+        views.forEach(view => view.classList.toggle("active", view.id === target));
+        pageTitle.textContent = viewText[target][0];
+        pageDesc.textContent = viewText[target][1];
+      });
+    });
+
+    document.querySelectorAll(".agent").forEach(agent => {
+      agent.addEventListener("click", () => {
+        document.querySelectorAll(".agent").forEach(item => item.classList.remove("selected"));
+        agent.classList.add("selected");
+        document.getElementById("agentName").textContent = agent.dataset.agent;
+        document.getElementById("agentRole").textContent = agent.dataset.role;
+        document.getElementById("agentCap").textContent = agent.dataset.cap;
+        document.getElementById("agentMessage").textContent = agent.dataset.agent + " 已选中，可接收 ACTION_REQUEST 消息。";
+      });
+    });
+
+    function appendLog(line) {
+      const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      protocolLog.textContent += `[${time}] ${line}\n`;
+      protocolLog.scrollTop = protocolLog.scrollHeight;
+    }
+
+    function setBar(barId, textId, value) {
+      document.getElementById(barId).style.setProperty("--w", `${value}%`);
+      document.getElementById(textId).textContent = `${value}%`;
+    }
+
+    function updateMetrics() {
+      const messageCount = document.getElementById("messageCount");
+      const tokenSaved = document.getElementById("tokenSaved");
+      const memoryRate = document.getElementById("memoryRate");
+      const taskDuration = document.getElementById("taskDuration");
+      const nextMessages = Number(messageCount.textContent) + Math.floor(Math.random() * 5) + 4;
+      const saved = 48 + Math.floor(Math.random() * 10);
+      const hit = 40 + Math.floor(Math.random() * 18);
+      const duration = (1.05 + Math.random() * 0.62).toFixed(2);
+      messageCount.textContent = nextMessages;
+      tokenSaved.textContent = `${saved}%`;
+      memoryRate.textContent = `${hit}%`;
+      taskDuration.textContent = `${duration}s`;
+      setBar("bar2", "barText2", saved);
+      setBar("bar4", "barText4", hit);
+    }
+
+    document.getElementById("submitTask").addEventListener("click", () => {
+      const input = document.getElementById("taskInput");
+      const agent = document.getElementById("targetAgent").value;
+      const id = `task_${Math.random().toString(16).slice(2, 10)}`;
+      const row = document.createElement("tr");
+      row.innerHTML = `<td>${id}</td><td>${agent}</td><td>${input.value}</td><td><span class="tag run">running</span></td><td>0.00s</td>`;
+      document.getElementById("taskTable").prepend(row);
+      appendLog(`[ACTION_REQUEST] ${agent} receives ${id}`);
+      setTimeout(() => {
+        row.querySelector(".tag").className = "tag done";
+        row.querySelector(".tag").textContent = "completed";
+        row.lastElementChild.textContent = `${(0.8 + Math.random()).toFixed(2)}s`;
+        appendLog(`[ACTION_RESULT] ${id} completed, status=success`);
+        appendLog(`[MEMORY_SAVE] ${id} result saved to shared memory`);
+        updateMetrics();
+      }, 900);
+    });
+
+    document.getElementById("simulateTask").addEventListener("click", () => {
+      taskCounter += 1;
+      appendLog(`[HANDSHAKE] simulation_${taskCounter}: Planner -> Retriever`);
+      appendLog(`[CAPABILITY_QUERY] simulation_${taskCounter}: query available capabilities`);
+      appendLog(`[ACTION_REQUEST] simulation_${taskCounter}: execute collaboration pipeline`);
+      document.getElementById("submitTask").click();
+    });
+
+    document.getElementById("toggleRuntime").addEventListener("click", event => {
+      running = !running;
+      document.getElementById("runtimeState").textContent = running ? "running" : "paused";
+      event.target.textContent = running ? "暂停运行" : "恢复运行";
+      appendLog(running ? "[Runtime] runtime resumed" : "[Runtime] runtime paused");
+    });
+
+    document.getElementById("clearLog").addEventListener("click", () => {
+      protocolLog.textContent = "";
+    });
+
+    document.getElementById("searchMemory").addEventListener("click", () => {
+      const query = document.getElementById("memoryQuery").value;
+      appendLog(`[MEMORY_QUERY] semantic query="${query}"`);
+      document.getElementById("memoryList").firstElementChild.style.borderColor = "#0891b2";
+      document.getElementById("memoryDetail").textContent = `查询 "${query}" 命中历史记忆，复用执行摘要和向量状态。`;
+      updateMetrics();
+    });
+
+    document.querySelectorAll(".memory-item").forEach(item => {
+      item.addEventListener("click", () => {
+        document.querySelectorAll(".memory-item").forEach(node => node.style.borderColor = "");
+        item.style.borderColor = "#0891b2";
+        document.getElementById("memorySource").textContent = item.textContent.includes("Retriever") ? "Retriever Agent" : item.textContent.includes("Summarizer") ? "Summarizer Agent" : "Executor Agent";
+        document.getElementById("memoryDetail").textContent = item.querySelector("p").textContent;
+      });
+    });
+
+    document.getElementById("refreshMetrics").addEventListener("click", () => {
+      const v1 = 50 + Math.floor(Math.random() * 16);
+      const v3 = 32 + Math.floor(Math.random() * 16);
+      setBar("bar1", "barText1", v1);
+      setBar("bar3", "barText3", v3);
+      updateMetrics();
+      appendLog("[Metrics] benchmark summary refreshed");
+    });
+  </script>
+</body>
+</html>

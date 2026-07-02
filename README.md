@@ -110,10 +110,29 @@ export STATEBUS_EMBED_DEVICE=cuda:0
 ```bash
 python -m pytest -q
 python -m runtime.smoke
+python -m pytest -q tests/v2
 ```
 
 benchmark 运行主入口在 `eval/runner.py`。  
 任务包索引、pack 角色和读法边界请优先看 `tasks/README.md`，不要只从默认 CLI 文件名推断当前 formal object。
+
+`v2` clean-room benchmark 入口按 formal 与 dev 分开：
+
+```bash
+python -m v2.benchmark.live_runner --suite preflight --role-path-mode deterministic --embedding-mode deterministic
+python -m v2.benchmark.live_runner --suite formal --benchmark-tier formal --role-path-mode deterministic --embedding-mode deterministic
+python -m v2.benchmark.live_runner --suite statebus --benchmark-tier dev --role-path-mode deterministic --embedding-mode deterministic
+python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-path-mode api --embedding-mode local
+```
+
+其中：
+
+- 以上是 host 环境口径；如果在 `openEuler` 容器内执行，同样命令请改用 `python3`
+- `role-path-mode=api` 需要有效的 `STATEBUS_LLM_API_KEY`
+- `embedding-mode=local` 需要本地 embedding 模型目录和可用 device
+- formal tier 默认跑 `formal_financial_family`
+- dev tier 的 fixed-answer / assisted comparator 只用于开发诊断，不承载 formal headline
+- 在正式 live 跑之前，建议先执行 `--suite preflight`
 
 ## 6. 实验结果与新手入口
 

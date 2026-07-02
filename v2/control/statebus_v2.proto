@@ -42,10 +42,11 @@ message ExecRequest {
   ReusePolicy reuse_policy = 2;
   repeated RefHandle state_refs = 3;
   repeated RefHandle artifact_refs = 4;
-  string runtime_reuse_contract = 5;
-  string output_contract_version = 6;
-  string workspace_root = 7;
-  string input_manifest_hash = 8;
+  repeated RefHandle memory_refs = 5;
+  string runtime_reuse_contract = 6;
+  string output_contract_version = 7;
+  string workspace_root = 8;
+  string input_manifest_hash = 9;
 }
 
 message AckReceived {

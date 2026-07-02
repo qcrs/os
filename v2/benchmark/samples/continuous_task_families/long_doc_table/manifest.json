@@ -1,0 +1,593 @@
+{
+  "schema_version": "statebus.continuous_task_family.v1",
+  "family_id": "long_doc_table_v1",
+  "display_name": "Long document plus table semantic pruning and evidence reuse",
+  "claim_tier": "formal_secondary",
+  "round_count": 10,
+  "datasets": [
+    {
+      "dataset_id": "acme_ops_2026",
+      "path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+      "kind": "markdown_long_doc",
+      "primary_entities": [
+        "ACME",
+        "revenue",
+        "gross_margin",
+        "operating_expense",
+        "churn",
+        "on_time_delivery"
+      ]
+    }
+  ],
+  "quality_floor": {
+    "deterministic_validator": [
+      "answer_fields_present",
+      "evidence_ids_present",
+      "numeric_tolerance"
+    ],
+    "fact_coverage": [
+      "required_metric_values_match",
+      "required_narrative_evidence_cited"
+    ],
+    "llm_judge": "optional_for_final_report"
+  },
+  "l0_l3_expectations": {
+    "L0": {
+      "expected_zero_metrics": [
+        "semantic_state_transfer_count",
+        "skipped_step_count"
+      ]
+    },
+    "L1": {
+      "required": [
+        "control_bytes_delta_l0_to_l1 < 0"
+      ]
+    },
+    "L2": {
+      "required": [
+        "semantic_state_transfer_count > 0",
+        "raw_evidence_bytes_seen_by_llm_delta_l1_to_l2 < 0",
+        "prompt_visible_total_bytes_delta_l1_to_l2 < 0"
+      ]
+    },
+    "L3": {
+      "required": [
+        "memory_match_count > 0",
+        "artifact_reuse_count > 0",
+        "history_reuse_gain > 0",
+        "history_step_reduction_count > 0"
+      ],
+      "target_nonzero_rounds": [
+        5,
+        8,
+        9,
+        10
+      ]
+    }
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "task_id": "longdoc-001",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Ingest the ACME operations report, build a semantic evidence index, extract the metric table, and persist entity and metric locators.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "build_semantic_index",
+        "required_outputs": [
+          "semantic_state_ref",
+          "metric_table_ref",
+          "entity_index_ref"
+        ],
+        "required_tools": [
+          "semantic_retriever",
+          "table_extractor"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md"
+        }
+      },
+      "depends_on_rounds": [],
+      "reuse_contract": {
+        "produces": [
+          "semantic_state:acme_ops_2026",
+          "table_artifact:acme_metric_table",
+          "entity_index:acme_ops_2026"
+        ],
+        "consumes": [],
+        "minimum_reuse_class": "none"
+      },
+      "expected_facts": {
+        "metric_row_count": "3",
+        "semantic_state_ref_present": "true"
+      },
+      "quality_checks": [
+        "artifact_exists:semantic_state_ref",
+        "artifact_exists:metric_table_ref",
+        "field_gte:metric_row_count:3"
+      ],
+      "expected_metric_effects": {
+        "L2_semantic_state_transfer_count_min": 1
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "longdoc-002",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Retrieve ACME revenue for Q1, Q2, and Q3 using the metric table locator.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series",
+        "required_outputs": [
+          "metric_series_ref",
+          "revenue_q1",
+          "revenue_q2",
+          "revenue_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "metric": "revenue_musd",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_series:revenue_musd"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "semantic_state:acme_ops_2026"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "revenue_q1": "120",
+        "revenue_q2": "132",
+        "revenue_q3": "145"
+      },
+      "quality_checks": [
+        "exact:revenue_q1",
+        "exact:revenue_q2",
+        "exact:revenue_q3"
+      ],
+      "expected_metric_effects": {
+        "L2_raw_evidence_bytes_seen_by_llm_delta_max": -1
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "longdoc-003",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Retrieve ACME gross margin by quarter and persist it as a reusable metric artifact.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series",
+        "required_outputs": [
+          "metric_series_ref",
+          "gross_margin_q1",
+          "gross_margin_q2",
+          "gross_margin_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "metric": "gross_margin_pct"
+        }
+      },
+      "depends_on_rounds": [
+        1
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_series:gross_margin_pct"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "gross_margin_q1": "42.5",
+        "gross_margin_q2": "41.8",
+        "gross_margin_q3": "40.6"
+      },
+      "quality_checks": [
+        "numeric_tolerance:gross_margin_q1:0.01",
+        "numeric_tolerance:gross_margin_q3:0.01"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 1
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "longdoc-004",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Retrieve operating expense by quarter and compute Q1 to Q3 expense growth.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_and_compute_metric_delta",
+        "required_outputs": [
+          "metric_series_ref",
+          "operating_expense_q1",
+          "operating_expense_q3",
+          "expense_growth_q1_to_q3"
+        ],
+        "required_tools": [
+          "table_retriever",
+          "codeact_executor"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "metric": "operating_expense_musd",
+          "delta": [
+            "2026Q1",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_series:operating_expense_musd",
+          "derived_metric:expense_growth_q1_to_q3"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "operating_expense_q1": "38",
+        "operating_expense_q3": "45",
+        "expense_growth_q1_to_q3": "7"
+      },
+      "quality_checks": [
+        "exact:operating_expense_q1",
+        "exact:operating_expense_q3",
+        "exact:expense_growth_q1_to_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 1
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "longdoc-005",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Compare revenue and gross margin trends from Q1 to Q3 and persist a trend artifact.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "compare_metric_trends",
+        "required_outputs": [
+          "trend_artifact_ref",
+          "revenue_delta_q1_to_q3",
+          "gross_margin_delta_q1_to_q3"
+        ],
+        "required_tools": [
+          "artifact_reader",
+          "codeact_executor"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "metric_artifacts": [
+            "metric_series:revenue_musd",
+            "metric_series:gross_margin_pct"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        2,
+        3
+      ],
+      "reuse_contract": {
+        "produces": [
+          "trend_artifact:revenue_margin_q1_q3"
+        ],
+        "consumes": [
+          "metric_series:revenue_musd",
+          "metric_series:gross_margin_pct"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "revenue_delta_q1_to_q3": "25",
+        "gross_margin_delta_q1_to_q3": "-1.9"
+      },
+      "quality_checks": [
+        "exact:revenue_delta_q1_to_q3",
+        "numeric_tolerance:gross_margin_delta_q1_to_q3:0.01"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 2,
+        "L3_skipped_step_count_min": 0
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "longdoc-006",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Find the narrative evidence explaining why enterprise churn increased in Q3.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "retrieve_narrative_evidence",
+        "required_outputs": [
+          "evidence_pack_ref",
+          "churn_driver",
+          "churn_delta_note"
+        ],
+        "required_tools": [
+          "semantic_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "topic": "enterprise churn Q3",
+          "expected_locator": "section:Churn Narrative"
+        }
+      },
+      "depends_on_rounds": [
+        1
+      ],
+      "reuse_contract": {
+        "produces": [
+          "evidence_pack:churn_narrative"
+        ],
+        "consumes": [
+          "semantic_state:acme_ops_2026"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "churn_driver": "delayed onboarding",
+        "churn_delta_note": "1.1 percentage points"
+      },
+      "quality_checks": [
+        "contains:churn_driver:delayed onboarding",
+        "contains:churn_delta_note:1.1"
+      ],
+      "expected_metric_effects": {
+        "L2_semantic_state_transfer_count_min": 1
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "longdoc-007",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Find the narrative evidence explaining on-time delivery decline and the mitigation plan.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "retrieve_narrative_evidence",
+        "required_outputs": [
+          "evidence_pack_ref",
+          "delivery_decline_q1_to_q3",
+          "mitigation_action"
+        ],
+        "required_tools": [
+          "semantic_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "topic": "supply chain on-time delivery",
+          "expected_locator": "section:Supply Chain Narrative"
+        }
+      },
+      "depends_on_rounds": [
+        1
+      ],
+      "reuse_contract": {
+        "produces": [
+          "evidence_pack:supply_chain_narrative"
+        ],
+        "consumes": [
+          "semantic_state:acme_ops_2026"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "delivery_decline_q1_to_q3": "-6.0",
+        "mitigation_action": "secondary supplier"
+      },
+      "quality_checks": [
+        "numeric_tolerance:delivery_decline_q1_to_q3:0.01",
+        "contains:mitigation_action:secondary supplier"
+      ],
+      "expected_metric_effects": {
+        "L2_raw_evidence_bytes_seen_by_llm_delta_max": -1
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "longdoc-008",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Combine table metrics and narrative evidence to explain why revenue rose while gross margin fell.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "join_metrics_and_narrative",
+        "required_outputs": [
+          "joined_evidence_ref",
+          "primary_explanation",
+          "required_citations"
+        ],
+        "required_tools": [
+          "artifact_reader",
+          "semantic_retriever",
+          "summarizer"
+        ],
+        "arguments": {
+          "metric_artifacts": [
+            "trend_artifact:revenue_margin_q1_q3"
+          ],
+          "narrative_artifacts": [
+            "evidence_pack:supply_chain_narrative"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        5,
+        7
+      ],
+      "reuse_contract": {
+        "produces": [
+          "joined_evidence:margin_pressure"
+        ],
+        "consumes": [
+          "trend_artifact:revenue_margin_q1_q3",
+          "evidence_pack:supply_chain_narrative"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "primary_explanation": "expedited freight costs",
+        "required_citations": "trend_artifact:revenue_margin_q1_q3,evidence_pack:supply_chain_narrative"
+      },
+      "quality_checks": [
+        "contains:primary_explanation:freight",
+        "contains:required_citations:trend_artifact"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 2,
+        "L3_skipped_step_count_min": 0
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "longdoc-009",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Prepare a Q4 risk memo using the churn and supply-chain evidence packs and the metric trend artifact.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "draft_risk_memo",
+        "required_outputs": [
+          "risk_memo_ref",
+          "risk_count",
+          "action_count"
+        ],
+        "required_tools": [
+          "artifact_reader",
+          "summarizer"
+        ],
+        "arguments": {
+          "inputs": [
+            "evidence_pack:churn_narrative",
+            "evidence_pack:supply_chain_narrative",
+            "trend_artifact:revenue_margin_q1_q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        5,
+        6,
+        7
+      ],
+      "reuse_contract": {
+        "produces": [
+          "risk_memo:q4_ops"
+        ],
+        "consumes": [
+          "evidence_pack:churn_narrative",
+          "evidence_pack:supply_chain_narrative",
+          "trend_artifact:revenue_margin_q1_q3"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "risk_count_min": "2",
+        "action_count_min": "3"
+      },
+      "quality_checks": [
+        "field_gte:risk_count:2",
+        "field_gte:action_count:3",
+        "artifact_exists:risk_memo_ref"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 3,
+        "L3_skipped_step_count_min": 0
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "longdoc-010",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Generate a final cited operations report using all prior metric, narrative, joined evidence, and risk memo artifacts.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "final_cited_report",
+        "required_outputs": [
+          "final_report_ref",
+          "citation_count",
+          "reused_artifact_count"
+        ],
+        "required_tools": [
+          "artifact_reader",
+          "summarizer"
+        ],
+        "arguments": {
+          "required_artifacts": [
+            "metric_series:revenue_musd",
+            "metric_series:gross_margin_pct",
+            "metric_series:operating_expense_musd",
+            "evidence_pack:churn_narrative",
+            "evidence_pack:supply_chain_narrative",
+            "joined_evidence:margin_pressure",
+            "risk_memo:q4_ops"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        2,
+        3,
+        4,
+        6,
+        7,
+        8,
+        9
+      ],
+      "reuse_contract": {
+        "produces": [
+          "final_report:acme_ops_2026"
+        ],
+        "consumes": [
+          "metric_series:revenue_musd",
+          "metric_series:gross_margin_pct",
+          "metric_series:operating_expense_musd",
+          "evidence_pack:churn_narrative",
+          "evidence_pack:supply_chain_narrative",
+          "joined_evidence:margin_pressure",
+          "risk_memo:q4_ops"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "citation_count_min": "5",
+        "reused_artifact_count_min": "7"
+      },
+      "quality_checks": [
+        "field_gte:citation_count:5",
+        "field_gte:reused_artifact_count:7",
+        "artifact_exists:final_report_ref"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 7,
+        "L3_skipped_step_count_min": 0,
+        "L3_reuse_gain_min": 0,
+        "L3_history_reuse_gain_min": 1,
+        "L3_history_step_reduction_count_min": 2
+      }
+    }
+  ]
+}

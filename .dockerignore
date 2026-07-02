@@ -1,0 +1,11 @@
+# Keep the Docker build context minimal. The dev container mounts the repo at
+# runtime, so image build only needs the Docker assets and pinned requirement
+# manifests.
+*
+!.dockerignore
+!docker/
+!docker/**
+!requirements-container-core.txt
+!requirements-container-embed.txt
+!scripts/
+!scripts/setup_container_embed_stack.sh

@@ -53,6 +53,7 @@ class ExecRequest:
     reuse_policy: ReusePolicy = field(default_factory=ReusePolicy)
     state_refs: tuple[RefHandle, ...] = ()
     artifact_refs: tuple[RefHandle, ...] = ()
+    memory_refs: tuple[RefHandle, ...] = ()
     runtime_reuse_contract: str = ""
     output_contract_version: str = ""
     workspace_root: str = ""
@@ -198,6 +199,7 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.reuse_policy.CopyFrom(reuse_pb)
         body_pb.state_refs.extend(_ref_to_pb(ref) for ref in message.state_refs)
         body_pb.artifact_refs.extend(_ref_to_pb(ref) for ref in message.artifact_refs)
+        body_pb.memory_refs.extend(_ref_to_pb(ref) for ref in message.memory_refs)
         body_pb.runtime_reuse_contract = message.runtime_reuse_contract
         body_pb.output_contract_version = message.output_contract_version
         body_pb.workspace_root = message.workspace_root
@@ -255,6 +257,7 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             ),
             state_refs=tuple(_ref_from_pb(ref) for ref in body_pb.state_refs),
             artifact_refs=tuple(_ref_from_pb(ref) for ref in body_pb.artifact_refs),
+            memory_refs=tuple(_ref_from_pb(ref) for ref in body_pb.memory_refs),
             runtime_reuse_contract=body_pb.runtime_reuse_contract,
             output_contract_version=body_pb.output_contract_version,
             workspace_root=body_pb.workspace_root,

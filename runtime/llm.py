@@ -9,11 +9,27 @@ from typing import Any, Protocol
 import yaml
 from openai import AsyncOpenAI
 
-from runtime.role_contracts import FOUR_ROLE_COMPARATOR_ORDER, normalize_comparator_role_name
-
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 DEFAULT_LLM_MODEL = "deepseek-v4-flash"
 DEFAULT_LLM_CONFIG_FILE = Path("deploy/statebus_llm.yaml.local")
+FOUR_ROLE_COMPARATOR_ORDER = ("planner", "retriever", "executor", "summarizer")
+FOUR_ROLE_ROLE_ALIASES = {
+    "plan": "planner",
+    "planner": "planner",
+    "retrieve": "retriever",
+    "retriever": "retriever",
+    "execute": "executor",
+    "executor": "executor",
+    "summarize": "summarizer",
+    "summarizer": "summarizer",
+}
+
+
+def normalize_comparator_role_name(role: str) -> str:
+    normalized = str(role).strip().lower()
+    if normalized not in FOUR_ROLE_ROLE_ALIASES:
+        raise ValueError(f"unsupported comparator role: {role}")
+    return FOUR_ROLE_ROLE_ALIASES[normalized]
 
 
 @dataclass(frozen=True)
@@ -219,14 +235,15 @@ class OpenAICompatibleLLMClient:
     def __init__(self, config: LLMConfig) -> None:
         config.require_api_ready()
         self.config = config
-        self._clients: dict[str, AsyncOpenAI] = {}
-        for provider_name, provider in self.config.providers.items():
-            self._clients[provider_name] = AsyncOpenAI(
-                api_key=provider.resolved_api_key,
-                base_url=provider.base_url,
-                timeout=provider.timeout_s,
-                default_headers=provider.default_headers or None,
-            )
+
+    def _build_provider_client(self, provider_name: str) -> AsyncOpenAI:
+        provider = self.config.provider_config(provider_name)
+        return AsyncOpenAI(
+            api_key=provider.resolved_api_key,
+            base_url=provider.base_url,
+            timeout=provider.timeout_s,
+            default_headers=provider.default_headers or None,
+        )
 
     async def complete(
         self,
@@ -237,10 +254,12 @@ class OpenAICompatibleLLMClient:
     ) -> LLMResult:
         role_config = self.config.role_config(purpose)
         provider_name = role_config.provider
-        if provider_name not in self._clients:
-            raise KeyError(f"provider {provider_name} is not initialized")
         request = _build_openai_request(role_config, messages, temperature=temperature)
-        response = await self._clients[provider_name].chat.completions.create(**request)
+        client = self._build_provider_client(provider_name)
+        try:
+            response = await client.chat.completions.create(**request)
+        finally:
+            await client.close()
         choice = response.choices[0]
         content = _coerce_content_to_text(choice.message.content)
         usage = getattr(response, "usage", None)
@@ -297,6 +316,36 @@ class DeterministicLLMClient:
             raise ValueError("deterministic llm requires at least one message")
         user_content = messages[-1].content
         if purpose == "planner":
+            if "Visible route/tool candidates:" in user_content and "Return JSON with route and tool_name" in user_content:
+                payload = parse_text_route_tool_planner_prompt(user_content)
+                selected = _deterministic_retriever_choice(
+                    query=str(payload.get("query", "")),
+                    tool_candidates=[
+                        dict(item)
+                        for item in payload.get("tool_candidates", [])
+                        if isinstance(item, dict)
+                    ],
+                )
+                selected_rank = next(
+                    (
+                        index
+                        for index, item in enumerate(payload.get("tool_candidates", []), start=1)
+                        if str(item.get("route", "")).strip() == str(selected.get("route", "")).strip()
+                        and str(item.get("tool_name", "")).strip() == str(selected.get("tool_name", "")).strip()
+                    ),
+                    0,
+                )
+                result_payload = {
+                    "route": str(selected.get("route", "")).strip(),
+                    "tool_name": str(selected.get("tool_name", "")).strip(),
+                    "strongest_competing_route": str(payload.get("fallback_route", "")).strip(),
+                    "validation_check": "planner selected one visible route/tool candidate without typed-state fallback",
+                    "candidate_rank": selected_rank,
+                }
+                return LLMResult(
+                    text=json.dumps(result_payload, ensure_ascii=False, sort_keys=True),
+                    model=self.config.role_config("planner").model,
+                )
             if "<sb-plan-v1>" in user_content:
                 payload = parse_compact_protocol_planner_brief(user_content)
                 plan = _build_compact_protocol_plan(payload)
@@ -306,6 +355,11 @@ class DeterministicLLMClient:
                     if "<statebus-planner-input>" in user_content
                     else parse_text_planner_brief(user_content)
                 )
+                if "evidence_text" not in payload:
+                    payload["evidence_text"] = extract_optional_tagged_text(
+                        user_content,
+                        "statebus-planner-evidence",
+                    )
                 plan_steps = [
                     {
                         "step_id": "retrieve",
@@ -374,6 +428,16 @@ class DeterministicLLMClient:
                     if "<statebus-summary-input>" in user_content
                     else parse_text_summarizer_handoff(user_content)
                 )
+            if "evidence_text" not in payload:
+                payload["evidence_text"] = extract_optional_tagged_text(
+                    user_content,
+                    "statebus-summary-evidence",
+                )
+            if "actions_text" not in payload:
+                payload["actions_text"] = extract_optional_tagged_text(
+                    user_content,
+                    "statebus-summary-actions",
+                )
             reusable_steps = list(payload.get("reusable_steps") or ["retrieve", "execute"])
             if compact_protocol:
                 action_lines = [line.strip() for line in str(payload["actions_text"]).splitlines() if line.strip()]
@@ -406,7 +470,7 @@ class DeterministicLLMClient:
             )
         if purpose == "retriever":
             payload = (
-                parse_tagged_json(user_content, "sb-retriever-v1")
+                parse_compact_protocol_retriever_handoff(user_content)
                 if "<sb-retriever-v1>" in user_content
                 else parse_text_retriever_handoff(user_content)
             )
@@ -445,7 +509,7 @@ class DeterministicLLMClient:
             )
         if purpose == "executor":
             payload = (
-                parse_tagged_json(user_content, "sb-executor-v1")
+                parse_compact_protocol_executor_handoff(user_content)
                 if "<sb-executor-v1>" in user_content
                 else parse_text_executor_handoff(user_content)
             )
@@ -468,6 +532,7 @@ class DeterministicLLMClient:
                 tool_name = str(selected.get("tool_name", tool_name)).strip() or tool_name
             action_contract = (
                 str(payload.get("validated_action_contract", "")).strip()
+                or str(payload.get("action_contract", "")).strip()
                 or "execute_validated_tool"
             )
             result_payload = {
@@ -531,6 +596,16 @@ def parse_tagged_json(text: str, tag: str) -> dict[str, Any]:
     return json.loads(payload)
 
 
+def extract_optional_tagged_text(text: str, tag: str) -> str:
+    start_token = f"<{tag}>"
+    end_token = f"</{tag}>"
+    start = text.find(start_token)
+    end = text.find(end_token)
+    if start == -1 or end == -1 or end < start:
+        return ""
+    return text[start + len(start_token) : end].strip()
+
+
 def extract_json_object(text: str) -> dict[str, Any]:
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -554,6 +629,10 @@ def parse_text_planner_brief(text: str) -> dict[str, Any]:
     summary_start_marker = (
         "Summary hint:\n" if not required_roles_block else "\n\nSummary hint:\n"
     )
+    has_evidence_note = "\n\nEvidence note:\n" in text
+    summary_end_marker = (
+        "\n\nEvidence note:\n" if has_evidence_note else "\n\nVisible route/tool candidates:"
+    )
     return {
         "task_id": _extract_line_value(text, "Task ID:"),
         "task_group": _extract_line_value(text, "Task group:"),
@@ -563,9 +642,9 @@ def parse_text_planner_brief(text: str) -> dict[str, Any]:
         "summary_hint": _extract_block(
             text,
             summary_start_marker,
-            "\n\nEvidence note:\n",
+            summary_end_marker,
         ),
-        "evidence_text": _extract_after(text, "Evidence note:\n"),
+        "evidence_text": (_extract_after(text, "Evidence note:\n") if has_evidence_note else ""),
         "tags": _split_csv(_extract_line_value(text, "Tags:")),
         "required_plan_semantic_roles": _split_csv(required_roles_block),
     }
@@ -581,6 +660,45 @@ def parse_compact_protocol_planner_brief(text: str) -> dict[str, Any]:
         "tags": [str(tag) for tag in payload.get("t", [])],
         "required_plan_semantic_roles": [str(role) for role in payload.get("rr", [])],
     }
+
+
+def _decode_compact_tool_candidates(items: list[Any]) -> list[dict[str, Any]]:
+    tool_candidates: list[dict[str, Any]] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        candidate: dict[str, Any] = {
+            "route": str(raw.get("r", raw.get("route", ""))).strip(),
+            "tool_name": str(raw.get("t", raw.get("tool_name", ""))).strip(),
+        }
+        if not candidate["route"] or not candidate["tool_name"]:
+            continue
+        if "d" in raw:
+            candidate["supporting_doc_ids"] = [str(item) for item in raw.get("d", []) if str(item).strip()]
+            candidate["support_doc_count"] = len(candidate["supporting_doc_ids"])
+        elif "supporting_doc_ids" in raw:
+            candidate["supporting_doc_ids"] = [str(item) for item in raw.get("supporting_doc_ids", []) if str(item).strip()]
+            candidate["support_doc_count"] = len(candidate["supporting_doc_ids"])
+        else:
+            candidate["support_doc_count"] = int(raw.get("n", raw.get("support_doc_count", 0)) or 0)
+        if "s" in raw:
+            candidate["support_terms"] = [str(item) for item in raw.get("s", []) if str(item).strip()]
+        elif "support_terms" in raw:
+            candidate["support_terms"] = [str(item) for item in raw.get("support_terms", []) if str(item).strip()]
+        if "m" in raw:
+            candidate["matched_issue_ids"] = [str(item) for item in raw.get("m", []) if str(item).strip()]
+        elif "matched_issue_ids" in raw:
+            candidate["matched_issue_ids"] = [str(item) for item in raw.get("matched_issue_ids", []) if str(item).strip()]
+        if "h" in raw or "helper_rank" in raw:
+            candidate["helper_rank"] = int(raw.get("h", raw.get("helper_rank", 0)) or 0)
+        if "sc" in raw or "score" in raw:
+            candidate["score"] = float(raw.get("sc", raw.get("score", 0.0)) or 0.0)
+        if "x" in raw:
+            candidate["rationale"] = str(raw.get("x", "")).strip()
+        elif "rationale" in raw:
+            candidate["rationale"] = str(raw.get("rationale", "")).strip()
+        tool_candidates.append(candidate)
+    return tool_candidates
 
 
 def _requires_validation_step(payload: dict[str, Any]) -> bool:
@@ -680,6 +798,22 @@ def parse_compact_protocol_summarizer_handoff(text: str) -> dict[str, Any]:
     }
 
 
+def parse_compact_protocol_retriever_handoff(text: str) -> dict[str, Any]:
+    payload = parse_tagged_json(text, "sb-retriever-v1")
+    return {
+        "query": str(payload.get("q", payload.get("query", ""))).strip(),
+        "evidence_text": str(payload.get("e", payload.get("evidence_text", ""))).strip(),
+        "retrieved_doc_ids": [
+            str(item)
+            for item in payload.get("rd", payload.get("retrieved_doc_ids", []))
+            if str(item).strip()
+        ],
+        "tool_candidates": _decode_compact_tool_candidates(
+            list(payload.get("tc", payload.get("tool_candidates", [])))
+        ),
+    }
+
+
 def parse_text_retriever_handoff(text: str) -> dict[str, Any]:
     visible_candidates = _extract_line_value(text, "Visible candidates:")
     tool_candidates = _parse_text_candidates_line(visible_candidates)
@@ -700,6 +834,27 @@ def parse_text_retriever_handoff(text: str) -> dict[str, Any]:
         "query": _extract_line_value(text, "Query:"),
         "retrieved_doc_ids": _split_csv(_extract_line_value(text, "Retrieved docs:")),
         "tool_candidates": tool_candidates,
+    }
+
+
+def parse_text_route_tool_planner_prompt(text: str) -> dict[str, Any]:
+    visible_candidates = _extract_line_value(text, "Visible route/tool candidates:")
+    tool_candidates = _parse_text_candidates_line(visible_candidates)
+    candidate_notes = _extract_optional_line_value(text, "Candidate notes:")
+    note_candidates = _parse_text_candidate_notes(candidate_notes)
+    if note_candidates:
+        note_by_identity = {_candidate_identity(item): item for item in note_candidates}
+        merged_candidates: list[dict[str, Any]] = []
+        for item in tool_candidates:
+            merged = dict(item)
+            merged.update(note_by_identity.get(_candidate_identity(item), {}))
+            merged_candidates.append(merged)
+        tool_candidates = merged_candidates
+    return {
+        "task_id": _extract_line_value(text, "Task ID:"),
+        "query": _extract_block(text, "Task query:\n", "\n\nVisible route/tool candidates:\n"),
+        "tool_candidates": tool_candidates,
+        "fallback_route": _extract_optional_line_value(text, "Competing route:"),
     }
 
 
@@ -726,6 +881,19 @@ def parse_text_executor_handoff(text: str) -> dict[str, Any]:
         "validated_tool_name": _extract_line_value(text, "Validated tool:"),
         "validated_action_contract": _extract_line_value(text, "Validated action contract:"),
         "tool_candidates": tool_candidates,
+    }
+
+
+def parse_compact_protocol_executor_handoff(text: str) -> dict[str, Any]:
+    payload = parse_tagged_json(text, "sb-executor-v1")
+    return {
+        "route": str(payload.get("r", payload.get("route", ""))).strip(),
+        "tool_name": str(payload.get("t", payload.get("tool_name", ""))).strip(),
+        "action_contract": str(payload.get("a", payload.get("action_contract", ""))).strip(),
+        "evidence_text": str(payload.get("e", payload.get("evidence_text", ""))).strip(),
+        "tool_candidates": _decode_compact_tool_candidates(
+            list(payload.get("tc", payload.get("tool_candidates", [])))
+        ),
     }
 
 
@@ -781,7 +949,18 @@ def _deterministic_retriever_choice(*, query: str, tool_candidates: list[dict[st
     if not tool_candidates:
         return {"route": "generic_triage", "tool_name": "tool.collect_more_evidence"}
     if not any(int(item.get("helper_rank", 0) or 0) > 0 for item in tool_candidates):
-        return tool_candidates[0]
+        query_tokens = set(query.lower().split())
+        scored = sorted(
+            tool_candidates,
+            key=lambda item: (
+                -_candidate_query_affinity(query_tokens, item),
+                -len([term for term in item.get("support_terms", []) if str(term).strip()]),
+                -int(item.get("support_doc_count", 0) or 0),
+                str(item.get("route", "")),
+                str(item.get("tool_name", "")),
+            ),
+        )
+        return scored[0]
     query_tokens = set(query.lower().split())
     scored = sorted(
         tool_candidates,

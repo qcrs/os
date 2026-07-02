@@ -125,6 +125,20 @@ def test_runtime_smoke_module_entry_emits_stdout() -> None:
     assert "statebus smoke ok:" in completed.stdout
 
 
+def test_lightweight_subprocess_runner_preserves_user_site_when_not_explicitly_disabled(monkeypatch) -> None:
+    monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+    runner = executor_runtime.LightweightSubprocessRunner()
+    env = runner._sandbox_env()
+    assert "PYTHONNOUSERSITE" not in env
+
+
+def test_lightweight_subprocess_runner_honors_explicit_pythonnousersite(monkeypatch) -> None:
+    monkeypatch.setenv("PYTHONNOUSERSITE", "1")
+    runner = executor_runtime.LightweightSubprocessRunner()
+    env = runner._sandbox_env()
+    assert env["PYTHONNOUSERSITE"] == "1"
+
+
 def test_executor_actual_tool_candidates_derive_from_feature_bundle_tool_candidates() -> None:
     payload = _actual_tool_candidates_from_feature_bundle(
         {

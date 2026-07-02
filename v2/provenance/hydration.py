@@ -125,7 +125,7 @@ def evidence_item_to_dict(item: EvidenceItem) -> dict[str, Any]:
         "source_name": item.source_name,
         "rank": item.rank,
         "score": item.score,
-        "metadata": dict(sorted(item.metadata.items())),
+        "metadata": dict(item.metadata),
     }
 
 
@@ -154,7 +154,7 @@ def evidence_pack_to_dict(pack: CanonicalEvidencePack) -> dict[str, Any]:
         "semantic_contexts": [evidence_item_to_dict(item) for item in pack.semantic_contexts],
         "lexical_hints": [evidence_item_to_dict(item) for item in pack.lexical_hints],
         "conflicts": [evidence_item_to_dict(item) for item in pack.conflicts],
-        "budget_meta": dict(sorted(pack.budget_meta.items())),
+        "budget_meta": dict(pack.budget_meta),
         "pack_hash": pack.pack_hash,
         "schema_version": pack.schema_version,
     }
@@ -240,6 +240,61 @@ def hydrate_manifest_entries(
             continue
         rendered.append(registry.hydrate_locator(entry.locator))
     return rendered
+
+
+@dataclass(frozen=True)
+class RoleHydratedSlice:
+    role: str
+    selected_stable_keys: tuple[str, ...]
+    hydrated_text: str
+    hydrated_bytes: int
+    item_count: int
+    table_text: str = ""
+    table_bytes: int = 0
+    table_item_count: int = 0
+    artifact_text: str = ""
+    artifact_bytes: int = 0
+    artifact_item_count: int = 0
+    memory_text: str = ""
+    memory_bytes: int = 0
+    memory_item_count: int = 0
+
+
+def build_hydration_registry_from_evidence_pack(pack: CanonicalEvidencePack) -> HydrationRegistry:
+    registry = HydrationRegistry()
+    for item in (
+        *pack.hard_facts,
+        *pack.structured_evidence,
+        *pack.semantic_contexts,
+        *pack.lexical_hints,
+        *pack.conflicts,
+    ):
+        if item.locator is None:
+            continue
+        registry.register(item.locator, item.rendered_text)
+    return registry
+
+
+def role_hydrated_slice(
+    *,
+    role: str,
+    manifest: HydrateManifest,
+    registry: HydrationRegistry,
+    selected_keys: tuple[str, ...],
+) -> RoleHydratedSlice:
+    rendered = hydrate_manifest_entries(
+        manifest,
+        registry,
+        selected_keys=set(selected_keys),
+    )
+    hydrated_text = "\n".join(item for item in rendered if item)
+    return RoleHydratedSlice(
+        role=role,
+        selected_stable_keys=tuple(selected_keys),
+        hydrated_text=hydrated_text,
+        hydrated_bytes=len(hydrated_text.encode("utf-8")),
+        item_count=len(rendered),
+    )
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,9 @@ Default branch posture:
 - `main` is the active implementation mainline.
 - `feat/realism-protocol-hardening` is now a historical topic branch pointer; it currently matches `main`.
 - `baseline/statebus-host-prototype-20260607` is a pre-hardening snapshot for comparison only.
-- Start new work from `main` unless the user explicitly asks for archaeology or regression analysis against the older branches.
+- `feat/statebus-v2-container-runtime` is the active `v2` clean-room planning branch rooted at the current contest-facing worktree, not at historical `main`.
+- Start new `v1/mainline` work from `main`.
+- Start new `v2` clean-room work from `feat/statebus-v2-container-runtime` unless the user explicitly asks to rebase or restart from another branch.
 
 Read these files first before major code changes:
 
@@ -21,7 +23,7 @@ Read these files first before major code changes:
 
 ## Environment Strategy
 
-Do not reopen this decision unless the user explicitly asks:
+Do not reopen the `v1/mainline` decision unless the user explicitly asks:
 
 - main development runs on the current Linux host;
 - use the user-owned conda env and user-owned directories under `$HOME/statebus`;
@@ -37,6 +39,17 @@ Current host fact pattern to keep stable:
 - `shared_memory` is a real benchmark option, not a dormant backend;
 - Docker socket access is not available to the current user;
 - `nsjail` is still absent on the host.
+
+For `v2` clean-room work, use this explicit exception path:
+
+- target environment is single-container `Docker + openEuler`;
+- container development is allowed and intended for `v2`;
+- the formal `v2` control plane is `UDS + typed Protobuf`, not `UDS + MessagePack` as the main wire contract;
+- the formal `v2` data plane is tiered by object kind:
+  - short-lived embedding / dense semantic state prefers `shared_memory`;
+  - replay-ready state, manifests, and long-lived objects prefer `mmap` / CAS;
+  - execution outputs use task workspaces plus artifact root plus CAS;
+- `KV cache / hidden-state handoff` remains `Future Work` and must be described only as `Engine-Local Prefix Reuse`.
 
 ## Project Layout
 
@@ -56,7 +69,7 @@ Top-level implementation folders:
 
 ## Development Priorities
 
-Implement in this order:
+Implement `v1/mainline` in this order:
 
 1. host-side env and directory assumptions
 2. `text` mode runnable path
@@ -71,6 +84,15 @@ Do not start with:
 - openEuler VM packaging
 - privileged shared-memory transport
 - production sandboxing
+
+For `v2`, implement in this order:
+
+1. `v2/` clean-room package skeleton and `tests/v2/`
+2. typed Protobuf control plane and runtime event semantics
+3. `CanonicalTaskSpec`, `RuntimeCompatibilitySignature`, and ref registry
+4. semantic provenance, hydration, and deterministic evidence fan-in
+5. execution workspace and `ExecutionArtifactRef`
+6. replay gate, telemetry, benchmark, and quality floor
 
 ## Commands
 
@@ -93,6 +115,17 @@ python -m pytest -q
 python -m runtime.smoke
 ```
 
+`v2` container bootstrap:
+
+```bash
+export STATEBUS_UID="$(id -u)"
+export STATEBUS_GID="$(id -g)"
+export STATEBUS_DOCKER_TARGET=core
+docker compose -f docker/compose.yaml build
+docker compose -f docker/compose.yaml up -d
+docker exec -it statebus-dev-qcrs bash
+```
+
 ## Code Rules
 
 - Keep terminology aligned to `Planner`, `Retriever`, `Executor`, `Summarizer`, `StateRef`, `MemoryProxy`.
@@ -102,3 +135,5 @@ python -m runtime.smoke
 - Avoid claiming `nsjail`, Docker-based execution, hidden-state/KV transfer, or stronger sandbox isolation unless that path has been explicitly validated.
 - For API latency claims, use serialized benchmark reruns only; do not treat concurrent API launches as formal timing evidence.
 - Treat current memory reuse as assist-style unless a benchmark explicitly shows non-zero `reuse_gain` or `skipped_step_count`.
+- For `v2`, keep `ExecutionArtifactRef` separate from `StateRef`; do not collapse them back into one vague ref type.
+- For `v2`, formal benchmark task families should default to offline financial-report / operating-metric analysis, not freeform incident demos.

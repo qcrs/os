@@ -1,0 +1,25 @@
+{
+  "task_id": "fixed-answer-auth-001",
+  "task_family": "fixed_answer_route_tool",
+  "request_text": "sso callback issuer mismatch stale jwks session cookies",
+  "canonical_task_spec": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "triage_route_tool",
+    "required_outputs": ["summary_text"],
+    "required_tools": ["semantic_retriever", "table_retriever"],
+    "arguments": {
+      "ticker": "ACME",
+      "quarter": "2026Q3",
+      "metric": "revenue",
+      "request_text": "sso callback issuer mismatch stale jwks session cookies"
+    }
+  },
+  "expected_facts": {
+    "revenue_value": "145",
+    "selected_doc_hashes": ["sha256:doc-acme-2026q3"]
+  },
+  "expected_route": "auth_session_drift",
+  "expected_tool_name": "semantic_retriever",
+  "summary_hint": "Choose the best incident route and preserve replay-ready artifact structure.",
+  "scenario_tags": ["fixed-answer", "auth", "session"]
+}

@@ -143,6 +143,32 @@ class ControlPlaneLoopbackServer:
             return responses
         raise TypeError(f"unsupported command for loopback session: {type(command)!r}")
 
+    def exchange_sequence_by_contract(self, message: ControlMessage) -> list[ControlMessage]:
+        if not hasattr(message, "runtime_reuse_contract"):
+            return self.exchange_sequence(message)
+        contract = getattr(message, "runtime_reuse_contract", "")
+        header = message.header
+        if "drop_ack" in contract:
+            return [
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="ack_timeout_simulated",
+                    error_detail="worker_harness_withheld_ack",
+                    failed_at_ns=0,
+                )
+            ]
+        if "lease_timeout" in contract:
+            return [
+                AckReceived(header=replace(header, event_type=EventType.ACK_RECV), acked_at_ns=1),
+                RunStart(
+                    header=replace(header, event_type=EventType.RUN_START),
+                    started_at_ns=2,
+                    heartbeat_interval_ms=2000,
+                    lease_timeout_ms=6000,
+                ),
+            ]
+        return self.exchange_sequence(message)
+
     def _worker_harness_sequence(self, message: ControlMessage) -> list[ControlMessage]:
         header = message.header
         if header.event_type != EventType.REQ_EXEC:

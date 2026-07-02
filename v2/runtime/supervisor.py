@@ -14,6 +14,7 @@ class StepRuntimeRecord:
     role: str
     state: StepLifecycleState = StepLifecycleState.PENDING
     last_error: str = ""
+    dispatched_at_ns: int = 0
     acked_at_ns: int = 0
     started_at_ns: int = 0
     last_heartbeat_ns: int = 0
@@ -30,6 +31,7 @@ class WorkerSessionSnapshot:
     attempt_id: str
     role: str
     state: str
+    dispatched_at_ns: int
     acked_at_ns: int
     started_at_ns: int
     last_heartbeat_ns: int
@@ -77,7 +79,9 @@ class RuntimeSupervisor:
         return record
 
     def dispatch(self, step_id: str) -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.DISPATCHED)
+        record = self._transition(step_id, StepLifecycleState.DISPATCHED)
+        record.dispatched_at_ns = time.time_ns()
+        return record
 
     def ack(self, step_id: str) -> StepRuntimeRecord:
         record = self._transition(step_id, StepLifecycleState.ACKED)
@@ -104,16 +108,20 @@ class RuntimeSupervisor:
         return record
 
     def fail(self, step_id: str, error: str) -> StepRuntimeRecord:
-        return self._transition(step_id, StepLifecycleState.FAILED, error)
+        record = self._transition(step_id, StepLifecycleState.FAILED, error)
+        record.completed_at_ns = time.time_ns()
+        return record
 
     def trap(self, step_id: str, error: str) -> StepRuntimeRecord:
         record = self._transition(step_id, StepLifecycleState.TRAPPED, error)
         record.trapped_at_ns = time.time_ns()
+        record.completed_at_ns = record.trapped_at_ns
         return record
 
     def cancel(self, step_id: str, error: str = "") -> StepRuntimeRecord:
         record = self._transition(step_id, StepLifecycleState.CANCELLED, error)
         record.cancelled_at_ns = time.time_ns()
+        record.completed_at_ns = record.cancelled_at_ns
         return record
 
     def gc_pending(self, step_id: str) -> StepRuntimeRecord:
@@ -132,6 +140,7 @@ class RuntimeSupervisor:
             attempt_id=record.attempt_id,
             role=record.role,
             state=record.state.value,
+            dispatched_at_ns=record.dispatched_at_ns,
             acked_at_ns=record.acked_at_ns,
             started_at_ns=record.started_at_ns,
             last_heartbeat_ns=record.last_heartbeat_ns,
@@ -140,6 +149,45 @@ class RuntimeSupervisor:
             trapped_at_ns=record.trapped_at_ns,
             last_error=record.last_error,
         )
+
+    def trap_if_ack_timed_out(
+        self,
+        step_id: str,
+        *,
+        ack_timeout_ms: int,
+        now_ns: int | None = None,
+    ) -> StepRuntimeRecord | None:
+        record = self.steps[step_id]
+        if record.state != StepLifecycleState.DISPATCHED or record.dispatched_at_ns == 0:
+            return None
+        current_ns = time.time_ns() if now_ns is None else now_ns
+        if current_ns - record.dispatched_at_ns < ack_timeout_ms * 1_000_000:
+            return None
+        record = self._transition(step_id, StepLifecycleState.TRAPPED, "ack_timeout")
+        record.trapped_at_ns = current_ns
+        record.completed_at_ns = current_ns
+        return record
+
+    def trap_if_lease_expired(
+        self,
+        step_id: str,
+        *,
+        lease_timeout_ms: int,
+        now_ns: int | None = None,
+    ) -> StepRuntimeRecord | None:
+        record = self.steps[step_id]
+        if record.state not in {StepLifecycleState.ACKED, StepLifecycleState.RUNNING}:
+            return None
+        lease_anchor_ns = record.last_heartbeat_ns or record.started_at_ns
+        if lease_anchor_ns == 0:
+            return None
+        current_ns = time.time_ns() if now_ns is None else now_ns
+        if current_ns - lease_anchor_ns < lease_timeout_ms * 1_000_000:
+            return None
+        record = self._transition(step_id, StepLifecycleState.TRAPPED, "heartbeat_timeout")
+        record.trapped_at_ns = current_ns
+        record.completed_at_ns = current_ns
+        return record
 
     def _transition(
         self,

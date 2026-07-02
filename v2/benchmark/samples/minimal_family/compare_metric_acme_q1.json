@@ -2,15 +2,27 @@
   "task_id": "benchmark-sample-1",
   "task_family": "financial_report_analysis",
   "expected_artifact_type": "json",
-  "request_text": {
+  "expected_facts": {
+    "revenue_value": "120",
+    "selected_doc_hashes": [
+      "sha256:doc-acme-2026q1"
+    ]
+  },
+  "request_text": "Compare ACME revenue for 2026Q1 and produce a summary.",
+  "canonical_task_spec": {
     "task_family": "financial_report_analysis",
     "intent_op": "compare_metric",
     "required_outputs": [
       "summary_text"
     ],
+    "required_tools": [
+      "table_retriever",
+      "semantic_retriever"
+    ],
     "arguments": {
       "ticker": "ACME",
-      "quarter": "2026Q1"
+      "quarter": "2026Q1",
+      "metric": "revenue"
     }
   }
 }
