@@ -1041,6 +1041,7 @@ class JsonContractStore:
         )
 
     def _memory_ref_from_dict(self, payload: dict[str, object]) -> MemoryRef:
+        metadata = dict(payload.get("metadata", {}))
         return MemoryRef(
             memory_id=str(payload["memory_id"]),
             memory_type=MemoryType(str(payload["memory_type"])),
@@ -1049,6 +1050,14 @@ class JsonContractStore:
             source_task_id=str(payload["source_task_id"]),
             summary=str(payload["summary"]),
             canonical_task_spec_hash=str(payload["canonical_task_spec_hash"]),
+            source_agent=str(payload.get("source_agent", metadata.get("source_agent", ""))),
+            created_at_ns=int(payload.get("created_at_ns", metadata.get("created_at_ns", 0))),
+            task_theme=str(payload.get("task_theme", metadata.get("task_theme", ""))),
+            tags=tuple(str(item) for item in payload.get("tags", metadata.get("tags", []))),
+            source_role_path=tuple(
+                str(item) for item in payload.get("source_role_path", metadata.get("source_role_path", []))
+            ),
+            producer_run_id=str(payload.get("producer_run_id", metadata.get("producer_run_id", ""))),
             artifact_ref_id=str(payload.get("artifact_ref_id", "")),
             semantic_state_ref_id=str(payload.get("semantic_state_ref_id", "")),
             embedding_ref_id=str(payload.get("embedding_ref_id", "")),
@@ -1059,7 +1068,7 @@ class JsonContractStore:
             ),
             answer_adopted=bool(payload.get("answer_adopted", False)),
             schema_version=str(payload.get("schema_version", "")),
-            metadata=dict(payload.get("metadata", {})),
+            metadata=metadata,
         )
 
     def _memory_commit_to_dict(self, commit: MemoryCommit) -> dict[str, object]:
