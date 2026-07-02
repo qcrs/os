@@ -204,7 +204,7 @@
 
 | # | 赛题要求 | 状态 | 说明 |
 |---|---------|------|------|
-| 11 | 鼓励CodeAct(LLM生成Python在沙箱运行) | ❌ 未实现 | LightweightSubprocessRunner不是安全沙箱，无CodeAct主路径 |
+| 11 | 鼓励CodeAct(LLM生成Python在沙箱运行) | 历史口径，非当前 v2 claim | 当前 v2 只能 claim controlled CodeAct-style execution；受限 LLM-code demo 仍是 future work |
 | 12 | 鼓励IPC/共享内存/Socket/向量库/WASM/容器/eBPF | ⚠️ 部分 | AF_UNIX+mmap+shared_memory+SQLite+FAISS已落地；WASM/容器/eBPF未实现 |
 
 ### 2.3 交付要求
@@ -418,15 +418,17 @@ git checkout HEAD -- tasks/sample_benchmark.yaml
 - 检索精度提升，可能让assist_only在run内work
 - 多信号检索融合是mem0的核心创新——有业界参考
 
-#### B4：CodeAct实现——受控代码执行（鼓励项）
+#### B4：CodeAct实现——受控代码执行（鼓励项，历史规划）
 
-**目标**：实现LLM生成Python代码在隔离环境中执行的能力。
+**当前 v2 读法**：这段是早期 roadmap，不是当前 evidence claim。当前已验证口径只能写成 controlled CodeAct-style execution：runtime-generated bounded Python action script 在 root+bwrap Docker profile 下执行。LLM 生成受限 Python function 仍属于 future work / optional demo，不能写成当前已完成能力。
+
+**原目标**：实现受限 LLM-code demo，在隔离环境中执行小型 Python function。
 
 **实现**：
 1. 在`runtime/`下新增`codeact_runner.py`：
    - 接收Planner的CodeAct request
-   - 调用Summarizer/Planner的LLM生成Python脚本
-   - 在`LightweightSubprocessRunner`中执行
+   - 调用Summarizer/Planner的LLM生成受限小函数
+   - 做 AST / import policy 检查后，在 sandbox profile 中执行
    - 捕获stdout/stderr + 超时控制 + 环境变量清理
 2. 在ToolRegistry中注册`codeact_execute`工具
 3. 当现有7个playbook工具无法处理时，fallback到CodeAct
@@ -536,7 +538,7 @@ Phase D (交付)
 | B1 | DeltaPlanStep | delta检测逻辑有bug导致接收方拿到不完整PlanStep | 低 | 高(整个task失败) | 增加`sanity_check`：delta merge后的完整PlanStep必须通过SchemaInterceptor校验 | 关闭delta特性标志位，回退到完整传输 |
 | B2 | Typed Channel | schema v1→v2兼容性导致旧consumer读不懂新bundle | 中 | 中(state传递失败) | v2 bundle保持v1所有字段，新增字段用optional | 降级flag：consumer请求v1格式 |
 | B3 | 双层记忆+多信号 | recency权重过大导致semantic signal被压制→检索精度反而下降 | 低 | 中(assist变得更差) | 用历史benchmark数据做grid search找最优权重 | 权重参数通过环境变量配置，可hot-fix |
-| B4 | CodeAct | LLM生成的Python代码有bug或恶意行为→subprocess crash或数据损坏 | 中 | 高(执行失败) | timeout(10s)+禁止import os/subprocess+sandboxed temp dir | 回退到playbook工具，CodeAct仅作fallback |
+| B4 | CodeAct | future-work 受限 LLM-code demo 可能产生有 bug 或违反 policy 的代码 | 中 | 高(执行失败) | AST/import policy + sandbox profile + stdout/stderr audit | 回退到 controlled runtime-generated action script |
 | C5 | Benchmark重构 | 新task定义有误→整个benchmark结果不可比 | 中 | 高(历史数据无法对照) | 保留一份旧pack的copy；新pack跑deterministic preflight验证 | 回退到旧pack重新跑 |
 
 ### 4.8 各Phase的成功标准与验证方法
@@ -549,7 +551,7 @@ Phase D (交付)
 | B1 | DeltaPlanStep | `python -m pytest tests/test_protocol_messages.py -k delta` | DeltaPlanStep的protobuf round-trip成功；delta merge后的完整PlanStep通过SchemaInterceptor校验 | 新增test |
 | B2 | Typed Channel | `python -m pytest tests/test_smoke.py -k feature_bundle` | v2 FEATURE_BUNDLE的metadata中包含`_channel_schema`字段 | 修改现有test |
 | B3 | 双层记忆 | 跑`communication+memory` pack | assist_only task_ms相比memory_off下降≥5% | `python -m eval.runner --task-set memory --repeat 3 --llm-mode api --out /tmp/b3_verify` |
-| B4 | CodeAct | 单独跑一个CodeAct-enabled task | CodeAct生成的Python代码成功执行并返回结果；无安全警告 | 新增smoke test |
+| B4 | CodeAct | 单独跑一个CodeAct-enabled task | controlled runtime-generated action script 成功执行并返回结果；若做 future-work LLM-code demo，必须另有 AST policy 和 sandbox evidence | 新增smoke test |
 | C5 | Benchmark重构 | 跑完整formal controlled pack | 赛题主张task占比≥60%；`failure_count=0`；`expectation_match_rate=1.00` | `python -m eval.runner --repeat 3 --llm-mode api --out /tmp/c5_verify` |
 | C6 | InvariantChecker | 跑C5的benchmark | 静态不变量全部通过；violations=0 | 在C5的report中检查 |
 | C7 | Trajectory IR | 跑C5的benchmark | 每个task都有对应的trajectory JSON；两次相同task的trajectory对比diff≤预期 | 在C5的report中检查 |
@@ -580,7 +582,7 @@ Phase D (交付)
 
 ### 5.4 系统完整性（20分）
 - ✅ 4 Agent + 双模式 + 协议 + StateRef + 记忆 + 评测全链路闭环
-- ✅ **CodeAct受控代码执行**（Phase B新增）
+- ✅ **CodeAct受控代码执行**（历史 Phase B 口径；当前 v2 只按 controlled CodeAct-style execution 上读）
 - ✅ **协议不变量自动检查**（Phase C新增）
 - ✅ **Trajectory IR可复现replay**（Phase C新增）
 

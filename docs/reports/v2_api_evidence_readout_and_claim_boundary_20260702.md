@@ -43,7 +43,7 @@
 - `torch_cuda_available`: `true`
 - `torch_version`: `2.5.1+cu121`
 - `sentence_transformers`: present
-- `CodeAct`: formal / carrier artifacts 中 `codeact_sandbox_bwrap_count > 0` 且 `codeact_sandbox_fallback_count = 0`
+- `CodeAct`: controlled CodeAct-style execution；formal / carrier artifacts 中 `codeact_sandbox_bwrap_count > 0` 且 `codeact_sandbox_fallback_count = 0`
 
 本轮主读法所对应的日志文件：
 
@@ -67,7 +67,7 @@
 
 - `v2` 四角色主链已经在 `api` 模式下完成 formal-first-pass 复验；
 - `GPU local embedding` 已用真实 `sentence_transformers + torch cu121 + cuda:0` 路径复验，不再只是 deterministic embedding 模拟；
-- `CodeAct` 已在 root + bwrap openEuler Docker profile 下进入真实 bwrap 后端，无 fallback；
+- controlled CodeAct-style execution 已在 root+bwrap openEuler Docker profile 下进入真实 bwrap 后端，无 fallback；当前执行脚本是 runtime-generated bounded Python action script，不是开放式 LLM 任意生成 Python；
 - `L1` 的收益主要是结构化 carrier 减少 prompt scaffolding；
 - `L2` 的收益主要是 semantic selection / non-text state 让 LLM 看到的原始证据和 prompt-visible bytes 显著下降；
 - `L3` 的收益只在 replay / history 真命中时成立，不能把所有 L3 都上读成自动加速；
@@ -87,7 +87,7 @@
 | 非文本状态传递 | `established` | `L2` 在长任务 family 中显著降低 `raw_evidence_bytes_seen_by_llm` 与 `prompt_visible_total_bytes` |
 | 共享记忆 / replay | `partially established` | 仅在 replay/headline-eligible family 中可以正式讲 `exact/validated replay` 与 `skipped_step_count` |
 | 连续任务 | `established` | 至少 2 组以上 10 轮连续任务已有 artifact 证明 |
-| CodeAct 支撑 | `established_as_runtime_capability_with_profile_boundary` | formal 与 continuous artifacts 中存在真实 `codeact_plan_*`、`codeact_execution_stage_ms`，且 root+bwrap profile 下有 bwrap sandbox evidence |
+| CodeAct 支撑 | `established_as_controlled_runtime_capability_with_profile_boundary` | formal 与 continuous artifacts 中存在真实 `codeact_plan_*`、`codeact_execution_stage_ms`；执行对象是 runtime-generated bounded Python action script；root+bwrap profile 下有 bwrap sandbox evidence |
 
 可以正式说：
 
@@ -95,6 +95,7 @@
 - 同一 StateBus runtime 内部，structured carrier 相比 internal pure-text carrier 确实减少了 prompt scaffolding。
 - 在长文档 / 表格 / 连续任务 family 中，`L2` semantic pruning / semantic state 带来真实的 evidence-byte 降低。
 - 两组 replay family 都已经在 GPU/local/API 路径下达到 `replay_admissible`；CSV 负责 validated replay 全覆盖，long-doc 负责 exact + validated 混合 replay。
+- CodeAct 只能写成 controlled CodeAct-style execution，不能写成 LLM generated arbitrary Python code、general-purpose CodeAct benchmark superiority 或 production-grade sandbox。
 
 ---
 
@@ -136,7 +137,7 @@ formal suite 当前可直接引用的关键信号：
 - `L2_semantic_state_transfer_count = 3`
 - `L2_shared_memory_publish_count = 3`
 - `L3_quality_floor_pass_count = 3`
-- `CodeAct bwrap count = 3` at each layer, fallback count `0`
+- controlled CodeAct-style `bwrap` count = `3` at each layer, fallback count `0`
 
 formal suite 当前支持的不是 external superiority，而是内部 attribution ladder：
 

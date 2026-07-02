@@ -952,9 +952,15 @@ def test_delta_plan_step_round_trip():
 
 ## C1：CodeAct 兜底实现
 
+> Historical planning note: this section is not the current v2 evidence
+> boundary. Current v2 can only claim controlled CodeAct-style execution:
+> runtime-generated bounded Python action scripts under the recorded sandbox
+> profile. A restricted LLM-code demo remains future work unless separately
+> implemented and evidenced.
+
 ### 目标
 
-当ToolRegistry中7个预注册工具无法处理当前task时，fallback到LLM生成Python代码执行。
+当ToolRegistry中预注册工具无法处理当前 task 时，future-work demo 可 fallback 到受限 LLM-code 小函数；当前 v2 不把这写成已完成能力。
 
 ### 实现
 
@@ -962,8 +968,8 @@ def test_delta_plan_step_round_trip():
 
 ```python
 """
-CodeAct: LLM生成Python代码 + subprocess执行。
-轻量实现——不依赖nsjail，用subprocess+timeout做基本隔离。
+Future-work CodeAct demo: restricted LLM-generated Python function plus policy
+checks and sandboxed execution. This is not the current v2 evidence claim.
 """
 import asyncio
 import hashlib
