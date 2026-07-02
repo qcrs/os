@@ -188,6 +188,7 @@ docker compose -f docker/compose.yaml -f docker/compose.bwrap.yaml up -d --force
 1. 默认 compose 和 `compose.root.yaml` 都只保证 root 身份，不保证 bwrap 可用。
 2. `compose.bwrap.yaml` 是 CodeAct sandbox 专项验证 profile，可用于证明 bwrap backend 在 openEuler 容器高权限配置下跑通。
 3. 不要把该结果表述成默认低权限容器也支持 bwrap；默认低权限路径仍应视为 `auto/resource` fallback。
+4. 当前 v2 CodeAct 口径是 controlled CodeAct-style execution：runtime 生成 bounded Python action script 并在 profile 内执行；不要把它写成 LLM 自由生成任意 Python 或 production-grade sandbox。
 
 进入容器：
 
