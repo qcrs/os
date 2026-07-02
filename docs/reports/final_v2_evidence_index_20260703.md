@@ -124,13 +124,26 @@ The flagship ablation replay families must be read separately:
 | `csv_correlation_replay_v1` | replay-admissible | 0 | 8 | 8 | validated replay only; no exact replay claim |
 | `long_doc_metric_replay_v1` | replay-admissible | 3 | 5 | 11 | mixed exact and validated replay; exact claim is limited to 3 target rounds |
 
+Replay class definitions for final reporting:
+
+| Class | Meaning | Reporting boundary |
+| --- | --- | --- |
+| `assist` | historical memory is available as a candidate or summary | no skipped-step or reuse-gain claim |
+| `validated_replay` | some steps can be skipped after task shape, output contract, and verified-output checks | not exact replay |
+| `exact_replay` | exact key matches runtime signature, input hashes, output contract, and task shape | limited to the target rounds with exact counters |
+
+Post-index P0-006 remediation adds a tmp-path persisted-history regression:
+`tests/v2/test_replay.py::test_persisted_history_replay_ignores_corrupted_output_artifact`.
+It proves a corrupted persisted output artifact hash is not loaded as a replay
+candidate. This is still not a full 12-case persisted-live-history audit.
+
 ## 9. Follow-up P0 Items
 
 This index closes the documentation part of P0-001. Remaining first-stage P0
 items from `docs/review/v2_issue_remediation_plan_20260703.md` are:
 
-- P0-004: make memory metadata first-class on `MemoryRef` / memory commits.
-- P0-005: tighten CodeAct claim wording to controlled CodeAct-style execution.
-- P0-006: harden replay exact / validated / assist boundaries.
+- P0-004: make memory metadata first-class on `MemoryRef` / memory commits. Completed in remediation commit `c2d3064`.
+- P0-005: tighten CodeAct claim wording to controlled CodeAct-style execution. Completed in remediation commit `4431d19`.
+- P0-006: harden replay exact / validated / assist boundaries. Boundary docs and a tmp-path persisted-history corrupted-artifact regression are covered; full persisted-live-history audit remains future work.
 - P0-003: convert tested openEuler container results into a reproducible
   validation report with root+bwrap profile boundaries.

@@ -118,6 +118,37 @@
 
 ---
 
+## 4.1 Replay 分类边界
+
+当前 `L3` / memory 结果必须按 replay class 分开读：
+
+| Class | 可 claim 内容 | 不可 claim 内容 |
+| --- | --- | --- |
+| `assist` | 历史记忆作为候选或摘要参与当前任务 | 跳过步骤、`reuse_gain`、exact replay |
+| `validated_replay` | 跳过部分步骤，但仍需要输出合同、任务形状和验证状态通过 | exact key 完全匹配、成熟审计级 replay |
+| `exact_replay` | runtime signature、input hashes、output contract、task shape 与 exact key 全匹配时跳过步骤 | 泛化到未匹配 family 或未审计历史 |
+
+`csv_correlation_replay_v1` 当前只能作为 validated-only replay 证据：
+
+- `exact_replay_count = 0`
+- `validated_replay_count = 8`
+- `skipped_step_count = 8`
+
+`long_doc_metric_replay_v1` 当前只能写成 mixed exact + validated replay：
+
+- `exact_replay_count = 3`
+- `validated_replay_count = 5`
+- `skipped_step_count = 11`
+
+2026-07-03 后续 P0-006 remediation 增加了一个 persisted-history unit regression：
+
+- `tests/v2/test_replay.py::test_persisted_history_replay_ignores_corrupted_output_artifact`
+- 该测试构造 tmp-path persisted memory commit、artifact manifest/ref、replay ledger、runtime session 和 output file。
+- 它证明 corrupted output artifact hash 不会被加载成 history replay candidate。
+- 这仍不是 12-case persisted-live-history audit，不能升级成 mature audit-grade replay claim。
+
+---
+
 ## 5. Formal Suite 读法
 
 formal suite 元数据已经把 claim 边界写得很清楚：
