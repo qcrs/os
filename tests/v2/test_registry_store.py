@@ -261,6 +261,12 @@ def test_json_contract_store_persists_memory_sidecars(tmp_path: Path) -> None:
         replay_class=ReplayClass.EXACT_REPLAY,
         score=0.95,
         source_task_id="task-1",
+        source_agent="summarizer",
+        created_at_ns=123456789,
+        task_theme="financial_report_analysis",
+        tags=("finance", "replay"),
+        source_role_path=("planner", "retriever", "executor", "summarizer"),
+        producer_run_id="trace-test",
         summary="exact replay memory",
         canonical_task_spec_hash="sha256:spec-1",
         artifact_ref_id="artifact-1",
@@ -302,7 +308,20 @@ def test_json_contract_store_persists_memory_sidecars(tmp_path: Path) -> None:
     assert commit_path.exists()
     assert match_path.exists()
     assert store.read_embedding(embedding.embedding_hash).embedding_id == "embedding-1"
-    assert store.read_memory_commit("memory-1").memory_ref.memory_id == "memory-1"
+    reloaded_commit = store.read_memory_commit("memory-1")
+    assert reloaded_commit.memory_ref.memory_id == "memory-1"
+    assert reloaded_commit.memory_ref.source_agent == "summarizer"
+    assert reloaded_commit.memory_ref.created_at_ns == 123456789
+    assert reloaded_commit.memory_ref.task_theme == "financial_report_analysis"
+    assert reloaded_commit.memory_ref.tags == ("finance", "replay")
+    assert reloaded_commit.memory_ref.source_role_path == ("planner", "retriever", "executor", "summarizer")
+    assert reloaded_commit.memory_ref.producer_run_id == "trace-test"
+    memory_commit_payload = json.loads(commit_path.read_text(encoding="utf-8"))
+    assert memory_commit_payload["memory_ref"]["source_agent"] == "summarizer"
+    assert memory_commit_payload["memory_ref"]["created_at_ns"] == 123456789
+    assert memory_commit_payload["memory_ref"]["task_theme"] == "financial_report_analysis"
+    assert memory_commit_payload["memory_ref"]["summary"] == "exact replay memory"
+    assert memory_commit_payload["memory_ref"]["tags"] == ["finance", "replay"]
     reloaded_match = store.read_memory_match_result(memory_match_result.result_hash)
     assert reloaded_match.query_task_id == "task-2"
     assert reloaded_match.candidate_pool is not None

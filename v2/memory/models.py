@@ -154,6 +154,12 @@ class MemoryRef:
     source_task_id: str
     summary: str
     canonical_task_spec_hash: str
+    source_agent: str = ""
+    created_at_ns: int = 0
+    task_theme: str = ""
+    tags: tuple[str, ...] = ()
+    source_role_path: tuple[str, ...] = ()
+    producer_run_id: str = ""
     artifact_ref_id: str = ""
     semantic_state_ref_id: str = ""
     embedding_ref_id: str = ""
@@ -187,6 +193,12 @@ class MemoryRef:
             "replay_class": self.replay_class.value,
             "score": self.score,
             "source_task_id": self.source_task_id,
+            "source_agent": self.source_agent,
+            "created_at_ns": self.created_at_ns,
+            "task_theme": self.task_theme,
+            "tags": list(self.tags),
+            "source_role_path": list(self.source_role_path),
+            "producer_run_id": self.producer_run_id,
             "summary": self.summary,
             "canonical_task_spec_hash": self.canonical_task_spec_hash,
             "artifact_ref_id": self.artifact_ref_id,
@@ -211,6 +223,9 @@ class MemoryRef:
                 "memory_id": self.memory_id,
                 "memory_type": self.memory_type.value,
                 "source_task_id": self.source_task_id,
+                "source_agent": self.source_agent,
+                "task_theme": self.task_theme,
+                "tags": list(self.tags),
                 "summary": self.summary,
                 "canonical_task_spec_hash": self.canonical_task_spec_hash,
                 "artifact_ref_id": self.artifact_ref_id,
