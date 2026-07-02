@@ -2,6 +2,8 @@ from v2.provenance.hydration import (
     DeterministicFanInBuilder,
     EvidenceCandidate,
     HydrationRegistry,
+    RoleHydratedSlice,
+    build_hydration_registry_from_evidence_pack,
     evidence_item_from_dict,
     evidence_item_to_dict,
     evidence_pack_from_dict,
@@ -11,12 +13,15 @@ from v2.provenance.hydration import (
     locator_to_dict,
     manifest_from_dict,
     manifest_to_dict,
+    role_hydrated_slice,
 )
 
 __all__ = [
     "DeterministicFanInBuilder",
     "EvidenceCandidate",
     "HydrationRegistry",
+    "RoleHydratedSlice",
+    "build_hydration_registry_from_evidence_pack",
     "evidence_item_from_dict",
     "evidence_item_to_dict",
     "evidence_pack_from_dict",
@@ -26,4 +31,5 @@ __all__ = [
     "locator_to_dict",
     "manifest_from_dict",
     "manifest_to_dict",
+    "role_hydrated_slice",
 ]

@@ -29,6 +29,7 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
         ),
         state_refs=(RefHandle(ref_id="state-1", ref_kind="semantic_state"),),
         artifact_refs=(RefHandle(ref_id="artifact-1", ref_kind="execution_artifact"),),
+        memory_refs=(RefHandle(ref_id="memory-1", ref_kind="memory"),),
         runtime_reuse_contract="benchmark_strict:exact_replay_allowed",
         output_contract_version="output-v1",
         workspace_root="/statebus/workspaces/task-1",
@@ -40,6 +41,7 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
     assert parsed.header.event_type == EventType.REQ_EXEC
     assert parsed.state_refs[0].ref_kind == "semantic_state"
     assert parsed.artifact_refs[0].ref_kind == "execution_artifact"
+    assert parsed.memory_refs[0].ref_kind == "memory"
     assert parsed.reuse_policy.allow_validated_replay is True
     assert parsed.runtime_reuse_contract == "benchmark_strict:exact_replay_allowed"
     assert parsed.workspace_root == "/statebus/workspaces/task-1"

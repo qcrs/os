@@ -1108,13 +1108,16 @@ class LightweightSubprocessRunner:
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", str(self.repo_root)),
             "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-            "PYTHONNOUSERSITE": "1",
         }
         current_pythonpath = os.environ.get("PYTHONPATH", "").strip()
         repo_root = str(self.repo_root)
         env["PYTHONPATH"] = (
             repo_root if not current_pythonpath else f"{repo_root}{os.pathsep}{current_pythonpath}"
         )
+        # Preserve explicit user-site visibility when the active interpreter relies on
+        # per-user packages, which is common in the Docker dev container fallback path.
+        if "PYTHONNOUSERSITE" in os.environ:
+            env["PYTHONNOUSERSITE"] = os.environ["PYTHONNOUSERSITE"]
         return env
 
 

@@ -1,0 +1,258 @@
+{
+  "group": "Group 2: 传染病+气象 跨CSV",
+  "total_rounds": 13,
+  "csv_files": [
+    "baro_2015.csv",
+    "estimated_numbers.csv"
+  ],
+  "tasks": [
+    {
+      "round": 1,
+      "id": 55,
+      "csv_file": "estimated_numbers.csv",
+      "question": "What is the mean number of cases recorded across all countries and years?",
+      "constraints": "Calculate the mean of the column 'No. of cases'. Convert the data type of 'No. of cases' column from Object (string) to Int64 before performing calculations. Ignore those records where 'No. of cases' column value is Null or empty.",
+      "answer_format": "@mean_cases[mean_value] where \"mean_value\" is a positive integer.",
+      "level": "easy",
+      "concepts": [
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "计算mean cases",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 2,
+      "id": 58,
+      "csv_file": "estimated_numbers.csv",
+      "question": "What is the percentage of missing values in the \"No. of cases_min\" column? How does this percentage compare to the percentage of missing values in the \"No. of deaths_max\" column?",
+      "constraints": "Calculate the percentage of missing values for both \"No. of cases_min\" and \"No. of deaths_max\" column. Report the exact percentage values.",
+      "answer_format": "@percentage_cases_min[percentage], @percentage_deaths_max[percentage] where \"percentage\" is a number between 0 and 100, rounded to two decimal places.",
+      "level": "easy",
+      "concepts": [
+        "Comprehensive Data Preprocessing",
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "检测缺失值比例",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 3,
+      "id": 56,
+      "csv_file": "estimated_numbers.csv",
+      "question": "Which country has the highest number of deaths recorded in a single year?",
+      "constraints": "Calculate the maximum value in the 'No. of deaths' column. Convert the data type of 'No. of deaths' column from Object (string) to Int64 before performing calculations. Ignore those records where 'No. of deaths' column value is Null or empty. Identify the corresponding country and year for the highest number of deaths.",
+      "answer_format": "@max_deaths_country[country_name] @max_deaths_year[year] where \"country_name\" is a string indicating the name of the country and \"year\" is an integer indicating the year in which the maximum deaths occurred.",
+      "level": "easy",
+      "concepts": [
+        "Distribution Analysis",
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "找deaths最多的国家+年份",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 4,
+      "id": 57,
+      "csv_file": "estimated_numbers.csv",
+      "question": "Is there a correlation between the number of cases and the number of deaths recorded?",
+      "constraints": "Calculate the Pearson correlation coefficient (r) to assess the strength and direction of the linear relationship between number of cases and number of deaths. Convert the data types of 'No. of cases' and 'No. of deaths' column from Object (String) to Int64 before performing calculations. Do this for complete data rather than specific country or year.",
+      "answer_format": "@correlation_coefficient[r_value] where \"r_value\" is a number between -1 and 1, rounded to two decimal places.",
+      "level": "easy",
+      "concepts": [
+        "Correlation Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          2
+        ],
+        "note": "cases和deaths相关系数 → 复用Q58缺失值知识",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 5,
+      "id": 59,
+      "csv_file": "estimated_numbers.csv",
+      "question": "Among the countries in the \"Americas\" region, which country has the highest average number of cases recorded over the years?",
+      "constraints": "Calculate the average of \"No. of cases\" for each country in the \"Americas\" region and report the country with the highest average number of cases. Count only complete years, i.e., exclude years with missing data.",
+      "answer_format": "@country_name[country] where \"country\" is a string representing the name of the country with the highest average number of cases.",
+      "level": "easy",
+      "concepts": [
+        "Distribution Analysis",
+        "Summary Statistics",
+        "Feature Engineering"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1
+        ],
+        "note": "Americas地区最高cases → 复用Q55的mean对比",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 6,
+      "id": 62,
+      "csv_file": "estimated_numbers.csv",
+      "question": "Are there any outliers in the \"No. of deaths_max\" column for each country? How do these outliers affect the overall distribution of recorded deaths?",
+      "constraints": "Use the IQR method (1.5*IQR rule) to detect the outliers. If there are any outliers, remove them and then recalculate the mean number of deaths.",
+      "answer_format": "@no_of_countries_with_outliers[number], @mean_no_of_deaths_with_outliers[original_mean], @mean_no_of_deaths_without_outliers[new_mean]. The number should be an integer. The original_mean and new_mean should be float numbers rounded to two decimal places.",
+      "level": "medium",
+      "concepts": [
+        "Outlier Detection",
+        "Distribution Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1
+        ],
+        "note": "Z-score异常值 → 复用Q55统计量 → 对比去异常值前后均值",
+        "is_cross_csv": false
+      }
+    },
+    {
+      "round": 7,
+      "id": 446,
+      "csv_file": "baro_2015.csv",
+      "question": "1. What is the mean wind speed in the dataset?",
+      "constraints": "Calculate the arithmetic mean of WINDSPEED, excluding any null values. The mean must be calculated to three decimal places.",
+      "answer_format": "@mean_windspeed[mean_windspeed], where \"mean_windspeed\" is a number with a maximum of three decimal places.",
+      "level": "easy",
+      "concepts": [
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          1
+        ],
+        "note": "mean wind speed → 复用CSV-A的mean计算模板",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 8,
+      "id": 450,
+      "csv_file": "baro_2015.csv",
+      "question": "2. Calculate the average wind speed (WINDSPEED) for each month in the dataset.",
+      "constraints": "Assume that the \"DATE TIME\" column is in the format \"YYYY-MM-DD HH:MM:SS\". Extract the month from each date and calculate the mean wind speed for each respective month. Keep only two decimal places. The data is in chronological order so the answer should also be in order.",
+      "answer_format": "@monthly_avg_windspeed[{'month_1':avg_1, 'month_2':avg_2, ..., 'month_12':avg_12",
+      "level": "easy",
+      "concepts": [
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          5
+        ],
+        "note": "按月平均风速(groupby) → 复用CSV-A的分组分析思路(Q59)",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 9,
+      "id": 449,
+      "csv_file": "baro_2015.csv",
+      "question": "1. What is the distribution of wind speeds (WINDSPEED) in the dataset? Is it normally distributed?",
+      "constraints": "Use the Shapiro-Wilk test to determine if the distribution is normal. Accept the null hypothesis that the data is normally distributed if the p-value is greater than 0.05, and reject it otherwise.",
+      "answer_format": "@shapiro_wilk_pvalue[p_value] @normal_distribution[yes/no] where \"p_value\" is a number between 0 and 1, rounded to four decimal places and \"normal_distribution\" is a string that can either be \"yes\" if p_value > 0.05 or \"no\" if p_value <= 0.05",
+      "level": "easy",
+      "concepts": [
+        "Distribution Analysis"
+      ],
+      "memory": {
+        "reuses_from_rounds": [],
+        "note": "wind speed正态检验 → 复用CSV-A的分布分析方法",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 10,
+      "id": 451,
+      "csv_file": "baro_2015.csv",
+      "question": "3. Can you detect any missing values in the dataset? If yes, how many missing values are there for each column?",
+      "constraints": "The columns are [\"DATE TIME\", \"WINDSPEED\", \"DIR\", \"GUSTS\", \"AT\", \"BARO\", \"RELHUM\", \"VIS\"].",
+      "answer_format": "@missing_values_per_column[{'DATE TIME':val_1, 'WINDSPEED':val_2, 'DIR':val_3, 'GUSTS':val_4, 'AT':val_5, 'BARO':val_6, 'RELHUM':val_7, 'VIS':val_8",
+      "level": "easy",
+      "concepts": [
+        "Comprehensive Data Preprocessing"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          2
+        ],
+        "note": "检测缺失值 → 复用CSV-A的缺失值检测代码(Q58)",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 11,
+      "id": 447,
+      "csv_file": "baro_2015.csv",
+      "question": "2. Are there any outliers in the atmospheric pressure column (BARO)? If yes, how many outliers are there?",
+      "constraints": "An outlier is any value that is more than 1.5 times the interquartile range above the third quartile or below the first quartile. Ignore null values.",
+      "answer_format": "@number_of_outliers[number_of_outliers], where \"number_of_outliers\" is an integer representing the total number of outliers detected under the conditions specified in the constraints.",
+      "level": "medium",
+      "concepts": [
+        "Outlier Detection"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          6
+        ],
+        "note": "BARO异常值Z-score → 复用CSV-A的Z-score方法(Q62)",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 12,
+      "id": 452,
+      "csv_file": "baro_2015.csv",
+      "question": "1. Is there a relationship between wind speed (WINDSPEED) and atmospheric pressure (BARO) for wind direction (DIR) equal to 180 degrees? Calculate the Pearson correlation coefficient for this specific wind direction.",
+      "constraints": "Calculate the Pearson correlation coefficient (r) to assess the strength and direction of the linear relationship between wind speed and atmospheric pressure for wind direction equal to 180 degrees.\nAssess the significance of the correlation using a two-tailed test with a significance level (alpha) of 0.05.\nReport the p-value associated with the correlation test.\nConsider the relationship to be linear if the p-value is less than 0.05 and the absolute value of r is greater than or equal to 0.5.\nConsider the relationship to be nonlinear if the p-value is less than 0.05 and the absolute value of r is less than 0.5.\nIf the p-value is greater than or equal to 0.05, report that there is no significant correlation.",
+      "answer_format": "@correlation_coefficient[r_value]\n@p_value[p_value]\n@relationship_type[relationship_type]\nwhere \"r_value\" is a number between -1 and 1, rounded to two decimal places.\nwhere \"p_value\" is a number between 0 and 1, rounded to four decimal places.\nwhere \"relationship_type\" is a string that can either be \"linear\", \"nonlinear\", or \"none\" based on the conditions specified in the constraints.",
+      "level": "hard",
+      "concepts": [
+        "Correlation Analysis",
+        "Feature Engineering"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          4
+        ],
+        "note": "特定风向下wind-BARO相关性 → 复用CSV-A的corr方法(Q57)+筛选",
+        "is_cross_csv": true
+      }
+    },
+    {
+      "round": 13,
+      "id": 453,
+      "csv_file": "baro_2015.csv",
+      "question": "2. Perform data preprocessing on the dataset, which includes removing outliers in the wind speed (WINDSPEED) column using the Z-score method (outliers are values that have a Z-score greater than 3 or lesser than -3) and handling missing values in the atmospheric temperature (AT) column by replacing them with the mean temperature. After preprocessing, calculate the mean wind speed and average atmospheric temperature.",
+      "constraints": "Calculate the mean and standard deviation of the wind speed (WINDSPEED) column before preprocessing.\nReplace any wind speed value that is more than three standard deviations away from the mean, with the mean wind speed.\nCalculate the mean atmosphere temperature (AT), and fill missing values in the atmospheric temperature (AT) column with this mean.\nCalculate the mean values after preprocessing.",
+      "answer_format": "@mean_wind_pre[mean_wind_pre]\n@mean_atmos_temp_pre[mean_atmos_temp_pre]\n@mean_wind_post[mean_wind_post]\n@mean_atmos_temp_post[mean_atmos_temp_post]\nwhere \"mean_wind_pre\" and \"mean_wind_post\" are the mean wind speed values before and after preprocessing, rounded to two decimal places.\nwhere \"mean_atmos_temp_pre\" and \"mean_atmos_temp_post\" are the mean atmospheric temperature values before and after preprocessing, rounded to two decimal places.",
+      "level": "hard",
+      "concepts": [
+        "Comprehensive Data Preprocessing",
+        "Summary Statistics"
+      ],
+      "memory": {
+        "reuses_from_rounds": [
+          7,
+          11,
+          10
+        ],
+        "note": "综合预处理: 去异常值+填缺失+重算均值 → 复用Q446/Q447/Q451全部结果",
+        "is_cross_csv": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,1040 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+import time
+from typing import Any
+
+from runtime.llm import ChatMessage, LLMClient, LLMResult, build_llm_client, extract_json_object, tagged_json_block
+from v2.contracts import CanonicalTaskSpec
+from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
+from v2.retrieval.models import RetrievalCandidatePool
+
+
+def _run_sync(awaitable: Any) -> Any:
+    return asyncio.run(awaitable)
+
+
+@dataclass(frozen=True)
+class RoleToolCandidate(RouteToolSurfaceCandidate):
+    pass
+
+
+class RoleSelectionError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class ParsedRoleSelection:
+    route: str = ""
+    tool_name: str = ""
+    candidate_key: str = ""
+    candidate_rank: int | None = None
+    supporting_doc_ids: tuple[str, ...] = ()
+    reason: str = ""
+    action_contract: str = ""
+
+
+def best_visible_candidate(
+    visible_candidates: tuple[RoleToolCandidate, ...],
+) -> RoleToolCandidate:
+    if not visible_candidates:
+        raise ValueError("visible_candidates must not be empty")
+    ranked = sorted(
+        visible_candidates,
+        key=lambda candidate: (-candidate.score, candidate.helper_rank, candidate.route, candidate.tool_name),
+    )
+    return ranked[0]
+
+
+def constrain_visible_candidates(
+    visible_candidates: tuple[RoleToolCandidate, ...],
+    *,
+    candidate_keys: tuple[str, ...] = (),
+    required_tools: tuple[str, ...] = (),
+) -> tuple[RoleToolCandidate, ...]:
+    constrained = visible_candidates
+    if candidate_keys:
+        key_set = {key.strip() for key in candidate_keys if key.strip()}
+        filtered = tuple(candidate for candidate in constrained if candidate.candidate_key() in key_set)
+        if filtered:
+            constrained = filtered
+    if required_tools:
+        tool_set = {tool.strip() for tool in required_tools if tool.strip()}
+        filtered = tuple(candidate for candidate in constrained if candidate.tool_name in tool_set)
+        if filtered:
+            constrained = filtered
+    return constrained
+
+
+@dataclass(frozen=True)
+class PlannerRoleResult:
+    workflow_payload: dict[str, Any]
+    retrieval_objective: dict[str, Any]
+    raw_text: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    prompt_bytes: int = 0
+    latency_ms: float = 0.0
+
+
+@dataclass(frozen=True)
+class RetrieverRoleDecision:
+    route: str
+    tool_name: str
+    supporting_doc_ids: tuple[str, ...]
+    reason: str
+    candidate_rank: int
+    raw_text: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    prompt_bytes: int = 0
+    latency_ms: float = 0.0
+
+
+@dataclass(frozen=True)
+class ExecutorRoleDecision:
+    route: str
+    tool_name: str
+    action_contract: str
+    reason: str
+    raw_text: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    prompt_bytes: int = 0
+    latency_ms: float = 0.0
+
+
+@dataclass(frozen=True)
+class SummarizerRoleDecision:
+    summary_text: str
+    reusable_steps: tuple[str, ...]
+    confidence: float
+    tags: tuple[str, ...]
+    raw_text: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    prompt_bytes: int = 0
+    latency_ms: float = 0.0
+
+
+@dataclass(frozen=True)
+class RolePromptSlice:
+    role: str
+    hydrated_text: str = ""
+    hydrated_bytes: int = 0
+    item_count: int = 0
+    table_text: str = ""
+    table_bytes: int = 0
+    table_item_count: int = 0
+    artifact_text: str = ""
+    artifact_bytes: int = 0
+    artifact_item_count: int = 0
+    memory_text: str = ""
+    memory_bytes: int = 0
+    memory_item_count: int = 0
+
+    def combined_text(self) -> str:
+        chunks = [
+            self.hydrated_text.strip(),
+            self.table_text.strip(),
+            self.artifact_text.strip(),
+            self.memory_text.strip(),
+        ]
+        return "\n".join(chunk for chunk in chunks if chunk)
+
+    def total_bytes(self) -> int:
+        return self.hydrated_bytes + self.table_bytes + self.artifact_bytes + self.memory_bytes
+
+    def total_item_count(self) -> int:
+        return self.item_count + self.table_item_count + self.artifact_item_count + self.memory_item_count
+
+    def payload(self, *, include_text: bool = True) -> dict[str, object]:
+        payload = {
+            "item_count": self.total_item_count(),
+            "hydrated_bytes": self.total_bytes(),
+            "text_context": {
+                "item_count": self.item_count,
+                "hydrated_bytes": self.hydrated_bytes,
+            },
+            "table_facts": {
+                "item_count": self.table_item_count,
+                "hydrated_bytes": self.table_bytes,
+            },
+            "artifact_context": {
+                "item_count": self.artifact_item_count,
+                "hydrated_bytes": self.artifact_bytes,
+            },
+            "memory_reuse": {
+                "item_count": self.memory_item_count,
+                "hydrated_bytes": self.memory_bytes,
+            },
+        }
+        if include_text:
+            payload["hydrated_text"] = self.combined_text()
+            payload["text_context"]["hydrated_text"] = self.hydrated_text
+            payload["table_facts"]["hydrated_text"] = self.table_text
+            payload["artifact_context"]["hydrated_text"] = self.artifact_text
+            payload["memory_reuse"]["hydrated_text"] = self.memory_text
+        return payload
+
+
+def _text_collaboration_prompt(
+    *,
+    role_label: str,
+    instruction: str,
+    sections: tuple[tuple[str, str], ...],
+) -> str:
+    rendered_sections = []
+    for title, body in sections:
+        normalized = body.strip()
+        if not normalized:
+            continue
+        rendered_sections.append(f"{title}:\n{normalized}")
+    body = "\n\n".join(rendered_sections)
+    return f"You are the StateBus v2 {role_label} role.\n{instruction}\n\n{body}\n"
+
+
+def _structured_collaboration_prompt(
+    *,
+    role_label: str,
+    instruction: str,
+    payload_tag: str,
+    payload: dict[str, Any],
+    evidence_blocks: tuple[str, ...] = (),
+) -> str:
+    prompt = (
+        f"You are the StateBus v2 {role_label} role.\n"
+        f"{instruction}\n\n"
+        f"{tagged_json_block(payload_tag, payload)}"
+    )
+    for block in evidence_blocks:
+        normalized = block.strip()
+        if normalized:
+            prompt += f"\n\n{normalized}"
+    return prompt + "\n"
+
+
+def _candidate_surface_payload(
+    visible_candidates: tuple["RoleToolCandidate", ...],
+    *,
+    include_helper_fields: bool,
+) -> tuple[list[dict[str, Any]], str]:
+    payload = [
+        {
+            "route": candidate.route,
+            "tool_name": candidate.tool_name,
+            "support_doc_count": candidate.support_doc_count,
+            "supporting_doc_ids": list(candidate.supporting_doc_ids),
+            "support_terms": list(candidate.support_terms),
+            **(
+                {
+                    "helper_rank": candidate.helper_rank,
+                    "score": candidate.score,
+                    "matched_issue_ids": list(candidate.matched_issue_ids),
+                    "rationale": candidate.rationale,
+                }
+                if include_helper_fields
+                else {}
+            ),
+        }
+        for candidate in visible_candidates
+    ]
+    text_notes = "; ".join(
+        candidate.note_payload(include_helper_fields=include_helper_fields) for candidate in visible_candidates
+    )
+    return payload, text_notes
+
+
+def _compact_candidate_surface_payload(
+    visible_candidates: tuple["RoleToolCandidate", ...],
+    *,
+    include_helper_fields: bool,
+) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for candidate in visible_candidates:
+        item: dict[str, Any] = {
+            "k": candidate.candidate_key(),
+            "r": candidate.route,
+            "t": candidate.tool_name,
+        }
+        if candidate.supporting_doc_ids:
+            item["d"] = list(candidate.supporting_doc_ids)
+        elif candidate.support_doc_count:
+            item["n"] = candidate.support_doc_count
+        if include_helper_fields and candidate.support_terms:
+            item["s"] = list(candidate.support_terms)
+        if include_helper_fields:
+            item["h"] = candidate.helper_rank
+            item["sc"] = candidate.score
+            if candidate.matched_issue_ids:
+                item["m"] = list(candidate.matched_issue_ids)
+            if candidate.rationale:
+                item["x"] = candidate.rationale
+        payload.append(item)
+    return payload
+
+
+def _candidate_identity_line(visible_candidates: tuple["RoleToolCandidate", ...]) -> str:
+    return "; ".join(candidate.candidate_key() for candidate in visible_candidates)
+
+
+def _tagged_text_block(tag: str, text: str) -> str:
+    normalized = text.strip()
+    if not normalized:
+        return ""
+    return f"<{tag}>\n{normalized}\n</{tag}>"
+
+
+def _compact_text_value(text: str) -> str:
+    normalized = text.strip()
+    if not normalized:
+        return ""
+    return "\n".join(line.strip() for line in normalized.splitlines() if line.strip())
+
+
+def _first_non_empty_string(*values: object) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _first_valid_int(*values: object) -> int | None:
+    for value in values:
+        if value is None or value == "":
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _coerce_string_tuple(value: object) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    if value is None:
+        return ()
+    text = str(value).strip()
+    return (text,) if text else ()
+
+
+def _selection_payload_candidates(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    candidates: list[dict[str, Any]] = [payload]
+    for key in ("candidate", "selected_candidate", "choice"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    return tuple(candidates)
+
+
+def _parse_role_selection(payload: dict[str, Any]) -> ParsedRoleSelection:
+    payload_candidates = _selection_payload_candidates(payload)
+    route = _first_non_empty_string(
+        *(candidate.get("route") for candidate in payload_candidates),
+        *(candidate.get("r") for candidate in payload_candidates),
+        *(candidate.get("selected_route") for candidate in payload_candidates),
+        *(candidate.get("validated_route") for candidate in payload_candidates),
+    )
+    tool_name = _first_non_empty_string(
+        *(candidate.get("tool_name") for candidate in payload_candidates),
+        *(candidate.get("tool") for candidate in payload_candidates),
+        *(candidate.get("t") for candidate in payload_candidates),
+        *(candidate.get("selected_tool_name") for candidate in payload_candidates),
+        *(candidate.get("validated_tool_name") for candidate in payload_candidates),
+    )
+    candidate_key_from_route_or_tool = _first_non_empty_string(
+        *(
+            candidate.get("route")
+            for candidate in payload_candidates
+            if "::" in str(candidate.get("route", "")).strip()
+        ),
+        *(
+            candidate.get("r")
+            for candidate in payload_candidates
+            if "::" in str(candidate.get("r", "")).strip()
+        ),
+        *(
+            candidate.get("tool_name")
+            for candidate in payload_candidates
+            if "::" in str(candidate.get("tool_name", "")).strip()
+        ),
+        *(
+            candidate.get("tool")
+            for candidate in payload_candidates
+            if "::" in str(candidate.get("tool", "")).strip()
+        ),
+        *(
+            candidate.get("t")
+            for candidate in payload_candidates
+            if "::" in str(candidate.get("t", "")).strip()
+        ),
+    )
+    candidate_key = _first_non_empty_string(
+        payload.get("candidate_key"),
+        payload.get("selected_candidate_key"),
+        payload.get("k"),
+        payload.get("candidate") if isinstance(payload.get("candidate"), str) else None,
+        payload.get("selected_candidate") if isinstance(payload.get("selected_candidate"), str) else None,
+        payload.get("choice_key"),
+        payload.get("choice") if isinstance(payload.get("choice"), str) else None,
+        *(candidate.get("candidate_key") for candidate in payload_candidates),
+        *(candidate.get("selected_candidate_key") for candidate in payload_candidates),
+        *(candidate.get("k") for candidate in payload_candidates),
+        *(candidate.get("key") for candidate in payload_candidates),
+        candidate_key_from_route_or_tool,
+    )
+    if candidate_key and ("::" in candidate_key) and (not route or not tool_name):
+        candidate_route, _, candidate_tool = candidate_key.partition("::")
+        route = route or candidate_route.strip()
+        tool_name = tool_name or candidate_tool.strip()
+    elif candidate_key and ("::" in candidate_key):
+        candidate_route, _, candidate_tool = candidate_key.partition("::")
+        candidate_route = candidate_route.strip()
+        candidate_tool = candidate_tool.strip()
+        if route == candidate_key or route == candidate_tool:
+            route = candidate_route or route
+        if tool_name == candidate_key or tool_name == candidate_route:
+            tool_name = candidate_tool or tool_name
+    candidate_rank = _first_valid_int(
+        payload.get("candidate_rank"),
+        payload.get("selected_candidate_rank"),
+        payload.get("helper_rank"),
+        payload.get("rank"),
+        payload.get("h"),
+        *(candidate.get("candidate_rank") for candidate in payload_candidates),
+        *(candidate.get("selected_candidate_rank") for candidate in payload_candidates),
+        *(candidate.get("helper_rank") for candidate in payload_candidates),
+        *(candidate.get("rank") for candidate in payload_candidates),
+        *(candidate.get("h") for candidate in payload_candidates),
+    )
+    supporting_doc_ids = _coerce_string_tuple(
+        payload.get("supporting_doc_ids")
+        if payload.get("supporting_doc_ids") is not None
+        else payload.get("d")
+    )
+    if not supporting_doc_ids:
+        for candidate in payload_candidates:
+            supporting_doc_ids = _coerce_string_tuple(
+                candidate.get("supporting_doc_ids")
+                if candidate.get("supporting_doc_ids") is not None
+                else candidate.get("d")
+            )
+            if supporting_doc_ids:
+                break
+    reason = _first_non_empty_string(
+        payload.get("reason"),
+        payload.get("selection_reason"),
+        payload.get("rationale"),
+        payload.get("why"),
+        *(candidate.get("reason") for candidate in payload_candidates),
+        *(candidate.get("selection_reason") for candidate in payload_candidates),
+        *(candidate.get("rationale") for candidate in payload_candidates),
+    )
+    action_contract = _first_non_empty_string(
+        payload.get("action_contract"),
+        payload.get("validated_action_contract"),
+        payload.get("a"),
+        *(candidate.get("action_contract") for candidate in payload_candidates),
+        *(candidate.get("validated_action_contract") for candidate in payload_candidates),
+        *(candidate.get("a") for candidate in payload_candidates),
+    )
+    return ParsedRoleSelection(
+        route=route,
+        tool_name=tool_name,
+        candidate_key=candidate_key,
+        candidate_rank=candidate_rank,
+        supporting_doc_ids=supporting_doc_ids,
+        reason=reason,
+        action_contract=action_contract,
+    )
+
+
+def _canonicalize_planner_workflow_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    def _canonical_step(step: dict[str, Any]) -> dict[str, Any]:
+        semantic_role = str(step.get("semantic_role", step.get("step_id", ""))).strip()
+        params = dict(step.get("params", {})) if isinstance(step.get("params"), dict) else {}
+        if semantic_role == "retrieve":
+            params = {
+                "query": str(params.get("query", "")),
+                "tags": [str(item) for item in params.get("tags", []) if str(item).strip()],
+                "allow_memory_reuse": bool(params.get("allow_memory_reuse", True)),
+            }
+        elif semantic_role == "summarize":
+            params = {
+                "summary_hint": str(params.get("summary_hint", "")),
+                "tags": [str(item) for item in params.get("tags", []) if str(item).strip()],
+            }
+        else:
+            params = {}
+        return {
+            "step_id": str(step.get("step_id", semantic_role)).strip(),
+            "semantic_role": semantic_role,
+            "owner_agent": str(step.get("owner_agent", "")).strip(),
+            "action": str(step.get("action", "")).strip(),
+            "input_state_refs": [],
+            "params": params,
+            "depends_on": [str(item) for item in step.get("depends_on", []) if str(item).strip()],
+        }
+
+    if "steps" in payload:
+        steps = payload.get("steps")
+        if isinstance(steps, list):
+            return {"steps": [_canonical_step(step) for step in steps if isinstance(step, dict)]}
+        return {"steps": []}
+    retrieve = payload.get("r")
+    execute = payload.get("x")
+    summarize = payload.get("s")
+    if not isinstance(retrieve, dict) or not isinstance(execute, dict) or not isinstance(summarize, dict):
+        return payload
+    steps: list[dict[str, Any]] = [
+        _canonical_step(
+            {
+            "step_id": str(retrieve.get("sid", "retrieve")),
+            "semantic_role": str(retrieve.get("role", "retrieve")),
+            "owner_agent": str(retrieve.get("owner", "retriever")),
+            "action": str(retrieve.get("action", "RETRIEVE_EVIDENCE")),
+            "input_state_refs": [],
+            "params": {
+                "query": str(retrieve.get("q", "")),
+                "tags": [str(item) for item in retrieve.get("t", []) if str(item).strip()],
+                "allow_memory_reuse": True,
+            },
+            "depends_on": [str(item) for item in retrieve.get("dep", []) if str(item).strip()],
+            }
+        )
+    ]
+    validate_sid = str(execute.get("vsid", "")).strip()
+    if validate_sid:
+        steps.append(
+            _canonical_step(
+                {
+                "step_id": validate_sid,
+                "semantic_role": str(execute.get("vrole", "validate")),
+                "owner_agent": str(execute.get("vowner", "executor")),
+                "action": str(execute.get("vaction", "VALIDATE_ROUTE")),
+                "input_state_refs": [],
+                "params": {},
+                "depends_on": [str(item) for item in execute.get("vdep", []) if str(item).strip()],
+                }
+            )
+        )
+    steps.append(
+        _canonical_step(
+            {
+            "step_id": str(execute.get("sid", "execute")),
+            "semantic_role": str(execute.get("role", "execute")),
+            "owner_agent": str(execute.get("owner", "executor")),
+            "action": str(execute.get("action", "EXECUTE_PLAYBOOK")),
+            "input_state_refs": [],
+            "params": {},
+            "depends_on": [str(item) for item in execute.get("dep", []) if str(item).strip()],
+            }
+        )
+    )
+    steps.append(
+        _canonical_step(
+            {
+            "step_id": str(summarize.get("sid", "summarize")),
+            "semantic_role": str(summarize.get("role", "summarize")),
+            "owner_agent": str(summarize.get("owner", "summarizer")),
+            "action": str(summarize.get("action", "SUMMARIZE_AND_COMMIT")),
+            "input_state_refs": [],
+            "params": {
+                "summary_hint": str(summarize.get("h", "")),
+                "tags": [str(item) for item in summarize.get("t", []) if str(item).strip()],
+            },
+            "depends_on": [str(item) for item in summarize.get("dep", []) if str(item).strip()],
+            }
+        )
+    )
+    return {"steps": steps}
+
+
+@dataclass
+class RolePathRunner:
+    llm_client: LLMClient = field(default_factory=build_llm_client)
+    handoff_mode: str = "structured_collaboration"
+
+    def _render_prompt(
+        self,
+        *,
+        role_label: str,
+        instruction: str,
+        payload_tag: str,
+        payload: dict[str, Any],
+        text_sections: tuple[tuple[str, str], ...],
+        evidence_blocks: tuple[str, ...] = (),
+    ) -> str:
+        if self.handoff_mode == "text_collaboration":
+            return _text_collaboration_prompt(
+                role_label=role_label,
+                instruction=instruction,
+                sections=text_sections,
+            )
+        return _structured_collaboration_prompt(
+            role_label=role_label,
+            instruction=instruction,
+            payload_tag=payload_tag,
+            payload=payload,
+            evidence_blocks=evidence_blocks,
+        )
+
+    def build_retrieval_objective(
+        self,
+        *,
+        spec: CanonicalTaskSpec,
+        goal: str,
+        query_text: str,
+        tags: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        arguments = spec.arguments or {}
+        ticker = str(arguments.get("ticker", "")).strip()
+        quarter = str(arguments.get("quarter", "")).strip()
+        metric = str(arguments.get("metric", "")).strip()
+        retrieval_query = " ".join(
+            part
+            for part in (
+                query_text.strip(),
+                ticker,
+                quarter,
+                metric,
+                spec.intent_op,
+            )
+            if part
+        ).strip()
+        return {
+            "query_text": retrieval_query,
+            "goal": goal,
+            "task_family": spec.task_family,
+            "intent_op": spec.intent_op,
+            "required_tools": list(spec.required_tools or tags),
+            "required_outputs": list(spec.required_outputs),
+        }
+
+    @staticmethod
+    def _normalize_candidate_selection(
+        *,
+        route: str,
+        tool_name: str,
+        candidate_key: str,
+        candidate_rank: int | None,
+        visible_candidates: tuple[RoleToolCandidate, ...],
+        allow_assisted_correction: bool,
+    ) -> tuple[RoleToolCandidate, int]:
+        if not visible_candidates:
+            raise ValueError("visible_candidates must not be empty")
+        route_normalized = route.strip()
+        tool_normalized = tool_name.strip()
+        candidate_key_normalized = candidate_key.strip()
+        ranked = [best_visible_candidate(visible_candidates)]
+        for candidate in visible_candidates:
+            if candidate.route == route_normalized and candidate.tool_name == tool_normalized:
+                return candidate, candidate.helper_rank
+        if candidate_key_normalized:
+            key_matches = [candidate for candidate in visible_candidates if candidate.candidate_key() == candidate_key_normalized]
+            if len(key_matches) == 1:
+                return key_matches[0], key_matches[0].helper_rank
+        if candidate_rank is not None:
+            if 1 <= candidate_rank <= len(visible_candidates):
+                selected = visible_candidates[candidate_rank - 1]
+                return selected, selected.helper_rank
+            helper_rank_matches = [candidate for candidate in visible_candidates if candidate.helper_rank == candidate_rank]
+            if len(helper_rank_matches) == 1:
+                return helper_rank_matches[0], helper_rank_matches[0].helper_rank
+        route_matches = [candidate for candidate in visible_candidates if candidate.route == route_normalized]
+        if len(route_matches) == 1 and tool_normalized == route_normalized:
+            selected = route_matches[0]
+            return selected, selected.helper_rank
+        if not allow_assisted_correction:
+            raise RoleSelectionError(
+                f"strict_visible_candidate_mismatch:{route_normalized or '<empty>'}::{tool_normalized or '<empty>'}"
+            )
+        if len(route_matches) == 1:
+            return route_matches[0], route_matches[0].helper_rank
+        tool_matches = [candidate for candidate in visible_candidates if candidate.tool_name == tool_normalized]
+        if len(tool_matches) == 1:
+            return tool_matches[0], tool_matches[0].helper_rank
+        return ranked[0], ranked[0].helper_rank
+
+    def plan_workflow(
+        self,
+        *,
+        task_id: str,
+        task_group: str,
+        task_theme: str,
+        goal: str,
+        query_text: str,
+        summary_hint: str,
+        visible_candidates: tuple[RoleToolCandidate, ...],
+        prompt_slice: RolePromptSlice | None = None,
+        strict_surface: bool = True,
+        tags: tuple[str, ...] = (),
+        required_roles: tuple[str, ...] = ("retrieve", "execute", "summarize"),
+    ) -> PlannerRoleResult:
+        prompt_slice = prompt_slice or RolePromptSlice(role="planner")
+        _, _candidate_notes = _candidate_surface_payload(
+            visible_candidates,
+            include_helper_fields=not strict_surface,
+        )
+        payload = {
+            "g": goal,
+            "q": query_text,
+            "h": summary_hint,
+            "t": list(tags),
+            "rr": list(required_roles),
+        }
+        if task_theme.strip():
+            payload["tf"] = task_theme
+        evidence_text = _compact_text_value(prompt_slice.combined_text())
+        if evidence_text:
+            payload["e"] = evidence_text
+        prompt = self._render_prompt(
+            role_label="planner",
+            instruction="Return a JSON object with stable retrieval_objective and steps.",
+            payload_tag="sb-plan-v1",
+            payload=payload,
+            text_sections=(
+                ("Task ID", task_id),
+                ("Task group", task_group),
+                ("Task Theme", task_theme),
+                ("Goal", goal),
+                ("Search query", query_text),
+                ("Required semantic roles", ", ".join(required_roles)),
+                ("Summary hint", summary_hint),
+                ("Tags", ", ".join(tags)),
+                ("Evidence note", evidence_text),
+            ),
+        )
+        if self.handoff_mode == "text_collaboration":
+            prompt = (
+                "You are the StateBus v2 planner role.\n"
+                "Return a JSON object with stable retrieval_objective and steps.\n\n"
+                f"Task ID: {task_id}\n"
+                f"Task group: {task_group}\n"
+                f"Task theme: {task_theme}\n"
+                f"Tags: {', '.join(tags)}\n\n"
+                f"Goal:\n{goal}\n\n"
+                f"Search query:\n{query_text}\n\n"
+                f"Required semantic roles:\n{', '.join(required_roles)}\n\n"
+                f"Summary hint:\n{summary_hint}\n\n"
+                f"Evidence note:\n{prompt_slice.combined_text()}\n\n"
+            )
+        prompt_bytes = len(prompt.encode("utf-8"))
+        start_ns = time.perf_counter_ns()
+        result = _run_sync(
+            self.llm_client.complete(
+                [ChatMessage(role="user", content=prompt)],
+                purpose="planner",
+            )
+        )
+        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        payload = _canonicalize_planner_workflow_payload(extract_json_object(result.text))
+        retrieval_objective = payload.get("retrieval_objective", {})
+        if not isinstance(retrieval_objective, dict):
+            retrieval_objective = {}
+        if "query_text" not in retrieval_objective:
+            retrieval_objective["query_text"] = query_text
+        if "required_tools" not in retrieval_objective:
+            retrieval_objective["required_tools"] = list(tags)
+        if "candidate_keys" not in retrieval_objective:
+            retrieval_objective["candidate_keys"] = [candidate.candidate_key() for candidate in visible_candidates]
+        return PlannerRoleResult(
+            workflow_payload=payload,
+            retrieval_objective=retrieval_objective,
+            raw_text=result.text,
+            model=result.model,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+            prompt_bytes=prompt_bytes,
+            latency_ms=latency_ms,
+        )
+
+    def choose_retrieval_candidate(
+        self,
+        *,
+        query_text: str,
+        retrieved_doc_ids: tuple[str, ...],
+        visible_candidates: tuple[RoleToolCandidate, ...],
+        prompt_slice: RolePromptSlice | None = None,
+        strict_surface: bool = True,
+        allow_assisted_correction: bool = True,
+    ) -> RetrieverRoleDecision:
+        prompt_slice = prompt_slice or RolePromptSlice(role="retriever")
+        candidate_payload, _candidate_notes = _candidate_surface_payload(
+            visible_candidates,
+            include_helper_fields=not strict_surface,
+        )
+        payload = {
+            "q": query_text,
+            "rd": list(retrieved_doc_ids),
+            "tc": _compact_candidate_surface_payload(
+                visible_candidates,
+                include_helper_fields=not strict_surface,
+            ),
+        }
+        evidence_text = _compact_text_value(prompt_slice.combined_text())
+        if evidence_text:
+            payload["e"] = evidence_text
+        prompt = self._render_prompt(
+            role_label="retriever",
+            instruction=(
+                "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
+                "exactly from a single visible tc item. Do not invent labels or use placeholders such as "
+                "'tool' or 'route'. Return a JSON object with keys candidate_key, route, tool_name, "
+                "supporting_doc_ids, and reason."
+            ),
+            payload_tag="sb-retriever-v1",
+            payload=payload,
+            text_sections=(
+                ("Query", query_text),
+                ("Retrieved Doc IDs", ", ".join(retrieved_doc_ids)),
+                ("Visible Candidates", "\n".join(_candidate_notes.split("; ")) if _candidate_notes else ""),
+                ("Hydrated Evidence", evidence_text),
+            ),
+        )
+        if self.handoff_mode == "text_collaboration":
+            prompt = (
+                "You are the StateBus v2 retriever role.\n"
+                "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
+                "exactly from one visible candidate and return JSON. Do not use placeholders such as "
+                "'tool' or 'route'.\n\n"
+                f"Query: {query_text}\n"
+                f"Retrieved docs: {','.join(retrieved_doc_ids)}\n"
+                f"Visible candidates: {_candidate_identity_line(visible_candidates)}\n"
+                f"Candidate notes: {_candidate_notes}\n\n"
+                f"Evidence note:\n{prompt_slice.combined_text()}\n"
+            )
+        prompt_bytes = len(prompt.encode("utf-8"))
+        start_ns = time.perf_counter_ns()
+        result = _run_sync(
+            self.llm_client.complete(
+                [ChatMessage(role="user", content=prompt)],
+                purpose="retriever",
+            )
+        )
+        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        payload = extract_json_object(result.text)
+        parsed_selection = _parse_role_selection(payload)
+        selected_candidate, selected_rank = self._normalize_candidate_selection(
+            route=parsed_selection.route,
+            tool_name=parsed_selection.tool_name,
+            candidate_key=parsed_selection.candidate_key,
+            candidate_rank=parsed_selection.candidate_rank,
+            visible_candidates=visible_candidates,
+            allow_assisted_correction=allow_assisted_correction,
+        )
+        return RetrieverRoleDecision(
+            route=selected_candidate.route,
+            tool_name=selected_candidate.tool_name,
+            supporting_doc_ids=parsed_selection.supporting_doc_ids or selected_candidate.supporting_doc_ids,
+            reason=parsed_selection.reason,
+            candidate_rank=selected_rank,
+            raw_text=result.text,
+            model=result.model,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+            prompt_bytes=prompt_bytes,
+            latency_ms=latency_ms,
+        )
+
+    def validate_execution_choice(
+        self,
+        *,
+        route: str,
+        tool_name: str,
+        visible_candidates: tuple[RoleToolCandidate, ...],
+        action_contract: str,
+        prompt_slice: RolePromptSlice | None = None,
+        strict_surface: bool = True,
+        allow_assisted_correction: bool = True,
+    ) -> ExecutorRoleDecision:
+        prompt_slice = prompt_slice or RolePromptSlice(role="executor")
+        candidate_payload, _candidate_notes = _candidate_surface_payload(
+            visible_candidates,
+            include_helper_fields=not strict_surface,
+        )
+        payload = {
+            "r": route,
+            "t": tool_name,
+            "a": action_contract,
+            "tc": _compact_candidate_surface_payload(
+                visible_candidates,
+                include_helper_fields=not strict_surface,
+            ),
+        }
+        evidence_text = _compact_text_value(prompt_slice.combined_text())
+        if evidence_text:
+            payload["e"] = evidence_text
+        prompt = self._render_prompt(
+            role_label="executor",
+            instruction=(
+                "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
+                "and tool_name exactly from a single visible tc item. Do not invent labels or use placeholders "
+                "such as 'tool' or 'route'. Return a JSON object with keys candidate_key, route, tool_name, "
+                "action_contract, and reason."
+            ),
+            payload_tag="sb-executor-v1",
+            payload=payload,
+            text_sections=(
+                ("Route", route),
+                ("Tool", tool_name),
+                ("Action Contract", action_contract),
+                ("Visible Candidates", "\n".join(_candidate_notes.split("; ")) if _candidate_notes else ""),
+                ("Hydrated Evidence", evidence_text),
+            ),
+        )
+        if self.handoff_mode == "text_collaboration":
+            prompt = (
+                "You are the StateBus v2 executor role.\n"
+                "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
+                "and tool_name exactly from one visible candidate and return JSON. Do not use placeholders "
+                "such as 'tool' or 'route'.\n\n"
+                f"Route: {route}\n"
+                f"Tool: {tool_name}\n"
+                f"Validated route: {route}\n"
+                f"Validated tool: {tool_name}\n"
+                f"Validated action contract: {action_contract}\n"
+                f"Visible candidates: {_candidate_identity_line(visible_candidates)}\n"
+                f"Candidate notes: {_candidate_notes}\n\n"
+                f"Evidence note:\n{prompt_slice.combined_text()}\n"
+            )
+        prompt_bytes = len(prompt.encode("utf-8"))
+        start_ns = time.perf_counter_ns()
+        result = _run_sync(
+            self.llm_client.complete(
+                [ChatMessage(role="user", content=prompt)],
+                purpose="executor",
+            )
+        )
+        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        payload = extract_json_object(result.text)
+        parsed_selection = _parse_role_selection(payload)
+        selected_candidate, _ = self._normalize_candidate_selection(
+            route=parsed_selection.route or route,
+            tool_name=parsed_selection.tool_name or tool_name,
+            candidate_key=parsed_selection.candidate_key,
+            candidate_rank=parsed_selection.candidate_rank,
+            visible_candidates=visible_candidates,
+            allow_assisted_correction=allow_assisted_correction,
+        )
+        return ExecutorRoleDecision(
+            route=selected_candidate.route,
+            tool_name=selected_candidate.tool_name,
+            action_contract=(
+                parsed_selection.action_contract or action_contract
+            ),
+            reason=parsed_selection.reason,
+            raw_text=result.text,
+            model=result.model,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+            prompt_bytes=prompt_bytes,
+            latency_ms=latency_ms,
+        )
+
+    def summarize(
+        self,
+        *,
+        task_id: str,
+        task_theme: str,
+        summary_hint: str,
+        prompt_slice: RolePromptSlice | None = None,
+        actions_text: str,
+        tags: tuple[str, ...] = (),
+        reusable_steps: tuple[str, ...] = ("retrieve", "execute"),
+    ) -> SummarizerRoleDecision:
+        prompt_slice = prompt_slice or RolePromptSlice(role="summarizer")
+        payload = {
+            "tf": task_theme,
+            "h": summary_hint,
+            "t": list(tags),
+            "r": list(reusable_steps),
+        }
+        evidence_text = _compact_text_value(prompt_slice.combined_text())
+        compact_actions_text = _compact_text_value(actions_text)
+        if evidence_text:
+            payload["e"] = evidence_text
+        if compact_actions_text:
+            payload["a"] = compact_actions_text
+        prompt = self._render_prompt(
+            role_label="summarizer",
+            instruction="Return JSON with summary text, reusable steps, confidence, and tags.",
+            payload_tag="sb-summary-v1",
+            payload=payload,
+            text_sections=(
+                ("Task Theme", task_theme),
+                ("Summary Hint", summary_hint),
+                ("Tags", ", ".join(tags)),
+                ("Reusable Steps", ", ".join(reusable_steps)),
+                ("Hydrated Evidence", evidence_text),
+                ("Action Handoff", compact_actions_text),
+            ),
+        )
+        if self.handoff_mode == "text_collaboration":
+            prompt = (
+                "You are the StateBus v2 summarizer role.\n"
+                "Return JSON with summary text, reusable steps, confidence, and tags.\n\n"
+                f"Task ID: {task_id}\n"
+                f"Task theme: {task_theme}\n"
+                f"Tags: {', '.join(tags)}\n"
+                f"Reusable steps: {', '.join(reusable_steps)}\n\n"
+                f"Summary hint:\n{summary_hint}\n\n"
+                f"Evidence note:\n{prompt_slice.combined_text()}\n\n"
+                f"Playbook actions:\n{actions_text}\n"
+            )
+        prompt_bytes = len(prompt.encode("utf-8"))
+        start_ns = time.perf_counter_ns()
+        result = _run_sync(
+            self.llm_client.complete(
+                [ChatMessage(role="user", content=prompt)],
+                purpose="summarizer",
+            )
+        )
+        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        payload = extract_json_object(result.text)
+        summary_text = str(payload.get("summary", payload.get("s", ""))).strip()
+        reusable = payload.get("reusable_steps", payload.get("r", []))
+        tags_payload = payload.get("tags", payload.get("t", []))
+        confidence = float(payload.get("confidence", payload.get("c", 0.0)) or 0.0)
+        return SummarizerRoleDecision(
+            summary_text=summary_text,
+            reusable_steps=tuple(str(item) for item in reusable if str(item).strip()),
+            confidence=confidence,
+            tags=tuple(str(item) for item in tags_payload if str(item).strip()),
+            raw_text=result.text,
+            model=result.model,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+            prompt_bytes=prompt_bytes,
+            latency_ms=latency_ms,
+        )
+
+
+def financial_tool_candidates(
+    spec: CanonicalTaskSpec,
+    candidate_pool: RetrievalCandidatePool | None = None,
+) -> tuple[RoleToolCandidate, ...]:
+    query_text = str(spec.arguments.get("request_text", ""))
+    surface = build_route_tool_surface(
+        spec,
+        query_text=query_text,
+        candidate_pool=candidate_pool,
+    )
+    return tuple(RoleToolCandidate(**candidate.__dict__) for candidate in surface)

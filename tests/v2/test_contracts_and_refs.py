@@ -6,10 +6,13 @@ from v2.contracts import (
     RefKind,
     RefRegistryEntry,
     RefStatus,
+    ReplayClass,
     RuntimeCompatibilitySignature,
     StorageKind,
 )
+from v2.memory import MemoryCommitStatus, MemoryRef, MemoryType, MemoryValidationStatus
 from v2.refs import ExecutionArtifactRef, SemanticStateRef
+from v2.utils import stable_json_dumps
 
 
 def test_canonical_task_spec_hash_is_stable_for_key_order() -> None:
@@ -88,3 +91,29 @@ def test_ref_registry_entry_exposes_small_index_payload() -> None:
     assert payload["ref_kind"] == "execution_artifact"
     assert payload["status"] == "verified"
 
+
+def test_memory_ref_is_separate_ref_family_and_tracks_commit_gate_fields() -> None:
+    memory_ref = MemoryRef(
+        memory_id="memory-1",
+        memory_type=MemoryType.VALIDATED_REPLAY,
+        replay_class=ReplayClass.VALIDATED_REPLAY,
+        score=0.88,
+        source_task_id="task-1",
+        summary="validated replay candidate",
+        canonical_task_spec_hash="sha256:spec",
+        artifact_ref_id="artifact-1",
+        embedding_ref_id="embedding-1",
+        commit_status=MemoryCommitStatus.COMMITTED,
+        validation_status=MemoryValidationStatus.PASSED,
+        answer_adopted=True,
+    )
+    registry_entry = memory_ref.registry_entry()
+    assert registry_entry.ref_kind == RefKind.MEMORY
+    assert registry_entry.status == RefStatus.VERIFIED
+    assert registry_entry.storage_kind == StorageKind.CAS_SIDECAR
+
+
+def test_stable_json_dumps_is_order_stable_without_pre_sorting() -> None:
+    payload_a = {"outer": {"b": 2, "a": 1}, "items": [{"z": 3, "y": 2}]}
+    payload_b = {"items": [{"y": 2, "z": 3}], "outer": {"a": 1, "b": 2}}
+    assert stable_json_dumps(payload_a) == stable_json_dumps(payload_b)

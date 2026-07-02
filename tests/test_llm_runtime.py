@@ -19,8 +19,9 @@ from agents.sample_agents import (
     _summary_from_llm_output,
 )
 from protocol.messages import Capability, CapabilityItem, StepResult
-from runtime.llm import DeterministicLLMClient, LLMConfig
+from runtime.llm import ChatMessage, DeterministicLLMClient, LLMConfig, OpenAICompatibleLLMClient
 from runtime.llm import LLMResult, LLMUsage
+from runtime.llm import ProviderConfig, RoleLLMConfig
 from runtime.llm import parse_tagged_json
 from runtime.task_profile import RuntimeTaskProfile
 from runtime import executor_runtime
@@ -91,6 +92,71 @@ roles:
     assert config.role_config("executor").model == "gpt-4.1"
     assert config.role_config("summarizer").request_kwargs["top_p"] == 0.8
     assert config.role_config("summarizer").model == "gpt-4.1-mini"
+
+
+def test_openai_compatible_llm_client_closes_provider_client_per_complete(monkeypatch) -> None:
+    created_clients: list[object] = []
+    closed_clients: list[object] = []
+
+    class FakeUsage:
+        prompt_tokens = 12
+        completion_tokens = 5
+        total_tokens = 17
+
+    class FakeMessage:
+        content = '{"ok": true}'
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeResponse:
+        choices = [FakeChoice()]
+        model = "fake-openai-model"
+        usage = FakeUsage()
+
+    class FakeCompletions:
+        def __init__(self, owner) -> None:  # type: ignore[no-untyped-def]
+            self.owner = owner
+
+        async def create(self, **request):  # type: ignore[no-untyped-def]
+            self.owner.requests.append(request)
+            return FakeResponse()
+
+    class FakeChat:
+        def __init__(self, owner) -> None:  # type: ignore[no-untyped-def]
+            self.completions = FakeCompletions(owner)
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            self.kwargs = kwargs
+            self.requests: list[dict[str, object]] = []
+            self.chat = FakeChat(self)
+            created_clients.append(self)
+
+        async def close(self) -> None:
+            closed_clients.append(self)
+
+    monkeypatch.setattr("runtime.llm.AsyncOpenAI", FakeAsyncOpenAI)
+    config = LLMConfig(
+        mode="api",
+        providers={"default": ProviderConfig(api_key="test-key")},
+        roles={
+            "planner": RoleLLMConfig(provider="default", model="fake-model"),
+            "retriever": RoleLLMConfig(provider="default", model="fake-model"),
+            "executor": RoleLLMConfig(provider="default", model="fake-model"),
+            "summarizer": RoleLLMConfig(provider="default", model="fake-model"),
+        },
+    )
+    client = OpenAICompatibleLLMClient(config)
+
+    first = asyncio.run(client.complete([ChatMessage(role="user", content="hello")], purpose="planner"))
+    second = asyncio.run(client.complete([ChatMessage(role="user", content="world")], purpose="planner"))
+
+    assert first.text == '{"ok": true}'
+    assert second.model == "fake-openai-model"
+    assert len(created_clients) == 2
+    assert len(closed_clients) == 2
+    assert closed_clients == created_clients
 
 
 def test_plan_parser_accepts_nested_deepseek_shape() -> None:
@@ -304,6 +370,66 @@ async def test_deterministic_llm_supports_retriever_and_executor_roles() -> None
     )
 
     assert json.loads(retriever.text)["tool_name"] == "tool.cache_invalidation_playbook"
+    assert json.loads(executor.text)["action_contract"] == "execute_validated_tool"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_llm_supports_compact_v2_retriever_and_executor_payloads() -> None:
+    client = DeterministicLLMClient()
+
+    retriever = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-retriever-v1>\n"
+                    + json.dumps(
+                        {
+                            "q": "compare ACME revenue",
+                            "rd": ["doc-1", "doc-2"],
+                            "tc": [
+                                {"r": "compare_metric", "t": "table_retriever", "d": ["doc-1"], "s": ["compare"]},
+                                {"r": "summarize_risk", "t": "semantic_retriever", "d": ["doc-2"], "s": ["risk"]},
+                            ],
+                        }
+                    )
+                    + "\n</sb-retriever-v1>",
+                },
+            )(),
+        ],
+        purpose="retriever",
+    )
+    executor = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-executor-v1>\n"
+                    + json.dumps(
+                        {
+                            "r": "compare_metric",
+                            "t": "table_retriever",
+                            "a": "execute_validated_tool",
+                            "tc": [
+                                {"r": "compare_metric", "t": "table_retriever"},
+                                {"r": "summarize_risk", "t": "semantic_retriever"},
+                            ],
+                        }
+                    )
+                    + "\n</sb-executor-v1>",
+                },
+            )(),
+        ],
+        purpose="executor",
+    )
+
+    assert json.loads(retriever.text)["tool_name"] == "table_retriever"
     assert json.loads(executor.text)["action_contract"] == "execute_validated_tool"
 
 
@@ -1738,6 +1864,39 @@ def test_protocol_summarizer_prompt_avoids_duplicate_top_level_fields() -> None:
     assert payload["t"] == ["ops"]
     assert '"schema"' not in messages[-1].content
     assert '{"schema"' not in payload["e"]
+
+
+def test_compact_protocol_retriever_and_executor_parsers_accept_inline_evidence() -> None:
+    from runtime.llm import parse_compact_protocol_executor_handoff, parse_compact_protocol_retriever_handoff
+
+    retriever_payload = parse_compact_protocol_retriever_handoff(
+        '<sb-retriever-v1>\n'
+        + json.dumps(
+            {
+                "q": "auth session issue",
+                "rd": ["doc-1"],
+                "e": "line1\nline2",
+                "tc": [{"r": "auth_session_drift", "t": "semantic_retriever"}],
+            }
+        )
+        + "\n</sb-retriever-v1>"
+    )
+    executor_payload = parse_compact_protocol_executor_handoff(
+        '<sb-executor-v1>\n'
+        + json.dumps(
+            {
+                "r": "auth_session_drift",
+                "t": "semantic_retriever",
+                "a": "execute_validated_tool",
+                "e": "line1\nline2",
+                "tc": [{"r": "auth_session_drift", "t": "semantic_retriever"}],
+            }
+        )
+        + "\n</sb-executor-v1>"
+    )
+
+    assert retriever_payload["evidence_text"] == "line1\nline2"
+    assert executor_payload["evidence_text"] == "line1\nline2"
 
 
 def test_render_protocol_summary_input_text_is_flat_text_handoff() -> None:

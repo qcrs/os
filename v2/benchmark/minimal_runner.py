@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from v2.benchmark.models import (
     BenchmarkSuiteReport,
     QualityFloorResult,
 )
+from v2.benchmark.reporting import family_report_to_dict, suite_report_to_dict, write_json_report
+from v2.contracts import CanonicalTaskSpec
 from v2.runtime import TelemetryEmitter, TelemetryEvent
 from v2.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
 from v2.utils import stable_json_dumps
@@ -25,6 +28,8 @@ LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
         structured_control_enabled=False,
         semantic_pruning_enabled=False,
         replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
     BenchmarkLayer.L1: BenchmarkLayerProfile(
         layer=BenchmarkLayer.L1,
@@ -32,6 +37,8 @@ LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
         structured_control_enabled=True,
         semantic_pruning_enabled=False,
         replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
     BenchmarkLayer.L2: BenchmarkLayerProfile(
         layer=BenchmarkLayer.L2,
@@ -39,6 +46,8 @@ LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
         structured_control_enabled=True,
         semantic_pruning_enabled=True,
         replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
     BenchmarkLayer.L3: BenchmarkLayerProfile(
         layer=BenchmarkLayer.L3,
@@ -46,6 +55,8 @@ LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
         structured_control_enabled=True,
         semantic_pruning_enabled=True,
         replay_enabled=True,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
 }
 
@@ -53,37 +64,67 @@ LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
 LAYER_SMOKE_CONFIGS: dict[BenchmarkLayer, SmokeLayerConfig] = {
     BenchmarkLayer.L0: SmokeLayerConfig(
         layer_name="L0",
+        handoff_mode="text_collaboration",
         structured_control_enabled=False,
         semantic_pruning_enabled=False,
         replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
     BenchmarkLayer.L1: SmokeLayerConfig(
         layer_name="L1",
         structured_control_enabled=True,
         semantic_pruning_enabled=False,
         replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
     BenchmarkLayer.L2: SmokeLayerConfig(
         layer_name="L2",
         structured_control_enabled=True,
         semantic_pruning_enabled=True,
         replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
     BenchmarkLayer.L3: SmokeLayerConfig(
         layer_name="L3",
         structured_control_enabled=True,
         semantic_pruning_enabled=True,
         replay_enabled=True,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
     ),
 }
+
+
+def _default_canonical_task_spec_schema_version() -> str:
+    return CanonicalTaskSpec(task_family="", intent_op="").schema_version
+
+
+def _canonical_task_spec_from_payload(payload: dict[str, object]) -> CanonicalTaskSpec:
+    schema_version = payload.get("schema_version")
+    return CanonicalTaskSpec(
+        task_family=str(payload["task_family"]),
+        intent_op=str(payload["intent_op"]),
+        target_entities=tuple(str(item) for item in payload.get("target_entities", [])),
+        time_scope=str(payload.get("time_scope", "")),
+        required_outputs=tuple(str(item) for item in payload.get("required_outputs", [])),
+        required_tools=tuple(str(item) for item in payload.get("required_tools", [])),
+        arguments=dict(payload.get("arguments", {})),
+        schema_version=str(schema_version) if schema_version is not None else _default_canonical_task_spec_schema_version(),
+    )
 
 
 @dataclass(frozen=True)
 class MinimalBenchmarkSample:
     task_id: str
     request_text: str
+    canonical_task_spec: CanonicalTaskSpec | None = None
     expected_artifact_type: str = "json"
     task_family: str = "financial_report_analysis"
+    expected_facts: dict[str, object] | None = None
+    scenario_tags: tuple[str, ...] = ()
 
     @classmethod
     def from_path(cls, path: Path) -> "MinimalBenchmarkSample":
@@ -91,11 +132,18 @@ class MinimalBenchmarkSample:
         request_text = payload["request_text"]
         if not isinstance(request_text, str):
             request_text = stable_json_dumps(request_text)
+        canonical_payload = payload.get("canonical_task_spec")
+        canonical_task_spec = None
+        if isinstance(canonical_payload, dict):
+            canonical_task_spec = _canonical_task_spec_from_payload(canonical_payload)
         return cls(
             task_id=str(payload["task_id"]),
             request_text=request_text,
+            canonical_task_spec=canonical_task_spec,
             expected_artifact_type=str(payload.get("expected_artifact_type", "json")),
             task_family=str(payload.get("task_family", "financial_report_analysis")),
+            expected_facts=dict(payload.get("expected_facts", {})) or None,
+            scenario_tags=tuple(str(tag) for tag in payload.get("scenario_tags", [])),
         )
 
 
@@ -107,15 +155,7 @@ def load_sample_family(directory: Path) -> list[MinimalBenchmarkSample]:
 
 
 def _quality_floor_from_smoke(smoke: SmokeResult) -> QualityFloorResult:
-    return QualityFloorResult(
-        quality_floor_pass=smoke.compiler_status == "compiled" and smoke.artifact_state == "verified",
-        deterministic_checks_passed=smoke.artifact_state == "verified",
-        fact_coverage_passed=smoke.replay_class in {"exact_replay", "validated_replay"},
-        llm_judge_passed=None,
-        quality_floor_fail_reason=""
-        if smoke.artifact_state == "verified"
-        else "artifact_not_verified",
-    )
+    return smoke.quality_floor
 
 
 def _report_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> BenchmarkRunReport:
@@ -127,6 +167,9 @@ def _report_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> Be
             "telemetry_event_count": float(smoke.telemetry_event_count),
             "registry_path_length": float(len(smoke.registry_path)),
             "output_artifact_path_length": float(len(smoke.output_artifact_path)),
+            "workflow_step_count": float(smoke.workflow_step_count),
+            "attempt_count": float(smoke.attempt_count),
+            "runtime_replan_count": float(smoke.runtime_replan_count),
         },
     )
 
@@ -142,61 +185,30 @@ def _case_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> Benc
         output_artifact_path=smoke.output_artifact_path,
         workspace_root=smoke.workspace_root,
         session_state=smoke.session_state,
+        comparison_tags=sample.scenario_tags,
+        audit_paths={
+            "replay": smoke.replay_audit_path,
+            "hydration": smoke.hydration_audit_path,
+            "hydration_debug": smoke.hydration_debug_audit_path,
+            "artifact": smoke.artifact_audit_path,
+        },
+        audit_summary=smoke.audit_summary,
         metrics={
             **dict(sorted(smoke.task_metrics.items())),
             "response_count": float(len(smoke.response_sequence)),
             "lineage_verified_artifact_count": float(len(smoke.lineage_view.verified_artifact_ids)),
+            "workflow_step_count": float(smoke.workflow_step_count),
+            "completed_workflow_step_count": float(smoke.completed_workflow_step_count),
+            "replan_history_count": float(smoke.replan_history_count),
         },
     )
 
 
-def _family_report_to_dict(report: BenchmarkFamilyReport) -> dict[str, object]:
-    return {
-        "suite_id": report.suite_id,
-        "layer": report.layer.value,
-        "task_family": report.task_family,
-        "profile": {
-            "description": report.profile.description,
-            "structured_control_enabled": report.profile.structured_control_enabled,
-            "semantic_pruning_enabled": report.profile.semantic_pruning_enabled,
-            "replay_enabled": report.profile.replay_enabled,
-        },
-        "eligible_for_headline": report.eligible_for_headline,
-        "missing_reason": report.missing_reason,
-        "aggregated_metrics": dict(sorted(report.aggregated_metrics.items())),
-        "telemetry_summary": dict(sorted(report.telemetry_summary.items())),
-        "cases": [
-            {
-                "task_id": case.task_id,
-                "task_family": case.task_family,
-                "replay_class": case.replay_class,
-                "telemetry_event_count": case.telemetry_event_count,
-                "output_artifact_hash": case.output_artifact_hash,
-                "output_artifact_path": case.output_artifact_path,
-                "workspace_root": case.workspace_root,
-                "session_state": case.session_state,
-                "quality_floor": {
-                    "quality_floor_pass": case.quality_floor.quality_floor_pass,
-                    "deterministic_checks_passed": case.quality_floor.deterministic_checks_passed,
-                    "fact_coverage_passed": case.quality_floor.fact_coverage_passed,
-                    "llm_judge_passed": case.quality_floor.llm_judge_passed,
-                    "quality_floor_fail_reason": case.quality_floor.quality_floor_fail_reason,
-                    "schema_version": case.quality_floor.schema_version,
-                },
-                "metrics": dict(sorted(case.metrics.items())),
-            }
-            for case in report.cases
-        ],
-    }
-
-
-def _suite_report_to_dict(report: BenchmarkSuiteReport) -> dict[str, object]:
-    return {
-        "suite_id": report.suite_id,
-        "task_family": report.task_family,
-        "waterfall_metrics": dict(sorted(report.waterfall_metrics.items())),
-        "layers": [_family_report_to_dict(layer_report) for layer_report in report.layer_reports],
-    }
+def _prepare_case_root(root: Path) -> Path:
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def run_minimal_benchmark(
@@ -205,14 +217,29 @@ def run_minimal_benchmark(
     workspace_root: Path,
     runtime_root: Path,
     socket_path: Path,
+    role_path_mode: str = "deterministic",
+    embedding_mode: str = "deterministic",
+    seed_replay_memory: bool = False,
 ) -> tuple[SmokeResult, BenchmarkRunReport]:
+    _prepare_case_root(workspace_root)
+    _prepare_case_root(runtime_root)
+    layer_config = SmokeLayerConfig(
+        **{
+            **LAYER_SMOKE_CONFIGS[BenchmarkLayer.L3].__dict__,
+            "role_path_mode": role_path_mode,
+            "embedding_mode": embedding_mode,
+        }
+    )
     smoke = run_smoke(
         workspace_root=workspace_root,
         runtime_root=runtime_root,
         socket_path=socket_path,
         request_text=sample.request_text,
+        canonical_task_spec=sample.canonical_task_spec,
         task_id=sample.task_id,
-        layer_config=LAYER_SMOKE_CONFIGS[BenchmarkLayer.L3],
+        layer_config=layer_config,
+        expected_facts=sample.expected_facts,
+        seed_replay_memory=seed_replay_memory,
     )
     return smoke, _report_from_smoke(sample, smoke)
 
@@ -225,18 +252,36 @@ def run_minimal_benchmark_family(
     socket_path: Path,
     suite_id: str = "minimal-family",
     layer: BenchmarkLayer = BenchmarkLayer.L3,
+    role_path_mode: str = "deterministic",
+    embedding_mode: str = "deterministic",
+    seed_replay_memory: bool = False,
+    benchmark_tier: str = "formal",
+    claim_level: str = "first_pass",
 ) -> BenchmarkFamilyReport:
     profile = LAYER_PROFILES[layer]
     cases: list[BenchmarkCaseReport] = []
     suite_emitter = TelemetryEmitter()
+    layer_workspace_root = _prepare_case_root(workspace_root)
     for sample in samples:
+        case_runtime_root = _prepare_case_root(runtime_root / sample.task_id)
         smoke = run_smoke(
-            workspace_root=workspace_root,
-            runtime_root=runtime_root,
-            socket_path=socket_path.with_name(f"{socket_path.stem}-{sample.task_id}{socket_path.suffix}"),
+            workspace_root=layer_workspace_root,
+            runtime_root=case_runtime_root,
+            socket_path=socket_path.with_name(
+                f"{socket_path.stem}-{layer.value.lower()}-{sample.task_id}{socket_path.suffix}"
+            ),
             request_text=sample.request_text,
+            canonical_task_spec=sample.canonical_task_spec,
             task_id=sample.task_id,
-            layer_config=LAYER_SMOKE_CONFIGS[layer],
+            layer_config=SmokeLayerConfig(
+                **{
+                    **LAYER_SMOKE_CONFIGS[layer].__dict__,
+                    "role_path_mode": role_path_mode,
+                    "embedding_mode": embedding_mode,
+                }
+            ),
+            expected_facts=sample.expected_facts,
+            seed_replay_memory=seed_replay_memory,
         )
         cases.append(_case_from_smoke(sample, smoke))
         suite_emitter.emit(
@@ -254,6 +299,16 @@ def run_minimal_benchmark_family(
         "telemetry_event_count": float(sum(case.telemetry_event_count for case in cases)),
     }
     telemetry_summary = suite_emitter.summarize_suite([case.task_id for case in cases])
+    replay_class_distribution: dict[str, float] = {}
+    quality_floor_breakdown = {
+        "deterministic_checks_passed_count": float(
+            sum(1 for case in cases if case.quality_floor.deterministic_checks_passed)
+        ),
+        "fact_coverage_passed_count": float(sum(1 for case in cases if case.quality_floor.fact_coverage_passed)),
+        "quality_floor_pass_count": aggregated_metrics["quality_floor_pass_count"],
+    }
+    for case in cases:
+        replay_class_distribution[case.replay_class] = replay_class_distribution.get(case.replay_class, 0.0) + 1.0
     task_family = cases[0].task_family if cases else "financial_report_analysis"
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}-{layer.value}.json"
     family_report = BenchmarkFamilyReport(
@@ -264,10 +319,24 @@ def run_minimal_benchmark_family(
         cases=tuple(cases),
         aggregated_metrics=aggregated_metrics,
         telemetry_summary=telemetry_summary,
+        replay_class_distribution=replay_class_distribution,
+        quality_floor_breakdown=quality_floor_breakdown,
+        metadata={
+            "benchmark_tier": benchmark_tier,
+            "claim_level": claim_level,
+            "embedding_mode": embedding_mode,
+            "formal_comparator_eligible": False,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": role_path_mode,
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": seed_replay_memory,
+            "task_family_tier": "formal_financial",
+            "uses_internal_helpers": False,
+        },
         report_path=str(report_path),
     )
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(stable_json_dumps(_family_report_to_dict(family_report)) + "\n", encoding="utf-8")
+    write_json_report(report_path, family_report_to_dict(family_report))
     return family_report
 
 
@@ -278,7 +347,13 @@ def run_minimal_benchmark_suite(
     runtime_root: Path,
     socket_path: Path,
     suite_id: str = "minimal-suite",
+    role_path_mode: str = "deterministic",
+    embedding_mode: str = "deterministic",
+    seed_replay_memory_by_layer: dict[BenchmarkLayer, bool] | None = None,
+    benchmark_tier: str = "formal",
+    claim_level: str = "first_pass",
 ) -> BenchmarkSuiteReport:
+    seed_replay_memory_by_layer = seed_replay_memory_by_layer or {}
     layer_reports = tuple(
         run_minimal_benchmark_family(
             samples=samples,
@@ -287,6 +362,11 @@ def run_minimal_benchmark_suite(
             socket_path=socket_path.with_name(f"{socket_path.stem}-{layer.value}{socket_path.suffix}"),
             suite_id=suite_id,
             layer=layer,
+            role_path_mode=role_path_mode,
+            embedding_mode=embedding_mode,
+            seed_replay_memory=seed_replay_memory_by_layer.get(layer, False),
+            benchmark_tier=benchmark_tier,
+            claim_level=claim_level,
         )
         for layer in BenchmarkLayer
     )
@@ -296,10 +376,53 @@ def run_minimal_benchmark_suite(
             "raw_evidence_bytes_seen_by_llm", 0.0
         ),
         "L1_control_bytes": layer_reports[1].telemetry_summary.get("control_bytes", 0.0),
+        "L1_control_message_count": layer_reports[1].telemetry_summary.get("control_message_count", 0.0),
         "L2_semantic_state_transfer_count": layer_reports[2].telemetry_summary.get(
             "semantic_state_transfer_count", 0.0
         ),
+        "L2_memory_match_count": layer_reports[2].telemetry_summary.get("memory_match_count", 0.0),
         "L3_quality_floor_pass_count": layer_reports[3].aggregated_metrics.get("quality_floor_pass_count", 0.0),
+        "L3_artifact_reuse_count": layer_reports[3].telemetry_summary.get("artifact_reuse_count", 0.0),
+        "L3_reuse_gain": layer_reports[3].telemetry_summary.get("reuse_gain", 0.0),
+    }
+    comparison_summary = {
+        "pruning_bytes_saved_vs_l0": max(
+            layer_reports[0].telemetry_summary.get("raw_evidence_bytes_seen_by_llm", 0.0)
+            - layer_reports[2].telemetry_summary.get("raw_evidence_bytes_seen_by_llm", 0.0),
+            0.0,
+        ),
+        "control_bytes_delta_l0_to_l1": max(
+            layer_reports[0].telemetry_summary.get("control_bytes", 0.0)
+            - layer_reports[1].telemetry_summary.get("control_bytes", 0.0),
+            0.0,
+        ),
+        "reuse_gain_delta_l2_to_l3": max(
+            layer_reports[3].telemetry_summary.get("reuse_gain", 0.0)
+            - layer_reports[2].telemetry_summary.get("reuse_gain", 0.0),
+            0.0,
+        ),
+        "artifact_reuse_delta_l2_to_l3": max(
+            layer_reports[3].telemetry_summary.get("artifact_reuse_count", 0.0)
+            - layer_reports[2].telemetry_summary.get("artifact_reuse_count", 0.0),
+            0.0,
+        ),
+        "quality_floor_pass_delta_l0_to_l3": (
+            layer_reports[3].aggregated_metrics.get("quality_floor_pass_count", 0.0)
+            - layer_reports[0].aggregated_metrics.get("quality_floor_pass_count", 0.0)
+        ),
+        "selected_evidence_bytes_delta_l0_to_l2": max(
+            layer_reports[0].telemetry_summary.get("selected_evidence_bytes", 0.0)
+            - layer_reports[2].telemetry_summary.get("selected_evidence_bytes", 0.0),
+            0.0,
+        ),
+        "replan_history_delta_l0_to_l3": (
+            layer_reports[3].telemetry_summary.get("replan_history_count", 0.0)
+            - layer_reports[0].telemetry_summary.get("replan_history_count", 0.0)
+        ),
+        "codeact_action_delta_l0_to_l3": (
+            layer_reports[3].telemetry_summary.get("codeact_plan_action_count", 0.0)
+            - layer_reports[0].telemetry_summary.get("codeact_plan_action_count", 0.0)
+        ),
     }
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}-suite.json"
     suite_report = BenchmarkSuiteReport(
@@ -307,10 +430,24 @@ def run_minimal_benchmark_suite(
         task_family=samples[0].task_family if samples else "financial_report_analysis",
         layer_reports=layer_reports,
         waterfall_metrics=waterfall_metrics,
+        comparison_summary=comparison_summary,
+        metadata={
+            "benchmark_tier": benchmark_tier,
+            "claim_level": claim_level,
+            "embedding_mode": embedding_mode,
+            "comparison_contract": "same_mainline_internal_attribution_ladder",
+            "ladder_claim_scope": "internal_attribution_only_not_external_superiority",
+            "role_path_mode": role_path_mode,
+            "seed_replay_memory_by_layer": {
+                layer.value: seed_replay_memory_by_layer.get(layer, False)
+                for layer in BenchmarkLayer
+            },
+            "task_family_tier": "formal_financial",
+        },
+        family_case_count=len(samples),
         report_path=str(report_path),
     )
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(stable_json_dumps(_suite_report_to_dict(suite_report)) + "\n", encoding="utf-8")
+    write_json_report(report_path, suite_report_to_dict(suite_report))
     return suite_report
 
 
@@ -325,14 +462,14 @@ def main() -> None:
         socket_path=Path("/tmp/statebus-v2-benchmark/control.sock"),
     )
     family = run_minimal_benchmark_family(
-        samples=load_sample_family(Path(__file__).with_name("samples") / "minimal_family"),
+        samples=load_sample_family(Path(__file__).with_name("samples") / "formal_financial_family"),
         workspace_root=Path("/tmp/statebus-v2-benchmark-family/workspaces"),
         runtime_root=Path("/tmp/statebus-v2-benchmark-family/runtime"),
         socket_path=Path("/tmp/statebus-v2-benchmark-family/control.sock"),
         layer=BenchmarkLayer.L3,
     )
     suite = run_minimal_benchmark_suite(
-        samples=load_sample_family(Path(__file__).with_name("samples") / "minimal_family"),
+        samples=load_sample_family(Path(__file__).with_name("samples") / "formal_financial_family"),
         workspace_root=Path("/tmp/statebus-v2-benchmark-suite/workspaces"),
         runtime_root=Path("/tmp/statebus-v2-benchmark-suite/runtime"),
         socket_path=Path("/tmp/statebus-v2-benchmark-suite/control.sock"),
@@ -346,6 +483,7 @@ def main() -> None:
     print(f"family_report_path={family.report_path}")
     print(f"suite_layer_count={len(suite.layer_reports)}")
     print(f"suite_report_path={suite.report_path}")
+    print(json.dumps(suite_report_to_dict(suite), ensure_ascii=True, separators=(",", ":")))
 
 
 if __name__ == "__main__":

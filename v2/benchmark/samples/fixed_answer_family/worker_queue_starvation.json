@@ -1,0 +1,25 @@
+{
+  "task_id": "fixed-answer-worker-001",
+  "task_family": "fixed_answer_route_tool",
+  "request_text": "release-17 latency tls reload worker queue stall not database",
+  "canonical_task_spec": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "triage_route_tool",
+    "required_outputs": ["summary_text"],
+    "required_tools": ["semantic_retriever", "table_retriever"],
+    "arguments": {
+      "ticker": "ACME",
+      "quarter": "2026Q2",
+      "metric": "revenue",
+      "request_text": "release-17 latency tls reload worker queue stall not database"
+    }
+  },
+  "expected_facts": {
+    "revenue_value": "132",
+    "selected_doc_hashes": ["sha256:doc-acme-2026q2"]
+  },
+  "expected_route": "worker_queue_starvation",
+  "expected_tool_name": "semantic_retriever",
+  "summary_hint": "Choose the best incident route with deterministic evidence selection.",
+  "scenario_tags": ["fixed-answer", "worker", "latency"]
+}

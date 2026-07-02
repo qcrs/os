@@ -1,0 +1,42 @@
+{
+  "schema_version": "statebus.gridops_world.v1",
+  "world_id": "gridops-alpha",
+  "width": 8,
+  "height": 8,
+  "legend": {
+    "S": "start",
+    "A": "drop_zone_a",
+    "B": "drop_zone_b",
+    "K": "key",
+    "D": "locked_door",
+    "C": "crate",
+    "H": "hazard",
+    "#": "wall",
+    ".": "open"
+  },
+  "grid": [
+    "S..#....",
+    ".#.#.K..",
+    ".#...#..",
+    ".###.#D.",
+    "...C.#..",
+    ".#..H...",
+    ".#..#..A",
+    "....#..B"
+  ],
+  "action_schema": [
+    "MOVE_NORTH",
+    "MOVE_SOUTH",
+    "MOVE_EAST",
+    "MOVE_WEST",
+    "PICK_KEY",
+    "UNLOCK_DOOR",
+    "PICK_CRATE",
+    "DROP_CRATE"
+  ],
+  "state_contract": {
+    "typed_state": "grid matrix plus object table",
+    "text_baseline": "natural-language map description",
+    "success_verifier": "deterministic simulator"
+  }
+}
