@@ -18,6 +18,7 @@ rerun of the full evidence suite on 2026-07-03.
 | Frozen baseline subject | `chore: freeze current statebus v2 evidence snapshot` |
 | Worktree status when indexed | clean, from `git status --short` |
 | Evidence readout | `docs/reports/v2_api_evidence_readout_and_claim_boundary_20260702.md` |
+| openEuler container report | `docs/reports/openeuler_container_validation_20260703.md` |
 | Remediation source | `docs/review/v2_issue_remediation_plan_20260703.md` P0-001 |
 
 ## 2. Evidence Root
@@ -137,13 +138,16 @@ Post-index P0-006 remediation adds a tmp-path persisted-history regression:
 It proves a corrupted persisted output artifact hash is not loaded as a replay
 candidate. This is still not a full 12-case persisted-live-history audit.
 
-## 9. Follow-up P0 Items
+## 9. First-Stage P0 Status
 
-This index closes the documentation part of P0-001. Remaining first-stage P0
-items from `docs/review/v2_issue_remediation_plan_20260703.md` are:
+First-stage P0 remediation status from
+`docs/review/v2_issue_remediation_plan_20260703.md`:
 
+- P0-001: final evidence index. Completed in remediation commit `c0be113`.
 - P0-004: make memory metadata first-class on `MemoryRef` / memory commits. Completed in remediation commit `c2d3064`.
 - P0-005: tighten CodeAct claim wording to controlled CodeAct-style execution. Completed in remediation commit `4431d19`.
-- P0-006: harden replay exact / validated / assist boundaries. Boundary docs and a tmp-path persisted-history corrupted-artifact regression are covered; full persisted-live-history audit remains future work.
+- P0-006: harden replay exact / validated / assist boundaries. Boundary docs and a tmp-path persisted-history corrupted-artifact regression are covered in remediation commit `f4475f6`; full persisted-live-history audit remains future work.
 - P0-003: convert tested openEuler container results into a reproducible
-  validation report with root+bwrap profile boundaries.
+  validation report with root+bwrap profile boundaries. Covered by
+  `docs/reports/openeuler_container_validation_20260703.md`; VM validation
+  remains future work.
