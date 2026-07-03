@@ -88,16 +88,18 @@ async def _llm_generated_source(
         source = _deterministic_generated_source()
         audit = audit_generated_source(source)
         return source, [_generation_attempt_payload(source=source, audit=audit, attempt=0, repair=False)]
+    input_example = stable_json_dumps(_demo_input_payload())
     prompt = textwrap.dedent(
-        """
+        f"""
         Generate a single Python script for a bounded CodeAct demo.
         Requirements:
         - read inputs/task.json from the current working directory;
+        - task.json has this schema/example: {input_example}
         - write outputs/bounded_codeact_result.json;
         - use only json and pathlib imports;
         - compute metric, point_count, delta_abs, growth_pct, summary_text;
         - do not use network, subprocess, open(), eval(), exec(), os, sys, or arbitrary paths.
-        Return code only, no markdown.
+        Return raw Python code only, no markdown, and do not wrap the code in JSON or a "code" field.
         """
     ).strip()
     client = build_llm_client(LLMConfig.from_runtime().with_mode("api"))
@@ -106,7 +108,7 @@ async def _llm_generated_source(
     current_prompt = prompt
     for attempt in range(max_repair_attempts + 1):
         result = await client.complete([ChatMessage(role="user", content=current_prompt)], purpose="executor")
-        source = _strip_code_fence(result.text)
+        source = _extract_python_source(result.text)
         audit = audit_generated_source(source)
         attempts.append(_generation_attempt_payload(source=source, audit=audit, attempt=attempt, repair=attempt > 0))
         if audit["pass"]:
@@ -132,13 +134,15 @@ def _generation_attempt_payload(
 
 
 def _repair_prompt(*, source: str, audit: dict[str, object]) -> str:
+    input_example = stable_json_dumps(_demo_input_payload())
     return textwrap.dedent(
         f"""
         Repair this bounded CodeAct Python script so it passes the AST policy.
-        Return code only, no markdown.
+        Return raw Python code only, no markdown, and do not wrap the code in JSON or a "code" field.
 
         Policy:
         - read inputs/task.json from the current working directory;
+        - task.json has this schema/example: {input_example}
         - write outputs/bounded_codeact_result.json;
         - use only json and pathlib imports;
         - compute metric, point_count, delta_abs, growth_pct, summary_text;
@@ -151,6 +155,18 @@ def _repair_prompt(*, source: str, audit: dict[str, object]) -> str:
         {source}
         """
     ).strip()
+
+
+def _extract_python_source(text: str) -> str:
+    stripped = _strip_code_fence(text).strip()
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("code"), str):
+            stripped = _strip_code_fence(payload["code"]).strip()
+    return stripped + "\n"
 
 
 def _strip_code_fence(text: str) -> str:
@@ -177,8 +193,12 @@ def audit_generated_source(source: str) -> dict[str, object]:
             "node_count": 0,
         }
     node_count = 0
+    string_literals: list[str] = []
+    has_output_write_call = False
     for node in ast.walk(tree):
         node_count += 1
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            string_literals.append(node.value)
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split(".", 1)[0]
@@ -190,6 +210,8 @@ def audit_generated_source(source: str) -> dict[str, object]:
                 violations.append(f"forbidden_import_from:{node.module}")
         elif isinstance(node, ast.Call):
             call_name = _call_name(node.func)
+            if call_name.endswith(".write_text") or call_name == "json.dump":
+                has_output_write_call = True
             if call_name in FORBIDDEN_CALLS:
                 violations.append(f"forbidden_call:{call_name}")
             root_name = call_name.split(".", 1)[0]
@@ -197,6 +219,12 @@ def audit_generated_source(source: str) -> dict[str, object]:
                 violations.append(f"forbidden_call_root:{call_name}")
         elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAME_ROOTS:
             violations.append(f"forbidden_name:{node.id}")
+    if not _has_path_literal(string_literals, "task.json"):
+        violations.append("missing_input_path:task.json")
+    if not _has_path_literal(string_literals, "bounded_codeact_result.json"):
+        violations.append("missing_output_path:bounded_codeact_result.json")
+    if not has_output_write_call:
+        violations.append("missing_output_write_call")
     return {
         "schema_version": SCHEMA_VERSION,
         "pass": not violations,
@@ -206,6 +234,10 @@ def audit_generated_source(source: str) -> dict[str, object]:
         "forbidden_calls": sorted(FORBIDDEN_CALLS),
         "forbidden_name_roots": sorted(FORBIDDEN_NAME_ROOTS),
     }
+
+
+def _has_path_literal(values: list[str], filename: str) -> bool:
+    return any(value == filename or value.endswith(f"/{filename}") or value.endswith(f"\\{filename}") for value in values)
 
 
 def _call_name(node: ast.AST) -> str:
