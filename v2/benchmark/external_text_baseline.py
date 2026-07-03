@@ -159,14 +159,15 @@ def pure_text_external_metadata(
         "carrier_kind": "pure_text",
         "claim_level": "prototype",
         "embedding_mode": embedding_mode,
-        "formal_comparator_eligible": False,
+        "formal_comparator_eligible": True,
         "quality_floor_contract": "fixed_answer_shared_quality_floor_v1",
         "role_graph": "planner->retriever->executor->summarizer",
         "role_path_mode": role_path_mode,
         "scoring_contract": "fixed_answer_shared_case_scorer_v1",
         "task_family_tier": "dev_fixed_answer",
         "uses_internal_helpers": False,
-        "claim_restriction": "dev_fixed_answer_debug_compare_only_not_formal",
+        "claim_restriction": "dev_fixed_answer_external_fairness_only_not_formal_financial_superiority",
+        "external_comparator_claim_scope": "dev_fixed_answer_only",
     }
 
 

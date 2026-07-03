@@ -267,7 +267,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 "debug_metrics": dict(mode_payload.get("debug_metrics", {})),
                 "headline_metrics": dict(mode_payload.get("headline_metrics", {})),
                 "conclusion": (
-                    "formal_comparator_admissible"
+                    "external_comparator_admissible"
                     if comparison_valid
                     else "debug_only_fairness_fail_closed"
                     if mode_payload.get("invalid_reason") == "fairness_gate_failed"
@@ -275,16 +275,20 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 ),
             }
         )
-    suite_verdict = "formal_valid" if invalid_modes == 0 and mode_results else "formal_invalid_debug_only"
+    benchmark_tier = str(suite_payload.get("benchmark_tier", ""))
+    if invalid_modes == 0 and mode_results:
+        suite_verdict = "formal_valid" if benchmark_tier == "formal" else "dev_fixed_answer_valid"
+    else:
+        suite_verdict = "formal_invalid_debug_only"
     return {
         "suite_id": suite_payload.get("suite_id", ""),
         "task_family": suite_payload.get("task_family", ""),
-        "benchmark_tier": suite_payload.get("benchmark_tier", ""),
+        "benchmark_tier": benchmark_tier,
         "claim_level": suite_payload.get("claim_level", ""),
         "suite_verdict": suite_verdict,
         "contract_problem": (
             "fairness_gate_fail_closed_blocks_formal_claim"
-            if suite_verdict != "formal_valid"
+            if suite_verdict == "formal_invalid_debug_only"
             else "none"
         ),
         "mode_results": mode_results,
@@ -425,7 +429,7 @@ def _build_text_lane_diagnostics(
         external_public_broadcast_bytes = sum(row["external_repeated_public_evidence_bytes"] for row in rows)
         statebus_raw_evidence_bytes = sum(row["statebus_raw_evidence_bytes_seen_by_llm"] for row in rows)
         formal_blockers = [
-            "external_formal_eligible_false",
+            "dev_fixed_answer_scope_not_formal_financial_family",
             "external_profile_disables_structured_control_semantic_pruning_replay",
             "external_repeats_full_public_evidence_text_across_all_roles",
             "statebus_lane_carries_workspace_artifact_telemetry_replay_obligations_not_shared_by_external",
@@ -926,13 +930,13 @@ def _build_experiment_plan(
         "recommended_experiments": [
             {
                 "experiment_id": "E1-current-compare-fairness-audit",
-                "goal": "Verify whether the current dev compare is formally admissible or only debug-grade.",
+                "goal": "Verify whether the current dev fixed-answer compare is admissible under the external fairness gate.",
                 "command": (
                     "python3 scripts/v2_diagnostics/compare_diagnostics.py "
                     f"--compare-suite-report {runs_dir / 'v2-live/runtime/benchmark_reports/statebus-v2-benchmark-cold-start-compare.json'} "
                     f"--output-root {output_root}"
                 ),
-                "expected_signal": "formal_invalid_debug_only if fairness gate still fails closed",
+                "expected_signal": "dev_fixed_answer_valid when the fairness gate passes; not a formal superiority claim",
             },
             {
                 "experiment_id": "E2-rerun-dev-compare-and-analyze",
