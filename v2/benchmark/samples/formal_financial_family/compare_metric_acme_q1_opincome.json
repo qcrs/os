@@ -29,5 +29,8 @@
       "quarter": "2026Q1",
       "metric": "operating_income"
     }
-  }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the operating_income value for ACME 2026Q1: 19."
 }

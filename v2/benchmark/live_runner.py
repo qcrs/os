@@ -274,23 +274,27 @@ def main() -> None:
     if args.statebus_mode == "cold-start" and args.seed_replay_memory:
         raise SystemExit("cold-start mode forbids synthetic replay seeding")
     if args.benchmark_tier == "formal":
-        if args.suite in {"external", "compare"}:
-            raise SystemExit("formal tier does not expose assisted external/comparator suites")
-        samples = load_sample_family(family_dir)
-        report = run_minimal_benchmark_suite(
-            samples=samples,
-            workspace_root=args.workspace_root,
-            runtime_root=args.runtime_root,
-            socket_path=args.socket_path,
-            suite_id=f"{args.suite_id}-formal",
-            role_path_mode=args.role_path_mode,
-            embedding_mode=args.embedding_mode,
-            seed_replay_memory_by_layer={},
-            benchmark_tier="formal",
-            claim_level="first_pass",
-        )
-        print(stable_json_dumps(suite_report_to_dict(report)))
-        return
+        if args.suite in {"external"}:
+            raise SystemExit("formal tier does not expose standalone external suites; use --suite compare")
+        if args.suite not in {"compare"}:
+            # Non-compare formal suites: use MinimalBenchmarkSample via load_sample_family
+            formal_samples = load_sample_family(family_dir)
+            formal_report = run_minimal_benchmark_suite(
+                samples=formal_samples,
+                workspace_root=args.workspace_root,
+                runtime_root=args.runtime_root,
+                socket_path=args.socket_path,
+                suite_id=f"{args.suite_id}-formal",
+                role_path_mode=args.role_path_mode,
+                embedding_mode=args.embedding_mode,
+                seed_replay_memory_by_layer={},
+                benchmark_tier="formal",
+                claim_level="first_pass",
+            )
+            print(stable_json_dumps(suite_report_to_dict(formal_report)))
+            return
+        # formal + compare: fall through to the dev compare path below,
+        # using load_fixed_answer_family (formal samples now have expected_route/tool/hint)
 
     samples = load_fixed_answer_family(family_dir)
     statebus_suite_prefix = _statebus_suite_prefix(
