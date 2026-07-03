@@ -107,6 +107,58 @@ def _group_totals(rows: list[dict[str, Any]], *, kind: str) -> list[dict[str, An
     return payload
 
 
+def _profile_includes_row(profile: str, row: dict[str, Any]) -> bool:
+    kind = str(row["kind"])
+    group = str(row["group"])
+    if profile == "audit_full":
+        return True
+    if profile == "benchmark_balanced":
+        if kind in {"manifest", "telemetry"}:
+            return True
+        return group not in {
+            "codeact_plan_audits",
+            "codeact_record_audits",
+            "role_prompt_slices",
+        }
+    if profile == "fast_runtime":
+        return kind == "manifest" or group in {
+            "artifact_manifests",
+            "execution_steps",
+            "memory_commits",
+            "replay_ledgers",
+            "runtime_sessions",
+        }
+    raise ValueError(f"unsupported persistence profile: {profile}")
+
+
+def _persistence_profile_readout(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    profile_boundaries = {
+        "audit_full": "keeps every manifest, sidecar, telemetry log, and audit detail; highest replay/debuggability",
+        "benchmark_balanced": "keeps benchmark/replay-critical manifests and compact sidecars; drops repeated deep audit details",
+        "fast_runtime": "keeps minimum runtime/replay lineage candidates only; diagnostic detail must be regenerated separately",
+    }
+    readouts = []
+    total_bytes = sum(int(row["size_bytes"]) for row in rows)
+    total_count = len(rows)
+    for profile in ("audit_full", "benchmark_balanced", "fast_runtime"):
+        included = [row for row in rows if _profile_includes_row(profile, row)]
+        included_bytes = sum(int(row["size_bytes"]) for row in included)
+        included_groups = sorted({f"{row['kind']}:{row['group']}" for row in included})
+        readouts.append(
+            {
+                "profile": profile,
+                "included_file_count": len(included),
+                "excluded_file_count": total_count - len(included),
+                "included_size_bytes": included_bytes,
+                "excluded_size_bytes": total_bytes - included_bytes,
+                "included_size_ratio": round(0.0 if total_bytes == 0 else included_bytes / total_bytes, 6),
+                "included_groups": included_groups,
+                "claim_boundary": profile_boundaries[profile],
+            }
+        )
+    return readouts
+
+
 def _persist_metric_subset(task_metrics: dict[str, float]) -> dict[str, float]:
     keys = sorted(key for key in task_metrics if key.startswith("persist_"))
     return {key: float(task_metrics[key]) for key in keys}
@@ -169,6 +221,13 @@ def _build_markdown_summary(summary: dict[str, Any]) -> str:
             lines.append(
                 f"- `{row['group']}` total `{row['total_size_bytes']}` B across `{row['file_count']}` files"
             )
+    lines.extend(["", "## Persistence Profiles", ""])
+    for profile in summary.get("persistence_profiles", []):
+        lines.append(
+            f"- `{profile['profile']}` keeps `{profile['included_file_count']}` files, "
+            f"`{profile['included_size_bytes']}` B, ratio `{profile['included_size_ratio']}`; "
+            f"{profile['claim_boundary']}"
+        )
     return "\n".join(lines)
 
 
@@ -255,6 +314,7 @@ def build_runtime_persistence_breakdown_bundle(
         "top_telemetry": telemetry_rows[:20],
         "sidecar_totals": sidecar_totals,
         "manifest_totals": manifest_totals,
+        "persistence_profiles": _persistence_profile_readout(file_rows),
         "next_target": _recommend_next_target(sidecar_totals),
     }
 
