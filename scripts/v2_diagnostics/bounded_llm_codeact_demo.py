@@ -102,6 +102,8 @@ async def _llm_generated_source(
         - File I/O must use pathlib.Path only, within these paths:
           Input:  inputs/task.json  (relative to cwd)
           Output: outputs/bounded_codeact_result.json  (relative to cwd)
+        - The string literal "inputs/task.json" MUST appear verbatim in your code.
+        - The string literal "bounded_codeact_result.json" MUST appear verbatim in your code.
 
         OUTPUT FORMAT:
         - Return ONLY raw Python code — no markdown fences, no JSON wrapper, no explanations.
@@ -180,13 +182,36 @@ def _generation_attempt_payload(
     }
 
 
+def _violation_explanation(violation: str) -> str:
+    if violation.startswith("missing_input_path:"):
+        fname = violation.split(":", 1)[1]
+        return (
+            f"missing_input_path:{fname} — "
+            f"Your code MUST contain the string literal \"{fname}\" "
+            f"(e.g. Path(\"inputs/{fname}\").read_text(...)). "
+            f"Do NOT build the path with separate string parts or variables."
+        )
+    if violation.startswith("missing_output_path:"):
+        fname = violation.split(":", 1)[1]
+        return (
+            f"missing_output_path:{fname} — "
+            f"Your code MUST contain the string literal \"{fname}\" "
+            f"(e.g. (out / \"{fname}\").write_text(...))."
+        )
+    if violation.startswith("forbidden_import:") or violation.startswith("forbidden_import_from:"):
+        return f"{violation} — remove this import; only json, math, pathlib, statistics are allowed."
+    if violation.startswith("forbidden_call:") or violation.startswith("forbidden_call_root:"):
+        return f"{violation} — remove or replace this call; use pathlib.Path for file I/O."
+    return violation
+
+
 def _repair_prompt(*, source: str, audit: dict[str, object]) -> str:
     _allowlist = ", ".join(sorted(ALLOWED_IMPORT_ROOTS))
     _forbidden = "os, sys, subprocess, socket, requests, urllib, http, shutil, open, eval, exec, compile, input"
     violations = list(audit.get("violations", []))
     if violations:
         violation_lines = "\n".join(
-            f"  • {v}" if isinstance(v, str)
+            f"  • {_violation_explanation(v)}" if isinstance(v, str)
             else f"  • Line {v.get('line', '?')}: {v.get('detail', v.get('violation_detail', str(v)))}"
             for v in violations
         )
@@ -201,6 +226,11 @@ def _repair_prompt(*, source: str, audit: dict[str, object]) -> str:
 
         ALLOWED imports: {_allowlist}
         FORBIDDEN: {_forbidden}
+
+        PATH RULES (critical):
+        - "inputs/task.json" must appear as a string literal (not built from parts)
+        - "bounded_codeact_result.json" must appear as a string literal
+        - Use pathlib.Path for all I/O, e.g.: Path("inputs/task.json").read_text(...)
 
         Fix only the violations above. Keep the logic the same.
         Return ONLY raw Python code — no markdown fences, no JSON wrapper.
