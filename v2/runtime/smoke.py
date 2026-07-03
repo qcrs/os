@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import time
+import uuid as _uuid
 
 from runtime.llm import LLMConfig, build_llm_client
 from v2.benchmark.models import QualityFloorResult
@@ -1714,7 +1715,7 @@ def run_smoke(
             task_theme=compiler_result.canonical_task_spec.task_family,
             tags=tuple(compiler_result.canonical_task_spec.required_tools),
             source_role_path=("planner", "retriever", "executor", "summarizer"),
-            producer_run_id=trace_id,
+            producer_run_id=str(_uuid.uuid4()),
             summary=f"{retrieval.query_text} cached summary",
             canonical_task_spec_hash=compiler_result.canonical_task_spec.spec_hash,
             artifact_ref_id="artifact-history",
@@ -2234,7 +2235,7 @@ def run_smoke(
             task_theme=compiler_result.canonical_task_spec.task_family,
             tags=tuple(compiler_result.canonical_task_spec.required_tools),
             source_role_path=("planner", "retriever", "executor", "summarizer"),
-            producer_run_id=trace_id,
+            producer_run_id=str(_uuid.uuid4()),
             summary=summary_suffix,
             canonical_task_spec_hash=compiler_result.canonical_task_spec.spec_hash,
             artifact_ref_id="artifact-smoke",
