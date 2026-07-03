@@ -28,5 +28,8 @@
       "quarter": "2026Q3",
       "metric": "revenue"
     }
-  }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the revenue value for ACME 2026Q3: 145."
 }

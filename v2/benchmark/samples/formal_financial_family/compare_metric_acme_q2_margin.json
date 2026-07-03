@@ -29,5 +29,8 @@
       "quarter": "2026Q2",
       "metric": "gross_margin"
     }
-  }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the gross_margin value for ACME 2026Q2: 39."
 }

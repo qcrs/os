@@ -29,5 +29,8 @@
       "quarter": "2025Q4",
       "metric": "revenue"
     }
-  }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the revenue value for ACME 2025Q4: 109."
 }

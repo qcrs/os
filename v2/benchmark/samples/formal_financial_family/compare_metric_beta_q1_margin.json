@@ -29,5 +29,8 @@
       "quarter": "2026Q1",
       "metric": "gross_margin"
     }
-  }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the gross_margin value for BETA 2026Q1: 31."
 }
