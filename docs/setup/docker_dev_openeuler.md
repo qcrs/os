@@ -410,6 +410,24 @@ export STATEBUS_V2_ENABLE_SYNTHETIC_REPLAY=1
 
 之后，helper 才会追加 replay-ready synthetic probe；这条路径仍只能当开发诊断，不能当 formal replay evidence。
 
+如果只是验证 2026-07-03 remediation 相关改动，优先跑下面这组更小的容器测试：
+
+```bash
+source /usr/local/bin/activate_statebus_container.sh
+cd /workspace/statebus/project
+export STATEBUS_CONTAINER_VALIDATION_DIR="${STATEBUS_RUNS_DIR:-/statebus/runs}/container-validation-$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$STATEBUS_CONTAINER_VALIDATION_DIR"
+{
+  python3 --version
+  id
+  command -v bwrap && bwrap --version || true
+} 2>&1 | tee "$STATEBUS_CONTAINER_VALIDATION_DIR/env.log"
+python3 -m pytest -q tests/v2/test_memory_runtime.py tests/v2/test_registry_store.py tests/v2/test_replay.py \
+  2>&1 | tee "$STATEBUS_CONTAINER_VALIDATION_DIR/p0-remediation-tests.log"
+python3 -m pytest -q tests/v2 \
+  2>&1 | tee "$STATEBUS_CONTAINER_VALIDATION_DIR/pytest-v2.log"
+```
+
 ## 11. 明确不要做的安装路径
 
 不要在 Docker 容器里运行：

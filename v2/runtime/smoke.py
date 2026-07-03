@@ -1419,7 +1419,8 @@ def run_smoke(
     if not preflight.ok:
         raise RuntimeError("; ".join(preflight.missing_reasons))
 
-    trace_id = "trace-smoke"
+    safe_task_id = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in task_id) or "task"
+    trace_id = f"trace-smoke-{safe_task_id}-{time.time_ns()}"
     step_id = "step-execute"
     attempt_id = "attempt-1"
 
