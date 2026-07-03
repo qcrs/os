@@ -71,6 +71,15 @@ def _build_debug_metrics(
         "message_count_delta": _statebus_message_count(statebus_report) - _metric(external_report, "message_count"),
         "control_bytes_delta": _metric(statebus_report, "control_bytes") - _metric(external_report, "control_bytes"),
         "task_ms_delta": _metric(statebus_report, "task_ms") - _metric(external_report, "end_to_end_ms"),
+        # Overhead breakdown: splits task_ms_delta into LLM-layer vs system-layer.
+        # net_llm_ms_delta: pure LLM call time difference (subject to API latency variance).
+        # system_overhead_ms_delta: non-LLM overhead difference (audit writes, state persistence, etc.).
+        "net_llm_ms_delta": _metric(statebus_report, "llm_wall_ms") - _metric(external_report, "llm_ms"),
+        "system_overhead_ms_delta": (
+            _metric(statebus_report, "task_ms") - _metric(statebus_report, "llm_wall_ms")
+        ) - (
+            _metric(external_report, "end_to_end_ms") - _metric(external_report, "llm_ms")
+        ),
         "exact_match_delta": _metric(statebus_report, "exact_match") - _metric(external_report, "exact_match"),
         "route_exact_delta": _metric(statebus_report, "route_exact") - _metric(external_report, "route_exact"),
         "tool_exact_delta": _metric(statebus_report, "tool_exact") - _metric(external_report, "tool_exact"),
