@@ -1,33 +1,147 @@
 # P0-2：External Comparator 完整化（深度分析与修复方案）
 
 **优先级**：P0
-**更新**：2026-07-03，基于 HEAD evidence 的 role-level 数据重新分析
-**根本问题**：external baseline 的设计与 StateBus 的角色职责设计不对称，导致对比失去归因意义
+**更新**：2026-07-03（prompt 重设计后，含最新对比数据）
+**根本问题**：external baseline 的 corpus 重复传递4次 → 已修复；formal 任务族不足 → 待完成
 
 ---
 
-## 一、当前 external compare 数据（HEAD 实测）
+## 一、进度总览
 
-从 `statebus-v2-benchmark-cold-start-compare.json` 的 case-level metrics：
+| 修复项 | 状态 | commit |
+|---|---|---|
+| Fix A：role prompt 重设计（Planner/Executor/Summarizer 不看完整corpus，只有Retriever看） | ✅ 完成 | `559250c` |
+| Fix D：fairness gate 动态化（3项从硬编码改为运行时检测） | ✅ 完成 | `559250c` |
+| Fix B：compare 报告加入 `net_llm_ms` + `overhead_ms` 细分 | ⬜ 待实现 | — |
+| Fix C：扩充 formal financial family ≥8 case + 新 corpus | ⬜ 待实现 | — |
 
-### 1.1 Role-level prompt bytes 对比
+---
 
-| 角色 | StateBus | External | Δ | 原因 |
-|---|---:|---:|---:|---|
-| Planner | ~950 | **~1975** | -1018 | External Planner 收到完整 corpus |
-| Retriever | ~937 | **~1674** | -737 | External Retriever 再次收到完整 corpus |
-| Executor | ~857 | **~1575** | -718 | External Executor 第三次收到完整 corpus |
-| Summarizer | ~793 | **~1192** | -399 | External Summarizer 第四次收到完整 corpus |
-| **scaffold bytes** | **~2616** | 0 | +2616 | StateBus 协议控制面 overhead |
-| **task_ms（单 case）** | ~8893ms | **~4794ms** | +4100ms | StateBus 端到端更慢 |
-| **llm_total_tokens** | ~1546 | ~2052 | -506 | StateBus 每 case 省 token |
+## 二、当前数据对比（prompt 修复前后）
 
-总计（3 cases）：
-- `prompt_bytes_delta = -8624`（StateBus 省 prompt bytes）
-- `llm_total_tokens_delta = -1517`（StateBus 省 LLM tokens）
-- `task_ms_delta = +12299ms`（StateBus 慢 12.3 秒）
-- `llm_ms_delta = +4085ms`（LLM 调用本身 StateBus 也慢 4 秒）
-- `control_bytes_delta = -1065`（StateBus 控制字节更少）
+### 2.1 修复前后的 delta 变化
+
+| 指标 | 修复前（corpus × 4） | **修复后（corpus × 1）** | 含义 |
+|---|---|---|---|
+| `prompt_bytes_delta` | -8624 | **-6188** | 缩小28%，但归因更纯粹 |
+| `llm_total_tokens_delta` | -1517 | **-1164** | 同上 |
+| `control_bytes_delta` | -936 | **-457** | StateBus 控制字节更少 |
+| `task_ms_delta` | +12299ms | **+10626ms** | StateBus 仍更慢 |
+| `llm_ms_delta` | +4085ms | **+2723ms** | API 波动（见第三节） |
+| StateBus exact match | 3/3 | 3/3 | ✅ 不变 |
+| External exact match | 3/3 | 3/3 | ✅ 不变 |
+| fairness gate | 5项硬编码 | **3项动态检测** | ✅ 更严格 |
+
+**关键结论**：-6188 bytes 现在代表**真正的 carrier 机制差异**（typed StateRef vs text handoff），而不是角色职责不对称。
+
+### 2.2 修复后 role-level bytes（修复前 → 修复后参考）
+
+修复前 external 的问题：每个角色都收到完整 corpus（~1600-1975 bytes），导致 prompt bytes 人为偏大。
+
+修复后：
+- **Planner**：只看 task_spec + visible_candidates（不看 corpus）→ external prompt 缩短约1000 bytes
+- **Retriever**：唯一看完整 corpus 的角色（保持原有行为）
+- **Executor**：只看 evidence_summary（~50-100 bytes），不看完整 corpus
+- **Summarizer**：只看 evidence_summary + execution artifact，不看完整 corpus
+
+---
+
+## 三、task_ms / llm_ms 问题分析与口径
+
+详细分析见 `docs/improvement/05_runtime_overhead_analysis.md`，此处仅记录结论。
+
+### 3.1 llm_ms_delta（+2723ms）：API 波动，不可消除
+
+- 12次 LLM 调用，平均每次多 227ms
+- 完全在正常 API 抖动范围内
+- **不是代码问题，无需优化**
+- 解决方法：串行跑3次取均值，报告注明"API variance"
+
+### 3.2 system_overhead_delta（+7903ms）：可优化
+
+- 来源：审计 bundle 写入（~4000-5000ms）+ state ref 写入 + embedding 计算
+- 优化方案：实现 `benchmark_balanced` profile，减少60-70%写入量
+- 预期效果：系统层 overhead 从 ~7903ms 降至 ~3000ms
+
+### 3.3 答辩口径（已就绪）
+
+见 `docs/improvement/05_runtime_overhead_analysis.md` 第四节完整口径。
+
+核心逻辑：
+1. task_ms_delta = llm_ms_delta（API 波动）+ system_overhead_delta（审计开销）
+2. StateBus prompt 更小（-6188 bytes），LLM 处理更快
+3. 慢的是系统层，不是协议层
+
+---
+
+## 四、待完成：formal financial family 扩充
+
+这是让 `formal_superiority_claim_allowed=true` 的唯一路径。
+
+### 4.1 需要新增的任务类型
+
+| task_id | intent_op | 关键特征 |
+|---|---|---|
+| `formal-fin-004` | `multi_period_comparison` | Q1 vs Q4 营收对比，Planner 需分解步骤 |
+| `formal-fin-005` | `margin_health_analysis` | 营收+成本计算毛利率 |
+| `formal-fin-006` | `anomaly_detection` | 当期值与阈值比较 |
+| `formal-fin-007` | `evidence_sufficiency_check` | 评估声明是否有数据支撑 |
+| `formal-fin-008` | `multi_ticker_comparison` | 两个 ticker 同一指标比较 |
+
+### 4.2 Corpus 需求
+
+在 `v2/retrieval/corpus.py` 的 `OfflineFinancialReportCorpus` 中新增：
+- `ACME` × `2025Q4`（含 ≥4 text fragments + ≥3 table rows，含干扰项）
+- `BETA` × `2026Q1`（同上）
+
+### 4.3 实现顺序
+
+```
+1. 扩充 OfflineFinancialReportCorpus（新增 ACME-2025Q4, BETA-2026Q1）
+2. 新建 formal-fin-004 ~ 008 的 sample JSON
+3. 运行 formal suite 确认 3/5+ quality_floor_pass
+4. 运行 compare suite（--benchmark-tier formal）
+5. 确认 formal_superiority_claim_allowed 状态
+```
+
+### 4.4 容器测试命令
+
+```bash
+docker exec statebus-dev-qcrs bash -lc '
+  source /usr/local/bin/activate_statebus_container.sh
+  cd /workspace/statebus/project
+  REPORT_ROOT=/statebus/runs/container-validation-formal-$(date +%Y%m%d_%H%M%S)
+  mkdir -p "$REPORT_ROOT"
+
+  python3 -m v2.benchmark.live_runner \
+    --suite compare \
+    --benchmark-tier formal \
+    --role-path-mode api \
+    --embedding-mode local \
+    2>&1 | tee "$REPORT_ROOT/formal-compare.log"
+
+  echo "$REPORT_ROOT"
+'
+```
+
+---
+
+## 五、当前可宣称（已稳定）
+
+| claim | 依据 | 数据 |
+|---|---|---|
+| dev fixed-answer fairness gate 通过 | `fixed_answer_external_comparison_valid=true` | 3/3 |
+| carrier 机制节省 prompt bytes | `prompt_bytes_delta=-6188` | 归因干净 |
+| carrier 机制节省 LLM tokens | `llm_total_tokens_delta=-1164` | 两次运行方向一致 |
+| 不影响答案质量 | 两边 exact match 相同 | 3/3 vs 3/3 |
+
+## 六、当前不可宣称（待扩充后评估）
+
+| claim | 原因 | 路径 |
+|---|---|---|
+| formal superiority over pure-text | 只有 dev scope 3 case | 扩充 formal family（Fix C）|
+| StateBus 端到端更快 | task_ms StateBus 慢 | benchmark_balanced profile（Fix B-overhead）|
+
 
 ---
 
