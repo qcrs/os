@@ -194,6 +194,66 @@ class PublicRouteCandidate:
         return "|".join(parts)
 
 
+def _visible_candidate_by_key(
+    route_candidates: tuple[PublicRouteCandidate, ...],
+) -> dict[str, PublicRouteCandidate]:
+    return {candidate.candidate_key(): candidate for candidate in route_candidates}
+
+
+def _normalize_visible_candidate_payload(
+    payload: dict[str, object],
+    route_candidates: tuple[PublicRouteCandidate, ...],
+) -> dict[str, object]:
+    candidate, reason = _resolve_visible_candidate(payload, route_candidates)
+    if candidate is None:
+        return dict(payload)
+    normalized = dict(payload)
+    normalized["route"] = candidate.route
+    normalized["tool_name"] = candidate.tool_name
+    normalized["candidate_key"] = candidate.candidate_key()
+    normalized["candidate_normalization_reason"] = reason
+    return normalized
+
+
+def _resolve_visible_candidate(
+    payload: dict[str, object],
+    route_candidates: tuple[PublicRouteCandidate, ...],
+) -> tuple[PublicRouteCandidate | None, str]:
+    by_key = _visible_candidate_by_key(route_candidates)
+    route = str(payload.get("route", "")).strip()
+    tool_name = str(payload.get("tool_name", payload.get("tool", ""))).strip()
+    candidate_key = str(payload.get("candidate_key", "")).strip()
+
+    for label, raw_value in (
+        ("candidate_key", candidate_key),
+        ("route", route),
+        ("tool_name", tool_name),
+    ):
+        candidate = by_key.get(raw_value)
+        if candidate is not None:
+            return candidate, f"{label}_contains_candidate_key"
+
+    if route and tool_name:
+        candidate = by_key.get(f"{route}::{tool_name}")
+        if candidate is not None:
+            return candidate, "route_tool_pair"
+
+    for candidate in route_candidates:
+        if route == candidate.route and (not tool_name or tool_name == candidate.tool_name):
+            return candidate, "route_name"
+
+    serialized = stable_json_dumps(payload)
+    matches = [candidate for key, candidate in by_key.items() if key in serialized]
+    if len(matches) == 1:
+        return matches[0], "payload_contains_candidate_key"
+
+    route_matches = [candidate for candidate in route_candidates if candidate.route in serialized]
+    if len(route_matches) == 1:
+        return route_matches[0], "payload_contains_route_name"
+
+    return None, ""
+
+
 @dataclass(frozen=True)
 class ExternalExecutionContext:
     request_payload: dict[str, object]
@@ -398,7 +458,8 @@ def run_external_text_case(
         llm_client.complete([ChatMessage(role="user", content=planner_prompt)], purpose="planner")
     )
     planner_latency_ms = (time.perf_counter_ns() - planner_start_ns) / 1_000_000.0
-    planner_payload = extract_json_object(planner_result.text)  # type: ignore[arg-type]
+    planner_payload_raw = extract_json_object(planner_result.text)  # type: ignore[arg-type]
+    planner_payload = _normalize_visible_candidate_payload(planner_payload_raw, context.route_candidates)
     planner_usage = _usage_from_result(prompt=planner_prompt, result=planner_result)
     planner_usage = ExternalTextRoleUsage(**{**planner_usage.__dict__, "latency_ms": planner_latency_ms})
 
@@ -408,7 +469,8 @@ def run_external_text_case(
         llm_client.complete([ChatMessage(role="user", content=retriever_prompt)], purpose="retriever")
     )
     retriever_latency_ms = (time.perf_counter_ns() - retriever_start_ns) / 1_000_000.0
-    retriever_payload = extract_json_object(retriever_result.text)  # type: ignore[arg-type]
+    retriever_payload_raw = extract_json_object(retriever_result.text)  # type: ignore[arg-type]
+    retriever_payload = _normalize_visible_candidate_payload(retriever_payload_raw, context.route_candidates)
     retriever_usage = _usage_from_result(prompt=retriever_prompt, result=retriever_result)
     retriever_usage = ExternalTextRoleUsage(**{**retriever_usage.__dict__, "latency_ms": retriever_latency_ms})
     route = str(retriever_payload.get("route", planner_payload.get("route", ""))).strip()
@@ -423,7 +485,8 @@ def run_external_text_case(
         llm_client.complete([ChatMessage(role="user", content=executor_prompt)], purpose="executor")
     )
     executor_latency_ms = (time.perf_counter_ns() - executor_start_ns) / 1_000_000.0
-    executor_payload = extract_json_object(executor_result.text)  # type: ignore[arg-type]
+    executor_payload_raw = extract_json_object(executor_result.text)  # type: ignore[arg-type]
+    executor_payload = _normalize_visible_candidate_payload(executor_payload_raw, context.route_candidates)
     executor_usage = _usage_from_result(prompt=executor_prompt, result=executor_result)
     executor_usage = ExternalTextRoleUsage(**{**executor_usage.__dict__, "latency_ms": executor_latency_ms})
     route = str(executor_payload.get("route", route)).strip()
@@ -559,6 +622,23 @@ def run_external_text_case(
             "retriever": retriever_usage.__dict__,
             "executor": executor_usage.__dict__,
             "summarizer": summarizer_usage.__dict__,
+        },
+        "role_payloads": {
+            "planner_raw": planner_payload_raw,
+            "planner": planner_payload,
+            "retriever_raw": retriever_payload_raw,
+            "retriever": retriever_payload,
+            "executor_raw": executor_payload_raw,
+            "executor": executor_payload,
+            "summarizer": summarizer_payload,
+        },
+        "candidate_resolution": {
+            "visible_candidate_keys": [candidate.candidate_key() for candidate in context.route_candidates],
+            "final_route": route,
+            "final_tool_name": tool_name,
+            "planner_candidate_key": planner_payload.get("candidate_key", ""),
+            "retriever_candidate_key": retriever_payload.get("candidate_key", ""),
+            "executor_candidate_key": executor_payload.get("candidate_key", ""),
         },
         "message_log": message_log,
         "public_doc_hashes": list(context.public_doc_hashes),

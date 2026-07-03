@@ -23,6 +23,27 @@ from v2.runtime.role_path import RolePathRunner, RoleToolCandidate
 from v2.runtime.driver import RuntimeDriverProfile
 
 
+def test_external_text_normalizes_candidate_key_route_payload() -> None:
+    from v2.benchmark.external_text_baseline import (
+        _load_execution_context,
+        _normalize_visible_candidate_payload,
+    )
+
+    sample = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))[2]
+    context = _load_execution_context(sample)
+    normalized = _normalize_visible_candidate_payload(
+        {
+            "route": "worker_queue_starvation::semantic_retriever",
+            "tool_name": "semantic_retriever",
+        },
+        context.route_candidates,
+    )
+
+    assert normalized["route"] == "worker_queue_starvation"
+    assert normalized["tool_name"] == "semantic_retriever"
+    assert normalized["candidate_key"] == "worker_queue_starvation::semantic_retriever"
+
+
 def test_fixed_answer_family_loads_samples() -> None:
     family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
     assert len(family) == 3

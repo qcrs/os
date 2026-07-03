@@ -271,6 +271,8 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                     if comparison_valid
                     else "debug_only_fairness_fail_closed"
                     if mode_payload.get("invalid_reason") == "fairness_gate_failed"
+                    else "quality_floor_failed"
+                    if mode_payload.get("invalid_reason") == "quality_floor_gate_failed"
                     else "not_formal_for_other_reason"
                 ),
             }
@@ -279,24 +281,40 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
     if invalid_modes == 0 and mode_results:
         suite_verdict = "formal_valid" if benchmark_tier == "formal" else "dev_fixed_answer_valid"
     else:
-        suite_verdict = "formal_invalid_debug_only"
+        invalid_reasons = {str(result["invalid_reason"]) for result in mode_results if result["invalid_reason"]}
+        fairness_failed = any(
+            result["invalid_reason"] == "fairness_gate_failed" or bool(result["failed_gates"])
+            for result in mode_results
+        )
+        if fairness_failed:
+            suite_verdict = "formal_invalid_debug_only"
+        elif "quality_floor_gate_failed" in invalid_reasons:
+            suite_verdict = (
+                "formal_quality_floor_invalid"
+                if benchmark_tier == "formal"
+                else "dev_fixed_answer_quality_invalid"
+            )
+        elif any(result["missing_reason"] for result in mode_results):
+            suite_verdict = "external_compare_missing"
+        else:
+            suite_verdict = "external_compare_invalid"
+    contract_problem = _fairness_contract_problem(mode_results, suite_verdict)
     return {
         "suite_id": suite_payload.get("suite_id", ""),
         "task_family": suite_payload.get("task_family", ""),
         "benchmark_tier": benchmark_tier,
         "claim_level": suite_payload.get("claim_level", ""),
         "suite_verdict": suite_verdict,
-        "contract_problem": (
-            "fairness_gate_fail_closed_blocks_formal_claim"
-            if suite_verdict == "formal_invalid_debug_only"
-            else "none"
-        ),
+        "contract_problem": contract_problem,
         "mode_results": mode_results,
         "summary": {
             "mode_count": len(mode_results),
             "valid_mode_count": sum(1 for result in mode_results if result["comparison_valid"]),
             "fairness_failed_mode_count": sum(
                 1 for result in mode_results if result["invalid_reason"] == "fairness_gate_failed"
+            ),
+            "quality_floor_failed_mode_count": sum(
+                1 for result in mode_results if result["invalid_reason"] == "quality_floor_gate_failed"
             ),
         },
         "authority_refs": [
@@ -307,6 +325,21 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
             "docs/planning/benchmark_quality_floor_contract.md:21-28",
         ],
     }
+
+
+def _fairness_contract_problem(mode_results: list[dict[str, Any]], suite_verdict: str) -> str:
+    if suite_verdict in {"formal_valid", "dev_fixed_answer_valid"}:
+        return "none"
+    if any(
+        result.get("invalid_reason") == "fairness_gate_failed" or bool(result.get("failed_gates"))
+        for result in mode_results
+    ):
+        return "fairness_gate_fail_closed_blocks_comparator_claim"
+    if any(result.get("invalid_reason") == "quality_floor_gate_failed" for result in mode_results):
+        return "quality_floor_gate_failed_blocks_comparator_claim"
+    if any(result.get("missing_reason") for result in mode_results):
+        return "missing_mode_blocks_comparator_claim"
+    return "invalid_mode_blocks_comparator_claim"
 
 
 def _external_prompt_rows(

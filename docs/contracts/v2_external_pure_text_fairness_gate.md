@@ -19,6 +19,12 @@ This fixes the previous fail-closed state where the external lane could satisfy
 the practical role/fairness contract but still reported
 `formal_comparator_eligible=false`.
 
+The external lane may normalize a role output that embeds the visible candidate
+key, for example `route="worker_queue_starvation::semantic_retriever"`, into
+the canonical pair `route="worker_queue_starvation"` and
+`tool_name="semantic_retriever"`. This is a pure output-normalization step over
+the public candidate list, not a scorer relaxation and not a StateBus helper.
+
 ## Claim Boundary
 
 Allowed claim:

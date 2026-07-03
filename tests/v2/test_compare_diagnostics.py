@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.v2_diagnostics.compare_diagnostics import build_compare_diagnostics_bundle, main as compare_diagnostics_main
+from scripts.v2_diagnostics.compare_diagnostics import (
+    _build_fairness_diagnostics,
+    build_compare_diagnostics_bundle,
+    main as compare_diagnostics_main,
+)
 from v2.benchmark.comparator_runner import compare_fixed_answer_with_external
 from v2.benchmark.fixed_answer_runner import load_fixed_answer_family, run_fixed_answer_internal_carrier_compare_suite
 
@@ -85,6 +89,51 @@ def test_compare_diagnostics_cli_analyzes_existing_report(
     assert Path(payload["bundle_dir"]) == bundle_dir
     assert Path(payload["summary_json"]).exists()
     assert Path(payload["summary_markdown"]).exists()
+
+
+def test_compare_diagnostics_distinguishes_quality_floor_failure() -> None:
+    role_counts = {
+        "planner_call_count": 1.0,
+        "retriever_call_count": 1.0,
+        "executor_call_count": 1.0,
+        "summarizer_call_count": 1.0,
+    }
+    diagnostics = _build_fairness_diagnostics(
+        {
+            "suite_id": "quality-floor-fail",
+            "task_family": "fixed_answer_route_tool",
+            "benchmark_tier": "dev",
+            "claim_level": "prototype",
+            "mode_reports": [
+                {
+                    "role_path_mode": "api",
+                    "comparison_valid": False,
+                    "invalid_reason": "quality_floor_gate_failed",
+                    "missing_reason": "",
+                    "fairness_manifest": {
+                        "same_task_family": True,
+                        "same_tier": True,
+                        "same_role_graph": True,
+                        "same_scoring_contract": True,
+                        "same_quality_floor_contract": True,
+                        "no_external_contamination": True,
+                        "external_uses_internal_helpers": False,
+                        "role_metric_presence_gate": True,
+                        "same_history_policy": True,
+                        "external_formal_eligible": True,
+                        "pass_hard_gate": True,
+                    },
+                    "statebus_report": {"telemetry_summary": role_counts},
+                    "external_report": {"telemetry_summary": role_counts},
+                }
+            ],
+        }
+    )
+
+    assert diagnostics["suite_verdict"] == "dev_fixed_answer_quality_invalid"
+    assert diagnostics["contract_problem"] == "quality_floor_gate_failed_blocks_comparator_claim"
+    assert diagnostics["mode_results"][0]["failed_gates"] == []
+    assert diagnostics["mode_results"][0]["conclusion"] == "quality_floor_failed"
 
 
 def test_compare_diagnostics_bundle_supports_internal_carrier_compare(tmp_path: Path) -> None:
