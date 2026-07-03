@@ -114,7 +114,18 @@ async def _llm_generated_source(
         if audit["pass"]:
             return source, attempts
         current_prompt = _repair_prompt(source=source, audit=audit)
-    return source, attempts
+    fallback_source = _deterministic_generated_source()
+    fallback_audit = audit_generated_source(fallback_source)
+    attempts.append(
+        _generation_attempt_payload(
+            source=fallback_source,
+            audit=fallback_audit,
+            attempt=len(attempts),
+            repair=False,
+            fallback=True,
+        )
+    )
+    return fallback_source, attempts
 
 
 def _generation_attempt_payload(
@@ -123,10 +134,12 @@ def _generation_attempt_payload(
     audit: dict[str, object],
     attempt: int,
     repair: bool,
+    fallback: bool = False,
 ) -> dict[str, object]:
     return {
         "attempt": attempt,
         "repair": repair,
+        "fallback": fallback,
         "source_hash": sha256_digest(source.encode("utf-8")),
         "ast_policy_pass": bool(audit["pass"]),
         "violations": list(audit.get("violations", [])),
@@ -210,9 +223,9 @@ def audit_generated_source(source: str) -> dict[str, object]:
                 violations.append(f"forbidden_import_from:{node.module}")
         elif isinstance(node, ast.Call):
             call_name = _call_name(node.func)
-            if call_name.endswith(".write_text") or call_name == "json.dump":
+            if call_name == "write_text" or call_name.endswith(".write_text") or call_name == "json.dump":
                 has_output_write_call = True
-            if call_name in FORBIDDEN_CALLS:
+            if call_name in FORBIDDEN_CALLS or call_name.endswith(".open"):
                 violations.append(f"forbidden_call:{call_name}")
             root_name = call_name.split(".", 1)[0]
             if root_name in FORBIDDEN_NAME_ROOTS:
@@ -328,17 +341,24 @@ def build_bounded_llm_codeact_demo_bundle(
     output_payload: dict[str, object] = {}
     if output_path.exists():
         output_payload = json.loads(output_path.read_text(encoding="utf-8"))
+    fallback_used = any(bool(attempt.get("fallback")) for attempt in generation_attempts)
+    generated_by = "deterministic_template"
+    if role_path_mode == "api":
+        generated_by = "deterministic_policy_fallback_after_llm_api" if fallback_used else "llm_api"
     summary = {
         "schema_version": SCHEMA_VERSION,
         "ok": bool(ast_audit["pass"]) and int(sandbox_payload["returncode"]) == 0 and bool(output_payload),
         "bundle_dir": str(bundle_dir),
         "workspace_root": str(workspace_root),
         "role_path_mode": role_path_mode,
-        "generated_by": "llm_api" if role_path_mode == "api" else "deterministic_template",
+        "generated_by": generated_by,
         "generated_source_path": str(generated_path),
         "generated_source_hash": sha256_digest(source.encode("utf-8")),
         "generation_attempt_count": len(generation_attempts),
-        "generation_repair_attempt_count": max(len(generation_attempts) - 1, 0),
+        "generation_repair_attempt_count": sum(
+            1 for attempt in generation_attempts if bool(attempt.get("repair")) and not bool(attempt.get("fallback"))
+        ),
+        "generation_fallback_used": fallback_used,
         "generation_attempts_path": str(generation_attempts_path),
         "ast_audit_path": str(ast_audit_path),
         "ast_policy_pass": bool(ast_audit["pass"]),
@@ -365,6 +385,7 @@ def _summary_markdown(summary: dict[str, object], ast_audit: dict[str, object]) 
             f"- generated_source_hash: `{summary['generated_source_hash']}`",
             f"- generation_attempt_count: `{summary['generation_attempt_count']}`",
             f"- generation_repair_attempt_count: `{summary['generation_repair_attempt_count']}`",
+            f"- generation_fallback_used: `{summary['generation_fallback_used']}`",
             f"- ast_policy_pass: `{summary['ast_policy_pass']}`",
             f"- sandbox_backend: `{summary['sandbox_backend']}`",
             f"- output_path: `{summary['output_path']}`",
