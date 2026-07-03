@@ -65,12 +65,12 @@ class MemoryIndexStore:
     ) -> MemoryCommit:
         status = MemoryCommitStatus.COMMITTED if quality_floor_pass and answer_adopted else MemoryCommitStatus.CANDIDATE
         validation_status = MemoryValidationStatus.PASSED if quality_floor_pass else MemoryValidationStatus.FAILED
-        replay_class = commit.memory_ref.replay_class
-        if status != MemoryCommitStatus.COMMITTED and replay_class != ReplayClass.ASSIST:
-            replay_class = ReplayClass.ASSIST
+        # replay_class is preserved regardless of commit status.
+        # CANDIDATE entries are served as ASSIST by lookup() at match time,
+        # but the stored class must not be permanently downgraded so that
+        # Round N+1 intra-session lookups can still see the original intent.
         committed_ref = replace(
             commit.memory_ref,
-            replay_class=replay_class,
             commit_status=status,
             validation_status=validation_status,
             answer_adopted=answer_adopted,
@@ -113,8 +113,9 @@ class MemoryIndexStore:
                 continue
             if ref.embedding_ref_id not in self.embeddings:
                 continue
-            if ref.commit_status != MemoryCommitStatus.COMMITTED and ref.replay_class != ReplayClass.ASSIST:
-                continue
+            # CANDIDATE entries are allowed into the candidate pool so that
+            # intra-session Round N+1 can find what Round N wrote.
+            # Their replay_class is clamped to ASSIST at lines 123-124 below.
             candidate_memory_ids.append(ref.memory_id)
             candidate_types.append(ref.memory_type.value)
             candidate_taxonomy[ref.memory_type.value] = candidate_taxonomy.get(ref.memory_type.value, 0) + 1
@@ -177,6 +178,56 @@ class MemoryIndexStore:
         for payload in self._read_registry(self.commit_registry_path).values():
             commit = self._commit_from_payload(payload)
             self.commits[commit.memory_ref.memory_id] = commit
+
+    def lookup_by_keyword(self, keyword: str, *, limit: int = 3) -> list[MemoryCommit]:
+        """Keyword search over summary, task_theme, and source_task_id fields.
+
+        Excludes INVALIDATED entries. Results are sorted by recency
+        (created_at_ns descending).
+        """
+        needle = keyword.strip().lower()
+        if not needle:
+            return []
+        hits: list[MemoryCommit] = []
+        for commit in self.commits.values():
+            ref = commit.memory_ref
+            if ref.commit_status == MemoryCommitStatus.INVALIDATED:
+                continue
+            haystack = f"{ref.summary} {ref.task_theme} {ref.source_task_id}".lower()
+            if needle in haystack:
+                hits.append(commit)
+        hits.sort(key=lambda c: -c.memory_ref.created_at_ns)
+        return hits[:limit]
+
+    def lookup_by_tags(
+        self,
+        tags: set[str],
+        *,
+        require_all: bool = False,
+        limit: int = 3,
+    ) -> list[MemoryCommit]:
+        """Tag-based retrieval.
+
+        require_all=True requires every query tag to appear on the entry.
+        Results sorted by overlap count (desc) then recency (desc).
+        Excludes INVALIDATED entries.
+        """
+        if not tags:
+            return []
+        hits: list[tuple[int, int, MemoryCommit]] = []
+        for commit in self.commits.values():
+            ref = commit.memory_ref
+            if ref.commit_status == MemoryCommitStatus.INVALIDATED:
+                continue
+            ref_tags = set(ref.tags)
+            overlap = len(tags & ref_tags)
+            if require_all and overlap < len(tags):
+                continue
+            if overlap == 0:
+                continue
+            hits.append((overlap, ref.created_at_ns, commit))
+        hits.sort(key=lambda item: (-item[0], -item[1]))
+        return [commit for _, _, commit in hits[:limit]]
 
     def list_commits(self) -> tuple[MemoryCommit, ...]:
         return tuple(sorted(self.commits.values(), key=lambda commit: commit.memory_ref.memory_id))

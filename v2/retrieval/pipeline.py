@@ -5,6 +5,7 @@ from pathlib import Path
 
 from v2.contracts import CanonicalTaskSpec
 from v2.memory import DeterministicEmbeddingEncoder, EmbeddingEncoder, build_embedding_encoder
+from v2.memory.embedding import cosine_similarity as _cosine_sim
 from v2.provenance import DeterministicFanInBuilder, EvidenceCandidate
 from v2.refs import CanonicalEvidencePack, HydrateManifest, HydrateManifestEntry
 from v2.retrieval.corpus import (
@@ -74,7 +75,7 @@ class LexicalMetadataRetriever:
 @dataclass(frozen=True)
 class SemanticChunkRetriever:
     encoder: EmbeddingEncoder = field(default_factory=lambda: DeterministicEmbeddingEncoder(dims=16))
-    top_k: int = 1
+    top_k: int = 1  # increase via SemanticChunkRetriever(top_k=3) for richer evidence
 
     def retrieve(self, *, spec: CanonicalTaskSpec, document: FinancialReportDocument | CsvTableDocument) -> RetrieverOutput:
         doc_identity = getattr(document, "ticker", getattr(document, "dataset_id", "dataset"))
@@ -94,7 +95,7 @@ class SemanticChunkRetriever:
                 embedding_id=f"embedding-fragment-{fragment.fragment_id}-{str(doc_scope).lower()}",
                 text=fragment.text,
             )
-            score = sum(left * right for left, right in zip(query_embedding.vector, fragment_embedding.vector))
+            score = _cosine_sim(query_embedding, fragment_embedding)
             scored.append((score, fragment))
         scored.sort(key=lambda item: (-item[0], item[1].fragment_id))
         selected = tuple(
@@ -153,7 +154,7 @@ class TableStructureRetriever:
                 rank=index + 1,
                 metadata={"metric_name": row.metric_name, "value": row.value},
             )
-            for index, row in enumerate(rows[:1])
+            for index, row in enumerate(rows[:1])  # increase limit for richer fact coverage
         )
         return RetrieverOutput(
             retriever_kind=RetrieverKind.TABLE_STRUCTURE,
