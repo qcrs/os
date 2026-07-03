@@ -377,14 +377,20 @@ def run_fixed_answer_external_comparator_suite(
         mode_reports=tuple(mode_reports),
         comparison_summary=comparison_summary,
         metadata={
-            "formal_headline_eligible": bool(mode_reports) and all(report.eligible_for_headline for report in mode_reports),
+            "formal_headline_eligible": bool(mode_reports)
+            and benchmark_tier == "formal"
+            and all(report.eligible_for_headline for report in mode_reports),
             "claim_restriction": (
                 "external_compare_debug_only_until_four_role_fairness_gate_passes"
                 if any(not report.comparison_valid for report in mode_reports)
-                else "fairness_gate_passed"
+                else "dev_fixed_answer_external_fairness_gate_passed_not_formal_superiority"
             ),
+            "external_comparator_claim_scope": "dev_fixed_answer_only",
             "formal_superiority_claim_allowed": bool(mode_reports)
+            and benchmark_tier == "formal"
             and all(report.eligible_for_headline for report in mode_reports),
+            "fixed_answer_external_comparison_valid": bool(mode_reports)
+            and all(report.comparison_valid for report in mode_reports),
         },
         benchmark_tier=benchmark_tier,
         claim_level=claim_level,

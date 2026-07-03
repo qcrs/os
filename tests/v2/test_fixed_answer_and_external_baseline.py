@@ -355,8 +355,12 @@ def test_external_text_family_runs(tmp_path: Path) -> None:
     assert report.telemetry_summary["prompt_bytes"] > 0.0
     assert report.telemetry_summary["end_to_end_ms"] >= report.telemetry_summary["llm_ms"] >= 0.0
     assert report.metadata["baseline_kind"] == "external_pure_text_four_role"
-    assert report.metadata["formal_comparator_eligible"] is False
-    assert report.metadata["claim_restriction"] == "dev_fixed_answer_debug_compare_only_not_formal"
+    assert report.metadata["formal_comparator_eligible"] is True
+    assert report.metadata["external_comparator_claim_scope"] == "dev_fixed_answer_only"
+    assert (
+        report.metadata["claim_restriction"]
+        == "dev_fixed_answer_external_fairness_only_not_formal_financial_superiority"
+    )
 
 
 def test_external_text_case_end_to_end_ms_includes_prep_stage(
@@ -398,26 +402,29 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     mode_report = report.mode_reports[0]
     assert mode_report.role_path_mode == "deterministic"
     assert mode_report.missing_reason == ""
-    assert mode_report.comparison_valid is False
-    assert mode_report.invalid_reason == "fairness_gate_failed"
-    assert mode_report.headline_metrics == {}
+    assert mode_report.comparison_valid is True
+    assert mode_report.invalid_reason == ""
+    assert "llm_total_tokens_delta" in mode_report.headline_metrics
+    assert "prompt_bytes_delta" in mode_report.headline_metrics
     assert "exact_match_delta" in mode_report.debug_metrics
     assert "end_to_end_ms_delta" in mode_report.debug_metrics
     assert "llm_ms_delta" in mode_report.debug_metrics
     assert "prompt_bytes_delta" in mode_report.debug_metrics
     assert "llm_call_count_delta" in mode_report.debug_metrics
-    assert mode_report.fairness_manifest["external_formal_eligible"] is False
+    assert mode_report.fairness_manifest["external_formal_eligible"] is True
+    assert mode_report.fairness_manifest["pass_hard_gate"] is True
     assert Path(mode_report.report_path).exists()
     assert Path(mode_report.markdown_report_path).exists()
     payload = json.loads(Path(report.report_path).read_text(encoding="utf-8"))
     assert payload["metadata"]["formal_headline_eligible"] is False
     assert payload["metadata"]["formal_superiority_claim_allowed"] is False
+    assert payload["metadata"]["fixed_answer_external_comparison_valid"] is True
     assert (
         payload["metadata"]["claim_restriction"]
-        == "external_compare_debug_only_until_four_role_fairness_gate_passes"
+        == "dev_fixed_answer_external_fairness_gate_passed_not_formal_superiority"
     )
     assert payload["mode_reports"][0]["role_path_mode"] == "deterministic"
-    assert payload["mode_reports"][0]["comparison_valid"] is False
+    assert payload["mode_reports"][0]["comparison_valid"] is True
     assert "deterministic_debug_exact_match_delta" in payload["comparison_summary"]
 
 
@@ -438,8 +445,8 @@ def test_fixed_answer_external_comparator_suite_runs_in_cold_start_mode(tmp_path
     assert mode_report.statebus_report.replay_class_distribution["disallowed"] == 3.0
     assert mode_report.statebus_report.telemetry_summary["artifact_reuse_count"] == 0.0
     assert mode_report.statebus_report.telemetry_summary["codeact_plan_stage_count"] > 0.0
-    assert mode_report.comparison_valid is False
-    assert mode_report.invalid_reason == "fairness_gate_failed"
+    assert mode_report.comparison_valid is True
+    assert mode_report.invalid_reason == ""
     assert mode_report.debug_metrics["statebus_exact_match_count"] == 3.0
     assert mode_report.debug_metrics["exact_match_delta"] >= 0.0
     assert mode_report.debug_metrics["llm_call_count_delta"] == 0.0
