@@ -19,6 +19,17 @@ def test_bounded_codeact_ast_policy_rejects_forbidden_call() -> None:
     assert "forbidden_import:subprocess" in audit["violations"]
 
 
+def test_bounded_codeact_ast_policy_rejects_path_open_call() -> None:
+    audit = audit_generated_source(
+        "from pathlib import Path\n"
+        "import json\n"
+        "payload = json.loads((Path('inputs') / 'task.json').open().read())\n"
+        "(Path('outputs') / 'bounded_codeact_result.json').write_text(json.dumps(payload))\n"
+    )
+    assert audit["pass"] is False
+    assert "forbidden_call:open" in audit["violations"]
+
+
 def test_bounded_codeact_ast_policy_rejects_inert_json_wrapper() -> None:
     audit = audit_generated_source(json.dumps({"code": _deterministic_generated_source()}))
     assert audit["pass"] is False
@@ -90,3 +101,24 @@ def test_bounded_codeact_api_generation_unwraps_repaired_json_code(monkeypatch) 
     assert audit_generated_source(source)["pass"] is True
     assert len(attempts) == 1
     assert attempts[0]["ast_policy_pass"] is True
+
+
+def test_bounded_codeact_api_generation_falls_back_after_policy_failures(monkeypatch) -> None:
+    class StubClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, purpose, temperature
+            return type("Result", (), {"text": "result = {}\n"})()
+
+    monkeypatch.setattr(
+        "scripts.v2_diagnostics.bounded_llm_codeact_demo.build_llm_client",
+        lambda config: StubClient(),
+    )
+    source, attempts = asyncio.run(_llm_generated_source(role_path_mode="api", max_repair_attempts=1))
+
+    assert source == _deterministic_generated_source()
+    assert audit_generated_source(source)["pass"] is True
+    assert len(attempts) == 3
+    assert attempts[0]["ast_policy_pass"] is False
+    assert attempts[1]["ast_policy_pass"] is False
+    assert attempts[2]["fallback"] is True
+    assert attempts[2]["ast_policy_pass"] is True
