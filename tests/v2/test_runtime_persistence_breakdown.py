@@ -33,6 +33,12 @@ def test_runtime_persistence_breakdown_bundle_writes_summary_and_csv(tmp_path: P
     assert summary["persist"]["persist_and_reload_stage_ms"] >= 0.0
     assert summary["sidecar_totals"]
     assert summary["top_sidecars"]
+    assert [profile["profile"] for profile in summary["persistence_profiles"]] == [
+        "audit_full",
+        "benchmark_balanced",
+        "fast_runtime",
+    ]
+    assert summary["persistence_profiles"][0]["included_size_ratio"] >= summary["persistence_profiles"][-1]["included_size_ratio"]
     assert (bundle_dir / "summary.md").exists()
     assert (bundle_dir / "file_sizes.csv").exists()
     assert (bundle_dir / "sidecar_sizes.csv").exists()
