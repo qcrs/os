@@ -340,7 +340,7 @@ def main() -> None:
             role_path_modes=(args.role_path_mode,),
             embedding_mode=args.embedding_mode,
             statebus_mode=args.statebus_mode,
-            benchmark_tier="dev",
+            benchmark_tier=args.benchmark_tier,
             claim_level="prototype",
         )
         print(stable_json_dumps(report.canonical_payload()))
@@ -356,7 +356,7 @@ def main() -> None:
         embedding_mode=args.embedding_mode,
         statebus_mode=args.statebus_mode,
         seed_replay_memory=args.seed_replay_memory,
-        benchmark_tier="dev",
+        benchmark_tier=args.benchmark_tier,
         claim_level="prototype",
     )
     print(stable_json_dumps(report.canonical_payload()))

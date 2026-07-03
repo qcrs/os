@@ -263,6 +263,35 @@ def _build_suite_markdown(report: BenchmarkComparatorSuiteReport) -> str:
     )
 
 
+def _quality_floor_equal_across_modes(
+    mode_reports: list[BenchmarkComparatorModeReport],
+) -> bool:
+    """True when StateBus and external both pass all quality_floor cases in every mode."""
+    for r in mode_reports:
+        n = r.debug_metrics.get("case_count", 0.0)
+        if n == 0.0:
+            return False
+        sb = r.debug_metrics.get("statebus_quality_floor_pass_count", 0.0)
+        ex = r.debug_metrics.get("external_quality_floor_pass_count", 0.0)
+        if not (sb == ex == n):
+            return False
+    return True
+
+
+def _efficiency_superior_across_modes(
+    mode_reports: list[BenchmarkComparatorModeReport],
+) -> bool:
+    """True when StateBus uses fewer LLM tokens AND fewer prompt bytes in every mode."""
+    for r in mode_reports:
+        if not r.debug_metrics:
+            return False
+        if r.debug_metrics.get("llm_total_tokens_delta", 0.0) >= 0.0:
+            return False
+        if r.debug_metrics.get("prompt_bytes_delta", 0.0) >= 0.0:
+            return False
+    return bool(mode_reports)
+
+
 def run_fixed_answer_external_comparator_suite(
     *,
     samples: list[FixedAnswerSample],
@@ -392,12 +421,31 @@ def run_fixed_answer_external_comparator_suite(
             "claim_restriction": (
                 "external_compare_debug_only_until_four_role_fairness_gate_passes"
                 if any(not report.comparison_valid for report in mode_reports)
+                else "formal_efficiency_superiority_with_equal_quality"
+                if benchmark_tier == "formal"
+                and _quality_floor_equal_across_modes(mode_reports)
+                and _efficiency_superior_across_modes(mode_reports)
                 else "dev_fixed_answer_external_fairness_gate_passed_not_formal_superiority"
             ),
-            "external_comparator_claim_scope": "dev_fixed_answer_only",
+            "external_comparator_claim_scope": (
+                "formal_financial_family"
+                if benchmark_tier == "formal"
+                else "dev_fixed_answer_only"
+            ),
+            # Allowed when: formal tier + all modes have headline quality
+            # + (StateBus strictly better quality OR equal quality with efficiency gain).
             "formal_superiority_claim_allowed": bool(mode_reports)
             and benchmark_tier == "formal"
-            and all(report.eligible_for_headline for report in mode_reports),
+            and all(report.eligible_for_headline for report in mode_reports)
+            and (
+                # Quality superiority
+                any(r.debug_metrics.get("quality_floor_pass_delta", 0.0) > 0.0 for r in mode_reports)
+                # OR: quality equal AND efficiency advantage (fewer tokens + fewer prompt bytes)
+                or (
+                    _quality_floor_equal_across_modes(mode_reports)
+                    and _efficiency_superior_across_modes(mode_reports)
+                )
+            ),
             "fixed_answer_external_comparison_valid": bool(mode_reports)
             and all(report.comparison_valid for report in mode_reports),
         },
