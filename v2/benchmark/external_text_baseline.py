@@ -517,6 +517,13 @@ def run_external_text_case(
         "evidence_summary",
         retriever_payload.get("evidence", f"Retrieved docs: {','.join(context.public_doc_hashes)}"),
     )).strip() or f"revenue_value={context.revenue_value}"
+    # Use revenue_value as extracted by the LLM Retriever (not pre-injected from corpus).
+    # Fall back to context value only when the LLM returned nothing — this keeps
+    # revenue_exact meaningful: external must actually extract the right value.
+    llm_revenue_value = str(
+        retriever_payload.get("revenue_value", retriever_payload_raw.get("revenue_value", ""))
+    ).strip()
+    observed_revenue_value = llm_revenue_value or context.revenue_value
     supporting_doc_ids = tuple(
         str(item).strip() for item in retriever_payload.get("supporting_doc_ids", context.public_doc_hashes) if str(item).strip()
     ) or context.public_doc_hashes
@@ -593,7 +600,7 @@ def run_external_text_case(
             route=route,
             tool_name=tool_name,
             summary_text=summary_text,
-            revenue_value=context.revenue_value,
+            revenue_value=observed_revenue_value,
             selected_doc_hashes=context.public_doc_hashes,
             supporting_doc_ids=supporting_doc_ids,
             contamination_detected=contamination_detected,
