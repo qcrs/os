@@ -111,8 +111,13 @@ def _fairness_gate(
     *,
     route_candidates: tuple[PublicRouteCandidate, ...],
     planner_payload: dict[str, object] | None = None,
+    planner_payload_raw: dict[str, object] | None = None,
     retriever_payload: dict[str, object] | None = None,
+    retriever_payload_raw: dict[str, object] | None = None,
     executor_payload: dict[str, object] | None = None,
+    executor_payload_raw: dict[str, object] | None = None,
+    summarizer_payload: dict[str, object] | None = None,
+    combined_surface: str = "",
 ) -> dict[str, object]:
     visible_candidate_keys = tuple(candidate.candidate_key() for candidate in route_candidates)
 
@@ -125,12 +130,29 @@ def _fairness_gate(
             return False
         return f"{route}::{tool_name}" in visible_candidate_keys
 
+    # Dynamic check: no StateBus typed-state terms in combined prompts/outputs
+    no_typed_state_used = not _contains_forbidden_terms(combined_surface)
+
+    # Dynamic check: oracle fields must not appear in any role payload or combined surface
+    _ORACLE_FIELDS = {"expected_route", "expected_tool_name", "expected_facts", "oracle_answer", "correctness_hint"}
+    no_metadata_leakage = not any(f in combined_surface for f in _ORACLE_FIELDS)
+
+    # Dynamic check: all 4 LLM outputs are non-empty dicts (no silently empty role)
+    llm_only_decisions = all(
+        isinstance(p, dict) and len(p) > 0
+        for p in [planner_payload_raw, retriever_payload_raw, executor_payload_raw, summarizer_payload]
+        if p is not None
+    )
+
     checks = {
+        # Code-structure guarantees (external_text_baseline.py never imports StateBus runtime)
         "no_statebus_imports": True,
-        "no_typed_state_used": True,
-        "no_metadata_leakage": True,
         "no_lexical_fallback": True,
-        "llm_only_decisions": True,
+        # Dynamic runtime checks
+        "no_typed_state_used": no_typed_state_used,
+        "no_metadata_leakage": no_metadata_leakage,
+        "llm_only_decisions": llm_only_decisions,
+        # Per-role visible-candidate checks
         "planner_visible_choice_only": _visible_choice_only(planner_payload),
         "retriever_visible_choice_only": _visible_choice_only(retriever_payload),
         "executor_visible_choice_only": _visible_choice_only(executor_payload),
@@ -323,21 +345,25 @@ def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionConte
 
 
 def _planner_prompt(*, sample: FixedAnswerSample, context: ExternalExecutionContext) -> str:
+    # Planner does NOT receive the full corpus — same as StateBus Planner.
+    # Its job is to select route/tool and define a retrieval_objective.
+    # The Retriever will fetch actual evidence based on this objective.
     visible_candidates = "; ".join(candidate.candidate_key() for candidate in context.route_candidates)
     candidate_notes = "; ".join(candidate.note_payload() for candidate in context.route_candidates)
     return (
         "You are an external pure-text planner.\n"
-        "Return JSON with route and tool_name only from the visible route/tool candidates.\n\n"
+        "Select the best route and tool from the visible candidates based on the task query.\n"
+        "Also provide a retrieval_objective describing what evidence the retriever should find.\n"
+        # NOTE: the exact phrase "Return JSON with route and tool_name" is kept so the
+        # deterministic LLM client can route this prompt to the correct mock handler.
+        "Return JSON with route and tool_name and retrieval_objective. No markdown.\n\n"
         f"Task ID: {sample.task_id}\n"
         "Task theme: fixed_answer_route_tool\n"
         "Task query:\n"
         f"{stable_json_dumps(context.request_payload)}\n\n"
         "Visible route/tool candidates:\n"
         f"{visible_candidates}\n"
-        f"Candidate notes: {candidate_notes}\n\n"
-        "Evidence text:\n"
-        f"{context.public_evidence_text}\n\n"
-        "Return JSON with route and tool_name and no markdown.\n"
+        f"Candidate notes: {candidate_notes}\n"
     )
 
 
@@ -347,13 +373,18 @@ def _retriever_prompt(
     context: ExternalExecutionContext,
     planner_payload: dict[str, object],
 ) -> str:
+    # Retriever is the ONLY role that sees the full corpus.
+    # It selects evidence and writes a compact evidence_summary for downstream roles.
+    # NOTE: keeps label format expected by DeterministicLLMClient (Query:, Visible candidates:, etc.)
     visible_candidates = "; ".join(candidate.candidate_key() for candidate in context.route_candidates)
     candidate_notes = "; ".join(candidate.note_payload() for candidate in context.route_candidates)
+    retrieval_objective = str(planner_payload.get("retrieval_objective", sample.request_text)).strip()
     return (
         "You are an external pure-text retriever.\n"
-        "Select exactly one visible route/tool candidate and return JSON.\n\n"
+        "Read the corpus evidence. Select the most relevant facts.\n"
+        "Return JSON with: route, tool_name, evidence_summary (2-3 sentences), revenue_value, selected_doc_hashes.\n\n"
         f"Task ID: {sample.task_id}\n"
-        f"Query: {sample.request_text}\n"
+        f"Query: {retrieval_objective}\n"
         f"Retrieved docs: {','.join(context.public_doc_hashes)}\n"
         f"Planner proposal: {stable_json_dumps(planner_payload)}\n"
         f"Visible candidates: {visible_candidates}\n"
@@ -369,12 +400,15 @@ def _executor_prompt(
     context: ExternalExecutionContext,
     route: str,
     tool_name: str,
+    evidence_summary: str,
 ) -> str:
+    # Executor only sees the retriever's evidence_summary — not the full corpus.
+    # Keeps labels required by DeterministicLLMClient parser.
     visible_candidates = "; ".join(candidate.candidate_key() for candidate in context.route_candidates)
     candidate_notes = "; ".join(candidate.note_payload() for candidate in context.route_candidates)
     return (
         "You are an external pure-text executor.\n"
-        "Validate the chosen route/tool within the visible candidate set and return JSON.\n\n"
+        "Validate the chosen route/tool and return JSON with route, tool_name, action_result.\n\n"
         f"Task ID: {sample.task_id}\n"
         f"Route: {route}\n"
         f"Tool: {tool_name}\n"
@@ -384,7 +418,7 @@ def _executor_prompt(
         f"Visible candidates: {visible_candidates}\n"
         f"Candidate notes: {candidate_notes}\n\n"
         "Evidence note:\n"
-        f"{context.public_evidence_text}\n"
+        f"{evidence_summary}\n"
     )
 
 
@@ -395,7 +429,10 @@ def _summarizer_prompt(
     route: str,
     tool_name: str,
     execution_artifact_text: str,
+    evidence_summary: str,
 ) -> str:
+    # Summarizer only sees the evidence_summary from retriever + executor artifact.
+    # Keeps labels required by DeterministicLLMClient parser.
     return (
         "You are an external pure-text summarizer.\n"
         "Return JSON with summary only.\n\n"
@@ -406,7 +443,7 @@ def _summarizer_prompt(
         "Summary hint:\n"
         f"{sample.summary_hint}\n\n"
         "Evidence note:\n"
-        f"{context.public_evidence_text}\n\n"
+        f"{evidence_summary}\n\n"
         "Playbook actions:\n"
         f"route={route}\n"
         f"tool={tool_name}\n"
@@ -475,11 +512,19 @@ def run_external_text_case(
     retriever_usage = ExternalTextRoleUsage(**{**retriever_usage.__dict__, "latency_ms": retriever_latency_ms})
     route = str(retriever_payload.get("route", planner_payload.get("route", ""))).strip()
     tool_name = str(retriever_payload.get("tool_name", planner_payload.get("tool_name", ""))).strip()
+    # Extract evidence_summary written by Retriever; fall back to a minimal summary if absent.
+    evidence_summary = str(retriever_payload.get(
+        "evidence_summary",
+        retriever_payload.get("evidence", f"Retrieved docs: {','.join(context.public_doc_hashes)}"),
+    )).strip() or f"revenue_value={context.revenue_value}"
     supporting_doc_ids = tuple(
         str(item).strip() for item in retriever_payload.get("supporting_doc_ids", context.public_doc_hashes) if str(item).strip()
     ) or context.public_doc_hashes
 
-    executor_prompt = _executor_prompt(sample=sample, context=context, route=route, tool_name=tool_name)
+    executor_prompt = _executor_prompt(
+        sample=sample, context=context, route=route, tool_name=tool_name,
+        evidence_summary=evidence_summary,
+    )
     executor_start_ns = time.perf_counter_ns()
     executor_result = _run_sync(
         llm_client.complete([ChatMessage(role="user", content=executor_prompt)], purpose="executor")
@@ -491,12 +536,6 @@ def run_external_text_case(
     executor_usage = ExternalTextRoleUsage(**{**executor_usage.__dict__, "latency_ms": executor_latency_ms})
     route = str(executor_payload.get("route", route)).strip()
     tool_name = str(executor_payload.get("tool_name", tool_name)).strip()
-    fairness_gate = _fairness_gate(
-        route_candidates=context.route_candidates,
-        planner_payload=planner_payload,
-        retriever_payload=retriever_payload,
-        executor_payload=executor_payload,
-    )
 
     execution_artifact_text = _build_execution_artifact_text(context=context, route=route, tool_name=tool_name)
     summarizer_prompt = _summarizer_prompt(
@@ -505,6 +544,7 @@ def run_external_text_case(
         route=route,
         tool_name=tool_name,
         execution_artifact_text=execution_artifact_text,
+        evidence_summary=evidence_summary,
     )
     summarizer_start_ns = time.perf_counter_ns()
     summarizer_result = _run_sync(
@@ -534,6 +574,19 @@ def run_external_text_case(
         + [planner_prompt, retriever_prompt, executor_prompt, summarizer_prompt, summary_text, execution_artifact_text]
     )
     contamination_detected = _contains_forbidden_terms(combined_surface)
+    # Fairness gate is evaluated here — after all 4 roles have executed —
+    # so llm_only_decisions can check all raw payloads including summarizer.
+    fairness_gate = _fairness_gate(
+        route_candidates=context.route_candidates,
+        planner_payload=planner_payload,
+        planner_payload_raw=planner_payload_raw,
+        retriever_payload=retriever_payload,
+        retriever_payload_raw=retriever_payload_raw,
+        executor_payload=executor_payload,
+        executor_payload_raw=executor_payload_raw,
+        summarizer_payload=summarizer_payload,
+        combined_surface=combined_surface,
+    )
     shared_score = score_fixed_answer_case(
         observed=FixedAnswerLaneResult(
             task_id=sample.task_id,
