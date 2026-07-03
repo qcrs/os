@@ -174,10 +174,11 @@ def pure_text_external_metadata(
     *,
     role_path_mode: str,
     embedding_mode: str,
+    benchmark_tier: str = "dev",
 ) -> dict[str, object]:
     return {
         "baseline_kind": "external_pure_text_four_role",
-        "benchmark_tier": "dev",
+        "benchmark_tier": benchmark_tier,
         "carrier_kind": "pure_text",
         "claim_level": "prototype",
         "embedding_mode": embedding_mode,
@@ -186,10 +187,10 @@ def pure_text_external_metadata(
         "role_graph": "planner->retriever->executor->summarizer",
         "role_path_mode": role_path_mode,
         "scoring_contract": "fixed_answer_shared_case_scorer_v1",
-        "task_family_tier": "dev_fixed_answer",
+        "task_family_tier": "formal_financial_family" if benchmark_tier == "formal" else "dev_fixed_answer",
         "uses_internal_helpers": False,
         "claim_restriction": "dev_fixed_answer_external_fairness_only_not_formal_financial_superiority",
-        "external_comparator_claim_scope": "dev_fixed_answer_only",
+        "external_comparator_claim_scope": "formal_financial_family" if benchmark_tier == "formal" else "dev_fixed_answer_only",
     }
 
 
@@ -746,12 +747,14 @@ def run_external_text_family(
     role_path_mode: str = "deterministic",
     suite_id: str = "external-pure-text-family",
     embedding_mode: str = "deterministic",
+    benchmark_tier: str = "dev",
 ) -> BenchmarkFamilyReport:
     task_family = samples[0].task_family if samples else "fixed_answer_route_tool"
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}.json"
     metadata = pure_text_external_metadata(
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        benchmark_tier=benchmark_tier,
     )
     missing_reason = benchmark_runtime_missing_reason(
         role_path_mode=role_path_mode,
