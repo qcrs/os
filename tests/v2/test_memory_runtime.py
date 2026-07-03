@@ -125,8 +125,10 @@ def test_memory_index_store_persists_embedding_and_commit_registry(tmp_path: Pat
     assert restored_ref.producer_run_id == "trace-test"
 
     registry_payload = json.loads((tmp_path / "memory-index" / "commit_registry.json").read_text(encoding="utf-8"))
+    assert registry_payload["memory-1"]["schema_version"] == "statebus.memory_commit.v2"
     memory_payload = registry_payload["memory-1"]["memory_ref"]
     assert memory_payload["memory_id"] == "memory-1"
+    assert memory_payload["schema_version"] == "statebus.memory_ref.v2"
     assert memory_payload["source_agent"] == "summarizer"
     assert memory_payload["created_at_ns"] == 123456789
     assert memory_payload["task_theme"] == "financial_report_analysis"

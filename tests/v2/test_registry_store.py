@@ -317,6 +317,8 @@ def test_json_contract_store_persists_memory_sidecars(tmp_path: Path) -> None:
     assert reloaded_commit.memory_ref.source_role_path == ("planner", "retriever", "executor", "summarizer")
     assert reloaded_commit.memory_ref.producer_run_id == "trace-test"
     memory_commit_payload = json.loads(commit_path.read_text(encoding="utf-8"))
+    assert memory_commit_payload["schema_version"] == "statebus.memory_commit.v2"
+    assert memory_commit_payload["memory_ref"]["schema_version"] == "statebus.memory_ref.v2"
     assert memory_commit_payload["memory_ref"]["source_agent"] == "summarizer"
     assert memory_commit_payload["memory_ref"]["created_at_ns"] == 123456789
     assert memory_commit_payload["memory_ref"]["task_theme"] == "financial_report_analysis"
