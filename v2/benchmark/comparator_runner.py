@@ -332,6 +332,7 @@ def run_fixed_answer_external_comparator_suite(
             role_path_mode=role_path_mode,
             suite_id=f"{suite_id}-external-{role_path_mode}",
             embedding_mode=embedding_mode,
+            benchmark_tier=benchmark_tier,
         )
         mode_missing_reason = statebus_report.missing_reason or external_report.missing_reason
         fairness_manifest = _fairness_manifest(
