@@ -366,11 +366,14 @@ def _external_prompt_rows(
         )
         planner_prompt = _planner_prompt(sample=sample, context=context)
         retriever_prompt = _retriever_prompt(sample=sample, context=context, planner_payload=planner_payload)
+        # Use a compact evidence_summary for executor/summarizer (they don't see full corpus).
+        _evidence_summary = f"Evidence for {sample.task_id}: revenue={context.revenue_value} docs={','.join(context.public_doc_hashes)}"
         executor_prompt = _executor_prompt(
             sample=sample,
             context=context,
             route=sample.expected_route,
             tool_name=sample.expected_tool_name,
+            evidence_summary=_evidence_summary,
         )
         summarizer_prompt = _summarizer_prompt(
             sample=sample,
@@ -378,6 +381,7 @@ def _external_prompt_rows(
             route=sample.expected_route,
             tool_name=sample.expected_tool_name,
             execution_artifact_text=artifact_text,
+            evidence_summary=_evidence_summary,
         )
         public_evidence_bytes = len(context.public_evidence_text.encode("utf-8"))
         planner_has_full_evidence = context.public_evidence_text in planner_prompt
