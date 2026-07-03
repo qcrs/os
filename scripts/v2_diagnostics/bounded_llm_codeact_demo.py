@@ -89,17 +89,51 @@ async def _llm_generated_source(
         audit = audit_generated_source(source)
         return source, [_generation_attempt_payload(source=source, audit=audit, attempt=0, repair=False)]
     input_example = stable_json_dumps(_demo_input_payload())
+    _allowlist = ", ".join(sorted(ALLOWED_IMPORT_ROOTS))
+    _forbidden = "os, sys, subprocess, socket, requests, urllib, http, shutil, open, eval, exec, compile, input"
     prompt = textwrap.dedent(
         f"""
-        Generate a single Python script for a bounded CodeAct demo.
-        Requirements:
-        - read inputs/task.json from the current working directory;
-        - task.json has this schema/example: {input_example}
-        - write outputs/bounded_codeact_result.json;
-        - use only json and pathlib imports;
-        - compute metric, point_count, delta_abs, growth_pct, summary_text;
-        - do not use network, subprocess, open(), eval(), exec(), os, sys, or arbitrary paths.
-        Return raw Python code only, no markdown, and do not wrap the code in JSON or a "code" field.
+        Generate a Python script for a bounded CodeAct data task.
+
+        STRICT AST POLICY (violation means the code will NOT be executed):
+        - ALLOWED imports ONLY: {_allowlist}
+        - FORBIDDEN: {_forbidden}
+        - Do NOT use open(), eval(), exec(), or any shell/network access.
+        - File I/O must use pathlib.Path only, within these paths:
+          Input:  inputs/task.json  (relative to cwd)
+          Output: outputs/bounded_codeact_result.json  (relative to cwd)
+
+        OUTPUT FORMAT:
+        - Return ONLY raw Python code — no markdown fences, no JSON wrapper, no explanations.
+
+        TASK INPUT SCHEMA:
+        {input_example}
+
+        REQUIRED OUTPUT FIELDS: metric, point_count, delta_abs, growth_pct, summary_text
+
+        EXAMPLE (follow this exact structure):
+        import json
+        from pathlib import Path
+
+        payload = json.loads(Path("inputs/task.json").read_text(encoding="utf-8"))
+        points = payload["quarters"]
+        first = float(points[0]["value"])
+        last = float(points[-1]["value"])
+        delta = round(last - first, 6)
+        pct = round((delta / first) * 100.0, 6) if first else 0.0
+        result = {{
+            "metric": payload["metric"],
+            "point_count": len(points),
+            "delta_abs": delta,
+            "growth_pct": pct,
+            "summary_text": f"{{payload['metric']}} changed by {{delta}}.",
+        }}
+        out = Path("outputs")
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "bounded_codeact_result.json").write_text(
+            json.dumps(result, ensure_ascii=True, sort_keys=True),
+            encoding="utf-8",
+        )
         """
     ).strip()
     client = build_llm_client(LLMConfig.from_runtime().with_mode("api"))
@@ -147,24 +181,31 @@ def _generation_attempt_payload(
 
 
 def _repair_prompt(*, source: str, audit: dict[str, object]) -> str:
-    input_example = stable_json_dumps(_demo_input_payload())
+    _allowlist = ", ".join(sorted(ALLOWED_IMPORT_ROOTS))
+    _forbidden = "os, sys, subprocess, socket, requests, urllib, http, shutil, open, eval, exec, compile, input"
+    violations = list(audit.get("violations", []))
+    if violations:
+        violation_lines = "\n".join(
+            f"  • {v}" if isinstance(v, str)
+            else f"  • Line {v.get('line', '?')}: {v.get('detail', v.get('violation_detail', str(v)))}"
+            for v in violations
+        )
+    else:
+        violation_lines = "  (see audit payload for details)"
     return textwrap.dedent(
         f"""
-        Repair this bounded CodeAct Python script so it passes the AST policy.
-        Return raw Python code only, no markdown, and do not wrap the code in JSON or a "code" field.
+        Your previous Python script FAILED the AST policy.
 
-        Policy:
-        - read inputs/task.json from the current working directory;
-        - task.json has this schema/example: {input_example}
-        - write outputs/bounded_codeact_result.json;
-        - use only json and pathlib imports;
-        - compute metric, point_count, delta_abs, growth_pct, summary_text;
-        - do not use network, subprocess, open(), eval(), exec(), os, sys, or arbitrary paths.
+        VIOLATIONS:
+        {violation_lines}
 
-        AST violations:
-        {stable_json_dumps(audit)}
+        ALLOWED imports: {_allowlist}
+        FORBIDDEN: {_forbidden}
 
-        Previous source:
+        Fix only the violations above. Keep the logic the same.
+        Return ONLY raw Python code — no markdown fences, no JSON wrapper.
+
+        PREVIOUS CODE:
         {source}
         """
     ).strip()

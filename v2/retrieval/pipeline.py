@@ -187,6 +187,7 @@ class RetrieverFanoutPipeline:
         dims: int = 16,
         model_path: str | Path | None = None,
         device: str | None = None,
+        top_k: int | None = None,
     ) -> "RetrieverFanoutPipeline":
         encoder = build_embedding_encoder(
             mode,
@@ -194,7 +195,10 @@ class RetrieverFanoutPipeline:
             model_path=model_path,
             device=device,
         )
-        return cls(semantic_retriever=SemanticChunkRetriever(encoder=encoder))
+        # api/local modes use top_k=3 for richer evidence diversity;
+        # deterministic stays at 1 to preserve test/benchmark determinism.
+        effective_top_k = top_k if top_k is not None else (3 if mode in {"api", "local"} else 1)
+        return cls(semantic_retriever=SemanticChunkRetriever(encoder=encoder, top_k=effective_top_k))
 
     def _build_candidate_pool(
         self,

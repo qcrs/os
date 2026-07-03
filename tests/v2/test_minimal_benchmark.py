@@ -60,11 +60,14 @@ def test_minimal_benchmark_sample_family_loads_multiple_samples() -> None:
 
 def test_formal_financial_family_loads_three_samples() -> None:
     family = load_sample_family(Path("v2/benchmark/samples/formal_financial_family"))
-    assert len(family) == 3
-    assert family[2].task_id == "benchmark-sample-3"
+    assert len(family) == 8
+    task_ids = {s.task_id for s in family}
+    assert "benchmark-sample-1" in task_ids
+    assert "benchmark-sample-3" in task_ids
+    assert "benchmark-sample-5" in task_ids  # BETA 2026Q1
+    assert "benchmark-sample-8" in task_ids  # BETA gross_margin
     assert family[0].canonical_task_spec is not None
     assert family[0].canonical_task_spec.required_tools == ("table_retriever", "semantic_retriever")
-    assert family[2].scenario_tags == ("late-quarter", "revenue")
 
 
 def test_minimal_benchmark_family_runs_and_persists_report(tmp_path: Path) -> None:
@@ -120,13 +123,13 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     assert suite_report.layer_reports[0].profile.structured_control_enabled is False
     assert suite_report.layer_reports[0].cases[0].metrics["handoff_mode_text_collaboration"] == 1.0
     assert suite_report.layer_reports[0].cases[0].metrics["handoff_mode_structured_collaboration"] == 0.0
-    assert suite_report.family_case_count == 3
+    assert suite_report.family_case_count == 8
     assert suite_report.layer_reports[1].profile.structured_control_enabled is True
     assert suite_report.layer_reports[2].profile.semantic_pruning_enabled is True
     assert suite_report.layer_reports[3].eligible_for_headline is True
     assert suite_report.layer_reports[0].cases[0].replay_class == "disallowed"
     assert suite_report.layer_reports[3].cases[0].replay_class == "disallowed"
-    assert suite_report.waterfall_metrics["L2_semantic_state_transfer_count"] == 3.0
+    assert suite_report.waterfall_metrics["L2_semantic_state_transfer_count"] == 8.0
     assert suite_report.waterfall_metrics["L3_artifact_reuse_count"] == 0.0
     assert suite_report.comparison_summary["reuse_gain_delta_l2_to_l3"] >= 0.0
     assert suite_report.comparison_summary["artifact_reuse_delta_l2_to_l3"] == 0.0
@@ -142,7 +145,7 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     payload = json.loads(Path(suite_report.report_path).read_text(encoding="utf-8"))
     assert payload["suite_id"] == "suite-sample-test"
     assert "comparison_summary" in payload
-    assert payload["family_case_count"] == 3
+    assert payload["family_case_count"] == 8
     assert len(payload["layers"]) == 4
     assert payload["metadata"]["comparison_contract"] == "same_mainline_internal_attribution_ladder"
 
