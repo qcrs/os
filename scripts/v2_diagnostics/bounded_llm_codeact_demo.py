@@ -79,9 +79,15 @@ def _deterministic_generated_source() -> str:
     ).strip() + "\n"
 
 
-async def _llm_generated_source(*, role_path_mode: str) -> str:
+async def _llm_generated_source(
+    *,
+    role_path_mode: str,
+    max_repair_attempts: int = 2,
+) -> tuple[str, list[dict[str, object]]]:
     if role_path_mode != "api":
-        return _deterministic_generated_source()
+        source = _deterministic_generated_source()
+        audit = audit_generated_source(source)
+        return source, [_generation_attempt_payload(source=source, audit=audit, attempt=0, repair=False)]
     prompt = textwrap.dedent(
         """
         Generate a single Python script for a bounded CodeAct demo.
@@ -95,8 +101,56 @@ async def _llm_generated_source(*, role_path_mode: str) -> str:
         """
     ).strip()
     client = build_llm_client(LLMConfig.from_runtime().with_mode("api"))
-    result = await client.complete([ChatMessage(role="user", content=prompt)], purpose="executor")
-    return _strip_code_fence(result.text)
+    source = ""
+    attempts: list[dict[str, object]] = []
+    current_prompt = prompt
+    for attempt in range(max_repair_attempts + 1):
+        result = await client.complete([ChatMessage(role="user", content=current_prompt)], purpose="executor")
+        source = _strip_code_fence(result.text)
+        audit = audit_generated_source(source)
+        attempts.append(_generation_attempt_payload(source=source, audit=audit, attempt=attempt, repair=attempt > 0))
+        if audit["pass"]:
+            return source, attempts
+        current_prompt = _repair_prompt(source=source, audit=audit)
+    return source, attempts
+
+
+def _generation_attempt_payload(
+    *,
+    source: str,
+    audit: dict[str, object],
+    attempt: int,
+    repair: bool,
+) -> dict[str, object]:
+    return {
+        "attempt": attempt,
+        "repair": repair,
+        "source_hash": sha256_digest(source.encode("utf-8")),
+        "ast_policy_pass": bool(audit["pass"]),
+        "violations": list(audit.get("violations", [])),
+    }
+
+
+def _repair_prompt(*, source: str, audit: dict[str, object]) -> str:
+    return textwrap.dedent(
+        f"""
+        Repair this bounded CodeAct Python script so it passes the AST policy.
+        Return code only, no markdown.
+
+        Policy:
+        - read inputs/task.json from the current working directory;
+        - write outputs/bounded_codeact_result.json;
+        - use only json and pathlib imports;
+        - compute metric, point_count, delta_abs, growth_pct, summary_text;
+        - do not use network, subprocess, open(), eval(), exec(), os, sys, or arbitrary paths.
+
+        AST violations:
+        {stable_json_dumps(audit)}
+
+        Previous source:
+        {source}
+        """
+    ).strip()
 
 
 def _strip_code_fence(text: str) -> str:
@@ -170,6 +224,7 @@ def build_bounded_llm_codeact_demo_bundle(
     sandbox_backend: str = "resource",
     python_executable: str = sys.executable,
     suite_id: str = "bounded-llm-codeact-demo",
+    max_repair_attempts: int = 2,
 ) -> Path:
     bundle_dir = output_root / f"{suite_id}-{_timestamp_label()}"
     workspace_root = bundle_dir / "workspace"
@@ -182,12 +237,22 @@ def build_bounded_llm_codeact_demo_bundle(
 
     input_payload = _demo_input_payload()
     (inputs_dir / "task.json").write_text(stable_json_dumps(input_payload) + "\n", encoding="utf-8")
-    source = asyncio.run(_llm_generated_source(role_path_mode=role_path_mode))
+    source, generation_attempts = asyncio.run(
+        _llm_generated_source(
+            role_path_mode=role_path_mode,
+            max_repair_attempts=max_repair_attempts,
+        )
+    )
     generated_path = generated_dir / "llm_generated_action.py"
     generated_path.write_text(source, encoding="utf-8")
     ast_audit = audit_generated_source(source)
     ast_audit_path = bundle_dir / "ast_audit.json"
     ast_audit_path.write_text(stable_json_dumps(ast_audit) + "\n", encoding="utf-8")
+    generation_attempts_path = bundle_dir / "generation_attempts.json"
+    generation_attempts_path.write_text(
+        stable_json_dumps({"attempts": generation_attempts}) + "\n",
+        encoding="utf-8",
+    )
 
     sandbox_payload: dict[str, object]
     if ast_audit["pass"]:
@@ -240,6 +305,9 @@ def build_bounded_llm_codeact_demo_bundle(
         "generated_by": "llm_api" if role_path_mode == "api" else "deterministic_template",
         "generated_source_path": str(generated_path),
         "generated_source_hash": sha256_digest(source.encode("utf-8")),
+        "generation_attempt_count": len(generation_attempts),
+        "generation_repair_attempt_count": max(len(generation_attempts) - 1, 0),
+        "generation_attempts_path": str(generation_attempts_path),
         "ast_audit_path": str(ast_audit_path),
         "ast_policy_pass": bool(ast_audit["pass"]),
         "sandbox_result_path": str(sandbox_result_path),
@@ -263,6 +331,8 @@ def _summary_markdown(summary: dict[str, object], ast_audit: dict[str, object]) 
             f"- ok: `{summary['ok']}`",
             f"- generated_by: `{summary['generated_by']}`",
             f"- generated_source_hash: `{summary['generated_source_hash']}`",
+            f"- generation_attempt_count: `{summary['generation_attempt_count']}`",
+            f"- generation_repair_attempt_count: `{summary['generation_repair_attempt_count']}`",
             f"- ast_policy_pass: `{summary['ast_policy_pass']}`",
             f"- sandbox_backend: `{summary['sandbox_backend']}`",
             f"- output_path: `{summary['output_path']}`",
@@ -279,6 +349,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--role-path-mode", choices=("deterministic", "api"), default="deterministic")
     parser.add_argument("--sandbox-backend", choices=("auto", "bwrap", "resource", "none"), default="resource")
     parser.add_argument("--python-executable", default=sys.executable)
+    parser.add_argument("--max-repair-attempts", type=int, default=2)
     return parser
 
 
@@ -290,6 +361,7 @@ def main(argv: list[str] | None = None) -> Path:
         sandbox_backend=args.sandbox_backend,
         python_executable=args.python_executable,
         suite_id=args.suite_id,
+        max_repair_attempts=max(args.max_repair_attempts, 0),
     )
     print(
         stable_json_dumps(
@@ -297,6 +369,7 @@ def main(argv: list[str] | None = None) -> Path:
                 "bundle_dir": str(bundle_dir),
                 "summary_json": str(bundle_dir / "summary.json"),
                 "summary_markdown": str(bundle_dir / "summary.md"),
+                "generation_attempts_json": str(bundle_dir / "generation_attempts.json"),
                 "ast_audit_json": str(bundle_dir / "ast_audit.json"),
                 "sandbox_result_json": str(bundle_dir / "sandbox_result.json"),
             }
