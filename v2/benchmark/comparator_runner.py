@@ -433,17 +433,26 @@ def run_fixed_answer_external_comparator_suite(
                 if benchmark_tier == "formal"
                 else "dev_fixed_answer_only"
             ),
-            # Allowed when: formal tier + all modes have headline quality
-            # + (StateBus strictly better quality OR equal quality with efficiency gain).
-            "formal_superiority_claim_allowed": bool(mode_reports)
-            and benchmark_tier == "formal"
-            and all(report.eligible_for_headline for report in mode_reports)
+            # Quality-superiority path: StateBus passes more cases than external.
+            # Does NOT require external_report.eligible_for_headline —
+            # external failing some cases IS the evidence of StateBus superiority.
+            # Requires: formal tier + fairness gate pass + StateBus all-pass + delta > 0.
+            # Efficiency-superiority path: both sides pass all cases (eligible_for_headline)
+            # + equal quality + StateBus uses fewer tokens AND fewer prompt bytes.
+            "formal_superiority_claim_allowed": benchmark_tier == "formal"
+            and bool(mode_reports)
             and (
-                # Quality superiority
-                any(r.debug_metrics.get("quality_floor_pass_delta", 0.0) > 0.0 for r in mode_reports)
-                # OR: quality equal AND efficiency advantage (fewer tokens + fewer prompt bytes)
+                # Path A: quality superiority (StateBus quality > external quality)
+                (
+                    all(not r.missing_reason for r in mode_reports)
+                    and all(r.fairness_manifest.get("pass_hard_gate", False) for r in mode_reports)
+                    and all(r.statebus_report.eligible_for_headline for r in mode_reports)
+                    and any(r.debug_metrics.get("quality_floor_pass_delta", 0.0) > 0.0 for r in mode_reports)
+                )
+                # Path B: efficiency superiority with equal quality
                 or (
-                    _quality_floor_equal_across_modes(mode_reports)
+                    all(report.eligible_for_headline for report in mode_reports)
+                    and _quality_floor_equal_across_modes(mode_reports)
                     and _efficiency_superior_across_modes(mode_reports)
                 )
             ),
