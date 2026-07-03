@@ -27,12 +27,19 @@ python3 scripts/v2_diagnostics/bounded_llm_codeact_demo.py \
   --output-root /statebus/runs/v2-diagnostics \
   --role-path-mode api \
   --sandbox-backend bwrap \
-  --python-executable /usr/bin/python3
+  --python-executable /usr/bin/python3 \
+  --max-repair-attempts 2
 ```
+
+API mode is fail-closed: generated code is never executed unless the final
+source passes the AST policy. If the first API response is invalid, the script
+may ask for a bounded repair up to `--max-repair-attempts` times and records all
+attempts.
 
 Expected artifacts:
 
 - `generated/llm_generated_action.py`
+- `generation_attempts.json`
 - `ast_audit.json`
 - `sandbox_result.json`
 - `outputs/bounded_codeact_result.json`
