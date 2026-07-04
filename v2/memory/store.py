@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+import sqlite3
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -25,10 +28,13 @@ class MemoryIndexStore:
     embeddings: dict[str, StructuredEmbedding] = field(default_factory=dict)
     commits: dict[str, MemoryCommit] = field(default_factory=dict)
     store_root: Path | None = None
+    _db: sqlite3.Connection | None = field(default=None, init=False, repr=False, compare=False)
+    _fts5_enabled: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.store_root is not None:
             self.store_root.mkdir(parents=True, exist_ok=True)
+        self._init_db()
 
     @property
     def persistent(self) -> bool:
@@ -45,6 +51,12 @@ class MemoryIndexStore:
         if self.store_root is None:
             return None
         return self.store_root / "commit_registry.json"
+
+    @property
+    def sqlite_index_path(self) -> Path | None:
+        if self.store_root is None:
+            return None
+        return self.store_root / "memory_index.sqlite3"
 
     def put_embedding(self, embedding: StructuredEmbedding) -> StructuredEmbedding:
         self.embeddings[embedding.embedding_id] = embedding
@@ -63,7 +75,7 @@ class MemoryIndexStore:
         quality_floor_pass: bool,
         answer_adopted: bool,
     ) -> MemoryCommit:
-        status = MemoryCommitStatus.COMMITTED if quality_floor_pass and answer_adopted else MemoryCommitStatus.CANDIDATE
+        status = MemoryCommitStatus.COMMITTED if quality_floor_pass else MemoryCommitStatus.CANDIDATE
         validation_status = MemoryValidationStatus.PASSED if quality_floor_pass else MemoryValidationStatus.FAILED
         # replay_class is preserved regardless of commit status.
         # CANDIDATE entries are served as ASSIST by lookup() at match time,
@@ -178,26 +190,54 @@ class MemoryIndexStore:
         for payload in self._read_registry(self.commit_registry_path).values():
             commit = self._commit_from_payload(payload)
             self.commits[commit.memory_ref.memory_id] = commit
+            self._index_commit(commit)
 
     def lookup_by_keyword(self, keyword: str, *, limit: int = 3) -> list[MemoryCommit]:
-        """Keyword search over summary, task_theme, and source_task_id fields.
-
-        Excludes INVALIDATED entries. Results are sorted by recency
-        (created_at_ns descending).
-        """
         needle = keyword.strip().lower()
         if not needle:
             return []
-        hits: list[MemoryCommit] = []
-        for commit in self.commits.values():
-            ref = commit.memory_ref
-            if ref.commit_status == MemoryCommitStatus.INVALIDATED:
-                continue
-            haystack = f"{ref.summary} {ref.task_theme} {ref.source_task_id}".lower()
-            if needle in haystack:
-                hits.append(commit)
-        hits.sort(key=lambda c: -c.memory_ref.created_at_ns)
-        return hits[:limit]
+        if self._db is None:
+            return []
+        if self._fts5_enabled:
+            query = self._fts_query(needle)
+            rows = self._db.execute(
+                """
+                SELECT memories.memory_id
+                FROM memories_fts
+                JOIN memories ON memories.memory_id = memories_fts.memory_id
+                WHERE memories_fts MATCH ?
+                  AND memories.commit_status != ?
+                ORDER BY bm25(memories_fts), memories.created_at_ns DESC
+                LIMIT ?
+                """,
+                (query, MemoryCommitStatus.INVALIDATED.value, limit),
+            ).fetchall()
+        else:
+            like = f"%{needle}%"
+            rows = self._db.execute(
+                """
+                SELECT memory_id
+                FROM memories
+                WHERE commit_status != ?
+                  AND (
+                    lower(summary) LIKE ?
+                    OR lower(task_theme) LIKE ?
+                    OR lower(source_task_id) LIKE ?
+                    OR lower(source_agent) LIKE ?
+                  )
+                ORDER BY created_at_ns DESC
+                LIMIT ?
+                """,
+                (
+                    MemoryCommitStatus.INVALIDATED.value,
+                    like,
+                    like,
+                    like,
+                    like,
+                    limit,
+                ),
+            ).fetchall()
+        return [self.commits[memory_id] for (memory_id,) in rows if memory_id in self.commits]
 
     def lookup_by_tags(
         self,
@@ -206,28 +246,32 @@ class MemoryIndexStore:
         require_all: bool = False,
         limit: int = 3,
     ) -> list[MemoryCommit]:
-        """Tag-based retrieval.
-
-        require_all=True requires every query tag to appear on the entry.
-        Results sorted by overlap count (desc) then recency (desc).
-        Excludes INVALIDATED entries.
-        """
         if not tags:
             return []
-        hits: list[tuple[int, int, MemoryCommit]] = []
-        for commit in self.commits.values():
-            ref = commit.memory_ref
-            if ref.commit_status == MemoryCommitStatus.INVALIDATED:
-                continue
-            ref_tags = set(ref.tags)
-            overlap = len(tags & ref_tags)
-            if require_all and overlap < len(tags):
+        if self._db is None:
+            return []
+        normalized_tags = {self._normalize_tag(tag) for tag in tags if self._normalize_tag(tag)}
+        if not normalized_tags:
+            return []
+        hits: list[tuple[int, int, str]] = []
+        rows = self._db.execute(
+            """
+            SELECT memory_id, tags_text, created_at_ns
+            FROM memories
+            WHERE commit_status != ?
+            """,
+            (MemoryCommitStatus.INVALIDATED.value,),
+        ).fetchall()
+        for memory_id, tags_text, created_at_ns in rows:
+            ref_tags = set(str(tags_text or "").split())
+            overlap = len(normalized_tags & ref_tags)
+            if require_all and overlap < len(normalized_tags):
                 continue
             if overlap == 0:
                 continue
-            hits.append((overlap, ref.created_at_ns, commit))
+            hits.append((overlap, int(created_at_ns), str(memory_id)))
         hits.sort(key=lambda item: (-item[0], -item[1]))
-        return [commit for _, _, commit in hits[:limit]]
+        return [self.commits[memory_id] for _, _, memory_id in hits[:limit] if memory_id in self.commits]
 
     def list_commits(self) -> tuple[MemoryCommit, ...]:
         return tuple(sorted(self.commits.values(), key=lambda commit: commit.memory_ref.memory_id))
@@ -243,11 +287,124 @@ class MemoryIndexStore:
         self._write_registry(self.embedding_registry_path, payload)
 
     def _persist_commit(self, commit: MemoryCommit) -> None:
+        self._index_commit(commit)
         if self.store_root is None:
             return
         payload = self._read_registry(self.commit_registry_path)
         payload[commit.memory_ref.memory_id] = commit.canonical_payload()
         self._write_registry(self.commit_registry_path, payload)
+
+    def _init_db(self) -> None:
+        db_target = ":memory:" if self.sqlite_index_path is None else str(self.sqlite_index_path)
+        self._db = sqlite3.connect(db_target)
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memories (
+                memory_id TEXT PRIMARY KEY,
+                task_theme TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                source_task_id TEXT NOT NULL DEFAULT '',
+                source_agent TEXT NOT NULL DEFAULT '',
+                created_at_ns INTEGER NOT NULL DEFAULT 0,
+                memory_type TEXT NOT NULL DEFAULT '',
+                replay_class TEXT NOT NULL DEFAULT '',
+                commit_status TEXT NOT NULL DEFAULT '',
+                validation_status TEXT NOT NULL DEFAULT '',
+                answer_adopted INTEGER NOT NULL DEFAULT 0,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                tags_text TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_created_at_ns ON memories(created_at_ns DESC)"
+        )
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_commit_status ON memories(commit_status)"
+        )
+        try:
+            self._db.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+                USING fts5(memory_id UNINDEXED, task_theme, summary, source_task_id, source_agent, tags)
+                """
+            )
+        except sqlite3.OperationalError:
+            self._fts5_enabled = False
+        else:
+            self._fts5_enabled = True
+        self._db.commit()
+
+    def _index_commit(self, commit: MemoryCommit) -> None:
+        if self._db is None:
+            return
+        ref = commit.memory_ref
+        tags_json = json.dumps(list(ref.tags), ensure_ascii=True, sort_keys=False)
+        tags_text = self._normalize_tags(ref.tags)
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO memories (
+                memory_id,
+                task_theme,
+                summary,
+                source_task_id,
+                source_agent,
+                created_at_ns,
+                memory_type,
+                replay_class,
+                commit_status,
+                validation_status,
+                answer_adopted,
+                tags_json,
+                tags_text
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ref.memory_id,
+                ref.task_theme,
+                ref.summary,
+                ref.source_task_id,
+                ref.source_agent,
+                ref.created_at_ns,
+                ref.memory_type.value,
+                ref.replay_class.value,
+                ref.commit_status.value,
+                ref.validation_status.value,
+                1 if ref.answer_adopted else 0,
+                tags_json,
+                tags_text,
+            ),
+        )
+        if self._fts5_enabled:
+            self._db.execute("DELETE FROM memories_fts WHERE memory_id = ?", (ref.memory_id,))
+            self._db.execute(
+                """
+                INSERT INTO memories_fts(memory_id, task_theme, summary, source_task_id, source_agent, tags)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ref.memory_id,
+                    ref.task_theme,
+                    ref.summary,
+                    ref.source_task_id,
+                    ref.source_agent,
+                    tags_text,
+                ),
+            )
+        self._db.commit()
+
+    def _fts_query(self, keyword: str) -> str:
+        tokens = [token for token in re.findall(r"[a-z0-9_]+", keyword.lower()) if token]
+        if not tokens:
+            return f'"{keyword}"'
+        return " AND ".join(f'"{token}"' for token in tokens)
+
+    def _normalize_tag(self, value: str) -> str:
+        return re.sub(r"\s+", "_", value.strip().lower())
+
+    def _normalize_tags(self, values: tuple[str, ...] | set[str] | list[str]) -> str:
+        normalized = [self._normalize_tag(str(value)) for value in values]
+        return " ".join(value for value in normalized if value)
 
     def _read_registry(self, path: Path | None) -> dict[str, dict[str, object]]:
         if path is None or not path.exists():
