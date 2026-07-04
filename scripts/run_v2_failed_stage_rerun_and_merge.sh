@@ -74,6 +74,9 @@ PY
   )"
 fi
 
+BASE_RUN_ID="$(basename "$BASE_RESULT_ROOT")"
+BASE_CONTAINER_RESULT_ROOT="${CONTAINER_RUNS_ROOT}/${BASE_RUN_ID}"
+
 mkdir -p "$HOST_RESULT_ROOT"
 
 printf '%s\n' "$BASE_RESULT_ROOT" > "${HOST_RESULT_ROOT}/base_result_root.txt"
