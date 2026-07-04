@@ -83,7 +83,10 @@ class TelemetryEmitter:
     events: list[TelemetryEvent] = field(default_factory=list)
     runtime_event_log_path: Path | None = None
     runtime_fact_log_path: Path | None = None
+    flush_interval: int = 1
     _append_handles: dict[Path, TextIO] = field(default_factory=dict, init=False, repr=False)
+    _pending_flush_counts: dict[Path, int] = field(default_factory=dict, init=False, repr=False)
+    _path_task_ids: dict[Path, str] = field(default_factory=dict, init=False, repr=False)
     _task_io_metrics: dict[str, dict[str, float]] = field(default_factory=dict, init=False, repr=False)
     additive_event_types: tuple[str, ...] = (
         "EVIDENCE_PACK_BUILT",
@@ -158,16 +161,28 @@ class TelemetryEmitter:
         return dict(self._task_metrics(task_id))
 
     def close(self) -> None:
-        for handle in self._append_handles.values():
+        for path, handle in self._append_handles.items():
+            if self._pending_flush_counts.get(path, 0) > 0:
+                handle.flush()
+                task_id = self._path_task_ids.get(path)
+                if task_id is not None:
+                    self._task_metrics(task_id)["telemetry_log_flush_count"] += 1.0
             handle.close()
         self._append_handles.clear()
+        self._pending_flush_counts.clear()
+        self._path_task_ids.clear()
 
     def _append_jsonl(self, path: Path | None, payload: dict[str, Any], *, task_id: str) -> bool:
         if path is None:
             return False
         handle = self._append_handle(path, task_id=task_id)
         handle.write(json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n")
-        handle.flush()
+        pending_count = self._pending_flush_counts.get(path, 0) + 1
+        if pending_count >= max(self.flush_interval, 1):
+            handle.flush()
+            pending_count = 0
+            self._task_metrics(task_id)["telemetry_log_flush_count"] += 1.0
+        self._pending_flush_counts[path] = pending_count
         return True
 
     def _append_handle(self, path: Path, *, task_id: str) -> TextIO:
@@ -177,6 +192,7 @@ class TelemetryEmitter:
         path.parent.mkdir(parents=True, exist_ok=True)
         handle = path.open("a", encoding="utf-8")
         self._append_handles[path] = handle
+        self._path_task_ids[path] = task_id
         self._task_metrics(task_id)["telemetry_log_handle_open_count"] += 1.0
         return handle
 
@@ -193,6 +209,7 @@ class TelemetryEmitter:
                 "telemetry_fact_write_stage_ms": 0.0,
                 "telemetry_event_write_count": 0.0,
                 "telemetry_fact_write_count": 0.0,
+                "telemetry_log_flush_count": 0.0,
                 "telemetry_log_handle_open_count": 0.0,
             },
         )

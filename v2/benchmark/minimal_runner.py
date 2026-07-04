@@ -220,6 +220,7 @@ def run_minimal_benchmark(
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
     seed_replay_memory: bool = False,
+    persistence_profile: str = "audit_full",
 ) -> tuple[SmokeResult, BenchmarkRunReport]:
     _prepare_case_root(workspace_root)
     _prepare_case_root(runtime_root)
@@ -228,6 +229,7 @@ def run_minimal_benchmark(
             **LAYER_SMOKE_CONFIGS[BenchmarkLayer.L3].__dict__,
             "role_path_mode": role_path_mode,
             "embedding_mode": embedding_mode,
+            "persistence_profile": persistence_profile,
         }
     )
     smoke = run_smoke(
@@ -257,6 +259,7 @@ def run_minimal_benchmark_family(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "formal",
     claim_level: str = "first_pass",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     profile = LAYER_PROFILES[layer]
     cases: list[BenchmarkCaseReport] = []
@@ -278,6 +281,7 @@ def run_minimal_benchmark_family(
                     **LAYER_SMOKE_CONFIGS[layer].__dict__,
                     "role_path_mode": role_path_mode,
                     "embedding_mode": embedding_mode,
+                    "persistence_profile": persistence_profile,
                 }
             ),
             expected_facts=sample.expected_facts,
@@ -352,6 +356,7 @@ def run_minimal_benchmark_suite(
     seed_replay_memory_by_layer: dict[BenchmarkLayer, bool] | None = None,
     benchmark_tier: str = "formal",
     claim_level: str = "first_pass",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkSuiteReport:
     seed_replay_memory_by_layer = seed_replay_memory_by_layer or {}
     layer_reports = tuple(
@@ -367,6 +372,7 @@ def run_minimal_benchmark_suite(
             seed_replay_memory=seed_replay_memory_by_layer.get(layer, False),
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            persistence_profile=persistence_profile,
         )
         for layer in BenchmarkLayer
     )

@@ -86,6 +86,7 @@ class RuntimeDriverProfile:
     simulate_ack_timeout: bool = False
     simulate_lease_timeout: bool = False
     persistence_verification_level: str = "strict_roundtrip"
+    persistence_profile: str = "audit_full"
 
 
 class PersistenceVerificationLevel(StrEnum):
@@ -276,7 +277,12 @@ class RuntimeDriver:
         supervisor = RuntimeSupervisor()
         telemetry = TelemetryEmitter(
             runtime_event_log_path=runtime_input.runtime_root / "telemetry" / "runtime_events.jsonl",
-            runtime_fact_log_path=runtime_input.runtime_root / "telemetry" / "runtime_facts.jsonl",
+            runtime_fact_log_path=(
+                None
+                if runtime_input.layer_profile.persistence_profile == "benchmark_balanced"
+                else runtime_input.runtime_root / "telemetry" / "runtime_facts.jsonl"
+            ),
+            flush_interval=10 if runtime_input.layer_profile.persistence_profile == "benchmark_balanced" else 1,
         )
         fallback_planner = FallbackPlanner()
         control_plane_exchange_stage_ms = 0.0

@@ -453,6 +453,7 @@ def run_non_text_flagship_ablation_report(
     suite_id: str = "statebus-v2-non-text-flagship-ablation",
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    persistence_profile: str = "audit_full",
 ) -> dict[str, object]:
     benchmark_report_root = runtime_root / "benchmark_reports"
     fixed_ladder = run_fixed_answer_suite(
@@ -467,6 +468,7 @@ def run_non_text_flagship_ablation_report(
         seed_replay_memory=False,
         benchmark_tier="dev",
         claim_level="diagnostic",
+        persistence_profile=persistence_profile,
     )
     fixed_t2 = run_fixed_answer_text_semantic_selection_family(
         samples=fixed_samples,
@@ -476,6 +478,7 @@ def run_non_text_flagship_ablation_report(
         suite_id=f"{suite_id}-fixed-text-semantic-selection",
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        persistence_profile=persistence_profile,
     )
     carrier_report = run_fixed_answer_internal_carrier_compare_suite(
         samples=fixed_samples,
@@ -488,6 +491,7 @@ def run_non_text_flagship_ablation_report(
         statebus_mode="cold-start",
         benchmark_tier="dev",
         claim_level="diagnostic",
+        persistence_profile=persistence_profile,
     )
     external_report = compare_fixed_answer_with_external(
         samples=fixed_samples,
@@ -501,6 +505,7 @@ def run_non_text_flagship_ablation_report(
         seed_replay_memory=False,
         benchmark_tier="dev",
         claim_level="diagnostic",
+        persistence_profile=persistence_profile,
     )
     continuous_report = run_continuous_benchmark_collection(
         families=continuous_families,
@@ -510,6 +515,7 @@ def run_non_text_flagship_ablation_report(
         suite_id=f"{suite_id}-continuous",
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        persistence_profile=persistence_profile,
     )
     continuous_t2_reports = tuple(
         run_continuous_text_semantic_selection_family(
@@ -520,6 +526,7 @@ def run_non_text_flagship_ablation_report(
             suite_id=f"{suite_id}-continuous-text-semantic-selection-{family.family_id}",
             role_path_mode=role_path_mode,
             embedding_mode=embedding_mode,
+            persistence_profile=persistence_profile,
         )
         for index, family in enumerate(continuous_families, start=1)
     )
@@ -532,6 +539,7 @@ def run_non_text_flagship_ablation_report(
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
         collection_scope="formal_replay_task_families",
+        persistence_profile=persistence_profile,
     )
     replay_t2_reports = tuple(
         run_continuous_text_semantic_selection_family(
@@ -542,6 +550,7 @@ def run_non_text_flagship_ablation_report(
             suite_id=f"{suite_id}-continuous-replay-text-semantic-selection-{family.family_id}",
             role_path_mode=role_path_mode,
             embedding_mode=embedding_mode,
+            persistence_profile=persistence_profile,
         )
         for index, family in enumerate(replay_families, start=1)
     )
