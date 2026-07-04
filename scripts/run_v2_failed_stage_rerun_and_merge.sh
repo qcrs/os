@@ -573,13 +573,27 @@ run_stage() {
         --family incident_diagnosis_v2
       ;;
     14_compare_diagnostics_dev)
-      run_json_stage \
-        "14_compare_diagnostics_dev" \
-        "$JSON_ROOT/14_compare_diagnostics_dev.json" \
-        "$LOG_ROOT/14_compare_diagnostics_dev.stderr.log" \
-        python3 scripts/v2_diagnostics/compare_diagnostics.py \
-        --compare-suite-report "$(resolve_compare_suite_report)" \
-        --family-dir v2/benchmark/samples/fixed_answer_family \
+      local _report
+      _report="$(resolve_compare_suite_report)"
+      if [[ ! -f "$_report" ]]; then
+        echo
+        echo "=== 14_compare_diagnostics_dev ==="
+        printf '{"skipped":true,"reason":"compare_suite_report_not_found","resolved_path":"%s"}\n' "$_report" \
+          > "$JSON_ROOT/14_compare_diagnostics_dev.json"
+        : > "$LOG_ROOT/14_compare_diagnostics_dev.stderr.log"
+        record_stage "14_compare_diagnostics_dev" "0" "$JSON_ROOT/14_compare_diagnostics_dev.json" "$LOG_ROOT/14_compare_diagnostics_dev.stderr.log"
+        echo "[skip] 14_compare_diagnostics_dev (compare suite report not found, non-critical)"
+      else
+        run_json_stage \
+          "14_compare_diagnostics_dev" \
+          "$JSON_ROOT/14_compare_diagnostics_dev.json" \
+          "$LOG_ROOT/14_compare_diagnostics_dev.stderr.log" \
+          python3 scripts/v2_diagnostics/compare_diagnostics.py \
+          --compare-suite-report "$_report" \
+          --family-dir v2/benchmark/samples/fixed_answer_family \
+          --output-root "$DIAG_ROOT/compare"
+      fi
+      ;;
         --output-root "$DIAG_ROOT/compare"
       ;;
     15_runtime_persistence_breakdown)
