@@ -38,6 +38,7 @@ def _default_continuous_family_roots() -> tuple[Path, ...]:
     base = Path(__file__).with_name("samples") / "continuous_task_families"
     return (
         base / "csv_table_profile",
+        base / "incident_diagnosis",
         base / "long_doc_table",
     )
 
@@ -50,8 +51,29 @@ def _default_continuous_replay_family_roots() -> tuple[Path, ...]:
     base = Path(__file__).with_name("samples") / "continuous_task_families"
     return (
         base / "csv_correlation_replay",
+        base / "incident_diagnosis",
         base / "long_doc_metric_replay",
     )
+
+
+def _continuous_family_dir_by_id(family_id: str) -> Path:
+    base = Path(__file__).with_name("samples") / "continuous_task_families"
+    mapping = {
+        "csv_table_profile_v1": base / "csv_table_profile",
+        "csv_table_profile": base / "csv_table_profile",
+        "csv_correlation_replay_v1": base / "csv_correlation_replay",
+        "csv_correlation_replay": base / "csv_correlation_replay",
+        "long_doc_table_v1": base / "long_doc_table",
+        "long_doc_table": base / "long_doc_table",
+        "long_doc_metric_replay_v1": base / "long_doc_metric_replay",
+        "long_doc_metric_replay": base / "long_doc_metric_replay",
+        "incident_diagnosis_v2": base / "incident_diagnosis",
+        "incident_diagnosis": base / "incident_diagnosis",
+    }
+    resolved = mapping.get(family_id.strip())
+    if resolved is None:
+        raise SystemExit(f"unsupported continuous family id: {family_id}")
+    return resolved
 
 
 def _default_workspace_root() -> Path:
@@ -112,6 +134,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="sample family directory; defaults to the tier-appropriate family",
     )
     parser.add_argument(
+        "--family",
+        default="",
+        help="continuous family id alias; resolves to a built-in continuous family directory",
+    )
+    parser.add_argument(
         "--workspace-root",
         type=Path,
         default=_default_workspace_root(),
@@ -153,14 +180,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="StateBus benchmark mode",
     )
     parser.add_argument(
+        "--replay-mode",
+        default="",
+        choices=("", "replay-ready", "cold-start"),
+        help="alias for --statebus-mode",
+    )
+    parser.add_argument(
         "--seed-replay-memory",
         action="store_true",
         help="dev-only synthetic replay seed for assisted diagnostics",
+    )
+    parser.add_argument(
+        "--persistence-profile",
+        default="audit_full",
+        choices=("audit_full", "benchmark_balanced"),
+        help="audit persistence profile",
     )
     return parser
 
 
 def _resolved_family_dir(args: argparse.Namespace) -> Path:
+    if args.family:
+        return _continuous_family_dir_by_id(args.family)
     if args.family_dir is not None:
         return args.family_dir
     if args.suite == "continuous-design-audit":
@@ -175,6 +216,8 @@ def _resolved_family_dir(args: argparse.Namespace) -> Path:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+    if args.replay_mode:
+        args.statebus_mode = args.replay_mode
     preflight = runtime_preflight(
         role_path_mode=args.role_path_mode,
         embedding_mode=args.embedding_mode,
@@ -210,6 +253,7 @@ def main() -> None:
                 suite_id=f"{args.suite_id}-continuous",
                 role_path_mode=args.role_path_mode,
                 embedding_mode=args.embedding_mode,
+                persistence_profile=args.persistence_profile,
             )
             print(stable_json_dumps(continuous_collection_report_to_dict(report)))
             return
@@ -222,6 +266,7 @@ def main() -> None:
             suite_id=f"{args.suite_id}-continuous",
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
+            persistence_profile=args.persistence_profile,
         )
         print(stable_json_dumps(suite_report_to_dict(report)))
         return
@@ -237,6 +282,7 @@ def main() -> None:
                 role_path_mode=args.role_path_mode,
                 embedding_mode=args.embedding_mode,
                 collection_scope="formal_replay_task_families",
+                persistence_profile=args.persistence_profile,
             )
             print(stable_json_dumps(continuous_collection_report_to_dict(report)))
             return
@@ -249,6 +295,7 @@ def main() -> None:
             suite_id=f"{args.suite_id}-continuous-replay",
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
+            persistence_profile=args.persistence_profile,
         )
         print(stable_json_dumps(suite_report_to_dict(report)))
         return
@@ -267,8 +314,24 @@ def main() -> None:
             suite_id=f"{args.suite_id}-non-text-flagship-ablation",
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
+            persistence_profile=args.persistence_profile,
         )
         print(stable_json_dumps(report))
+        return
+
+    if args.suite == "statebus" and args.family:
+        family = load_continuous_task_family(family_dir)
+        report = run_continuous_benchmark_suite(
+            family=family,
+            workspace_root=args.workspace_root,
+            runtime_root=args.runtime_root,
+            socket_path=args.socket_path,
+            suite_id=f"{args.suite_id}-continuous-{family.family_id}",
+            role_path_mode=args.role_path_mode,
+            embedding_mode=args.embedding_mode,
+            persistence_profile=args.persistence_profile,
+        )
+        print(stable_json_dumps(suite_report_to_dict(report)))
         return
 
     if args.statebus_mode == "cold-start" and args.seed_replay_memory:
@@ -290,6 +353,7 @@ def main() -> None:
                 seed_replay_memory_by_layer={},
                 benchmark_tier="formal",
                 claim_level="first_pass",
+                persistence_profile=args.persistence_profile,
             )
             print(stable_json_dumps(suite_report_to_dict(formal_report)))
             return
@@ -315,6 +379,7 @@ def main() -> None:
             seed_replay_memory=args.seed_replay_memory,
             benchmark_tier="dev",
             claim_level="prototype",
+            persistence_profile=args.persistence_profile,
         )
         print(stable_json_dumps(suite_report_to_dict(report)))
         return
@@ -342,6 +407,7 @@ def main() -> None:
             statebus_mode=args.statebus_mode,
             benchmark_tier=args.benchmark_tier,
             claim_level="prototype",
+            persistence_profile=args.persistence_profile,
         )
         print(stable_json_dumps(report.canonical_payload()))
         return
@@ -358,6 +424,7 @@ def main() -> None:
         seed_replay_memory=args.seed_replay_memory,
         benchmark_tier=args.benchmark_tier,
         claim_level="prototype",
+        persistence_profile=args.persistence_profile,
     )
     print(stable_json_dumps(report.canonical_payload()))
 
