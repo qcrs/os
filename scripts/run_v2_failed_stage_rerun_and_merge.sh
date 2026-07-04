@@ -274,6 +274,27 @@ resolve_compare_suite_report() {
     printf '%s\n' "$rerun_report"
     return 0
   fi
+  if [[ -f "$base_report" ]]; then
+    printf '%s\n' "$base_report"
+    return 0
+  fi
+  # Fallback: read report_path from stage 06 artifact (run_full_experiment.sh layout)
+  local artifact_report
+  artifact_report="$(python3 -c "
+import json, pathlib, sys
+for base in sys.argv[1:]:
+    p = pathlib.Path(base) / 'json' / '06_dev_compare_coldstart.json'
+    if p.exists():
+        d = json.loads(p.read_text())
+        rp = d.get('report_path', '')
+        if rp:
+            print(rp)
+            sys.exit(0)
+" "$BASE_RESULT_ROOT" "$RERUN_CONTAINER_RESULT_ROOT" 2>/dev/null || true)"
+  if [[ -n "$artifact_report" ]]; then
+    printf '%s\n' "$artifact_report"
+    return 0
+  fi
   printf '%s\n' "$base_report"
 }
 

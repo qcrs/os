@@ -370,8 +370,19 @@ sep "14  Compare diagnostics dev"
 DIAG_ROOT="$RESULT_ROOT/diagnostics"
 mkdir -p "$DIAG_ROOT/compare"
 log "Running: 14_compare_diagnostics_dev"
-if python3 scripts/v2_diagnostics/compare_diagnostics.py \
-    --compare-suite-report "$RUNTIME_ROOT/06_dev_compare_coldstart/benchmark_reports/${STATEBUS_RUN_ID:-$(basename "$RESULT_ROOT")}-cold-start-compare.json" \
+# Read the actual compare suite report path from stage 06 artifact
+DEV_COMPARE_REPORT=$(python3 -c "
+import json, pathlib
+p = pathlib.Path('$JSON_DIR/06_dev_compare_coldstart.json')
+d = json.loads(p.read_text()) if p.exists() else {}
+print(d.get('report_path', ''))
+" 2>/dev/null || true)
+if [[ -z "$DEV_COMPARE_REPORT" ]]; then
+  echo '{"skipped":true,"reason":"stage_06_artifact_missing"}' > "$JSON_DIR/14_compare_diagnostics_dev.json"
+  STAGE_STATUS+=("14_compare_diagnostics_dev:skip_no_report")
+  log "SKIPPED: 14_compare_diagnostics_dev (stage 06 artifact not found)"
+elif python3 scripts/v2_diagnostics/compare_diagnostics.py \
+    --compare-suite-report "$DEV_COMPARE_REPORT" \
     --family-dir v2/benchmark/samples/fixed_answer_family \
     --output-root "$DIAG_ROOT/compare" \
     > "$JSON_DIR/14_compare_diagnostics_dev.json" \
@@ -379,10 +390,9 @@ if python3 scripts/v2_diagnostics/compare_diagnostics.py \
   STAGE_STATUS+=("14_compare_diagnostics_dev:pass")
   log "Done:    14_compare_diagnostics_dev"
 else
-  # diagnostics are non-critical — generate a placeholder and continue
-  echo '{"skipped":true,"reason":"compare_suite_report_not_found"}' > "$JSON_DIR/14_compare_diagnostics_dev.json"
-  STAGE_STATUS+=("14_compare_diagnostics_dev:skip_no_report")
-  log "SKIPPED: 14_compare_diagnostics_dev (compare suite report not found)"
+  echo '{"skipped":true,"reason":"compare_diagnostics_failed"}' > "$JSON_DIR/14_compare_diagnostics_dev.json"
+  STAGE_STATUS+=("14_compare_diagnostics_dev:skip_failed")
+  log "SKIPPED: 14_compare_diagnostics_dev (diagnostics script failed, non-critical)"
 fi
 python3 -c "
 import json
