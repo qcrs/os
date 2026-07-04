@@ -611,10 +611,21 @@ def extract_json_object(text: str) -> dict[str, Any]:
     if stripped.startswith("```"):
         stripped = _strip_code_fence(stripped)
     start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or end < start:
+    if start == -1:
         raise ValueError(f"expected json object in llm output: {text!r}")
-    return json.loads(stripped[start : end + 1])
+    # Walk backwards from the last } until json.loads succeeds.
+    # This handles LLM appending trailing commentary after the closing brace.
+    end = len(stripped) - 1
+    while end >= start:
+        end = stripped.rfind("}", start, end + 1)
+        if end == -1:
+            break
+        candidate = stripped[start : end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            end -= 1
+    raise ValueError(f"expected json object in llm output: {text!r}")
 
 
 def parse_text_planner_brief(text: str) -> dict[str, Any]:
