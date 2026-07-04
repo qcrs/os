@@ -40,16 +40,15 @@ if [[ ! -d "${BASE_RESULT_ROOT}" ]]; then
   echo "[statebus-v2-rerun] base result root does not exist: ${BASE_RESULT_ROOT}" >&2
   exit 1
 fi
-if [[ ! -f "${BASE_RESULT_ROOT}/status.tsv" ]]; then
+if [[ -n "${STATEBUS_FORCE_FAILED_STAGES:-}" ]]; then
+  # FORCE_FAILED_STAGES bypasses status.tsv requirement
+  FAILED_STAGES_CSV="${STATEBUS_FORCE_FAILED_STAGES}"
+elif [[ ! -f "${BASE_RESULT_ROOT}/status.tsv" ]]; then
   echo "[statebus-v2-rerun] missing base status.tsv: ${BASE_RESULT_ROOT}/status.tsv" >&2
   exit 1
-fi
-
-BASE_RUN_ID="$(basename "$BASE_RESULT_ROOT")"
-BASE_CONTAINER_RESULT_ROOT="${CONTAINER_RUNS_ROOT}/${BASE_RUN_ID}"
-
-FAILED_STAGES_CSV="$(
-  python3 - "${BASE_RESULT_ROOT}/status.tsv" <<'PY'
+else
+  FAILED_STAGES_CSV="$(
+    python3 - "${BASE_RESULT_ROOT}/status.tsv" <<'PY'
 import sys
 
 failed = []
@@ -72,10 +71,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
             failed.append(stage)
 print(",".join(failed))
 PY
-)"
-
-if [[ -n "${STATEBUS_FORCE_FAILED_STAGES:-}" ]]; then
-  FAILED_STAGES_CSV="${STATEBUS_FORCE_FAILED_STAGES}"
+  )"
 fi
 
 mkdir -p "$HOST_RESULT_ROOT"
