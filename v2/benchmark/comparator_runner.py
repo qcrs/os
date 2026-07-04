@@ -180,12 +180,34 @@ def _headline_metrics(
             "llm_call_count_delta",
             "prompt_bytes_delta",
             "llm_ms_delta",
+            "net_llm_ms_delta",
             "end_to_end_ms_delta",
             "message_count_delta",
             "control_bytes_delta",
             "task_ms_delta",
+            "system_overhead_ms_delta",
         )
     }, ""
+
+
+def _mode_formal_efficiency_claim_allowed(mode_report: BenchmarkComparatorModeReport) -> bool:
+    return (
+        mode_report.benchmark_tier == "formal"
+        and not mode_report.missing_reason
+        and mode_report.debug_metrics.get("llm_total_tokens_delta", 0.0) < 0.0
+        and mode_report.debug_metrics.get("prompt_bytes_delta", 0.0) < 0.0
+        and mode_report.debug_metrics.get("quality_floor_pass_delta", 0.0) >= 0.0
+    )
+
+
+def _formal_efficiency_claim_allowed(
+    mode_reports: list[BenchmarkComparatorModeReport],
+    *,
+    benchmark_tier: str,
+) -> bool:
+    return benchmark_tier == "formal" and bool(mode_reports) and all(
+        _mode_formal_efficiency_claim_allowed(report) for report in mode_reports
+    )
 
 
 def _build_mode_markdown(
@@ -305,6 +327,7 @@ def run_fixed_answer_external_comparator_suite(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkComparatorSuiteReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
     mode_reports: list[BenchmarkComparatorModeReport] = []
@@ -325,6 +348,7 @@ def run_fixed_answer_external_comparator_suite(
             seed_replay_memory=seed_replay_memory,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            persistence_profile=persistence_profile,
         )
         external_report = run_external_text_family(
             samples=samples,
@@ -350,10 +374,18 @@ def run_fixed_answer_external_comparator_suite(
             fairness_manifest=fairness_manifest,
         )
         comparison_valid = not mode_missing_reason and not invalid_reason
+        mode_formal_efficiency_claim_allowed = (
+            benchmark_tier == "formal"
+            and not mode_missing_reason
+            and debug_metrics.get("llm_total_tokens_delta", 0.0) < 0.0
+            and debug_metrics.get("prompt_bytes_delta", 0.0) < 0.0
+            and debug_metrics.get("quality_floor_pass_delta", 0.0) >= 0.0
+        )
         comparison_summary = {
             "case_count": debug_metrics.get("case_count", 0.0),
             "comparison_valid": 1.0 if comparison_valid else 0.0,
             "headline_metric_count": float(len(headline_metrics)),
+            "formal_efficiency_claim_allowed": 1.0 if mode_formal_efficiency_claim_allowed else 0.0,
         }
         if comparison_valid:
             comparison_summary.update(headline_metrics)
@@ -400,6 +432,9 @@ def run_fixed_answer_external_comparator_suite(
         "mode_count": float(len(mode_reports)),
         "successful_mode_count": float(sum(1 for report in mode_reports if not report.missing_reason)),
         "valid_mode_count": float(sum(1 for report in mode_reports if report.comparison_valid)),
+        "formal_efficiency_claim_allowed": 1.0
+        if _formal_efficiency_claim_allowed(mode_reports, benchmark_tier=benchmark_tier)
+        else 0.0,
     }
     for mode_report in mode_reports:
         mode_key = mode_report.role_path_mode.replace("-", "_")
@@ -416,6 +451,10 @@ def run_fixed_answer_external_comparator_suite(
         mode_reports=tuple(mode_reports),
         comparison_summary=comparison_summary,
         metadata={
+            "formal_efficiency_claim_allowed": _formal_efficiency_claim_allowed(
+                mode_reports,
+                benchmark_tier=benchmark_tier,
+            ),
             "formal_headline_eligible": bool(mode_reports)
             and benchmark_tier == "formal"
             and all(report.eligible_for_headline for report in mode_reports),
@@ -482,6 +521,7 @@ def compare_fixed_answer_with_external(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkComparatorSuiteReport:
     return run_fixed_answer_external_comparator_suite(
         samples=samples,
@@ -495,4 +535,5 @@ def compare_fixed_answer_with_external(
         seed_replay_memory=seed_replay_memory,
         benchmark_tier=benchmark_tier,
         claim_level=claim_level,
+        persistence_profile=persistence_profile,
     )

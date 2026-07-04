@@ -273,6 +273,7 @@ class SmokeLayerConfig:
     hermetic_runtime_root: bool = True
     role_path_mode: str = "deterministic"
     embedding_mode: str = "deterministic"
+    persistence_profile: str = "audit_full"
 
 
 @dataclass(frozen=True)
@@ -509,6 +510,45 @@ def _role_prompt_slice_payload(
     }
 
 
+def _role_prompt_slice_hash_only_payload(
+    *,
+    task_id: str,
+    slice_: RoleHydratedSlice,
+    prompt_bytes: int,
+) -> dict[str, object]:
+    combined_text = "\n\n".join(
+        part
+        for part in (
+            slice_.hydrated_text,
+            slice_.table_text,
+            slice_.artifact_text,
+            slice_.memory_text,
+        )
+        if part
+    )
+    return {
+        "task_id": task_id,
+        "role": slice_.role,
+        "hydrated_bytes": slice_.hydrated_bytes,
+        "hydrated_item_count": slice_.item_count,
+        "table_bytes": slice_.table_bytes,
+        "table_item_count": slice_.table_item_count,
+        "artifact_bytes": slice_.artifact_bytes,
+        "artifact_item_count": slice_.artifact_item_count,
+        "memory_bytes": slice_.memory_bytes,
+        "memory_item_count": slice_.memory_item_count,
+        "external_evidence_bytes": _role_external_evidence_bytes(slice_),
+        "total_prompt_visible_bytes": _role_total_prompt_visible_bytes(slice_),
+        "non_external_prompt_visible_bytes": _role_non_external_prompt_visible_bytes(slice_),
+        "total_prompt_visible_item_count": _role_total_prompt_visible_items(slice_),
+        "prompt_scaffolding_bytes": _prompt_scaffolding_bytes(prompt_bytes=prompt_bytes, slice_=slice_),
+        "prompt_bytes": prompt_bytes,
+        "persistence_profile": "benchmark_balanced",
+        "combined_text_sha256": sha256_digest(combined_text.encode("utf-8")) if combined_text else "",
+        "schema_version": ROLE_PROMPT_SLICE_SCHEMA_VERSION,
+    }
+
+
 def _persist_role_prompt_slice_artifact(
     *,
     task_id: str,
@@ -516,11 +556,25 @@ def _persist_role_prompt_slice_artifact(
     layout,
     slice_: RoleHydratedSlice,
     prompt_bytes: int,
+    persistence_profile: str = "audit_full",
 ) -> tuple[MaterializedFile, ExecutionArtifactRef]:
+    payload = (
+        _role_prompt_slice_hash_only_payload(
+            task_id=task_id,
+            slice_=slice_,
+            prompt_bytes=prompt_bytes,
+        )
+        if persistence_profile == "benchmark_balanced"
+        else _role_prompt_slice_payload(
+            task_id=task_id,
+            slice_=slice_,
+            prompt_bytes=prompt_bytes,
+        )
+    )
     prompt_slice_file = workspace.write_json(
         layout,
         _role_prompt_slice_relpath(slice_.role),
-        _role_prompt_slice_payload(task_id=task_id, slice_=slice_, prompt_bytes=prompt_bytes),
+        payload,
         logical_name=f"{slice_.role}_prompt_slice",
     )
     return prompt_slice_file, ExecutionArtifactRef(
@@ -540,6 +594,146 @@ def _persist_role_prompt_slice_artifact(
     )
 
 
+def _telemetry_artifact_payload(
+    *,
+    events: list[TelemetryEvent],
+    persistence_profile: str,
+) -> object:
+    payloads = [event.canonical_payload() for event in events]
+    if persistence_profile != "benchmark_balanced":
+        return payloads
+    event_type_counts: dict[str, int] = {}
+    for payload in payloads:
+        event_type = str(payload.get("event_type", "")).strip()
+        if event_type:
+            event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+    return {
+        "schema_version": "statebus.telemetry_summary.v1",
+        "persistence_profile": "benchmark_balanced",
+        "event_count": len(payloads),
+        "event_type_counts": dict(sorted(event_type_counts.items())),
+        "events_sha256": sha256_digest(stable_json_dumps(payloads).encode("utf-8")) if payloads else "",
+    }
+
+
+def _replay_audit_payload_for_profile(
+    *,
+    payload: dict[str, object],
+    persistence_profile: str,
+) -> dict[str, object]:
+    if persistence_profile != "benchmark_balanced":
+        return payload
+    replay_candidate = dict(payload.get("replay_candidate", {}))
+    history_candidate_selection = dict(payload.get("history_candidate_selection", {}))
+    return {
+        "task_id": payload["task_id"],
+        "persistence_profile": "benchmark_balanced",
+        "replay_class": payload["replay_class"],
+        "decision_reason": payload["decision_reason"],
+        "compatibility_verdict": payload["compatibility_verdict"],
+        "candidate_id": payload["candidate_id"],
+        "skipped_step_count": payload["skipped_step_count"],
+        "degraded": payload["degraded"],
+        "history_runtime_root_count": payload["history_runtime_root_count"],
+        "replay_history_source": payload["replay_history_source"],
+        "memory_match_count": payload["memory_match_count"],
+        "exact_replay_candidate_count": payload["exact_replay_candidate_count"],
+        "history_artifact_reuse_count": payload["history_artifact_reuse_count"],
+        "history_strategy_reuse_count": payload["history_strategy_reuse_count"],
+        "history_step_reduction_count": payload["history_step_reduction_count"],
+        "history_reuse_gain": payload["history_reuse_gain"],
+        "planner_handoff_hash": payload["planner_handoff_hash"],
+        "output_artifact_hash": payload["output_artifact_hash"],
+        "runtime_signature_manifest_bundle_hash": payload["runtime_signature_manifest_bundle_hash"],
+        "input_artifact_hashes_sha256": sha256_digest(
+            stable_json_dumps(payload.get("input_artifact_hashes", [])).encode("utf-8")
+        ),
+        "replay_candidate_sha256": (
+            sha256_digest(stable_json_dumps(replay_candidate).encode("utf-8")) if replay_candidate else ""
+        ),
+        "history_candidate_selection_sha256": (
+            sha256_digest(stable_json_dumps(history_candidate_selection).encode("utf-8"))
+            if history_candidate_selection
+            else ""
+        ),
+    }
+
+
+def _hydration_debug_audit_payload_for_profile(
+    *,
+    payload: dict[str, object],
+    persistence_profile: str,
+) -> dict[str, object]:
+    if persistence_profile != "benchmark_balanced":
+        return payload
+    roles = payload.get("roles", {})
+    prompt_slice_ref_ids = {
+        role: str(role_payload.get("prompt_slice_ref_id", "")).strip()
+        for role, role_payload in dict(roles).items()
+        if isinstance(role_payload, dict)
+    }
+    prompt_slice_blob_hashes = {
+        role: str(role_payload.get("prompt_slice_blob_hash", "")).strip()
+        for role, role_payload in dict(roles).items()
+        if isinstance(role_payload, dict)
+    }
+    return {
+        "task_id": payload["task_id"],
+        "persistence_profile": "benchmark_balanced",
+        "evidence_pack_id": payload["evidence_pack_id"],
+        "evidence_pack_hash": payload["evidence_pack_hash"],
+        "hydrate_manifest_id": payload["hydrate_manifest_id"],
+        "hydrate_manifest_hash": payload["hydrate_manifest_hash"],
+        "evidence_locator_count": payload["evidence_locator_count"],
+        "counting_scope": payload["counting_scope"],
+        "raw_evidence_bytes_seen_by_llm": payload["raw_evidence_bytes_seen_by_llm"],
+        "prompt_visible_total_bytes": payload["prompt_visible_total_bytes"],
+        "non_external_prompt_visible_bytes": payload["non_external_prompt_visible_bytes"],
+        "prompt_scaffolding_bytes_total": payload["prompt_scaffolding_bytes_total"],
+        "semantic_pruning_enabled": payload["semantic_pruning_enabled"],
+        "prompt_slice_ref_ids": prompt_slice_ref_ids,
+        "prompt_slice_blob_hashes": prompt_slice_blob_hashes,
+        "roles_sha256": sha256_digest(stable_json_dumps(roles).encode("utf-8")) if roles else "",
+    }
+
+
+def _artifact_audit_payload_for_profile(
+    *,
+    payload: dict[str, object],
+    persistence_profile: str,
+) -> dict[str, object]:
+    if persistence_profile != "benchmark_balanced":
+        return payload
+    return {
+        "task_id": payload["task_id"],
+        "persistence_profile": "benchmark_balanced",
+        "artifact_id": payload["artifact_id"],
+        "input_manifest_hash": payload["input_manifest_hash"],
+        "artifact_manifest_hash": payload["artifact_manifest_hash"],
+        "output_artifact_path": payload["output_artifact_path"],
+        "output_artifact_hash": payload["output_artifact_hash"],
+        "output_relpath": payload["output_relpath"],
+        "replay_ready": payload["replay_ready"],
+        "verification_state": payload["verification_state"],
+        "root_id": payload["root_id"],
+        "workspace_relpath": payload["workspace_relpath"],
+        "blob_hash": payload["blob_hash"],
+        "manifest_hash": payload["manifest_hash"],
+        "size_bytes": payload["size_bytes"],
+        "validator_report_count": len(payload.get("validator_report_hashes", [])),
+        "input_validator_report_count": len(payload.get("input_validator_hashes", [])),
+        "settlement_state": payload["settlement_state"],
+        "commit_gate_reason": payload["commit_gate_reason"],
+        "state_storage_kind": payload["state_storage_kind"],
+        "validator_report_hashes_sha256": sha256_digest(
+            stable_json_dumps(payload.get("validator_report_hashes", [])).encode("utf-8")
+        ),
+        "input_validator_hashes_sha256": sha256_digest(
+            stable_json_dumps(payload.get("input_validator_hashes", [])).encode("utf-8")
+        ),
+    }
+
+
 def _string_list(payload: dict[str, object], key: str) -> tuple[str, ...]:
     values = payload.get(key, [])
     if not isinstance(values, list):
@@ -554,7 +748,7 @@ def _continuous_output_reuse_metrics(
     quality_floor: QualityFloorResult,
     layer_config: SmokeLayerConfig,
 ) -> dict[str, float]:
-    if spec.task_family not in {"continuous_csv_table_analysis", "continuous_long_doc_table_analysis"}:
+    if spec.task_family not in {"continuous_csv_table_analysis", "continuous_long_doc_table_analysis", "incident_diagnosis_v2"}:
         return {}
     if not layer_config.replay_enabled or not quality_floor.quality_floor_pass:
         return {
@@ -581,6 +775,8 @@ def _continuous_output_reuse_metrics(
             and artifact_count >= 7
         ):
             step_reduction_count = 2
+        elif spec.task_family == "incident_diagnosis_v2":
+            step_reduction_count = 1
     return {
         "history_artifact_reuse_count": float(artifact_count),
         "history_strategy_reuse_count": float(strategy_count),
@@ -782,6 +978,9 @@ def _goal_from_spec(spec: object) -> str:
         dataset_id = str(arguments.get("dataset_id", "dataset"))
         intent = str(getattr(spec, "intent_op", "analyze"))
         return f"Execute long-doc {intent} for {dataset_id} and persist cited reusable artifacts."
+    if task_family == "incident_diagnosis_v2":
+        service_name = str(arguments.get("service_name", arguments.get("dataset_id", "service")))
+        return f"Diagnose startup latency for {service_name} and persist a reusable timing profile."
     ticker = str(getattr(spec, "arguments", {}).get("ticker", "ACME"))
     quarter = str(getattr(spec, "arguments", {}).get("quarter", "2026Q1"))
     metric = str(getattr(spec, "arguments", {}).get("metric", "revenue"))
@@ -800,6 +999,9 @@ def _summary_hint_from_spec(spec: object) -> str:
         dataset_id = str(arguments.get("dataset_id", "dataset"))
         intent = str(getattr(spec, "intent_op", "analyze"))
         return f"{dataset_id} {intent} cited summary ready"
+    if task_family == "incident_diagnosis_v2":
+        service_name = str(arguments.get("service_name", arguments.get("dataset_id", "service")))
+        return f"{service_name} startup diagnosis summary ready"
     ticker = str(getattr(spec, "arguments", {}).get("ticker", "ACME"))
     quarter = str(getattr(spec, "arguments", {}).get("quarter", "2026Q1"))
     intent = str(getattr(spec, "intent_op", "compare_metric"))
@@ -989,6 +1191,31 @@ def _planner_scope_payload(
             "table_bytes": len(table_context.encode("utf-8")),
             "table_item_count": len(document.table_rows),
         }
+    if spec.task_family == "incident_diagnosis_v2":
+        dataset_id = str(spec.arguments.get("dataset_id", "")).strip()
+        log_path = str(spec.arguments.get("log_path", "")).strip()
+        journal_path = str(spec.arguments.get("journal_path", "")).strip()
+        service_name = str(spec.arguments.get("service_name", "")).strip()
+        from v2.retrieval.corpus import OfflineIncidentLogCorpus
+
+        document = OfflineIncidentLogCorpus().resolve(
+            dataset_id=dataset_id,
+            log_path=log_path,
+            journal_path=journal_path,
+            service_name=service_name,
+        )
+        text_context = "\n".join(fragment.text for fragment in document.text_fragments)
+        table_context = "\n".join(row.rendered_text for row in document.table_rows)
+        return {
+            "supporting_doc_ids": [document.source_doc_hash],
+            "source_doc_hashes": [document.source_doc_hash],
+            "text_context": text_context,
+            "text_bytes": len(text_context.encode("utf-8")),
+            "text_item_count": len(document.text_fragments),
+            "table_context": table_context,
+            "table_bytes": len(table_context.encode("utf-8")),
+            "table_item_count": len(document.table_rows),
+        }
     ticker = str(spec.arguments.get("ticker", "ACME"))
     quarter = str(spec.arguments.get("quarter", "2026Q1"))
     document = OfflineFinancialReportCorpus().resolve(ticker=ticker, quarter=quarter)
@@ -1021,6 +1248,12 @@ def _query_text_from_spec(spec: object) -> str:
         topic = str(arguments.get("topic", arguments.get("metric", ""))).strip()
         intent = str(getattr(spec, "intent_op", "analyze"))
         return " ".join(part for part in (dataset_id, topic, intent) if part).strip()
+    if str(getattr(spec, "task_family", "")).strip() == "incident_diagnosis_v2":
+        service_name = str(arguments.get("service_name", arguments.get("dataset_id", "service"))).strip()
+        symptom_family = str(arguments.get("symptom_family", "startup_latency")).strip()
+        phase_hint = str(arguments.get("phase_hint", "storage_mount")).strip()
+        intent = str(getattr(spec, "intent_op", "diagnose"))
+        return " ".join(part for part in (service_name, symptom_family, phase_hint, intent) if part).strip()
     ticker = str(arguments.get("ticker", "ACME"))
     quarter = str(arguments.get("quarter", "2026Q1"))
     metric = str(arguments.get("metric", "revenue"))
@@ -1357,6 +1590,7 @@ def _driver_profile_from_layer_config(layer_config: SmokeLayerConfig) -> Runtime
         multi_attempt_enabled=layer_config.multi_attempt_enabled,
         force_first_attempt_trap=layer_config.force_first_attempt_trap,
         persistence_verification_level="strict_roundtrip",
+        persistence_profile=layer_config.persistence_profile,
     )
 
 
@@ -2498,7 +2732,10 @@ def run_smoke(
     telemetry_path = layout.logs_dir / "telemetry.json"
     telemetry_path.write_text(
         stable_json_dumps(
-            [event.canonical_payload() for event in telemetry.events]
+            _telemetry_artifact_payload(
+                events=telemetry.events,
+                persistence_profile=layer_config.persistence_profile,
+            )
         )
         + "\n",
         encoding="utf-8",
@@ -2572,7 +2809,10 @@ def run_smoke(
     replay_audit_file = workspace.write_json(
         layout,
         "logs/replay_audit.json",
-        replay_audit_payload,
+        _replay_audit_payload_for_profile(
+            payload=replay_audit_payload,
+            persistence_profile=layer_config.persistence_profile,
+        ),
         logical_name="replay_audit",
     )
     role_prompt_bytes = {
@@ -2590,6 +2830,7 @@ def run_smoke(
             layout=layout,
             slice_=role_hydrated_slices[role],
             prompt_bytes=role_prompt_bytes[role],
+            persistence_profile=layer_config.persistence_profile,
         )
         role_prompt_slice_files[role] = prompt_slice_file
         role_prompt_slice_refs[role] = prompt_slice_ref
@@ -2653,7 +2894,10 @@ def run_smoke(
     hydration_debug_audit_file = workspace.write_json(
         layout,
         "logs/hydration_audit.json",
-        hydration_audit_payload,
+        _hydration_debug_audit_payload_for_profile(
+            payload=hydration_audit_payload,
+            persistence_profile=layer_config.persistence_profile,
+        ),
         logical_name="hydration_audit",
     )
     hydration_accounting_store = JsonContractStore(runtime_root)
@@ -2702,7 +2946,10 @@ def run_smoke(
     artifact_audit_file = workspace.write_json(
         layout,
         "logs/artifact_audit.json",
-        artifact_audit_payload,
+        _artifact_audit_payload_for_profile(
+            payload=artifact_audit_payload,
+            persistence_profile=layer_config.persistence_profile,
+        ),
         logical_name="artifact_audit",
     )
     audit_summary = {

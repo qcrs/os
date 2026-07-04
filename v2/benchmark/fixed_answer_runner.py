@@ -162,6 +162,7 @@ def _fixed_answer_smoke_config(
     statebus_mode: str,
     role_path_mode: str,
     embedding_mode: str,
+    persistence_profile: str = "audit_full",
 ) -> SmokeLayerConfig:
     normalized = normalize_statebus_mode(statebus_mode)
     base = FIXED_ANSWER_SMOKE_CONFIGS[layer]
@@ -180,6 +181,7 @@ def _fixed_answer_smoke_config(
         force_first_attempt_trap=base.force_first_attempt_trap,
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        persistence_profile=persistence_profile,
     )
 
 
@@ -194,6 +196,7 @@ def _fixed_answer_driver_profile(layer_config: SmokeLayerConfig) -> RuntimeDrive
         multi_attempt_enabled=layer_config.multi_attempt_enabled,
         force_first_attempt_trap=layer_config.force_first_attempt_trap,
         persistence_verification_level="core_roundtrip",
+        persistence_profile=layer_config.persistence_profile,
     )
 
 
@@ -460,6 +463,7 @@ def run_fixed_answer_benchmark_family(
     profile_override: BenchmarkLayerProfile | None = None,
     smoke_config_override: SmokeLayerConfig | None = None,
     metadata_extra: dict[str, object] | None = None,
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
     if layer != BenchmarkLayer.L3:
@@ -475,6 +479,7 @@ def run_fixed_answer_benchmark_family(
         statebus_mode=normalized_statebus_mode,
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        persistence_profile=persistence_profile,
     )
     history_backed_replay_enabled = (
         layer == BenchmarkLayer.L3 and normalized_statebus_mode == "replay_ready" and not seed_replay_memory
@@ -556,6 +561,7 @@ def run_fixed_answer_benchmark_family(
                     statebus_mode="cold_start",
                     role_path_mode=role_path_mode,
                     embedding_mode=embedding_mode,
+                    persistence_profile=persistence_profile,
                 ),
                 expected_facts=sample.expected_facts,
                 seed_replay_memory=False,
@@ -565,6 +571,7 @@ def run_fixed_answer_benchmark_family(
                         statebus_mode="cold_start",
                         role_path_mode=role_path_mode,
                         embedding_mode=embedding_mode,
+                        persistence_profile=persistence_profile,
                     )
                 ),
             )
@@ -692,12 +699,14 @@ def run_fixed_answer_text_semantic_selection_family(
     embedding_mode: str = "deterministic",
     benchmark_tier: str = "dev",
     claim_level: str = "diagnostic",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     smoke_config = SmokeLayerConfig(
         **{
             **FIXED_ANSWER_TEXT_SEMANTIC_SELECTION_SMOKE_CONFIG.__dict__,
             "role_path_mode": role_path_mode,
             "embedding_mode": embedding_mode,
+            "persistence_profile": persistence_profile,
         }
     )
     return run_fixed_answer_benchmark_family(
@@ -724,6 +733,7 @@ def run_fixed_answer_text_semantic_selection_family(
             "semantic_state_transfer_enabled": False,
             "uses_semantic_state_ref": False,
         },
+        persistence_profile=persistence_profile,
     )
 
 
@@ -740,6 +750,7 @@ def run_fixed_answer_suite(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkSuiteReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
     primary_role_path_mode = role_path_modes[0] if role_path_modes else "deterministic"
@@ -757,6 +768,7 @@ def run_fixed_answer_suite(
             seed_replay_memory=seed_replay_memory if layer == BenchmarkLayer.L3 else False,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            persistence_profile=persistence_profile,
         )
         for layer in BenchmarkLayer
     )
@@ -851,6 +863,7 @@ def run_fixed_answer_internal_carrier_compare_suite(
     statebus_mode: str = "cold_start",
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkComparatorSuiteReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
     mode_reports: list[BenchmarkComparatorModeReport] = []
@@ -871,6 +884,7 @@ def run_fixed_answer_internal_carrier_compare_suite(
             seed_replay_memory=False,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            persistence_profile=persistence_profile,
         )
         structured_report = run_fixed_answer_benchmark_family(
             samples=samples,
@@ -885,6 +899,7 @@ def run_fixed_answer_internal_carrier_compare_suite(
             seed_replay_memory=False,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            persistence_profile=persistence_profile,
         )
         mode_missing_reason = text_report.missing_reason or structured_report.missing_reason
         fairness_manifest = _internal_carrier_fairness_manifest(
