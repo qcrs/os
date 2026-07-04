@@ -4,6 +4,7 @@ import hashlib
 import json
 import mmap
 import os
+import platform
 from dataclasses import dataclass
 from multiprocessing import shared_memory
 from pathlib import Path
@@ -14,6 +15,7 @@ from protocol.messages import StateRef
 
 MMAP_FILE_STORAGE = "MMAP_FILE"
 PY_SHARED_MEMORY_STORAGE = "PY_SHARED_MEMORY"
+MEMFD_STORAGE = "MEMFD"
 CAS_BLOB_STORAGE = "CAS_BLOB"
 DEFAULT_STATEPOOL_BACKEND = "mmap"
 DEFAULT_EMBED_STATE_BACKEND = "mmap"
@@ -54,6 +56,8 @@ def resolve_statepool_backend(value: str | None = None) -> str:
         return MMAP_FILE_STORAGE
     if candidate in {"shared_memory", "py_shared_memory", PY_SHARED_MEMORY_STORAGE.lower()}:
         return PY_SHARED_MEMORY_STORAGE
+    if candidate in {"memfd", MEMFD_STORAGE.lower()}:
+        return MEMFD_STORAGE
     raise ValueError(f"unsupported statepool backend: {candidate}")
 
 
@@ -67,6 +71,8 @@ def resolve_embedding_state_backend(value: str | None = None) -> str:
         return MMAP_FILE_STORAGE
     if candidate in {"shared_memory", "py_shared_memory", PY_SHARED_MEMORY_STORAGE.lower()}:
         return PY_SHARED_MEMORY_STORAGE
+    if candidate in {"memfd", MEMFD_STORAGE.lower()}:
+        return MEMFD_STORAGE
     raise ValueError(f"unsupported embedding state backend: {candidate}")
 
 
@@ -80,6 +86,35 @@ def cleanup_shared_memory_handles(handles: set[str]) -> None:
             segment.unlink()
         finally:
             segment.close()
+
+
+def memfd_create_available() -> bool:
+    fd = _memfd_create_safe("statebus_probe")
+    if fd is None:
+        return False
+    os.close(fd)
+    return True
+
+
+def _memfd_create(name: str) -> int:
+    if hasattr(os, "memfd_create"):
+        flags = int(getattr(os, "MFD_CLOEXEC", 0x0001))
+        return int(os.memfd_create(name, flags=flags))
+    import ctypes
+
+    syscall_number = 319 if platform.machine() == "x86_64" else 385
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    fd = int(libc.syscall(syscall_number, name.encode("utf-8"), 0x0001))
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "memfd_create failed")
+    return fd
+
+
+def _memfd_create_safe(name: str) -> int | None:
+    try:
+        return _memfd_create(name)
+    except (AttributeError, OSError):
+        return None
 
 
 class FileBackedStatePool:
@@ -202,6 +237,130 @@ class SharedMemoryStatePool:
         return _read_ref_meta(self.meta_dir / f"{state_id}.json")
 
 
+class MemfdStatePool:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        owned_fds: dict[str, int] | None = None,
+        fallback_pool: SharedMemoryStatePool | None = None,
+    ) -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.meta_dir = self.root / "meta"
+        self.meta_dir.mkdir(parents=True, exist_ok=True)
+        self.owned_fds = owned_fds if owned_fds is not None else {}
+        self._handle_to_state_id: dict[str, str] = {}
+        self._fallback_pool = fallback_pool or SharedMemoryStatePool(self.root / "shared_memory_fallback")
+
+    def put_bytes(
+        self,
+        state_id: str,
+        kind: str,
+        payload: bytes,
+        metadata: dict[str, object] | None = None,
+    ) -> StateRef:
+        fd = _memfd_create_safe(f"statebus_{state_id[:32]}")
+        if fd is None:
+            return self._fallback_pool.put_bytes(state_id, kind, payload, metadata=metadata)
+        os.ftruncate(fd, len(payload))
+        _write_all(fd, payload)
+        os.lseek(fd, 0, os.SEEK_SET)
+        checksum = hashlib.sha256(payload).hexdigest()
+        handle = f"memfd:{state_id}"
+        ref = StateRef(
+            state_id=state_id,
+            kind=kind,
+            length=len(payload),
+            metadata=dict(metadata or {}),
+            storage=MEMFD_STORAGE,
+            handle=handle,
+            blob_hash=checksum,
+            checksum=checksum,
+        )
+        self.owned_fds[state_id] = fd
+        self._handle_to_state_id[handle] = state_id
+        _write_ref_meta(self.meta_dir / f"{state_id}.json", ref)
+        return ref
+
+    def get_bytes(self, ref: StateRef) -> bytes:
+        fd = self._resolve_fd(ref)
+        os.lseek(fd, 0, os.SEEK_SET)
+        return os.read(fd, ref.length)
+
+    def get_text(self, ref: StateRef) -> str:
+        return self.get_bytes(ref).decode("utf-8")
+
+    def get_embedding(self, ref: StateRef) -> np.ndarray:
+        dtype = str(ref.metadata.get("dtype", "float32"))
+        vector_dim = int(ref.metadata["vector_dim"])
+        vector = np.frombuffer(self.get_bytes(ref), dtype=dtype)
+        if vector.shape != (vector_dim,):
+            raise ValueError(
+                f"embedding state {ref.state_id} shape mismatch:"
+                f" expected {(vector_dim,)}, got {vector.shape}"
+            )
+        return np.asarray(vector, dtype="float32")
+
+    def load_ref(self, state_id: str) -> StateRef:
+        return _read_ref_meta(self.meta_dir / f"{state_id}.json")
+
+    def send_fd_via_socket(self, state_id: str, sock: object) -> None:
+        import array
+        import socket
+
+        fd = self._resolve_fd_by_state_id(state_id)
+        fds = array.array("i", [fd])
+        sock.sendmsg(
+            [state_id.encode("utf-8")],
+            [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds.tobytes())],
+        )
+
+    def receive_fd_via_socket(self, sock: object, *, state_id: str | None = None) -> str:
+        import array
+        import socket
+
+        message, ancillary, _flags, _addr = sock.recvmsg(256, socket.CMSG_SPACE(array.array("i", [0]).itemsize))
+        resolved_state_id = state_id or message.decode("utf-8").strip()
+        for level, message_type, data in ancillary:
+            if level != socket.SOL_SOCKET or message_type != socket.SCM_RIGHTS:
+                continue
+            fds = array.array("i")
+            usable = len(data) - (len(data) % fds.itemsize)
+            fds.frombytes(data[:usable])
+            if not fds:
+                continue
+            handle = f"memfd:{resolved_state_id}"
+            self.owned_fds[resolved_state_id] = int(fds[0])
+            self._handle_to_state_id[handle] = resolved_state_id
+            return resolved_state_id
+        raise RuntimeError("no memfd descriptor received via SCM_RIGHTS")
+
+    def close_all(self) -> None:
+        for state_id, fd in list(self.owned_fds.items()):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            self.owned_fds.pop(state_id, None)
+        self._handle_to_state_id.clear()
+
+    def _resolve_fd(self, ref: StateRef) -> int:
+        state_id = ref.state_id
+        return self._resolve_fd_by_state_id(state_id, handle=ref.handle)
+
+    def _resolve_fd_by_state_id(self, state_id: str, *, handle: str | None = None) -> int:
+        if state_id in self.owned_fds:
+            return self.owned_fds[state_id]
+        mapped_state_id = self._handle_to_state_id.get(handle or f"memfd:{state_id}")
+        if mapped_state_id and mapped_state_id in self.owned_fds:
+            return self.owned_fds[mapped_state_id]
+        raise FileNotFoundError(
+            f"memfd handle for state_id={state_id} is not available in this process;"
+            " transfer it via SCM_RIGHTS or use shared_memory fallback"
+        )
+
+
 class StatePool:
     def __init__(
         self,
@@ -209,6 +368,7 @@ class StatePool:
         *,
         config: StatePoolConfig | None = None,
         owned_shared_handles: set[str] | None = None,
+        owned_memfd_fds: dict[str, int] | None = None,
     ) -> None:
         self.root = Path(root)
         self.config = config or StatePoolConfig.from_env()
@@ -216,6 +376,11 @@ class StatePool:
         self.shared_pool = SharedMemoryStatePool(
             self.root / "shared_memory",
             owned_handles=owned_shared_handles,
+        )
+        self.memfd_pool = MemfdStatePool(
+            self.root / "memfd",
+            owned_fds=owned_memfd_fds,
+            fallback_pool=self.shared_pool,
         )
         self.cas_blobs = ContentAddressedBlobStore(self.root / "cas")
 
@@ -231,6 +396,8 @@ class StatePool:
         backend = storage or self.config.default_backend
         if backend == CAS_BLOB_STORAGE:
             return self.cas_blobs.put(state_id, kind, payload, metadata=metadata)
+        if backend == MEMFD_STORAGE:
+            return self.memfd_pool.put_bytes(state_id, kind, payload, metadata=metadata)
         if backend == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.put_bytes(state_id, kind, payload, metadata=metadata)
         return self.file_pool.put_bytes(state_id, kind, payload, metadata=metadata)
@@ -353,6 +520,8 @@ class StatePool:
                     with mmap.mmap(handle.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
                         return mm[:]
             raise FileNotFoundError(f"missing CAS blob: {ref.canonical_hash}")
+        if ref.storage == MEMFD_STORAGE:
+            return self.memfd_pool.get_bytes(ref)
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_bytes(ref)
         return self.file_pool.get_bytes(ref)
@@ -360,6 +529,8 @@ class StatePool:
     def get_text(self, ref: StateRef) -> str:
         if ref.storage == CAS_BLOB_STORAGE:
             return self.get_bytes(ref).decode("utf-8")
+        if ref.storage == MEMFD_STORAGE:
+            return self.memfd_pool.get_text(ref)
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_text(ref)
         return self.file_pool.get_text(ref)
@@ -375,6 +546,8 @@ class StatePool:
                     f" expected {(vector_dim,)}, got {vector.shape}"
                 )
             return np.asarray(vector, dtype="float32")
+        if ref.storage == MEMFD_STORAGE:
+            return self.memfd_pool.get_embedding(ref)
         if ref.storage == PY_SHARED_MEMORY_STORAGE:
             return self.shared_pool.get_embedding(ref)
         return self.file_pool.get_embedding(ref)
@@ -386,6 +559,9 @@ class StatePool:
         cas_meta = self.cas_blobs.ref_meta_path(state_id)
         if cas_meta.exists():
             return self.cas_blobs.load_ref(state_id)
+        memfd_meta = self.memfd_pool.meta_dir / f"{state_id}.json"
+        if memfd_meta.exists():
+            return self.memfd_pool.load_ref(state_id)
         return self.shared_pool.load_ref(state_id)
 
 
@@ -610,3 +786,15 @@ def _write_ref_meta(path: Path, ref: StateRef) -> None:
 def _read_ref_meta(path: Path) -> StateRef:
     payload = json.loads(path.read_text(encoding="utf-8"))
     return StateRef(**payload)
+
+
+def _write_all(fd: int, payload: bytes) -> None:
+    if not payload:
+        return
+    view = memoryview(payload)
+    total_written = 0
+    while total_written < len(view):
+        written = os.write(fd, view[total_written:])
+        if written <= 0:
+            raise OSError("failed to write memfd payload")
+        total_written += written
