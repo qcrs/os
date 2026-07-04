@@ -1,0 +1,5 @@
+Jul 03 09:00:00 systemd[1]: Starting inference-gateway.service...
+Jul 03 09:00:08 kernel: EXT4-fs: /dev/sdb1 mounted
+Jul 03 09:00:09 inference-gateway[2341]: Service started, listening on :8080
+Jul 03 09:00:09 sshd[1204]: Accepted publickey for admin
+Jul 03 09:00:10 cron[856]: (CRON) INFO (pidfile fd = 3)

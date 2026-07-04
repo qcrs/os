@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import csv
 import hashlib
+import json
 import re
 
 from v2.refs import TableCellLocator, TextSpanLocator
@@ -447,6 +448,23 @@ class CsvTableDocument:
         )
 
 
+@dataclass(frozen=True)
+class IncidentLogDocument:
+    dataset_id: str
+    log_path: str
+    source_doc_hash: str
+    title: str
+    metadata_hints: tuple[str, ...]
+    text_fragments: tuple[CorpusTextFragment, ...]
+    table_rows: tuple[CorpusTableRow, ...]
+
+    @property
+    def full_corpus_bytes(self) -> int:
+        return sum(len(fragment.text.encode("utf-8")) for fragment in self.text_fragments) + sum(
+            len(row.rendered_text.encode("utf-8")) for row in self.table_rows
+        )
+
+
 @dataclass
 class OfflineCsvTableCorpus:
     _cache: dict[str, CsvTableDocument] = field(default_factory=dict)
@@ -508,6 +526,159 @@ class OfflineCsvTableCorpus:
             ),
             text_fragments=text_fragments,
             table_rows=table_rows,
+        )
+        self._cache[cache_key] = document
+        return document
+
+
+@dataclass
+class OfflineIncidentLogCorpus:
+    _cache: dict[str, IncidentLogDocument] = field(default_factory=dict)
+
+    @staticmethod
+    def _source_doc_hash(path: Path) -> str:
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+    @staticmethod
+    def _load_text(path: str) -> str:
+        if not path.strip():
+            return ""
+        resolved = Path(path)
+        if not resolved.is_absolute():
+            resolved = Path.cwd() / resolved
+        if not resolved.exists() or not resolved.is_file():
+            raise KeyError(f"offline incident corpus missing dataset path: {path}")
+        return resolved.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _boot_log_metrics(*, source_doc_hash: str, text: str) -> tuple[CorpusTableRow, ...]:
+        ready_ts = 0.0
+        storage_wait = 0.0
+        service_name = "service"
+        slow_phase = "storage_mount"
+        root_cause = "unknown"
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in lines:
+            if "Starting " in line and ".service" in line:
+                tail = line.split("Starting ", 1)[1]
+                service_name = tail.split()[0].strip()
+            match = re.search(r"Storage mounted \(([-+]?\d+(?:\.\d+)?)s wait\)", line)
+            if match is not None:
+                storage_wait = float(match.group(1))
+            if "high IO wait detected" in line:
+                root_cause = "high_io_wait"
+            elif "Storage mounted" in line and root_cause == "unknown":
+                root_cause = "normal_mount_wait"
+            match = re.search(r"total startup:\s*([-+]?\d+(?:\.\d+)?)s", line)
+            if match is not None:
+                ready_ts = float(match.group(1))
+        values = (
+            ("service_name", service_name),
+            ("slow_phase", slow_phase),
+            ("wait_duration_seconds", f"{storage_wait:.1f}"),
+            ("ready_seconds", f"{ready_ts:.1f}"),
+            ("root_cause", root_cause),
+        )
+        return tuple(
+            CorpusTableRow(
+                source_doc_hash=source_doc_hash,
+                table_id="incident_boot_metrics",
+                sheet_name="boot_log",
+                row_idx=index,
+                col_idx=1,
+                metric_name=metric_name,
+                value=value,
+                rendered_text=f"{metric_name} = {value}.",
+                extractor_version="incident-boot-log-v1",
+            )
+            for index, (metric_name, value) in enumerate(values, start=1)
+        )
+
+    @staticmethod
+    def _text_fragments(*, source_doc_hash: str, log_text: str, journal_text: str) -> tuple[CorpusTextFragment, ...]:
+        fragments: list[CorpusTextFragment] = []
+        cursor = 0
+        for index, line in enumerate([line.strip() for line in log_text.splitlines() if line.strip()], start=1):
+            start_char = cursor
+            end_char = start_char + len(line)
+            cursor = end_char + 1
+            fragments.append(
+                CorpusTextFragment(
+                    fragment_id=f"boot-{index}",
+                    source_doc_hash=source_doc_hash,
+                    text=line,
+                    start_char=start_char,
+                    end_char=end_char,
+                    extractor_version="incident-boot-line-v1",
+                )
+            )
+        if journal_text.strip():
+            journal_base = cursor
+            for index, line in enumerate([line.strip() for line in journal_text.splitlines() if line.strip()], start=1):
+                start_char = journal_base
+                end_char = start_char + len(line)
+                journal_base = end_char + 1
+                fragments.append(
+                    CorpusTextFragment(
+                        fragment_id=f"journal-{index}",
+                        source_doc_hash=source_doc_hash,
+                        text=line,
+                        start_char=start_char,
+                        end_char=end_char,
+                        extractor_version="incident-journal-line-v1",
+                    )
+                )
+        return tuple(fragments)
+
+    def resolve(
+        self,
+        *,
+        dataset_id: str,
+        log_path: str,
+        journal_path: str = "",
+        service_name: str = "",
+    ) -> IncidentLogDocument:
+        if not log_path.strip():
+            raise KeyError(f"offline incident corpus missing log_path for {dataset_id}")
+        cache_key = json.dumps(
+            {
+                "dataset_id": dataset_id,
+                "log_path": log_path,
+                "journal_path": journal_path,
+                "service_name": service_name,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        resolved_log_path = Path(log_path)
+        if not resolved_log_path.is_absolute():
+            resolved_log_path = Path.cwd() / resolved_log_path
+        if not resolved_log_path.exists() or not resolved_log_path.is_file():
+            raise KeyError(f"offline incident corpus missing dataset path for {dataset_id}: {log_path}")
+        log_text = resolved_log_path.read_text(encoding="utf-8")
+        journal_text = self._load_text(journal_path)
+        source_doc_hash = self._source_doc_hash(resolved_log_path)
+        document = IncidentLogDocument(
+            dataset_id=dataset_id,
+            log_path=str(resolved_log_path),
+            source_doc_hash=source_doc_hash,
+            title=service_name or resolved_log_path.stem,
+            metadata_hints=(
+                dataset_id,
+                service_name or resolved_log_path.stem,
+                "startup_latency",
+                "storage_mount",
+                "high_io_wait",
+            ),
+            text_fragments=self._text_fragments(
+                source_doc_hash=source_doc_hash,
+                log_text=log_text,
+                journal_text=journal_text,
+            ),
+            table_rows=self._boot_log_metrics(source_doc_hash=source_doc_hash, text=log_text),
         )
         self._cache[cache_key] = document
         return document

@@ -1,0 +1,5 @@
+Jul 03 09:05:00 systemd[1]: Starting service-b.service...
+Jul 03 09:05:08 kernel: EXT4-fs: /dev/sdc1 mounted
+Jul 03 09:05:09 service-b[4412]: grpc listening on :9090
+Jul 03 09:05:09 systemd[1]: Started metrics-agent.service
+Jul 03 09:05:10 sudo[901]: pam_unix(sudo:session): session opened

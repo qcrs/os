@@ -267,6 +267,16 @@ def stable_tool_registry_profiles() -> tuple[RouteToolProfile, ...]:
 def select_route_profiles(spec: CanonicalTaskSpec) -> tuple[RouteToolProfile, ...]:
     intent = spec.intent_op.strip().lower()
     task_family = spec.task_family.strip().lower()
+    if task_family == "incident_diagnosis_v2":
+        return (
+            RouteToolProfile(
+                route="diagnose_startup_latency",
+                tool_name="codeact_executor",
+                issue_terms=("startup", "latency", "boot", "storage", "mount", "io", "service"),
+                rationale="incident startup diagnosis should retrieve log evidence then materialize a timing profile",
+                bucket_preference="semantic_context",
+            ),
+        )
     if task_family == "continuous_csv_table_analysis":
         return CONTINUOUS_CSV_ROUTE_PROFILES
     if task_family == "continuous_long_doc_table_analysis":
