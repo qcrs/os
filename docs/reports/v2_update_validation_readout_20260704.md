@@ -10,6 +10,10 @@ Authoritative artifact roots:
 - failed-stage rerun: `/home/qcrs/statebus/runs/v2-update-rerun-20260704_160710`
 - flagship-only rerun: `/home/qcrs/statebus/runs/v2-update-rerun-20260704_170948`
 
+Non-authoritative follow-up run that should not be counted as a real validation pass:
+
+- skipped rerun on unrelated base: `/home/qcrs/statebus/runs/v2-update-rerun-20260704_220940`
+
 Final all-stage status should be read from:
 
 - `/home/qcrs/statebus/runs/v2-update-rerun-20260704_170948/status.tsv`
@@ -21,6 +25,8 @@ Headline metrics should primarily be read from:
 The flagship ablation final result should be read from:
 
 - `/home/qcrs/statebus/runs/v2-update-rerun-20260704_170948/json/16_flagship_ablation.json`
+
+The skipped `14_compare_diagnostics_dev` rerun on `full-experiment-20260704_111950` should not be used for validation conclusions because the compare-suite input report was absent and the stage was intentionally skipped.
 
 ## Final Status
 
