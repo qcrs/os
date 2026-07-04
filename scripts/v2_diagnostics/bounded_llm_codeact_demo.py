@@ -619,6 +619,20 @@ def main(argv: list[str] | None = None) -> Path:
         suite_id=args.suite_id,
         max_repair_attempts=max(args.max_repair_attempts, 0),
     )
+    summary = json.loads((bundle_dir / "summary.json").read_text(encoding="utf-8"))
+    ast_audit = json.loads((bundle_dir / "ast_audit.json").read_text(encoding="utf-8"))
+    violations = list(ast_audit.get("violations", []))
+    print(
+        " ".join(
+            [
+                f"ok={summary.get('ok')}",
+                f"generation_fallback_used={summary.get('generation_fallback_used')}",
+                f"attempt_count={summary.get('generation_attempt_count')}",
+                f"repair_attempt_count={summary.get('generation_repair_attempt_count')}",
+                f"violations={','.join(violations) if violations else 'none'}",
+            ]
+        )
+    )
     print(
         stable_json_dumps(
             {
