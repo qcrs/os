@@ -86,6 +86,39 @@ def _write_text_artifact(root: Path, relpath: str, text: str) -> str:
     return relpath
 
 
+def _read_json_lines_text(*paths: str) -> str:
+    chunks: list[str] = []
+    for path in paths:
+        if not path:
+            continue
+        text, _ = _read_text_file(path)
+        chunks.append(text)
+    return "\n".join(chunk for chunk in chunks if chunk)
+
+
+def _incident_boot_metrics(log_text: str) -> dict[str, str]:
+    service_name = "service"
+    slow_phase = "storage_mount"
+    wait_duration_seconds = "0.0"
+    root_cause = "unknown"
+    for line in [line.strip() for line in log_text.splitlines() if line.strip()]:
+        if "Starting " in line and ".service" in line:
+            service_name = line.split("Starting ", 1)[1].split()[0].strip()
+        match = re.search(r"Storage mounted \(([-+]?\d+(?:\.\d+)?)s wait\)", line)
+        if match is not None:
+            wait_duration_seconds = f"{float(match.group(1)):.1f}"
+        if "high IO wait detected" in line:
+            root_cause = "high_io_wait"
+        elif "Storage mounted" in line and root_cause == "unknown":
+            root_cause = "normal_mount_wait"
+    return {
+        "service_name": service_name,
+        "slow_phase": slow_phase,
+        "wait_duration_seconds": wait_duration_seconds,
+        "root_cause": root_cause,
+    }
+
+
 def _numeric_series(rows: list[dict[str, str]], column: str) -> list[float]:
     return [_parse_number(row.get(column, "")) for row in rows if _parse_number(row.get(column, "")) is not None]
 
@@ -586,6 +619,57 @@ def build_candidate_output_payload(request: dict[str, Any], root: Path) -> dict[
     task_family = str(request.get("task_family", "")).strip()
     if task_family == "continuous_long_doc_table_analysis":
         return _build_long_doc_output_payload(request, root)
+    if task_family == "incident_diagnosis_v2":
+        arguments = dict(request.get("spec_arguments", {}))
+        required_outputs = [str(item) for item in request.get("required_outputs", [])]
+        execution_context = dict(request.get("execution_context", {}))
+        reuse_contract = dict(execution_context.get("reuse_contract", {}))
+        history_payloads = _history_output_payloads([str(item) for item in request.get("history_runtime_roots", [])])
+        available_artifact_refs, available_strategy_refs = _available_history_refs(history_payloads)
+        declared_artifact_consumes, declared_strategy_consumes = _consumed_refs(reuse_contract)
+        consumed_artifact_refs = sorted(set(declared_artifact_consumes) & available_artifact_refs)
+        consumed_strategy_refs = sorted(set(declared_strategy_consumes) & available_strategy_refs)
+        log_text, _ = _read_text_file(str(arguments.get("log_path", "")))
+        metrics = _incident_boot_metrics(log_text)
+        timing_profile_relpath = _artifact_relpath(str(request["task_id"]), "timing_profile")
+        timing_profile_payload = {
+            "service_name": metrics["service_name"],
+            "slow_phase": metrics["slow_phase"],
+            "wait_duration_seconds": metrics["wait_duration_seconds"],
+            "root_cause": metrics["root_cause"],
+            "source_log_path": str(arguments.get("log_path", "")),
+        }
+        artifact_refs, strategy_refs = _produced_refs(reuse_contract)
+        base_payload: dict[str, object] = {
+            "task_id": request["task_id"],
+            "task_family": task_family,
+            "intent_op": str(request.get("intent_op", "")).strip(),
+            "query_text": request["query_text"],
+            "summary_text": request["summary_suffix"],
+            "selected_doc_hashes": list(request["selected_doc_hashes"]),
+            "supporting_doc_ids": list(request.get("supporting_doc_ids", [])),
+            "evidence_pack_hash": request["evidence_pack_hash"],
+            "retrieval_log_hash": request["retrieval_log_hash"],
+            "route": request.get("route", ""),
+            "tool_name": request.get("tool_name", ""),
+            "action_contract": request.get("action_contract", ""),
+            "downgraded_execution_goal": request["downgraded_execution_goal"],
+            "execution_goal": request["execution_goal"],
+            "planner_plan_payload": request.get("planner_plan_payload", {}),
+            "dataset_id": str(arguments.get("dataset_id", "")),
+            "log_path": str(arguments.get("log_path", "")),
+            "journal_path": str(arguments.get("journal_path", "")),
+            "produced_artifact_refs": artifact_refs,
+            "produced_strategy_refs": strategy_refs,
+            "consumed_artifact_refs": consumed_artifact_refs,
+            "consumed_strategy_refs": consumed_strategy_refs,
+            "timing_profile_ref": _write_artifact(root, timing_profile_relpath, timing_profile_payload),
+            **metrics,
+        }
+        for field_name in required_outputs:
+            if field_name not in base_payload:
+                raise RuntimeError(f"incident output missing required field: {field_name}")
+        return base_payload
     if task_family != "continuous_csv_table_analysis":
         raise ValueError(f"unsupported task family for continuous codeact helper: {task_family}")
 

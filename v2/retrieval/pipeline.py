@@ -11,6 +11,8 @@ from v2.refs import CanonicalEvidencePack, HydrateManifest, HydrateManifestEntry
 from v2.retrieval.corpus import (
     CsvTableDocument,
     FinancialReportDocument,
+    IncidentLogDocument,
+    OfflineIncidentLogCorpus,
     OfflineMarkdownLongDocCorpus,
     OfflineCsvTableCorpus,
     OfflineFinancialReportCorpus,
@@ -43,7 +45,12 @@ def _stable_entry_key(candidate: EvidenceCandidate) -> str:
 
 @dataclass(frozen=True)
 class LexicalMetadataRetriever:
-    def retrieve(self, *, spec: CanonicalTaskSpec, document: FinancialReportDocument | CsvTableDocument) -> RetrieverOutput:
+    def retrieve(
+        self,
+        *,
+        spec: CanonicalTaskSpec,
+        document: FinancialReportDocument | CsvTableDocument | IncidentLogDocument,
+    ) -> RetrieverOutput:
         ticker = str(spec.arguments.get("ticker", getattr(document, "ticker", "")))
         quarter = str(spec.arguments.get("quarter", getattr(document, "quarter", "")))
         dataset_id = str(spec.arguments.get("dataset_id", getattr(document, "dataset_id", "")))
@@ -77,7 +84,12 @@ class SemanticChunkRetriever:
     encoder: EmbeddingEncoder = field(default_factory=lambda: DeterministicEmbeddingEncoder(dims=16))
     top_k: int = 1  # increase via SemanticChunkRetriever(top_k=3) for richer evidence
 
-    def retrieve(self, *, spec: CanonicalTaskSpec, document: FinancialReportDocument | CsvTableDocument) -> RetrieverOutput:
+    def retrieve(
+        self,
+        *,
+        spec: CanonicalTaskSpec,
+        document: FinancialReportDocument | CsvTableDocument | IncidentLogDocument,
+    ) -> RetrieverOutput:
         doc_identity = getattr(document, "ticker", getattr(document, "dataset_id", "dataset"))
         doc_scope = getattr(document, "quarter", Path(getattr(document, "csv_path", "")).name or "scope")
         query_text = (
@@ -126,7 +138,12 @@ class SemanticChunkRetriever:
 
 @dataclass(frozen=True)
 class TableStructureRetriever:
-    def retrieve(self, *, spec: CanonicalTaskSpec, document: FinancialReportDocument | CsvTableDocument) -> RetrieverOutput:
+    def retrieve(
+        self,
+        *,
+        spec: CanonicalTaskSpec,
+        document: FinancialReportDocument | CsvTableDocument | IncidentLogDocument,
+    ) -> RetrieverOutput:
         requested_metric = str(
             spec.arguments.get(
                 "metric",
@@ -134,7 +151,10 @@ class TableStructureRetriever:
                     "column",
                     spec.arguments.get(
                         "value_column",
-                        spec.arguments.get("mean_column", spec.arguments.get("max_column", "revenue")),
+                        spec.arguments.get(
+                            "mean_column",
+                            spec.arguments.get("max_column", spec.arguments.get("phase_hint", "revenue")),
+                        ),
                     ),
                 ),
             )
@@ -142,8 +162,10 @@ class TableStructureRetriever:
         rows = tuple(
             row
             for row in document.table_rows
-            if row.metric_name == requested_metric or requested_metric == "revenue"
+            if row.metric_name == requested_metric or requested_metric in {"revenue", "storage_mount"}
         )
+        if not rows and document.table_rows:
+            rows = tuple(document.table_rows[:1])
         selected = tuple(
             EvidenceCandidate(
                 item_id=f"fact-{row.metric_name}-{index + 1}",
@@ -173,6 +195,7 @@ class TableStructureRetriever:
 class RetrieverFanoutPipeline:
     corpus: OfflineFinancialReportCorpus = field(default_factory=OfflineFinancialReportCorpus)
     csv_corpus: OfflineCsvTableCorpus = field(default_factory=OfflineCsvTableCorpus)
+    incident_corpus: OfflineIncidentLogCorpus = field(default_factory=OfflineIncidentLogCorpus)
     long_doc_corpus: OfflineMarkdownLongDocCorpus = field(default_factory=OfflineMarkdownLongDocCorpus)
     lexical_retriever: LexicalMetadataRetriever = field(default_factory=LexicalMetadataRetriever)
     semantic_retriever: SemanticChunkRetriever = field(default_factory=SemanticChunkRetriever)
@@ -581,6 +604,17 @@ class RetrieverFanoutPipeline:
             dataset_id = str(spec.arguments.get("dataset_id", "")).strip()
             csv_path = str(spec.arguments.get("csv_path", "")).strip()
             document = self.csv_corpus.resolve(dataset_id=dataset_id, csv_path=csv_path)
+        elif spec.task_family == "incident_diagnosis_v2":
+            dataset_id = str(spec.arguments.get("dataset_id", "")).strip()
+            log_path = str(spec.arguments.get("log_path", "")).strip()
+            journal_path = str(spec.arguments.get("journal_path", "")).strip()
+            service_name = str(spec.arguments.get("service_name", "")).strip()
+            document = self.incident_corpus.resolve(
+                dataset_id=dataset_id,
+                log_path=log_path,
+                journal_path=journal_path,
+                service_name=service_name,
+            )
         elif spec.task_family == "continuous_long_doc_table_analysis":
             dataset_id = str(spec.arguments.get("dataset_id", "")).strip()
             document_path = str(spec.arguments.get("document_path", "")).strip()

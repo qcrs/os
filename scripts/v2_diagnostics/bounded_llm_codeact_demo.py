@@ -4,6 +4,7 @@ import argparse
 import ast
 import asyncio
 import json
+import re
 import sys
 import textwrap
 import time
@@ -20,7 +21,18 @@ from v2.utils import sha256_digest, stable_json_dumps
 
 
 SCHEMA_VERSION = "statebus.bounded_llm_codeact_demo.v1"
-ALLOWED_IMPORT_ROOTS = {"json", "pathlib", "statistics", "math"}
+ALLOWED_IMPORT_ROOTS = {
+    "collections",
+    "csv",
+    "datetime",
+    "decimal",
+    "itertools",
+    "json",
+    "math",
+    "pathlib",
+    "re",
+    "statistics",
+}
 FORBIDDEN_CALLS = {"eval", "exec", "compile", "open", "input", "__import__"}
 FORBIDDEN_NAME_ROOTS = {"socket", "subprocess", "requests", "urllib", "http", "os", "sys", "shutil"}
 
@@ -79,6 +91,103 @@ def _deterministic_generated_source() -> str:
     ).strip() + "\n"
 
 
+def _allowed_imports_text() -> str:
+    return ", ".join(sorted(ALLOWED_IMPORT_ROOTS))
+
+
+def _required_input_line() -> str:
+    return 'payload = json.loads(Path("inputs/task.json").read_text(encoding="utf-8"))'
+
+
+def _required_output_block() -> str:
+    return textwrap.dedent(
+        """
+        out = Path("outputs")
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "bounded_codeact_result.json").write_text(
+            json.dumps(result, ensure_ascii=True, sort_keys=True),
+            encoding="utf-8",
+        )
+        """
+    ).strip()
+
+
+def _safe_result_template() -> str:
+    return textwrap.dedent(
+        f"""
+        import json
+        from pathlib import Path
+
+        {_required_input_line()}
+        points = payload["quarters"]
+        first = float(points[0]["value"])
+        last = float(points[-1]["value"])
+        delta_abs = round(last - first, 6)
+        growth_pct = round((delta_abs / first) * 100.0, 6) if first else 0.0
+        result = {{
+            "metric": payload["metric"],
+            "point_count": len(points),
+            "delta_abs": delta_abs,
+            "growth_pct": growth_pct,
+            "summary_text": f"{{payload['metric']}} changed by {{delta_abs}} from {{points[0]['quarter']}} to {{points[-1]['quarter']}}.",
+        }}
+        {_required_output_block()}
+        """
+    ).strip()
+
+
+def _generation_prompt(*, input_example: str) -> str:
+    return textwrap.dedent(
+        f"""
+        You are a Python code generator for a sandboxed execution environment.
+        Return ONLY Python code. Do not wrap the answer in markdown, JSON, or prose.
+        Return a COMPLETE Python file, not a fragment. The first line of the answer must be `import json`.
+
+        === AST POLICY: ALLOWED IMPORT ROOTS ONLY ===
+        {_allowed_imports_text()}
+
+        === FORBIDDEN ===
+        - Imports or names rooted at: os, sys, subprocess, socket, requests, urllib, http, shutil
+        - Calls: open(), eval(), exec(), compile(), input(), __import__()
+        - Dynamic workspace discovery such as Path.cwd(), __file__, os.path.join(), or shell access
+
+        === REQUIRED FILE PATH LITERALS ===
+        - The exact string literal "inputs/task.json" MUST appear in the code as ONE literal
+        - The exact string literal "bounded_codeact_result.json" MUST appear in the code
+        - Do NOT split the input path into Path("inputs") / "task.json"
+        - Copy this input line EXACTLY:
+        ```python
+        {_required_input_line()}
+        ```
+        - Write output under outputs/ while keeping the literal filename EXACTLY:
+        ```python
+        {_required_output_block()}
+        ```
+
+        === SAFE STARTER TEMPLATE ===
+        Copy this whole file and then adjust only the calculation or summary text if needed.
+        Do not drop the import lines. Do not start from the middle of the file.
+        ```python
+        {_safe_result_template()}
+        ```
+
+        === TASK INPUT SCHEMA ===
+        {input_example}
+
+        === REQUIRED OUTPUT FIELDS ===
+        metric, point_count, delta_abs, growth_pct, summary_text
+
+        === IMPORTANT ===
+        - The easiest valid answer is to copy SAFE STARTER TEMPLATE and adjust only the summary text if needed.
+        - Keep the input line and output block unchanged.
+        - If you compose the input path from multiple strings, the code will be rejected.
+        - Do not start with a fragment such as `["quarters"]`, `points = ...`, or `result = ...`.
+
+        Use the smallest valid import set. Prefer pathlib.Path for all file access.
+        """
+    ).strip()
+
+
 async def _llm_generated_source(
     *,
     role_path_mode: str,
@@ -89,62 +198,20 @@ async def _llm_generated_source(
         audit = audit_generated_source(source)
         return source, [_generation_attempt_payload(source=source, audit=audit, attempt=0, repair=False)]
     input_example = stable_json_dumps(_demo_input_payload())
-    _allowlist = ", ".join(sorted(ALLOWED_IMPORT_ROOTS))
-    _forbidden = "os, sys, subprocess, socket, requests, urllib, http, shutil, open, eval, exec, compile, input"
-    prompt = textwrap.dedent(
-        f"""
-        Generate a Python script for a bounded CodeAct data task.
-
-        STRICT AST POLICY (violation means the code will NOT be executed):
-        - ALLOWED imports ONLY: {_allowlist}
-        - FORBIDDEN: {_forbidden}
-        - Do NOT use open(), eval(), exec(), or any shell/network access.
-        - File I/O must use pathlib.Path only, within these paths:
-          Input:  inputs/task.json  (relative to cwd)
-          Output: outputs/bounded_codeact_result.json  (relative to cwd)
-        - The string literal "inputs/task.json" MUST appear verbatim in your code.
-        - The string literal "bounded_codeact_result.json" MUST appear verbatim in your code.
-
-        OUTPUT FORMAT:
-        - Return ONLY raw Python code — no markdown fences, no JSON wrapper, no explanations.
-
-        TASK INPUT SCHEMA:
-        {input_example}
-
-        REQUIRED OUTPUT FIELDS: metric, point_count, delta_abs, growth_pct, summary_text
-
-        EXAMPLE (follow this exact structure):
-        import json
-        from pathlib import Path
-
-        payload = json.loads(Path("inputs/task.json").read_text(encoding="utf-8"))
-        points = payload["quarters"]
-        first = float(points[0]["value"])
-        last = float(points[-1]["value"])
-        delta = round(last - first, 6)
-        pct = round((delta / first) * 100.0, 6) if first else 0.0
-        result = {{
-            "metric": payload["metric"],
-            "point_count": len(points),
-            "delta_abs": delta,
-            "growth_pct": pct,
-            "summary_text": f"{{payload['metric']}} changed by {{delta}}.",
-        }}
-        out = Path("outputs")
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "bounded_codeact_result.json").write_text(
-            json.dumps(result, ensure_ascii=True, sort_keys=True),
-            encoding="utf-8",
-        )
-        """
-    ).strip()
-    client = build_llm_client(LLMConfig.from_runtime().with_mode("api"))
+    prompt = _generation_prompt(input_example=input_example)
+    # Code generation requires raw text output. The default executor role config
+    # requests JSON objects, which truncates or reshapes Python source replies.
+    client = build_llm_client(
+        LLMConfig.from_runtime()
+        .with_mode("api")
+        .with_role_override("executor", json_output=False)
+    )
     source = ""
     attempts: list[dict[str, object]] = []
     current_prompt = prompt
     for attempt in range(max_repair_attempts + 1):
         result = await client.complete([ChatMessage(role="user", content=current_prompt)], purpose="executor")
-        source = _extract_python_source(result.text)
+        source = _extract_code(result.text)
         audit = audit_generated_source(source)
         attempts.append(_generation_attempt_payload(source=source, audit=audit, attempt=attempt, repair=attempt > 0))
         if audit["pass"]:
@@ -199,58 +266,103 @@ def _violation_explanation(violation: str) -> str:
             f"(e.g. (out / \"{fname}\").write_text(...))."
         )
     if violation.startswith("forbidden_import:") or violation.startswith("forbidden_import_from:"):
-        return f"{violation} — remove this import; only json, math, pathlib, statistics are allowed."
+        return f"{violation} — remove this import; allowed roots: {_allowed_imports_text()}."
     if violation.startswith("forbidden_call:") or violation.startswith("forbidden_call_root:"):
         return f"{violation} — remove or replace this call; use pathlib.Path for file I/O."
     return violation
 
 
+def _numbered_source(source: str) -> str:
+    lines = source.rstrip("\n").splitlines()
+    if not lines:
+        return "1: <empty>"
+    return "\n".join(f"{index:>3}: {line}" for index, line in enumerate(lines, start=1))
+
+
+def _repair_hint(violation: str) -> str:
+    if violation.startswith("forbidden_import:") or violation.startswith("forbidden_import_from:"):
+        return f"remove that import and keep only: {_allowed_imports_text()}"
+    if violation == "missing_input_path:task.json":
+        return f'insert this exact line and do not rewrite it: `{_required_input_line()}`'
+    if violation == "missing_output_path:bounded_codeact_result.json":
+        return 'write through `(Path("outputs") / "bounded_codeact_result.json").write_text(...)`'
+    if violation == "missing_output_write_call":
+        return "finish by writing the JSON result with Path.write_text(...)"
+    if violation.startswith("forbidden_call:open"):
+        return 'replace open() with `Path("...").read_text(...)` or `write_text(...)`'
+    if violation.startswith("forbidden_call:"):
+        return "remove the forbidden call and keep the logic in pure Python"
+    if violation.startswith("forbidden_call_root:") or violation.startswith("forbidden_name:"):
+        return "remove the forbidden module/root reference entirely"
+    if violation.startswith("syntax_error:"):
+        return "return syntactically valid Python with balanced brackets and indentation"
+    return "repair this violation without changing the task logic"
+
+
 def _repair_prompt(*, source: str, audit: dict[str, object]) -> str:
-    _allowlist = ", ".join(sorted(ALLOWED_IMPORT_ROOTS))
-    _forbidden = "os, sys, subprocess, socket, requests, urllib, http, shutil, open, eval, exec, compile, input"
     violations = list(audit.get("violations", []))
+    details = audit.get("violation_details", [])
+    detail_by_code = {
+        detail.get("violation"): detail
+        for detail in details
+        if isinstance(detail, dict) and isinstance(detail.get("violation"), str)
+    }
     if violations:
         violation_lines = "\n".join(
-            f"  • {_violation_explanation(v)}" if isinstance(v, str)
-            else f"  • Line {v.get('line', '?')}: {v.get('detail', v.get('violation_detail', str(v)))}"
+            (
+                f"  - line {detail_by_code[v].get('line')}: {v} -> {_repair_hint(v)}"
+                if isinstance(v, str) and v in detail_by_code and detail_by_code[v].get("line") is not None
+                else f"  - {v}: {_repair_hint(v)}"
+            )
             for v in violations
         )
     else:
-        violation_lines = "  (see audit payload for details)"
+        violation_lines = "  - inspect the source and return valid code only"
     return textwrap.dedent(
         f"""
-        Your previous Python script FAILED the AST policy.
+        Your previous Python script FAILED the AST policy. Repair it without changing the task logic.
 
-        VIOLATIONS:
+        SOURCE WITH LINE NUMBERS:
+        {_numbered_source(source)}
+
+        REQUIRED FIXES:
         {violation_lines}
 
-        ALLOWED imports: {_allowlist}
-        FORBIDDEN: {_forbidden}
+        REMINDERS:
+        - Allowed import roots only: {_allowed_imports_text()}
+        - Never use open(), eval(), exec(), compile(), input(), shell access, or network access
+        - Keep the exact literals "inputs/task.json" and "bounded_codeact_result.json"
+        - The input path must appear as ONE literal, not as Path("inputs") / "task.json"
+        - Use pathlib.Path for all file I/O
+        - Write the final JSON artifact under outputs/
+        - Return a COMPLETE file from the first import line; do not return a mid-file fragment.
+        - If needed, start from this safe skeleton and fill in the logic:
+        ```python
+          {_safe_result_template()}
+        ```
 
-        PATH RULES (critical):
-        - "inputs/task.json" must appear as a string literal (not built from parts)
-        - "bounded_codeact_result.json" must appear as a string literal
-        - Use pathlib.Path for all I/O, e.g.: Path("inputs/task.json").read_text(...)
-
-        Fix only the violations above. Keep the logic the same.
         Return ONLY raw Python code — no markdown fences, no JSON wrapper.
-
-        PREVIOUS CODE:
-        {source}
         """
     ).strip()
 
 
-def _extract_python_source(text: str) -> str:
-    stripped = _strip_code_fence(text).strip()
+def _extract_code(text: str) -> str:
+    stripped = text.strip()
     if stripped.startswith("{"):
         try:
             payload = json.loads(stripped)
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict) and isinstance(payload.get("code"), str):
-            stripped = _strip_code_fence(payload["code"]).strip()
+            return _extract_code(payload["code"])
+    fenced = re.search(r"```(?:python)?\s*(.*?)```", stripped, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip() + "\n"
     return stripped + "\n"
+
+
+def _extract_python_source(text: str) -> str:
+    return _extract_code(text)
 
 
 def _strip_code_fence(text: str) -> str:
@@ -267,6 +379,18 @@ def _strip_code_fence(text: str) -> str:
 
 def audit_generated_source(source: str) -> dict[str, object]:
     violations: list[str] = []
+    violation_details: list[dict[str, object]] = []
+
+    def _record(violation: str, *, node: ast.AST | None = None) -> None:
+        violations.append(violation)
+        line = getattr(node, "lineno", None) if node is not None else None
+        violation_details.append(
+            {
+                "violation": violation,
+                "line": int(line) if isinstance(line, int) else None,
+            }
+        )
+
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
@@ -274,6 +398,7 @@ def audit_generated_source(source: str) -> dict[str, object]:
             "schema_version": SCHEMA_VERSION,
             "pass": False,
             "violations": [f"syntax_error:{exc.msg}"],
+            "violation_details": [{"violation": f"syntax_error:{exc.msg}", "line": exc.lineno}],
             "node_count": 0,
         }
     node_count = 0
@@ -287,32 +412,39 @@ def audit_generated_source(source: str) -> dict[str, object]:
             for alias in node.names:
                 root = alias.name.split(".", 1)[0]
                 if root not in ALLOWED_IMPORT_ROOTS:
-                    violations.append(f"forbidden_import:{alias.name}")
+                    _record(f"forbidden_import:{alias.name}", node=node)
         elif isinstance(node, ast.ImportFrom):
             root = (node.module or "").split(".", 1)[0]
             if root not in ALLOWED_IMPORT_ROOTS:
-                violations.append(f"forbidden_import_from:{node.module}")
+                _record(f"forbidden_import_from:{node.module}", node=node)
         elif isinstance(node, ast.Call):
             call_name = _call_name(node.func)
             if call_name == "write_text" or call_name.endswith(".write_text") or call_name == "json.dump":
                 has_output_write_call = True
             if call_name in FORBIDDEN_CALLS or call_name.endswith(".open"):
-                violations.append(f"forbidden_call:{call_name}")
+                _record(f"forbidden_call:{call_name}", node=node)
             root_name = call_name.split(".", 1)[0]
             if root_name in FORBIDDEN_NAME_ROOTS:
-                violations.append(f"forbidden_call_root:{call_name}")
+                _record(f"forbidden_call_root:{call_name}", node=node)
         elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAME_ROOTS:
-            violations.append(f"forbidden_name:{node.id}")
+            _record(f"forbidden_name:{node.id}", node=node)
     if not _has_path_literal(string_literals, "task.json"):
-        violations.append("missing_input_path:task.json")
+        _record("missing_input_path:task.json")
     if not _has_path_literal(string_literals, "bounded_codeact_result.json"):
-        violations.append("missing_output_path:bounded_codeact_result.json")
+        _record("missing_output_path:bounded_codeact_result.json")
     if not has_output_write_call:
-        violations.append("missing_output_write_call")
+        _record("missing_output_write_call")
     return {
         "schema_version": SCHEMA_VERSION,
         "pass": not violations,
         "violations": sorted(set(violations)),
+        "violation_details": sorted(
+            (
+                {"violation": detail["violation"], "line": detail["line"]}
+                for detail in violation_details
+            ),
+            key=lambda detail: (detail["violation"], -1 if detail["line"] is None else int(detail["line"])),
+        ),
         "node_count": node_count,
         "allowed_import_roots": sorted(ALLOWED_IMPORT_ROOTS),
         "forbidden_calls": sorted(FORBIDDEN_CALLS),

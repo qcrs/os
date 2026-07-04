@@ -699,6 +699,7 @@ for stage in plan.get("stages", []):
             if str(request.get("task_family", "")) in {
                 "continuous_csv_table_analysis",
                 "continuous_long_doc_table_analysis",
+                "incident_diagnosis_v2",
             }:
                 output_payload = build_candidate_output_payload(request, root)
             else:
