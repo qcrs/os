@@ -1,57 +1,57 @@
-# StateBus v2 改进计划总索引
+# StateBus v2 改进计划
 
-**制定时间**：2026-07-03
-**基于**：`docs/reports/v2_code_review_20260703.md` 审阅结论
-**约束**：基于赛题、可落地可实现、本轮只分析不改代码
+**审计基准**：HEAD `0dff814`，实验数据 `v2_experiment_summary_20260703.md`
+**代码路径**：基于实际代码探索，所有行号均已核实
 
 ---
 
-## 问题分类与文件索引
+## 当前评分预估
 
-| 优先级 | 问题域 | 文档 | 核心目标 |
+| 评分维度 | 满分 | 当前预估 | 核心缺口 |
 |---|---|---|---|
-| P0 | 证据刷新与验证闭环 | `01_p0_evidence_refresh.md` | HEAD 代码下 pytest 全绿 + evidence 重新落盘 |
-| P0 | External Comparator 完整化 | `02_external_comparator_upgrade.md` | formal financial family 下的公平对比成立 |
-| P1 | 任务设计补充 | `03_task_design_expansion.md` | 任务更贴赛题、更有说服力 |
-| P1 | CodeAct API 稳定化 | `04_codeact_stabilization.md` | API 生成代码至少一次通过 AST policy |
-| P1 | Runtime Overhead 分析与优化 | `05_runtime_overhead_analysis.md` | 解释 +9263ms 并有优化路径 |
-| P2 | KV Cache 实现路径 | `06_kv_cache_implementation.md` | 本地 vLLM + prefix cache 机制验证 |
-| 深度审阅 | 四大模块代码级问题 | `07_deep_implementation_analysis.md` | 结构化通信、Embedding、记忆复用、CodeAct 的代码级 Bug 和优化点 |
+| 通信效率 | 25 | 19~22 | efficiency gate 路径未在报告中明确展示 |
+| 状态传递创新 | 20 | 13~16 | shm 只在 L2 continuous，四环节文档未系统化 |
+| 记忆复用 | 20 | 15~18 | CANDIDATE 只能 assist，FTS/标签检索缺失 |
+| 系统完整性 | 20 | 14~17 | 同进程顺序、任务多样性不足 |
+| 实验验证 | 15 | 10~13 | CodeAct LLM 生成 0%，overhead 未分解 |
+| **合计** | **100** | **71~86** | |
 
 ---
 
-## 执行顺序建议
+## 文件索引
 
-```
-P0-1（pytest 复验）
-    ↓
-P0-2（external comparator formal 化）
-    ↓
-P1-a（任务设计扩充）+ P1-b（CodeAct 稳定化）  ← 可并行
-    ↓
-P1-c（runtime overhead 说明文档）
-    ↓
-P2（KV Cache 机制验证）
-```
-
----
-
-## 核心原则
-
-1. **每个改动不破坏已有证据**：只新增任务族、新增对比，不修改现有 expected fields
-2. **claim 边界必须在结果产出时重新标定**：每次新实验后更新 claim boundary
-3. **容器内复验优先**：所有实验命令以容器版本为准
-4. **formal 对比是核心**：赛题评分最重的是"实验验证"和"通信效率"，external comparator 直接影响这两项
-
----
-
-## 当前已确认的证据状态
-
-| 证据 | 状态 | 可用于 claim |
+| 优先级 | 文件 | 解决的核心问题 |
 |---|---|---|
-| container pytest 154 passed | frozen baseline (f7dcb15) | 需要在 HEAD 重确认 |
-| external compare dev gate pass | 3/3，但 HEAD 之前的结果 | dev scope only |
-| continuous 20 轮 | frozen baseline | 需要在 HEAD 重确认 |
-| replay 16 轮 validated=13 exact=3 | frozen baseline | 需要在 HEAD 重确认 |
-| flagship ablation 4/4 | frozen baseline | 需要在 HEAD 重确认 |
-| CodeAct bwrap ok | deterministic fallback | 不能 claim API 生成稳定 |
+| **P0** | `01_p0_critical_fixes.md` | CodeAct 生成、memory 设计、claim 路径 |
+| **P0** | `02_competition_claim_hardening.md` | 竞赛声明精确表述与答辩防御 |
+| **P1** | `03_agent_role_and_task_redesign.md` | 3类任务、角色真实性、10轮连续 |
+| **P1** | `04_codeact_and_sandbox_hardening.md` | CodeAct 完整修复（代码级） |
+| **P1** | `05_memory_and_replay_complete_design.md` | SQLite FTS、replay 完整实现 |
+| **P1** | `07_non_text_state_transfer_audit.md` | 非文本传递四环节审计 |
+| **P1** | `08_performance_and_overhead_breakdown.md` | overhead 分解与答辩口径 |
+| **P2** | `06_kv_cache_implementation.md` | KV Cache 机制（保留原文） |
+
+---
+
+## 执行顺序
+
+```
+P0（并行）：01 CodeAct 修复 + 02 claim 口径确认
+    ↓
+P1-a（并行）：04 CodeAct 深度修复 + 05 memory FTS
+    ↓
+P1-b（并行）：03 新任务族 + 07 非文本传递加固
+    ↓
+P1-c：08 overhead 报告字段实现
+    ↓
+P2：06 KV Cache（时间允许）
+```
+
+---
+
+## 核心约束（写报告/答辩时）
+
+1. formal claim 只引用 `--embedding-mode local`（Qwen3-Embedding-0.6B）结果
+2. CodeAct 必须区分两条路径：bwrap 执行稳定（8/8）≠ LLM 生成稳定（0/3）
+3. memory_match_count=0 在 formal compare 是正确行为（cold-start），与 skipped_steps=19 不矛盾
+4. task_ms_delta 的两个数字（-4,772ms vs +28,391ms）测量的是不同视角，均正确
