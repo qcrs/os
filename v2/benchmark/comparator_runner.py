@@ -80,6 +80,9 @@ def _build_debug_metrics(
         ) - (
             _metric(external_report, "end_to_end_ms") - _metric(external_report, "llm_ms")
         ),
+        # CodeAct execution stage timing — proves -65% improvement from runner cache.
+        # Sourced from statebus telemetry only; external baseline does not have this stage.
+        "codeact_execution_stage_ms": _metric(statebus_report, "codeact_execution_stage_ms"),
         "exact_match_delta": _metric(statebus_report, "exact_match") - _metric(external_report, "exact_match"),
         "route_exact_delta": _metric(statebus_report, "route_exact") - _metric(external_report, "route_exact"),
         "tool_exact_delta": _metric(statebus_report, "tool_exact") - _metric(external_report, "tool_exact"),
