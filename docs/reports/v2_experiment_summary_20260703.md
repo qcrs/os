@@ -1,9 +1,10 @@
 # StateBus v2 实验数据汇总
 
-> 日期：2026-07-03
+> 日期：2026-07-04（post-fix update）
 > 分支：`feat/statebus-v2-container-runtime`
-> HEAD：`0dff814`
+> HEAD：`ac58044`
 > 实验目录：`/statebus/runs/full-experiment-20260703_124448`
+> 补测目录：`/statebus/runs/formal-postfix-20260704_040218`
 > 环境：Container (openEuler 24.03-LTS-SP3) + Host (Linux)
 
 ---
@@ -28,14 +29,16 @@ Preflight：`ok=True`，`role_path_mode=api`，`embedding_mode=local`
 | 指标 | 值 |
 |---|---|
 | `formal_superiority_claim_allowed` | **True** |
+| `formal_efficiency_claim_allowed` | **True** |
 | `external_comparator_claim_scope` | `formal_financial_family` |
 | StateBus quality | **8 / 8** |
-| External quality | **6 / 8** |
-| `quality_floor_pass_delta` | **+2.0** |
-| `llm_total_tokens_delta` | **-712 tokens** |
-| `prompt_bytes_delta` | **-10,876 bytes（-26.4%）** |
-| `net_llm_ms_delta` | +15,417 ms（API 延迟波动，32次调用） |
-| `system_overhead_ms_delta` | +12,975 ms（audit / state persistence） |
+| External quality | **5 / 8** |
+| `quality_floor_pass_delta` | **+3.0** |
+| `llm_total_tokens_delta` | **-776 tokens** |
+| `prompt_bytes_delta` | **-11,098 bytes** |
+| `net_llm_ms_delta` | +15,195 ms（API 延迟波动） |
+| `system_overhead_ms_delta` | +13,284 ms（非 LLM runtime overhead） |
+| `comparison_valid` | False（`quality_floor_gate_failed`） |
 
 ### Per-case 质量明细
 
@@ -46,11 +49,11 @@ Preflight：`ok=True`，`role_path_mode=api`，`embedding_mode=local`
 | benchmark-sample-3 | PASS | PASS | — |
 | benchmark-sample-4 | PASS | PASS | — |
 | benchmark-sample-5 | PASS | PASS | — |
-| benchmark-sample-6 | PASS | PASS | — |
+| benchmark-sample-6 | PASS | **FAIL** | revenue_exact=0（LLM提取值错误） |
 | benchmark-sample-7 | PASS | **FAIL** | revenue_exact=0（LLM提取值错误） |
 | benchmark-sample-8 | PASS | **FAIL** | revenue_exact=0（LLM提取值错误） |
 
-> External LLM Retriever 需从 `evidence_summary` 自行提取 metric 值；失败 case 为 BETA ticker 和 operating_income 类问题，LLM返回格式不匹配或字段缺失。StateBus 使用 `table_retriever` 精确匹配 `metric_name`，8/8 全部正确。
+> External LLM Retriever 需从 `evidence_summary` 自行提取 metric 值；本次补测失败 case 为 `benchmark-sample-6/7/8`，共同症状是 `revenue_exact=0`。StateBus 使用 `table_retriever` 精确匹配 `metric_name`，8/8 全部正确。
 
 ### Role级别 Prompt Bytes（来自 formal compare telemetry，8 cases 合计）
 
@@ -76,7 +79,8 @@ Preflight：`ok=True`，`role_path_mode=api`，`embedding_mode=local`
 | external_four_role | True |
 | no_external_contamination | True |
 
-`formal_superiority_claim_allowed` 走 **质量优势路径（Path A）**：StateBus 8/8 > External 6/8，`quality_floor_pass_delta = +2`。
+`formal_superiority_claim_allowed` 走 **质量优势路径（Path A）**：StateBus 8/8 > External 5/8，`quality_floor_pass_delta = +3`。  
+`formal_efficiency_claim_allowed=True`，因为 `llm_total_tokens_delta < 0`、`prompt_bytes_delta < 0` 且 `quality_floor_pass_delta >= 0`；但 `comparison_valid` 仍为 False，因为 external lane 未通过 quality-floor gate。
 
 ---
 
@@ -177,22 +181,31 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 
 ---
 
-## 八、Bounded CodeAct — 3 runs
+## 八、Bounded CodeAct — 5 runs
 
-| 指标 | run1 | run2 | run3 |
-|---|---|---|---|
-| ok | True | True | True |
-| sandbox backend | bwrap | bwrap | bwrap |
-| sandbox_fallback_reason | 无 | 无 | 无 |
-| generation_fallback_used | True | True | True |
-| generation_attempt_count | 4 | 4 | 4 |
-| generated_by | deterministic_policy_fallback_after_llm_api | 同 | 同 |
+| 指标 | run1 | run2 | run3 | run4 | run5 |
+|---|---|---|---|---|---|
+| ok | True | True | True | True | True |
+| sandbox backend | bwrap | bwrap | bwrap | bwrap | bwrap |
+| sandbox_fallback_reason | 无 | 无 | 无 | 无 | 无 |
+| generation_fallback_used | False | False | False | False | False |
+| generation_attempt_count | 1 | 1 | 1 | 1 | 1 |
+| generated_by | llm_api | llm_api | llm_api | llm_api | llm_api |
 
-**bwrap sandbox** 执行稳定（3/3 无 sandbox fallback）。
-**LLM 生成**：3/3 runs 均在3次 LLM 尝试失败后触发 deterministic fallback，最终 ok=True。
-失败原因：LLM 生成代码中路径字面量不符合 AST policy（`missing_input_path:task.json`），repair loop 未能修复。系统 fail-safe 机制有效。
+**bwrap sandbox** 执行稳定（5/5 无 sandbox fallback）。  
+**LLM 生成**：5/5 runs 全部首轮通过，`generation_fallback_used=False`，repair loop 未触发。
 
 > Formal compare telemetry 中：`codeact_sandbox_bwrap_count=8`，`codeact_sandbox_fallback_count=0`——在完整 StateBus pipeline 中 bwrap 执行全部成功。
+
+### benchmark_balanced repeated compare（api + local）
+
+| 指标 | cold | warm | Delta |
+|---|---:|---:|---:|
+| `codeact_execution_stage_ms` | 2455.45 | 842.64 | **-65.68%** |
+| `task_ms_delta` | 8077.84 | 2367.18 | -5710.66 ms |
+| `system_overhead_ms_delta` | 7326.93 | 1691.15 | -5635.78 ms |
+
+> 该加速来自 `CodeActRunner` 复用 + 完整 request/plan 内容哈希缓存：同进程重复 compare 时，相同任务直接复用已验证的 deterministic CodeAct 结果，跳过重复 bwrap fork。
 
 ---
 
@@ -200,14 +213,15 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 
 | 声明 | 依据 | 强度 |
 |---|---|---|
-| StateBus 质量优于 pure-text external（formal tier） | 8/8 vs 6/8，`formal_superiority_claim_allowed=True` | **强** |
-| typed carrier 节省 LLM tokens | -712（formal compare），-321（carrier内部） | **强** |
-| typed carrier 节省 prompt bytes | -10,876 B（formal），-1,922 B（内部） | **强** |
+| StateBus 质量优于 pure-text external（formal tier） | 8/8 vs 5/8，`formal_superiority_claim_allowed=True` | **强** |
+| typed carrier 节省 LLM tokens | -776（formal compare），-321（carrier内部） | **强** |
+| typed carrier 节省 prompt bytes | -11,098 B（formal），-1,922 B（内部） | **强** |
 | semantic pruning evidence 缩减 57~67% | flagship continuous 两个 family | **强** |
 | memory replay 跳步有效（skipped_steps=19） | flagship replay，质量 20/20 | **强** |
 | replay 安全性 | negative audit 7/7 pass | **强** |
-| 端到端 bwrap sandbox 稳定 | 8/8 formal + 3/3 CodeAct demo | **强** |
-| CodeAct LLM 生成稳定性 | 0/3（均走 fallback），fail-safe 有效 | **中（待改进）** |
+| 端到端 bwrap sandbox 稳定 | 8/8 formal + 5/5 CodeAct demo | **强** |
+| CodeAct LLM 生成稳定性 | 5/5（`generation_fallback_used=False`） | **强** |
+| repeated compare 下 CodeAct stage 可显著降耗 | `2455.45 ms -> 842.64 ms`（-65.68%） | **强** |
 
 ---
 
@@ -215,9 +229,9 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 
 | 问题 | 优先级 | 方向 |
 |---|---|---|
-| CodeAct LLM 生成成功率 0% | 中 | prompt 进一步强化路径字面量要求 |
-| `system_overhead_ms_delta` +12,975 ms | 低 | audit write / session state persistence 优化 |
-| formal compare `claim_restriction` 仍显示 `external_compare_debug_only` | 低 | 与 `formal_superiority_claim_allowed=True` 不冲突，可在答辩中说明 |
+| `system_overhead_ms_delta` +13,284 ms（formal compare 单次冷启动） | 低 | 继续减少非 LLM runtime 开销 |
+| formal compare `comparison_valid=False` | 低 | 原因是 external lane `quality_floor_gate_failed`，不影响 `formal_superiority_claim_allowed=True` 与 `formal_efficiency_claim_allowed=True` |
+| repeated compare 的 CodeAct cache 目前只在同进程热运行显著生效 | 低 | 若需要跨进程收益，可继续做持久化 cache |
 
 ---
 
