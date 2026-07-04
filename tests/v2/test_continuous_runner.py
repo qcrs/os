@@ -260,6 +260,37 @@ def test_continuous_runner_executes_replay_family(tmp_path: Path) -> None:
     assert Path(exact_case.workspace_root, exact_output["metric_series_ref"]).exists()
 
 
+def test_continuous_runner_executes_incident_family(tmp_path: Path) -> None:
+    family = load_continuous_task_family(
+        Path("v2/benchmark/samples/continuous_task_families/incident_diagnosis")
+    )
+    report = run_continuous_benchmark_suite(
+        family=family,
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        suite_id="continuous-incident",
+        role_path_mode="deterministic",
+        embedding_mode="deterministic",
+    )
+
+    assert report.family_case_count == 10
+    assert report.metadata["continuous_execution"] is True
+    assert report.metadata["eligible_for_replay_headline"] is True
+    assert report.metadata["headline_scope"] == "replay_admissible"
+    l3_report = next(layer_report for layer_report in report.layer_reports if layer_report.layer == BenchmarkLayer.L3)
+    validated_case = next(case for case in l3_report.cases if case.task_id == "incident-002")
+    exact_case = next(case for case in l3_report.cases if case.task_id == "incident-003")
+    assert validated_case.replay_class == "validated_replay"
+    assert validated_case.metrics["validated_replay_count"] == 1.0
+    assert exact_case.replay_class == "exact_replay"
+    assert exact_case.metrics["exact_replay_count"] == 1.0
+    assert exact_case.metrics["skipped_step_count"] == 2.0
+    output_payload = json.loads(Path(validated_case.output_artifact_path).read_text(encoding="utf-8"))
+    assert output_payload["service_name"] == "service-b.service"
+    assert output_payload["root_cause"] == "high_io_wait"
+
+
 def test_continuous_runner_executes_csv_replay_family(tmp_path: Path) -> None:
     family = load_continuous_task_family(
         Path("v2/benchmark/samples/continuous_task_families/csv_correlation_replay")

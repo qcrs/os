@@ -13,6 +13,7 @@ from v2.memory import (
     MemoryMatch,
     MemoryType,
     MemoryRef,
+    MemoryValidationStatus,
 )
 
 
@@ -73,6 +74,40 @@ def test_memory_index_store_commit_lookup_and_invalidate() -> None:
         allow_replay=True,
     )
     assert post_invalidation.matches == ()
+
+
+def test_commit_candidate_promotes_quality_pass_without_answer_adoption() -> None:
+    encoder = DeterministicEmbeddingEncoder(dims=8)
+    embedding = encoder.encode(embedding_id="embedding-memory", text="ACME revenue increased in APAC.")
+    commit = MemoryCommit(
+        memory_ref=MemoryRef(
+            memory_id="memory-quality-pass",
+            memory_type=MemoryType.VALIDATED_REPLAY,
+            replay_class=ReplayClass.VALIDATED_REPLAY,
+            score=0.8,
+            source_task_id="task-1",
+            summary="quality pass without final answer adoption",
+            canonical_task_spec_hash="sha256:spec-quality-pass",
+            embedding_ref_id="embedding-memory",
+        ),
+        canonical_task_spec=CanonicalTaskSpec(
+            task_family="financial_report_analysis",
+            intent_op="compare_metric",
+            required_outputs=("summary_text",),
+            arguments={"ticker": "ACME", "quarter": "2026Q1"},
+        ),
+        required_outputs=("summary_text",),
+        quality_floor_pass=True,
+        created_from_artifact_hash="sha256:artifact-quality-pass",
+    )
+
+    store = MemoryIndexStore()
+    store.put_embedding(embedding)
+    committed = store.commit_candidate(commit=commit, quality_floor_pass=True, answer_adopted=False)
+
+    assert committed.memory_ref.commit_status == MemoryCommitStatus.COMMITTED
+    assert committed.memory_ref.validation_status == MemoryValidationStatus.PASSED
+    assert committed.memory_ref.answer_adopted is False
 
 
 def test_memory_index_store_persists_embedding_and_commit_registry(tmp_path: Path) -> None:

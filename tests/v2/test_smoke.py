@@ -264,6 +264,35 @@ def test_v2_smoke_default_driver_profile_keeps_strict_roundtrip() -> None:
     assert profile.persistence_verification_level == "strict_roundtrip"
 
 
+def test_v2_smoke_benchmark_balanced_profile_hashes_prompt_slices(tmp_path: Path) -> None:
+    result = run_smoke(
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        layer_config=SmokeLayerConfig(
+            persistence_profile="benchmark_balanced",
+            multi_attempt_enabled=False,
+            force_first_attempt_trap=False,
+        ),
+    )
+    assert result.quality_floor.quality_floor_pass is True
+    role_payload = json.loads(
+        (Path(result.workspace_root) / "logs" / "prompt_slices" / "planner.prompt_slice.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert role_payload["persistence_profile"] == "benchmark_balanced"
+    assert role_payload["combined_text_sha256"]
+    assert "hydrated_text" not in role_payload
+    assert "table_text" not in role_payload
+    assert "artifact_text" not in role_payload
+    assert "memory_text" not in role_payload
+    telemetry_payload = json.loads(Path(result.telemetry_path).read_text(encoding="utf-8"))
+    assert telemetry_payload["persistence_profile"] == "benchmark_balanced"
+    assert telemetry_payload["event_count"] == result.telemetry_event_count
+    assert telemetry_payload["events_sha256"]
+
+
 def test_v2_smoke_l0_layer_disables_semantic_state_and_replay(tmp_path: Path) -> None:
     result = run_smoke(
         workspace_root=tmp_path / "workspaces",

@@ -427,6 +427,8 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert mode_report.invalid_reason == ""
     assert "llm_total_tokens_delta" in mode_report.headline_metrics
     assert "prompt_bytes_delta" in mode_report.headline_metrics
+    assert "net_llm_ms_delta" in mode_report.headline_metrics
+    assert "system_overhead_ms_delta" in mode_report.headline_metrics
     assert "exact_match_delta" in mode_report.debug_metrics
     assert "end_to_end_ms_delta" in mode_report.debug_metrics
     assert "llm_ms_delta" in mode_report.debug_metrics
@@ -438,6 +440,7 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert Path(mode_report.markdown_report_path).exists()
     payload = json.loads(Path(report.report_path).read_text(encoding="utf-8"))
     assert payload["metadata"]["formal_headline_eligible"] is False
+    assert payload["metadata"]["formal_efficiency_claim_allowed"] is False
     assert payload["metadata"]["formal_superiority_claim_allowed"] is False
     assert payload["metadata"]["fixed_answer_external_comparison_valid"] is True
     assert (
@@ -446,6 +449,8 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     )
     assert payload["mode_reports"][0]["role_path_mode"] == "deterministic"
     assert payload["mode_reports"][0]["comparison_valid"] is True
+    assert payload["mode_reports"][0]["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
+    assert payload["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert "deterministic_debug_exact_match_delta" in payload["comparison_summary"]
 
 
