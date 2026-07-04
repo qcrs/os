@@ -21,6 +21,7 @@ class TaskCompiler:
         "financial_report_analysis",
         "continuous_csv_table_analysis",
         "continuous_long_doc_table_analysis",
+        "incident_diagnosis_v2",
     )
     allowed_intent_ops: tuple[str, ...] = (
         "compare_metric",
@@ -44,6 +45,7 @@ class TaskCompiler:
         "join_metrics_and_narrative",
         "draft_risk_memo",
         "final_cited_report",
+        "diagnose_startup_latency",
     )
     allowed_required_outputs: tuple[str, ...] = (
         "summary_text",
@@ -108,6 +110,11 @@ class TaskCompiler:
         "action_count",
         "final_report_ref",
         "citation_count",
+        "timing_profile_ref",
+        "service_name",
+        "slow_phase",
+        "wait_duration_seconds",
+        "root_cause",
     )
     allowed_required_tools: tuple[str, ...] = (
         "table_retriever",

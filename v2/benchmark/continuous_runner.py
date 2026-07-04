@@ -30,6 +30,7 @@ from v2.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
 SUPPORTED_CONTINUOUS_FAMILY_IDS = {
     "csv_correlation_replay_v1",
     "csv_table_profile_v1",
+    "incident_diagnosis_v2",
     "long_doc_table_v1",
     "long_doc_metric_replay_v1",
 }
@@ -933,6 +934,7 @@ def run_continuous_benchmark_family(
     report_layer_label: str | None = None,
     enforce_expected_metric_effects: bool = True,
     metadata_extra: dict[str, object] | None = None,
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     if family.family_id not in SUPPORTED_CONTINUOUS_FAMILY_IDS:
         raise ValueError(
@@ -949,6 +951,7 @@ def run_continuous_benchmark_family(
             **base_smoke_config.__dict__,
             "role_path_mode": role_path_mode,
             "embedding_mode": embedding_mode,
+            "persistence_profile": persistence_profile,
         }
     )
     history_runtime_root_by_round: dict[int, Path] = {}
@@ -1092,6 +1095,7 @@ def run_continuous_text_semantic_selection_family(
     suite_id: str,
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     return run_continuous_benchmark_family(
         family=family,
@@ -1116,6 +1120,7 @@ def run_continuous_text_semantic_selection_family(
             "semantic_state_transfer_enabled": False,
             "uses_semantic_state_ref": False,
         },
+        persistence_profile=persistence_profile,
     )
 
 
@@ -1128,6 +1133,7 @@ def run_continuous_benchmark_suite(
     suite_id: str,
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkSuiteReport:
     layer_reports = tuple(
         run_continuous_benchmark_family(
@@ -1139,6 +1145,7 @@ def run_continuous_benchmark_suite(
             layer=layer,
             role_path_mode=role_path_mode,
             embedding_mode=embedding_mode,
+            persistence_profile=persistence_profile,
         )
         for layer in BenchmarkLayer
     )
@@ -1225,6 +1232,7 @@ def run_continuous_benchmark_collection(
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
     collection_scope: str = "formal_continuous_task_families",
+    persistence_profile: str = "audit_full",
 ) -> BenchmarkContinuousCollectionReport:
     if not families:
         raise ValueError("continuous benchmark collection requires at least one family")
@@ -1241,6 +1249,7 @@ def run_continuous_benchmark_collection(
                 suite_id=f"{suite_id}-{family_slug}",
                 role_path_mode=role_path_mode,
                 embedding_mode=embedding_mode,
+                persistence_profile=persistence_profile,
             )
         )
 
