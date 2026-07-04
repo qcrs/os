@@ -222,6 +222,40 @@ def test_task_compiler_accepts_continuous_long_doc_precompiled_spec_for_benchmar
     assert result.canonical_task_spec == spec
 
 
+def test_task_compiler_accepts_incident_precompiled_spec_for_benchmark_strict() -> None:
+    compiler = TaskCompiler()
+    spec = CanonicalTaskSpec(
+        task_family="incident_diagnosis_v2",
+        intent_op="diagnose_startup_latency",
+        required_outputs=(
+            "timing_profile_ref",
+            "service_name",
+            "slow_phase",
+            "wait_duration_seconds",
+            "root_cause",
+            "summary_text",
+        ),
+        required_tools=("semantic_retriever", "codeact_executor", "artifact_writer"),
+        arguments={
+            "dataset_id": "inference_gateway_boot",
+            "log_path": "v2/benchmark/samples/incident_corpus/inference-gateway/boot_log.txt",
+            "journal_path": "v2/benchmark/samples/incident_corpus/inference-gateway/journal.txt",
+            "service_name": "inference-gateway.service",
+            "phase_hint": "storage_mount",
+            "symptom_family": "startup_latency",
+        },
+    )
+    result = compiler.compile(
+        TaskCompilerInput(
+            request_text="diagnose startup latency",
+            task_mode=TaskMode.BENCHMARK_STRICT,
+            precompiled_canonical_task_spec=spec,
+        )
+    )
+    assert result.status == CompilerStatus.COMPILED
+    assert result.canonical_task_spec == spec
+
+
 def test_quality_floor_result_is_shared_case_level_contract() -> None:
     from v2.benchmark.scoring import FixedAnswerLaneResult, score_fixed_answer_case
 
@@ -952,6 +986,33 @@ def test_telemetry_emitter_persists_runtime_event_and_fact_logs(tmp_path: Path) 
     assert io_metrics["telemetry_fact_write_count"] == 2.0
     assert io_metrics["telemetry_log_handle_open_count"] == 2.0
     assert io_metrics["telemetry_emit_stage_ms"] >= 0.0
+
+
+def test_telemetry_emitter_batches_flushes_for_benchmark_balanced_profile(tmp_path: Path) -> None:
+    emitter = TelemetryEmitter(
+        runtime_event_log_path=tmp_path / "runtime_events.jsonl",
+        runtime_fact_log_path=tmp_path / "runtime_facts.jsonl",
+        flush_interval=10,
+    )
+    emitter.emit(
+        TelemetryEvent.create(
+            trace_id="trace-1",
+            task_id="task-1",
+            event_type="STEP_DISPATCHED",
+            metrics={"timeout_ms": 250.0},
+        )
+    )
+    before_close = emitter.task_io_metrics("task-1")
+    assert before_close["telemetry_event_write_count"] == 1.0
+    assert before_close["telemetry_fact_write_count"] == 1.0
+    assert before_close["telemetry_log_flush_count"] == 0.0
+    emitter.close()
+    after_close = emitter.task_io_metrics("task-1")
+    assert after_close["telemetry_log_flush_count"] == 2.0
+    event_lines = (tmp_path / "runtime_events.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    fact_lines = (tmp_path / "runtime_facts.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(event_lines) == 1
+    assert len(fact_lines) == 1
 
 
 def test_expected_fact_pass_supports_minimum_threshold_contract() -> None:

@@ -15,6 +15,7 @@ def test_continuous_task_family_manifests_have_ten_ordered_rounds() -> None:
     for family in (
         "csv_table_profile",
         "csv_correlation_replay",
+        "incident_diagnosis",
         "long_doc_table",
         "long_doc_metric_replay",
         "gridops_world",
@@ -31,6 +32,7 @@ def test_continuous_task_family_dependencies_only_point_backward() -> None:
     for family in (
         "csv_table_profile",
         "csv_correlation_replay",
+        "incident_diagnosis",
         "long_doc_table",
         "long_doc_metric_replay",
         "gridops_world",
@@ -45,6 +47,7 @@ def test_continuous_task_family_rounds_declare_reuse_and_quality_contracts() -> 
     for family in (
         "csv_table_profile",
         "csv_correlation_replay",
+        "incident_diagnosis",
         "long_doc_table",
         "long_doc_metric_replay",
         "gridops_world",
@@ -67,11 +70,12 @@ def test_continuous_task_families_cover_formal_and_demo_tracks() -> None:
     tiers = {
         _load_manifest(family)["claim_tier"]
         for family in (
-            "csv_table_profile",
-            "csv_correlation_replay",
-            "long_doc_table",
-            "long_doc_metric_replay",
-            "gridops_world",
+        "csv_table_profile",
+        "csv_correlation_replay",
+        "incident_diagnosis",
+        "long_doc_table",
+        "long_doc_metric_replay",
+        "gridops_world",
         )
     }
     assert "formal_primary" in tiers

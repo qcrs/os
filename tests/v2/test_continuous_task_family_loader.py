@@ -49,6 +49,21 @@ def test_load_continuous_task_family_long_doc_replay_manifest() -> None:
     assert family.design_audit_payload()["validated_replay_target_rounds"] == [3, 4, 6, 8, 9]
 
 
+def test_load_continuous_task_family_incident_manifest() -> None:
+    family = load_continuous_task_family(
+        Path("v2/benchmark/samples/continuous_task_families/incident_diagnosis")
+    )
+    assert family.family_id == "incident_diagnosis_v2"
+    assert family.claim_tier == "formal_secondary"
+    assert family.round_count == 10
+    assert family.datasets[0].dataset_id == "inference_gateway_boot"
+    assert family.rounds[0].canonical_task_spec.intent_op == "diagnose_startup_latency"
+    assert family.rounds[1].reuse_contract.minimum_reuse_class == "validated_replay"
+    assert family.rounds[2].reuse_contract.minimum_reuse_class == "exact_replay"
+    assert family.design_audit_payload()["exact_replay_target_rounds"] == [3, 4, 6, 7, 8, 9, 10]
+    assert family.design_audit_payload()["validated_replay_target_rounds"] == [2, 5]
+
+
 def test_load_continuous_task_family_csv_replay_manifest() -> None:
     family = load_continuous_task_family(
         Path("v2/benchmark/samples/continuous_task_families/csv_correlation_replay")
