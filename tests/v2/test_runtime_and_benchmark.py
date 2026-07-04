@@ -749,6 +749,75 @@ def test_codeact_runner_records_explicit_no_sandbox_backend(tmp_path: Path) -> N
     assert result.record.sandbox_fallback_reason == ""
 
 
+def test_codeact_runner_reuses_cached_result_for_identical_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from v2.runtime import codeact as codeact_module
+
+    workspace_one = WorkspaceManager(tmp_path / "workspace-one")
+    layout_one = workspace_one.ensure_layout("task-1")
+    step_layout_one = workspace_one.ensure_step_layout(layout_one, "step-1")
+    workspace_two = WorkspaceManager(tmp_path / "workspace-two")
+    layout_two = workspace_two.ensure_layout("task-1")
+    step_layout_two = workspace_two.ensure_step_layout(layout_two, "step-1")
+
+    runner = CodeActRunner(
+        sandbox_config=CodeActSandboxConfig(requested_backend="resource"),
+    )
+    request = CodeActRequest(
+        task_id="task-1",
+        step_id="step-1",
+        attempt_id="attempt-1",
+        execution_goal="full_execution_goal",
+        query_text="Compare ACME revenue with the previous quarter",
+        summary_suffix="candidate summary",
+        revenue_value="120",
+        selected_doc_hashes=("sha256:doc-1",),
+        evidence_pack_hash="sha256:pack-1",
+        retrieval_log_hash="sha256:retrieval-1",
+        runtime_contract="l3-fixed-answer-cold-start",
+        required_outputs=("summary_text", "revenue_value"),
+        route="compare_metric",
+        tool_name="table_retriever",
+        action_contract="materialize_validated_artifact",
+        supporting_doc_ids=("doc-1",),
+        planner_plan_payload={"steps": ["retrieve", "execute"]},
+    )
+
+    sandbox_run_count = 0
+    original_run = codeact_module.CodeActSandboxRunner.run
+
+    def counting_run(self, *args, **kwargs):
+        nonlocal sandbox_run_count
+        sandbox_run_count += 1
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(codeact_module.CodeActSandboxRunner, "run", counting_run)
+
+    first = runner.run(
+        workspace=workspace_one,
+        layout=layout_one,
+        step_layout=step_layout_one,
+        request=request,
+    )
+    second = runner.run(
+        workspace=workspace_two,
+        layout=layout_two,
+        step_layout=step_layout_two,
+        request=request,
+    )
+
+    assert sandbox_run_count == 1
+    assert first.output_payload == second.output_payload
+    assert second.request_path != first.request_path
+    assert second.request_path.exists()
+    assert second.script_path.exists()
+    assert second.result_path.exists()
+    assert second.output_path.exists()
+    assert second.record.sandbox_backend == "resource"
+
+
 def test_codeact_runner_auto_falls_back_when_bwrap_namespace_is_unavailable(
     tmp_path: Path,
     monkeypatch,

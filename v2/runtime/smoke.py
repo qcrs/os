@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import lru_cache
 import json
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import time
 import uuid as _uuid
@@ -59,6 +61,7 @@ from v2.retrieval import RetrievalBundle, RetrieverFanoutPipeline
 from v2.retrieval.corpus import OfflineCsvTableCorpus, OfflineFinancialReportCorpus, OfflineMarkdownLongDocCorpus
 from v2.route_tool_catalog import build_route_tool_surface, stable_tool_registry_profiles
 from v2.runtime.codeact import CodeActRequest, CodeActRunner
+from v2.runtime.codeact_sandbox import CodeActSandboxConfig
 from v2.runtime import (
     ArtifactLifecycleManager,
     ArtifactManifestItem,
@@ -117,6 +120,45 @@ from v2.runtime.driver import RuntimeDriver, RuntimeDriverInput, RuntimeDriverPr
 from v2.state import JsonContractStore, LayeredStateStore, MaterializedStateHandle, RefRegistryQuery
 from v2.state import MemorySidecarStore, RetrievalSidecarStore
 from v2.utils import sha256_digest, stable_json_dumps
+
+
+@lru_cache(maxsize=8)
+def _build_codeact_runner(
+    python_executable: str,
+    requested_backend: str,
+    timeout_seconds: float,
+    cpu_seconds: int,
+    address_space_bytes: int,
+    file_size_bytes: int,
+    nofile_limit: int,
+    nproc_limit: int,
+) -> CodeActRunner:
+    return CodeActRunner(
+        python_executable=python_executable,
+        sandbox_config=CodeActSandboxConfig(
+            requested_backend=requested_backend,
+            timeout_seconds=timeout_seconds,
+            cpu_seconds=cpu_seconds,
+            address_space_bytes=address_space_bytes,
+            file_size_bytes=file_size_bytes,
+            nofile_limit=nofile_limit,
+            nproc_limit=nproc_limit,
+        ),
+    )
+
+
+def _get_codeact_runner() -> CodeActRunner:
+    config = CodeActSandboxConfig.from_env()
+    return _build_codeact_runner(
+        sys.executable,
+        config.requested_backend,
+        config.timeout_seconds,
+        config.cpu_seconds,
+        config.address_space_bytes,
+        config.file_size_bytes,
+        config.nofile_limit,
+        config.nproc_limit,
+    )
 
 
 def _history_output_candidate_paths(root: Path) -> tuple[Path, ...]:
@@ -2221,7 +2263,7 @@ def run_smoke(
             f"supporting_docs={','.join(retriever_decision.supporting_doc_ids or retrieval.selected_doc_hashes)}"
         )
         codeact_stage_start_ns = time.perf_counter_ns()
-        codeact_result = CodeActRunner().run(
+        codeact_result = _get_codeact_runner().run(
             workspace=workspace,
             layout=layout,
             step_layout=step_layout,
