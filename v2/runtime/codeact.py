@@ -389,11 +389,37 @@ class CodeActExecutionResult:
     stderr_text: str
 
 
+@dataclass(frozen=True)
+class _CodeActDeterministicCacheEntry:
+    script_source: str
+    result_payload: dict[str, object]
+    output_rendered: bytes
+    workspace_artifacts: tuple[tuple[str, bytes], ...]
+    stdout_text: str
+    stderr_text: str
+    generated_code_hash: str
+    request_hash: str
+    plan_hash: str
+    stage_results: tuple[CodeActStageResult, ...]
+    sandbox_backend: str
+    sandbox_requested_backend: str
+    sandbox_fallback_reason: str
+
+
 @dataclass
 class CodeActRunner:
     python_executable: str = sys.executable
     output_name: str = "summary_json"
     sandbox_config: CodeActSandboxConfig | None = None
+    _deterministic_cache: dict[str, _CodeActDeterministicCacheEntry] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _sandbox_runner: CodeActSandboxRunner = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._sandbox_runner = CodeActSandboxRunner(self.sandbox_config)
 
     def build_plan(self, *, request: CodeActRequest) -> CodeActPlan:
         if request.plan is not None:
@@ -508,6 +534,18 @@ class CodeActRunner:
         result_relpath = f"tmp/{request.step_id}.{request.attempt_id}.codeact_result.json"
         script_path = layout.root / script_relpath
         result_path = layout.root / result_relpath
+        cache_key = self._deterministic_cache_key(request=request, plan=plan)
+        cache_entry = self._deterministic_cache.get(cache_key)
+        if cache_entry is not None:
+            return self._materialize_cached_execution(
+                layout=layout,
+                request=request,
+                plan=plan,
+                bundle_file=bundle_file.path,
+                script_relpath=script_relpath,
+                result_relpath=result_relpath,
+                cache_entry=cache_entry,
+            )
         script_source = self._build_script(
             bundle_relpath=bundle_relpath,
             result_relpath=result_relpath,
@@ -517,8 +555,7 @@ class CodeActRunner:
         project_root = Path(__file__).resolve().parents[2]
         host_env = self._workspace_env(project_root=str(project_root))
         bwrap_env = self._workspace_env(project_root="/sandbox/project")
-        sandbox = CodeActSandboxRunner(self.sandbox_config)
-        sandbox_result = sandbox.run(
+        sandbox_result = self._sandbox_runner.run(
             host_command=[self.python_executable, str(script_path)],
             bwrap_command=[
                 self.python_executable,
@@ -567,7 +604,7 @@ class CodeActRunner:
             sandbox_requested_backend=sandbox_result.requested_backend,
             sandbox_fallback_reason=sandbox_result.fallback_reason,
         )
-        return CodeActExecutionResult(
+        result = CodeActExecutionResult(
             request=request,
             plan=plan,
             record=record,
@@ -581,6 +618,119 @@ class CodeActRunner:
             stdout_text=completed.stdout,
             stderr_text=completed.stderr,
         )
+        if completed.returncode == 0:
+            self._deterministic_cache[cache_key] = _CodeActDeterministicCacheEntry(
+                script_source=script_source,
+                result_payload={
+                    "output_relpath": output_relpath,
+                    "output_payload": output_payload,
+                    "stage_results": [item.canonical_payload() for item in stage_results],
+                },
+                output_rendered=output_rendered,
+                workspace_artifacts=self._workspace_artifacts(layout.root),
+                stdout_text=completed.stdout,
+                stderr_text=completed.stderr,
+                generated_code_hash=record.generated_code_hash,
+                request_hash=request_hash,
+                plan_hash=plan.plan_hash,
+                stage_results=stage_results,
+                sandbox_backend=sandbox_result.actual_backend,
+                sandbox_requested_backend=sandbox_result.requested_backend,
+                sandbox_fallback_reason=sandbox_result.fallback_reason,
+            )
+        return result
+
+    def _deterministic_cache_key(self, *, request: CodeActRequest, plan: CodeActPlan) -> str:
+        return sha256_digest(
+            {
+                "request": request.canonical_payload(),
+                "plan": plan.canonical_payload(),
+            }
+        )
+
+    def _materialize_cached_execution(
+        self,
+        *,
+        layout: WorkspaceLayout,
+        request: CodeActRequest,
+        plan: CodeActPlan,
+        bundle_file: Path,
+        script_relpath: str,
+        result_relpath: str,
+        cache_entry: _CodeActDeterministicCacheEntry,
+    ) -> CodeActExecutionResult:
+        script_path = layout.root / script_relpath
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+        script_path.write_text(cache_entry.script_source, encoding="utf-8")
+
+        result_path = layout.root / result_relpath
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(
+            json.dumps(
+                cache_entry.result_payload,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        output_relpath = str(cache_entry.result_payload.get("output_relpath", request.candidate_output_relpath))
+        output_path = layout.root / output_relpath
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(cache_entry.output_rendered)
+        for artifact_relpath, artifact_bytes in cache_entry.workspace_artifacts:
+            artifact_path = layout.root / artifact_relpath
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_bytes(artifact_bytes)
+        output_payload = json.loads(cache_entry.output_rendered.decode("utf-8"))
+        record = CodeActExecutionRecord(
+            task_id=request.task_id,
+            step_id=request.step_id,
+            attempt_id=request.attempt_id,
+            execution_goal=request.execution_goal,
+            script_relpath=script_relpath,
+            request_relpath=str(bundle_file.relative_to(layout.root)),
+            output_relpath=output_relpath,
+            plan_relpath=str(bundle_file.relative_to(layout.root)),
+            exit_code=0,
+            stdout_text=cache_entry.stdout_text,
+            stderr_text=cache_entry.stderr_text,
+            output_payload=output_payload,
+            generated_code_hash=cache_entry.generated_code_hash,
+            request_hash=cache_entry.request_hash,
+            plan_hash=cache_entry.plan_hash,
+            stage_results=cache_entry.stage_results,
+            sandbox_backend=cache_entry.sandbox_backend,
+            sandbox_requested_backend=cache_entry.sandbox_requested_backend,
+            sandbox_fallback_reason=cache_entry.sandbox_fallback_reason,
+        )
+        return CodeActExecutionResult(
+            request=request,
+            plan=plan,
+            record=record,
+            output_payload=output_payload,
+            output_rendered=cache_entry.output_rendered,
+            script_path=script_path,
+            request_path=bundle_file,
+            plan_path=bundle_file,
+            result_path=result_path,
+            output_path=output_path,
+            stdout_text=cache_entry.stdout_text,
+            stderr_text=cache_entry.stderr_text,
+        )
+
+    def _workspace_artifacts(self, root: Path) -> tuple[tuple[str, bytes], ...]:
+        outputs_root = root / "outputs"
+        if not outputs_root.exists():
+            return ()
+        artifacts: list[tuple[str, bytes]] = []
+        for path in sorted(outputs_root.rglob("*")):
+            if not path.is_file():
+                continue
+            artifacts.append((path.relative_to(root).as_posix(), path.read_bytes()))
+        return tuple(artifacts)
 
     def _workspace_env(self, *, project_root: str) -> dict[str, str]:
         return {
