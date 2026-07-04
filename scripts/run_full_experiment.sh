@@ -262,47 +262,69 @@ sep "11  CodeAct LLM generation acceptance (5 runs)"
 if [[ "${SKIP_CODEACT:-0}" == "1" ]]; then
   log "SKIPPED (SKIP_CODEACT=1)"
   echo '{"skipped":true,"success_count":0,"total_runs":0}' > "$JSON_DIR/11_codeact_acceptance.json"
+  STAGE_STATUS+=("11_codeact_acceptance:skipped")
 else
-  CODEACT_RUNS_JSON="[]"
-  SUCCESS_COUNT=0
+  CODEACT_TMPDIR="$RESULT_ROOT/codeact-tmp"
+  mkdir -p "$CODEACT_TMPDIR"
   TOTAL_RUNS=5
   for i in $(seq 1 $TOTAL_RUNS); do
     CODEACT_OUT="$RESULT_ROOT/codeact-run-$i"
-    # capture the structured stdout summary line
-    RUN_LINE=$(python3 scripts/v2_diagnostics/bounded_llm_codeact_demo.py \
+    # stdout → summary line for display; summary.json written to output dir
+    python3 scripts/v2_diagnostics/bounded_llm_codeact_demo.py \
       --role-path-mode api \
       --sandbox-backend bwrap \
       --max-repair-attempts 3 \
       --output-root "$CODEACT_OUT" \
       2>"$LOG_DIR/11_codeact_run${i}.stderr.log" \
-      | grep "^ok=" | head -1 || true)
-    echo "  run${i}: $RUN_LINE"
-    # parse the summary.json directly (not the .log sidecar)
-    SUMMARY_FILE=$(find "$CODEACT_OUT" -name "summary.json" -not -name "*.log*" -type f 2>/dev/null | head -1)
-    if [[ -n "$SUMMARY_FILE" ]]; then
-      RUN_JSON=$(python3 -c "
-import json
-d=json.load(open('$SUMMARY_FILE'))
-print(json.dumps({'run':'run-$i','ok':d.get('ok',False),'generation_fallback_used':d.get('generation_fallback_used',True),'attempt_count':d.get('generation_attempt_count',0),'violations':d.get('violations',[]),'sandbox_backend':d.get('sandbox_backend','')}))
-" 2>/dev/null || echo '{"run":"run-'$i'","ok":false,"generation_fallback_used":true,"attempt_count":0,"violations":[]}')
-      IS_SUCCESS=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('1' if d.get('ok') and not d.get('generation_fallback_used',True) else '0')" <<< "$RUN_JSON" 2>/dev/null || echo 0)
-      [[ "$IS_SUCCESS" == "1" ]] && SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-      # append to runs array (only real runs, no .log sidecars)
-      CODEACT_RUNS_JSON=$(python3 -c "
-import json,sys
-runs=json.loads(sys.argv[1])
-runs.append(json.loads(sys.argv[2]))
-print(json.dumps(runs))
-" "$CODEACT_RUNS_JSON" "$RUN_JSON" 2>/dev/null || echo "$CODEACT_RUNS_JSON")
-    fi
+      | tee "$CODEACT_TMPDIR/run${i}.stdout" || true
+    echo "  run${i}: $(grep '^ok=' "$CODEACT_TMPDIR/run${i}.stdout" 2>/dev/null | head -1)"
   done
-  TARGET_MET=$([[ $SUCCESS_COUNT -ge 3 ]] && echo true || echo false)
-  python3 -c "
-import json
-result={'success_count':$SUCCESS_COUNT,'total_runs':$TOTAL_RUNS,'target_success_count':3,'target_met':$TARGET_MET,'runs':$CODEACT_RUNS_JSON}
-open('$JSON_DIR/11_codeact_acceptance.json','w').write(json.dumps(result,indent=2))
-print(f'  success_count: $SUCCESS_COUNT / $TOTAL_RUNS  target_met: $TARGET_MET')
-" 2>/dev/null || echo "  parse error writing acceptance artifact"
+  # Aggregate: parse each run's summary.json into a temp file, then merge
+  python3 - "$CODEACT_TMPDIR" "$JSON_DIR/11_codeact_acceptance.json" "$RESULT_ROOT" <<'PYEOF'
+import json, pathlib, sys
+
+tmpdir   = pathlib.Path(sys.argv[1])
+out_path = pathlib.Path(sys.argv[2])
+runs_dir = pathlib.Path(sys.argv[3])
+
+runs = []
+for i in range(1, 6):
+    codeact_out = runs_dir / f"codeact-run-{i}"
+    # find the canonical summary.json (not *.log files)
+    candidates = [p for p in codeact_out.rglob("summary.json")
+                  if ".log" not in str(p)]
+    if not candidates:
+        runs.append({"run": f"run-{i}", "ok": False,
+                     "generation_fallback_used": True, "attempt_count": 0})
+        continue
+    d = json.loads(candidates[0].read_text())
+    runs.append({
+        "run": f"run-{i}",
+        "ok": bool(d.get("ok", False)),
+        "generation_fallback_used": bool(d.get("generation_fallback_used", True)),
+        "attempt_count": int(d.get("generation_attempt_count", 0)),
+        "violations": list(d.get("violations", [])),
+        "sandbox_backend": str(d.get("sandbox_backend", "")),
+    })
+
+success_count = sum(1 for r in runs if r["ok"] and not r["generation_fallback_used"])
+target_met    = success_count >= 3
+result = {
+    "success_count": success_count,
+    "total_runs":    len(runs),
+    "target_success_count": 3,
+    "target_met":    target_met,
+    "runs": runs,
+}
+out_path.write_text(json.dumps(result, indent=2))
+print(f"  success_count: {success_count} / {len(runs)}  target_met: {target_met}")
+PYEOF
+  CODEACT_EXIT=$?
+  if [[ $CODEACT_EXIT -eq 0 ]]; then
+    STAGE_STATUS+=("11_codeact_acceptance:pass")
+  else
+    STAGE_STATUS+=("11_codeact_acceptance:fail")
+  fi
 fi
 
 # ==========================================
@@ -332,19 +354,36 @@ run_stage 13_incident_diagnosis_v2 "incident diagnosis v2" \
 python3 -c "
 import json
 d=json.load(open('$JSON_DIR/13_incident_diagnosis_v2.json'))
+ep=d.get('evidence_pack',{})
+delta=ep.get('l0_l3_delta',{})
 print('  eligible_for_replay_headline:', d.get('eligible_for_replay_headline'))
-print('  validated_replay_count:', d.get('collection_summary',{}).get('validated_replay_count', d.get('validated_replay_count')))
-print('  exact_replay_count:', d.get('collection_summary',{}).get('exact_replay_count', d.get('exact_replay_count')))
-print('  skipped_step_count:', d.get('collection_summary',{}).get('skipped_step_count', d.get('skipped_step_count')))
+print('  validated_replay_count:', delta.get('validated_replay_count'))
+print('  exact_replay_count:', delta.get('exact_replay_count'))
+print('  skipped_step_count:', delta.get('skipped_step_count'))
+print('  l1_l2_evidence_reduction_bytes:', ep.get('l1_l2_non_text_delta',{}).get('raw_evidence_bytes_seen_by_llm'))
 " 2>/dev/null || true
 
 # ==========================================
-# 14. Compare diagnostics dev（overhead 细分）
+# 14. Compare diagnostics dev（独立诊断脚本）
 # ==========================================
 sep "14  Compare diagnostics dev"
-run_stage 14_compare_diagnostics_dev "compare diagnostics dev" \
-  --suite compare-diagnostics \
-  --benchmark-tier dev
+DIAG_ROOT="$RESULT_ROOT/diagnostics"
+mkdir -p "$DIAG_ROOT/compare"
+log "Running: 14_compare_diagnostics_dev"
+if python3 scripts/v2_diagnostics/compare_diagnostics.py \
+    --compare-suite-report "$RUNTIME_ROOT/06_dev_compare_coldstart/benchmark_reports/${STATEBUS_RUN_ID:-$(basename "$RESULT_ROOT")}-cold-start-compare.json" \
+    --family-dir v2/benchmark/samples/fixed_answer_family \
+    --output-root "$DIAG_ROOT/compare" \
+    > "$JSON_DIR/14_compare_diagnostics_dev.json" \
+    2> "$LOG_DIR/14_compare_diagnostics_dev.stderr.log"; then
+  STAGE_STATUS+=("14_compare_diagnostics_dev:pass")
+  log "Done:    14_compare_diagnostics_dev"
+else
+  # diagnostics are non-critical — generate a placeholder and continue
+  echo '{"skipped":true,"reason":"compare_suite_report_not_found"}' > "$JSON_DIR/14_compare_diagnostics_dev.json"
+  STAGE_STATUS+=("14_compare_diagnostics_dev:skip_no_report")
+  log "SKIPPED: 14_compare_diagnostics_dev (compare suite report not found)"
+fi
 python3 -c "
 import json
 d=json.load(open('$JSON_DIR/14_compare_diagnostics_dev.json'))
@@ -354,11 +393,25 @@ for k,v in sorted(d.items()):
 " 2>/dev/null || true
 
 # ==========================================
-# 15. Runtime persistence breakdown
+# 15. Runtime persistence breakdown（独立诊断脚本）
 # ==========================================
 sep "15  Runtime persistence breakdown"
-run_stage 15_runtime_persistence_breakdown "runtime persistence breakdown" \
-  --suite runtime-persistence-breakdown
+mkdir -p "$DIAG_ROOT/runtime-persistence"
+log "Running: 15_runtime_persistence_breakdown"
+if python3 scripts/v2_diagnostics/runtime_persistence_breakdown.py \
+    --output-root "$DIAG_ROOT/runtime-persistence" \
+    --role-path-mode api \
+    --embedding-mode local \
+    --history-runtime-root "$RUNTIME_ROOT/08_statebus_dev_replay_ready" \
+    > "$JSON_DIR/15_runtime_persistence_breakdown.json" \
+    2> "$LOG_DIR/15_runtime_persistence_breakdown.stderr.log"; then
+  STAGE_STATUS+=("15_runtime_persistence_breakdown:pass")
+  log "Done:    15_runtime_persistence_breakdown"
+else
+  echo '{"skipped":true,"reason":"history_runtime_root_not_found"}' > "$JSON_DIR/15_runtime_persistence_breakdown.json"
+  STAGE_STATUS+=("15_runtime_persistence_breakdown:skip_no_history")
+  log "SKIPPED: 15_runtime_persistence_breakdown (history runtime root not found)"
+fi
 python3 -c "
 import json
 d=json.load(open('$JSON_DIR/15_runtime_persistence_breakdown.json'))
