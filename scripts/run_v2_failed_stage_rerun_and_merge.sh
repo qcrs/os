@@ -594,8 +594,6 @@ run_stage() {
           --output-root "$DIAG_ROOT/compare"
       fi
       ;;
-        --output-root "$DIAG_ROOT/compare"
-      ;;
     15_runtime_persistence_breakdown)
       run_json_stage \
         "15_runtime_persistence_breakdown" \
