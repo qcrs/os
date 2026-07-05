@@ -138,6 +138,55 @@ def test_compare_diagnostics_distinguishes_quality_floor_failure() -> None:
     assert diagnostics["mode_results"][0]["conclusion"] == "quality_floor_failed"
 
 
+def test_compare_diagnostics_exposes_external_per_case_fairness_gate_failure() -> None:
+    role_counts = {
+        "planner_call_count": 1.0,
+        "retriever_call_count": 1.0,
+        "executor_call_count": 1.0,
+        "summarizer_call_count": 1.0,
+    }
+    diagnostics = _build_fairness_diagnostics(
+        {
+            "suite_id": "external-fairness-fail",
+            "task_family": "fixed_answer_route_tool",
+            "benchmark_tier": "dev",
+            "claim_level": "prototype",
+            "mode_reports": [
+                {
+                    "role_path_mode": "api",
+                    "comparison_valid": False,
+                    "invalid_reason": "fairness_gate_failed",
+                    "missing_reason": "",
+                    "fairness_manifest": {
+                        "same_task_family": True,
+                        "same_tier": True,
+                        "same_role_graph": True,
+                        "same_scoring_contract": True,
+                        "same_quality_floor_contract": True,
+                        "no_external_contamination": True,
+                        "external_fairness_gate_coverage": True,
+                        "no_external_fairness_gate_failures": False,
+                        "external_fairness_gate_failed_case_count": 1.0,
+                        "external_fairness_gate_failed_checks": ["planner_visible_choice_only"],
+                        "external_uses_internal_helpers": False,
+                        "role_metric_presence_gate": True,
+                        "same_history_policy": True,
+                        "external_formal_eligible": True,
+                        "pass_hard_gate": False,
+                    },
+                    "statebus_report": {"telemetry_summary": role_counts},
+                    "external_report": {"telemetry_summary": role_counts},
+                }
+            ],
+        }
+    )
+
+    assert diagnostics["suite_verdict"] == "formal_invalid_debug_only"
+    assert diagnostics["contract_problem"] == "fairness_gate_fail_closed_blocks_comparator_claim"
+    assert diagnostics["mode_results"][0]["failed_gates"] == ["external_per_case_fairness_gate"]
+    assert diagnostics["mode_results"][0]["conclusion"] == "debug_only_fairness_fail_closed"
+
+
 def test_compare_diagnostics_bundle_supports_internal_carrier_compare(tmp_path: Path) -> None:
     family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
     compare_report = run_fixed_answer_internal_carrier_compare_suite(

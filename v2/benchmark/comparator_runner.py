@@ -120,6 +120,36 @@ def _fairness_manifest(
     )
     statebus_case_payload = statebus_report.cases[0].metrics if statebus_report.cases else {}
     no_external_contamination = external_report.telemetry_summary.get("contamination_detected", 0.0) == 0.0
+    external_case_count = float(len(external_report.cases))
+    external_fairness_gate_pass_count = _metric(external_report, "external_fairness_gate_pass_count")
+    external_fairness_gate_failed_case_count = _metric(
+        external_report,
+        "external_fairness_gate_failed_case_count",
+    )
+    external_fairness_gate_failed_check_count = _metric(
+        external_report,
+        "external_fairness_gate_failed_check_count",
+    )
+    external_fairness_gate_reported_case_count = _metric(
+        external_report,
+        "external_fairness_gate_reported_case_count",
+    )
+    external_fairness_gate_failed_checks = tuple(
+        str(check).strip()
+        for check in external_metadata.get("external_fairness_gate_failed_checks", [])
+        if str(check).strip()
+    )
+    external_fairness_gate_coverage = (
+        external_case_count > 0.0
+        and external_fairness_gate_reported_case_count == external_case_count
+        and external_fairness_gate_pass_count + external_fairness_gate_failed_case_count == external_case_count
+    )
+    no_external_fairness_gate_failures = (
+        external_fairness_gate_coverage
+        and external_fairness_gate_failed_case_count == 0.0
+        and external_fairness_gate_failed_check_count == 0.0
+        and not external_fairness_gate_failed_checks
+    )
     role_metric_presence = all(
         external_report.telemetry_summary.get(f"{role}_call_count", 0.0) > 0.0
         for role in ("planner", "retriever", "executor", "summarizer")
@@ -136,6 +166,8 @@ def _fairness_manifest(
             external_four_role,
             same_history_policy,
             no_external_contamination,
+            external_fairness_gate_coverage,
+            no_external_fairness_gate_failures,
             role_metric_presence,
         )
     )
@@ -146,7 +178,17 @@ def _fairness_manifest(
         ),
         "external_formal_eligible": external_formal_eligible,
         "external_four_role": external_four_role,
+        "external_fairness_gate_contract": str(
+            external_metadata.get("external_fairness_gate_contract", "")
+        ),
+        "external_fairness_gate_coverage": external_fairness_gate_coverage,
+        "external_fairness_gate_failed_case_count": external_fairness_gate_failed_case_count,
+        "external_fairness_gate_failed_check_count": external_fairness_gate_failed_check_count,
+        "external_fairness_gate_failed_checks": list(external_fairness_gate_failed_checks),
+        "external_fairness_gate_pass_count": external_fairness_gate_pass_count,
+        "external_fairness_gate_reported_case_count": external_fairness_gate_reported_case_count,
         "external_uses_internal_helpers": external_uses_internal_helpers,
+        "no_external_fairness_gate_failures": no_external_fairness_gate_failures,
         "no_external_contamination": no_external_contamination,
         "pass_hard_gate": pass_hard_gate,
         "role_metric_presence_gate": role_metric_presence,

@@ -863,7 +863,7 @@ def parse_text_route_tool_planner_prompt(text: str) -> dict[str, Any]:
         tool_candidates = merged_candidates
     return {
         "task_id": _extract_line_value(text, "Task ID:"),
-        "query": _extract_block(text, "Task query:\n", "\n\nVisible route/tool candidates:\n"),
+        "query": _extract_block(text, "Task query:\n", "\n\nVisible route/tool candidates:"),
         "tool_candidates": tool_candidates,
         "fallback_route": _extract_optional_line_value(text, "Competing route:"),
     }

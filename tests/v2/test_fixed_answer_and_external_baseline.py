@@ -372,8 +372,10 @@ def test_external_text_case_runs(tmp_path: Path) -> None:
     assert result.retriever_usage.prompt_bytes > 0
     assert result.executor_usage.prompt_bytes > 0
     assert result.summarizer_usage.prompt_bytes > 0
+    assert result.fairness_gate["pass_hard_gate"] is True
     payload = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
     assert payload["revenue_fallback_used"] == 1.0
+    assert payload["fairness_gate"]["pass_hard_gate"] is True
     output_payload = json.loads(Path(result.output_path).read_text(encoding="utf-8"))
     assert output_payload["revenue_value"] == ""
 
@@ -391,6 +393,9 @@ def test_external_text_family_runs(tmp_path: Path) -> None:
     assert report.telemetry_summary["summarizer_call_count"] == 3.0
     assert report.telemetry_summary["prompt_bytes"] > 0.0
     assert report.telemetry_summary["end_to_end_ms"] >= report.telemetry_summary["llm_ms"] >= 0.0
+    assert report.aggregated_metrics["external_fairness_gate_pass_count"] == 3.0
+    assert report.aggregated_metrics["external_fairness_gate_failed_case_count"] == 0.0
+    assert report.metadata["external_fairness_gate_pass"] is True
     assert report.metadata["baseline_kind"] == "external_pure_text_four_role"
     assert report.metadata["formal_comparator_eligible"] is True
     assert report.metadata["external_comparator_claim_scope"] == "dev_fixed_answer_only"
@@ -398,6 +403,121 @@ def test_external_text_family_runs(tmp_path: Path) -> None:
         report.metadata["claim_restriction"]
         == "dev_fixed_answer_external_fairness_only_not_formal_financial_superiority"
     )
+
+
+def _fake_external_result_for_fairness_gate(sample, runtime_root: Path, *, fairness_gate: dict[str, object]):
+    from v2.benchmark.external_text_baseline import ExternalTextCaseResult, ExternalTextRoleUsage
+    from v2.benchmark.models import QualityFloorResult
+    from v2.benchmark.scoring import FixedAnswerScore
+
+    case_root = runtime_root / sample.task_id
+    case_root.mkdir(parents=True, exist_ok=True)
+    output_path = case_root / "external_text_output.json"
+    report_path = case_root / "external_text_report.json"
+    output_path.write_text("{}\n", encoding="utf-8")
+    report_path.write_text("{}\n", encoding="utf-8")
+    quality_floor = QualityFloorResult(
+        quality_floor_pass=True,
+        deterministic_checks_passed=True,
+        fact_coverage_passed=True,
+        llm_judge_passed=None,
+    )
+    score = FixedAnswerScore(
+        route_exact=True,
+        tool_exact=True,
+        revenue_exact=True,
+        selected_doc_hashes_exact=True,
+        summary_present=True,
+        exact_match=True,
+        admissible_match=True,
+        correctness_label="exact_match",
+        quality_floor=quality_floor,
+    )
+    usage = ExternalTextRoleUsage(prompt_bytes=10, prompt_tokens=1, completion_tokens=1, total_tokens=2)
+    selected_doc_hashes = tuple(
+        str(item)
+        for item in sample.expected_facts.get("selected_doc_hashes", ["doc"])
+    )
+    return ExternalTextCaseResult(
+        task_id=sample.task_id,
+        route=sample.expected_route,
+        tool_name=sample.expected_tool_name,
+        summary_text="summary",
+        revenue_value=str(sample.expected_facts.get("revenue_value", "1")),
+        output_path=str(output_path),
+        report_path=str(report_path),
+        message_count=4,
+        text_bytes=40,
+        prompt_bytes=40,
+        prompt_tokens=4,
+        completion_tokens=4,
+        total_tokens=8,
+        llm_ms=1.0,
+        end_to_end_ms=2.0,
+        llm_call_count=4,
+        route_exact=True,
+        tool_exact=True,
+        revenue_fallback_used=False,
+        exact_match=True,
+        admissible_match=True,
+        correctness_label="exact_match",
+        contamination_detected=False,
+        fairness_gate=fairness_gate,
+        selected_doc_hashes=selected_doc_hashes,
+        supporting_doc_ids=selected_doc_hashes,
+        quality_floor=score,
+        planner_usage=usage,
+        retriever_usage=usage,
+        executor_usage=usage,
+        summarizer_usage=usage,
+    )
+
+
+def test_external_text_family_aggregates_per_case_fairness_gate_failures(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from v2.benchmark import external_text_baseline as baseline
+
+    family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
+    failed_task_id = family[0].task_id
+    passing_gate = {
+        "checks": {"planner_visible_choice_only": True},
+        "failed_checks": [],
+        "pass_hard_gate": True,
+        "visible_candidate_keys": ["route::tool"],
+    }
+    failing_gate = {
+        "checks": {"planner_visible_choice_only": False},
+        "failed_checks": ["planner_visible_choice_only"],
+        "pass_hard_gate": False,
+        "visible_candidate_keys": ["route::tool"],
+    }
+
+    def fake_run_external_text_case(*, sample, runtime_root, role_path_mode, embedding_mode):
+        del role_path_mode, embedding_mode
+        return _fake_external_result_for_fairness_gate(
+            sample,
+            runtime_root,
+            fairness_gate=failing_gate if sample.task_id == failed_task_id else passing_gate,
+        )
+
+    monkeypatch.setattr(baseline, "run_external_text_case", fake_run_external_text_case)
+    report = baseline.run_external_text_family(samples=family, runtime_root=tmp_path / "external")
+
+    assert report.aggregated_metrics["external_fairness_gate_pass_count"] == 2.0
+    assert report.aggregated_metrics["external_fairness_gate_failed_case_count"] == 1.0
+    assert report.aggregated_metrics["external_fairness_gate_failed_check_count"] == 1.0
+    assert report.aggregated_metrics["external_fairness_gate_reported_case_count"] == 3.0
+    assert report.metadata["external_fairness_gate_pass"] is False
+    assert report.metadata["external_fairness_gate_failed_checks"] == ["planner_visible_choice_only"]
+    assert report.cases[0].metrics["external_fairness_gate_failed"] == 1.0
+    assert report.cases[0].audit_summary["external_fairness_gate"]["pass_hard_gate"] is False
+    payload = json.loads(Path(report.report_path).read_text(encoding="utf-8"))
+    assert payload["aggregated_metrics"]["external_fairness_gate_failed_case_count"] == 1.0
+    assert payload["cases"][0]["audit_summary"]["external_fairness_gate"]["failed_checks"] == [
+        "planner_visible_choice_only"
+    ]
 
 
 def test_external_text_case_end_to_end_ms_includes_prep_stage(
@@ -466,6 +586,67 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert payload["mode_reports"][0]["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert payload["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert "deterministic_debug_exact_match_delta" in payload["comparison_summary"]
+
+
+def test_fixed_answer_external_comparator_fails_closed_on_external_fairness_gate_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from v2.benchmark import comparator_runner
+    from v2.benchmark import external_text_baseline as baseline
+
+    family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
+    failed_task_id = family[0].task_id
+    passing_gate = {
+        "checks": {"planner_visible_choice_only": True},
+        "failed_checks": [],
+        "pass_hard_gate": True,
+        "visible_candidate_keys": ["route::tool"],
+    }
+    failing_gate = {
+        "checks": {"planner_visible_choice_only": False},
+        "failed_checks": ["planner_visible_choice_only"],
+        "pass_hard_gate": False,
+        "visible_candidate_keys": ["route::tool"],
+    }
+
+    def fake_run_external_text_case(*, sample, runtime_root, role_path_mode, embedding_mode):
+        del role_path_mode, embedding_mode
+        return _fake_external_result_for_fairness_gate(
+            sample,
+            runtime_root,
+            fairness_gate=failing_gate if sample.task_id == failed_task_id else passing_gate,
+        )
+
+    monkeypatch.setattr(baseline, "run_external_text_case", fake_run_external_text_case)
+    external_report = baseline.run_external_text_family(
+        samples=family,
+        runtime_root=tmp_path / "external-report-source",
+    )
+    monkeypatch.setattr(comparator_runner, "run_external_text_family", lambda **kwargs: external_report)
+
+    report = comparator_runner.compare_fixed_answer_with_external(
+        samples=family,
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        role_path_modes=("deterministic",),
+    )
+
+    mode_report = report.mode_reports[0]
+    assert mode_report.comparison_valid is False
+    assert mode_report.invalid_reason == "fairness_gate_failed"
+    assert mode_report.headline_metrics == {}
+    assert mode_report.fairness_manifest["external_fairness_gate_coverage"] is True
+    assert mode_report.fairness_manifest["no_external_fairness_gate_failures"] is False
+    assert mode_report.fairness_manifest["external_fairness_gate_failed_case_count"] == 1.0
+    assert mode_report.fairness_manifest["external_fairness_gate_failed_checks"] == [
+        "planner_visible_choice_only"
+    ]
+    assert mode_report.fairness_manifest["pass_hard_gate"] is False
+    payload = json.loads(Path(mode_report.report_path).read_text(encoding="utf-8"))
+    assert payload["fairness_manifest"]["external_fairness_gate_failed_case_count"] == 1.0
+    assert payload["invalid_reason"] == "fairness_gate_failed"
 
 
 def test_fixed_answer_external_comparator_suite_runs_in_cold_start_mode(tmp_path: Path) -> None:
