@@ -790,7 +790,12 @@ def _continuous_output_reuse_metrics(
     quality_floor: QualityFloorResult,
     layer_config: SmokeLayerConfig,
 ) -> dict[str, float]:
-    if spec.task_family not in {"continuous_csv_table_analysis", "continuous_long_doc_table_analysis", "incident_diagnosis_v2"}:
+    if spec.task_family not in {
+        "continuous_csv_table_analysis",
+        "continuous_long_doc_table_analysis",
+        "cross_period_financial_analysis",
+        "incident_diagnosis_v2",
+    }:
         return {}
     if not layer_config.replay_enabled or not quality_floor.quality_floor_pass:
         return {
@@ -817,6 +822,13 @@ def _continuous_output_reuse_metrics(
             and artifact_count >= 7
         ):
             step_reduction_count = 2
+        elif spec.task_family == "cross_period_financial_analysis":
+            if spec.intent_op == "compute_delta" and artifact_count >= 2:
+                step_reduction_count = 2
+            elif spec.intent_op == "compute_trend" and artifact_count >= 3:
+                step_reduction_count = 2
+            elif spec.intent_op == "compare_metric" and (artifact_count >= 2 or strategy_count >= 1):
+                step_reduction_count = 1
         elif spec.task_family == "incident_diagnosis_v2":
             step_reduction_count = 1
     return {
@@ -1020,6 +1032,10 @@ def _goal_from_spec(spec: object) -> str:
         dataset_id = str(arguments.get("dataset_id", "dataset"))
         intent = str(getattr(spec, "intent_op", "analyze"))
         return f"Execute long-doc {intent} for {dataset_id} and persist cited reusable artifacts."
+    if task_family == "cross_period_financial_analysis":
+        dataset_id = str(arguments.get("dataset_id", "cross_period_financial"))
+        intent = str(getattr(spec, "intent_op", "analyze"))
+        return f"Execute cross-period {intent} for {dataset_id} and persist reusable comparison outputs."
     if task_family == "incident_diagnosis_v2":
         service_name = str(arguments.get("service_name", arguments.get("dataset_id", "service")))
         return f"Diagnose startup latency for {service_name} and persist a reusable timing profile."
@@ -1041,6 +1057,10 @@ def _summary_hint_from_spec(spec: object) -> str:
         dataset_id = str(arguments.get("dataset_id", "dataset"))
         intent = str(getattr(spec, "intent_op", "analyze"))
         return f"{dataset_id} {intent} cited summary ready"
+    if task_family == "cross_period_financial_analysis":
+        dataset_id = str(arguments.get("dataset_id", "cross_period_financial"))
+        intent = str(getattr(spec, "intent_op", "analyze"))
+        return f"{dataset_id} {intent} comparison summary ready"
     if task_family == "incident_diagnosis_v2":
         service_name = str(arguments.get("service_name", arguments.get("dataset_id", "service")))
         return f"{service_name} startup diagnosis summary ready"
@@ -1233,6 +1253,27 @@ def _planner_scope_payload(
             "table_bytes": len(table_context.encode("utf-8")),
             "table_item_count": len(document.table_rows),
         }
+    if spec.task_family == "cross_period_financial_analysis":
+        dataset_id = str(spec.arguments.get("dataset_id", "")).strip()
+        document_path = str(spec.arguments.get("document_path", "")).strip()
+        if not document_path:
+            document_path = (
+                "v2/benchmark/samples/continuous_task_families/"
+                "cross_period_financial/cross_period_financial_report.md"
+            )
+        document = OfflineMarkdownLongDocCorpus().resolve(dataset_id=dataset_id, document_path=document_path)
+        text_context = "\n".join(fragment.text for fragment in document.text_fragments)
+        table_context = "\n".join(row.rendered_text for row in document.table_rows)
+        return {
+            "supporting_doc_ids": [document.source_doc_hash],
+            "source_doc_hashes": [document.source_doc_hash],
+            "text_context": text_context,
+            "text_bytes": len(text_context.encode("utf-8")),
+            "text_item_count": len(document.text_fragments),
+            "table_context": table_context,
+            "table_bytes": len(table_context.encode("utf-8")),
+            "table_item_count": len(document.table_rows),
+        }
     if spec.task_family == "incident_diagnosis_v2":
         dataset_id = str(spec.arguments.get("dataset_id", "")).strip()
         log_path = str(spec.arguments.get("log_path", "")).strip()
@@ -1290,6 +1331,27 @@ def _query_text_from_spec(spec: object) -> str:
         topic = str(arguments.get("topic", arguments.get("metric", ""))).strip()
         intent = str(getattr(spec, "intent_op", "analyze"))
         return " ".join(part for part in (dataset_id, topic, intent) if part).strip()
+    if str(getattr(spec, "task_family", "")).strip() == "cross_period_financial_analysis":
+        dataset_id = str(arguments.get("dataset_id", "cross_period_financial")).strip()
+        ticker = str(arguments.get("ticker", "")).strip()
+        tickers = [
+            str(item).strip()
+            for item in arguments.get("tickers", [])
+            if str(item).strip()
+        ]
+        subject = ",".join(tickers) if tickers else ticker
+        quarter = str(arguments.get("quarter", "")).strip()
+        quarters = [
+            str(item).strip()
+            for item in arguments.get("quarters", [])
+            if str(item).strip()
+        ]
+        period_from = str(arguments.get("period_from", "")).strip()
+        period_to = str(arguments.get("period_to", "")).strip()
+        metric = str(arguments.get("metric", "revenue")).strip()
+        intent = str(getattr(spec, "intent_op", "compare_metric"))
+        scope = ",".join(quarters) if quarters else ",".join(part for part in (period_from, period_to, quarter) if part)
+        return " ".join(part for part in (dataset_id, subject, scope, metric, intent) if part).strip()
     if str(getattr(spec, "task_family", "")).strip() == "incident_diagnosis_v2":
         service_name = str(arguments.get("service_name", arguments.get("dataset_id", "service"))).strip()
         symptom_family = str(arguments.get("symptom_family", "startup_latency")).strip()
@@ -3060,7 +3122,7 @@ def run_smoke(
         },
     }
 
-    return SmokeResult(
+    result = SmokeResult(
         task_id=task_id,
         compiler_status=compiler_result.status.value,
         supervisor_state=session_snapshot.state,
@@ -3134,6 +3196,8 @@ def run_smoke(
         runtime_stage_metrics=runtime_stage_metrics,
         audit_summary=audit_summary,
     )
+    state_store.teardown()
+    return result
 
 
 def main() -> None:
