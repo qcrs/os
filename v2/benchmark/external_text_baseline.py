@@ -184,6 +184,7 @@ def pure_text_external_metadata(
         "claim_level": "prototype",
         "embedding_mode": embedding_mode,
         "formal_comparator_eligible": True,
+        "external_fairness_gate_contract": "external_pure_text_per_case_fairness_gate_v1",
         "quality_floor_contract": "fixed_answer_shared_quality_floor_v1",
         "role_graph": "planner->retriever->executor->summarizer",
         "role_path_mode": role_path_mode,
@@ -363,8 +364,7 @@ def _planner_prompt(*, sample: FixedAnswerSample, context: ExternalExecutionCont
         "Task theme: fixed_answer_route_tool\n"
         "Task query:\n"
         f"{stable_json_dumps(context.request_payload)}\n\n"
-        "Visible route/tool candidates:\n"
-        f"{visible_candidates}\n"
+        f"Visible route/tool candidates: {visible_candidates}\n"
         f"Candidate notes: {candidate_notes}\n"
     )
 
@@ -799,6 +799,7 @@ def run_external_text_family(
         return report
 
     cases: list[BenchmarkCaseReport] = []
+    fairness_failed_check_counts: dict[str, int] = {}
     for sample in samples:
         result = run_external_text_case(
             sample=sample,
@@ -806,6 +807,49 @@ def run_external_text_family(
             role_path_mode=role_path_mode,
             embedding_mode=embedding_mode,
         )
+        fairness_failed_checks = tuple(
+            str(check).strip()
+            for check in result.fairness_gate.get("failed_checks", [])
+            if str(check).strip()
+        )
+        for check in fairness_failed_checks:
+            fairness_failed_check_counts[check] = fairness_failed_check_counts.get(check, 0) + 1
+        fairness_gate_passed = bool(result.fairness_gate.get("pass_hard_gate", False))
+        case_metrics = {
+            "message_count": float(result.message_count),
+            "text_bytes": float(result.text_bytes),
+            "control_bytes": float(result.text_bytes),
+            "prompt_bytes": float(result.prompt_bytes),
+            "prompt_tokens": float(result.prompt_tokens),
+            "completion_tokens": float(result.completion_tokens),
+            "llm_total_tokens": float(result.total_tokens),
+            "llm_ms": float(result.llm_ms),
+            "end_to_end_ms": float(result.end_to_end_ms),
+            "task_ms": float(result.end_to_end_ms),
+            "llm_call_count": float(result.llm_call_count),
+            "planner_call_count": 1.0,
+            "retriever_call_count": 1.0,
+            "executor_call_count": 1.0,
+            "summarizer_call_count": 1.0,
+            "planner_prompt_bytes": float(result.planner_usage.prompt_bytes),
+            "retriever_prompt_bytes": float(result.retriever_usage.prompt_bytes),
+            "executor_prompt_bytes": float(result.executor_usage.prompt_bytes),
+            "summarizer_prompt_bytes": float(result.summarizer_usage.prompt_bytes),
+            "route_exact": 1.0 if result.route_exact else 0.0,
+            "tool_exact": 1.0 if result.tool_exact else 0.0,
+            "revenue_exact": 1.0 if result.quality_floor.revenue_exact else 0.0,
+            "revenue_fallback_used": 1.0 if result.revenue_fallback_used else 0.0,
+            "selected_doc_hashes_exact": 1.0 if result.quality_floor.selected_doc_hashes_exact else 0.0,
+            "summary_present": 1.0 if result.quality_floor.summary_present else 0.0,
+            "exact_match": 1.0 if result.exact_match else 0.0,
+            "admissible_match": 1.0 if result.admissible_match else 0.0,
+            "contamination_detected": 1.0 if result.contamination_detected else 0.0,
+            "external_fairness_gate_pass": 1.0 if fairness_gate_passed else 0.0,
+            "external_fairness_gate_failed": 0.0 if fairness_gate_passed else 1.0,
+            "external_fairness_gate_failed_check_count": float(len(fairness_failed_checks)),
+        }
+        for check in fairness_failed_checks:
+            case_metrics[f"external_fairness_failed_{check}"] = 1.0
         cases.append(
             BenchmarkCaseReport(
                 task_id=sample.task_id,
@@ -818,44 +862,39 @@ def run_external_text_family(
                 workspace_root=str(runtime_root / sample.task_id),
                 session_state="EXTERNAL_TEXT_DONE",
                 comparison_tags=sample.scenario_tags,
-                audit_paths={},
-                audit_summary={},
-                metrics={
-                    "message_count": float(result.message_count),
-                    "text_bytes": float(result.text_bytes),
-                    "control_bytes": float(result.text_bytes),
-                    "prompt_bytes": float(result.prompt_bytes),
-                    "prompt_tokens": float(result.prompt_tokens),
-                    "completion_tokens": float(result.completion_tokens),
-                    "llm_total_tokens": float(result.total_tokens),
-                    "llm_ms": float(result.llm_ms),
-                    "end_to_end_ms": float(result.end_to_end_ms),
-                    "task_ms": float(result.end_to_end_ms),
-                    "llm_call_count": float(result.llm_call_count),
-                    "planner_call_count": 1.0,
-                    "retriever_call_count": 1.0,
-                    "executor_call_count": 1.0,
-                    "summarizer_call_count": 1.0,
-                    "planner_prompt_bytes": float(result.planner_usage.prompt_bytes),
-                    "retriever_prompt_bytes": float(result.retriever_usage.prompt_bytes),
-                    "executor_prompt_bytes": float(result.executor_usage.prompt_bytes),
-                    "summarizer_prompt_bytes": float(result.summarizer_usage.prompt_bytes),
-                    "route_exact": 1.0 if result.route_exact else 0.0,
-                    "tool_exact": 1.0 if result.tool_exact else 0.0,
-                    "revenue_exact": 1.0 if result.quality_floor.revenue_exact else 0.0,
-                    "revenue_fallback_used": 1.0 if result.revenue_fallback_used else 0.0,
-                    "selected_doc_hashes_exact": 1.0 if result.quality_floor.selected_doc_hashes_exact else 0.0,
-                    "summary_present": 1.0 if result.quality_floor.summary_present else 0.0,
-                    "exact_match": 1.0 if result.exact_match else 0.0,
-                    "admissible_match": 1.0 if result.admissible_match else 0.0,
-                    "contamination_detected": 1.0 if result.contamination_detected else 0.0,
-                },
+                audit_paths={"external_text_report": result.report_path},
+                audit_summary={"external_fairness_gate": result.fairness_gate},
+                metrics=case_metrics,
             )
         )
+    external_fairness_gate_pass_count = float(
+        sum(case.metrics.get("external_fairness_gate_pass", 0.0) for case in cases)
+    )
+    external_fairness_gate_failed_case_count = float(
+        sum(case.metrics.get("external_fairness_gate_failed", 0.0) for case in cases)
+    )
+    external_fairness_gate_failed_check_count = float(
+        sum(case.metrics.get("external_fairness_gate_failed_check_count", 0.0) for case in cases)
+    )
+    external_fairness_gate_reported_case_count = (
+        external_fairness_gate_pass_count + external_fairness_gate_failed_case_count
+    )
+    metadata = {
+        **metadata,
+        "external_fairness_gate_pass": bool(cases)
+        and external_fairness_gate_failed_case_count == 0.0
+        and external_fairness_gate_pass_count == float(len(cases)),
+        "external_fairness_gate_failed_checks": list(sorted(fairness_failed_check_counts)),
+        "external_fairness_gate_failed_check_counts": dict(sorted(fairness_failed_check_counts.items())),
+    }
     aggregated_metrics = {
         "case_count": float(len(cases)),
         "quality_floor_pass_count": float(sum(1 for case in cases if case.quality_floor.quality_floor_pass)),
         "telemetry_event_count": 0.0,
+        "external_fairness_gate_pass_count": external_fairness_gate_pass_count,
+        "external_fairness_gate_failed_case_count": external_fairness_gate_failed_case_count,
+        "external_fairness_gate_failed_check_count": external_fairness_gate_failed_check_count,
+        "external_fairness_gate_reported_case_count": external_fairness_gate_reported_case_count,
     }
     telemetry_summary: dict[str, float] = {}
     for case in cases:

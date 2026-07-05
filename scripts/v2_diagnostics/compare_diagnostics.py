@@ -173,6 +173,10 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
         external_role_count = _count_true_flags(
             [_role_call_count({"telemetry_summary": external_summary}, role) > 0.0 for role in ("planner", "retriever", "executor", "summarizer")]
         )
+        external_per_case_gate_reported = (
+            "external_fairness_gate_coverage" in fairness_manifest
+            or "no_external_fairness_gate_failures" in fairness_manifest
+        )
         gate_checks = [
             {
                 "gate": "object_parity_gate",
@@ -217,6 +221,25 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 "details": {
                     "no_external_contamination": fairness_manifest.get("no_external_contamination"),
                     "external_uses_internal_helpers": fairness_manifest.get("external_uses_internal_helpers"),
+                },
+            },
+            {
+                "gate": "external_per_case_fairness_gate",
+                "passed": True
+                if not external_per_case_gate_reported
+                else bool(fairness_manifest.get("external_fairness_gate_coverage"))
+                and bool(fairness_manifest.get("no_external_fairness_gate_failures")),
+                "contract_ref": "v2/benchmark/external_text_baseline.py",
+                "code_ref": "v2/benchmark/comparator_runner.py:94-169",
+                "details": {
+                    "external_fairness_gate_coverage": fairness_manifest.get("external_fairness_gate_coverage"),
+                    "no_external_fairness_gate_failures": fairness_manifest.get("no_external_fairness_gate_failures"),
+                    "external_fairness_gate_failed_case_count": fairness_manifest.get(
+                        "external_fairness_gate_failed_case_count"
+                    ),
+                    "external_fairness_gate_failed_checks": fairness_manifest.get(
+                        "external_fairness_gate_failed_checks"
+                    ),
                 },
             },
             {
