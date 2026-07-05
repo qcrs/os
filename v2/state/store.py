@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from mmap import ACCESS_READ, mmap
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+import weakref
 
 from v2.contracts import StorageKind
 from v2.utils import sha256_digest, stable_json_dumps
@@ -130,11 +131,13 @@ class LayeredStateStore:
     materializations: dict[str, MaterializedStateHandle] = field(default_factory=dict)
     shared_memory_bytes_used: int = 0
     _shared_segments: dict[str, SharedMemory] = field(default_factory=dict, init=False, repr=False)
+    _finalizer: weakref.finalize | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
         self.mmap_dir.mkdir(parents=True, exist_ok=True)
+        self._finalizer = weakref.finalize(self, _cleanup_orphan_shared_segments, self._shared_segments)
 
     @property
     def metadata_dir(self) -> Path:
@@ -202,6 +205,8 @@ class LayeredStateStore:
     def teardown(self) -> None:
         for ref_id in tuple(self.materializations):
             self.release(ref_id)
+        if self._finalizer is not None and self._finalizer.alive:
+            self._finalizer()
 
     def count_by_storage(self, storage_kind: StorageKind) -> int:
         return sum(1 for handle in self.materializations.values() if handle.storage_kind == storage_kind)
@@ -310,3 +315,16 @@ class LayeredStateStore:
     def _write_metadata(self, handle: MaterializedStateHandle) -> None:
         handle.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         handle.metadata_path.write_text(stable_json_dumps(handle.metadata_payload()) + "\n", encoding="utf-8")
+
+
+def _cleanup_orphan_shared_segments(shared_segments: dict[str, SharedMemory]) -> None:
+    for ref_id, shared in list(shared_segments.items()):
+        try:
+            shared.close()
+        except FileNotFoundError:
+            pass
+        try:
+            shared.unlink()
+        except FileNotFoundError:
+            pass
+        shared_segments.pop(ref_id, None)

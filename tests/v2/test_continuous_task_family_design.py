@@ -13,6 +13,7 @@ def _load_manifest(family: str) -> dict[str, object]:
 
 def test_continuous_task_family_manifests_have_ten_ordered_rounds() -> None:
     for family in (
+        "cross_period_financial",
         "csv_table_profile",
         "csv_correlation_replay",
         "incident_diagnosis",
@@ -30,6 +31,7 @@ def test_continuous_task_family_manifests_have_ten_ordered_rounds() -> None:
 
 def test_continuous_task_family_dependencies_only_point_backward() -> None:
     for family in (
+        "cross_period_financial",
         "csv_table_profile",
         "csv_correlation_replay",
         "incident_diagnosis",
@@ -45,6 +47,7 @@ def test_continuous_task_family_dependencies_only_point_backward() -> None:
 
 def test_continuous_task_family_rounds_declare_reuse_and_quality_contracts() -> None:
     for family in (
+        "cross_period_financial",
         "csv_table_profile",
         "csv_correlation_replay",
         "incident_diagnosis",
@@ -70,6 +73,7 @@ def test_continuous_task_families_cover_formal_and_demo_tracks() -> None:
     tiers = {
         _load_manifest(family)["claim_tier"]
         for family in (
+        "cross_period_financial",
         "csv_table_profile",
         "csv_correlation_replay",
         "incident_diagnosis",
@@ -81,3 +85,17 @@ def test_continuous_task_families_cover_formal_and_demo_tracks() -> None:
     assert "formal_primary" in tiers
     assert "formal_secondary" in tiers
     assert "demo_secondary" in tiers
+
+
+def test_cross_period_financial_manifest_targets_strategy_reuse_not_answer_restore() -> None:
+    manifest = _load_manifest("cross_period_financial")
+    rounds_by_number = {round_payload["round"]: round_payload for round_payload in manifest["rounds"]}
+
+    assert rounds_by_number[2]["reuse_contract"]["minimum_reuse_class"] == "validated_replay"
+    assert rounds_by_number[4]["reuse_contract"]["minimum_reuse_class"] == "validated_replay"
+    assert rounds_by_number[6]["canonical_task_spec"]["arguments"]["ticker"] == "BETA"
+    assert rounds_by_number[6]["reuse_contract"]["minimum_reuse_class"] == "validated_replay"
+    assert rounds_by_number[8]["canonical_task_spec"]["arguments"]["ticker"] == "BETA"
+    assert rounds_by_number[8]["reuse_contract"]["minimum_reuse_class"] == "validated_replay"
+    assert rounds_by_number[7]["reuse_contract"]["minimum_reuse_class"] == "assist"
+    assert rounds_by_number[10]["reuse_contract"]["minimum_reuse_class"] == "assist"
