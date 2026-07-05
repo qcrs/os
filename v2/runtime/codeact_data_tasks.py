@@ -354,6 +354,49 @@ def _long_doc_metric_series(document_text: str, metric: str) -> dict[str, str]:
     return {quarter: values[metric] for quarter, values in rows.items() if metric in values}
 
 
+def _parse_cross_period_revenue_tables(document_text: str) -> dict[str, dict[str, float]]:
+    sections = _extract_long_doc_sections(document_text)
+    series_by_ticker: dict[str, dict[str, float]] = {}
+    for title, body in sections.items():
+        if not title.endswith("Revenue Table"):
+            continue
+        ticker = title.removesuffix("Revenue Table").strip().upper()
+        if not ticker:
+            continue
+        quarter_values: dict[str, float] = {}
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                continue
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            quarter = cells[0]
+            if quarter in {"quarter", "---"} or set(quarter) == {"-"}:
+                continue
+            value = _parse_number(cells[1])
+            if value is None:
+                continue
+            quarter_values[quarter] = value
+        if quarter_values:
+            series_by_ticker[ticker] = quarter_values
+    return series_by_ticker
+
+
+def _cross_period_direction(values: list[float]) -> str:
+    if len(values) < 2:
+        return "flat"
+    if all(right > left for left, right in zip(values, values[1:])):
+        return "increasing"
+    if all(right < left for left, right in zip(values, values[1:])):
+        return "decreasing"
+    return "mixed"
+
+
+def _cross_period_series_text(values: list[float]) -> str:
+    return ",".join(_format_number(value) for value in values)
+
+
 def _long_doc_reuse_base_payload(
     *,
     request: dict[str, Any],
@@ -615,10 +658,123 @@ def _build_long_doc_output_payload(request: dict[str, Any], root: Path) -> dict[
     return base_payload
 
 
+def _build_cross_period_output_payload(request: dict[str, Any], root: Path) -> dict[str, object]:
+    arguments = dict(request.get("spec_arguments", {}))
+    intent_op = str(request.get("intent_op", "")).strip()
+    required_outputs = [str(item) for item in request.get("required_outputs", [])]
+    execution_context = dict(request.get("execution_context", {}))
+    reuse_contract = dict(execution_context.get("reuse_contract", {}))
+    history_payloads = _history_output_payloads([str(item) for item in request.get("history_runtime_roots", [])])
+    available_artifact_refs, available_strategy_refs = _available_history_refs(history_payloads)
+    declared_artifact_consumes, declared_strategy_consumes = _consumed_refs(reuse_contract)
+    consumed_artifact_refs = sorted(set(declared_artifact_consumes) & available_artifact_refs)
+    consumed_strategy_refs = sorted(set(declared_strategy_consumes) & available_strategy_refs)
+    artifact_refs, strategy_refs = _produced_refs(reuse_contract)
+    document_path = str(arguments.get("document_path", "")).strip()
+    if not document_path:
+        document_path = (
+            "v2/benchmark/samples/continuous_task_families/"
+            "cross_period_financial/cross_period_financial_report.md"
+        )
+    document_text, resolved_doc_path = _read_text_file(document_path)
+    revenue_tables = _parse_cross_period_revenue_tables(document_text)
+    base_payload = _long_doc_reuse_base_payload(
+        request=request,
+        resolved_path=resolved_doc_path,
+        artifact_refs=artifact_refs,
+        strategy_refs=strategy_refs,
+        consumed_artifact_refs=consumed_artifact_refs,
+        consumed_strategy_refs=consumed_strategy_refs,
+    )
+
+    def _ticker_series(ticker: str, quarters: list[str]) -> list[float]:
+        series = revenue_tables.get(ticker.upper(), {})
+        return [float(series[quarter]) for quarter in quarters]
+
+    if intent_op == "compare_metric":
+        tickers = [str(item).strip().upper() for item in arguments.get("tickers", []) if str(item).strip()]
+        quarter = str(arguments.get("quarter", "")).strip()
+        metric = str(arguments.get("metric", "revenue")).strip()
+        if metric != "revenue":
+            raise ValueError(f"unsupported cross-period compare metric: {metric}")
+        if not tickers:
+            ticker = str(arguments.get("ticker", "")).strip().upper()
+            if not ticker or not quarter:
+                raise ValueError("cross-period compare_metric requires ticker and quarter")
+            base_payload["revenue_value"] = _format_number(revenue_tables[ticker][quarter])
+        else:
+            if len(tickers) < 2 or not quarter:
+                raise ValueError("cross-period compare_metric multi-entity requires tickers and quarter")
+            left = _format_number(revenue_tables[tickers[0]][quarter])
+            right = _format_number(revenue_tables[tickers[1]][quarter])
+            gap_value = float(revenue_tables[tickers[0]][quarter]) - float(revenue_tables[tickers[1]][quarter])
+            base_payload.update(
+                {
+                    "acme_revenue_value": left,
+                    "beta_revenue_value": right,
+                    "gap_value": _format_number(gap_value),
+                }
+            )
+    elif intent_op == "compute_delta":
+        ticker = str(arguments.get("ticker", "")).strip().upper()
+        period_from = str(arguments.get("period_from", "")).strip()
+        period_to = str(arguments.get("period_to", "")).strip()
+        if not ticker or not period_from or not period_to:
+            raise ValueError("cross-period compute_delta requires ticker, period_from, and period_to")
+        start_value = float(revenue_tables[ticker][period_from])
+        end_value = float(revenue_tables[ticker][period_to])
+        delta_value = end_value - start_value
+        delta_pct = 0.0 if start_value == 0.0 else (delta_value / start_value) * 100.0
+        base_payload.update(
+            {
+                "delta_value": _format_number(delta_value),
+                "delta_pct": _format_number(round(delta_pct, 1), digits=1),
+            }
+        )
+    elif intent_op == "compute_trend":
+        tickers = [str(item).strip().upper() for item in arguments.get("tickers", []) if str(item).strip()]
+        quarters = [str(item).strip() for item in arguments.get("quarters", []) if str(item).strip()]
+        if not quarters:
+            quarters = ["2025Q3", "2025Q4", "2026Q1"]
+        if not tickers:
+            ticker = str(arguments.get("ticker", "")).strip().upper()
+            if not ticker:
+                raise ValueError("cross-period compute_trend requires ticker or tickers")
+            values = _ticker_series(ticker, quarters)
+            base_payload.update(
+                {
+                    "trend_values": _cross_period_series_text(values),
+                    "trend_direction": _cross_period_direction(values),
+                }
+            )
+        else:
+            if len(tickers) < 2:
+                raise ValueError("cross-period multi-entity compute_trend requires at least two tickers")
+            left_values = _ticker_series(tickers[0], quarters)
+            right_values = _ticker_series(tickers[1], quarters)
+            base_payload.update(
+                {
+                    "acme_trend_values": _cross_period_series_text(left_values),
+                    "beta_trend_values": _cross_period_series_text(right_values),
+                    "acme_trend_direction": _cross_period_direction(left_values),
+                    "beta_trend_direction": _cross_period_direction(right_values),
+                }
+            )
+    else:
+        raise ValueError(f"unsupported cross-period intent_op: {intent_op}")
+
+    for field_name in required_outputs:
+        if field_name not in base_payload:
+            raise RuntimeError(f"cross-period output missing required field: {field_name}")
+    return base_payload
+
+
 def build_candidate_output_payload(request: dict[str, Any], root: Path) -> dict[str, object]:
     task_family = str(request.get("task_family", "")).strip()
     if task_family == "continuous_long_doc_table_analysis":
         return _build_long_doc_output_payload(request, root)
+    if task_family == "cross_period_financial_analysis":
+        return _build_cross_period_output_payload(request, root)
     if task_family == "incident_diagnosis_v2":
         arguments = dict(request.get("spec_arguments", {}))
         required_outputs = [str(item) for item in request.get("required_outputs", [])]

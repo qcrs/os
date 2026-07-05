@@ -34,8 +34,10 @@ def test_compare_diagnostics_bundle_reports_fairness_and_runtime(tmp_path: Path)
     text_lane = summary["text_lane"]
     runtime = summary["runtime"]
 
-    assert fairness["suite_verdict"] == "dev_fixed_answer_valid"
-    assert fairness["mode_results"][0]["invalid_reason"] == ""
+    assert fairness["suite_verdict"] == "dev_fixed_answer_quality_invalid"
+    assert fairness["contract_problem"] == "quality_floor_gate_failed_blocks_comparator_claim"
+    assert fairness["mode_results"][0]["invalid_reason"] == "quality_floor_gate_failed"
+    assert fairness["mode_results"][0]["conclusion"] == "quality_floor_failed"
     assert fairness["mode_results"][0]["failed_gates"] == []
     assert text_lane["suite_verdict"] == "reasonable_for_debug_not_formal"
     assert runtime["suite_verdict"] == "runtime_non_llm_overhead_dominates"

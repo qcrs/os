@@ -89,6 +89,7 @@ class ExternalTextCaseResult:
     llm_call_count: int
     route_exact: bool
     tool_exact: bool
+    revenue_fallback_used: bool
     exact_match: bool
     admissible_match: bool
     correctness_label: str
@@ -464,16 +465,20 @@ def _usage_from_result(*, prompt: str, result) -> ExternalTextRoleUsage:
 
 def _build_execution_artifact_text(
     *,
-    context: ExternalExecutionContext,
+    context: ExternalExecutionContext | None = None,
     route: str,
     tool_name: str,
+    revenue_value: str = "",
+    supporting_doc_ids: tuple[str, ...] | None = None,
 ) -> str:
+    if supporting_doc_ids is None:
+        supporting_doc_ids = context.public_doc_hashes if context is not None else ()
     payload = {
         "route": route,
         "tool_name": tool_name,
-        "revenue_value": context.revenue_value,
-        "selected_doc_hashes": list(context.public_doc_hashes),
-        "supporting_doc_ids": list(context.public_doc_hashes),
+        "revenue_value": revenue_value,
+        "selected_doc_hashes": list(supporting_doc_ids),
+        "supporting_doc_ids": list(supporting_doc_ids),
     }
     return stable_json_dumps(payload)
 
@@ -517,14 +522,14 @@ def run_external_text_case(
     evidence_summary = str(retriever_payload.get(
         "evidence_summary",
         retriever_payload.get("evidence", f"Retrieved docs: {','.join(context.public_doc_hashes)}"),
-    )).strip() or f"revenue_value={context.revenue_value}"
-    # Use revenue_value as extracted by the LLM Retriever (not pre-injected from corpus).
-    # Fall back to context value only when the LLM returned nothing — this keeps
-    # revenue_exact meaningful: external must actually extract the right value.
+    )).strip() or f"Retrieved docs: {','.join(context.public_doc_hashes)}"
+    # Use revenue_value exactly as extracted by the LLM Retriever.
+    # Do not fall back to the corpus preload here, or the external baseline can
+    # appear correct without actually extracting the fact.
     llm_revenue_value = str(
         retriever_payload.get("revenue_value", retriever_payload_raw.get("revenue_value", ""))
     ).strip()
-    observed_revenue_value = llm_revenue_value or context.revenue_value
+    observed_revenue_value = llm_revenue_value
     supporting_doc_ids = tuple(
         str(item).strip() for item in retriever_payload.get("supporting_doc_ids", context.public_doc_hashes) if str(item).strip()
     ) or context.public_doc_hashes
@@ -545,7 +550,12 @@ def run_external_text_case(
     route = str(executor_payload.get("route", route)).strip()
     tool_name = str(executor_payload.get("tool_name", tool_name)).strip()
 
-    execution_artifact_text = _build_execution_artifact_text(context=context, route=route, tool_name=tool_name)
+    execution_artifact_text = _build_execution_artifact_text(
+        route=route,
+        tool_name=tool_name,
+        revenue_value=observed_revenue_value,
+        supporting_doc_ids=supporting_doc_ids,
+    )
     summarizer_prompt = _summarizer_prompt(
         sample=sample,
         context=context,
@@ -620,7 +630,7 @@ def run_external_text_case(
         "route": route,
         "tool_name": tool_name,
         "summary_text": summary_text,
-        "revenue_value": context.revenue_value,
+        "revenue_value": observed_revenue_value,
         "selected_doc_hashes": list(context.public_doc_hashes),
         "supporting_doc_ids": list(supporting_doc_ids),
     }
@@ -664,6 +674,7 @@ def run_external_text_case(
         "route_exact": shared_score.route_exact,
         "tool_exact": shared_score.tool_exact,
         "revenue_exact": shared_score.revenue_exact,
+        "revenue_fallback_used": 1.0 if (not llm_revenue_value and context.revenue_value) else 0.0,
         "selected_doc_hashes_exact": shared_score.selected_doc_hashes_exact,
         "exact_match": shared_score.exact_match,
         "admissible_match": shared_score.admissible_match,
@@ -711,7 +722,7 @@ def run_external_text_case(
         route=route,
         tool_name=tool_name,
         summary_text=summary_text,
-        revenue_value=context.revenue_value,
+        revenue_value=observed_revenue_value,
         output_path=str(output_path),
         report_path=str(report_path),
         message_count=len(message_log),
@@ -725,6 +736,7 @@ def run_external_text_case(
         llm_call_count=4,
         route_exact=shared_score.route_exact,
         tool_exact=shared_score.tool_exact,
+        revenue_fallback_used=not llm_revenue_value and bool(context.revenue_value),
         exact_match=shared_score.exact_match,
         admissible_match=shared_score.admissible_match,
         correctness_label=shared_score.correctness_label,
@@ -831,6 +843,7 @@ def run_external_text_family(
                     "route_exact": 1.0 if result.route_exact else 0.0,
                     "tool_exact": 1.0 if result.tool_exact else 0.0,
                     "revenue_exact": 1.0 if result.quality_floor.revenue_exact else 0.0,
+                    "revenue_fallback_used": 1.0 if result.revenue_fallback_used else 0.0,
                     "selected_doc_hashes_exact": 1.0 if result.quality_floor.selected_doc_hashes_exact else 0.0,
                     "summary_present": 1.0 if result.quality_floor.summary_present else 0.0,
                     "exact_match": 1.0 if result.exact_match else 0.0,

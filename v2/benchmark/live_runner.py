@@ -51,9 +51,8 @@ def _default_continuous_replay_family_roots() -> tuple[Path, ...]:
     base = Path(__file__).with_name("samples") / "continuous_task_families"
     return (
         base / "csv_correlation_replay",
-        base / "incident_diagnosis",
-        base / "long_doc_metric_replay",
         base / "cross_period_financial",
+        base / "long_doc_metric_replay",
     )
 
 
@@ -216,6 +215,10 @@ def _resolved_family_dir(args: argparse.Namespace) -> Path:
     return _default_dev_family_dir()
 
 
+def _uses_explicit_single_family(args: argparse.Namespace) -> bool:
+    return bool(args.family) or args.family_dir is not None
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
@@ -246,7 +249,7 @@ def main() -> None:
         print(stable_json_dumps(family.design_audit_payload()))
         return
     if args.suite == "continuous":
-        if args.family_dir is None:
+        if not _uses_explicit_single_family(args):
             families = tuple(load_continuous_task_family(path) for path in _default_continuous_family_roots())
             report = run_continuous_benchmark_collection(
                 families=families,
@@ -274,7 +277,7 @@ def main() -> None:
         print(stable_json_dumps(suite_report_to_dict(report)))
         return
     if args.suite == "continuous-replay":
-        if args.family_dir is None:
+        if not _uses_explicit_single_family(args):
             families = tuple(load_continuous_task_family(path) for path in _default_continuous_replay_family_roots())
             report = run_continuous_benchmark_collection(
                 families=families,

@@ -43,6 +43,52 @@ def _stable_entry_key(candidate: EvidenceCandidate) -> str:
     )
 
 
+def _cross_period_tickers(spec: CanonicalTaskSpec) -> tuple[str, ...]:
+    tickers: list[str] = []
+    single = str(spec.arguments.get("ticker", "")).strip()
+    if single:
+        tickers.append(single.upper())
+    multi = spec.arguments.get("tickers", [])
+    if isinstance(multi, (list, tuple)):
+        tickers.extend(str(item).strip().upper() for item in multi if str(item).strip())
+    return tuple(dict.fromkeys(tickers))
+
+
+def _cross_period_quarters(spec: CanonicalTaskSpec) -> tuple[str, ...]:
+    quarters: list[str] = []
+    single = str(spec.arguments.get("quarter", "")).strip()
+    if single:
+        quarters.append(single.upper())
+    period_from = str(spec.arguments.get("period_from", "")).strip()
+    if period_from:
+        quarters.append(period_from.upper())
+    period_to = str(spec.arguments.get("period_to", "")).strip()
+    if period_to:
+        quarters.append(period_to.upper())
+    multi = spec.arguments.get("quarters", [])
+    if isinstance(multi, (list, tuple)):
+        quarters.extend(str(item).strip().upper() for item in multi if str(item).strip())
+    return tuple(dict.fromkeys(quarters))
+
+
+def _cross_period_row_matches(
+    row,
+    *,
+    tickers: tuple[str, ...],
+    quarters: tuple[str, ...],
+    metric: str,
+) -> bool:
+    if row.metric_name != metric:
+        return False
+    rendered = row.rendered_text.upper()
+    ticker_ok = not tickers or any(f"FOR {ticker} " in rendered for ticker in tickers)
+    quarter_ok = not quarters or any(
+        f" {quarter}." in rendered or f" {quarter} " in rendered
+        for quarter in quarters
+    )
+    return ticker_ok and quarter_ok
+
+
 @dataclass(frozen=True)
 class LexicalMetadataRetriever:
     def retrieve(
@@ -159,13 +205,28 @@ class TableStructureRetriever:
                 ),
             )
         )
-        rows = tuple(
-            row
-            for row in document.table_rows
-            if row.metric_name == requested_metric or requested_metric in {"revenue", "storage_mount"}
-        )
+        if spec.task_family == "cross_period_financial_analysis":
+            rows = tuple(
+                row
+                for row in document.table_rows
+                if _cross_period_row_matches(
+                    row,
+                    tickers=_cross_period_tickers(spec),
+                    quarters=_cross_period_quarters(spec),
+                    metric=requested_metric,
+                )
+            )
+        else:
+            rows = tuple(
+                row
+                for row in document.table_rows
+                if row.metric_name == requested_metric or requested_metric in {"revenue", "storage_mount"}
+            )
         if not rows and document.table_rows:
             rows = tuple(document.table_rows[:1])
+        row_limit = 3 if spec.intent_op in {"compute_delta", "compute_trend"} else 1
+        if spec.task_family == "cross_period_financial_analysis" and rows:
+            row_limit = max(row_limit, len(rows))
         selected = tuple(
             EvidenceCandidate(
                 item_id=f"fact-{row.metric_name}-{index + 1}",
@@ -176,7 +237,7 @@ class TableStructureRetriever:
                 rank=index + 1,
                 metadata={"metric_name": row.metric_name, "value": row.value},
             )
-            for index, row in enumerate(rows[:1])  # increase limit for richer fact coverage
+            for index, row in enumerate(rows[:row_limit])
         )
         return RetrieverOutput(
             retriever_kind=RetrieverKind.TABLE_STRUCTURE,
@@ -288,6 +349,10 @@ class RetrieverFanoutPipeline:
     ) -> dict[str, object]:
         payload = dict(planner_scope_payload or {})
         query_text = str(payload.get("query_text", "")).strip()
+        if not query_text:
+            request_text = str(spec.arguments.get("request_text", "")).strip()
+            if request_text:
+                query_text = request_text
         if not query_text:
             ticker = str(spec.arguments.get("ticker", "ACME"))
             quarter = str(spec.arguments.get("quarter", "2026Q1"))
@@ -620,6 +685,15 @@ class RetrieverFanoutPipeline:
             document_path = str(spec.arguments.get("document_path", "")).strip()
             if not document_path:
                 document_path = "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md"
+            document = self.long_doc_corpus.resolve(dataset_id=dataset_id, document_path=document_path)
+        elif spec.task_family == "cross_period_financial_analysis":
+            dataset_id = str(spec.arguments.get("dataset_id", "")).strip()
+            document_path = str(spec.arguments.get("document_path", "")).strip()
+            if not document_path:
+                document_path = (
+                    "v2/benchmark/samples/continuous_task_families/"
+                    "cross_period_financial/cross_period_financial_report.md"
+                )
             document = self.long_doc_corpus.resolve(dataset_id=dataset_id, document_path=document_path)
         else:
             ticker = str(spec.arguments.get("ticker", "ACME"))

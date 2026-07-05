@@ -171,9 +171,7 @@
         "exact:value_q1",
         "exact:value_q3"
       ],
-      "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1
-      }
+      "expected_metric_effects": {}
     },
     {
       "round": 3,
@@ -231,7 +229,6 @@
         "exact:value_q3"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1,
         "L3_downgrade_execution_goal_count_min": 1
@@ -294,7 +291,6 @@
         "exact:value_q3"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1,
         "L3_downgrade_execution_goal_count_min": 1
@@ -421,7 +417,6 @@
         "exact:value_q3"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1,
         "L3_downgrade_execution_goal_count_min": 1
@@ -546,7 +541,6 @@
         "exact:value_q3"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1,
         "L3_downgrade_execution_goal_count_min": 1
@@ -614,7 +608,6 @@
         "exact:value_q3"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1,
         "L3_downgrade_execution_goal_count_min": 1

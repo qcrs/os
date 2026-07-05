@@ -32,17 +32,25 @@ from v2.benchmark.replay_negative_audit import run_replay_negative_audit
 from v2.contracts import CompilerStatus, ReplayClass, RuntimeCompatibilitySignature, TaskCompilerResult
 
 
-def _spec(*, intent_op: str, metric: str, required_outputs: tuple[str, ...]) -> CanonicalTaskSpec:
+def _spec(
+    *,
+    intent_op: str,
+    metric: str,
+    required_outputs: tuple[str, ...],
+    required_tools: tuple[str, ...] = ("table_retriever",),
+    **arguments: object,
+) -> CanonicalTaskSpec:
     return CanonicalTaskSpec(
         task_family="continuous_long_doc_table_analysis",
         intent_op=intent_op,
         required_outputs=required_outputs,
-        required_tools=("table_retriever",),
+        required_tools=required_tools,
         arguments={
             "dataset_id": "acme_ops_2026",
             "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
             "metric": metric,
             "quarters": ["2026Q1", "2026Q2", "2026Q3"],
+            **arguments,
         },
     )
 
@@ -223,6 +231,35 @@ def test_validated_replay_contract_rejects_different_intent_even_with_same_surfa
         required_outputs=("metric_series_ref", "metric_name", "value_q1", "value_q2", "value_q3"),
     )
     assert validated_replay_contract_compatible(current_spec=current, candidate_spec=candidate) is False
+
+
+def test_validated_replay_contract_allows_different_ticker_for_same_shape() -> None:
+    current = CanonicalTaskSpec(
+        task_family="cross_period_financial_v1",
+        intent_op="compare_metric",
+        required_outputs=("revenue_value",),
+        required_tools=("table_retriever",),
+        arguments={
+            "ticker": "BETA",
+            "quarter": "2026Q1",
+            "metric": "revenue",
+            "dataset_id": "cross-period-financial",
+        },
+    )
+    candidate = CanonicalTaskSpec(
+        task_family="cross_period_financial_v1",
+        intent_op="compare_metric",
+        required_outputs=("revenue_value",),
+        required_tools=("table_retriever",),
+        arguments={
+            "ticker": "ACME",
+            "quarter": "2026Q1",
+            "metric": "revenue",
+            "dataset_id": "cross-period-financial",
+        },
+    )
+
+    assert validated_replay_contract_compatible(current_spec=current, candidate_spec=candidate) is True
 
 
 def test_replay_normalized_hashes_ignore_round_specific_ids() -> None:

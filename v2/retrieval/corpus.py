@@ -732,6 +732,51 @@ class OfflineMarkdownLongDocCorpus:
         return tuple(rows)
 
     @staticmethod
+    def _cross_period_revenue_rows(
+        *,
+        source_doc_hash: str,
+        text: str,
+    ) -> tuple[CorpusTableRow, ...]:
+        rows: list[CorpusTableRow] = []
+        matches = re.finditer(
+            r"(?ms)^## ([^\n]+? Revenue Table)\s*(.*?)(?=^## |\Z)",
+            text,
+        )
+        for match in matches:
+            title = match.group(1).strip()
+            section_text = match.group(2)
+            ticker = title.removesuffix("Revenue Table").strip().upper()
+            if not ticker:
+                continue
+            data_row_idx = 0
+            for line in section_text.splitlines():
+                stripped = line.strip()
+                if not stripped.startswith("|"):
+                    continue
+                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+                if len(cells) < 2:
+                    continue
+                quarter = cells[0]
+                if quarter in {"quarter", "---"} or set(quarter) == {"-"}:
+                    continue
+                data_row_idx += 1
+                value = cells[1]
+                rows.append(
+                    CorpusTableRow(
+                        source_doc_hash=source_doc_hash,
+                        table_id=f"{ticker.lower()}_revenue",
+                        sheet_name="markdown",
+                        row_idx=data_row_idx,
+                        col_idx=1,
+                        metric_name="revenue",
+                        value=value,
+                        rendered_text=f"Revenue = {value} for {ticker} {quarter}.",
+                        extractor_version="markdown-cross-period-v1",
+                    )
+                )
+        return tuple(rows)
+
+    @staticmethod
     def _text_fragments(
         *,
         source_doc_hash: str,
@@ -780,6 +825,8 @@ class OfflineMarkdownLongDocCorpus:
         )
         metric_section = metric_table_match.group(1) if metric_table_match else ""
         table_rows = self._metric_table_rows(source_doc_hash=source_doc_hash, section_text=metric_section)
+        if not table_rows:
+            table_rows = self._cross_period_revenue_rows(source_doc_hash=source_doc_hash, text=text)
         title_match = re.search(r"(?m)^# (.+)$", text)
         title = title_match.group(1).strip() if title_match else f"{dataset_id} markdown report"
         metadata_hints = (

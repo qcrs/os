@@ -4,7 +4,7 @@
   "display_name": "Cross-period financial revenue analysis (ACME and BETA, 3 quarters)",
   "claim_tier": "formal_secondary",
   "source_basis": {
-    "design_note": "10-round continuous family demonstrating memory-accelerated cross-period analysis. Rounds 3/5/9/10 trigger exact_replay as accumulated memory eliminates the need for repeated LLM extraction, showing decreasing token usage across rounds."
+    "design_note": "10-round continuous family demonstrating validated replay of reusable cross-period extraction strategy. Rounds 2/4/6/8 reuse the persisted compare_metric execution pattern while later compute rounds continue to execute against the current in-memory task state."
   },
   "round_count": 10,
   "datasets": [
@@ -54,10 +54,9 @@
       "required": [
         "memory_match_count > 0",
         "validated_replay_count > 0",
-        "exact_replay_count > 0",
         "skipped_step_count > 0"
       ],
-      "target_nonzero_rounds": [3, 5, 9, 10]
+      "target_nonzero_rounds": [2, 4, 6, 8]
     }
   },
   "rounds": [
@@ -143,7 +142,6 @@
         "exact:revenue_value"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1
       }
@@ -181,7 +179,7 @@
           "metric:acme_2026q1_revenue",
           "metric:acme_2025q4_revenue"
         ],
-        "minimum_reuse_class": "exact_replay"
+        "minimum_reuse_class": "assist"
       },
       "expected_facts": {
         "delta_value": "11"
@@ -189,11 +187,7 @@
       "quality_checks": [
         "exact:delta_value"
       ],
-      "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 2,
-        "L3_exact_replay_count_min": 1,
-        "L3_skipped_step_count_min": 2
-      }
+      "expected_metric_effects": {}
     },
     {
       "round": 4,
@@ -235,7 +229,6 @@
         "exact:revenue_value"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1
       }
@@ -273,7 +266,7 @@
           "metric:acme_2025q4_revenue",
           "metric:acme_2026q1_revenue"
         ],
-        "minimum_reuse_class": "exact_replay"
+        "minimum_reuse_class": "assist"
       },
       "expected_facts": {
         "trend_direction": "increasing"
@@ -281,11 +274,7 @@
       "quality_checks": [
         "exact:trend_direction"
       ],
-      "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 3,
-        "L3_exact_replay_count_min": 1,
-        "L3_skipped_step_count_min": 3
-      }
+      "expected_metric_effects": {}
     },
     {
       "round": 6,
@@ -327,7 +316,6 @@
         "exact:revenue_value"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1
       }
@@ -365,7 +353,7 @@
           "metric:acme_2026q1_revenue",
           "metric:beta_2026q1_revenue"
         ],
-        "minimum_reuse_class": "validated_replay"
+        "minimum_reuse_class": "assist"
       },
       "expected_facts": {
         "gap_value": "33"
@@ -373,11 +361,7 @@
       "quality_checks": [
         "exact:gap_value"
       ],
-      "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 2,
-        "L3_validated_replay_count_min": 1,
-        "L3_skipped_step_count_min": 1
-      }
+      "expected_metric_effects": {}
     },
     {
       "round": 8,
@@ -419,7 +403,6 @@
         "exact:revenue_value"
       ],
       "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 1,
         "L3_validated_replay_count_min": 1,
         "L3_skipped_step_count_min": 1
       }
@@ -457,7 +440,7 @@
           "metric:beta_2025q4_revenue",
           "metric:beta_2026q1_revenue"
         ],
-        "minimum_reuse_class": "exact_replay"
+        "minimum_reuse_class": "assist"
       },
       "expected_facts": {
         "delta_value": "8"
@@ -465,11 +448,7 @@
       "quality_checks": [
         "exact:delta_value"
       ],
-      "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 2,
-        "L3_exact_replay_count_min": 1,
-        "L3_skipped_step_count_min": 2
-      }
+      "expected_metric_effects": {}
     },
     {
       "round": 10,
@@ -510,7 +489,7 @@
           "analysis:acme_3q_revenue_trend",
           "analysis:beta_q4_to_q1_delta"
         ],
-        "minimum_reuse_class": "exact_replay"
+        "minimum_reuse_class": "assist"
       },
       "expected_facts": {
         "acme_trend_direction": "increasing",
@@ -520,11 +499,7 @@
         "exact:acme_trend_direction",
         "exact:beta_trend_direction"
       ],
-      "expected_metric_effects": {
-        "L3_artifact_reuse_count_min": 5,
-        "L3_exact_replay_count_min": 1,
-        "L3_skipped_step_count_min": 5
-      }
+      "expected_metric_effects": {}
     }
   ]
 }

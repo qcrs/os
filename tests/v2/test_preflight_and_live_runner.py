@@ -354,7 +354,7 @@ def test_live_runner_routes_flagship_ablation_suite(
     ]
     assert [family.family_id for family in captured["replay_families"]] == [
         "csv_correlation_replay",
-        "incident_diagnosis",
+        "cross_period_financial",
         "long_doc_metric_replay",
     ]
     assert captured["role_path_mode"] == "deterministic"
@@ -552,6 +552,63 @@ def test_live_runner_continuous_suite_outputs_suite_payload(
     assert payload["family_case_count"] == 10
 
 
+def test_live_runner_continuous_family_flag_selects_single_family_suite(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+
+    family = SimpleNamespace(family_id="csv_table_profile_v1")
+    monkeypatch.setattr("v2.benchmark.live_runner.load_continuous_task_family", lambda path: family)
+
+    def fake_run_continuous_benchmark_suite(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family=family.family_id,
+            layer_reports=(),
+            waterfall_metrics={},
+            comparison_summary={},
+            metadata={"continuous_execution": True, "family_id": family.family_id},
+            family_case_count=10,
+            report_path=str(tmp_path / "continuous-family-report.json"),
+        )
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_continuous_benchmark_suite",
+        fake_run_continuous_benchmark_suite,
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_continuous_benchmark_collection",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("collection path should not run for --family")),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "continuous",
+            "--family",
+            "csv_table_profile_v1",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+        ],
+    )
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["family"].family_id == "csv_table_profile_v1"
+    assert payload["task_family"] == "csv_table_profile_v1"
+    assert payload["metadata"]["family_id"] == "csv_table_profile_v1"
+
+
 def test_live_runner_continuous_defaults_to_formal_collection(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -643,8 +700,8 @@ def test_live_runner_continuous_replay_defaults_to_replay_collection(
         family_name = path.name
         if family_name == "csv_correlation_replay":
             return SimpleNamespace(family_id="csv_correlation_replay_v1")
-        if family_name == "incident_diagnosis":
-            return SimpleNamespace(family_id="incident_diagnosis_v2")
+        if family_name == "cross_period_financial":
+            return SimpleNamespace(family_id="cross_period_financial_v1")
         if family_name == "long_doc_metric_replay":
             return SimpleNamespace(family_id="long_doc_metric_replay_v1")
         raise AssertionError(f"unexpected family path: {path}")
@@ -661,7 +718,7 @@ def test_live_runner_continuous_replay_defaults_to_replay_collection(
             },
             admissibility_summary={
                 "csv_correlation_replay_v1": {"eligible_for_replay_headline": True},
-                "incident_diagnosis_v2": {"eligible_for_replay_headline": True},
+                "cross_period_financial_v1": {"eligible_for_replay_headline": True},
                 "long_doc_metric_replay_v1": {"eligible_for_replay_headline": True},
             },
             metadata={
@@ -669,7 +726,7 @@ def test_live_runner_continuous_replay_defaults_to_replay_collection(
                 "collection_scope": "formal_replay_task_families",
                 "supported_continuous_execution_families": [
                     "csv_correlation_replay_v1",
-                    "incident_diagnosis_v2",
+                    "cross_period_financial_v1",
                     "long_doc_metric_replay_v1",
                 ],
             },
@@ -700,13 +757,70 @@ def test_live_runner_continuous_replay_defaults_to_replay_collection(
     payload = json.loads(capsys.readouterr().out)
     assert [family.family_id for family in captured["families"]] == [
         "csv_correlation_replay_v1",
-        "incident_diagnosis_v2",
+        "cross_period_financial_v1",
         "long_doc_metric_replay_v1",
     ]
     assert captured["collection_scope"] == "formal_replay_task_families"
     assert payload["metadata"]["continuous_execution"] is True
     assert payload["metadata"]["collection_scope"] == "formal_replay_task_families"
     assert payload["collection_summary"]["family_count"] == 3.0
+
+
+def test_live_runner_continuous_replay_family_flag_selects_single_family_suite(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+
+    family = SimpleNamespace(family_id="long_doc_metric_replay_v1")
+    monkeypatch.setattr("v2.benchmark.live_runner.load_continuous_task_family", lambda path: family)
+
+    def fake_run_continuous_benchmark_suite(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family=family.family_id,
+            layer_reports=(),
+            waterfall_metrics={},
+            comparison_summary={},
+            metadata={"continuous_execution": True, "family_id": family.family_id},
+            family_case_count=10,
+            report_path=str(tmp_path / "continuous-replay-family-report.json"),
+        )
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_continuous_benchmark_suite",
+        fake_run_continuous_benchmark_suite,
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_continuous_benchmark_collection",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("collection path should not run for --family")),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "continuous-replay",
+            "--family",
+            "long_doc_metric_replay_v1",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+        ],
+    )
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["family"].family_id == "long_doc_metric_replay_v1"
+    assert payload["task_family"] == "long_doc_metric_replay_v1"
+    assert payload["metadata"]["family_id"] == "long_doc_metric_replay_v1"
 
 
 def test_live_runner_uses_statebus_env_defaults_for_paths(
