@@ -53,6 +53,7 @@ def _default_continuous_replay_family_roots() -> tuple[Path, ...]:
         base / "csv_correlation_replay",
         base / "incident_diagnosis",
         base / "long_doc_metric_replay",
+        base / "cross_period_financial",
     )
 
 
@@ -69,6 +70,8 @@ def _continuous_family_dir_by_id(family_id: str) -> Path:
         "long_doc_metric_replay": base / "long_doc_metric_replay",
         "incident_diagnosis_v2": base / "incident_diagnosis",
         "incident_diagnosis": base / "incident_diagnosis",
+        "cross_period_financial_v1": base / "cross_period_financial",
+        "cross_period_financial": base / "cross_period_financial",
     }
     resolved = mapping.get(family_id.strip())
     if resolved is None:
