@@ -18,6 +18,7 @@ from v2.control.messages import (
     EventType,
     ExecRequest,
     Heartbeat,
+    RefHandle,
     RunStart,
     SuccessResult,
     TrapFatal,
@@ -256,6 +257,29 @@ class ControlPlaneLoopbackServer:
         ]
 
 
+def encode_memfd_ref(*, fd: int, length: int, state_id: str, ref_kind: str = "embedding") -> "RefHandle":
+    """Encode a memfd file descriptor into a RefHandle for subprocess transfer.
+
+    The ref_id format is ``memfd_fd:{fd}:{length}:{state_id}``.  The caller
+    must pass the fd number to the subprocess via ``pass_fds`` so that the
+    worker can read it with ``os.read(fd, length)``.
+    """
+    return RefHandle(ref_id=f"memfd_fd:{fd}:{length}:{state_id}", ref_kind=ref_kind)
+
+
+def decode_memfd_ref(ref: "RefHandle") -> tuple[int, int, str] | None:
+    """Parse a memfd RefHandle back to (fd, length, state_id), or None."""
+    if not ref.ref_id.startswith("memfd_fd:"):
+        return None
+    parts = ref.ref_id.split(":", 3)
+    if len(parts) != 4:
+        return None
+    try:
+        return int(parts[1]), int(parts[2]), parts[3]
+    except ValueError:
+        return None
+
+
 @dataclass
 class SubprocessExecutorTransport:
     """Launch a worker subprocess and communicate via UDS + typed Protobuf frames.
@@ -265,14 +289,61 @@ class SubprocessExecutorTransport:
 
     Protocol: main sends ExecRequest → worker sends AckReceived + RunStart +
     Heartbeat + SuccessResult (or ErrorResult) → connection closes.
+
+    memfd support
+    -------------
+    Pass ``memfd_refs={state_id: (fd, length)}`` to forward anonymous
+    memfd file descriptors to the worker subprocess via ``pass_fds``.
+    The state_refs in the request are rewritten to ``memfd_fd:{fd}:{length}:{state_id}``
+    so the worker can call ``os.read(fd, length)`` directly — no filesystem
+    path needed, embedding bytes never touch disk.
     """
 
     socket_path: Path
     python_executable: str = sys.executable
     timeout_s: float = 30.0
 
-    def execute(self, request: ExecRequest) -> Union[SuccessResult, ErrorResult]:
-        """Start worker subprocess, exchange one ExecRequest/result pair."""
+    def execute(
+        self,
+        request: ExecRequest,
+        *,
+        memfd_refs: dict[str, tuple[int, int]] | None = None,
+    ) -> Union[SuccessResult, ErrorResult]:
+        """Start worker subprocess, exchange one ExecRequest/result pair.
+
+        Args:
+            request: The execution request.
+            memfd_refs: Optional mapping of ``{state_id: (fd, length)}``.
+                When provided the corresponding state_refs are rewritten to
+                ``memfd_fd:`` handles and the FDs are inherited by the
+                subprocess via ``pass_fds``.
+        """
+        import os as _os
+
+        # Rewrite state_refs and collect FDs to inherit.
+        pass_fds: tuple[int, ...] = ()
+        exec_request = request
+        if memfd_refs:
+            new_state_refs = []
+            fds_to_pass: list[int] = []
+            for ref in request.state_refs:
+                entry = memfd_refs.get(ref.ref_id)
+                if entry is not None:
+                    fd, length = entry
+                    new_state_refs.append(encode_memfd_ref(fd=fd, length=length, state_id=ref.ref_id, ref_kind=ref.ref_kind))
+                    fds_to_pass.append(fd)
+                else:
+                    new_state_refs.append(ref)
+            # Also encode any state_ids that appear in memfd_refs but not
+            # already present as explicit state_refs (append as new refs).
+            existing_ids = {ref.ref_id for ref in request.state_refs}
+            for state_id, (fd, length) in memfd_refs.items():
+                if state_id not in existing_ids:
+                    new_state_refs.append(encode_memfd_ref(fd=fd, length=length, state_id=state_id))
+                    fds_to_pass.append(fd)
+            exec_request = replace(request, state_refs=tuple(new_state_refs))
+            pass_fds = tuple(sorted(set(fds_to_pass)))
+
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
             self.socket_path.unlink()
@@ -289,10 +360,8 @@ class SubprocessExecutorTransport:
                 server_ready.set()
                 conn, _ = server.accept()
                 try:
-                    send_control_message(conn, request)
+                    send_control_message(conn, exec_request)
                     # Drain intermediate frames (ACK, RUN_START, HEARTBEAT).
-                    # For error responses the worker sends only one frame, so
-                    # treat any SuccessResult/ErrorResult as the final message.
                     final = None
                     for _ in range(4):
                         try:
@@ -313,8 +382,6 @@ class SubprocessExecutorTransport:
                 if self.socket_path.exists():
                     self.socket_path.unlink()
 
-        import os as _os
-
         t = threading.Thread(target=_serve, daemon=True)
         t.start()
         server_ready.wait(timeout=2.0)
@@ -333,6 +400,8 @@ class SubprocessExecutorTransport:
             stderr=subprocess.PIPE,
             env=_os.environ,
             cwd=str(_worker_file),
+            close_fds=True,
+            pass_fds=pass_fds,
         )
         t.join(timeout=self.timeout_s)
         try:
