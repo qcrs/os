@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from runtime.llm import LLMResult, LLMUsage
 from v2.benchmark import (
@@ -209,6 +210,10 @@ def test_minimal_benchmark_family_api_mode_accepts_compact_role_alias_responses(
             return {"backend": "stub"}
 
     monkeypatch.setattr("v2.runtime.smoke.build_llm_client", lambda config=None: StubLLMClient())
+    monkeypatch.setattr(
+        "v2.runtime.smoke.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, missing_reasons=(), canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
     family_report = run_minimal_benchmark_family(
         samples=load_sample_family(Path("v2/benchmark/samples/formal_financial_family"))[:1],
         workspace_root=tmp_path / "workspaces",
@@ -277,6 +282,10 @@ def test_minimal_benchmark_family_api_mode_accepts_string_candidate_alias(
             return {"backend": "stub"}
 
     monkeypatch.setattr("v2.runtime.smoke.build_llm_client", lambda config=None: StubLLMClient())
+    monkeypatch.setattr(
+        "v2.runtime.smoke.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, missing_reasons=(), canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
     family_report = run_minimal_benchmark_family(
         samples=load_sample_family(Path("v2/benchmark/samples/formal_financial_family"))[:1],
         workspace_root=tmp_path / "workspaces",

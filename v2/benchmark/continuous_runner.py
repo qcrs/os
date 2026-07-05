@@ -30,6 +30,7 @@ from v2.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
 SUPPORTED_CONTINUOUS_FAMILY_IDS = {
     "csv_correlation_replay_v1",
     "csv_table_profile_v1",
+    "cross_period_financial_v1",
     "incident_diagnosis_v2",
     "long_doc_table_v1",
     "long_doc_metric_replay_v1",

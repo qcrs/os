@@ -21,8 +21,6 @@ from v2.utils import sha256_digest
 
 
 _BENCHMARK_ONLY_ARGUMENT_KEYS = {"quality_checks", "reuse_contract", "depends_on_rounds"}
-
-
 @dataclass(frozen=True)
 class ReplayPolicy:
     allow_assist: bool = True

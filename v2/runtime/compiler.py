@@ -21,10 +21,13 @@ class TaskCompiler:
         "financial_report_analysis",
         "continuous_csv_table_analysis",
         "continuous_long_doc_table_analysis",
+        "cross_period_financial_analysis",
         "incident_diagnosis_v2",
     )
     allowed_intent_ops: tuple[str, ...] = (
         "compare_metric",
+        "compute_delta",
+        "compute_trend",
         "summarize_risk",
         "generate_chart",
         "triage_route_tool",
@@ -49,6 +52,7 @@ class TaskCompiler:
     )
     allowed_required_outputs: tuple[str, ...] = (
         "summary_text",
+        "revenue_value",
         "metric_table",
         "plot_png",
         "summary_json",
@@ -115,6 +119,17 @@ class TaskCompiler:
         "slow_phase",
         "wait_duration_seconds",
         "root_cause",
+        "delta_value",
+        "delta_pct",
+        "trend_values",
+        "trend_direction",
+        "acme_revenue_value",
+        "beta_revenue_value",
+        "gap_value",
+        "acme_trend_values",
+        "beta_trend_values",
+        "acme_trend_direction",
+        "beta_trend_direction",
     )
     allowed_required_tools: tuple[str, ...] = (
         "table_retriever",

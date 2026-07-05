@@ -52,6 +52,15 @@ def test_fixed_answer_family_loads_samples() -> None:
     assert family[0].request_text == "sso callback issuer mismatch stale jwks session cookies"
 
 
+def test_fixed_answer_retrieval_scope_prefers_request_text_for_triage_query() -> None:
+    from v2.retrieval import RetrieverFanoutPipeline
+
+    sample = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))[0]
+    retrieval = RetrieverFanoutPipeline().run(task_id=sample.task_id, spec=sample.canonical_task_spec)
+
+    assert retrieval.query_text == sample.request_text
+
+
 def test_fixed_answer_family_runs(tmp_path: Path) -> None:
     family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
     report = run_fixed_answer_benchmark_family(
@@ -354,12 +363,19 @@ def test_external_text_case_runs(tmp_path: Path) -> None:
     assert result.end_to_end_ms >= result.llm_ms >= 0.0
     assert Path(result.output_path).exists()
     assert Path(result.report_path).exists()
-    assert result.correctness_label == "exact_match"
-    assert result.quality_floor.quality_floor.quality_floor_pass is True
+    assert result.correctness_label == "mismatch"
+    assert result.revenue_value == ""
+    assert result.revenue_fallback_used is True
+    assert result.quality_floor.revenue_exact is False
+    assert result.quality_floor.quality_floor.quality_floor_pass is False
     assert result.planner_usage.prompt_bytes > 0
     assert result.retriever_usage.prompt_bytes > 0
     assert result.executor_usage.prompt_bytes > 0
     assert result.summarizer_usage.prompt_bytes > 0
+    payload = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
+    assert payload["revenue_fallback_used"] == 1.0
+    output_payload = json.loads(Path(result.output_path).read_text(encoding="utf-8"))
+    assert output_payload["revenue_value"] == ""
 
 
 def test_external_text_family_runs(tmp_path: Path) -> None:
@@ -423,17 +439,15 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     mode_report = report.mode_reports[0]
     assert mode_report.role_path_mode == "deterministic"
     assert mode_report.missing_reason == ""
-    assert mode_report.comparison_valid is True
-    assert mode_report.invalid_reason == ""
-    assert "llm_total_tokens_delta" in mode_report.headline_metrics
-    assert "prompt_bytes_delta" in mode_report.headline_metrics
-    assert "net_llm_ms_delta" in mode_report.headline_metrics
-    assert "system_overhead_ms_delta" in mode_report.headline_metrics
+    assert mode_report.comparison_valid is False
+    assert mode_report.invalid_reason == "quality_floor_gate_failed"
+    assert mode_report.headline_metrics == {}
     assert "exact_match_delta" in mode_report.debug_metrics
     assert "end_to_end_ms_delta" in mode_report.debug_metrics
     assert "llm_ms_delta" in mode_report.debug_metrics
     assert "prompt_bytes_delta" in mode_report.debug_metrics
     assert "llm_call_count_delta" in mode_report.debug_metrics
+    assert mode_report.debug_metrics["external_quality_floor_pass_count"] == 0.0
     assert mode_report.fairness_manifest["external_formal_eligible"] is True
     assert mode_report.fairness_manifest["pass_hard_gate"] is True
     assert Path(mode_report.report_path).exists()
@@ -442,13 +456,13 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert payload["metadata"]["formal_headline_eligible"] is False
     assert payload["metadata"]["formal_efficiency_claim_allowed"] is False
     assert payload["metadata"]["formal_superiority_claim_allowed"] is False
-    assert payload["metadata"]["fixed_answer_external_comparison_valid"] is True
+    assert payload["metadata"]["fixed_answer_external_comparison_valid"] is False
     assert (
         payload["metadata"]["claim_restriction"]
-        == "dev_fixed_answer_external_fairness_gate_passed_not_formal_superiority"
+        == "external_compare_debug_only_until_four_role_fairness_gate_passes"
     )
     assert payload["mode_reports"][0]["role_path_mode"] == "deterministic"
-    assert payload["mode_reports"][0]["comparison_valid"] is True
+    assert payload["mode_reports"][0]["comparison_valid"] is False
     assert payload["mode_reports"][0]["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert payload["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert "deterministic_debug_exact_match_delta" in payload["comparison_summary"]
@@ -471,9 +485,10 @@ def test_fixed_answer_external_comparator_suite_runs_in_cold_start_mode(tmp_path
     assert mode_report.statebus_report.replay_class_distribution["disallowed"] == 3.0
     assert mode_report.statebus_report.telemetry_summary["artifact_reuse_count"] == 0.0
     assert mode_report.statebus_report.telemetry_summary["codeact_plan_stage_count"] > 0.0
-    assert mode_report.comparison_valid is True
-    assert mode_report.invalid_reason == ""
+    assert mode_report.comparison_valid is False
+    assert mode_report.invalid_reason == "quality_floor_gate_failed"
     assert mode_report.debug_metrics["statebus_exact_match_count"] == 3.0
+    assert mode_report.debug_metrics["external_quality_floor_pass_count"] == 0.0
     assert mode_report.debug_metrics["exact_match_delta"] >= 0.0
     assert mode_report.debug_metrics["llm_call_count_delta"] == 0.0
     payload = json.loads(Path(mode_report.report_path).read_text(encoding="utf-8"))
@@ -538,6 +553,27 @@ def test_role_path_normalizes_invalid_api_route_to_best_visible_candidate() -> N
     assert decision.tool_name == sample.expected_tool_name
     assert decision.candidate_rank == 3
     assert decision.total_tokens == 18
+
+
+def test_role_path_strict_selection_uses_visible_candidate_surface_for_fixed_answer_triage() -> None:
+    from runtime.llm import DeterministicLLMClient
+    from v2.retrieval import RetrieverFanoutPipeline
+    from v2.runtime.role_path import financial_tool_candidates
+
+    sample = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))[0]
+    spec = sample.canonical_task_spec
+    retrieval = RetrieverFanoutPipeline().run(task_id=sample.task_id, spec=spec)
+    candidates = financial_tool_candidates(spec, retrieval.candidate_pool)
+    runner = RolePathRunner(llm_client=DeterministicLLMClient())
+    decision = runner.choose_retrieval_candidate(
+        query_text=retrieval.query_text,
+        retrieved_doc_ids=retrieval.selected_doc_hashes,
+        visible_candidates=candidates,
+    )
+
+    assert decision.route == sample.expected_route
+    assert decision.tool_name == sample.expected_tool_name
+    assert decision.candidate_rank == 3
 
 
 def test_role_path_strict_selection_fails_closed_for_invalid_route_choice() -> None:

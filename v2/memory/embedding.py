@@ -13,6 +13,10 @@ from v2.utils import sha256_digest
 DEFAULT_EMBED_DEVICE = "auto"
 _MODEL_CACHE: dict[tuple[str, str], object] = {}
 
+# SentenceTransformers may emit fork-related tokenizer warnings on the benchmark path.
+# Defaulting this keeps the local-embedding subprocess path deterministic and quiet.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 
 class EmbeddingEncoder(Protocol):
     def encode(self, *, embedding_id: str, text: str) -> StructuredEmbedding: ...
