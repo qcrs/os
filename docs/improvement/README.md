@@ -31,6 +31,10 @@
 | **P1** | `08_performance_and_overhead_breakdown.md` | overhead 分解与答辩口径 | benchmark_balanced+cache 已实现 |
 | **P2** | `06_kv_cache_implementation.md` | KV Cache 机制（保留原文，Future Work） | 未实现，不计分 |
 
+最新补充：
+
+- `15_fairness_gate_propagation_audit_20260706.md`：修复 external pure-text per-case fairness gate 未上卷到 family/comparator hard gate 的问题，并归档 `api + local` compare JSON 证据。
+
 ---
 
 ## 最新实验关键数字（full-experiment-20260704_111950）
