@@ -7,8 +7,17 @@ Protocol (worker-side):
   1. Connect to the UDS path supplied via --socket-path.
   2. Receive one ExecRequest frame from the main process.
   3. Validate required fields; send ErrorResult on failure.
-  4. On success: send AckReceived → RunStart → Heartbeat → SuccessResult.
-  5. Close connection and exit.
+  4. Read any memfd state refs (``memfd_fd:{fd}:{length}:{state_id}``).
+  5. On success: send AckReceived → RunStart → Heartbeat → SuccessResult.
+  6. Close connection and exit.
+
+memfd refs
+----------
+When the ExecRequest contains state_refs with ``memfd_fd:`` prefixed
+ref_ids the worker reads the embedding bytes directly from the inherited
+file descriptor using ``os.read(fd, length)``.  The bytes never touch the
+filesystem; the FD was created with ``memfd_create`` in the main process
+and forwarded via ``pass_fds`` in ``subprocess.Popen``.
 
 Usage:
   python -m v2.control.subprocess_worker --socket-path /tmp/statebus-exec.sock
@@ -16,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 import time
@@ -27,10 +37,36 @@ from v2.control.messages import (
     EventType,
     ExecRequest,
     Heartbeat,
+    RefHandle,
     RunStart,
     SuccessResult,
 )
-from v2.control.transport import recv_control_message, send_control_message
+from v2.control.transport import decode_memfd_ref, recv_control_message, send_control_message
+
+
+def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
+    """Read bytes from any inherited memfd FDs in state_refs.
+
+    Returns {state_id: payload_bytes} for each successfully read memfd ref.
+    Non-memfd refs are silently skipped.
+    """
+    result: dict[str, bytes] = {}
+    for ref in state_refs:
+        parsed = decode_memfd_ref(ref)
+        if parsed is None:
+            continue
+        fd, length, state_id = parsed
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            data = os.read(fd, length)
+        except OSError as exc:
+            print(
+                f"subprocess_worker: failed to read memfd fd={fd} state_id={state_id}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        result[state_id] = data
+    return result
 
 
 def run(socket_path: str) -> int:
@@ -85,6 +121,16 @@ def run(socket_path: str) -> int:
         )
         sock.close()
         return 1
+
+    # Read any memfd state refs passed by the main process.
+    memfd_payloads = _read_memfd_refs(message.state_refs)
+    if memfd_payloads:
+        total_bytes = sum(len(v) for v in memfd_payloads.values())
+        print(
+            f"subprocess_worker: read {len(memfd_payloads)} memfd ref(s), "
+            f"{total_bytes} bytes total: {list(memfd_payloads)}",
+            file=sys.stderr,
+        )
 
     now = time.time_ns()
     send_control_message(

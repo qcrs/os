@@ -196,3 +196,81 @@ def test_memory_store_faiss_lookup_matches_linear_scan(tmp_path: Path) -> None:
     else:
         for m in result.matches:
             assert m.matched_on == "embedding_similarity"
+
+
+def test_memory_store_faiss_ranking_matches_cosine_with_unnormalised_vectors(tmp_path: Path) -> None:
+    """FAISS IndexFlatIP ranking must match cosine_similarity ranking even when
+    the encoder produces unnormalised vectors (DeterministicEmbeddingEncoder).
+
+    This is a regression test for B2: before the fix, _build_faiss_index did
+    not call faiss.normalize_L2, so FAISS IP scores diverged from cosine scores
+    when vectors had different norms.
+    """
+    from v2.memory.embedding import cosine_similarity
+
+    store = MemoryIndexStore(store_root=tmp_path / "b2-test")
+    encoder = DeterministicEmbeddingEncoder(dims=16)
+
+    texts = [
+        "ACME quarterly revenue analysis 2026Q1",
+        "incident gateway startup failure resolved",
+        "deployment pipeline ops notes",
+        "cache eviction recovery service",
+        "financial operating metrics comparison",
+    ]
+    for i, text in enumerate(texts):
+        emb = encoder.encode(embedding_id=f"emb-b2-{i}", text=text)
+        store.put_embedding(emb)
+        commit = MemoryCommit(
+            memory_ref=MemoryRef(
+                memory_id=f"b2-{i}",
+                memory_type=MemoryType.OUTCOME,
+                replay_class=ReplayClass.ASSIST,
+                score=0.5,
+                source_task_id=f"task-b2-{i}",
+                source_agent="summarizer",
+                summary=text,
+                task_theme="test",
+                tags=(),
+                canonical_task_spec_hash=f"sha256:b2-{i}",
+                embedding_ref_id=emb.embedding_id,
+                created_at_ns=i * 10,
+            ),
+            canonical_task_spec=CanonicalTaskSpec(
+                task_family="test",
+                intent_op="compare_metric",
+                required_outputs=("summary_text",),
+                arguments={},
+            ),
+            required_outputs=("summary_text",),
+            quality_floor_pass=True,
+            created_from_artifact_hash=f"sha256:artifact-b2-{i}",
+        )
+        store.commit_candidate(commit=commit, quality_floor_pass=True, answer_adopted=True)
+
+    query_emb = encoder.encode(embedding_id="query-b2", text="ACME revenue financial 2026Q1")
+
+    if not store.faiss_available:
+        return  # skip if faiss not installed
+
+    # Get FAISS-based ranking
+    faiss_result = store.lookup(
+        query_task_id="q-b2",
+        query_spec_hash="qsh-b2",
+        query_embedding=query_emb,
+        limit=5,
+    )
+    faiss_order = [m.memory_ref.memory_id for m in faiss_result.matches]
+
+    # Compute cosine ranking directly (bypass FAISS)
+    cosine_scores = {
+        commit.memory_ref.memory_id: cosine_similarity(query_emb, store.embeddings[commit.memory_ref.embedding_ref_id])
+        for commit in store.commits.values()
+    }
+    cosine_order = sorted(cosine_scores, key=lambda mid: -cosine_scores[mid])[:5]
+
+    assert faiss_order == cosine_order, (
+        f"FAISS ranking {faiss_order!r} diverges from cosine ranking {cosine_order!r}.\n"
+        f"Scores: FAISS={[m.score for m in faiss_result.matches]}, "
+        f"cosine={[round(cosine_scores[mid], 6) for mid in cosine_order]}"
+    )

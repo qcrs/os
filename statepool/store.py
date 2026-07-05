@@ -18,6 +18,11 @@ PY_SHARED_MEMORY_STORAGE = "PY_SHARED_MEMORY"
 MEMFD_STORAGE = "MEMFD"
 CAS_BLOB_STORAGE = "CAS_BLOB"
 DEFAULT_STATEPOOL_BACKEND = "mmap"
+# "mmap" (FileBackedStatePool) is the only backend that persists state across
+# process restarts and therefore the only one that supports cross-session
+# exact_replay and validated_replay.  shared_memory and memfd are available
+# for experimentation (SubprocessExecutorTransport + MemfdStatePool pairing)
+# but should not be used as the default for benchmark runs.
 DEFAULT_EMBED_STATE_BACKEND = "mmap"
 CAS_REPLAY_RESTORABLE_KINDS = frozenset(
     {

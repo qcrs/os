@@ -127,6 +127,13 @@ class MemoryIndexStore:
         import numpy as np
 
         q = np.array([list(query_embedding.vector)], dtype="float32")
+        # Normalise the query vector to match the normalised index vectors so
+        # that IndexFlatIP computes cosine similarity, not raw dot product.
+        try:
+            import faiss as _faiss_q  # type: ignore[import]
+            _faiss_q.normalize_L2(q)
+        except ImportError:
+            pass
         n_indexed = len(self._faiss_id_map)
         if n_indexed == 0:
             return {}
@@ -365,6 +372,10 @@ class MemoryIndexStore:
             return False
         dims = len(vecs[0])
         arr = np.array(vecs, dtype="float32")
+        # L2-normalise so that IndexFlatIP equals cosine similarity for all
+        # encoder backends, including DeterministicEmbeddingEncoder (BoW-hash,
+        # unnormalised).  Vectors whose norm is zero are left unchanged.
+        _faiss.normalize_L2(arr)
         index = _faiss.IndexFlatIP(dims)
         index.add(arr)
         self._faiss_index = index
