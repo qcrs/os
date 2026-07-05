@@ -3,7 +3,7 @@
 日期：`2026-06-13`
 
 > 当前定位：历史 pack-map / 旧主线设计说明，不是当前 active communication source-of-truth。
-> 本文主要帮助读者理解早期 v3 pack 分工，仍以 `contest_honest_headline_v1` 为主线。
+> 本文主要帮助读者理解早期 v3 pack 分工和后续边界收紧，不能替代当前 active communication source-of-truth。
 > 当前 communication headline 已切到 `superiority_comm_v1`；最新正式读法请优先看：
 > `docs/reports/statebus_system_method_task_and_results_explainer.md`
 > `docs/reports/current_task_results_overview_20260622.md`

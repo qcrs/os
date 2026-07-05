@@ -86,6 +86,7 @@ external text审计   audit      external_text_baseline_audit_v3   external text
 1. **通信**→ 当前正式主线优先读 `contest_honest_headline_v1` 的 API repeat=10 frozen artifact；主结论是 control-byte compactness。
 2. **状态传递**→ 当前正式主线可读 `contest_honest_headline_v1` 的 `state_packet_minimal`：`DENSE_EVIDENCE + EXECUTOR_DECISION_PACKET` 被 executor 真实消费。
 3. **记忆**→ 当前正式主线只 claim controlled S2 replay effect；更广义的 memory policy 归因仍读 `memory_reuse_v3` / `memory_policy_controlled_v3`。
+4. **通信变量读法**→ `carrier_microbench_v3` 只回答单一通信载体变量对照，不把 mode / carrier / memory policy 混成一个 headline。
 
 ### 第5步：诚实边界（加分项）
 

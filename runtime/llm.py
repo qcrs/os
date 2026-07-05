@@ -900,6 +900,15 @@ def parse_compact_protocol_executor_handoff(text: str) -> dict[str, Any]:
     return {
         "route": str(payload.get("r", payload.get("route", ""))).strip(),
         "tool_name": str(payload.get("t", payload.get("tool_name", ""))).strip(),
+        "validated_route": str(
+            payload.get("vr", payload.get("validated_route", ""))
+        ).strip(),
+        "validated_tool_name": str(
+            payload.get("vt", payload.get("validated_tool_name", ""))
+        ).strip(),
+        "validated_action_contract": str(
+            payload.get("va", payload.get("validated_action_contract", ""))
+        ).strip(),
         "action_contract": str(payload.get("a", payload.get("action_contract", ""))).strip(),
         "evidence_text": str(payload.get("e", payload.get("evidence_text", ""))).strip(),
         "tool_candidates": _decode_compact_tool_candidates(
@@ -959,32 +968,54 @@ def _parse_text_candidate_notes(value: str) -> list[dict[str, Any]]:
 def _deterministic_retriever_choice(*, query: str, tool_candidates: list[dict[str, Any]]) -> dict[str, Any]:
     if not tool_candidates:
         return {"route": "generic_triage", "tool_name": "tool.collect_more_evidence"}
-    if not any(int(item.get("helper_rank", 0) or 0) > 0 for item in tool_candidates):
-        query_tokens = set(query.lower().split())
-        scored = sorted(
-            tool_candidates,
-            key=lambda item: (
-                -_candidate_query_affinity(query_tokens, item),
-                -len([term for term in item.get("support_terms", []) if str(term).strip()]),
-                -int(item.get("support_doc_count", 0) or 0),
-                str(item.get("route", "")),
-                str(item.get("tool_name", "")),
-            ),
+    first_identity = _candidate_identity(tool_candidates[0])
+    if first_identity == ("generic_triage", "tool.collect_more_evidence"):
+        return tool_candidates[0]
+    scored = [
+        (index, item)
+        for index, item in enumerate(tool_candidates)
+        if item.get("score") is not None
+    ]
+    if scored:
+        scored.sort(
+            key=lambda pair: (
+                -int(pair[1].get("score", 0) or 0),
+                int(pair[1].get("helper_rank", 0) or 0) if int(pair[1].get("helper_rank", 0) or 0) > 0 else 10**9,
+                pair[0],
+            )
         )
-        return scored[0]
-    query_tokens = set(query.lower().split())
-    scored = sorted(
-        tool_candidates,
-        key=lambda item: (
-            -_candidate_query_affinity(query_tokens, item),
-            -len([issue_id for issue_id in item.get("matched_issue_ids", []) if str(issue_id).strip()]),
-            -int(item.get("support_doc_count", 0) or 0),
-            -len([term for term in item.get("support_terms", []) if str(term).strip()]),
-            str(item.get("route", "")),
-            str(item.get("tool_name", "")),
-        ),
-    )
-    return scored[0]
+        return scored[0][1]
+    query_tokens = set(query.lower().replace("::", " ").replace(".", " ").replace("_", " ").split())
+    affinity_ranked = [
+        (index, item, _candidate_query_affinity(query_tokens, item))
+        for index, item in enumerate(tool_candidates)
+    ]
+    affinity_ranked = [item for item in affinity_ranked if item[2] > 0]
+    if affinity_ranked:
+        affinity_ranked.sort(
+            key=lambda pair: (
+                -pair[2],
+                int(pair[1].get("helper_rank", 0) or 0) if int(pair[1].get("helper_rank", 0) or 0) > 0 else 10**9,
+                pair[0],
+            )
+        )
+        return affinity_ranked[0][1]
+    ranked = [
+        (index, item)
+        for index, item in enumerate(tool_candidates)
+        if int(item.get("helper_rank", 0) or 0) > 0
+    ]
+    if ranked:
+        ranked.sort(
+            key=lambda pair: (
+                int(pair[1].get("helper_rank", 0) or 0),
+                pair[0],
+            )
+        )
+        return ranked[0][1]
+    # The bounded retriever prompt already carries an ordered visible-candidate view.
+    # Deterministic mode should preserve that ordering instead of re-ranking by query terms.
+    return tool_candidates[0]
 
 
 def _deterministic_executor_choice(
@@ -1001,12 +1032,15 @@ def _deterministic_executor_choice(
 
 
 def _candidate_query_affinity(query_tokens: set[str], item: dict[str, Any]) -> int:
+    support_terms = [str(term) for term in item.get("support_terms", []) if str(term).strip()]
+    if not support_terms:
+        support_terms = list(_candidate_catalog_issue_terms(item))
     surface = " ".join(
         [
             str(item.get("route", "")),
             str(item.get("tool_name", "")),
             " ".join(str(issue_id) for issue_id in item.get("matched_issue_ids", []) if str(issue_id).strip()),
-            " ".join(str(term) for term in item.get("support_terms", []) if str(term).strip()),
+            " ".join(support_terms),
             " ".join(str(doc_id) for doc_id in item.get("supporting_doc_ids", []) if str(doc_id).strip()),
         ]
     ).lower()
@@ -1016,6 +1050,21 @@ def _candidate_query_affinity(query_tokens: set[str], item: dict[str, Any]) -> i
 
 def _candidate_identity(item: dict[str, Any]) -> tuple[str, str]:
     return (str(item.get("route", "")).strip(), str(item.get("tool_name", "")).strip())
+
+
+def _candidate_catalog_issue_terms(item: dict[str, Any]) -> tuple[str, ...]:
+    route = str(item.get("route", "")).strip()
+    tool_name = str(item.get("tool_name", "")).strip()
+    if not route or not tool_name:
+        return ()
+    try:
+        from v2.route_tool_catalog import stable_tool_registry_profiles
+    except Exception:
+        return ()
+    for profile in stable_tool_registry_profiles():
+        if profile.route == route and profile.tool_name == tool_name:
+            return tuple(str(term).strip() for term in profile.issue_terms if str(term).strip())
+    return ()
 
 
 def _provider_from_mapping(name: str, payload: dict[str, Any]) -> ProviderConfig:

@@ -14,6 +14,7 @@ from agents.sample_agents import (
     _build_protocol_summary_input_packet,
     _planner_repair_messages,
     _planner_messages,
+    _retriever_messages,
     _render_protocol_summary_input_text,
     _summarizer_messages,
     _summary_from_llm_output,
@@ -434,6 +435,45 @@ async def test_deterministic_llm_supports_compact_v2_retriever_and_executor_payl
 
 
 @pytest.mark.asyncio
+async def test_deterministic_llm_compact_executor_honors_validated_tool_fields() -> None:
+    client = DeterministicLLMClient()
+
+    executor = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-executor-v1>\n"
+                    + json.dumps(
+                        {
+                            "r": "auth_session_drift",
+                            "t": "tool.auth_session_repair",
+                            "vr": "auth_session_drift",
+                            "vt": "tool.auth_jwks_refresh",
+                            "va": "execute_validated_tool",
+                            "tc": [
+                                {"r": "auth_session_drift", "t": "tool.auth_jwks_refresh"},
+                                {"r": "auth_session_drift", "t": "tool.auth_session_repair"},
+                            ],
+                        }
+                    )
+                    + "\n</sb-executor-v1>",
+                },
+            )(),
+        ],
+        purpose="executor",
+    )
+
+    payload = json.loads(executor.text)
+    assert payload["route"] == "auth_session_drift"
+    assert payload["tool_name"] == "tool.auth_jwks_refresh"
+    assert payload["action_contract"] == "execute_validated_tool"
+
+
+@pytest.mark.asyncio
 async def test_executor_uses_retrieve_payload_tool_candidates_when_validation_candidates_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = ExecutorAgent(
         agent_id="executor",
@@ -577,6 +617,133 @@ async def test_deterministic_llm_retriever_uses_neutral_query_affinity_ranking_f
     )
 
     payload = json.loads(retriever.text)
+    assert payload["candidate_rank"] == 1
+    assert payload["route"] == "auth_rate_limit"
+    assert payload["tool_name"] == "tool.auth_rate_limit_triage"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_llm_retriever_prefers_explicit_score_over_catalog_helper_rank() -> None:
+    client = DeterministicLLMClient()
+    retriever = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-retriever-v1>\n"
+                    + json.dumps(
+                        {
+                            "query": "sso callback issuer mismatch stale jwks session cookies",
+                            "retrieved_doc_ids": ["doc-1"],
+                            "tool_candidates": [
+                                {
+                                    "route": "cache_replica_stale_read",
+                                    "tool_name": "semantic_retriever",
+                                    "score": 1,
+                                    "helper_rank": 1,
+                                },
+                                {
+                                    "route": "worker_queue_starvation",
+                                    "tool_name": "semantic_retriever",
+                                    "score": 0,
+                                    "helper_rank": 2,
+                                },
+                                {
+                                    "route": "auth_session_drift",
+                                    "tool_name": "semantic_retriever",
+                                    "score": 5,
+                                    "helper_rank": 3,
+                                },
+                            ],
+                        }
+                    )
+                    + "\n</sb-retriever-v1>",
+                },
+            )(),
+        ],
+        purpose="retriever",
+    )
+
+    payload = json.loads(retriever.text)
+    assert payload["candidate_rank"] == 3
+    assert payload["route"] == "auth_session_drift"
+    assert payload["tool_name"] == "semantic_retriever"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_llm_retriever_keeps_visible_generic_abstain_candidate() -> None:
+    client = DeterministicLLMClient()
+    retriever = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-retriever-v1>\n"
+                    + json.dumps(
+                        {
+                            "query": "investigate a vague release issue",
+                            "retrieved_doc_ids": ["doc-1"],
+                            "tool_candidates": [
+                                {
+                                    "route": "generic_triage",
+                                    "tool_name": "tool.collect_more_evidence",
+                                    "score": 0,
+                                },
+                                {
+                                    "route": "db_pool_saturation",
+                                    "tool_name": "tool.db_pool_triage",
+                                    "score": 4,
+                                },
+                            ],
+                        }
+                    )
+                    + "\n</sb-retriever-v1>",
+                },
+            )(),
+        ],
+        purpose="retriever",
+    )
+
+    payload = json.loads(retriever.text)
+    assert payload["candidate_rank"] == 1
+    assert payload["route"] == "generic_triage"
+    assert payload["tool_name"] == "tool.collect_more_evidence"
+
+
+@pytest.mark.asyncio
+async def test_text_retriever_prompt_preserves_candidate_score_notes() -> None:
+    client = DeterministicLLMClient()
+    messages = _retriever_messages(
+        {
+            "query": "recheck SSO callback issuer mismatch and stale sessions",
+            "retrieved_doc_ids": ["doc-1"],
+            "tool_candidates": [
+                {
+                    "route": "auth_rate_limit",
+                    "tool_name": "tool.auth_rate_limit_triage",
+                    "score": 9,
+                },
+                {
+                    "route": "auth_session_drift",
+                    "tool_name": "tool.auth_session_repair",
+                    "score": 4,
+                },
+            ],
+            "evidence_text": "bounded evidence only",
+        },
+        mode="text",
+    )
+
+    retriever = await client.complete(messages, purpose="retriever")
+
+    payload = json.loads(retriever.text)
+    assert "Candidate notes:" in messages[-1].content
     assert payload["candidate_rank"] == 1
     assert payload["route"] == "auth_rate_limit"
     assert payload["tool_name"] == "tool.auth_rate_limit_triage"
@@ -1887,6 +2054,9 @@ def test_compact_protocol_retriever_and_executor_parsers_accept_inline_evidence(
             {
                 "r": "auth_session_drift",
                 "t": "semantic_retriever",
+                "vr": "auth_session_drift",
+                "vt": "tool.auth_jwks_refresh",
+                "va": "execute_validated_tool",
                 "a": "execute_validated_tool",
                 "e": "line1\nline2",
                 "tc": [{"r": "auth_session_drift", "t": "semantic_retriever"}],
@@ -1897,6 +2067,9 @@ def test_compact_protocol_retriever_and_executor_parsers_accept_inline_evidence(
 
     assert retriever_payload["evidence_text"] == "line1\nline2"
     assert executor_payload["evidence_text"] == "line1\nline2"
+    assert executor_payload["validated_route"] == "auth_session_drift"
+    assert executor_payload["validated_tool_name"] == "tool.auth_jwks_refresh"
+    assert executor_payload["validated_action_contract"] == "execute_validated_tool"
 
 
 def test_render_protocol_summary_input_text_is_flat_text_handoff() -> None:

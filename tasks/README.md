@@ -96,6 +96,9 @@
 - `superiority_comm_v1` 是当前 active communication headline，当前 formal 读法不再从 `contest_honest_headline_v1` 读取。
 - `superiority_memory_v1` 只回答 replay effect，不回答 memory superiority 或 overall superiority。
 - `typed_state_mechanism_v3` 与 `typed_state_consumer_sensitivity_v3` 一起组成当前 non-text state-transfer formal-secondary evidence。
+- 正式机制 claim 仍优先读 `typed_state_mechanism_v3`；`typed_state_authenticity_v3` 只保留 legacy compatibility surface。
+- `memory_policy_controlled_v3` 只读 protocol + state_packet_minimal 固定后的 memory policy 单变量归因。
+- `external_text_baseline_audit_v3` 只读独立 external text baseline 审计，不并入 formal headline。
 - `contest_honest_headline_v1` 是历史 frozen object，可用于展示历史对照与机制边界，但不是当前 active source-of-truth。
 - `contest_dual_mode_controlled_v3` 是内部 controlled composite surface，不再承担 contest-facing pure-text headline。
 - `tasks/state_ref_consumer_sensitivity_audit_benchmark.yaml` 是 mechanism audit pack；它既做 rich helper visibility audit，也做 minimal packet 缺包/错包负控。

@@ -157,6 +157,13 @@ python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-p
 - 当前必须区分：`Communication gate` 与 `Formal stability gate`
 - `text_whole_lane` 是 StateBus runtime 内部 comparator，不是 external pure-text baseline
 
+当前相关的 support / audit 边界还包括：
+
+- `memory_dual_mode_fairness_v3`：dual-mode fairness / object parity audit，不并入 headline
+- `memory_policy_controlled_v3`：固定 `protocol + state_packet_minimal` 后的 memory policy 单变量归因
+- `typed_state_mechanism_v3`：正式机制 claim 的主读取对象
+- `external_text_baseline_audit_v3`：独立 external text baseline 审计对象，不并入 formal headline
+
 历史报告仍保留参考价值，但只能当背景材料，不能替代当前 source-of-truth：
 
 - `docs/reports/MASTER_PRESENTATION_GUIDE.md`
