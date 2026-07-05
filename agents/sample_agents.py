@@ -116,11 +116,17 @@ def _retriever_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessa
             and str(item.get("route", "")).strip()
             and str(item.get("tool_name", "")).strip()
         ]
+        candidate_notes = [
+            _format_text_candidate_note(item)
+            for item in payload.get("tool_candidates", [])
+            if isinstance(item, dict)
+        ]
         user_prompt = (
             "Retriever handoff for a text-only multi-agent workflow.\n\n"
             f"Query: {payload['query']}\n"
             f"Retrieved docs: {', '.join(payload.get('retrieved_doc_ids', []))}\n"
             f"Visible candidates: {'; '.join(visible_candidates) if visible_candidates else 'none'}\n"
+            f"Candidate notes: {'; '.join(candidate_notes) if candidate_notes else 'none'}\n"
             f"Visible evidence:\n{payload['evidence_text']}\n"
         )
     else:
@@ -148,6 +154,18 @@ def _retriever_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessa
 
 def _executor_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessage]:
     if mode == "text":
+        visible_candidates = [
+            f"{str(item.get('route', '')).strip()}::{str(item.get('tool_name', '')).strip()}"
+            for item in payload.get("tool_candidates", [])
+            if isinstance(item, dict)
+            and str(item.get("route", "")).strip()
+            and str(item.get("tool_name", "")).strip()
+        ]
+        candidate_notes = [
+            _format_text_candidate_note(item)
+            for item in payload.get("tool_candidates", [])
+            if isinstance(item, dict)
+        ]
         user_prompt = (
             "Executor handoff for a text-only multi-agent workflow.\n\n"
             f"Route: {payload.get('route', '')}\n"
@@ -155,6 +173,8 @@ def _executor_messages(payload: dict[str, Any], *, mode: str) -> list[ChatMessag
             f"Validated route: {payload.get('validated_route', '')}\n"
             f"Validated tool: {payload.get('validated_tool_name', '')}\n"
             f"Validated action contract: {payload.get('validated_action_contract', '')}\n"
+            f"Visible candidates: {'; '.join(visible_candidates) if visible_candidates else 'none'}\n"
+            f"Candidate notes: {'; '.join(candidate_notes) if candidate_notes else 'none'}\n"
         )
     else:
         user_prompt = tagged_json_block(
@@ -194,6 +214,41 @@ def _retriever_selection_from_llm_output(output_text: str) -> dict[str, Any]:
         "reason": str(payload.get("reason", "")).strip(),
         "candidate_rank": int(payload.get("candidate_rank", 0) or 0),
     }
+
+
+def _format_text_candidate_note(item: dict[str, Any]) -> str:
+    route = str(item.get("route", "")).strip()
+    tool_name = str(item.get("tool_name", "")).strip()
+    if not route or not tool_name:
+        return ""
+    segments = [f"{route}::{tool_name}"]
+    if item.get("helper_rank") is not None:
+        segments.append(f"helper_rank={int(item.get('helper_rank', 0) or 0)}")
+    if item.get("score") is not None:
+        score = item.get("score", 0)
+        score_text = str(int(score)) if float(score).is_integer() else str(score)
+        segments.append(f"score={score_text}")
+    support_terms = [str(term).strip() for term in item.get("support_terms", []) if str(term).strip()]
+    if support_terms:
+        segments.append(f"support_terms={','.join(support_terms)}")
+    matched_issue_ids = [
+        str(issue_id).strip()
+        for issue_id in item.get("matched_issue_ids", [])
+        if str(issue_id).strip()
+    ]
+    if matched_issue_ids:
+        segments.append(f"matched_issue_ids={','.join(matched_issue_ids)}")
+    supporting_doc_ids = [
+        str(doc_id).strip()
+        for doc_id in item.get("supporting_doc_ids", [])
+        if str(doc_id).strip()
+    ]
+    if supporting_doc_ids:
+        segments.append(f"support_docs={','.join(supporting_doc_ids)}")
+        segments.append(f"support_doc_count={len(supporting_doc_ids)}")
+    elif item.get("support_doc_count") is not None:
+        segments.append(f"support_doc_count={int(item.get('support_doc_count', 0) or 0)}")
+    return "|".join(segments)
 
 
 def _executor_selection_from_llm_output(output_text: str) -> dict[str, Any]:
@@ -560,24 +615,23 @@ def _build_text_strict_pure_lane_retriever_handoff(
     retrieved_doc_ids: list[str],
     upstream_text: str = "",
 ) -> str:
+    del route_source, route_provenance, matched_signals, matched_tags
+    route_text = route.replace("_", " ").strip() or "generic triage"
+    tool_text = tool_name.split(".")[-1].replace("_", " ").strip() if tool_name else "collect more evidence"
+    doc_text = ", ".join(doc_id.strip() for doc_id in retrieved_doc_ids if str(doc_id).strip()) or "the cited release artifacts"
+    confidence_text = "high" if route_confidence >= 0.85 else "moderate" if route_confidence >= 0.55 else "low"
     parts = [
-        "Retriever handoff in plain language.",
-        f"User goal: {goal.strip()}",
-        f"Query: {query.strip()}",
-        f"Route: {route.strip() or 'generic_triage'}",
-        f"Tool: {tool_name.strip() or 'tool.collect_more_evidence'}",
-        f"Route source: {route_source.strip() or 'retriever_handoff'}",
-        f"Route confidence: {route_confidence:.2f}",
-        "Route provenance: "
-        + (", ".join(item.strip() for item in route_provenance if str(item).strip()) or "none"),
-        "Matched signals: "
-        + (", ".join(item.strip() for item in matched_signals if str(item).strip()) or "none"),
-        "Matched tags: "
-        + (", ".join(item.strip() for item in matched_tags if str(item).strip()) or "none"),
-        "Retrieved docs: "
-        + (", ".join(item.strip() for item in retrieved_doc_ids if str(item).strip()) or "none"),
-        "Use only the cited evidence below. Do not assume any hidden route, tool, memory hint, or structured packet exists.",
-        "Evidence:",
+        "Retriever handoff in plain language for the strict pure-text lane.",
+        f"The user is trying to {goal.strip()}.",
+        f"The visible request concerns {query.strip()}.",
+        (
+            f"Based on the visible evidence, {route_text} is the leading explanation so far, "
+            "and the strongest competing explanation has not overtaken it."
+        ),
+        f"Starting with {tool_text} is the safest next step for now.",
+        f"This read stays at {confidence_text} confidence and depends only on {doc_text}.",
+        "Stay inside the visible evidence below and do not rely on any hidden structured packet, route field, tool field, or retrieval shortcut.",
+        "The visible evidence appears below.",
         evidence_text.strip(),
     ]
     if upstream_text.strip():

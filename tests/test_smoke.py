@@ -6750,8 +6750,9 @@ def test_contest_dual_mode_controlled_v3_repeat_one_does_not_pass_formal_stabili
     assert result["manifest"]["contest_formal_coverage_gate"]["surface_complete"] is True
     assert result["manifest"]["contest_formal_coverage_gate"]["repeat_sufficient"] is False
     assert result["manifest"]["contest_formal_coverage_gate"]["passed"] is False
-    assert result["manifest"]["object_parity_gate"]["passed"] is False
-    assert result["manifest"]["object_parity_gate"]["text_hidden_field_leak_zero"] is False
+    assert result["manifest"]["object_parity_gate"]["passed"] is True
+    assert result["manifest"]["object_parity_gate"]["text_hidden_field_leak_zero"] is True
+    assert result["manifest"]["object_parity_gate"]["cross_lane_actual_parity_ok"] is True
 
 
 def test_contest_formal_coverage_gate_distinguishes_surface_from_repeat() -> None:

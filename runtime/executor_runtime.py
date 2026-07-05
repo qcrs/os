@@ -2243,39 +2243,10 @@ def _feature_bundle_from_text_whole_lane_handoff(
     handoff_text: str,
     registry: ToolRegistry,
 ) -> dict[str, Any]:
-    query = str(query_text or "").strip()
-    route_candidate = ""
-    tool_candidate = ""
-    for raw_line in handoff_text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("The current request is: ") and not query:
-            query = line.removeprefix("The current request is: ").strip()
-        elif line.startswith("The visible request is about this situation: ") and not query:
-            query = line.removeprefix("The visible request is about this situation: ").strip()
-        elif line.startswith("The visible request concerns ") and not query:
-            query = line.removeprefix("The visible request concerns ").strip().rstrip(".")
-        elif line.startswith("The current working hypothesis is "):
-            route_candidate = line.removeprefix("The current working hypothesis is ").strip().rstrip(".")
-        elif line.startswith("Based on the visible evidence, ") and " is the leading explanation so far" in line:
-            route_candidate = (
-                line.removeprefix("Based on the visible evidence, ")
-                .split(" is the leading explanation so far", 1)[0]
-                .strip()
-                .rstrip(".")
-            )
-        elif line.startswith("The recommended first playbook is "):
-            tool_candidate = line.removeprefix("The recommended first playbook is ").strip().rstrip(".")
-        elif line.startswith("The first playbook to try is "):
-            tool_candidate = line.removeprefix("The first playbook to try is ").strip().rstrip(".")
-        elif line.startswith("Starting with ") and " is the safest next step for now" in line:
-            tool_candidate = (
-                line.removeprefix("Starting with ")
-                .split(" is the safest next step for now", 1)[0]
-                .strip()
-                .rstrip(".")
-            )
+    query, route_candidate, tool_candidate = _parse_natural_text_handoff_fields(
+        query_text=query_text,
+        handoff_text=handoff_text,
+    )
     bundle = build_feature_bundle(
         query=query,
         evidence_text=evidence_text,
@@ -2312,15 +2283,99 @@ def _feature_bundle_from_strict_pure_text_handoff(
     handoff_text: str,
     registry: ToolRegistry,
 ) -> dict[str, Any]:
-    del registry
-    bundle = _feature_bundle_from_explicit_text_handoff(
-        query_text=query_text,
-        evidence_text=handoff_text,
-        handoff_text=handoff_text,
-    )
+    if any(
+        marker in handoff_text
+        for marker in (
+            "Route:",
+            "Tool:",
+            "Route source:",
+            "Matched signals:",
+            "Matched tags:",
+            "Retrieved docs:",
+        )
+    ):
+        bundle = _feature_bundle_from_explicit_text_handoff(
+            query_text=query_text,
+            evidence_text=handoff_text,
+            handoff_text=handoff_text,
+        )
+    else:
+        query, route_candidate, tool_candidate = _parse_natural_text_handoff_fields(
+            query_text=query_text,
+            handoff_text=handoff_text,
+        )
+        normalized_route = route_candidate.replace(" ", "_").strip().lower()
+        normalized_tool = tool_candidate.replace(" ", "_").strip().lower()
+        route = ""
+        tool_name = ""
+        if normalized_route:
+            route_tool = registry.maybe_get_for_route(normalized_route)
+            if route_tool is not None:
+                route = route_tool.route
+                tool_name = route_tool.name
+        if normalized_tool:
+            candidate_name = normalized_tool if normalized_tool.startswith("tool.") else f"tool.{normalized_tool}"
+            try:
+                spec = registry.get(candidate_name)
+                tool_name = spec.name
+                route = spec.route
+            except KeyError:
+                pass
+        explicit_lines = [f"Query: {query}"]
+        if route:
+            explicit_lines.append(f"Route: {route}")
+        if tool_name:
+            explicit_lines.append(f"Tool: {tool_name}")
+        bundle = _feature_bundle_from_explicit_text_handoff(
+            query_text=query,
+            evidence_text=handoff_text,
+            handoff_text="\n".join(explicit_lines),
+        )
+    bundle["route_provenance"] = ["strict_pure_text_handoff"]
     bundle["actual_tool_candidates"] = _actual_tool_candidates_from_feature_bundle(bundle)
     bundle["transfer_strategy"] = "text_strict_pure_lane"
     return bundle
+
+
+def _parse_natural_text_handoff_fields(
+    *,
+    query_text: object,
+    handoff_text: str,
+) -> tuple[str, str, str]:
+    query = str(query_text or "").strip()
+    route_candidate = ""
+    tool_candidate = ""
+    for raw_line in handoff_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("The current request is: ") and not query:
+            query = line.removeprefix("The current request is: ").strip()
+        elif line.startswith("The visible request is about this situation: ") and not query:
+            query = line.removeprefix("The visible request is about this situation: ").strip()
+        elif line.startswith("The visible request concerns ") and not query:
+            query = line.removeprefix("The visible request concerns ").strip().rstrip(".")
+        elif line.startswith("The current working hypothesis is "):
+            route_candidate = line.removeprefix("The current working hypothesis is ").strip().rstrip(".")
+        elif line.startswith("Based on the visible evidence, ") and " is the leading explanation so far" in line:
+            route_candidate = (
+                line.removeprefix("Based on the visible evidence, ")
+                .split(" is the leading explanation so far", 1)[0]
+                .strip()
+                .rstrip(".")
+            )
+        elif line.startswith("The recommended first playbook is "):
+            tool_candidate = line.removeprefix("The recommended first playbook is ").strip().rstrip(".")
+        elif line.startswith("The first playbook to try is "):
+            tool_candidate = line.removeprefix("The first playbook to try is ").strip().rstrip(".")
+        elif line.startswith("Starting with ") and " is the safest next step for now" in line:
+            tool_candidate = (
+                line.removeprefix("Starting with ")
+                .split(" is the safest next step for now", 1)[0]
+                .strip()
+                .rstrip(".")
+            )
+    return query, route_candidate, tool_candidate
 
 
 def _feature_bundle_from_executor_decision_packet(

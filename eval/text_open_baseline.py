@@ -307,8 +307,11 @@ class ExternalTextOpenRuntime:
         helper_top1 = projected_helper_candidate(issue_hypotheses=issue_hypotheses)
         helper_top1_route = str(helper_top1.get("route", "")).strip()
         helper_top1_tool_name = str(helper_top1.get("tool_name", "")).strip()
+        helper_projection_ambiguous = bool(helper_top1.get("ambiguous_surface", False))
         helper_selected_matches_top1 = (
-            route == helper_top1_route and tool_name == helper_top1_tool_name
+            not helper_projection_ambiguous
+            and route == helper_top1_route
+            and tool_name == helper_top1_tool_name
         )
         helper_single_candidate = len(visible_candidates) == 1
         debug_state["helper_top1_route"] = helper_top1_route
@@ -401,7 +404,9 @@ class ExternalTextOpenRuntime:
                 debug_state["llm_usage"] = dict(usage)
                 raise ExternalBaselineStageError(str(exc), debug_state=debug_state) from exc
             helper_selected_matches_top1 = (
-                route == helper_top1_route and tool_name == helper_top1_tool_name
+                not helper_projection_ambiguous
+                and route == helper_top1_route
+                and tool_name == helper_top1_tool_name
             )
             role_trace.append(
                 {
@@ -1032,7 +1037,11 @@ def projected_helper_candidate(*, issue_hypotheses: list[dict[str, object]]) -> 
     rule = PLAYBOOK_BY_ROUTE.get(route)
     if rule is None:
         return {}
-    return {"route": rule.route, "tool_name": rule.tool_name}
+    return {
+        "route": rule.route,
+        "tool_name": rule.tool_name,
+        "ambiguous_surface": len(route_options) > 1,
+    }
 
 
 def summarize(task: SampleTask, retrieved_docs: list[CorpusDoc], route: str, tool_name: str) -> str:
