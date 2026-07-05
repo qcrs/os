@@ -5,6 +5,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from v2.contracts import ReplayClass
 from v2.memory.embedding import cosine_similarity
@@ -30,6 +31,11 @@ class MemoryIndexStore:
     store_root: Path | None = None
     _db: sqlite3.Connection | None = field(default=None, init=False, repr=False, compare=False)
     _fts5_enabled: bool = field(default=False, init=False, repr=False, compare=False)
+    # Optional FAISS index for O(log N) embedding search.
+    # Rebuilt lazily when _faiss_dirty=True and FAISS is available.
+    _faiss_index: Any = field(default=None, init=False, repr=False, compare=False)
+    _faiss_id_map: dict[int, str] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _faiss_dirty: bool = field(default=True, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.store_root is not None:
@@ -60,6 +66,7 @@ class MemoryIndexStore:
 
     def put_embedding(self, embedding: StructuredEmbedding) -> StructuredEmbedding:
         self.embeddings[embedding.embedding_id] = embedding
+        self._faiss_dirty = True
         self._persist_embedding(embedding)
         return embedding
 
@@ -106,6 +113,33 @@ class MemoryIndexStore:
         self._persist_commit(invalidated)
         return invalidated
 
+    def _faiss_score_map(self, query_embedding: StructuredEmbedding) -> dict[str, float]:
+        """Return {embedding_id: score} for all indexed embeddings via FAISS batch query.
+
+        Falls back to an empty dict if the index is unavailable or stale, in which
+        case the caller should fall back to per-item cosine_similarity().
+        """
+        if not self.embeddings:
+            return {}
+        if self._faiss_dirty or self._faiss_index is None:
+            if not self._build_faiss_index():
+                return {}
+        import numpy as np
+
+        q = np.array([list(query_embedding.vector)], dtype="float32")
+        n_indexed = len(self._faiss_id_map)
+        if n_indexed == 0:
+            return {}
+        distances, indices = self._faiss_index.search(q, n_indexed)
+        result: dict[str, float] = {}
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx < 0:
+                continue
+            emb_id = self._faiss_id_map.get(int(idx))
+            if emb_id is not None:
+                result[emb_id] = round(float(dist), 6)
+        return result
+
     def lookup(
         self,
         *,
@@ -115,6 +149,9 @@ class MemoryIndexStore:
         limit: int = 3,
         allow_replay: bool = True,
     ) -> MemoryMatchResult:
+        # Attempt FAISS batch scoring; falls back to per-item cosine_similarity.
+        faiss_scores = self._faiss_score_map(query_embedding)
+        matched_on = "faiss_ip" if faiss_scores else "embedding_similarity"
         matches: list[MemoryMatch] = []
         candidate_memory_ids: list[str] = []
         candidate_types: list[str] = []
@@ -127,18 +164,21 @@ class MemoryIndexStore:
                 continue
             # CANDIDATE entries are allowed into the candidate pool so that
             # intra-session Round N+1 can find what Round N wrote.
-            # Their replay_class is clamped to ASSIST at lines 123-124 below.
+            # Their replay_class is clamped to ASSIST below.
             candidate_memory_ids.append(ref.memory_id)
             candidate_types.append(ref.memory_type.value)
             candidate_taxonomy[ref.memory_type.value] = candidate_taxonomy.get(ref.memory_type.value, 0) + 1
-            score = cosine_similarity(query_embedding, self.embeddings[ref.embedding_ref_id])
+            if ref.embedding_ref_id in faiss_scores:
+                score = faiss_scores[ref.embedding_ref_id]
+            else:
+                score = cosine_similarity(query_embedding, self.embeddings[ref.embedding_ref_id])
             replay_class = ref.replay_class if allow_replay else ReplayClass.ASSIST
             if ref.commit_status != MemoryCommitStatus.COMMITTED:
                 replay_class = ReplayClass.ASSIST
             matches.append(
                 MemoryMatch(
                     memory_ref=replace(ref, replay_class=replay_class),
-                    matched_on="embedding_similarity",
+                    matched_on=matched_on,
                     score=score,
                     replay_class=replay_class,
                 )
@@ -253,15 +293,25 @@ class MemoryIndexStore:
         normalized_tags = {self._normalize_tag(tag) for tag in tags if self._normalize_tag(tag)}
         if not normalized_tags:
             return []
-        hits: list[tuple[int, int, str]] = []
-        rows = self._db.execute(
-            """
+        # SQL pre-filter: require at least one tag to appear in tags_text via LIKE.
+        # This eliminates rows with no matching tag at the DB layer instead of
+        # pulling the entire table into Python for O(N) set intersection.
+        clauses_any = " OR ".join("tags_text LIKE ?" for _ in normalized_tags)
+        params_any = [f"%{tag}%" for tag in normalized_tags]
+        sql = f"""
             SELECT memory_id, tags_text, created_at_ns
             FROM memories
             WHERE commit_status != ?
-            """,
-            (MemoryCommitStatus.INVALIDATED.value,),
+              AND ({clauses_any})
+            ORDER BY created_at_ns DESC
+            LIMIT ?
+        """
+        rows = self._db.execute(
+            sql,
+            (MemoryCommitStatus.INVALIDATED.value, *params_any, limit * 5),
         ).fetchall()
+        # Python exact overlap scoring (handles require_all and multi-tag ranking).
+        hits: list[tuple[int, int, str]] = []
         for memory_id, tags_text, created_at_ns in rows:
             ref_tags = set(str(tags_text or "").split())
             overlap = len(normalized_tags & ref_tags)
@@ -278,6 +328,49 @@ class MemoryIndexStore:
 
     def list_embeddings(self) -> tuple[StructuredEmbedding, ...]:
         return tuple(sorted(self.embeddings.values(), key=lambda embedding: embedding.embedding_id))
+
+    @property
+    def faiss_available(self) -> bool:
+        try:
+            import faiss  # type: ignore[import]  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    def _build_faiss_index(self) -> bool:
+        """Build FAISS IndexFlatIP from current embeddings (assumes L2-normalised vectors).
+
+        Returns True if the index was built successfully, False if FAISS is
+        unavailable or there are no embeddings to index.
+        """
+        if not self.embeddings:
+            self._faiss_dirty = False
+            return False
+        try:
+            import faiss as _faiss  # type: ignore[import]
+        except ImportError:
+            self._faiss_dirty = False
+            return False
+        import numpy as np
+
+        id_map: dict[int, str] = {}
+        vecs: list[list[float]] = []
+        for i, (emb_id, emb) in enumerate(self.embeddings.items()):
+            if not emb.vector:
+                continue
+            vecs.append(list(emb.vector))
+            id_map[i] = emb_id
+        if not vecs:
+            self._faiss_dirty = False
+            return False
+        dims = len(vecs[0])
+        arr = np.array(vecs, dtype="float32")
+        index = _faiss.IndexFlatIP(dims)
+        index.add(arr)
+        self._faiss_index = index
+        self._faiss_id_map = id_map
+        self._faiss_dirty = False
+        return True
 
     def _persist_embedding(self, embedding: StructuredEmbedding) -> None:
         if self.store_root is None:

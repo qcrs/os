@@ -112,3 +112,87 @@ def test_memory_store_sqlite_tag_lookup_honors_overlap_and_require_all(tmp_path:
 
     strict_hits = restored.lookup_by_tags({"incident diagnosis", "gateway"}, require_all=True)
     assert [hit.memory_ref.memory_id for hit in strict_hits] == ["incident-gateway"]
+
+
+def test_memory_store_lookup_by_tags_sql_prefilter(tmp_path: Path) -> None:
+    """lookup_by_tags must use SQL LIKE pre-filter, not full-table Python scan."""
+    store = MemoryIndexStore(store_root=tmp_path / "memory-index")
+    _commit_memory(
+        store,
+        memory_id="tagged-finance",
+        summary="quarterly revenue",
+        task_theme="finance",
+        tags=("finance", "revenue", "acme"),
+        created_at_ns=300,
+    )
+    _commit_memory(
+        store,
+        memory_id="tagged-ops",
+        summary="deployment notes",
+        task_theme="ops",
+        tags=("ops", "deployment"),
+        created_at_ns=200,
+    )
+    _commit_memory(
+        store,
+        memory_id="tagged-other",
+        summary="unrelated entry",
+        task_theme="misc",
+        tags=("misc",),
+        created_at_ns=100,
+    )
+
+    # Single-tag match
+    hits = store.lookup_by_tags({"finance"})
+    assert [h.memory_ref.memory_id for h in hits] == ["tagged-finance"]
+
+    # Multi-tag: both finance and ops have overlap=1; finance is newer so first
+    hits = store.lookup_by_tags({"finance", "ops"})
+    ids = [h.memory_ref.memory_id for h in hits]
+    assert "tagged-finance" in ids
+    assert "tagged-ops" in ids
+    assert "tagged-other" not in ids
+
+    # require_all: only "tagged-finance" has both tags finance AND revenue
+    hits = store.lookup_by_tags({"finance", "revenue"}, require_all=True)
+    assert [h.memory_ref.memory_id for h in hits] == ["tagged-finance"]
+
+    # No match
+    hits = store.lookup_by_tags({"nonexistent_tag_xyz"})
+    assert hits == []
+
+
+def test_memory_store_faiss_lookup_matches_linear_scan(tmp_path: Path) -> None:
+    """FAISS-accelerated lookup must return the same top results as linear cosine scan."""
+    store = MemoryIndexStore(store_root=tmp_path / "faiss-test")
+    for i in range(5):
+        _commit_memory(
+            store,
+            memory_id=f"mem-{i}",
+            summary=f"task summary number {i} about topic {i}",
+            task_theme="test_family",
+            tags=(f"tag{i}",),
+            created_at_ns=i * 100,
+        )
+
+    encoder = DeterministicEmbeddingEncoder(dims=8)
+    query_emb = encoder.encode(embedding_id="q", text="task summary topic 2")
+
+    result = store.lookup(
+        query_task_id="q-task",
+        query_spec_hash="qsh",
+        query_embedding=query_emb,
+        limit=3,
+    )
+    assert len(result.matches) <= 3
+    if store.faiss_available:
+        assert store.faiss_available
+        # After first lookup the index should be built and clean
+        assert not store._faiss_dirty
+        assert store._faiss_index is not None
+        # matched_on reflects FAISS path
+        for m in result.matches:
+            assert m.matched_on == "faiss_ip"
+    else:
+        for m in result.matches:
+            assert m.matched_on == "embedding_similarity"
