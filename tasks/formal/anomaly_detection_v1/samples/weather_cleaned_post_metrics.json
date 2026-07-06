@@ -1,0 +1,30 @@
+{
+  "task_id": "formal-anomaly-003",
+  "task_family": "anomaly_detection_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["anomaly", "cleanup", "weather"],
+  "expected_facts": {
+    "mean_wind_post": "5.76",
+    "mean_atmos_temp_post": "52.47"
+  },
+  "request_text": "Materialize a cleaned weather table after WINDSPEED outlier handling and AT imputation.",
+  "canonical_task_spec": {
+    "task_family": "continuous_csv_table_analysis",
+    "intent_op": "materialize_clean_table",
+    "required_outputs": ["cleaned_table_ref", "mean_wind_post", "mean_atmos_temp_post"],
+    "required_tools": ["codeact_executor", "artifact_writer"],
+    "arguments": {
+      "dataset_id": "weather_baro_2015",
+      "csv_path": "task/csv/baro_2015.csv",
+      "outlier_column": "WINDSPEED",
+      "impute_column": "AT",
+      "outlier_method": "iqr",
+      "outlier_threshold": 3,
+      "quality_checks": [
+        "numeric_tolerance:mean_wind_post:0.01",
+        "numeric_tolerance:mean_atmos_temp_post:0.01",
+        "artifact_exists:cleaned_table_ref"
+      ]
+    }
+  }
+}

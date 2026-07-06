@@ -63,6 +63,7 @@ class RefKind(StrEnum):
 
 class StorageKind(StrEnum):
     SHARED_MEMORY = "shared_memory"
+    MEMFD = "memfd"
     MMAP_FILE = "mmap_file"
     CAS_SIDECAR = "cas_sidecar"
     WORKSPACE_ROOT = "workspace_root"

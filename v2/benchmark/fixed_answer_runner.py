@@ -162,6 +162,7 @@ def _fixed_answer_smoke_config(
     statebus_mode: str,
     role_path_mode: str,
     embedding_mode: str,
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> SmokeLayerConfig:
     normalized = normalize_statebus_mode(statebus_mode)
@@ -181,6 +182,7 @@ def _fixed_answer_smoke_config(
         force_first_attempt_trap=base.force_first_attempt_trap,
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        state_pool_mode=state_pool_mode,
         persistence_profile=persistence_profile,
     )
 
@@ -463,6 +465,7 @@ def run_fixed_answer_benchmark_family(
     profile_override: BenchmarkLayerProfile | None = None,
     smoke_config_override: SmokeLayerConfig | None = None,
     metadata_extra: dict[str, object] | None = None,
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
@@ -479,6 +482,7 @@ def run_fixed_answer_benchmark_family(
         statebus_mode=normalized_statebus_mode,
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        state_pool_mode=state_pool_mode,
         persistence_profile=persistence_profile,
     )
     history_backed_replay_enabled = (
@@ -561,6 +565,7 @@ def run_fixed_answer_benchmark_family(
                     statebus_mode="cold_start",
                     role_path_mode=role_path_mode,
                     embedding_mode=embedding_mode,
+                    state_pool_mode=state_pool_mode,
                     persistence_profile=persistence_profile,
                 ),
                 expected_facts=sample.expected_facts,
@@ -571,6 +576,7 @@ def run_fixed_answer_benchmark_family(
                         statebus_mode="cold_start",
                         role_path_mode=role_path_mode,
                         embedding_mode=embedding_mode,
+                        state_pool_mode=state_pool_mode,
                         persistence_profile=persistence_profile,
                     )
                 ),
@@ -661,6 +667,24 @@ def run_fixed_answer_benchmark_family(
     for case in cases:
         for key, value in case.metrics.items():
             telemetry_summary[key] = telemetry_summary.get(key, 0.0) + float(value)
+    state_pool_mode_used = (
+        "memfd"
+        if telemetry_summary.get("memfd_transfer_count", 0.0) > 0.0
+        else "shared_memory"
+        if telemetry_summary.get("state_pool_shared_memory_mode_count", 0.0) > 0.0
+        else "mmap_file"
+        if telemetry_summary.get("state_pool_mmap_mode_count", 0.0) > 0.0
+        else state_pool_mode
+    )
+    metadata.update(
+        {
+            "state_pool_mode_requested": state_pool_mode,
+            "state_pool_mode_used": state_pool_mode_used,
+            "memfd_transfer_count": telemetry_summary.get("memfd_transfer_count", 0.0),
+            "memfd_publish_count": telemetry_summary.get("memfd_publish_count", 0.0),
+            "memfd_bytes_transferred": telemetry_summary.get("memfd_bytes_transferred", 0.0),
+        }
+    )
     replay_class_distribution: dict[str, float] = {}
     for case in cases:
         replay_class_distribution[case.replay_class] = replay_class_distribution.get(case.replay_class, 0.0) + 1.0
@@ -750,6 +774,7 @@ def run_fixed_answer_suite(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkSuiteReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
@@ -768,10 +793,12 @@ def run_fixed_answer_suite(
             seed_replay_memory=seed_replay_memory if layer == BenchmarkLayer.L3 else False,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
         )
         for layer in BenchmarkLayer
     )
+    l3_report = layer_reports[3]
     successful_mode_count = float(sum(1 for layer in layer_reports if not layer.missing_reason))
     suite_metadata = {
         "benchmark_tier": benchmark_tier,
@@ -781,6 +808,11 @@ def run_fixed_answer_suite(
         "seed_replay_memory": seed_replay_memory,
         "statebus_mode": normalized_statebus_mode,
         "role_path_mode": primary_role_path_mode,
+        "state_pool_mode_requested": state_pool_mode,
+        "state_pool_mode_used": str(l3_report.metadata.get("state_pool_mode_used", state_pool_mode)),
+        "memfd_transfer_count": l3_report.telemetry_summary.get("memfd_transfer_count", 0.0),
+        "memfd_publish_count": l3_report.telemetry_summary.get("memfd_publish_count", 0.0),
+        "memfd_bytes_transferred": l3_report.telemetry_summary.get("memfd_bytes_transferred", 0.0),
         "task_family_tier": "dev_fixed_answer",
     }
     report = BenchmarkSuiteReport(
@@ -863,6 +895,7 @@ def run_fixed_answer_internal_carrier_compare_suite(
     statebus_mode: str = "cold_start",
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkComparatorSuiteReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
@@ -884,6 +917,7 @@ def run_fixed_answer_internal_carrier_compare_suite(
             seed_replay_memory=False,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
         )
         structured_report = run_fixed_answer_benchmark_family(
@@ -899,6 +933,7 @@ def run_fixed_answer_internal_carrier_compare_suite(
             seed_replay_memory=False,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
         )
         mode_missing_reason = text_report.missing_reason or structured_report.missing_reason

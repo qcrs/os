@@ -177,7 +177,7 @@ class BenchmarkComparatorSuiteReport:
     markdown_report_path: str = ""
 
     def canonical_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "suite_id": self.suite_id,
             "task_family": self.task_family,
             "benchmark_tier": self.benchmark_tier,
@@ -200,3 +200,19 @@ class BenchmarkComparatorSuiteReport:
                 for report in self.mode_reports
             ],
         }
+        for key in (
+            "formal_superiority_claim_allowed",
+            "formal_efficiency_claim_allowed",
+            "fixed_answer_external_comparison_valid",
+            "state_pool_mode_requested",
+            "state_pool_mode_used",
+            "memfd_transfer_count",
+            "memfd_publish_count",
+            "memfd_bytes_transferred",
+        ):
+            if key in self.metadata:
+                payload[key] = self.metadata[key]
+        for key, value in self.comparison_summary.items():
+            if key.endswith("_quality_floor_pass_count") or key.endswith("_tokens_delta") or key.endswith("_task_ms_delta"):
+                payload[key] = value
+        return payload

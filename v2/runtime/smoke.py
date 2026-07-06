@@ -117,7 +117,7 @@ from v2.runtime.preflight import runtime_preflight
 from v2.runtime.runtime_signature import runtime_signature_payload
 from v2.runtime.session import RuntimeTaskSession, RuntimeWorkflowStep
 from v2.runtime.driver import RuntimeDriver, RuntimeDriverInput, RuntimeDriverProfile
-from v2.state import JsonContractStore, LayeredStateStore, MaterializedStateHandle, RefRegistryQuery
+from v2.state import JsonContractStore, LayeredStateStore, LayeredStoragePolicy, MaterializedStateHandle, RefRegistryQuery
 from v2.state import MemorySidecarStore, RetrievalSidecarStore
 from v2.utils import sha256_digest, stable_json_dumps
 
@@ -315,6 +315,7 @@ class SmokeLayerConfig:
     hermetic_runtime_root: bool = True
     role_path_mode: str = "deterministic"
     embedding_mode: str = "deterministic"
+    state_pool_mode: str = "auto"
     persistence_profile: str = "audit_full"
 
 
@@ -1859,7 +1860,10 @@ def run_smoke(
         artifact_item_count=int(planner_scope_payload.get("artifact_item_count", 0)),
     )
 
-    state_store = LayeredStateStore(root=runtime_root / "state")
+    state_store = LayeredStateStore(
+        root=runtime_root / "state",
+        policy=LayeredStoragePolicy.for_state_pool_mode(layer_config.state_pool_mode),
+    )
     semantic_state_handle: MaterializedStateHandle | None = None
     semantic_ref: SemanticStateRef | None = None
     if layer_config.semantic_pruning_enabled and layer_config.semantic_state_transfer_enabled:
@@ -2673,6 +2677,18 @@ def run_smoke(
     bundle = driver_result.persisted_paths
     telemetry = driver_result.telemetry
     task_metrics = dict(driver_result.task_metrics)
+    task_metrics["memfd_transfer_count"] = float(state_store.memfd_transfer_count)
+    task_metrics["memfd_bytes_transferred"] = float(state_store.memfd_bytes_transferred)
+    task_metrics["state_pool_memfd_mode_count"] = 1.0 if state_store.backend_name == "memfd" else 0.0
+    task_metrics["state_pool_shared_memory_mode_count"] = (
+        1.0 if state_store.backend_name == "shared_memory" else 0.0
+    )
+    task_metrics["state_pool_mmap_mode_count"] = 1.0 if state_store.backend_name == "mmap_file" else 0.0
+    task_metrics["state_pool_fallback_count"] = (
+        1.0
+        if semantic_state_handle is not None and semantic_state_handle.decision.fallback_used
+        else 0.0
+    )
     runtime_stage_metrics.update(
         {
             "persist_and_reload_stage_ms": float(driver_result.task_metrics.get("persist_and_reload_stage_ms", 0.0)),

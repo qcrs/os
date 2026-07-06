@@ -1127,6 +1127,12 @@ class RuntimeDriver:
                 trace_id=runtime_input.trace_id,
                 task_id=runtime_input.task_id,
             event_type="TASK_SUMMARY_METRICS",
+            payload={
+                "state_pool_mode_requested": runtime_input.state_store.policy.state_pool_mode,
+                "state_pool_mode_used": runtime_input.state_store.backend_name,
+                "memfd_transfer_count": runtime_input.state_store.memfd_transfer_count,
+                "memfd_bytes_transferred": runtime_input.state_store.memfd_bytes_transferred,
+            },
             metrics={
                     "artifact_count": 1.0,
                     "telemetry_events": 1.0,
@@ -1280,6 +1286,21 @@ class RuntimeDriver:
         )
         task_metrics = telemetry.summarize_task(runtime_input.task_id)
         task_metrics.update(telemetry.task_io_metrics(runtime_input.task_id))
+        task_metrics.update(
+            {
+                "memfd_transfer_count": float(runtime_input.state_store.memfd_transfer_count),
+                "memfd_bytes_transferred": float(runtime_input.state_store.memfd_bytes_transferred),
+                "state_pool_memfd_mode_count": (
+                    1.0 if runtime_input.state_store.backend_name == StorageKind.MEMFD.value else 0.0
+                ),
+                "state_pool_shared_memory_mode_count": (
+                    1.0 if runtime_input.state_store.backend_name == StorageKind.SHARED_MEMORY.value else 0.0
+                ),
+                "state_pool_mmap_mode_count": (
+                    1.0 if runtime_input.state_store.backend_name == StorageKind.MMAP_FILE.value else 0.0
+                ),
+            }
+        )
         telemetry.close()
         session_snapshot = supervisor.snapshot(runtime_input.step_id)
         lineage_view = build_task_lineage_view(
@@ -1418,6 +1439,11 @@ class RuntimeDriver:
                     },
                     metrics={
                         "semantic_state_transfer_count": 1.0,
+                        "memfd_publish_count": (
+                            1.0
+                            if runtime_input.semantic_state_handle.storage_kind == StorageKind.MEMFD
+                            else 0.0
+                        ),
                         "shared_memory_publish_count": (
                             1.0
                             if runtime_input.semantic_state_handle.storage_kind == StorageKind.SHARED_MEMORY

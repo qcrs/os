@@ -35,6 +35,21 @@ def test_layered_state_store_falls_back_to_mmap_when_budget_exceeded(tmp_path: P
     store.teardown()
 
 
+def test_layered_state_store_memfd_mode_round_trip(tmp_path: Path) -> None:
+    store = LayeredStateStore(
+        root=tmp_path / "state",
+        policy=LayeredStoragePolicy.for_state_pool_mode("memfd"),
+    )
+    handle = store.publish(ref_id="state-memfd", object_kind="EMBEDDING_STATE", payload=b"memfd-payload")
+    assert handle.storage_kind in {StorageKind.MEMFD, StorageKind.SHARED_MEMORY}
+    assert store.load("state-memfd") == b"memfd-payload"
+    if handle.storage_kind == StorageKind.MEMFD:
+        assert store.backend_name == "memfd"
+        assert store.memfd_transfer_count == 1
+        assert store.memfd_bytes_transferred == len(b"memfd-payload")
+    store.teardown()
+
+
 def test_layered_state_store_finalizer_cleans_orphan_shared_memory(tmp_path: Path) -> None:
     from multiprocessing.shared_memory import SharedMemory
 

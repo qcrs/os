@@ -220,6 +220,7 @@ def run_minimal_benchmark(
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
     seed_replay_memory: bool = False,
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> tuple[SmokeResult, BenchmarkRunReport]:
     _prepare_case_root(workspace_root)
@@ -229,6 +230,7 @@ def run_minimal_benchmark(
             **LAYER_SMOKE_CONFIGS[BenchmarkLayer.L3].__dict__,
             "role_path_mode": role_path_mode,
             "embedding_mode": embedding_mode,
+            "state_pool_mode": state_pool_mode,
             "persistence_profile": persistence_profile,
         }
     )
@@ -259,6 +261,7 @@ def run_minimal_benchmark_family(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "formal",
     claim_level: str = "first_pass",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     profile = LAYER_PROFILES[layer]
@@ -281,6 +284,7 @@ def run_minimal_benchmark_family(
                     **LAYER_SMOKE_CONFIGS[layer].__dict__,
                     "role_path_mode": role_path_mode,
                     "embedding_mode": embedding_mode,
+                    "state_pool_mode": state_pool_mode,
                     "persistence_profile": persistence_profile,
                 }
             ),
@@ -333,6 +337,7 @@ def run_minimal_benchmark_family(
             "quality_floor_contract": "statebus_smoke_quality_floor_v1",
             "role_graph": "planner->retriever->executor->summarizer",
             "role_path_mode": role_path_mode,
+            "state_pool_mode": state_pool_mode,
             "scoring_contract": "statebus_smoke_quality_floor_v1",
             "seed_replay_memory": seed_replay_memory,
             "task_family_tier": "formal_financial",
@@ -356,6 +361,7 @@ def run_minimal_benchmark_suite(
     seed_replay_memory_by_layer: dict[BenchmarkLayer, bool] | None = None,
     benchmark_tier: str = "formal",
     claim_level: str = "first_pass",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkSuiteReport:
     seed_replay_memory_by_layer = seed_replay_memory_by_layer or {}
@@ -372,9 +378,21 @@ def run_minimal_benchmark_suite(
             seed_replay_memory=seed_replay_memory_by_layer.get(layer, False),
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
         )
         for layer in BenchmarkLayer
+    )
+    l3_report = layer_reports[3]
+    formal_families = tuple(dict.fromkeys(sample.task_family for sample in samples))
+    state_pool_mode_used = (
+        "memfd"
+        if l3_report.telemetry_summary.get("memfd_transfer_count", 0.0) > 0.0
+        else "shared_memory"
+        if l3_report.telemetry_summary.get("state_pool_shared_memory_mode_count", 0.0) > 0.0
+        else "mmap_file"
+        if l3_report.telemetry_summary.get("state_pool_mmap_mode_count", 0.0) > 0.0
+        else state_pool_mode
     )
     waterfall_metrics = {
         "L0_case_count": float(len(layer_reports[0].cases)),
@@ -444,10 +462,17 @@ def run_minimal_benchmark_suite(
             "comparison_contract": "same_mainline_internal_attribution_ladder",
             "ladder_claim_scope": "internal_attribution_only_not_external_superiority",
             "role_path_mode": role_path_mode,
+            "state_pool_mode_requested": state_pool_mode,
+            "state_pool_mode_used": state_pool_mode_used,
+            "memfd_transfer_count": l3_report.telemetry_summary.get("memfd_transfer_count", 0.0),
+            "memfd_publish_count": l3_report.telemetry_summary.get("memfd_publish_count", 0.0),
+            "memfd_bytes_transferred": l3_report.telemetry_summary.get("memfd_bytes_transferred", 0.0),
             "seed_replay_memory_by_layer": {
                 layer.value: seed_replay_memory_by_layer.get(layer, False)
                 for layer in BenchmarkLayer
             },
+            "formal_task_families": list(formal_families),
+            "formal_task_family_count": len(formal_families),
             "task_family_tier": "formal_financial",
         },
         family_case_count=len(samples),
