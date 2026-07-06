@@ -1,6 +1,10 @@
 # StateBus v2 改进计划
 
-> 2026-07-06 current-source note: 本 README 下方的评分和实验数字保留为 2026-07-04 historical snapshot。当前答辩事实源请优先使用 `14_full_validation_rollup_20260706.md`、`15_fairness_gate_propagation_audit_20260706.md`、`16_deep_contest_audit_20260706.md` 以及对应 `docs/improvement/artifacts/` 证据日志。
+> 2026-07-06 current-source note: 本 README 下方的评分和实验数字保留为 2026-07-04 historical snapshot。
+>
+> **当前最高优先级 source-of-truth：** `17_final_system_audit_20260706.md` + 6 个子文档
+>
+> 次要参考：`14_full_validation_rollup_20260706.md`、`15_fairness_gate_propagation_audit_20260706.md`、`16_deep_contest_audit_20260706.md` 以及对应 `docs/improvement/artifacts/` 证据日志。
 
 **审计基准**：HEAD `6ece8a0`，实验数据 `full-experiment-20260704_111950`
 **代码路径**：基于实际代码探索，所有行号均已核实
@@ -35,7 +39,24 @@
 
 最新补充：
 
+- **`17_final_system_audit_20260706.md`**：✨ **最终系统审计报告（答辩前必读）**
+  - 基于文档 12-16、代码深度审查、benchmark JSON 交叉验证的全面审计
+  - 明确 StateBus v2 能支撑和不能支撑的声明
+  - 包含 6 个详细子文档：
+    - `17a_evidence_table.md` - 声明强度分级（Strong/Medium/Weak/Unsupported）
+    - `17b_code_review_findings.md` - 10 个核心文件代码审查结果
+    - `17c_benchmark_json_analysis.md` - Benchmark JSON 指标交叉验证
+    - `17d_issue_ledger.md` - 完整问题分类账（P0/P1/P2）
+    - `17e_remediation_plan.md` - 详细修复方案（赛前必修 4 项）
+    - `17f_safe_claim_language.md` - 推荐答辩口径和禁用表述
+  - **关键发现**：
+    - ✅ 所有 P1 问题已修复（5 个）
+    - 🔴 6 个 P2 问题开放（4 个赛前强烈建议修）
+    - ❌ 明确不能声称：端到端速度优势、形式化广泛推理、openEuler VM 验证
+    - ✅ 可以声称：类型化控制平面、非文本状态传输（4/6）、连续降级复用、dev 外部公平门通过
+
 - `16_deep_contest_audit_20260706.md`：从赛题要求出发复核 v2 的代码、benchmark JSON、历史审计链路和 claim 边界；修复 full audit script 指标解析/socket 隔离问题，并新增 replay 保守语义指标。
+
 - `15_fairness_gate_propagation_audit_20260706.md`：修复 external pure-text per-case fairness gate 未上卷到 family/comparator hard gate 的问题，并归档 `api + local` compare JSON 证据。
 
 ---
