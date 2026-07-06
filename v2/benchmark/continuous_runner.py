@@ -711,7 +711,19 @@ def _family_layer_evidence(report: BenchmarkFamilyReport) -> dict[str, object]:
         "history_step_reduction_count": float(report.telemetry_summary.get("history_step_reduction_count", 0.0)),
         "history_reuse_gain": float(report.telemetry_summary.get("history_reuse_gain", 0.0)),
         "validated_replay_count": float(report.telemetry_summary.get("validated_replay_count", 0.0)),
+        "validated_downgraded_reuse_count": float(
+            report.telemetry_summary.get(
+                "validated_downgraded_reuse_count",
+                report.telemetry_summary.get("validated_replay_count", 0.0),
+            )
+        ),
         "exact_replay_count": float(report.telemetry_summary.get("exact_replay_count", 0.0)),
+        "answer_restoration_replay_count": float(
+            report.telemetry_summary.get(
+                "answer_restoration_replay_count",
+                report.telemetry_summary.get("exact_replay_count", 0.0),
+            )
+        ),
         "skipped_step_count": float(report.telemetry_summary.get("skipped_step_count", 0.0)),
         "runtime_overhead": _runtime_overhead_summary(report),
         "report_path": report.report_path,
@@ -733,7 +745,13 @@ def _case_round_evidence(case: BenchmarkCaseReport) -> dict[str, object]:
         "artifact_reuse_count": float(case.metrics.get("artifact_reuse_count", 0.0)),
         "history_step_reduction_count": float(case.metrics.get("history_step_reduction_count", 0.0)),
         "validated_replay_count": float(case.metrics.get("validated_replay_count", 0.0)),
+        "validated_downgraded_reuse_count": float(
+            case.metrics.get("validated_downgraded_reuse_count", case.metrics.get("validated_replay_count", 0.0))
+        ),
         "exact_replay_count": float(case.metrics.get("exact_replay_count", 0.0)),
+        "answer_restoration_replay_count": float(
+            case.metrics.get("answer_restoration_replay_count", case.metrics.get("exact_replay_count", 0.0))
+        ),
         "skipped_step_count": float(case.metrics.get("skipped_step_count", 0.0)),
         "decision_reason": str(replay.get("decision_reason", "")),
         "compatibility_verdict": str(replay.get("compatibility_verdict", "")),
@@ -778,7 +796,9 @@ def _continuous_suite_evidence_pack(
                 "control_bytes",
                 "artifact_reuse_count",
                 "validated_replay_count",
+                "validated_downgraded_reuse_count",
                 "exact_replay_count",
+                "answer_restoration_replay_count",
                 "skipped_step_count",
             )
         },
@@ -1191,12 +1211,28 @@ def run_continuous_benchmark_suite(
             "L3_history_step_reduction_count": layer_reports[3].telemetry_summary.get(
                 "history_step_reduction_count", 0.0
             ),
+            "L3_validated_downgraded_reuse_count": layer_reports[3].telemetry_summary.get(
+                "validated_downgraded_reuse_count",
+                layer_reports[3].telemetry_summary.get("validated_replay_count", 0.0),
+            ),
+            "L3_answer_restoration_replay_count": layer_reports[3].telemetry_summary.get(
+                "answer_restoration_replay_count",
+                layer_reports[3].telemetry_summary.get("exact_replay_count", 0.0),
+            ),
         },
         comparison_summary={
             "layer_count": float(len(layer_reports)),
             "successful_layer_count": float(sum(1 for report_ in layer_reports if not report_.missing_reason)),
             "round_count": float(family.round_count),
             "reuse_edge_count": float(sum(len(round_.depends_on_rounds) for round_ in family.rounds)),
+            "validated_downgraded_reuse_count": layer_reports[3].telemetry_summary.get(
+                "validated_downgraded_reuse_count",
+                layer_reports[3].telemetry_summary.get("validated_replay_count", 0.0),
+            ),
+            "answer_restoration_replay_count": layer_reports[3].telemetry_summary.get(
+                "answer_restoration_replay_count",
+                layer_reports[3].telemetry_summary.get("exact_replay_count", 0.0),
+            ),
             **replay_summary_counts,
         },
         evidence_pack=evidence_pack,
@@ -1302,9 +1338,29 @@ def run_continuous_benchmark_collection(
                 for layer_report in report.layer_reports
             )
         ),
+        "validated_downgraded_reuse_count": float(
+            sum(
+                layer_report.telemetry_summary.get(
+                    "validated_downgraded_reuse_count",
+                    layer_report.telemetry_summary.get("validated_replay_count", 0.0),
+                )
+                for report in family_reports
+                for layer_report in report.layer_reports
+            )
+        ),
         "exact_replay_count": float(
             sum(
                 layer_report.telemetry_summary.get("exact_replay_count", 0.0)
+                for report in family_reports
+                for layer_report in report.layer_reports
+            )
+        ),
+        "answer_restoration_replay_count": float(
+            sum(
+                layer_report.telemetry_summary.get(
+                    "answer_restoration_replay_count",
+                    layer_report.telemetry_summary.get("exact_replay_count", 0.0),
+                )
                 for report in family_reports
                 for layer_report in report.layer_reports
             )
@@ -1371,9 +1427,29 @@ def run_continuous_benchmark_collection(
                     if layer_report.layer == BenchmarkLayer.L3
                 )
             ),
+            "L3_validated_downgraded_reuse_count": float(
+                next(
+                    layer_report.telemetry_summary.get(
+                        "validated_downgraded_reuse_count",
+                        layer_report.telemetry_summary.get("validated_replay_count", 0.0),
+                    )
+                    for layer_report in report.layer_reports
+                    if layer_report.layer == BenchmarkLayer.L3
+                )
+            ),
             "L3_exact_replay_count": float(
                 next(
                     layer_report.telemetry_summary.get("exact_replay_count", 0.0)
+                    for layer_report in report.layer_reports
+                    if layer_report.layer == BenchmarkLayer.L3
+                )
+            ),
+            "L3_answer_restoration_replay_count": float(
+                next(
+                    layer_report.telemetry_summary.get(
+                        "answer_restoration_replay_count",
+                        layer_report.telemetry_summary.get("exact_replay_count", 0.0),
+                    )
                     for layer_report in report.layer_reports
                     if layer_report.layer == BenchmarkLayer.L3
                 )
