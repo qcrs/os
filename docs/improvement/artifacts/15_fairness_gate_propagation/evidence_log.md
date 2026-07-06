@@ -3,19 +3,23 @@
 ## Strong Evidence
 
 - Targeted tests passed: `38 passed`.
+- Review follow-up targeted tests passed: `40 passed`.
 - Full v2 tests passed: `212 passed`.
+- Review follow-up full v2 tests passed: `214 passed`.
 - Full repo tests passed: `507 passed`.
 - Runtime smoke passed.
 - `api + local` preflight passed.
 - Live `api + local` compare passed and generated inspectable JSON.
+- Review follow-up live `api + local` compare passed after raw-payload fairness hardening.
 - JSON inspection confirmed:
   - `pass_hard_gate = true`
   - `external_fairness_gate_coverage = true`
   - `no_external_fairness_gate_failures = true`
   - `external_fairness_gate_pass_count = 3`
   - `external_fairness_gate_failed_case_count = 0`
-  - `external_fairness_gate_failed_check_count = 0`
-  - per-case `failed_checks = []`
+- `external_fairness_gate_failed_check_count = 0`
+- per-case `failed_checks = []`
+- Review follow-up report has the same hard-gate facts at `/home/qcrs/statebus/runs/codex-raw-fairness-20260706/runtime/benchmark_reports/codex-raw-fairness-20260706-cold-start-compare-api.json`.
 
 ## Medium Evidence
 
@@ -31,4 +35,5 @@
 
 - `/home/qcrs/statebus/runs/codex-fairness-gate-20260706/runtime/benchmark_reports/codex-fairness-gate-20260706-cold-start-compare.json`
 - `/home/qcrs/statebus/runs/codex-fairness-gate-20260706/runtime/benchmark_reports/codex-fairness-gate-20260706-cold-start-compare-api.json`
-
+- `/home/qcrs/statebus/runs/codex-raw-fairness-20260706/runtime/benchmark_reports/codex-raw-fairness-20260706-cold-start-compare.json`
+- `/home/qcrs/statebus/runs/codex-raw-fairness-20260706/runtime/benchmark_reports/codex-raw-fairness-20260706-cold-start-compare-api.json`

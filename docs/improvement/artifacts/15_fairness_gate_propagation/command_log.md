@@ -15,6 +15,8 @@ cd /workspace/statebus/project
 
 Result: `38 passed in 21.82s`
 
+Review follow-up result: `40 passed in 20.48s`
+
 ## Full v2 Tests
 
 ```bash
@@ -22,6 +24,8 @@ Result: `38 passed in 21.82s`
 ```
 
 Result: `212 passed, 100 warnings in 388.02s`
+
+Review follow-up result: `214 passed, 100 warnings in 369.84s`
 
 ## Four-Mode Preflight
 
@@ -51,6 +55,23 @@ Result: all four returned `"ok": true`.
 
 Result: `fixed_answer_external_comparison_valid=true`
 
+Review follow-up live compare:
+
+```bash
+/usr/bin/python3 -m v2.benchmark.live_runner \
+  --suite compare \
+  --benchmark-tier dev \
+  --statebus-mode cold-start \
+  --role-path-mode api \
+  --embedding-mode local \
+  --suite-id codex-raw-fairness-20260706 \
+  --workspace-root /statebus/work/codex-raw-fairness-20260706/workspaces \
+  --runtime-root /statebus/runs/codex-raw-fairness-20260706/runtime \
+  --socket-path /tmp/crf.sock
+```
+
+Result: `fixed_answer_external_comparison_valid=true`
+
 ## JSON Inspection
 
 ```bash
@@ -59,6 +80,10 @@ jq '.fairness_manifest | {pass_hard_gate, external_fairness_gate_coverage, no_ex
 ```
 
 Result: hard gate passed, coverage true, no external fairness failures.
+
+Review follow-up JSON inspection used `/usr/bin/python3` because `jq` was not installed in the container.
+
+Result: hard gate passed, coverage true, no external fairness failures, and all external case `failed_checks` lists were empty.
 
 ## Runtime Smoke
 
@@ -84,4 +109,3 @@ git commit -m "Propagate external fairness gate failures"
 ```
 
 Result: `a6e951e`
-

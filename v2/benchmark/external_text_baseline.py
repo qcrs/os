@@ -122,21 +122,37 @@ def _fairness_gate(
 ) -> dict[str, object]:
     visible_candidate_keys = tuple(candidate.candidate_key() for candidate in route_candidates)
 
-    def _visible_choice_only(payload: dict[str, object] | None) -> bool:
+    def _raw_visible_choice_only(payload: dict[str, object] | None) -> bool:
         if not isinstance(payload, dict):
             return False
+        candidate_key = str(payload.get("candidate_key", "")).strip()
         route = str(payload.get("route", "")).strip()
-        tool_name = str(payload.get("tool_name", "")).strip()
-        if not route or not tool_name:
-            return False
-        return f"{route}::{tool_name}" in visible_candidate_keys
+        tool_name = str(payload.get("tool_name", payload.get("tool", ""))).strip()
+        # If route/tool fields are present, they must themselves name a visible
+        # candidate. Do not let a later assisted normalization rescue bad raw
+        # choices merely because another field mentions a visible candidate key.
+        if route or tool_name:
+            return bool(route and tool_name and f"{route}::{tool_name}" in visible_candidate_keys)
+        return bool(candidate_key and candidate_key in visible_candidate_keys)
 
-    # Dynamic check: no StateBus typed-state terms in combined prompts/outputs
-    no_typed_state_used = not _contains_forbidden_terms(combined_surface)
+    raw_role_surface = "\n".join(
+        stable_json_dumps(payload)
+        for payload in [
+            planner_payload_raw,
+            retriever_payload_raw,
+            executor_payload_raw,
+            summarizer_payload,
+        ]
+        if isinstance(payload, dict)
+    )
+    audited_surface = "\n".join(item for item in (combined_surface, raw_role_surface) if item)
 
-    # Dynamic check: oracle fields must not appear in any role payload or combined surface
+    # Dynamic check: no StateBus typed-state terms in prompts/outputs or raw role JSON
+    no_typed_state_used = not _contains_forbidden_terms(audited_surface)
+
+    # Dynamic check: oracle fields must not appear in prompts/outputs or raw role JSON
     _ORACLE_FIELDS = {"expected_route", "expected_tool_name", "expected_facts", "oracle_answer", "correctness_hint"}
-    no_metadata_leakage = not any(f in combined_surface for f in _ORACLE_FIELDS)
+    no_metadata_leakage = not any(f in audited_surface for f in _ORACLE_FIELDS)
 
     # Dynamic check: all 4 LLM outputs are non-empty dicts (no silently empty role)
     llm_only_decisions = all(
@@ -154,9 +170,9 @@ def _fairness_gate(
         "no_metadata_leakage": no_metadata_leakage,
         "llm_only_decisions": llm_only_decisions,
         # Per-role visible-candidate checks
-        "planner_visible_choice_only": _visible_choice_only(planner_payload),
-        "retriever_visible_choice_only": _visible_choice_only(retriever_payload),
-        "executor_visible_choice_only": _visible_choice_only(executor_payload),
+        "planner_visible_choice_only": _raw_visible_choice_only(planner_payload_raw),
+        "retriever_visible_choice_only": _raw_visible_choice_only(retriever_payload_raw),
+        "executor_visible_choice_only": _raw_visible_choice_only(executor_payload_raw),
     }
     failed_checks = tuple(name for name, passed in checks.items() if not passed)
     return {
