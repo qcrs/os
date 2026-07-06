@@ -44,6 +44,69 @@ def test_external_text_normalizes_candidate_key_route_payload() -> None:
     assert normalized["candidate_key"] == "worker_queue_starvation::semantic_retriever"
 
 
+def test_external_fairness_gate_rejects_raw_invisible_choice_after_normalization() -> None:
+    from v2.benchmark.external_text_baseline import PublicRouteCandidate, _fairness_gate
+
+    candidate = PublicRouteCandidate(
+        route="visible_route",
+        tool_name="semantic_retriever",
+        support_terms=(),
+        source_doc_hashes=(),
+        support_doc_count=0,
+    )
+    gate = _fairness_gate(
+        route_candidates=(candidate,),
+        planner_payload={"route": "visible_route", "tool_name": "semantic_retriever"},
+        planner_payload_raw={
+            "route": "invisible_route",
+            "tool_name": "unknown_tool",
+            "note": "visible_route::semantic_retriever",
+        },
+        retriever_payload_raw={"route": "visible_route", "tool_name": "semantic_retriever"},
+        executor_payload_raw={"route": "visible_route", "tool_name": "semantic_retriever"},
+        summarizer_payload={"summary": "ok"},
+        combined_surface="",
+    )
+
+    assert gate["pass_hard_gate"] is False
+    assert gate["checks"]["planner_visible_choice_only"] is False
+    assert "planner_visible_choice_only" in gate["failed_checks"]
+
+
+def test_external_fairness_gate_scans_raw_role_json_for_leakage_and_typed_state() -> None:
+    from v2.benchmark.external_text_baseline import PublicRouteCandidate, _fairness_gate
+
+    candidate = PublicRouteCandidate(
+        route="visible_route",
+        tool_name="semantic_retriever",
+        support_terms=(),
+        source_doc_hashes=(),
+        support_doc_count=0,
+    )
+    gate = _fairness_gate(
+        route_candidates=(candidate,),
+        planner_payload_raw={
+            "route": "visible_route",
+            "tool_name": "semantic_retriever",
+            "oracle_answer": "hidden truth",
+        },
+        retriever_payload_raw={"route": "visible_route", "tool_name": "semantic_retriever"},
+        executor_payload_raw={
+            "route": "visible_route",
+            "tool_name": "semantic_retriever",
+            "debug": "StateRef should not appear in external raw role JSON",
+        },
+        summarizer_payload={"summary": "ok"},
+        combined_surface="",
+    )
+
+    assert gate["pass_hard_gate"] is False
+    assert gate["checks"]["no_metadata_leakage"] is False
+    assert gate["checks"]["no_typed_state_used"] is False
+    assert "no_metadata_leakage" in gate["failed_checks"]
+    assert "no_typed_state_used" in gate["failed_checks"]
+
+
 def test_fixed_answer_family_loads_samples() -> None:
     family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
     assert len(family) == 3

@@ -18,6 +18,7 @@ The fix is fail-closed:
 2. Comparator hard-gate logic now requires full external fairness-gate coverage and zero failed external fairness cases.
 3. Compare diagnostics now surfaces `external_per_case_fairness_gate` as a named gate.
 4. The external planner prompt and deterministic parser were made consistent so the default external baseline satisfies the visible-candidate contract instead of failing due to prompt formatting.
+5. Review follow-up hardened the gate to evaluate raw role JSON, not only normalized payloads or prompt/output surfaces.
 
 ## Current Code Reality Map
 
@@ -58,6 +59,8 @@ Preflight facts:
 | --- | --- | --- | --- |
 | External per-case fairness gate not propagated | resolved in this pass | strong | Family reports now expose aggregate and per-case fairness gate data; comparator hard gate consumes it. |
 | Deterministic external planner failed visible-candidate gate due to prompt layout | resolved in this pass | strong | Prompt and parser now agree on inline `Visible route/tool candidates:`. |
+| Raw invisible route/tool choices could be rescued by normalization | resolved in review follow-up | strong | `_fairness_gate()` now checks raw route/tool or raw candidate_key fields directly. |
+| Raw role JSON contamination was not scanned | resolved in review follow-up | strong | Raw planner/retriever/executor/summarizer JSON now participates in metadata and typed-state leakage checks. |
 | External revenue fallback into gold answer | resolved before this pass | strong | Current tests assert empty revenue remains a failed extraction rather than gold replacement. |
 | `continuous-replay --family` ignored alias | resolved before this pass | medium | Covered by prior follow-up tests and docs. |
 | API + local replay full collection evidence | resolved before this pass | strong | `14_full_validation_rollup_20260706.md` records full collection pass after rerun. |
@@ -119,6 +122,8 @@ The prior failure mode was concrete: per-case `fairness_gate` existed only in le
 - adding aggregate external fairness metrics to `aggregated_metrics` and `telemetry_summary`;
 - requiring `external_fairness_gate_coverage` and `no_external_fairness_gate_failures` in comparator `pass_hard_gate`;
 - adding diagnostics gate `external_per_case_fairness_gate`.
+- checking raw planner/retriever/executor route/tool choices before any assisted normalization can rescue a bad choice;
+- scanning raw role JSON for oracle metadata and typed-state terms.
 
 Live `api + local` compare result:
 
@@ -211,6 +216,7 @@ Claims to avoid:
     - `external_fairness_gate_reported_case_count`
   - Added per-case `audit_summary.external_fairness_gate`.
   - Fixed planner prompt layout so `Visible route/tool candidates:` is parseable by deterministic mode.
+  - Review follow-up: raw route/tool visible-choice checks now use raw role payloads and raw role JSON is included in leakage scans.
 - `v2/benchmark/comparator_runner.py`
   - Hard gate now requires:
     - `external_fairness_gate_coverage == true`
@@ -241,6 +247,7 @@ cd /workspace/statebus/project
 Result:
 
 - `38 passed in 21.82s`
+- Review follow-up: `40 passed in 20.48s`
 
 ### Full v2 Tests
 
@@ -251,6 +258,7 @@ Result:
 Result:
 
 - `212 passed, 100 warnings in 388.02s`
+- Review follow-up: `214 passed, 100 warnings in 369.84s`
 
 ### Strong Mode Preflight
 
@@ -284,6 +292,8 @@ Primary reports:
 
 - `/home/qcrs/statebus/runs/codex-fairness-gate-20260706/runtime/benchmark_reports/codex-fairness-gate-20260706-cold-start-compare.json`
 - `/home/qcrs/statebus/runs/codex-fairness-gate-20260706/runtime/benchmark_reports/codex-fairness-gate-20260706-cold-start-compare-api.json`
+- Review follow-up: `/home/qcrs/statebus/runs/codex-raw-fairness-20260706/runtime/benchmark_reports/codex-raw-fairness-20260706-cold-start-compare.json`
+- Review follow-up: `/home/qcrs/statebus/runs/codex-raw-fairness-20260706/runtime/benchmark_reports/codex-raw-fairness-20260706-cold-start-compare-api.json`
 
 Inspected JSON facts:
 
@@ -296,6 +306,7 @@ Inspected JSON facts:
 - `external_fairness_gate_failed_case_count = 0`
 - `external_fairness_gate_failed_check_count = 0`
 - all external case audits have `failed_checks = []`
+- Review follow-up JSON also confirmed raw-payload-hardened `pass_hard_gate = true`, `external_fairness_gate_coverage = true`, `no_external_fairness_gate_failures = true`, and all external case `failed_checks = []`.
 
 Efficiency/debug facts from the same report:
 
@@ -337,6 +348,7 @@ Resolved:
 - Comparator hard gate now consumes the external per-case fairness aggregate.
 - Diagnostics can identify the failed external per-case fairness gate by name.
 - Default deterministic external planner no longer drops visible candidates due to prompt formatting.
+- Raw invisible choices and raw JSON-only contamination now fail the fairness gate.
 
 Still bounded:
 
@@ -387,6 +399,8 @@ Files:
 
 - `/home/qcrs/statebus/runs/codex-fairness-gate-20260706/runtime/benchmark_reports/codex-fairness-gate-20260706-cold-start-compare.json`
 - `/home/qcrs/statebus/runs/codex-fairness-gate-20260706/runtime/benchmark_reports/codex-fairness-gate-20260706-cold-start-compare-api.json`
+- `/home/qcrs/statebus/runs/codex-raw-fairness-20260706/runtime/benchmark_reports/codex-raw-fairness-20260706-cold-start-compare.json`
+- `/home/qcrs/statebus/runs/codex-raw-fairness-20260706/runtime/benchmark_reports/codex-raw-fairness-20260706-cold-start-compare-api.json`
 
 ### Key JSON Fields
 
@@ -413,3 +427,4 @@ Suite report:
 
 - `a6e951e` - `Propagate external fairness gate failures`
 - Documentation/audit commit: recorded in final response after commit creation.
+- Review follow-up commit: recorded in final response after commit creation.

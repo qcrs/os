@@ -11,4 +11,6 @@
 - 2026-07-06: Ran targeted tests, full v2 tests, four-mode preflight, live `api + local` compare, runtime smoke, and full repo pytest in the container.
 - 2026-07-06: Inspected generated compare JSON reports and recorded key fields in the main audit document.
 - 2026-07-06: Created implementation commit `a6e951e`.
-
+- 2026-07-06: Review follow-up found two remaining fairness gaps: normalized payloads could rescue raw invisible route/tool choices, and raw role JSON was not scanned for leakage.
+- 2026-07-06: Hardened `_fairness_gate()` to validate raw role choices and include raw role JSON in metadata/typed-state scans.
+- 2026-07-06: Added targeted regression tests and reran targeted tests, live `api + local` compare, JSON inspection, and full `tests/v2`.
