@@ -721,7 +721,7 @@ def _family_layer_evidence(report: BenchmarkFamilyReport) -> dict[str, object]:
         "answer_restoration_replay_count": float(
             report.telemetry_summary.get(
                 "answer_restoration_replay_count",
-                report.telemetry_summary.get("exact_replay_count", 0.0),
+                0.0,
             )
         ),
         "skipped_step_count": float(report.telemetry_summary.get("skipped_step_count", 0.0)),
@@ -750,7 +750,7 @@ def _case_round_evidence(case: BenchmarkCaseReport) -> dict[str, object]:
         ),
         "exact_replay_count": float(case.metrics.get("exact_replay_count", 0.0)),
         "answer_restoration_replay_count": float(
-            case.metrics.get("answer_restoration_replay_count", case.metrics.get("exact_replay_count", 0.0))
+            case.metrics.get("answer_restoration_replay_count", 0.0)
         ),
         "skipped_step_count": float(case.metrics.get("skipped_step_count", 0.0)),
         "decision_reason": str(replay.get("decision_reason", "")),
@@ -1217,7 +1217,7 @@ def run_continuous_benchmark_suite(
             ),
             "L3_answer_restoration_replay_count": layer_reports[3].telemetry_summary.get(
                 "answer_restoration_replay_count",
-                layer_reports[3].telemetry_summary.get("exact_replay_count", 0.0),
+                0.0,
             ),
         },
         comparison_summary={
@@ -1231,7 +1231,7 @@ def run_continuous_benchmark_suite(
             ),
             "answer_restoration_replay_count": layer_reports[3].telemetry_summary.get(
                 "answer_restoration_replay_count",
-                layer_reports[3].telemetry_summary.get("exact_replay_count", 0.0),
+                0.0,
             ),
             **replay_summary_counts,
         },
@@ -1359,7 +1359,7 @@ def run_continuous_benchmark_collection(
             sum(
                 layer_report.telemetry_summary.get(
                     "answer_restoration_replay_count",
-                    layer_report.telemetry_summary.get("exact_replay_count", 0.0),
+                    0.0,
                 )
                 for report in family_reports
                 for layer_report in report.layer_reports
@@ -1448,7 +1448,7 @@ def run_continuous_benchmark_collection(
                 next(
                     layer_report.telemetry_summary.get(
                         "answer_restoration_replay_count",
-                        layer_report.telemetry_summary.get("exact_replay_count", 0.0),
+                        0.0,
                     )
                     for layer_report in report.layer_reports
                     if layer_report.layer == BenchmarkLayer.L3

@@ -241,10 +241,7 @@ def test_continuous_runner_executes_replay_family(tmp_path: Path) -> None:
         == l3_report.telemetry_summary["validated_replay_count"]
     )
     assert l3_report.telemetry_summary["exact_replay_count"] >= 3.0
-    assert (
-        l3_report.telemetry_summary["answer_restoration_replay_count"]
-        == l3_report.telemetry_summary["exact_replay_count"]
-    )
+    assert l3_report.telemetry_summary["answer_restoration_replay_count"] == 0.0
     assert l3_report.telemetry_summary["skipped_step_count"] >= 11.0
     assert l3_report.telemetry_summary["downgrade_execution_goal_count"] >= 4.0
     validated_case = next(case for case in l3_report.cases if case.task_id == "replay-longdoc-003")
@@ -264,7 +261,7 @@ def test_continuous_runner_executes_replay_family(tmp_path: Path) -> None:
     exact_output = json.loads(Path(exact_case.output_artifact_path).read_text(encoding="utf-8"))
     assert exact_case.replay_class == "exact_replay"
     assert exact_case.metrics["exact_replay_count"] == 1.0
-    assert exact_case.metrics["answer_restoration_replay_count"] == 1.0
+    assert exact_case.metrics["answer_restoration_replay_count"] == 0.0
     assert exact_case.metrics["validated_downgraded_reuse_count"] == 0.0
     assert exact_case.metrics["skipped_step_count"] == 2.0
     assert exact_output["restored_replay_class"] == "exact_replay"
@@ -515,10 +512,7 @@ def test_continuous_runner_executes_replay_collection(tmp_path: Path) -> None:
         == report.collection_summary["validated_replay_count"]
     )
     assert report.collection_summary["exact_replay_count"] >= 3.0
-    assert (
-        report.collection_summary["answer_restoration_replay_count"]
-        == report.collection_summary["exact_replay_count"]
-    )
+    assert report.collection_summary["answer_restoration_replay_count"] == 0.0
     assert report.collection_summary["replay_target_round_count"] == 16.0
     assert report.collection_summary["replay_observed_round_count"] == 16.0
     assert report.collection_summary["replay_missing_target_round_count"] == 0.0
