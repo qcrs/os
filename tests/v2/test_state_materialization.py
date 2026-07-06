@@ -50,6 +50,50 @@ def test_layered_state_store_memfd_mode_round_trip(tmp_path: Path) -> None:
     store.teardown()
 
 
+def test_layered_state_store_backend_name_survives_release(tmp_path: Path) -> None:
+    store = LayeredStateStore(
+        root=tmp_path / "state",
+        policy=LayeredStoragePolicy.for_state_pool_mode("auto"),
+    )
+    store.publish(ref_id="state-auto", object_kind="EMBEDDING_STATE", payload=b"auto-payload")
+    assert store.backend_name == StorageKind.SHARED_MEMORY.value
+    store.release("state-auto")
+    assert store.backend_name == StorageKind.SHARED_MEMORY.value
+
+
+def test_layered_state_store_memfd_unavailable_reports_fallback_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("v2.state.store._memfd_create_safe", lambda _name: None)
+    store = LayeredStateStore(
+        root=tmp_path / "state",
+        policy=LayeredStoragePolicy.for_state_pool_mode("memfd"),
+    )
+    store.publish(ref_id="state-fallback", object_kind="EMBEDDING_STATE", payload=b"fallback")
+    assert store.backend_name == StorageKind.SHARED_MEMORY.value
+    assert store.memfd_transfer_count == 0
+    store.release("state-fallback")
+    assert store.backend_name == StorageKind.SHARED_MEMORY.value
+
+
+def test_layered_state_store_memfd_fallback_honors_shared_memory_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("v2.state.store._memfd_create_safe", lambda _name: None)
+    policy = LayeredStoragePolicy.for_state_pool_mode("memfd")
+    policy.shared_memory_budget_bytes = 4
+    store = LayeredStateStore(root=tmp_path / "state", policy=policy)
+    handle = store.publish(ref_id="state-large", object_kind="EMBEDDING_STATE", payload=b"large-payload")
+    assert handle.storage_kind == StorageKind.MMAP_FILE
+    assert handle.decision.fallback_used is True
+    assert handle.decision.reason == "memfd_unavailable"
+    assert store.backend_name == StorageKind.MMAP_FILE.value
+    assert store.load("state-large") == b"large-payload"
+    store.teardown()
+
+
 def test_layered_state_store_finalizer_cleans_orphan_shared_memory(tmp_path: Path) -> None:
     from multiprocessing.shared_memory import SharedMemory
 

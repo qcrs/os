@@ -151,6 +151,30 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     assert payload["metadata"]["comparison_contract"] == "same_mainline_internal_attribution_ladder"
 
 
+def test_minimal_benchmark_suite_reports_actual_state_pool_backend_after_release(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("v2.state.store._memfd_create_safe", lambda _name: None)
+    suite_report = run_minimal_benchmark_suite(
+        samples=load_sample_family(Path("v2/benchmark/samples/formal_financial_family"))[:1],
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        suite_id="suite-state-pool-fallback-test",
+        state_pool_mode="memfd",
+    )
+    assert suite_report.metadata["state_pool_mode_requested"] == "memfd"
+    assert suite_report.metadata["state_pool_mode_used"] == "shared_memory"
+    assert suite_report.metadata["memfd_transfer_count"] == 0.0
+    assert suite_report.layer_reports[3].telemetry_summary["state_pool_shared_memory_mode_count"] == 1.0
+
+    payload = json.loads(Path(suite_report.report_path).read_text(encoding="utf-8"))
+    assert payload["state_pool_mode_requested"] == "memfd"
+    assert payload["state_pool_mode_used"] == "shared_memory"
+    assert payload["memfd_transfer_count"] == 0.0
+
+
 def test_minimal_benchmark_family_api_mode_accepts_compact_role_alias_responses(
     tmp_path: Path,
     monkeypatch,
