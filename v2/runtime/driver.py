@@ -1227,9 +1227,7 @@ class RuntimeDriver:
                     "exact_replay_count": (
                         1.0 if runtime_input.replay_decision.replay_class == ReplayClass.EXACT_REPLAY else 0.0
                     ),
-                    "answer_restoration_replay_count": (
-                        1.0 if runtime_input.replay_decision.replay_class == ReplayClass.EXACT_REPLAY else 0.0
-                    ),
+                    "answer_restoration_replay_count": 0.0,
                     "pruning_gain_bytes": float(runtime_input.retrieval.pruning_profile.pruning_gain_bytes),
                     "codeact_plan_stage_count": (
                         0.0 if runtime_input.codeact_plan is None else float(runtime_input.codeact_plan.stage_count)

@@ -7,6 +7,9 @@
 > 且 `--state-pool-mode memfd` 路径记录 25 次 memfd transfer、25 次 memfd publish、247046 bytes。
 > 本次没有重新运行 formal external API compare，因此不要把本文旧 formal compare 段落当作
 > 2026-07-06 claim-upgrade 的 formal external superiority 证据。
+> 本文第八节 CodeAct 数据也是 2026-07-04 诊断记录；当前主线只可表述为
+> bounded CodeAct / controlled execution path，不能写成 formal benchmark 已证明
+> realtime LLM code generation。
 
 > 日期：2026-07-04（final update after full validation cycle）
 > 分支：`feat/statebus-v2-container-runtime`
@@ -225,6 +228,10 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 
 ## 八、Bounded CodeAct — 5 runs
 
+> 本节是历史诊断记录。它可证明 bounded CodeAct 执行链路在该诊断包中可运行，
+> 但不能作为当前 formal benchmark 主线的 realtime LLM code generation 证明。
+> 当前对外 claim 请使用 `17f_safe_claim_language.md` 中的 bounded CodeAct 表述。
+
 | 指标 | run1 | run2 | run3 | run4 | run5 |
 |---|---|---|---|---|---|
 | ok | True | True | True | True | True |
@@ -235,7 +242,8 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 | generated_by | llm_api | llm_api | llm_api | llm_api | llm_api |
 
 **bwrap sandbox** 执行稳定（5/5 无 sandbox fallback）。  
-**LLM 生成**：5/5 runs 全部首轮通过，`generation_fallback_used=False`，repair loop 未触发。
+**LLM 生成诊断**：该历史诊断包中 5/5 runs 全部首轮通过，`generation_fallback_used=False`，
+repair loop 未触发；此结论不得升级成当前 formal benchmark 已证明 realtime LLM code generation。
 
 > Formal compare telemetry 中：`codeact_sandbox_bwrap_count=8`，`codeact_sandbox_fallback_count=0`——在完整 StateBus pipeline 中 bwrap 执行全部成功。
 
@@ -267,7 +275,7 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 | 第3类任务族（incident_diagnosis_v2）replay 有效 | `eligible_for_replay_headline=True`，skipped_steps=16 | **强** |
 | replay 安全性 | negative audit 7/7 pass | **强** |
 | 端到端 bwrap sandbox 稳定 | 8/8 formal + 5/5 CodeAct demo | **强** |
-| CodeAct LLM 生成稳定性 | 5/5（`generation_fallback_used=False`，attempt_count=1） | **强** |
+| CodeAct LLM 生成诊断记录 | 2026-07-04 诊断包中 5/5（`generation_fallback_used=False`，attempt_count=1）；不作为当前 formal benchmark realtime codegen claim | **历史诊断，谨慎引用** |
 | repeated compare 下 CodeAct stage 显著降耗 | 2455→843ms（-65.68%） | **强** |
 | 关键词/标签检索 | SQLite FTS5，lookup_by_keyword + lookup_by_tags | **强** |
 | POSIX shared_memory + memfd state-pool 后端 | MemfdStatePool 能力测试 + 2026-07-06 formal benchmark memfd transfer metrics | **强** |
