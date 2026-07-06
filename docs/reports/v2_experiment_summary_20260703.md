@@ -1,5 +1,13 @@
 # StateBus v2 实验数据汇总
 
+> **2026-07-06 claim-upgrade addendum:** 本文保留 2026-07-04 实验记录，但当前对外 claim 应优先读取
+> `docs/improvement/19_claim_upgrade_completion_report_20260706.md` 和
+> `docs/improvement/artifacts/17_final_system_audit/17f_safe_claim_language.md`。
+> 本次新增可声明证据为 local-embedding formal benchmark：25 cases / 5 families / 25 quality passes，
+> 且 `--state-pool-mode memfd` 路径记录 25 次 memfd transfer、25 次 memfd publish、247046 bytes。
+> 本次没有重新运行 formal external API compare，因此不要把本文旧 formal compare 段落当作
+> 2026-07-06 claim-upgrade 的 formal external superiority 证据。
+
 > 日期：2026-07-04（final update after full validation cycle）
 > 分支：`feat/statebus-v2-container-runtime`
 > HEAD：`f424d49`
@@ -20,9 +28,13 @@ Preflight：`ok=True`，`role_path_mode=api`，`embedding_mode=local`
 
 ---
 
-## 二、Formal Compare — 核心论点
+## 二、Formal Compare — 2026-07-04 历史记录
 
 **配置**：`--suite compare --benchmark-tier formal --role-path-mode api --embedding-mode local`
+
+> 注意：本节记录 2026-07-04 的历史 API compare 结果。2026-07-06 claim-upgrade
+> 没有重新运行 formal external API compare，因此本节不能作为本次升级后的
+> formal external superiority 新证据。
 
 ### 结论
 
@@ -243,7 +255,9 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 
 | 声明 | 依据 | 强度 |
 |---|---|---|
-| StateBus 质量优于 pure-text external（formal tier） | 8/8 vs 6/8，`formal_superiority_claim_allowed=True` | **强** |
+| 形式化多样化推理验证 | 2026-07-06 local-embedding formal run：25 cases / 5 families / 25 quality passes | **强** |
+| memfd formal benchmark 主线可观测 | `state_pool_mode_used=memfd`，25 transfers，25 publishes，247046 bytes | **强** |
+| StateBus 质量优于 pure-text external（formal tier） | 2026-07-04 历史 formal compare 记录；2026-07-06 claim-upgrade 未重新运行 API compare，不作为新增外部优势 claim | **历史证据，谨慎引用** |
 | typed carrier 节省 LLM tokens | -743（formal compare），-395（carrier内部） | **强** |
 | typed carrier 节省 prompt bytes | -10,928 B（formal），-1,922 B（内部） | **强** |
 | typed carrier 降低执行时间 | carrier-compare task_ms -6,114ms | **强** |
@@ -256,7 +270,7 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 | CodeAct LLM 生成稳定性 | 5/5（`generation_fallback_used=False`，attempt_count=1） | **强** |
 | repeated compare 下 CodeAct stage 显著降耗 | 2455→843ms（-65.68%） | **强** |
 | 关键词/标签检索 | SQLite FTS5，lookup_by_keyword + lookup_by_tags | **强** |
-| POSIX shared_memory 零拷贝 + memfd_create | MemfdStatePool，shm fallback，SCM_RIGHTS | **强** |
+| POSIX shared_memory + memfd state-pool 后端 | MemfdStatePool 能力测试 + 2026-07-06 formal benchmark memfd transfer metrics | **强** |
 
 ---
 
@@ -265,7 +279,7 @@ skipped_steps=19：memory replay 跳过了 19 个执行步骤，质量全部保�
 | 问题 | 优先级 | 方向 |
 |---|---|---|
 | `system_overhead_ms_delta` +13,284 ms（formal compare 单次冷启动） | 低 | 继续减少非 LLM runtime 开销 |
-| formal compare `comparison_valid=False` | 低 | 原因是 external lane `quality_floor_gate_failed`，不影响 `formal_superiority_claim_allowed=True` 与 `formal_efficiency_claim_allowed=True` |
+| formal compare `comparison_valid=False` | 低 | 历史记录原因是 external lane `quality_floor_gate_failed`；2026-07-06 claim-upgrade 不把该历史结果作为新增 formal external superiority 证据 |
 | repeated compare 的 CodeAct cache 目前只在同进程热运行显著生效 | 低 | 若需要跨进程收益，可继续做持久化 cache |
 
 ---
