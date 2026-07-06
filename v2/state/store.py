@@ -93,10 +93,17 @@ class LayeredStoragePolicy:
         object_kind: str,
         preferred: StorageKind,
         reason: str,
+        size_bytes: int = 0,
+        shared_memory_bytes_used: int = 0,
     ) -> StorageDecision:
         preferences = self.kind_preferences.get(object_kind, (StorageKind.MMAP_FILE,))
         for candidate in preferences:
             if candidate != preferred:
+                if (
+                    candidate == StorageKind.SHARED_MEMORY
+                    and shared_memory_bytes_used + size_bytes > self.shared_memory_budget_bytes
+                ):
+                    continue
                 return StorageDecision(
                     object_kind=object_kind,
                     selected=candidate,
@@ -159,6 +166,8 @@ class LayeredStateStore:
     shared_memory_bytes_used: int = 0
     memfd_transfer_count: int = 0
     memfd_bytes_transferred: int = 0
+    storage_publish_counts: dict[StorageKind, int] = field(default_factory=dict)
+    last_published_storage_kind: StorageKind | None = None
     _shared_segments: dict[str, SharedMemory] = field(default_factory=dict, init=False, repr=False)
     _memfd_fds: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _finalizer: weakref.finalize | None = field(default=None, init=False, repr=False, compare=False)
@@ -184,11 +193,13 @@ class LayeredStateStore:
 
     @property
     def backend_name(self) -> str:
-        if self.memfd_transfer_count > 0:
+        if self.last_published_storage_kind is not None:
+            return self.last_published_storage_kind.value
+        if self.storage_publish_counts.get(StorageKind.MEMFD, 0) > 0:
             return StorageKind.MEMFD.value
-        if any(handle.storage_kind == StorageKind.SHARED_MEMORY for handle in self.materializations.values()):
+        if self.storage_publish_counts.get(StorageKind.SHARED_MEMORY, 0) > 0:
             return StorageKind.SHARED_MEMORY.value
-        if any(handle.storage_kind == StorageKind.MMAP_FILE for handle in self.materializations.values()):
+        if self.storage_publish_counts.get(StorageKind.MMAP_FILE, 0) > 0:
             return StorageKind.MMAP_FILE.value
         return self.policy.state_pool_mode
 
@@ -207,9 +218,13 @@ class LayeredStateStore:
                 object_kind=object_kind,
                 preferred=decision.preferred,
                 reason=f"{decision.selected.value}_unavailable",
+                size_bytes=len(payload),
+                shared_memory_bytes_used=self.shared_memory_bytes_used,
             )
             handle = self._materialize(ref_id=ref_id, object_kind=object_kind, payload=payload, decision=fallback)
         self.materializations[ref_id] = handle
+        self.storage_publish_counts[handle.storage_kind] = self.storage_publish_counts.get(handle.storage_kind, 0) + 1
+        self.last_published_storage_kind = handle.storage_kind
         return handle
 
     def load(self, ref_id: str) -> bytes:
