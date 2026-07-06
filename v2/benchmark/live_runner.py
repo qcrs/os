@@ -18,6 +18,7 @@ from v2.benchmark.flagship_ablation import run_non_text_flagship_ablation_report
 from v2.benchmark.minimal_runner import load_sample_family, run_minimal_benchmark_suite
 from v2.benchmark.reporting import continuous_collection_report_to_dict, suite_report_to_dict
 from v2.benchmark.replay_negative_audit import run_replay_negative_audit
+from v2.benchmark.task_registry import formal_family_payload, load_registered_formal_samples
 from v2.runtime import runtime_preflight
 from v2.utils import stable_json_dumps
 
@@ -169,6 +170,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="deterministic",
         choices=("deterministic", "local"),
         help="retrieval embedding mode",
+    )
+    parser.add_argument(
+        "--state-pool-mode",
+        default="auto",
+        choices=("auto", "shared_memory", "memfd"),
+        help="semantic state pool backend selection for StateBus runtime lanes",
     )
     parser.add_argument(
         "--suite-id",
@@ -347,7 +354,11 @@ def main() -> None:
             raise SystemExit("formal tier does not expose standalone external suites; use --suite compare")
         if args.suite not in {"compare"}:
             # Non-compare formal suites: use MinimalBenchmarkSample via load_sample_family
-            formal_samples = load_sample_family(family_dir)
+            formal_samples = (
+                load_registered_formal_samples()
+                if args.family_dir is None and not args.family
+                else load_sample_family(family_dir)
+            )
             formal_report = run_minimal_benchmark_suite(
                 samples=formal_samples,
                 workspace_root=args.workspace_root,
@@ -359,9 +370,12 @@ def main() -> None:
                 seed_replay_memory_by_layer={},
                 benchmark_tier="formal",
                 claim_level="first_pass",
+                state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
             )
-            print(stable_json_dumps(suite_report_to_dict(formal_report)))
+            payload = suite_report_to_dict(formal_report)
+            payload["formal_registry"] = formal_family_payload()
+            print(stable_json_dumps(payload))
             return
         # formal + compare: fall through to the dev compare path below,
         # using load_fixed_answer_family (formal samples now have expected_route/tool/hint)
@@ -385,6 +399,7 @@ def main() -> None:
             seed_replay_memory=args.seed_replay_memory,
             benchmark_tier="dev",
             claim_level="prototype",
+            state_pool_mode=args.state_pool_mode,
             persistence_profile=args.persistence_profile,
         )
         print(stable_json_dumps(suite_report_to_dict(report)))
@@ -413,6 +428,7 @@ def main() -> None:
             statebus_mode=args.statebus_mode,
             benchmark_tier=args.benchmark_tier,
             claim_level="prototype",
+            state_pool_mode=args.state_pool_mode,
             persistence_profile=args.persistence_profile,
         )
         print(stable_json_dumps(report.canonical_payload()))
@@ -430,6 +446,7 @@ def main() -> None:
         seed_replay_memory=args.seed_replay_memory,
         benchmark_tier=args.benchmark_tier,
         claim_level="prototype",
+        state_pool_mode=args.state_pool_mode,
         persistence_profile=args.persistence_profile,
     )
     print(stable_json_dumps(report.canonical_payload()))

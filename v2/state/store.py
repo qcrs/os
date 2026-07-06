@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from mmap import ACCESS_READ, mmap
 from multiprocessing.shared_memory import SharedMemory
+import os
 from pathlib import Path
+import platform
 import weakref
 
 from v2.contracts import StorageKind
@@ -21,6 +23,7 @@ class StorageDecision:
 
 @dataclass
 class LayeredStoragePolicy:
+    state_pool_mode: str = "auto"
     shared_memory_budget_bytes: int = 64 * 1024 * 1024
     kind_preferences: dict[str, tuple[StorageKind, ...]] = field(
         default_factory=lambda: {
@@ -34,6 +37,26 @@ class LayeredStoragePolicy:
             "EXECUTION_ARTIFACT": (StorageKind.WORKSPACE_ROOT, StorageKind.CAS_SIDECAR),
         }
     )
+
+    @classmethod
+    def for_state_pool_mode(cls, mode: str = "auto") -> "LayeredStoragePolicy":
+        normalized = _normalize_state_pool_mode(mode)
+        policy = cls(state_pool_mode=normalized)
+        if normalized == "memfd":
+            policy.kind_preferences.update(
+                {
+                    "EMBEDDING_STATE": (StorageKind.MEMFD, StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
+                    "DENSE_SEMANTIC_STATE": (StorageKind.MEMFD, StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
+                }
+            )
+        elif normalized == "shared_memory":
+            policy.kind_preferences.update(
+                {
+                    "EMBEDDING_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
+                    "DENSE_SEMANTIC_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
+                }
+            )
+        return policy
 
     def decide(
         self,
@@ -100,6 +123,8 @@ class MaterializedStateHandle:
     decision: StorageDecision
     metadata_path: Path
     shared_memory_name: str = ""
+    memfd_name: str = ""
+    memfd_fd: int | None = field(default=None, compare=False, repr=False)
     mmap_path: Path | None = None
     inline_payload: bytes = b""
     root_id: str = "state_root"
@@ -119,6 +144,8 @@ class MaterializedStateHandle:
                 "reason": self.decision.reason,
             },
             "shared_memory_name": self.shared_memory_name,
+            "memfd_name": self.memfd_name,
+            "memfd_descriptor_available": self.memfd_fd is not None,
             "mmap_path": "" if self.mmap_path is None else str(self.mmap_path),
             "root_id": self.root_id,
         }
@@ -130,14 +157,22 @@ class LayeredStateStore:
     policy: LayeredStoragePolicy = field(default_factory=LayeredStoragePolicy)
     materializations: dict[str, MaterializedStateHandle] = field(default_factory=dict)
     shared_memory_bytes_used: int = 0
+    memfd_transfer_count: int = 0
+    memfd_bytes_transferred: int = 0
     _shared_segments: dict[str, SharedMemory] = field(default_factory=dict, init=False, repr=False)
+    _memfd_fds: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _finalizer: weakref.finalize | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
         self.mmap_dir.mkdir(parents=True, exist_ok=True)
-        self._finalizer = weakref.finalize(self, _cleanup_orphan_shared_segments, self._shared_segments)
+        self._finalizer = weakref.finalize(
+            self,
+            _cleanup_orphan_state_resources,
+            self._shared_segments,
+            self._memfd_fds,
+        )
 
     @property
     def metadata_dir(self) -> Path:
@@ -146,6 +181,16 @@ class LayeredStateStore:
     @property
     def mmap_dir(self) -> Path:
         return self.root / "mmap"
+
+    @property
+    def backend_name(self) -> str:
+        if self.memfd_transfer_count > 0:
+            return StorageKind.MEMFD.value
+        if any(handle.storage_kind == StorageKind.SHARED_MEMORY for handle in self.materializations.values()):
+            return StorageKind.SHARED_MEMORY.value
+        if any(handle.storage_kind == StorageKind.MMAP_FILE for handle in self.materializations.values()):
+            return StorageKind.MMAP_FILE.value
+        return self.policy.state_pool_mode
 
     def publish(self, *, ref_id: str, object_kind: str, payload: bytes) -> MaterializedStateHandle:
         decision = self.policy.decide(
@@ -156,12 +201,12 @@ class LayeredStateStore:
         try:
             handle = self._materialize(ref_id=ref_id, object_kind=object_kind, payload=payload, decision=decision)
         except OSError:
-            if decision.selected != StorageKind.SHARED_MEMORY:
+            if decision.selected not in {StorageKind.SHARED_MEMORY, StorageKind.MEMFD}:
                 raise
             fallback = self.policy.fallback(
                 object_kind=object_kind,
                 preferred=decision.preferred,
-                reason="shared_memory_unavailable",
+                reason=f"{decision.selected.value}_unavailable",
             )
             handle = self._materialize(ref_id=ref_id, object_kind=object_kind, payload=payload, decision=fallback)
         self.materializations[ref_id] = handle
@@ -169,6 +214,10 @@ class LayeredStateStore:
 
     def load(self, ref_id: str) -> bytes:
         handle = self.materializations[ref_id]
+        if handle.storage_kind == StorageKind.MEMFD:
+            fd = self._memfd_fds[ref_id]
+            os.lseek(fd, 0, os.SEEK_SET)
+            return os.read(fd, handle.size_bytes)
         if handle.storage_kind == StorageKind.SHARED_MEMORY:
             shared = self._shared_segments.get(ref_id)
             if shared is None:
@@ -198,6 +247,13 @@ class LayeredStateStore:
             finally:
                 shared.unlink()
             self.shared_memory_bytes_used = max(0, self.shared_memory_bytes_used - handle.size_bytes)
+        elif handle.storage_kind == StorageKind.MEMFD:
+            fd = self._memfd_fds.pop(ref_id, None)
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
         elif handle.storage_kind == StorageKind.MMAP_FILE and handle.mmap_path is not None:
             if handle.mmap_path.exists():
                 handle.mmap_path.unlink()
@@ -221,6 +277,13 @@ class LayeredStateStore:
     ) -> MaterializedStateHandle:
         if decision.selected == StorageKind.SHARED_MEMORY:
             handle = self._materialize_shared_memory(
+                ref_id=ref_id,
+                object_kind=object_kind,
+                payload=payload,
+                decision=decision,
+            )
+        elif decision.selected == StorageKind.MEMFD:
+            handle = self._materialize_memfd(
                 ref_id=ref_id,
                 object_kind=object_kind,
                 payload=payload,
@@ -265,6 +328,36 @@ class LayeredStateStore:
             decision=decision,
             metadata_path=self.metadata_dir / f"{ref_id}.json",
             shared_memory_name=shared.name,
+        )
+
+    def _materialize_memfd(
+        self,
+        *,
+        ref_id: str,
+        object_kind: str,
+        payload: bytes,
+        decision: StorageDecision,
+    ) -> MaterializedStateHandle:
+        memfd_name = f"statebus_v2_{ref_id[:48]}"
+        fd = _memfd_create_safe(memfd_name)
+        if fd is None:
+            raise OSError("memfd_create_unavailable")
+        os.ftruncate(fd, max(1, len(payload)))
+        _write_all(fd, payload)
+        os.lseek(fd, 0, os.SEEK_SET)
+        self._memfd_fds[ref_id] = fd
+        self.memfd_transfer_count += 1
+        self.memfd_bytes_transferred += len(payload)
+        return MaterializedStateHandle(
+            ref_id=ref_id,
+            object_kind=object_kind,
+            storage_kind=StorageKind.MEMFD,
+            size_bytes=len(payload),
+            blob_hash=sha256_digest(payload),
+            decision=decision,
+            metadata_path=self.metadata_dir / f"{ref_id}.json",
+            memfd_name=memfd_name,
+            memfd_fd=fd,
         )
 
     def _materialize_mmap_file(
@@ -317,7 +410,45 @@ class LayeredStateStore:
         handle.metadata_path.write_text(stable_json_dumps(handle.metadata_payload()) + "\n", encoding="utf-8")
 
 
-def _cleanup_orphan_shared_segments(shared_segments: dict[str, SharedMemory]) -> None:
+def _normalize_state_pool_mode(mode: str) -> str:
+    normalized = mode.strip().lower().replace("-", "_")
+    if normalized not in {"auto", "shared_memory", "memfd"}:
+        raise ValueError(f"unsupported state pool mode: {mode}")
+    return normalized
+
+
+def _memfd_create(name: str) -> int:
+    if hasattr(os, "memfd_create"):
+        flags = int(getattr(os, "MFD_CLOEXEC", 0x0001))
+        return int(os.memfd_create(name, flags=flags))
+    import ctypes
+
+    syscall_number = 319 if platform.machine() == "x86_64" else 385
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    fd = int(libc.syscall(syscall_number, name.encode("utf-8"), 0x0001))
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "memfd_create failed")
+    return fd
+
+
+def _memfd_create_safe(name: str) -> int | None:
+    try:
+        return _memfd_create(name)
+    except (AttributeError, OSError):
+        return None
+
+
+def _write_all(fd: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    total = 0
+    while total < len(payload):
+        written = os.write(fd, view[total:])
+        if written <= 0:
+            raise OSError("memfd_write_failed")
+        total += written
+
+
+def _cleanup_orphan_state_resources(shared_segments: dict[str, SharedMemory], memfd_fds: dict[str, int]) -> None:
     for ref_id, shared in list(shared_segments.items()):
         try:
             shared.close()
@@ -328,3 +459,9 @@ def _cleanup_orphan_shared_segments(shared_segments: dict[str, SharedMemory]) ->
         except FileNotFoundError:
             pass
         shared_segments.pop(ref_id, None)
+    for ref_id, fd in list(memfd_fds.items()):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        memfd_fds.pop(ref_id, None)

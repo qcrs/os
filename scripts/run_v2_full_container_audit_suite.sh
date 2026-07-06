@@ -293,7 +293,8 @@ run_live_stage \
   "$PRIMARY_ROLE_PATH_MODE" \
   "$PRIMARY_EMBEDDING_MODE" \
   "formal" \
-  --benchmark-tier formal
+  --benchmark-tier formal \
+  --state-pool-mode memfd
 formal_primary_exit="$LAST_STAGE_EXIT_CODE"
 mark_required_failure_if_needed "$formal_primary_exit"
 
@@ -303,7 +304,8 @@ run_live_stage \
   "$PRIMARY_ROLE_PATH_MODE" \
   "$PRIMARY_EMBEDDING_MODE" \
   "compare" \
-  --benchmark-tier dev
+  --benchmark-tier dev \
+  --state-pool-mode memfd
 compare_primary_exit="$LAST_STAGE_EXIT_CODE"
 mark_required_failure_if_needed "$compare_primary_exit"
 
@@ -444,6 +446,10 @@ def selected_metrics(stage: str, payload: dict) -> dict[str, object]:
                 "L3_reuse_gain": waterfall.get("L3_reuse_gain"),
                 "control_bytes_delta_l0_to_l1": comparison.get("control_bytes_delta_l0_to_l1"),
                 "pruning_bytes_saved_vs_l0": comparison.get("pruning_bytes_saved_vs_l0"),
+                "state_pool_mode_used": payload.get("state_pool_mode_used"),
+                "memfd_transfer_count": payload.get("memfd_transfer_count"),
+                "memfd_bytes_transferred": payload.get("memfd_bytes_transferred"),
+                "formal_family_count": payload.get("family_count"),
             }
         )
     elif stage == "08_compare_primary":
@@ -469,6 +475,12 @@ def selected_metrics(stage: str, payload: dict) -> dict[str, object]:
                 ),
                 "external_fairness_gate_pass_count": fairness.get("external_fairness_gate_pass_count"),
                 "fairness_pass_hard_gate": fairness.get("pass_hard_gate"),
+                "state_pool_mode_used": payload.get("state_pool_mode_used")
+                or metadata.get("state_pool_mode_used"),
+                "memfd_transfer_count": payload.get("memfd_transfer_count")
+                or metadata.get("memfd_transfer_count"),
+                "memfd_bytes_transferred": payload.get("memfd_bytes_transferred")
+                or metadata.get("memfd_bytes_transferred"),
             }
         )
     elif stage.startswith("10_continuous_replay") or stage.startswith("14_continuous_replay"):

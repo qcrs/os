@@ -372,6 +372,7 @@ def run_fixed_answer_external_comparator_suite(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkComparatorSuiteReport:
     normalized_statebus_mode = normalize_statebus_mode(statebus_mode)
@@ -393,6 +394,7 @@ def run_fixed_answer_external_comparator_suite(
             seed_replay_memory=seed_replay_memory,
             benchmark_tier=benchmark_tier,
             claim_level=claim_level,
+            state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
         )
         external_report = run_external_text_family(
@@ -542,6 +544,24 @@ def run_fixed_answer_external_comparator_suite(
             ),
             "fixed_answer_external_comparison_valid": bool(mode_reports)
             and all(report.comparison_valid for report in mode_reports),
+            "state_pool_mode_requested": state_pool_mode,
+            "state_pool_mode_used": (
+                str(mode_reports[0].statebus_report.metadata.get("state_pool_mode_used", state_pool_mode))
+                if mode_reports
+                else state_pool_mode
+            ),
+            "memfd_transfer_count": sum(
+                float(report.statebus_report.telemetry_summary.get("memfd_transfer_count", 0.0))
+                for report in mode_reports
+            ),
+            "memfd_publish_count": sum(
+                float(report.statebus_report.telemetry_summary.get("memfd_publish_count", 0.0))
+                for report in mode_reports
+            ),
+            "memfd_bytes_transferred": sum(
+                float(report.statebus_report.telemetry_summary.get("memfd_bytes_transferred", 0.0))
+                for report in mode_reports
+            ),
         },
         benchmark_tier=benchmark_tier,
         claim_level=claim_level,
@@ -566,6 +586,7 @@ def compare_fixed_answer_with_external(
     seed_replay_memory: bool = False,
     benchmark_tier: str = "dev",
     claim_level: str = "prototype",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkComparatorSuiteReport:
     return run_fixed_answer_external_comparator_suite(
@@ -580,5 +601,6 @@ def compare_fixed_answer_with_external(
         seed_replay_memory=seed_replay_memory,
         benchmark_tier=benchmark_tier,
         claim_level=claim_level,
+        state_pool_mode=state_pool_mode,
         persistence_profile=persistence_profile,
     )

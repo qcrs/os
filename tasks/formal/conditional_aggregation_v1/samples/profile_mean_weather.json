@@ -1,0 +1,22 @@
+{
+  "task_id": "formal-agg-003",
+  "task_family": "conditional_aggregation_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["aggregation", "mean", "weather"],
+  "expected_facts": {
+    "mean_windspeed": "5.979"
+  },
+  "request_text": "Profile baro_2015.csv and calculate the mean WINDSPEED.",
+  "canonical_task_spec": {
+    "task_family": "continuous_csv_table_analysis",
+    "intent_op": "profile_and_mean",
+    "required_outputs": ["schema_profile_ref", "mean_windspeed"],
+    "required_tools": ["csv_profiler", "codeact_executor"],
+    "arguments": {
+      "dataset_id": "weather_baro_2015",
+      "csv_path": "task/csv/baro_2015.csv",
+      "column": "WINDSPEED",
+      "quality_checks": ["numeric_tolerance:mean_windspeed:0.001", "artifact_exists:schema_profile_ref"]
+    }
+  }
+}

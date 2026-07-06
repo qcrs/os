@@ -75,6 +75,7 @@ def family_report_to_dict(report: BenchmarkFamilyReport) -> dict[str, object]:
 
 
 def suite_report_to_dict(report: BenchmarkSuiteReport) -> dict[str, object]:
+    l3_report = report.layer_reports[3] if len(report.layer_reports) > 3 else None
     payload = {
         "suite_id": report.suite_id,
         "task_family": report.task_family,
@@ -87,6 +88,18 @@ def suite_report_to_dict(report: BenchmarkSuiteReport) -> dict[str, object]:
         "evidence_pack": dict(report.evidence_pack),
         "layers": [family_report_to_dict(layer_report) for layer_report in report.layer_reports],
     }
+    if l3_report is not None:
+        payload["L3_case_count"] = l3_report.aggregated_metrics.get("case_count", report.family_case_count)
+        payload["L3_quality_pass_count"] = l3_report.aggregated_metrics.get("quality_floor_pass_count", 0.0)
+    if "state_pool_mode_used" in report.metadata:
+        payload["state_pool_mode_used"] = report.metadata["state_pool_mode_used"]
+        payload["state_pool_mode_requested"] = report.metadata.get("state_pool_mode_requested", "")
+        payload["memfd_transfer_count"] = report.metadata.get("memfd_transfer_count", 0.0)
+        payload["memfd_publish_count"] = report.metadata.get("memfd_publish_count", 0.0)
+        payload["memfd_bytes_transferred"] = report.metadata.get("memfd_bytes_transferred", 0.0)
+    if "formal_task_families" in report.metadata:
+        payload["families"] = list(report.metadata.get("formal_task_families", []))
+        payload["family_count"] = report.metadata.get("formal_task_family_count", len(payload["families"]))
     if "eligible_for_replay_headline" in report.metadata:
         payload["eligible_for_quality_headline"] = bool(report.metadata.get("eligible_for_quality_headline", False))
         payload["eligible_for_replay_headline"] = bool(report.metadata.get("eligible_for_replay_headline", False))

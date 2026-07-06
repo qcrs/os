@@ -123,7 +123,14 @@ def test_live_runner_formal_suite_uses_formal_family_by_default(
             ),
             waterfall_metrics={},
             comparison_summary={},
-            metadata={"benchmark_tier": "formal"},
+            metadata={
+                "benchmark_tier": "formal",
+                "state_pool_mode_requested": str(kwargs["state_pool_mode"]),
+                "state_pool_mode_used": "memfd",
+                "memfd_transfer_count": 25.0,
+                "memfd_publish_count": 25.0,
+                "memfd_bytes_transferred": 247046.0,
+            },
             family_case_count=0,
             report_path=str(tmp_path / "statebus-report.json"),
         )
@@ -139,14 +146,21 @@ def test_live_runner_formal_suite_uses_formal_family_by_default(
             "deterministic",
             "--embedding-mode",
             "deterministic",
+            "--state-pool-mode",
+            "memfd",
         ],
     )
     live_runner_main()
     payload = json.loads(capsys.readouterr().out)
     assert captured["benchmark_tier"] == "formal"
+    assert captured["state_pool_mode"] == "memfd"
     assert captured["seed_replay_memory_by_layer"] == {}
     assert payload["suite_id"] == "statebus-v2-benchmark-formal"
     assert payload["metadata"]["benchmark_tier"] == "formal"
+    assert payload["state_pool_mode_used"] == "memfd"
+    assert payload["memfd_transfer_count"] == 25.0
+    assert payload["memfd_publish_count"] == 25.0
+    assert payload["memfd_bytes_transferred"] == 247046.0
 
 
 def test_live_runner_threads_statebus_mode_to_dev_compare_suite(
