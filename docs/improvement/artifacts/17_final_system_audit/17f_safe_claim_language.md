@@ -1,35 +1,45 @@
 # 17f - 安全声明语言指南 (Safe Claim Language Guide)
 
 **审计日期：** 2026-07-06
+**状态：** 已按 claim-upgrade 执行结果更新
 **关联主报告：** [17_final_system_audit_20260706.md](../../17_final_system_audit_20260706.md)
+**新增完成报告：** [19_claim_upgrade_completion_report_20260706.md](../../19_claim_upgrade_completion_report_20260706.md)
 
 ---
 
 ## 使用说明
 
-本文档提供答辩和对外沟通的推荐用语。每个声明都经过证据验证，带有：
-- ✅ **可以声明**：Strong 证据支持
-- ⚠️ **谨慎声明**：Medium 证据，需加限定语
-- ❌ **不能声明**：证据不足或矛盾
+本文档给出答辩和对外沟通的推荐用语。每个声明都按当前证据边界分为：
+
+- ✅ **可以声明**：有代码、测试或 benchmark JSON 证据支持
+- ⚠️ **谨慎声明**：可以说，但必须带范围限定
+- ❌ **不能声明**：当前证据不足，或会越过项目约束
+
+本次 claim-upgrade 新增两类可声明证据：
+
+1. 形式化 benchmark 从 8 个单指标案例扩展为 25 个案例、5 个任务家族。
+2. `memfd` transport 已进入 formal benchmark 主线，并在 JSON 中可观测到真实 transfer count 和 bytes。
 
 ---
 
-## 第一部分：核心创新声明（Strong 证据）
+## 第一部分：核心创新声明
 
 ### 1. 类型化控制平面
 
 ✅ **推荐表述：**
 
-> "StateBus 实现了 UDS + Protobuf 类型化控制平面，支持四角色结构化交接（Planner → Retriever → Executor → Summarizer）。类型化控制开销可控（+360 字节），在形式化基准上维持质量无回归（8/8 案例通过）。"
+> "StateBus 实现了 UDS + Protobuf 类型化控制平面，支持四角色结构化交接（Planner -> Retriever -> Executor -> Summarizer）。在扩展后的形式化 benchmark 上，四角色流程完成 25/25 案例并维持质量通过。"
 
 **支持证据：**
-- 代码：`v2/control/transport.py:283-419`, `v2/runtime/driver.py`
-- Benchmark：`formal_primary stdout.json`，control_bytes_delta=+360B
-- 测试：214 tests passed (v2 suite)
+
+- 代码：`v2/control/transport.py`, `v2/runtime/driver.py`
+- Benchmark：`/tmp/statebus-claim-upgrade-formal-runtime-local-final/benchmark_reports/claim-upgrade-formal-local-final-formal-suite.json`
+- 关键指标：`L3_case_count=25`, `L3_quality_pass_count=25`
 
 **避免过度表述：**
-- ❌ "类型化控制平面显著提升性能"（实际开销为正）
-- ❌ "零开销类型系统"（+360B 开销真实存在）
+
+- ❌ "类型化控制平面显著提升端到端速度"
+- ❌ "零开销类型系统"
 
 ---
 
@@ -37,20 +47,17 @@
 
 ✅ **推荐表述：**
 
-> "StateBus 引入 SemanticStateRef 作为非文本状态载体，在 4/6 任务家族中成功减少提示暴露（8409 字节提示可见节省），保持质量无回归。非文本状态传输在表格检索和长文档任务中效果显著。"
+> "StateBus 引入 SemanticStateRef 作为非文本状态载体。扩展形式化 benchmark 中，语义状态传输覆盖 25/25 案例，并通过 state-pool 后端传递检索后的结构化状态。"
 
 **支持证据：**
-- 代码：`v2/refs/models.py:38-97`, `v2/state/store.py`
-- Benchmark：`flagship_ablation stdout.json`，4/6 家族通过
-- 测量：2208B LM 提示节省，8409B 提示可见节省
+
+- 代码：`v2/refs/models.py`, `v2/state/store.py`, `v2/runtime/smoke.py`
+- Benchmark：`waterfall_metrics.L2_semantic_state_transfer_count=25`
 
 **必要限定语：**
-- ⚠️ "在 4/6 任务家族中"（不是全部）
-- ⚠️ "表格检索和长文档任务"（明确适用场景）
 
-**避免过度表述：**
-- ❌ "所有任务都受益于非文本状态"（实际 4/6）
-- ❌ "完全消除文本传输"（仍有文本交互）
+- ⚠️ "语义状态传输"不是"完全消除文本"
+- ⚠️ 当前证据覆盖 repo-local formal benchmark，不代表开放域所有任务
 
 ---
 
@@ -58,30 +65,26 @@
 
 ✅ **推荐表述：**
 
-> "StateBus 在 3 个连续任务家族中观测到基于策略的降级复用机制：17 次验证降级复用（跳过规划步骤）、3 次精确重放（字节完全相同）、20/20 目标轮次匹配。重放准入基于任务家族、意图操作和工具集的 SHA-256 哈希匹配，确保安全性和可追溯性。"
+> "StateBus 支持基于策略的降级复用：当任务家族、意图操作和工具集满足准入条件时，可以跳过规划步骤；字节完全相同时可触发 exact replay。准入门基于 SHA-256 哈希匹配，强调安全性和可追溯性。"
 
 **支持证据：**
-- 代码：`v2/runtime/replay.py:123-528`（SHA-256 准入门）
-- Benchmark：`continuous_replay_collection stdout.json`
-- 数据：17 次验证降级复用，3 次精确重放，L3_reuse_gain=20
 
-**必要限定语：**
-- ✅ "降级复用（downgraded reuse）"而非"验证重放（validated replay）"
-- ✅ "跳过规划步骤"（明确跳步范围）
-- ✅ "基于策略的"（不是泛化记忆）
+- 代码：`v2/runtime/replay.py`
+- 历史审计证据：连续任务 replay collection 与 negative audit
+
+**必须说明：**
+
+| 级别 | 语义 | 跳步 |
+|------|------|------|
+| EXACT_REPLAY | 字节完全相同 | 可跳过更多步骤 |
+| VALIDATED_DOWNGRADED_REUSE | 家族和工具集匹配，参数不同 | 跳过规划步骤 |
+| ASSIST | 历史支持但不满足跳步准入 | 不跳步 |
 
 **避免过度表述：**
-- ❌ "通用答案恢复"（不能直接重放答案）
-- ❌ "AI 长期记忆"（需要任务家族匹配）
-- ❌ "泛化重放能力"（严格准入条件）
 
-**三级分类说明（必须说明）：**
-
-| 级别 | 语义 | 跳步 | 证据 |
-|------|------|------|------|
-| EXACT_REPLAY | 字节完全相同 | 2 步 | 3 次 |
-| VALIDATED_DOWNGRADED_REUSE | 家族+工具相同，参数不同 | 1 步 | 17 次 |
-| ASSIST | 历史支持，无跳步 | 0 步 | 39 次 |
+- ❌ "通用答案恢复"
+- ❌ "AI 长期记忆"
+- ❌ "泛化重放能力"
 
 ---
 
@@ -89,326 +92,194 @@
 
 ✅ **推荐表述：**
 
-> "StateBus 通过 dev 固定答案外部纯文本公平门验证（3/3 案例，0 失败）。外部基线采用四角色独立 LLM 调用，每案例 7 项公平检查全覆盖。对比结果显示：StateBus 令牌节省 34%（-1023 tokens）、提示字节节省 39%（-4992 bytes），质量对等（双方都 3/3 精确匹配）。当前系统开销为正（+9.9 秒），优化空间明确。"
+> "StateBus 已实现 dev 固定答案范围的外部纯文本公平门。外部基线采用四角色独立 LLM 调用，并通过公平性检查约束可见信息。该证据支持 dev 范围的资源效率对比，不自动扩展为 formal tier 外部优势。"
 
 **支持证据：**
-- 代码：`v2/benchmark/external_text_baseline.py:389-688`（真实四角色）
-- Benchmark：`codex-raw-fairness-20260706 JSON`
-- 公平门：external_fairness_gate_failed_check_count=0
+
+- 代码：`v2/benchmark/external_text_baseline.py`, `v2/benchmark/comparator_runner.py`
+- 历史审计证据：dev fixed-answer external gate
 
 **必要限定语：**
-- ⚠️ "dev 固定答案范围"（不是 formal 财务）
-- ⚠️ "当前系统开销为正"（诚实说明）
-- ⚠️ "形式化外部标题资格待定"（formal_superiority_claim_allowed=False）
+
+- ⚠️ "dev 固定答案范围"
+- ⚠️ "formal tier 外部比较未在本次 claim-upgrade 中重新执行"
+- ⚠️ 不把内部 formal 25/25 结果说成外部优势
 
 **避免过度表述：**
-- ❌ "形式化财务外部优势"（无 formal tier 外部比较）
-- ❌ "端到端速度更快"（实际更慢 +9.9s）
-- ❌ "系统性能优势"（只有资源效率，无速度优势）
+
+- ❌ "形式化财务外部优势已由本次升级验证"
+- ❌ "端到端速度更快"
 
 ---
 
-## 第二部分：限制和边界（必须主动说明）
+### 5. 形式化多样化推理验证
 
-### 5. 系统开销当前为正
+✅ **推荐表述：**
+
+> "StateBus 形式化 benchmark 已扩展到 25 个案例、5 个任务家族：财务单指标提取、多期趋势分析、跨表关联、条件聚合、异常检测。local-embedding formal run 中质量基线维持 25/25 通过。"
+
+**支持证据：**
+
+- 任务注册：`v2/benchmark/task_registry.py`
+- 新任务目录：`tasks/formal/`
+- Benchmark JSON：`L3_case_count=25`, `L3_quality_pass_count=25`, `family_count=5`
+- Families：`financial_report_analysis`, `multi_period_trend_analysis_v1`, `cross_table_join_analysis_v1`, `conditional_aggregation_v1`, `anomaly_detection_v1`
+
+**必要限定语：**
+
+- ⚠️ "形式化多样化推理验证"可以说
+- ⚠️ "大规模开放域 benchmark"不能说
+- ⚠️ 当前证据是 local-embedding formal run，不是 API formal external comparison
+
+---
+
+### 6. memfd benchmark 主线验证
+
+✅ **推荐表述：**
+
+> "StateBus formal benchmark 主线已可通过 `--state-pool-mode memfd` 使用 memfd state-pool 后端。claim-upgrade local-embedding formal run 中，JSON 记录 `state_pool_mode_used=\"memfd\"`，并观测到 25 次 memfd transfer、25 次 memfd publish、247046 bytes transferred。"
+
+**支持证据：**
+
+- 代码：`v2/state/store.py`, `v2/runtime/driver.py`, `v2/runtime/smoke.py`, `v2/benchmark/live_runner.py`
+- Benchmark JSON：`state_pool_mode_used="memfd"`, `memfd_transfer_count=25`, `memfd_publish_count=25`, `memfd_bytes_transferred=247046`
+- 审计脚本：`scripts/run_v2_full_container_audit_suite.sh` stage 07/08 传入 `--state-pool-mode memfd`
+
+**必要限定语：**
+
+- ⚠️ "formal benchmark 主线可观测使用 memfd"
+- ⚠️ 不说"生产级 memfd transport"
+- ⚠️ 不把 mode 字段单独当证据，必须同时引用 transfer count 和 bytes
+
+---
+
+## 第二部分：限制和边界
+
+### 7. 系统开销当前为正
 
 ⚠️ **推荐表述：**
 
-> "StateBus 展示了令牌和提示字节的显著效率改进（-34% tokens, -39% prompt bytes），但当前端到端时间比外部基线慢 9.9 秒。系统开销主要来自多角色协调和状态序列化。优化路径明确：减少角色切换开销、优化序列化性能、引入并行执行。资源效率改进已通过外部公平门验证，为后续性能优化奠定基础。"
-
-**支持证据：**
-- Benchmark：api_task_ms_delta=+9906ms（更慢）
-- 资源效率：api_llm_total_tokens_delta=-1023（节省）
+> "StateBus 展示了令牌和提示字节效率改进，但当前不能声称端到端速度优势。历史外部比较中系统开销为正，主要来自多角色协调、状态序列化和多次角色调用。速度优化仍是后续工作。"
 
 **必须诚实说明：**
-- ✅ "当前端到端时间慢 9.9 秒"
-- ✅ "系统开销为正"
-- ✅ "优化空间明确"
 
-**避免回避或淡化：**
-- ❌ 完全不提速度对比
-- ❌ "性能相当"（不准确）
-- ❌ "可忽略的开销"（9.9s 不可忽略）
+- ✅ 当前不能说更快
+- ✅ 只能说资源效率和结构化状态传递
+- ✅ 角色并行、序列化优化、Engine-Local Prefix Reuse 都是后续优化方向
 
 ---
 
-### 6. 形式化范围为精密锚点
+### 8. openEuler 只验证到容器范围
 
 ⚠️ **推荐表述：**
 
-> "StateBus 形式化基准覆盖 8 个财务报告分析案例（单指标表格检索），定位为精密锚点（precision anchor）。质量基线维持 8/8 通过，语义剪枝节省 6255 字节，类型化控制开销 +360 字节。冷启动场景下重放增益为 0（符合预期）。"
-
-**支持证据：**
-- Benchmark：`formal_primary stdout.json`
-- 质量：8/8 通过
-- 剪枝：6255B 节省
-
-**必要限定语：**
-- ⚠️ "精密锚点"（不是广泛推理）
-- ⚠️ "单指标表格检索"（明确任务类型）
-- ⚠️ "8 个案例"（诚实说明规模）
+> "StateBus v2 面向 openEuler 24.03-LTS-SP3 容器环境进行了验证。openEuler VM 验证仍属于 posterior validation，不应提前声称。"
 
 **避免过度表述：**
-- ❌ "形式化广泛推理优势"
-- ❌ "复杂多代理协作优势"
-- ❌ "大规模形式化验证"
+
+- ❌ "openEuler VM 验证"
+- ❌ "openEuler 生产环境验证"
 
 ---
 
-### 7. openEuler 容器验证
+### 9. Bounded CodeAct 不是实时 LLM 代码生成证明
 
 ⚠️ **推荐表述：**
 
-> "StateBus 在 openEuler 24.03-LTS-SP3 容器环境中通过全测试套件验证（194 tests passed）。"
-
-**支持证据：**
-- Docker 容器测试：194 tests passed
-- 镜像：openEuler 24.03-LTS-SP3
-
-**必要限定语：**
-- ⚠️ "容器环境"（不是 VM）
+> "StateBus 实现了 bounded CodeAct 路径，在受控执行环境中运行受限代码执行流程。当前主线 claim 不应表述为 benchmark 已证明实时 LLM 代码生成能力。"
 
 **避免过度表述：**
-- ❌ "openEuler VM 验证"（无 VM 阶段证据）
-- ❌ "openEuler 生产环境验证"（只有容器）
+
+- ❌ "Benchmark 证明实时 LLM 代码生成"
+- ❌ "动态代码生成能力已被 formal benchmark 证明"
 
 ---
 
-## 第三部分：明确不支持的声明
+### 10. 形式化外部优势本次未升级
 
-### ❌ 不能声称：端到端速度优势
+⚠️ **推荐表述：**
 
-**错误表述（禁止）：**
-- "StateBus 端到端速度更快"
-- "延迟改进"
-- "latency win"
+> "本次 claim-upgrade 验证了 local-embedding internal formal benchmark 的 25/25 质量和 memfd 主线传输。formal tier 外部比较需要 `STATEBUS_LLM_API_KEY` 和 `--suite compare --benchmark-tier formal --role-path-mode api --embedding-mode local` 重新运行后才能声明。"
 
-**正确替代：**
-- "令牌和提示字节效率改进"
-- "资源效率提升"
-- "优化基础已建立"
+**避免过度表述：**
 
-**证据：** api_task_ms_delta = +9906ms（更慢）
+- ❌ "形式化财务外部优势已由 25-case local-embedding internal run 证明"
+- ❌ "formal_superiority_claim_allowed=True"（除非引用同一环境下重新生成的 formal compare JSON）
 
 ---
 
-### ❌ 不能声称：形式化广泛推理优势
+## 第三部分：禁用表述清单
 
-**错误表述（禁止）：**
-- "形式化广泛推理优势"
-- "复杂多代理协作优势"
-- "大规模形式化验证"
-
-**正确替代：**
-- "形式化质量基线维持（8/8 精密锚点案例）"
-- "单指标表格检索质量验证"
-
-**证据：** 只有 8 案例，单一任务类型
-
----
-
-### ❌ 不能声称：形式化财务外部优势
-
-**错误表述（禁止）：**
-- "形式化财务任务外部优势"
-- "formal superiority validated"
-
-**正确替代：**
-- "Dev 固定答案外部公平门通过"
-- "形式化外部标题资格待定"
-
-**证据：** formal_superiority_claim_allowed = False
+| 禁用词 | 原因 | 替代表述 |
+|--------|------|----------|
+| "更快" / "faster" | 端到端速度优势未建立 | "资源效率改进" |
+| "延迟改进" | 外部比较中系统开销为正 | "令牌/提示字节节省" |
+| "大规模开放域验证" | 当前 formal 为 25 个 repo-local 案例 | "25-case formal diversified benchmark" |
+| "通用答案恢复" | replay 需要准入门 | "基于策略的降级复用" |
+| "AI 长期记忆" | 不是泛化记忆系统 | "历史支持复用" |
+| "VM 验证" | 只有容器/宿主验证证据 | "openEuler 容器验证" |
+| "实时 LLM 代码生成证明" | 主线 claim 不支持 | "bounded CodeAct 路径" |
+| "生产级 memfd" | benchmark 主线已验证，但非生产认证 | "formal benchmark memfd path" |
+| "formal external superiority" | 本次未运行 formal external compare | "formal internal quality baseline" |
 
 ---
 
-### ❌ 不能声称：openEuler VM 验证
-
-**错误表述（禁止）：**
-- "openEuler VM 环境验证"
-- "openEuler 生产环境部署"
-
-**正确替代：**
-- "openEuler 容器环境测试通过"
-
-**证据：** 只有 Docker 容器测试
-
----
-
-### ❌ 不能声称：通用答案恢复
-
-**错误表述（禁止）：**
-- "通用答案恢复"
-- "AI 长期记忆"
-- "泛化重放能力"
-
-**正确替代：**
-- "基于策略的降级复用"
-- "任务家族匹配下的规划步骤跳过"
-
-**证据：** validated replay 需要严格的任务家族 + 工具集匹配
-
----
-
-### ❌ 不能声称：benchmark 证明实时 LLM 代码生成
-
-**错误表述（禁止）：**
-- "Benchmark 证明实时 LLM 代码生成"
-- "动态代码生成能力"
-
-**正确替代：**
-- "受控执行环境下的代码生成能力展示"
-- "Bounded CodeAct with bwrap sandbox"
-
-**证据：** 主线使用固定辅助脚本，不是实时生成
-
----
-
-### ❌ 不能声称：memfd 为 benchmark 主路径
-
-**错误表述（禁止）：**
-- "Benchmark 证明 memfd 为主路径"
-- "生产级 memfd transport"
-
-**正确替代：**
-- "MemfdStatePool 真实实现，能力测试通过"
-- "memfd_create + SCM_RIGHTS + shm fallback"
-
-**证据：** 未在 formal/compare benchmark 主线可观测
-
----
-
-## 第四部分：完整答辩模板
+## 第四部分：答辩模板
 
 ### 开场白（30 秒）
 
-> "StateBus 是一个宿主侧多代理协作框架，探索通过类型化控制平面和非文本状态载体降低通信开销、验证中间状态非纯文本传递的可行性、以及共享内存是否支持真实复用。系统编排四个角色（Planner、Retriever、Executor、Summarizer），通过 UDS + Protobuf 进行结构化交接，使用 SemanticStateRef 作为类型化状态载体。"
+> "StateBus 是一个宿主侧多代理协作框架，探索通过 UDS + Protobuf 类型化控制平面和非文本状态载体降低跨角色文本暴露，并让中间状态以可追溯的 StateRef 形式传递。系统编排 Planner、Retriever、Executor、Summarizer 四个角色。"
 
 ### 核心创新（1 分钟）
 
-> "我们实现了三个关键创新：
->
-> **第一，类型化控制平面。** 使用 UDS + Protobuf 替代纯文本交接，四角色职责边界清晰，类型化控制开销可控（+360 字节）。形式化基准 8/8 质量通过，无回归。
->
-> **第二，非文本状态传输。** SemanticStateRef 在 4/6 任务家族中减少提示暴露 8409 字节，保持质量。在表格检索和长文档任务中效果显著。
->
-> **第三，基于策略的降级复用。** 在 3 个连续任务家族中观测到 17 次验证降级复用、3 次精确重放，20/20 目标轮次匹配。重放准入基于任务家族和工具集的 SHA-256 哈希匹配。"
+> "我们实现了三类核心机制：第一，类型化控制平面，四角色交接走结构化协议；第二，SemanticStateRef 非文本状态载体，formal benchmark 中 25/25 案例完成语义状态传输；第三，基于策略的降级复用，严格通过任务家族和工具集准入门控制跳步。"
 
-### 外部验证（30 秒）
+### 新增验证（30 秒）
 
-> "我们实现了外部纯文本公平门验证。外部基线采用四角色独立 LLM 调用，每案例 7 项公平检查。Dev 固定答案范围 3/3 通过，0 失败。对比显示：令牌节省 34%、提示字节节省 39%，质量对等。"
+> "本次升级把形式化 benchmark 从 8 个单指标案例扩展到 25 个案例、5 个任务家族，包括多期趋势、跨表关联、条件聚合和异常检测。local-embedding formal run 维持 25/25 质量通过。同时，formal 主线通过 `--state-pool-mode memfd` 观测到 25 次 memfd transfer、25 次 memfd publish、247046 bytes transferred。"
 
-### 诚实说明限制（30 秒）
+### 诚实边界（30 秒）
 
-> "我们也诚实说明当前限制：
->
-> **第一，系统开销当前为正。** 端到端时间比外部基线慢 9.9 秒，主要来自多角色协调。资源效率改进已验证，优化路径明确。
->
-> **第二，形式化范围为精密锚点。** 8 个单指标表格检索案例，不是广泛推理。
->
-> **第三，外部公平门当前为 dev 范围。** 形式化外部标题资格待定。"
-
-### 收尾（15 秒）
-
-> "StateBus 验证了类型化状态载体的可行性，为后续优化奠定基础。我们选择诚实边界而非过度声明，展示真实的工程权衡。谢谢。"
+> "我们不声称端到端速度优势，不声称 openEuler VM 验证，不声称通用答案恢复，也不把本次 local-embedding internal formal run 说成 formal external superiority。外部公平门目前只可按已有 dev/fixed-answer 证据谨慎表述；formal external claim 需要单独 API compare JSON。"
 
 ---
 
 ## 第五部分：问答应对策略
 
-### Q: "为什么 StateBus 更慢？"
+### Q: "现在可以说形式化广泛推理了吗？"
 
 ✅ **推荐回答：**
 
-> "当前系统开销为正（+9.9 秒），主要来自三个方面：第一，多角色顺序执行而非并行；第二，状态序列化和 IPC 开销；第三，每个角色独立 LLM 调用。
->
-> 我们展示的是资源效率（-34% tokens, -39% bytes），而非速度。优化路径明确：引入角色并行执行、优化序列化、复用 KV cache。当前版本聚焦验证架构可行性，性能优化是下一阶段工作。"
+> "可以说形式化 benchmark 已扩展为 25-case、5-family diversified reasoning validation。但不能说大规模开放域验证，也不能说 formal external superiority，因为这两个需要不同证据。"
 
----
-
-### Q: "只有 8 个形式化案例是否太少？"
+### Q: "memfd 的证据是什么？"
 
 ✅ **推荐回答：**
 
-> "8 个案例确实是精密锚点规模，不是大规模验证。我们选择单指标表格检索作为起点，因为它有确定性验证器，可以隔离质量变量。
->
-> 我们已设计 4 个新家族（多期趋势、跨表关联、条件聚合、异常检测），可扩展到 20-25 案例。选择诚实说明当前规模，而非过度泛化。"
+> "证据不是只有配置开关。formal benchmark JSON 同时记录 `state_pool_mode_used=\"memfd\"`、`memfd_transfer_count=25`、`memfd_publish_count=25`、`memfd_bytes_transferred=247046`，说明有真实发布、传输计数和字节数。"
 
----
-
-### Q: "validated replay 和 exact replay 有什么区别？"
+### Q: "为什么不声称更快？"
 
 ✅ **推荐回答：**
 
-> "我们严格区分三级：
->
-> **Exact replay（精确重放）：** 字节完全相同，跳 2 步。3 次观测。
->
-> **Validated downgraded reuse（验证降级复用）：** 任务家族、工具集相同，但参数不同，跳 1 步（规划器）。17 次观测。注意：这不是'通用答案恢复'——我们仍运行 Retriever 和 Executor。
->
-> **Assist（辅助）：** 历史支持，但无跳步。39 次观测。
->
-> 准入基于 SHA-256 哈希，不是启发式判断。"
+> "当前证据支持资源效率和状态传递，不支持端到端速度优势。多角色串行、状态序列化和多次角色调用会带来系统开销。速度优化需要后续工程。"
 
----
-
-### Q: "外部公平门如何防止作弊？"
+### Q: "validated reuse 和 exact replay 有什么区别？"
 
 ✅ **推荐回答：**
 
-> "外部基线是独立四角色实现，不依赖 StateBus 运行时。每案例 7 项检查：
->
-> 1-2. 代码结构保证（no_statebus_imports, no_lexical_fallback）
-> 3. 动态扫描禁用词（no_typed_state_used）
-> 4. 元数据泄漏扫描（oracle 字段）
-> 5-7. 原始角色 JSON 可见候选检查
->
-> 所有原始载荷（包括归一化前的 JSON）都参与扫描。公平门失败时，比较器硬门拒绝发布 headline。"
+> "Exact replay 是字节完全相同的重放；validated downgraded reuse 是任务家族和工具集满足准入但参数不同，只跳过规划步骤；assist 只是历史支持，不跳步。我们有意保守，避免把历史答案泛化到不安全的新任务。"
 
 ---
 
-### Q: "为什么不用 LangGraph？"
+## 第六部分：审计签名
 
-✅ **推荐回答：**
+本文档已按 claim-upgrade 执行结果更新：
 
-> "StateBus 的核心问题是'类型化状态载体是否降低通信开销'，不是'工作流编排'。LangGraph 是优秀的工作流引擎，但它不强制类型化状态、不实现 UDS 控制平面、不提供准入门replay。
->
-> 我们使用 LangGraph 的 StateGraph 作为规划器的内部编译目标，但 StateBus 的创新在于跨角色的类型化交接和重放准入，不在工作流 DSL。"
+- ✅ 形式化任务：25 cases / 5 families / 25 quality passes
+- ✅ memfd 主线：25 transfers / 25 publishes / 247046 bytes
+- ✅ 仍保守：速度优势、openEuler VM、通用答案恢复、实时 LLM 代码生成、formal external superiority
 
----
-
-## 第六部分：禁用表述清单
-
-### 绝对禁止使用的词汇
-
-| 禁用词 | 原因 | 替代词 |
-|--------|------|--------|
-| "更快" / "faster" | api_task_ms_delta = +9906ms | "资源效率" |
-| "延迟改进" | 端到端时间增加 | "令牌节省" |
-| "广泛推理" | 只有 8 案例 | "精密锚点" |
-| "通用答案恢复" | 需要家族匹配 | "降级复用" |
-| "AI 长期记忆" | 不是泛化记忆 | "历史支持复用" |
-| "VM 验证" | 只有容器 | "容器环境测试" |
-| "实时代码生成" | 固定脚本 | "受控代码执行" |
-| "生产级" | 研究原型 | "原型验证" |
-
----
-
-## 第七部分：审计签名
-
-本文档所有推荐表述均经过以下证据验证：
-
-- ✅ 代码审查：10 个核心文件无桩或模拟
-- ✅ Benchmark JSON：6 个报告指标自洽
-- ✅ 测试覆盖：214 tests passed (v2 suite)
-- ✅ 外部公平门：3/3 通过，0 失败
-- ✅ 连续重放：20/20 目标轮次匹配
-
-**审计人签名：** Claude (Kiro)
 **审计日期：** 2026-07-06
-**证据锚点：** v2-full-audit-20260705_213331, codex-raw-fairness-20260706
-**代码锚点：** HEAD `03a9d22`
-
----
-
-**最后更新：** 2026-07-06
+**证据锚点：** `/tmp/statebus-claim-upgrade-formal-runtime-local-final/benchmark_reports/claim-upgrade-formal-local-final-formal-suite.json`
 **答辩前必读：** 是
