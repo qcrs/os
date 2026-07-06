@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Run all Group 1 tasks for a single protocol and output results as JSON.
+"""Run all group tasks for a single protocol and output results as JSON.
 
 Usage (inside SynapseX-wmw container):
     # Protocol A (text mode):
-    CHAT_BACKEND=transformers python3 run_group1_single.py --mode text
+    CHAT_BACKEND=transformers python3 run_group1_single.py --group 1 --mode text
 
     # Protocol B (structured, compressed text only):
     CHAT_BACKEND=transformers ENABLE_EMBEDDING_TRANSFER=0 \
-        python3 run_group1_single.py --mode structured
+        python3 run_group1_single.py --group 1 --mode structured
 """
 
 # ── Env vars MUST be set before any project imports ──────────────────
@@ -23,6 +23,7 @@ os.environ.setdefault("LOCAL_MODEL_PATH", "/data/models/Qwen3-8B")
 os.environ.setdefault("LOCAL_MODEL_DEVICE", "cuda:0")
 os.environ.setdefault("LOCAL_MODEL_DTYPE", "bfloat16")
 os.environ.setdefault("LOCAL_TRANSFORMERS_MAX_NEW_TOKENS", "512")
+os.environ.setdefault("ENABLE_CODEACT_EXECUTOR", "1")
 os.environ.pop("DASHSCOPE_API_KEY", None)
 os.environ.pop("http_proxy", None)
 os.environ.pop("https_proxy", None)
@@ -37,12 +38,12 @@ import time
 from pathlib import Path
 
 TASK_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = TASK_DIR.parent
+PROJECT_ROOT = TASK_DIR.parent.parent
 
 for p in (
     PROJECT_ROOT / "src",
-    PROJECT_ROOT / "langgraph" / "libs" / "langgraph",
-    PROJECT_ROOT / "langgraph" / "libs" / "checkpoint",
+    PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "langgraph",
+    PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "checkpoint",
 ):
     sys.path.insert(0, str(p))
 
@@ -51,8 +52,7 @@ from graph import build_graph          # noqa: E402
 from metrics import metrics            # noqa: E402
 
 # ── Constants ────────────────────────────────────────────────────────
-TASKS_FILE = TASK_DIR / "group1_tasks.json"
-CSV_FILE = TASK_DIR / "csv" / "titanic.csv"
+CSV_DIR = TASK_DIR / "csv"
 CSV_SAMPLE_ROWS = 40                   # rows included in the query context
 
 
@@ -66,13 +66,13 @@ def load_csv_context(path: Path, max_rows: int = CSV_SAMPLE_ROWS) -> str:
     return f"Columns: {header}\n" + "\n".join(sample)
 
 
-def build_query(task: dict, csv_context: str) -> str:
+def build_query(task: dict, csv_context: str, csv_file_name: str) -> str:
     """Compose the full query including question, constraints, and data."""
     parts = [
         task["question"],
         f"\nConstraints: {task['constraints']}",
         f"\nExpected answer format: {task['answer_format']}",
-        f"\nSample data (first {CSV_SAMPLE_ROWS} rows of titanic.csv):\n{csv_context}",
+        f"\nSample data (first {CSV_SAMPLE_ROWS} rows of {csv_file_name}):\n{csv_context}",
         "\nPlease compute the required statistics from the data above and "
         "return ONLY the answer in the exact format specified.",
     ]
@@ -87,12 +87,22 @@ def extract_answers(text: str) -> dict[str, str]:
     return dict(ANSWER_RE.findall(text or ""))
 
 
-def run_all_tasks(mode: str) -> dict:
-    """Build graph, run 10 tasks, collect raw results and metrics."""
+def _task_files(group: int) -> tuple[Path, Path]:
+    tasks_file = TASK_DIR / f"group{group}_tasks.json"
+    gold_file = TASK_DIR / f"group{group}_gold.json"
+    if not tasks_file.exists():
+        raise FileNotFoundError(f"Missing tasks file: {tasks_file}")
+    if not gold_file.exists():
+        raise FileNotFoundError(f"Missing gold file: {gold_file}")
+    return tasks_file, gold_file
+
+
+def run_all_tasks(group: int, mode: str) -> dict:
+    """Build graph, run one task group, and collect raw results and metrics."""
     graph, store = build_graph(mode=mode)
 
-    tasks = json.loads(TASKS_FILE.read_text(encoding="utf-8"))["tasks"]
-    csv_context = load_csv_context(CSV_FILE)
+    tasks_file, _ = _task_files(group)
+    tasks = json.loads(tasks_file.read_text(encoding="utf-8"))["tasks"]
 
     round_results = []
     total = len(tasks)
@@ -103,8 +113,12 @@ def run_all_tasks(mode: str) -> dict:
             file=sys.stderr,
             flush=True,
         )
-        query = build_query(task, csv_context)
-        task_group = f"titanic_round_{rd}"
+        csv_file_name = str(task["csv_file"]).strip()
+        csv_file = CSV_DIR / csv_file_name
+        csv_context = load_csv_context(csv_file)
+        query = build_query(task, csv_context, csv_file_name)
+        csv_label = Path(csv_file_name).stem
+        task_group = f"group{group}_{csv_label}_round_{rd}"
 
         t0 = time.perf_counter()
         try:
@@ -112,6 +126,12 @@ def run_all_tasks(mode: str) -> dict:
                 "query": query,
                 "task_group": task_group,
                 "mode": mode,
+                "artifact_refs": [{
+                    "id": f"{task_group}_csv",
+                    "kind": "csv",
+                    "label": csv_label,
+                    "path": str(csv_file.resolve()),
+                }],
             })
         except Exception as exc:
             result = {"summary": "", "analysis": "", "error": str(exc)}
@@ -132,6 +152,8 @@ def run_all_tasks(mode: str) -> dict:
             "answer_source": "executor",
             "analysis": analysis_text[:500],
             "execution_summary": result.get("execution_summary", ""),
+            "execution_result": result.get("execution_result", {}),
+            "execution_trace": result.get("execution_trace", []),
             "extracted_answers": answers,
             "summary_extracted_answers": extract_answers(summary_text),
             "duration_s": round(duration, 2),
@@ -149,6 +171,7 @@ def run_all_tasks(mode: str) -> dict:
     metrics_report = metrics.report()
 
     return {
+        "group": group,
         "mode": mode,
         "rounds": round_results,
         "metrics_summary": summary_dict,
@@ -159,11 +182,12 @@ def run_all_tasks(mode: str) -> dict:
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Group 1 tasks for one protocol")
+    parser = argparse.ArgumentParser(description="Run one group of CSV tasks for one protocol")
+    parser.add_argument("--group", type=int, choices=[1, 2, 3], default=1)
     parser.add_argument("--mode", choices=["text", "structured"], required=True)
     args = parser.parse_args()
 
-    result = run_all_tasks(args.mode)
+    result = run_all_tasks(args.group, args.mode)
     # Output JSON to stdout (wrapper script captures it)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

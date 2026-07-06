@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Orchestrate Protocol A vs Protocol B comparison on Group 1 tasks.
+"""Orchestrate Protocol A vs Protocol B comparison on one task group.
 
 Runs run_group1_single.py as a subprocess for each protocol, extracts answers,
-compares with gold, and saves results to task/result/group1_comparison.json.
+compares with gold, and saves results to task/result/group{n}_comparison.json.
 
 Usage (inside SynapseX-wmw container):
     cd /data/mingwei/SynapseX/task
@@ -15,16 +15,13 @@ import subprocess
 import sys
 import re
 from datetime import datetime, timezone
+from json import JSONDecodeError
 from pathlib import Path
 
 TASK_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = TASK_DIR.parent
+PROJECT_ROOT = TASK_DIR.parent.parent
 RESULT_DIR = TASK_DIR / "result"
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
-
-TASKS_FILE = TASK_DIR / "group1_tasks.json"
-GOLD_FILE = TASK_DIR / "group1_gold.json"
-OUTPUT_FILE = RESULT_DIR / "group1_comparison.json"
 
 # ── Base environment for container runs ──────────────────────────────
 def _env_default(name: str, default: str) -> str:
@@ -41,12 +38,51 @@ BASE_ENV = {
     "LOCAL_MODEL_DEVICE": _env_default("LOCAL_MODEL_DEVICE", "cuda:0"),
     "LOCAL_MODEL_DTYPE": _env_default("LOCAL_MODEL_DTYPE", "bfloat16"),
     "LOCAL_TRANSFORMERS_MAX_NEW_TOKENS": _env_default("LOCAL_TRANSFORMERS_MAX_NEW_TOKENS", "512"),
+    "ENABLE_CODEACT_EXECUTOR": _env_default("ENABLE_CODEACT_EXECUTOR", "1"),
     "DASHSCOPE_API_KEY": "",
-    "PYTHONPATH": str(PROJECT_ROOT / "src"),
+    "PYTHONPATH": os.pathsep.join([
+        str(PROJECT_ROOT / "src"),
+        str(PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "langgraph"),
+        str(PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "checkpoint"),
+    ]),
 }
 
 
-def run_protocol(mode: str, extra_env: dict | None = None) -> dict:
+def _group_files(group: int) -> tuple[Path, Path, Path]:
+    tasks_file = TASK_DIR / f"group{group}_tasks.json"
+    gold_file = TASK_DIR / f"group{group}_gold.json"
+    output_file = RESULT_DIR / f"group{group}_comparison.json"
+    return tasks_file, gold_file, output_file
+
+
+def _single_protocol_output_file(group: int, mode: str) -> Path:
+    return RESULT_DIR / f"group{group}_{mode}_only.json"
+
+
+def _coerce_subprocess_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _parse_protocol_json(stdout_text: str, mode: str) -> dict:
+    json_start = stdout_text.find("{")
+    if json_start < 0:
+        print("[ERROR] subprocess did not emit JSON", file=sys.stderr)
+        print(f"STDOUT tail:\n{stdout_text[-1000:]}", file=sys.stderr)
+        return {"mode": mode, "rounds": [], "error": "missing_json_output"}
+
+    try:
+        return json.loads(stdout_text[json_start:])
+    except JSONDecodeError as exc:
+        print(f"[ERROR] bad JSON: {exc}", file=sys.stderr)
+        print(f"STDOUT tail:\n{stdout_text[-1000:]}", file=sys.stderr)
+        return {"mode": mode, "rounds": [], "error": str(exc)}
+
+
+def run_protocol(group: int, mode: str, extra_env: dict | None = None, timeout_s: int = 1800) -> dict:
     """Invoke run_group1_single.py as a subprocess and parse its JSON output."""
     env = {
         **__import__("os").environ,
@@ -56,38 +92,51 @@ def run_protocol(mode: str, extra_env: dict | None = None) -> dict:
     cmd = [
         sys.executable, "-u",
         str(TASK_DIR / "run_group1_single.py"),
+        "--group", str(group),
         "--mode", mode,
     ]
     print(f"\n{'='*60}")
     print(f"Running Protocol {'A' if mode == 'text' else 'B'} ({mode} mode)...")
     print(f"{'='*60}")
 
-    proc = subprocess.run(
-        cmd,
-        cwd=str(PROJECT_ROOT),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=1800,  # 30 min per protocol
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout_text = _coerce_subprocess_text(exc.stdout)
+        stderr_text = _coerce_subprocess_text(exc.stderr)
+        print(f"[ERROR] subprocess timed out after {timeout_s}s", file=sys.stderr)
+        if stderr_text:
+            print(f"STDERR tail:\n{stderr_text[-2000:]}", file=sys.stderr)
+
+        partial = _parse_protocol_json(stdout_text, mode) if stdout_text else {"mode": mode, "rounds": []}
+        partial["mode"] = mode
+        partial["timed_out"] = True
+        partial["timeout_s"] = timeout_s
+        partial["error"] = f"timeout_after_{timeout_s}s"
+        if stderr_text:
+            partial["stderr_tail"] = stderr_text[-2000:]
+        if stdout_text and "rounds" not in partial:
+            partial["rounds"] = []
+        return partial
 
     if proc.returncode != 0:
         print(f"[ERROR] subprocess exited {proc.returncode}", file=sys.stderr)
         print(f"STDERR:\n{proc.stderr[-2000:]}", file=sys.stderr)
-        return {"mode": mode, "rounds": [], "error": proc.stderr[-500:]}
+        return {
+            "mode": mode,
+            "rounds": [],
+            "error": proc.stderr[-500:],
+            "returncode": proc.returncode,
+        }
 
-    json_start = proc.stdout.find("{")
-    if json_start < 0:
-        print("[ERROR] subprocess did not emit JSON", file=sys.stderr)
-        print(f"STDOUT tail:\n{proc.stdout[-1000:]}", file=sys.stderr)
-        return {"mode": mode, "rounds": [], "error": "missing_json_output"}
-
-    try:
-        return json.loads(proc.stdout[json_start:])
-    except json.JSONDecodeError as exc:
-        print(f"[ERROR] bad JSON: {exc}", file=sys.stderr)
-        print(f"STDOUT tail:\n{proc.stdout[-1000:]}", file=sys.stderr)
-        return {"mode": mode, "rounds": [], "error": str(exc)}
+    return _parse_protocol_json(proc.stdout, mode)
 
 
 # ── Answer comparison ────────────────────────────────────────────────
@@ -159,17 +208,59 @@ def compute_protocol_stats(rounds: list[dict]) -> dict:
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
-    tasks = json.loads(TASKS_FILE.read_text(encoding="utf-8"))["tasks"]
-    gold = json.loads(GOLD_FILE.read_text(encoding="utf-8"))
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compare text vs structured on one task group")
+    parser.add_argument("--group", type=int, choices=[1, 2, 3], default=1)
+    parser.add_argument(
+        "--mode",
+        choices=["both", "text", "structured"],
+        default="both",
+        help="Run both protocols, or only one protocol and save its standalone result.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=1800,
+        help="Per-protocol subprocess timeout in seconds.",
+    )
+    args = parser.parse_args()
+
+    tasks_file, gold_file, output_file = _group_files(args.group)
+    tasks = json.loads(tasks_file.read_text(encoding="utf-8"))["tasks"]
+    gold = json.loads(gold_file.read_text(encoding="utf-8"))
+
+    if args.mode == "text":
+        result_a = run_protocol(args.group, "text", timeout_s=args.timeout)
+        standalone_path = _single_protocol_output_file(args.group, "text")
+        standalone_path.write_text(json.dumps(result_a, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\nResults saved to {standalone_path}")
+        return
+
+    if args.mode == "structured":
+        result_b = run_protocol(args.group, "structured", {
+            "ENABLE_CONTEXT_PACKETS": "1",
+            "ENABLE_EMBEDDING_TRANSFER": "0",
+        }, timeout_s=args.timeout)
+        standalone_path = _single_protocol_output_file(args.group, "structured")
+        standalone_path.write_text(json.dumps(result_b, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\nResults saved to {standalone_path}")
+        return
 
     # ── Protocol A: text mode ────────────────────────────────────────
-    result_a = run_protocol("text")
+    result_a = run_protocol(args.group, "text", timeout_s=args.timeout)
+    text_output_path = _single_protocol_output_file(args.group, "text")
+    text_output_path.write_text(json.dumps(result_a, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\nText-only result saved to {text_output_path}")
 
     # ── Protocol B: structured, compressed text only ─────────────────
-    result_b = run_protocol("structured", {
+    result_b = run_protocol(args.group, "structured", {
         "ENABLE_CONTEXT_PACKETS": "1",
         "ENABLE_EMBEDDING_TRANSFER": "0",
-    })
+    }, timeout_s=args.timeout)
+    structured_output_path = _single_protocol_output_file(args.group, "structured")
+    structured_output_path.write_text(json.dumps(result_b, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\nStructured-only result saved to {structured_output_path}")
 
     # ── Compare answers with gold ────────────────────────────────────
     comparison_a = []
@@ -211,9 +302,9 @@ def main():
 
     output = {
         "experiment": {
-            "name": "group1_protocol_comparison",
+            "name": f"group{args.group}_protocol_comparison",
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "tasks": "group1_tasks.json (10 rounds, titanic.csv)",
+            "tasks": f"{tasks_file.name} ({len(tasks)} rounds)",
             "container": _env_default("EXPERIMENT_CONTAINER", "SynapseX-wang"),
             "backend": BASE_ENV["CHAT_BACKEND"],
             "base_url": BASE_ENV["CHAT_BASE_URL"],
@@ -222,6 +313,8 @@ def main():
         "protocol_a": {
             "label": "Plain Text (mode=text)",
             "config": {"mode": "text"},
+            "error": result_a.get("error", ""),
+            "timed_out": bool(result_a.get("timed_out", False)),
             "stats": stats_a,
             "metrics": {
                 "llm_calls": metrics_a.get("llm_calls", 0),
@@ -246,6 +339,8 @@ def main():
                 "ENABLE_CONTEXT_PACKETS": True,
                 "ENABLE_EMBEDDING_TRANSFER": False,
             },
+            "error": result_b.get("error", ""),
+            "timed_out": bool(result_b.get("timed_out", False)),
             "stats": stats_b,
             "metrics": {
                 "llm_calls": metrics_b.get("llm_calls", 0),
@@ -274,8 +369,8 @@ def main():
     }
 
     # Save to file
-    OUTPUT_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\nResults saved to {OUTPUT_FILE}")
+    output_file.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\nResults saved to {output_file}")
 
     # Print summary
     print(f"\n{'='*60}")
@@ -284,9 +379,13 @@ def main():
     print(f"  Protocol A (text):       {total_correct_a}/{total_fields} correct, "
           f"{metrics_a.get('total_tokens', 0)} tokens, "
           f"{stats_a.get('total_duration_s', 0):.1f}s")
+    if result_a.get("error"):
+        print(f"    error: {result_a.get('error')}")
     print(f"  Protocol B (structured): {total_correct_b}/{total_fields} correct, "
           f"{metrics_b.get('total_tokens', 0)} tokens, "
           f"{stats_b.get('total_duration_s', 0):.1f}s")
+    if result_b.get("error"):
+        print(f"    error: {result_b.get('error')}")
     print(f"  Accuracy diff: {total_correct_b - total_correct_a:+d}")
     print(f"  Token diff:    {metrics_b.get('total_tokens', 0) - metrics_a.get('total_tokens', 0):+d}")
     print(f"  Input token diff: {metrics_b.get('input_tokens', 0) - metrics_a.get('input_tokens', 0):+d}")

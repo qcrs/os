@@ -36,6 +36,7 @@ VLLM_ENFORCE_EAGER = os.getenv("VLLM_ENFORCE_EAGER", "0").lower() in {"1", "true
 
 ENABLE_CONTEXT_PACKETS = os.getenv("ENABLE_CONTEXT_PACKETS", "1").lower() in {"1", "true", "yes"}
 ENABLE_EMBEDDING_TRANSFER = os.getenv("ENABLE_EMBEDDING_TRANSFER", "1").lower() in {"1", "true", "yes"}
+ENABLE_CODEACT_EXECUTOR = os.getenv("ENABLE_CODEACT_EXECUTOR", "0").lower() in {"1", "true", "yes"}
 
 # Backward-compatible names used by older scripts/docs.
 DEEPSEEK_API_KEY = CHAT_API_KEY

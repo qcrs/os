@@ -1,4 +1,4 @@
-"""Research agent package.
+"""Research agent package with lazy exports.
 
 Primary role names:
 - planner: decomposes the task
@@ -7,16 +7,34 @@ Primary role names:
 - executor: runs a bounded CodeAct verification step
 - summarizer: writes the final answer
 
-Compatibility alias `retriever` remains available for older scripts.
+Compatibility aliases remain available for older scripts.
 """
 
-from .analyst import analyst
-from .executor import executor
-from .planner import planner
-from .researcher import researcher
-from .summarizer import summarizer
+from importlib import import_module
 
-# Legacy alias: not an additional agent.
-retriever = researcher
 
-__all__ = ["planner", "researcher", "analyst", "executor", "summarizer"]
+__all__ = [
+    "planner",
+    "researcher",
+    "retriever",
+    "analyst",
+    "executor",
+    "summarizer",
+    "codeact",
+]
+
+
+def __getattr__(name: str):
+    if name == "planner":
+        return import_module(".planner", __name__).planner
+    if name in {"researcher", "retriever"}:
+        return import_module(".researcher", __name__).researcher
+    if name == "analyst":
+        return import_module(".analyst", __name__).analyst
+    if name == "executor":
+        return import_module(".executor", __name__).executor
+    if name == "summarizer":
+        return import_module(".summarizer", __name__).summarizer
+    if name == "codeact":
+        return import_module(".codeact", __name__).codeact
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
