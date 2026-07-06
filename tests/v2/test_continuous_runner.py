@@ -236,7 +236,15 @@ def test_continuous_runner_executes_replay_family(tmp_path: Path) -> None:
     l3_report = next(layer_report for layer_report in report.layer_reports if layer_report.layer == BenchmarkLayer.L3)
     assert l3_report.quality_floor_breakdown["quality_floor_pass_count"] == 10.0
     assert l3_report.telemetry_summary["validated_replay_count"] >= 5.0
+    assert (
+        l3_report.telemetry_summary["validated_downgraded_reuse_count"]
+        == l3_report.telemetry_summary["validated_replay_count"]
+    )
     assert l3_report.telemetry_summary["exact_replay_count"] >= 3.0
+    assert (
+        l3_report.telemetry_summary["answer_restoration_replay_count"]
+        == l3_report.telemetry_summary["exact_replay_count"]
+    )
     assert l3_report.telemetry_summary["skipped_step_count"] >= 11.0
     assert l3_report.telemetry_summary["downgrade_execution_goal_count"] >= 4.0
     validated_case = next(case for case in l3_report.cases if case.task_id == "replay-longdoc-003")
@@ -244,6 +252,8 @@ def test_continuous_runner_executes_replay_family(tmp_path: Path) -> None:
     validated_from_api_exact_mismatch_case = next(case for case in l3_report.cases if case.task_id == "replay-longdoc-008")
     assert validated_case.replay_class == "validated_replay"
     assert validated_case.metrics["validated_replay_count"] == 1.0
+    assert validated_case.metrics["validated_downgraded_reuse_count"] == 1.0
+    assert validated_case.metrics["answer_restoration_replay_count"] == 0.0
     assert validated_case.metrics["skipped_step_count"] == 1.0
     assert validated_case.metrics["downgrade_execution_goal_count"] == 1.0
     assert validated_from_api_exact_mismatch_case.replay_class == "validated_replay"
@@ -254,6 +264,8 @@ def test_continuous_runner_executes_replay_family(tmp_path: Path) -> None:
     exact_output = json.loads(Path(exact_case.output_artifact_path).read_text(encoding="utf-8"))
     assert exact_case.replay_class == "exact_replay"
     assert exact_case.metrics["exact_replay_count"] == 1.0
+    assert exact_case.metrics["answer_restoration_replay_count"] == 1.0
+    assert exact_case.metrics["validated_downgraded_reuse_count"] == 0.0
     assert exact_case.metrics["skipped_step_count"] == 2.0
     assert exact_output["restored_replay_class"] == "exact_replay"
     assert exact_output["task_id"] == "replay-longdoc-005"
@@ -286,7 +298,11 @@ def test_continuous_runner_executes_cross_period_family_with_replay_safety(tmp_p
     l3_report = next(layer_report for layer_report in report.layer_reports if layer_report.layer == BenchmarkLayer.L3)
     assert l3_report.quality_floor_breakdown["quality_floor_pass_count"] == 10.0
     assert l3_report.telemetry_summary["validated_replay_count"] == 4.0
+    assert l3_report.telemetry_summary["validated_downgraded_reuse_count"] == 4.0
     assert l3_report.telemetry_summary["exact_replay_count"] == 0.0
+    assert l3_report.telemetry_summary["answer_restoration_replay_count"] == 0.0
+    assert report.comparison_summary["validated_downgraded_reuse_count"] == 4.0
+    assert report.comparison_summary["answer_restoration_replay_count"] == 0.0
     assert report.comparison_summary["replay_target_round_count"] == 4.0
     assert report.comparison_summary["replay_observed_round_count"] == 4.0
     assert report.comparison_summary["replay_missing_target_round_count"] == 0.0
@@ -294,6 +310,7 @@ def test_continuous_runner_executes_cross_period_family_with_replay_safety(tmp_p
     beta_case = next(case for case in l3_report.cases if case.task_id == "cross-period-006")
     assert beta_case.replay_class == "validated_replay"
     assert beta_case.metrics["validated_replay_count"] == 1.0
+    assert beta_case.metrics["validated_downgraded_reuse_count"] == 1.0
     assert beta_case.metrics["skipped_step_count"] == 1.0
     output_payload = json.loads(Path(beta_case.output_artifact_path).read_text(encoding="utf-8"))
     assert output_payload["revenue_value"] == "87"
@@ -493,7 +510,15 @@ def test_continuous_runner_executes_replay_collection(tmp_path: Path) -> None:
     assert report.collection_summary["history_missing_target_round_count"] == 0.0
     assert report.collection_summary["history_additional_reuse_round_count"] == 0.0
     assert report.collection_summary["validated_replay_count"] >= 13.0
+    assert (
+        report.collection_summary["validated_downgraded_reuse_count"]
+        == report.collection_summary["validated_replay_count"]
+    )
     assert report.collection_summary["exact_replay_count"] >= 3.0
+    assert (
+        report.collection_summary["answer_restoration_replay_count"]
+        == report.collection_summary["exact_replay_count"]
+    )
     assert report.collection_summary["replay_target_round_count"] == 16.0
     assert report.collection_summary["replay_observed_round_count"] == 16.0
     assert report.collection_summary["replay_missing_target_round_count"] == 0.0
@@ -518,7 +543,9 @@ def test_continuous_runner_executes_replay_collection(tmp_path: Path) -> None:
     assert report.admissibility_summary["csv_correlation_replay_v1"]["eligible_for_replay_headline"] is True
     assert report.admissibility_summary["csv_correlation_replay_v1"]["replay_gate_reason"] == ""
     assert report.admissibility_summary["csv_correlation_replay_v1"]["L3_validated_replay_count"] >= 8.0
+    assert report.admissibility_summary["csv_correlation_replay_v1"]["L3_validated_downgraded_reuse_count"] >= 8.0
     assert report.admissibility_summary["csv_correlation_replay_v1"]["L3_exact_replay_count"] == 0.0
+    assert report.admissibility_summary["csv_correlation_replay_v1"]["L3_answer_restoration_replay_count"] == 0.0
     assert report.admissibility_summary["csv_correlation_replay_v1"]["history_target_round_count"] == 0.0
     assert report.admissibility_summary["csv_correlation_replay_v1"]["replay_target_round_count"] == 8.0
     assert report.admissibility_summary["csv_correlation_replay_v1"]["replay_observed_round_count"] == 8.0

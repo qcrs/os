@@ -1215,7 +1215,13 @@ class RuntimeDriver:
                     "validated_replay_count": (
                         1.0 if runtime_input.replay_decision.replay_class == ReplayClass.VALIDATED_REPLAY else 0.0
                     ),
+                    "validated_downgraded_reuse_count": (
+                        1.0 if runtime_input.replay_decision.replay_class == ReplayClass.VALIDATED_REPLAY else 0.0
+                    ),
                     "exact_replay_count": (
+                        1.0 if runtime_input.replay_decision.replay_class == ReplayClass.EXACT_REPLAY else 0.0
+                    ),
+                    "answer_restoration_replay_count": (
                         1.0 if runtime_input.replay_decision.replay_class == ReplayClass.EXACT_REPLAY else 0.0
                     ),
                     "pruning_gain_bytes": float(runtime_input.retrieval.pruning_profile.pruning_gain_bytes),

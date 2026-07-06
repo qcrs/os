@@ -207,7 +207,7 @@ short_socket_path() {
   local label="$1"
   local digest
   digest="$(
-    /usr/bin/python3 - "$label" <<'PY'
+    /usr/bin/python3 - "$STATEBUS_RUN_ID:$label" <<'PY'
 import hashlib
 import sys
 
@@ -406,6 +406,143 @@ replay_ok = bool(int(sys.argv[7]))
 
 rows = list(csv.DictReader(status_path.open("r", encoding="utf-8"), delimiter="\t"))
 failed = [row for row in rows if row["exit_code"] != "0"]
+
+
+def load_json(path_value: str):
+    if not path_value or path_value == "-":
+        return None
+    path = Path(path_value)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # keep the audit summary writable even for partial artifacts
+        return {"_parse_error": str(exc), "_path": str(path)}
+
+
+def first_mode_report(payload: dict) -> dict:
+    mode_reports = payload.get("mode_reports", [])
+    if not mode_reports:
+        return {}
+    first = mode_reports[0]
+    if not isinstance(first, dict):
+        return {}
+    nested = load_json(str(first.get("report_path", "")))
+    return nested if isinstance(nested, dict) else first
+
+
+def selected_metrics(stage: str, payload: dict) -> dict[str, object]:
+    metrics: dict[str, object] = {}
+    if stage == "07_formal_primary":
+        waterfall = payload.get("waterfall_metrics") or {}
+        comparison = payload.get("comparison_summary") or {}
+        metrics.update(
+            {
+                "L0_case_count": waterfall.get("L0_case_count"),
+                "L3_quality_floor_pass_count": waterfall.get("L3_quality_floor_pass_count"),
+                "L2_semantic_state_transfer_count": waterfall.get("L2_semantic_state_transfer_count"),
+                "L3_reuse_gain": waterfall.get("L3_reuse_gain"),
+                "control_bytes_delta_l0_to_l1": comparison.get("control_bytes_delta_l0_to_l1"),
+                "pruning_bytes_saved_vs_l0": comparison.get("pruning_bytes_saved_vs_l0"),
+            }
+        )
+    elif stage == "08_compare_primary":
+        summary = payload.get("comparison_summary") or {}
+        metadata = payload.get("metadata") or {}
+        mode_payload = first_mode_report(payload)
+        fairness = mode_payload.get("fairness_manifest", {}) if isinstance(mode_payload, dict) else {}
+        metrics.update(
+            {
+                "fixed_answer_external_comparison_valid": metadata.get("fixed_answer_external_comparison_valid"),
+                "external_comparator_claim_scope": metadata.get("external_comparator_claim_scope"),
+                "formal_headline_eligible": metadata.get("formal_headline_eligible"),
+                "formal_superiority_claim_allowed": metadata.get("formal_superiority_claim_allowed"),
+                "formal_efficiency_claim_allowed": metadata.get("formal_efficiency_claim_allowed"),
+                "api_llm_total_tokens_delta": summary.get("api_llm_total_tokens_delta"),
+                "api_prompt_bytes_delta": summary.get("api_prompt_bytes_delta"),
+                "api_control_bytes_delta": summary.get("api_control_bytes_delta"),
+                "api_task_ms_delta": summary.get("api_task_ms_delta"),
+                "external_fairness_gate_coverage": fairness.get("external_fairness_gate_coverage"),
+                "no_external_fairness_gate_failures": fairness.get("no_external_fairness_gate_failures"),
+                "external_fairness_gate_failed_case_count": fairness.get(
+                    "external_fairness_gate_failed_case_count"
+                ),
+                "external_fairness_gate_pass_count": fairness.get("external_fairness_gate_pass_count"),
+                "fairness_pass_hard_gate": fairness.get("pass_hard_gate"),
+            }
+        )
+    elif stage.startswith("10_continuous_replay") or stage.startswith("14_continuous_replay"):
+        summary = payload.get("collection_summary") or {}
+        metrics.update(
+            {
+                "family_count": summary.get("family_count"),
+                "continuous_round_count": summary.get("continuous_round_count"),
+                "replay_target_round_count": summary.get("replay_target_round_count"),
+                "replay_observed_round_count": summary.get("replay_observed_round_count"),
+                "replay_missing_target_round_count": summary.get("replay_missing_target_round_count"),
+                "validated_replay_count": summary.get("validated_replay_count"),
+                "validated_downgraded_reuse_count": summary.get("validated_downgraded_reuse_count"),
+                "exact_replay_count": summary.get("exact_replay_count"),
+                "answer_restoration_replay_count": summary.get("answer_restoration_replay_count"),
+                "L2_semantic_state_transfer_count": summary.get("L2_semantic_state_transfer_count"),
+                "L3_reuse_gain": summary.get("L3_reuse_gain"),
+                "L3_artifact_reuse_count": summary.get("L3_artifact_reuse_count"),
+            }
+        )
+    elif stage.startswith(("11_continuous_replay", "12_continuous_replay", "13_continuous_replay")):
+        comparison = payload.get("comparison_summary") or {}
+        metadata = payload.get("metadata") or {}
+        audit = metadata.get("replay_admissibility_audit", {}) if isinstance(metadata, dict) else {}
+        metrics.update(
+            {
+                "task_family": payload.get("task_family"),
+                "eligible_for_quality_headline": metadata.get("eligible_for_quality_headline"),
+                "eligible_for_replay_headline": metadata.get("eligible_for_replay_headline"),
+                "replay_target_round_count": audit.get("replay_target_round_count"),
+                "replay_observed_round_count": audit.get("replay_observed_round_count"),
+                "replay_missing_target_round_count": audit.get("replay_missing_target_round_count"),
+                "validated_replay_count": comparison.get("validated_replay_count"),
+                "validated_downgraded_reuse_count": comparison.get("validated_downgraded_reuse_count"),
+                "exact_replay_count": comparison.get("exact_replay_count"),
+                "answer_restoration_replay_count": comparison.get("answer_restoration_replay_count"),
+            }
+        )
+    elif stage == "09_replay_negative_primary":
+        metrics.update(
+            {
+                "audit_pass": payload.get("audit_pass"),
+                "case_count": payload.get("case_count"),
+                "failed_case_count": payload.get("failed_case_count"),
+            }
+        )
+    elif stage == "15_flagship_ablation_primary":
+        stress = payload.get("non_text_state_stress_summary") or {}
+        metrics.update(
+            {
+                "stress_family_count": stress.get("stress_family_count"),
+                "stress_pass_family_count": stress.get("stress_pass_family_count"),
+                "total_llm_prompt_saved_by_state_ref_bytes": stress.get(
+                    "total_llm_prompt_saved_by_state_ref_bytes"
+                ),
+                "total_prompt_visible_saved_by_state_ref_bytes": stress.get(
+                    "total_prompt_visible_saved_by_state_ref_bytes"
+                ),
+                "top_prompt_visible_saving_family": (
+                    stress.get("top_prompt_visible_saving_family", {}) or {}
+                ).get("family_id"),
+            }
+        )
+    return {key: value for key, value in metrics.items() if value is not None}
+
+
+key_metrics: dict[str, dict[str, object]] = {}
+for row in rows:
+    payload_for_stage = load_json(row.get("artifact", ""))
+    if isinstance(payload_for_stage, dict):
+        metrics = selected_metrics(row["stage"], payload_for_stage)
+        if metrics:
+            key_metrics[row["stage"]] = metrics
+
 payload = {
     "primary_mode": {
         "role_path_mode": primary_role,
@@ -416,6 +553,7 @@ payload = {
     "stage_count": len(rows),
     "failed_stage_count": len(failed),
     "failed_stages": [row["stage"] for row in failed],
+    "key_metrics": key_metrics,
     "stages": rows,
 }
 summary_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -435,6 +573,15 @@ if failed:
         lines.append(f"- `{row['stage']}` exit `{row['exit_code']}`")
 else:
     lines.append("- none")
+lines.extend(["", "## Key Metrics", ""])
+if key_metrics:
+    for stage, metrics in key_metrics.items():
+        lines.append(f"### {stage}")
+        for key, value in metrics.items():
+            lines.append(f"- `{key}`: `{value}`")
+        lines.append("")
+else:
+    lines.append("- none parsed")
 lines.extend(["", "## Stage Log", ""])
 for row in rows:
     lines.append(
