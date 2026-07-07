@@ -7,6 +7,8 @@
     "revenue"
   ],
   "expected_facts": {
+    "metric_name": "revenue",
+    "metric_value": "145",
     "revenue_value": "145",
     "selected_doc_hashes": [
       "sha256:doc-acme-2026q3"

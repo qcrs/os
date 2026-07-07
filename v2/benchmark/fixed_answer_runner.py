@@ -607,6 +607,8 @@ def run_fixed_answer_benchmark_family(
                 tool_name=observed_tool_name,
                 summary_text=str(output_payload.get("summary_text", "")),
                 revenue_value=str(output_payload.get("revenue_value", "")),
+                metric_name=str(output_payload.get("metric_name", "")),
+                metric_value=str(output_payload.get("metric_value", "")),
                 selected_doc_hashes=tuple(
                     str(item).strip() for item in output_payload.get("selected_doc_hashes", []) if str(item).strip()
                 ),
@@ -649,6 +651,8 @@ def run_fixed_answer_benchmark_family(
                     **smoke_metrics,
                     "route_exact": 1.0 if shared_score.route_exact else 0.0,
                     "tool_exact": 1.0 if shared_score.tool_exact else 0.0,
+                    "metric_name_exact": 1.0 if shared_score.metric_name_exact else 0.0,
+                    "metric_value_exact": 1.0 if shared_score.metric_value_exact else 0.0,
                     "revenue_exact": 1.0 if shared_score.revenue_exact else 0.0,
                     "selected_doc_hashes_exact": 1.0 if shared_score.selected_doc_hashes_exact else 0.0,
                     "summary_present": 1.0 if shared_score.summary_present else 0.0,

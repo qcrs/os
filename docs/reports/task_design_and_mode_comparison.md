@@ -5,8 +5,9 @@
 > 当前定位：历史 pack-map / 旧主线设计说明，不是当前 active communication source-of-truth。
 > 本文主要帮助读者理解早期 v3 pack 分工和后续边界收紧，不能替代当前 active communication source-of-truth。
 > 2026-07-06 claim-upgrade 后，当前可声明内容请优先读取：
-> `docs/improvement/19_claim_upgrade_completion_report_20260706.md`
-> 和 `docs/improvement/artifacts/17_final_system_audit/17f_safe_claim_language.md`。
+> `docs/README.md`、`docs/improvement/README.md`、
+> `docs/improvement/20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
+> 和最新 local+api 深挖文档。
 > 当前 communication headline 已切到 `superiority_comm_v1`；最新正式读法请优先看：
 > `docs/reports/statebus_system_method_task_and_results_explainer.md`
 > `docs/reports/current_task_results_overview_20260622.md`

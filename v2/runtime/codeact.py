@@ -153,6 +153,8 @@ class CodeActRequest:
     route: str = ""
     tool_name: str = ""
     action_contract: str = ""
+    metric_name: str = ""
+    metric_value: str = ""
     supporting_doc_ids: tuple[str, ...] = ()
     planner_plan_payload: dict[str, object] = field(default_factory=dict)
     task_family: str = "financial_report_analysis"
@@ -175,6 +177,8 @@ class CodeActRequest:
             "execution_goal": self.execution_goal,
             "query_text": self.query_text,
             "summary_suffix": self.summary_suffix,
+            "metric_name": self.metric_name,
+            "metric_value": self.metric_value,
             "revenue_value": self.revenue_value,
             "selected_doc_hashes": list(self.selected_doc_hashes),
             "evidence_pack_hash": self.evidence_pack_hash,
@@ -859,6 +863,8 @@ for stage in plan.get("stages", []):
                     "task_family": "financial_report_analysis",
                     "query_text": request["query_text"],
                     "summary_text": request["summary_suffix"],
+                    "metric_name": request.get("metric_name", ""),
+                    "metric_value": request.get("metric_value", request.get("revenue_value", "")),
                     "revenue_value": request["revenue_value"],
                     "selected_doc_hashes": request["selected_doc_hashes"],
                     "supporting_doc_ids": request.get("supporting_doc_ids", []),

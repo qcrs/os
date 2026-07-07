@@ -1,15 +1,23 @@
 # StateBus v2 实验数据汇总
 
 > **2026-07-06 claim-upgrade addendum:** 本文保留 2026-07-04 实验记录，但当前对外 claim 应优先读取
-> `docs/improvement/19_claim_upgrade_completion_report_20260706.md` 和
-> `docs/improvement/artifacts/17_final_system_audit/17f_safe_claim_language.md`。
+> `docs/README.md`、`docs/improvement/README.md`、
+> `docs/improvement/20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
+> 和最新 local+api 深挖文档。
 > 本次新增可声明证据为 local-embedding formal benchmark：25 cases / 5 families / 25 quality passes，
-> 且 `--state-pool-mode memfd` 路径记录 25 次 memfd transfer、25 次 memfd publish、247046 bytes。
+> 且 `--state-pool-mode memfd` 路径记录 25 次 memfd transfer、25 次 memfd publish、247076 bytes。
 > 本次没有重新运行 formal external API compare，因此不要把本文旧 formal compare 段落当作
 > 2026-07-06 claim-upgrade 的 formal external superiority 证据。
 > 本文第八节 CodeAct 数据也是 2026-07-04 诊断记录；当前主线只可表述为
 > bounded CodeAct / controlled execution path，不能写成 formal benchmark 已证明
 > realtime LLM code generation。
+>
+> **2026-07-07 contest-audit stopline:** 本文中的 `Container (openEuler)` 不是
+> openEuler 24.03-LTS-SP3 VM validation；old `formal_superiority_claim_allowed=True`
+> / `formal_efficiency_claim_allowed=True` 不是 latest formal external superiority；
+> bwrap sandbox 记录不是 production sandbox validation；flagship/replay 历史强项不能覆盖
+> `local_api_20260707_163354` 中 flagship stress 3/6 的最新边界。当前对外 claim
+> 必须以 `docs/improvement/20_v2_comprehensive_truth_audit_20260706/` 为准。
 
 > 日期：2026-07-04（final update after full validation cycle）
 > 分支：`feat/statebus-v2-container-runtime`
@@ -261,10 +269,16 @@ repair loop 未触发；此结论不得升级成当前 formal benchmark 已证�
 
 ## 九、可声明内容总结
 
+> 2026-07-07 审计说明：下表是 2026-07-04 历史可声明内容总结，不是当前 claim
+> 白名单。当前白名单见
+> `docs/improvement/20_v2_comprehensive_truth_audit_20260706/10_contest_oriented_followup_plan_20260707.md`。
+> 尤其不要把 old token/efficiency、openEuler container、bwrap 或 flagship/replay 历史字段
+> 外推为 current total-token superiority、openEuler VM validation、production sandbox 或 all-pass。
+
 | 声明 | 依据 | 强度 |
 |---|---|---|
 | 形式化多样化推理验证 | 2026-07-06 local-embedding formal run：25 cases / 5 families / 25 quality passes | **强** |
-| memfd formal benchmark 主线可观测 | `state_pool_mode_used=memfd`，25 transfers，25 publishes，247046 bytes | **强** |
+| memfd formal benchmark 主线可观测 | `state_pool_mode_used=memfd`，25 transfers，25 publishes，247076 bytes | **强** |
 | StateBus 质量优于 pure-text external（formal tier） | 2026-07-04 历史 formal compare 记录；2026-07-06 claim-upgrade 未重新运行 API compare，不作为新增外部优势 claim | **历史证据，谨慎引用** |
 | typed carrier 节省 LLM tokens | -743（formal compare），-395（carrier内部） | **强** |
 | typed carrier 节省 prompt bytes | -10,928 B（formal），-1,922 B（内部） | **强** |

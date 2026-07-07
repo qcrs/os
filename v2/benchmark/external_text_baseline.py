@@ -76,6 +76,8 @@ class ExternalTextCaseResult:
     tool_name: str
     summary_text: str
     revenue_value: str
+    metric_name: str
+    metric_value: str
     output_path: str
     report_path: str
     message_count: int
@@ -89,6 +91,8 @@ class ExternalTextCaseResult:
     llm_call_count: int
     route_exact: bool
     tool_exact: bool
+    metric_name_exact: bool
+    metric_value_exact: bool
     revenue_fallback_used: bool
     exact_match: bool
     admissible_match: bool
@@ -121,6 +125,18 @@ def _fairness_gate(
     combined_surface: str = "",
 ) -> dict[str, object]:
     visible_candidate_keys = tuple(candidate.candidate_key() for candidate in route_candidates)
+    visible_candidate_by_key = _visible_candidate_by_key(route_candidates)
+
+    def _raw_route_tool_names_visible_candidate(route: str, tool_name: str) -> bool:
+        if route and tool_name and f"{route}::{tool_name}" in visible_candidate_keys:
+            return True
+        route_candidate = visible_candidate_by_key.get(route)
+        if route_candidate is not None:
+            return not tool_name or tool_name == route_candidate.tool_name
+        tool_candidate = visible_candidate_by_key.get(tool_name)
+        if tool_candidate is not None:
+            return not route or route == tool_candidate.route
+        return False
 
     def _raw_visible_choice_only(payload: dict[str, object] | None) -> bool:
         if not isinstance(payload, dict):
@@ -129,10 +145,11 @@ def _fairness_gate(
         route = str(payload.get("route", "")).strip()
         tool_name = str(payload.get("tool_name", payload.get("tool", ""))).strip()
         # If route/tool fields are present, they must themselves name a visible
-        # candidate. Do not let a later assisted normalization rescue bad raw
-        # choices merely because another field mentions a visible candidate key.
+        # candidate or a visible candidate key. Do not let a later assisted
+        # normalization rescue bad raw choices merely because another field
+        # mentions a visible candidate key.
         if route or tool_name:
-            return bool(route and tool_name and f"{route}::{tool_name}" in visible_candidate_keys)
+            return _raw_route_tool_names_visible_candidate(route, tool_name)
         return bool(candidate_key and candidate_key in visible_candidate_keys)
 
     raw_role_surface = "\n".join(
@@ -303,6 +320,8 @@ class ExternalExecutionContext:
     table_text: str
     public_evidence_text: str
     public_doc_hashes: tuple[str, ...]
+    metric_name: str
+    metric_value: str
     revenue_value: str
 
 
@@ -344,11 +363,12 @@ def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionConte
         )
         for profile in profiles
     )
-    revenue_value = next(
+    requested_metric = str(sample.canonical_task_spec.arguments.get("metric", "revenue")).strip() or "revenue"
+    metric_value = next(
         (
             row.value
             for row in document.table_rows
-            if row.metric_name == str(sample.canonical_task_spec.arguments.get("metric", "revenue"))
+            if row.metric_name == requested_metric
         ),
         "",
     )
@@ -359,7 +379,9 @@ def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionConte
         table_text=table_text,
         public_evidence_text=public_evidence_text,
         public_doc_hashes=public_doc_hashes,
-        revenue_value=revenue_value,
+        metric_name=requested_metric,
+        metric_value=metric_value,
+        revenue_value=metric_value if requested_metric == "revenue" else "",
     )
 
 
@@ -400,9 +422,12 @@ def _retriever_prompt(
     return (
         "You are an external pure-text retriever.\n"
         "Read the corpus evidence. Select the most relevant facts.\n"
-        "Return JSON with: route, tool_name, evidence_summary (2-3 sentences), revenue_value, selected_doc_hashes.\n\n"
+        "Return JSON with: route, tool_name, evidence_summary (2-3 sentences), metric_name, metric_value, selected_doc_hashes.\n"
+        "metric_name must equal the requested metric, and metric_value must be the value for that metric.\n"
+        "For legacy revenue requests you may also include revenue_value, but do not put revenue in metric_value unless revenue was requested.\n\n"
         f"Task ID: {sample.task_id}\n"
         f"Query: {retrieval_objective}\n"
+        f"Requested metric: {context.metric_name}\n"
         f"Retrieved docs: {','.join(context.public_doc_hashes)}\n"
         f"Planner proposal: {stable_json_dumps(planner_payload)}\n"
         f"Visible candidates: {visible_candidates}\n"
@@ -485,6 +510,8 @@ def _build_execution_artifact_text(
     route: str,
     tool_name: str,
     revenue_value: str = "",
+    metric_name: str = "",
+    metric_value: str = "",
     supporting_doc_ids: tuple[str, ...] | None = None,
 ) -> str:
     if supporting_doc_ids is None:
@@ -492,6 +519,8 @@ def _build_execution_artifact_text(
     payload = {
         "route": route,
         "tool_name": tool_name,
+        "metric_name": metric_name,
+        "metric_value": metric_value,
         "revenue_value": revenue_value,
         "selected_doc_hashes": list(supporting_doc_ids),
         "supporting_doc_ids": list(supporting_doc_ids),
@@ -539,12 +568,20 @@ def run_external_text_case(
         "evidence_summary",
         retriever_payload.get("evidence", f"Retrieved docs: {','.join(context.public_doc_hashes)}"),
     )).strip() or f"Retrieved docs: {','.join(context.public_doc_hashes)}"
-    # Use revenue_value exactly as extracted by the LLM Retriever.
-    # Do not fall back to the corpus preload here, or the external baseline can
-    # appear correct without actually extracting the fact.
+    # Use metric_value exactly as extracted by the LLM Retriever. Do not fall
+    # back to the corpus preload here, or the external baseline can appear
+    # correct without actually extracting the fact.
+    llm_metric_name = str(
+        retriever_payload.get("metric_name", retriever_payload_raw.get("metric_name", ""))
+    ).strip()
+    llm_metric_value = str(
+        retriever_payload.get("metric_value", retriever_payload_raw.get("metric_value", ""))
+    ).strip()
     llm_revenue_value = str(
         retriever_payload.get("revenue_value", retriever_payload_raw.get("revenue_value", ""))
     ).strip()
+    observed_metric_name = llm_metric_name
+    observed_metric_value = llm_metric_value or llm_revenue_value
     observed_revenue_value = llm_revenue_value
     supporting_doc_ids = tuple(
         str(item).strip() for item in retriever_payload.get("supporting_doc_ids", context.public_doc_hashes) if str(item).strip()
@@ -570,6 +607,8 @@ def run_external_text_case(
         route=route,
         tool_name=tool_name,
         revenue_value=observed_revenue_value,
+        metric_name=observed_metric_name,
+        metric_value=observed_metric_value,
         supporting_doc_ids=supporting_doc_ids,
     )
     summarizer_prompt = _summarizer_prompt(
@@ -628,6 +667,8 @@ def run_external_text_case(
             tool_name=tool_name,
             summary_text=summary_text,
             revenue_value=observed_revenue_value,
+            metric_name=observed_metric_name,
+            metric_value=observed_metric_value,
             selected_doc_hashes=context.public_doc_hashes,
             supporting_doc_ids=supporting_doc_ids,
             contamination_detected=contamination_detected,
@@ -646,6 +687,8 @@ def run_external_text_case(
         "route": route,
         "tool_name": tool_name,
         "summary_text": summary_text,
+        "metric_name": observed_metric_name,
+        "metric_value": observed_metric_value,
         "revenue_value": observed_revenue_value,
         "selected_doc_hashes": list(context.public_doc_hashes),
         "supporting_doc_ids": list(supporting_doc_ids),
@@ -656,6 +699,11 @@ def run_external_text_case(
         "route": route,
         "tool_name": tool_name,
         "summary_text": summary_text,
+        "metric_name": observed_metric_name,
+        "metric_value": observed_metric_value,
+        "expected_metric_name": context.metric_name,
+        "expected_metric_value": context.metric_value,
+        "revenue_value": observed_revenue_value,
         "message_count": len(message_log),
         "text_bytes": sum(len(item.encode("utf-8")) for item in message_log),
         "control_bytes": sum(len(item.encode("utf-8")) for item in message_log),
@@ -689,6 +737,8 @@ def run_external_text_case(
         "llm_call_count": 4,
         "route_exact": shared_score.route_exact,
         "tool_exact": shared_score.tool_exact,
+        "metric_name_exact": shared_score.metric_name_exact,
+        "metric_value_exact": shared_score.metric_value_exact,
         "revenue_exact": shared_score.revenue_exact,
         "revenue_fallback_used": 1.0 if (not llm_revenue_value and context.revenue_value) else 0.0,
         "selected_doc_hashes_exact": shared_score.selected_doc_hashes_exact,
@@ -739,6 +789,8 @@ def run_external_text_case(
         tool_name=tool_name,
         summary_text=summary_text,
         revenue_value=observed_revenue_value,
+        metric_name=observed_metric_name,
+        metric_value=observed_metric_value,
         output_path=str(output_path),
         report_path=str(report_path),
         message_count=len(message_log),
@@ -752,6 +804,8 @@ def run_external_text_case(
         llm_call_count=4,
         route_exact=shared_score.route_exact,
         tool_exact=shared_score.tool_exact,
+        metric_name_exact=shared_score.metric_name_exact,
+        metric_value_exact=shared_score.metric_value_exact,
         revenue_fallback_used=not llm_revenue_value and bool(context.revenue_value),
         exact_match=shared_score.exact_match,
         admissible_match=shared_score.admissible_match,
@@ -853,6 +907,8 @@ def run_external_text_family(
             "summarizer_prompt_bytes": float(result.summarizer_usage.prompt_bytes),
             "route_exact": 1.0 if result.route_exact else 0.0,
             "tool_exact": 1.0 if result.tool_exact else 0.0,
+            "metric_name_exact": 1.0 if result.metric_name_exact else 0.0,
+            "metric_value_exact": 1.0 if result.metric_value_exact else 0.0,
             "revenue_exact": 1.0 if result.quality_floor.revenue_exact else 0.0,
             "revenue_fallback_used": 1.0 if result.revenue_fallback_used else 0.0,
             "selected_doc_hashes_exact": 1.0 if result.quality_floor.selected_doc_hashes_exact else 0.0,

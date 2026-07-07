@@ -5,7 +5,15 @@ from dataclasses import dataclass, field
 import time
 from typing import Any
 
-from runtime.llm import ChatMessage, LLMClient, LLMResult, build_llm_client, extract_json_object, tagged_json_block
+from runtime.llm import (
+    ChatMessage,
+    LLMClient,
+    LLMResult,
+    LLMUsage,
+    build_llm_client,
+    extract_json_object,
+    tagged_json_block,
+)
 from v2.contracts import CanonicalTaskSpec
 from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
 from v2.retrieval.models import RetrievalCandidatePool
@@ -13,6 +21,23 @@ from v2.retrieval.models import RetrievalCandidatePool
 
 def _run_sync(awaitable: Any) -> Any:
     return asyncio.run(awaitable)
+
+
+def _merge_llm_results(results: list[LLMResult]) -> LLMResult:
+    if not results:
+        return LLMResult(text="", model="", usage=LLMUsage())
+    if len(results) == 1:
+        return results[0]
+    last = results[-1]
+    return LLMResult(
+        text=last.text,
+        model=last.model,
+        usage=LLMUsage(
+            prompt_tokens=sum(result.usage.prompt_tokens for result in results),
+            completion_tokens=sum(result.usage.completion_tokens for result in results),
+            total_tokens=sum(result.usage.total_tokens for result in results),
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -124,6 +149,15 @@ class SummarizerRoleDecision:
     total_tokens: int = 0
     prompt_bytes: int = 0
     latency_ms: float = 0.0
+
+
+@dataclass(frozen=True)
+class JsonRoleCompletion:
+    payload: dict[str, Any]
+    result: LLMResult
+    prompt_bytes: int
+    latency_ms: float
+    attempt_count: int
 
 
 @dataclass(frozen=True)
@@ -287,6 +321,21 @@ def _candidate_identity_line(visible_candidates: tuple["RoleToolCandidate", ...]
     return "; ".join(candidate.candidate_key() for candidate in visible_candidates)
 
 
+def _selection_retry_prompt(
+    *,
+    prompt: str,
+    error: RoleSelectionError,
+    visible_candidates: tuple["RoleToolCandidate", ...],
+) -> str:
+    visible_keys = ", ".join(candidate.candidate_key() for candidate in visible_candidates)
+    return (
+        f"{prompt}\n\n"
+        "Selection retry instruction: the prior JSON selected an invisible or inconsistent "
+        f"route/tool candidate ({error}). Return exactly one visible candidate from this list "
+        f"and copy candidate_key, route, and tool_name exactly: {visible_keys}."
+    )
+
+
 def _tagged_text_block(tag: str, text: str) -> str:
     normalized = text.strip()
     if not normalized:
@@ -320,6 +369,33 @@ def _first_valid_int(*values: object) -> int | None:
         except (TypeError, ValueError):
             continue
     return None
+
+
+def _coerce_confidence(value: object) -> float:
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        text = str(value).strip().lower()
+    label_scores = {
+        "certain": 1.0,
+        "very_high": 0.95,
+        "very high": 0.95,
+        "high": 0.9,
+        "medium_high": 0.75,
+        "medium high": 0.75,
+        "moderate": 0.6,
+        "medium": 0.5,
+        "low": 0.25,
+        "very_low": 0.1,
+        "very low": 0.1,
+        "none": 0.0,
+        "unknown": 0.0,
+    }
+    return label_scores.get(text, 0.0)
 
 
 def _coerce_string_tuple(value: object) -> tuple[str, ...]:
@@ -567,6 +643,7 @@ def _canonicalize_planner_workflow_payload(payload: dict[str, Any]) -> dict[str,
 class RolePathRunner:
     llm_client: LLMClient = field(default_factory=build_llm_client)
     handoff_mode: str = "structured_collaboration"
+    json_response_max_attempts: int = 3
 
     def _render_prompt(
         self,
@@ -591,6 +668,53 @@ class RolePathRunner:
             payload=payload,
             evidence_blocks=evidence_blocks,
         )
+
+    def _complete_json_role(
+        self,
+        *,
+        prompt: str,
+        purpose: str,
+    ) -> JsonRoleCompletion:
+        attempts: list[LLMResult] = []
+        prompt_bytes = 0
+        current_prompt = prompt
+        retry_note = (
+            "\n\nJSON retry instruction: the prior response was empty or malformed. "
+            "Return exactly one valid JSON object and no prose."
+        )
+        max_attempts = max(1, self.json_response_max_attempts)
+        start_ns = time.perf_counter_ns()
+        last_error: ValueError | None = None
+        for attempt_index in range(max_attempts):
+            prompt_bytes += len(current_prompt.encode("utf-8"))
+            result = _run_sync(
+                self.llm_client.complete(
+                    [ChatMessage(role="user", content=current_prompt)],
+                    purpose=purpose,
+                )
+            )
+            attempts.append(result)
+            try:
+                payload = extract_json_object(result.text)
+            except ValueError as exc:
+                last_error = exc
+                if attempt_index + 1 >= max_attempts:
+                    break
+                current_prompt = f"{prompt}{retry_note}"
+                continue
+            latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+            return JsonRoleCompletion(
+                payload=payload,
+                result=_merge_llm_results(attempts),
+                prompt_bytes=prompt_bytes,
+                latency_ms=latency_ms,
+                attempt_count=len(attempts),
+            )
+        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        last_text = attempts[-1].text if attempts else ""
+        raise ValueError(
+            f"{purpose} role returned invalid JSON after {len(attempts)} attempt(s): {last_text!r}"
+        ) from last_error
 
     def build_retrieval_objective(
         self,
@@ -633,12 +757,14 @@ class RolePathRunner:
         candidate_rank: int | None,
         visible_candidates: tuple[RoleToolCandidate, ...],
         allow_assisted_correction: bool,
+        route_hints: tuple[str, ...] = (),
     ) -> tuple[RoleToolCandidate, int]:
         if not visible_candidates:
             raise ValueError("visible_candidates must not be empty")
         route_normalized = route.strip()
         tool_normalized = tool_name.strip()
         candidate_key_normalized = candidate_key.strip()
+        normalized_route_hints = tuple(dict.fromkeys(hint.strip() for hint in route_hints if hint.strip()))
         ranked = [best_visible_candidate(visible_candidates)]
         for candidate in visible_candidates:
             if candidate.route == route_normalized and candidate.tool_name == tool_normalized:
@@ -646,6 +772,36 @@ class RolePathRunner:
         if candidate_key_normalized:
             key_matches = [candidate for candidate in visible_candidates if candidate.candidate_key() == candidate_key_normalized]
             if len(key_matches) == 1:
+                selected = key_matches[0]
+                if (
+                    not route_normalized
+                    or route_normalized in {selected.route, selected.tool_name, selected.candidate_key()}
+                ) and (
+                    not tool_normalized
+                    or tool_normalized in {selected.tool_name, selected.route, selected.candidate_key()}
+                ):
+                    return selected, selected.helper_rank
+        if "::" in route_normalized:
+            key_matches = [candidate for candidate in visible_candidates if candidate.candidate_key() == route_normalized]
+            if len(key_matches) == 1 and (
+                not tool_normalized
+                or tool_normalized in {
+                    key_matches[0].tool_name,
+                    key_matches[0].route,
+                    key_matches[0].candidate_key(),
+                }
+            ):
+                return key_matches[0], key_matches[0].helper_rank
+        if "::" in tool_normalized:
+            key_matches = [candidate for candidate in visible_candidates if candidate.candidate_key() == tool_normalized]
+            if len(key_matches) == 1 and (
+                not route_normalized
+                or route_normalized in {
+                    key_matches[0].route,
+                    key_matches[0].tool_name,
+                    key_matches[0].candidate_key(),
+                }
+            ):
                 return key_matches[0], key_matches[0].helper_rank
         if candidate_rank is not None:
             if 1 <= candidate_rank <= len(visible_candidates):
@@ -658,6 +814,23 @@ class RolePathRunner:
         if len(route_matches) == 1 and tool_normalized == route_normalized:
             selected = route_matches[0]
             return selected, selected.helper_rank
+        swapped_matches = [
+            candidate
+            for candidate in visible_candidates
+            if candidate.route == tool_normalized and candidate.tool_name == route_normalized
+        ]
+        if len(swapped_matches) == 1:
+            selected = swapped_matches[0]
+            return selected, selected.helper_rank
+        if route_normalized and route_normalized == tool_normalized and normalized_route_hints:
+            hinted_matches = [
+                candidate
+                for candidate in visible_candidates
+                if candidate.route in normalized_route_hints and candidate.tool_name == tool_normalized
+            ]
+            if len(hinted_matches) == 1:
+                selected = hinted_matches[0]
+                return selected, selected.helper_rank
         if not allow_assisted_correction:
             raise RoleSelectionError(
                 f"strict_visible_candidate_mismatch:{route_normalized or '<empty>'}::{tool_normalized or '<empty>'}"
@@ -732,16 +905,9 @@ class RolePathRunner:
                 f"Summary hint:\n{summary_hint}\n\n"
                 f"Evidence note:\n{prompt_slice.combined_text()}\n\n"
             )
-        prompt_bytes = len(prompt.encode("utf-8"))
-        start_ns = time.perf_counter_ns()
-        result = _run_sync(
-            self.llm_client.complete(
-                [ChatMessage(role="user", content=prompt)],
-                purpose="planner",
-            )
-        )
-        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
-        payload = _canonicalize_planner_workflow_payload(extract_json_object(result.text))
+        completion = self._complete_json_role(prompt=prompt, purpose="planner")
+        result = completion.result
+        payload = _canonicalize_planner_workflow_payload(completion.payload)
         retrieval_objective = payload.get("retrieval_objective", {})
         if not isinstance(retrieval_objective, dict):
             retrieval_objective = {}
@@ -759,8 +925,8 @@ class RolePathRunner:
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
-            prompt_bytes=prompt_bytes,
-            latency_ms=latency_ms,
+            prompt_bytes=completion.prompt_bytes,
+            latency_ms=completion.latency_ms,
         )
 
     def choose_retrieval_candidate(
@@ -772,6 +938,7 @@ class RolePathRunner:
         prompt_slice: RolePromptSlice | None = None,
         strict_surface: bool = True,
         allow_assisted_correction: bool = True,
+        route_hints: tuple[str, ...] = (),
     ) -> RetrieverRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="retriever")
         candidate_payload, _candidate_notes = _candidate_surface_payload(
@@ -818,25 +985,38 @@ class RolePathRunner:
                 f"Candidate notes: {_candidate_notes}\n\n"
                 f"Evidence note:\n{prompt_slice.combined_text()}\n"
             )
-        prompt_bytes = len(prompt.encode("utf-8"))
-        start_ns = time.perf_counter_ns()
-        result = _run_sync(
-            self.llm_client.complete(
-                [ChatMessage(role="user", content=prompt)],
-                purpose="retriever",
-            )
-        )
-        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
-        payload = extract_json_object(result.text)
-        parsed_selection = _parse_role_selection(payload)
-        selected_candidate, selected_rank = self._normalize_candidate_selection(
-            route=parsed_selection.route,
-            tool_name=parsed_selection.tool_name,
-            candidate_key=parsed_selection.candidate_key,
-            candidate_rank=parsed_selection.candidate_rank,
-            visible_candidates=visible_candidates,
-            allow_assisted_correction=allow_assisted_correction,
-        )
+        completions: list[JsonRoleCompletion] = []
+        current_prompt = prompt
+        max_attempts = max(1, self.json_response_max_attempts)
+        last_error: RoleSelectionError | None = None
+        for attempt_index in range(max_attempts):
+            completion = self._complete_json_role(prompt=current_prompt, purpose="retriever")
+            completions.append(completion)
+            payload = completion.payload
+            parsed_selection = _parse_role_selection(payload)
+            try:
+                selected_candidate, selected_rank = self._normalize_candidate_selection(
+                    route=parsed_selection.route,
+                    tool_name=parsed_selection.tool_name,
+                    candidate_key=parsed_selection.candidate_key,
+                    candidate_rank=parsed_selection.candidate_rank,
+                    visible_candidates=visible_candidates,
+                    allow_assisted_correction=allow_assisted_correction,
+                    route_hints=route_hints,
+                )
+                break
+            except RoleSelectionError as exc:
+                last_error = exc
+                if attempt_index + 1 >= max_attempts:
+                    raise
+                current_prompt = _selection_retry_prompt(
+                    prompt=prompt,
+                    error=exc,
+                    visible_candidates=visible_candidates,
+                )
+        else:
+            raise last_error or RoleSelectionError("selection_retry_exhausted")
+        result = _merge_llm_results([completion.result for completion in completions])
         return RetrieverRoleDecision(
             route=selected_candidate.route,
             tool_name=selected_candidate.tool_name,
@@ -848,8 +1028,8 @@ class RolePathRunner:
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
-            prompt_bytes=prompt_bytes,
-            latency_ms=latency_ms,
+            prompt_bytes=sum(completion.prompt_bytes for completion in completions),
+            latency_ms=sum(completion.latency_ms for completion in completions),
         )
 
     def validate_execution_choice(
@@ -862,6 +1042,7 @@ class RolePathRunner:
         prompt_slice: RolePromptSlice | None = None,
         strict_surface: bool = True,
         allow_assisted_correction: bool = True,
+        route_hints: tuple[str, ...] = (),
     ) -> ExecutorRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="executor")
         candidate_payload, _candidate_notes = _candidate_surface_payload(
@@ -913,25 +1094,38 @@ class RolePathRunner:
                 f"Candidate notes: {_candidate_notes}\n\n"
                 f"Evidence note:\n{prompt_slice.combined_text()}\n"
             )
-        prompt_bytes = len(prompt.encode("utf-8"))
-        start_ns = time.perf_counter_ns()
-        result = _run_sync(
-            self.llm_client.complete(
-                [ChatMessage(role="user", content=prompt)],
-                purpose="executor",
-            )
-        )
-        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
-        payload = extract_json_object(result.text)
-        parsed_selection = _parse_role_selection(payload)
-        selected_candidate, _ = self._normalize_candidate_selection(
-            route=parsed_selection.route or route,
-            tool_name=parsed_selection.tool_name or tool_name,
-            candidate_key=parsed_selection.candidate_key,
-            candidate_rank=parsed_selection.candidate_rank,
-            visible_candidates=visible_candidates,
-            allow_assisted_correction=allow_assisted_correction,
-        )
+        completions: list[JsonRoleCompletion] = []
+        current_prompt = prompt
+        max_attempts = max(1, self.json_response_max_attempts)
+        last_error: RoleSelectionError | None = None
+        for attempt_index in range(max_attempts):
+            completion = self._complete_json_role(prompt=current_prompt, purpose="executor")
+            completions.append(completion)
+            payload = completion.payload
+            parsed_selection = _parse_role_selection(payload)
+            try:
+                selected_candidate, _ = self._normalize_candidate_selection(
+                    route=parsed_selection.route or route,
+                    tool_name=parsed_selection.tool_name or tool_name,
+                    candidate_key=parsed_selection.candidate_key,
+                    candidate_rank=parsed_selection.candidate_rank,
+                    visible_candidates=visible_candidates,
+                    allow_assisted_correction=allow_assisted_correction,
+                    route_hints=route_hints,
+                )
+                break
+            except RoleSelectionError as exc:
+                last_error = exc
+                if attempt_index + 1 >= max_attempts:
+                    raise
+                current_prompt = _selection_retry_prompt(
+                    prompt=prompt,
+                    error=exc,
+                    visible_candidates=visible_candidates,
+                )
+        else:
+            raise last_error or RoleSelectionError("selection_retry_exhausted")
+        result = _merge_llm_results([completion.result for completion in completions])
         return ExecutorRoleDecision(
             route=selected_candidate.route,
             tool_name=selected_candidate.tool_name,
@@ -944,8 +1138,8 @@ class RolePathRunner:
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
-            prompt_bytes=prompt_bytes,
-            latency_ms=latency_ms,
+            prompt_bytes=sum(completion.prompt_bytes for completion in completions),
+            latency_ms=sum(completion.latency_ms for completion in completions),
         )
 
     def summarize(
@@ -998,20 +1192,13 @@ class RolePathRunner:
                 f"Evidence note:\n{prompt_slice.combined_text()}\n\n"
                 f"Playbook actions:\n{actions_text}\n"
             )
-        prompt_bytes = len(prompt.encode("utf-8"))
-        start_ns = time.perf_counter_ns()
-        result = _run_sync(
-            self.llm_client.complete(
-                [ChatMessage(role="user", content=prompt)],
-                purpose="summarizer",
-            )
-        )
-        latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
-        payload = extract_json_object(result.text)
+        completion = self._complete_json_role(prompt=prompt, purpose="summarizer")
+        result = completion.result
+        payload = completion.payload
         summary_text = str(payload.get("summary", payload.get("s", ""))).strip()
         reusable = payload.get("reusable_steps", payload.get("r", []))
         tags_payload = payload.get("tags", payload.get("t", []))
-        confidence = float(payload.get("confidence", payload.get("c", 0.0)) or 0.0)
+        confidence = _coerce_confidence(payload.get("confidence", payload.get("c", 0.0)))
         return SummarizerRoleDecision(
             summary_text=summary_text,
             reusable_steps=tuple(str(item) for item in reusable if str(item).strip()),
@@ -1022,8 +1209,8 @@ class RolePathRunner:
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
-            prompt_bytes=prompt_bytes,
-            latency_ms=latency_ms,
+            prompt_bytes=completion.prompt_bytes,
+            latency_ms=completion.latency_ms,
         )
 
 

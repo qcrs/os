@@ -20,6 +20,7 @@ from v2.benchmark.reporting import (
     write_json_report,
     write_markdown_report,
 )
+from v2.benchmark.task_registry import formal_family_specs
 
 
 def _metric(report: BenchmarkFamilyReport, key: str) -> float:
@@ -239,9 +240,29 @@ def _mode_formal_efficiency_claim_allowed(mode_report: BenchmarkComparatorModeRe
     return (
         mode_report.benchmark_tier == "formal"
         and not mode_report.missing_reason
+        and mode_report.comparison_valid
         and mode_report.debug_metrics.get("llm_total_tokens_delta", 0.0) < 0.0
         and mode_report.debug_metrics.get("prompt_bytes_delta", 0.0) < 0.0
-        and mode_report.debug_metrics.get("quality_floor_pass_delta", 0.0) >= 0.0
+        and mode_report.debug_metrics.get("quality_floor_pass_delta", 0.0) == 0.0
+    )
+
+
+def _mode_prompt_byte_efficiency_claim_allowed(mode_report: BenchmarkComparatorModeReport) -> bool:
+    """True when StateBus uses fewer prompt bytes with equal quality.
+
+    This is a weaker efficiency claim than _mode_formal_efficiency_claim_allowed.
+    It focuses on prompt bytes (input context reduction from structured protocol)
+    without requiring total token reduction. StateBus may use more total tokens
+    due to structured JSON output verbosity vs external free-text output.
+    The claim: StateBus reduces inter-agent context overhead (prompt bytes)
+    while achieving equal quality.
+    """
+    return (
+        mode_report.benchmark_tier == "formal"
+        and not mode_report.missing_reason
+        and mode_report.comparison_valid
+        and mode_report.debug_metrics.get("prompt_bytes_delta", 0.0) < 0.0
+        and mode_report.debug_metrics.get("quality_floor_pass_delta", 0.0) == 0.0
     )
 
 
@@ -255,6 +276,56 @@ def _formal_efficiency_claim_allowed(
     )
 
 
+def _mode_quality_superiority_comparison_valid(mode_report: BenchmarkComparatorModeReport) -> bool:
+    return (
+        not mode_report.missing_reason
+        and bool(mode_report.fairness_manifest.get("pass_hard_gate", False))
+        and mode_report.statebus_report.eligible_for_headline
+        and mode_report.debug_metrics.get("quality_floor_pass_delta", 0.0) > 0.0
+    )
+
+
+def _quality_superiority_comparison_valid(mode_reports: list[BenchmarkComparatorModeReport]) -> bool:
+    return bool(mode_reports) and all(not r.missing_reason for r in mode_reports) and all(
+        bool(r.fairness_manifest.get("pass_hard_gate", False)) for r in mode_reports
+    ) and all(r.statebus_report.eligible_for_headline for r in mode_reports) and any(
+        r.debug_metrics.get("quality_floor_pass_delta", 0.0) > 0.0 for r in mode_reports
+    )
+
+
+def _formal_compare_scope_metadata(
+    *,
+    samples: list[FixedAnswerSample],
+    benchmark_tier: str,
+) -> dict[str, object]:
+    case_count = len(samples)
+    family_count = len({sample.task_family for sample in samples}) if samples else 0
+    registry_case_count = sum(spec.expected_case_count for spec in formal_family_specs())
+    registry_family_count = len(formal_family_specs())
+    full_registry = (
+        benchmark_tier == "formal"
+        and case_count == registry_case_count
+        and family_count == registry_family_count
+    )
+    if benchmark_tier == "formal":
+        if full_registry:
+            label = f"formal_registry_{registry_case_count}case_{registry_family_count}family_compare"
+        elif case_count == 8 and family_count == 1:
+            label = "formal_financial_family_8case_compare"
+        else:
+            label = f"formal_partial_{family_count}family_{case_count}case_compare"
+    else:
+        label = f"dev_fixed_answer_{case_count}case_compare"
+    return {
+        "formal_compare_scope_label": label,
+        "formal_compare_case_count": case_count,
+        "formal_compare_family_count": family_count,
+        "formal_registry_case_count": registry_case_count,
+        "formal_registry_family_count": registry_family_count,
+        "formal_compare_full_registry_coverage": full_registry,
+    }
+
+
 def _build_mode_markdown(
     *,
     role_path_mode: str,
@@ -264,6 +335,9 @@ def _build_mode_markdown(
     headline_metrics: dict[str, float],
     debug_metrics: dict[str, float],
     comparison_valid: bool,
+    quality_superiority_comparison_valid: bool,
+    formal_efficiency_superiority_claim_allowed: bool,
+    formal_external_claim_kind: str,
 ) -> str:
     rendered_statebus_mode = statebus_mode.replace("_", "-")
     if missing_reason:
@@ -287,6 +361,10 @@ def _build_mode_markdown(
         f"- mode: `{role_path_mode}`",
         f"- statebus_mode: `{rendered_statebus_mode}`",
         f"- status: `{status}`",
+        f"- strict_equal_quality_comparison_valid: `{comparison_valid}`",
+        f"- quality_superiority_comparison_valid: `{quality_superiority_comparison_valid}`",
+        f"- formal_efficiency_superiority_claim_allowed: `{formal_efficiency_superiority_claim_allowed}`",
+        f"- formal_external_claim_kind: `{formal_external_claim_kind}`",
     ]
     if invalid_reason:
         summary_lines.append(f"- invalid_reason: `{invalid_reason}`")
@@ -313,6 +391,10 @@ def _build_mode_markdown(
 
 def _build_suite_markdown(report: BenchmarkComparatorSuiteReport) -> str:
     description = report.mode_reports[0].statebus_report.profile.description if report.mode_reports else "-"
+    scope_label = str(report.metadata.get("formal_compare_scope_label", "-"))
+    claim_kind = str(report.metadata.get("formal_external_claim_kind", "-"))
+    strict_valid = bool(report.metadata.get("strict_equal_quality_comparison_valid", False))
+    quality_valid = bool(report.metadata.get("quality_superiority_comparison_valid", False))
     rows = []
     for mode_report in report.mode_reports:
         delta = mode_report.debug_metrics.get("exact_match_delta", 0.0)
@@ -323,6 +405,10 @@ def _build_suite_markdown(report: BenchmarkComparatorSuiteReport) -> str:
     return (
         "# Fixed-Answer Comparator Suite\n\n"
         f"- statebus_profile: `{description}`\n\n"
+        f"- formal_compare_scope_label: `{scope_label}`\n"
+        f"- strict_equal_quality_comparison_valid: `{strict_valid}`\n"
+        f"- quality_superiority_comparison_valid: `{quality_valid}`\n"
+        f"- formal_external_claim_kind: `{claim_kind}`\n\n"
         "| Mode | Status | exact_match_delta | Note |\n"
         "| --- | --- | ---: | --- |\n"
         + "\n".join(rows)
@@ -421,18 +507,33 @@ def run_fixed_answer_external_comparator_suite(
             fairness_manifest=fairness_manifest,
         )
         comparison_valid = not mode_missing_reason and not invalid_reason
-        mode_formal_efficiency_claim_allowed = (
+        mode_quality_superiority_comparison_valid = (
+            not mode_missing_reason
+            and bool(fairness_manifest.get("pass_hard_gate", False))
+            and statebus_report.eligible_for_headline
+            and debug_metrics.get("quality_floor_pass_delta", 0.0) > 0.0
+        )
+        mode_formal_efficiency_superiority_claim_allowed = (
             benchmark_tier == "formal"
-            and not mode_missing_reason
+            and comparison_valid
             and debug_metrics.get("llm_total_tokens_delta", 0.0) < 0.0
             and debug_metrics.get("prompt_bytes_delta", 0.0) < 0.0
-            and debug_metrics.get("quality_floor_pass_delta", 0.0) >= 0.0
+            and debug_metrics.get("quality_floor_pass_delta", 0.0) == 0.0
         )
         comparison_summary = {
             "case_count": debug_metrics.get("case_count", 0.0),
             "comparison_valid": 1.0 if comparison_valid else 0.0,
+            "strict_equal_quality_comparison_valid": 1.0 if comparison_valid else 0.0,
+            "quality_superiority_comparison_valid": 1.0
+            if mode_quality_superiority_comparison_valid
+            else 0.0,
             "headline_metric_count": float(len(headline_metrics)),
-            "formal_efficiency_claim_allowed": 1.0 if mode_formal_efficiency_claim_allowed else 0.0,
+            "formal_efficiency_superiority_claim_allowed": 1.0
+            if mode_formal_efficiency_superiority_claim_allowed
+            else 0.0,
+            "formal_efficiency_claim_allowed": 1.0
+            if mode_formal_efficiency_superiority_claim_allowed
+            else 0.0,
         }
         if comparison_valid:
             comparison_summary.update(headline_metrics)
@@ -469,24 +570,76 @@ def run_fixed_answer_external_comparator_suite(
                 headline_metrics=headline_metrics,
                 debug_metrics=debug_metrics,
                 comparison_valid=comparison_valid,
+                quality_superiority_comparison_valid=mode_quality_superiority_comparison_valid,
+                formal_efficiency_superiority_claim_allowed=mode_formal_efficiency_superiority_claim_allowed,
+                formal_external_claim_kind=(
+                    "efficiency_superiority_equal_quality"
+                    if mode_formal_efficiency_superiority_claim_allowed
+                    else "quality_superiority"
+                    if benchmark_tier == "formal" and mode_quality_superiority_comparison_valid
+                    else "debug_only"
+                    if benchmark_tier == "formal"
+                    else "none"
+                ),
             ),
         )
         mode_reports.append(mode_report)
 
     suite_report_path = benchmark_report_root / f"{suite_id}.json"
     suite_markdown_path = benchmark_report_root / f"{suite_id}.md"
+    strict_equal_quality_comparison_valid = bool(mode_reports) and all(
+        report.comparison_valid for report in mode_reports
+    )
+    quality_superiority_comparison_valid = _quality_superiority_comparison_valid(mode_reports)
+    formal_efficiency_superiority_claim_allowed = _formal_efficiency_claim_allowed(
+        mode_reports,
+        benchmark_tier=benchmark_tier,
+    )
+    formal_prompt_byte_efficiency_claim_allowed = (
+        benchmark_tier == "formal"
+        and bool(mode_reports)
+        and all(_mode_prompt_byte_efficiency_claim_allowed(r) for r in mode_reports)
+    )
+    formal_quality_superiority_claim_allowed = (
+        benchmark_tier == "formal" and quality_superiority_comparison_valid
+    )
+    formal_external_claim_kind = (
+        "quality_superiority"
+        if formal_quality_superiority_claim_allowed
+        else "efficiency_superiority_equal_quality"
+        if formal_efficiency_superiority_claim_allowed
+        else "debug_only"
+        if benchmark_tier == "formal" and mode_reports
+        else "none"
+    )
+    formal_compare_scope_metadata = _formal_compare_scope_metadata(
+        samples=samples,
+        benchmark_tier=benchmark_tier,
+    )
     comparison_summary: dict[str, float] = {
         "mode_count": float(len(mode_reports)),
         "successful_mode_count": float(sum(1 for report in mode_reports if not report.missing_reason)),
         "valid_mode_count": float(sum(1 for report in mode_reports if report.comparison_valid)),
-        "formal_efficiency_claim_allowed": 1.0
-        if _formal_efficiency_claim_allowed(mode_reports, benchmark_tier=benchmark_tier)
+        "strict_equal_quality_comparison_valid": 1.0
+        if strict_equal_quality_comparison_valid
         else 0.0,
+        "quality_superiority_comparison_valid": 1.0
+        if quality_superiority_comparison_valid
+        else 0.0,
+        "formal_quality_superiority_claim_allowed": 1.0
+        if formal_quality_superiority_claim_allowed
+        else 0.0,
+        "formal_efficiency_superiority_claim_allowed": 1.0
+        if formal_efficiency_superiority_claim_allowed
+        else 0.0,
+        "formal_efficiency_claim_allowed": 1.0 if formal_efficiency_superiority_claim_allowed else 0.0,
     }
     for mode_report in mode_reports:
         mode_key = mode_report.role_path_mode.replace("-", "_")
         comparison_summary[f"{mode_key}_missing"] = 1.0 if mode_report.missing_reason else 0.0
         comparison_summary[f"{mode_key}_comparison_valid"] = 1.0 if mode_report.comparison_valid else 0.0
+        for key, value in mode_report.comparison_summary.items():
+            comparison_summary[f"{mode_key}_{key}"] = float(value)
         for key, value in mode_report.headline_metrics.items():
             comparison_summary[f"{mode_key}_{key}"] = float(value)
         for key, value in mode_report.debug_metrics.items():
@@ -498,52 +651,35 @@ def run_fixed_answer_external_comparator_suite(
         mode_reports=tuple(mode_reports),
         comparison_summary=comparison_summary,
         metadata={
-            "formal_efficiency_claim_allowed": _formal_efficiency_claim_allowed(
-                mode_reports,
-                benchmark_tier=benchmark_tier,
-            ),
+            **formal_compare_scope_metadata,
+            "legacy_comparison_valid_semantics": "strict_equal_quality_comparison_valid",
+            "strict_equal_quality_comparison_valid": strict_equal_quality_comparison_valid,
+            "quality_superiority_comparison_valid": quality_superiority_comparison_valid,
+            "formal_quality_superiority_claim_allowed": formal_quality_superiority_claim_allowed,
+            "formal_efficiency_superiority_claim_allowed": formal_efficiency_superiority_claim_allowed,
+            "formal_prompt_byte_efficiency_claim_allowed": formal_prompt_byte_efficiency_claim_allowed,
+            "formal_external_claim_kind": formal_external_claim_kind,
+            "formal_efficiency_claim_allowed": formal_efficiency_superiority_claim_allowed,
             "formal_headline_eligible": bool(mode_reports)
             and benchmark_tier == "formal"
             and all(report.eligible_for_headline for report in mode_reports),
             "claim_restriction": (
-                "external_compare_debug_only_until_four_role_fairness_gate_passes"
-                if any(not report.comparison_valid for report in mode_reports)
+                "formal_quality_superiority_external_compare"
+                if formal_quality_superiority_claim_allowed
                 else "formal_efficiency_superiority_with_equal_quality"
-                if benchmark_tier == "formal"
-                and _quality_floor_equal_across_modes(mode_reports)
-                and _efficiency_superior_across_modes(mode_reports)
+                if formal_efficiency_superiority_claim_allowed
+                else "external_compare_debug_only_until_strict_or_quality_gate_passes"
+                if any(not report.comparison_valid for report in mode_reports)
                 else "dev_fixed_answer_external_fairness_gate_passed_not_formal_superiority"
             ),
             "external_comparator_claim_scope": (
-                "formal_financial_family"
+                formal_compare_scope_metadata["formal_compare_scope_label"]
                 if benchmark_tier == "formal"
                 else "dev_fixed_answer_only"
             ),
-            # Quality-superiority path: StateBus passes more cases than external.
-            # Does NOT require external_report.eligible_for_headline —
-            # external failing some cases IS the evidence of StateBus superiority.
-            # Requires: formal tier + fairness gate pass + StateBus all-pass + delta > 0.
-            # Efficiency-superiority path: both sides pass all cases (eligible_for_headline)
-            # + equal quality + StateBus uses fewer tokens AND fewer prompt bytes.
-            "formal_superiority_claim_allowed": benchmark_tier == "formal"
-            and bool(mode_reports)
-            and (
-                # Path A: quality superiority (StateBus quality > external quality)
-                (
-                    all(not r.missing_reason for r in mode_reports)
-                    and all(r.fairness_manifest.get("pass_hard_gate", False) for r in mode_reports)
-                    and all(r.statebus_report.eligible_for_headline for r in mode_reports)
-                    and any(r.debug_metrics.get("quality_floor_pass_delta", 0.0) > 0.0 for r in mode_reports)
-                )
-                # Path B: efficiency superiority with equal quality
-                or (
-                    all(report.eligible_for_headline for report in mode_reports)
-                    and _quality_floor_equal_across_modes(mode_reports)
-                    and _efficiency_superior_across_modes(mode_reports)
-                )
-            ),
-            "fixed_answer_external_comparison_valid": bool(mode_reports)
-            and all(report.comparison_valid for report in mode_reports),
+            "formal_superiority_claim_allowed": formal_quality_superiority_claim_allowed
+            or formal_efficiency_superiority_claim_allowed,
+            "fixed_answer_external_comparison_valid": strict_equal_quality_comparison_valid,
             "state_pool_mode_requested": state_pool_mode,
             "state_pool_mode_used": (
                 str(mode_reports[0].statebus_report.metadata.get("state_pool_mode_used", state_pool_mode))

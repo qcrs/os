@@ -8,6 +8,8 @@
     "q2-2026"
   ],
   "expected_facts": {
+    "metric_name": "gross_margin",
+    "metric_value": "39",
     "revenue_value": "39",
     "selected_doc_hashes": [
       "sha256:doc-acme-2026q2"

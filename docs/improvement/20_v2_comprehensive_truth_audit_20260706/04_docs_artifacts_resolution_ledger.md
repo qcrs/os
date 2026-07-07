@@ -1,193 +1,195 @@
-# Docs And Artifacts Resolution Ledger
+# 文档与 Artifacts Resolution Ledger
 
-## Item: Claim-upgrade execution prompt
+注：本 ledger 记录的是本轮审计当时读取过的历史来源。后续文档整理已把 prompt、01-19 中间态 improvement 文档和 15-17 artifacts 从 active docs tree 清理；如需追溯这些来源，请从 git 历史读取。当前 source-of-truth 以本审计、保留的 fresh JSON artifacts 和 local+api 深挖文档为准。
 
-Source document: `docs/improvement/PROMPT_FOR_CLAIM_UPGRADE_EXECUTION.md`
+## 条目：Claim-upgrade execution prompt
 
-Claim / issue: Directed implementation of formal families, state-pool mode, memfd evidence, external compare, and safe claims.
+来源文档：`docs/improvement/PROMPT_FOR_CLAIM_UPGRADE_EXECUTION.md`
 
-Expected fix: Real code/tests/benchmarks, not just docs.
+声明 / 问题：指示实现 formal families、state-pool mode、memfd evidence、external compare 和 safe claims。
 
-Current evidence: Formal families and state-pool mode landed. External formal compare did not. File had pre-existing dirty edits.
+预期修复：真实代码、测试和 benchmark，而不是只改文档。
 
-Status: partially solved
+当前证据：formal families 与 state-pool mode 已落地。post-fix targeted external compare 和 `local_api_20260707_163354` full comprehensive 已覆盖 formal financial 8 cases / 1 family strict equal-quality；full formal registry 25 cases / 5 families compare 仍未完成。该文件有本轮前已存在的 dirty edits。
 
-Priority: P1
+状态：partially solved
 
-Recommended action: Keep as historical prompt; do not use as source of truth.
+优先级：P1
 
-## Item: Claim-upgrade plan
+建议动作：已从 active docs tree 清理；不要作为 source of truth。
 
-Source document: `docs/improvement/18_claim_upgrade_execution_plan.md`
+## 条目：Claim-upgrade plan
 
-Claim / issue: Planned 25-case formal benchmark, stronger validators, memfd, external compare.
+来源文档：`docs/improvement/18_claim_upgrade_execution_plan.md`
 
-Expected fix: Implement and verify all stages.
+声明 / 问题：计划 25-case formal benchmark、更强 validators、memfd、external compare。
 
-Current evidence: 25 cases and memfd verified. Validators are not primary runner validators. External formal compare absent.
+预期修复：实现并验证所有 stages。
 
-Status: partially solved
+当前证据：25 cases 与 memfd 已在 `local_api_20260707_163354` 验证。Validators 不是 primary runner validators。post-fix formal external compare 只覆盖 8 cases / 1 family；full 25/5 external compare 缺失。
 
-Priority: P1
+状态：partially solved
 
-Recommended action: Track validator integration and formal external compare as remaining work.
+优先级：P1
 
-## Item: Final system audit
+建议动作：继续跟踪 validator integration 与 formal external compare。
 
-Source document: `docs/improvement/17_final_system_audit_20260706.md`
+## 条目：Final system audit
 
-Claim / issue: Identified unsafe claims and implementation gaps.
+来源文档：`docs/improvement/17_final_system_audit_20260706.md`
 
-Expected fix: Merge issues into current ledger.
+声明 / 问题：识别 unsafe claims 和 implementation gaps。
 
-Current evidence: Later commits fixed some gaps; this audit merged remaining issues.
+预期修复：把 issues 合并到当前 ledger。
 
-Status: partially solved
+当前证据：后续 commits 修复了部分 gaps；本审计合并了剩余问题。
 
-Priority: P1
+状态：partially solved
 
-Recommended action: Use this audit's merged ledger as current tracker.
+优先级：P1
 
-## Item: Evidence table
+建议动作：使用本审计 merged ledger 作为当前 tracker。
 
-Source document: `docs/improvement/artifacts/17_final_system_audit/17a_evidence_table.md`
+## 条目：Evidence table
 
-Claim / issue: Before-state evidence matrix.
+来源文档：`docs/improvement/artifacts/17_final_system_audit/17a_evidence_table.md`
 
-Expected fix: Replace stale benchmark facts with fresh artifacts.
+声明 / 问题：before-state evidence matrix。
 
-Current evidence: Fresh formal artifacts in this directory supersede internal formal fields.
+预期修复：用 fresh artifacts 替换过时 benchmark facts。
 
-Status: stale for formal internal benchmark; useful historical reference
+当前证据：本目录 fresh formal artifacts 替代 internal formal fields。
 
-Priority: P2
+状态：对 formal internal benchmark 已 stale；仍可作为历史参考
 
-Recommended action: Cite only as pre-upgrade baseline.
+优先级：P2
 
-## Item: Code review findings
+建议动作：仅作为 pre-upgrade baseline 引用。
 
-Source document: `17b_code_review_findings.md`
+## 条目：Code review findings
 
-Claim / issue: Source-level implementation gaps.
+来源文档：`17b_code_review_findings.md`
 
-Expected fix: Implement real changes.
+声明 / 问题：源码级 implementation gaps。
 
-Current evidence: Formal registry and statepool observability fixed; answer restoration overclaim fixed in this audit.
+预期修复：真实实现变更。
 
-Status: partially solved
+当前证据：formal registry 与 statepool observability 已修复；answer restoration overclaim 在本审计修复。
 
-Priority: P1
+状态：partially solved
 
-Recommended action: Keep open items in `05_merged_issue_ledger.md`.
+优先级：P1
 
-## Item: Benchmark JSON analysis
+建议动作：开放项保留在 `05_merged_issue_ledger.md`。
 
-Source document: `17c_benchmark_json_analysis.md`
+## 条目：Benchmark JSON analysis
 
-Claim / issue: Earlier benchmark JSON was insufficient for several claims.
+来源文档：`17c_benchmark_json_analysis.md`
 
-Expected fix: Rerun formal and extract fields.
+声明 / 问题：早期 benchmark JSON 不足以支撑多个 claims。
 
-Current evidence: Fresh formal JSON artifacts added. No formal external JSON.
+预期修复：重跑 formal 并抽取字段。
 
-Status: partially solved
+当前证据：已添加 fresh formal JSON artifacts。没有 formal external JSON。
 
-Priority: P1
+状态：partially solved
 
-Recommended action: Add formal external compare artifact when available.
+优先级：P1
 
-## Item: Issue ledger
+建议动作：有条件时补 formal external compare artifact。
 
-Source document: `17d_issue_ledger.md`
+## 条目：Issue ledger
 
-Claim / issue: Prior issue tracking.
+来源文档：`17d_issue_ledger.md`
 
-Expected fix: De-duplicate into one current ledger.
+声明 / 问题：之前的问题追踪。
 
-Current evidence: Done in `05_merged_issue_ledger.md`.
+预期修复：去重合并到一个当前 ledger。
 
-Status: solved for merge; issues remain by status
+当前证据：已在 `05_merged_issue_ledger.md` 完成。
 
-Priority: P1
+状态：merge 已解决；具体 issues 按状态继续跟踪
 
-Recommended action: Use merged ledger going forward.
+优先级：P1
 
-## Item: Remediation plan
+建议动作：后续使用 merged ledger。
 
-Source document: `17e_remediation_plan.md`
+## 条目：Remediation plan
 
-Claim / issue: Included explicit requirement that answer restoration not be inflated.
+来源文档：`17e_remediation_plan.md`
 
-Expected fix: `answer_restoration_replay_count` should remain zero absent real feature.
+声明 / 问题：包含 answer restoration 不得膨胀的明确要求。
 
-Current evidence: Fixed in `v2/runtime/driver.py`, `v2/benchmark/continuous_runner.py`, and tests.
+预期修复：在没有真实 feature 前，`answer_restoration_replay_count` 应保持 zero。
 
-Status: solved for answer restoration; partially solved overall
+当前证据：已在 `v2/runtime/driver.py`、`v2/benchmark/continuous_runner.py` 和测试中修复。
 
-Priority: P1
+状态：answer restoration 已解决；整体仍部分解决
 
-Recommended action: Continue remaining plan items as staged work.
+优先级：P1
 
-## Item: Safe claim language
+建议动作：继续推进 plan 的剩余项。
 
-Source document: `17f_safe_claim_language.md`
+## 条目：Safe claim language
 
-Claim / issue: Conservative wording for current evidence.
+来源文档：`17f_safe_claim_language.md`
 
-Expected fix: Keep docs aligned to safe claims.
+声明 / 问题：当前证据下的保守表述。
 
-Current evidence: Still valid. This audit adds CodeAct warning to older experiment summary.
+预期修复：保持 docs 与 safe claims 对齐。
 
-Status: current effective source
+当前证据：仍然有效。本审计对旧 experiment summary 增加 CodeAct warning。
 
-Priority: P0
+状态：current effective source
 
-Recommended action: Use as claim boundary until formal external/API evidence changes.
+优先级：P0
 
-## Item: Claim-upgrade completion report
+建议动作：在 formal external/API 证据变化前，继续作为 claim boundary。
 
-Source document: `docs/improvement/19_claim_upgrade_completion_report_20260706.md`
+## 条目：Claim-upgrade completion report
 
-Claim / issue: Reports completed upgrade and limitations.
+来源文档：`docs/improvement/19_claim_upgrade_completion_report_20260706.md`
 
-Expected fix: Verify that reported implementation exists and limits are honest.
+声明 / 问题：报告 upgrade 完成情况与限制。
 
-Current evidence: Internal formal and memfd claims verified. Formal external superiority remains absent as the report says.
+预期修复：验证 report 中的实现是否存在，限制是否诚实。
 
-Status: partially valid
+当前证据：internal formal 与 memfd claims 已验证。formal external superiority 缺失，且报告本身也这样说明。
 
-Priority: P1
+状态：partially valid
 
-Recommended action: Do not strengthen beyond its own limitations.
+优先级：P1
 
-## Item: Fairness gate artifacts
+建议动作：不要超出它自己的限制去强化 claim。
 
-Source document: `docs/improvement/artifacts/15_fairness_gate_propagation/*`
+## 条目：Fairness gate artifacts
 
-Claim / issue: External fairness gate propagation.
+来源文档：`docs/improvement/artifacts/15_fairness_gate_propagation/*`
 
-Expected fix: Ensure fairness failures propagate.
+声明 / 问题：External fairness gate propagation。
 
-Current evidence: Historical commits show real fairness work. Scope remains dev/fixed-answer unless formal compare rerun.
+预期修复：确保 fairness failures 能传播。
 
-Status: solved for historical fairness propagation; not formal superiority
+当前证据：历史 commits 显示真实 fairness work。post-fix targeted formal compare 已重跑 8-case financial scope；`local_api_20260707_163354` 中该 scope fairness 8/8、strict equal-quality gate 通过；full registry compare 仍缺失。
 
-Priority: P2
+状态：历史 fairness propagation 已解决；不是 formal superiority
 
-Recommended action: Keep as historical dev evidence.
+优先级：P2
 
-## Item: Deep contest audit artifacts
+建议动作：作为历史 dev evidence 保留。
 
-Source document: `docs/improvement/artifacts/16_deep_contest_audit/*`
+## 条目：Deep contest audit artifacts
 
-Claim / issue: Broad contest risks and issue list.
+来源文档：`docs/improvement/artifacts/16_deep_contest_audit/*`
 
-Expected fix: Fold into current ledger.
+声明 / 问题：宽范围 contest risks 与 issue list。
 
-Current evidence: Relevant items merged into this audit.
+预期修复：合入当前 ledger。
 
-Status: partially superseded
+当前证据：相关项已合并到本审计。
 
-Priority: P2
+状态：partially superseded
 
-Recommended action: Keep archived; use current ledger for action.
+优先级：P2
+
+建议动作：继续归档；行动项以当前 ledger 为准。

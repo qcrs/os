@@ -1,6 +1,6 @@
-# Git History And Change Review
+# Git 历史与变更审查
 
-Commands reviewed:
+本轮审阅了以下命令结果：
 
 - `git status -sb`
 - `git log --oneline --decorate -n 50`
@@ -12,87 +12,87 @@ Commands reviewed:
 - `git diff --stat`
 - `git diff --check`
 
-## Current branch and tag
+## 当前分支和 tag
 
-`HEAD` at audit start:
+审计开始时的 `HEAD`：
 
 ```text
 3738f34 (HEAD -> feat/statebus-v2-container-runtime, tag: v2-claim-upgrade-20260706) Fix state pool backend fallback observability
 ```
 
-The tag `v2-claim-upgrade-20260706` points at the state-pool observability fix commit before this audit's new follow-up commit.
+`v2-claim-upgrade-20260706` tag 指向本轮审计前的 state-pool observability fix commit。
 
-## Key recent commits
+## 近期关键提交
 
 ### `3738f34 Fix state pool backend fallback observability`
 
-Type: real code fix plus tests.
+类型：真实代码修复 + 测试。
 
-Changed:
+变更：
 
 - `v2/state/store.py`
 - `tests/v2/test_minimal_benchmark.py`
 - `tests/v2/test_state_materialization.py`
 
-Resolution: real fix. `LayeredStateStore.backend_name` now reports the last or prior actual storage backend after a handle is released. Fresh formal runs confirmed `state_pool_mode_used` is real for shared memory and memfd.
+结论：真实修复。`LayeredStateStore.backend_name` 现在会在 handle release 后报告 last 或 prior actual storage backend。fresh formal runs 确认 `state_pool_mode_used` 对 shared memory 和 memfd 是真实 backend。
 
-Limit: memfd unavailable fallback is still not proven on a real no-memfd host.
+限制：memfd unavailable fallback 仍未在真实 no-memfd 主机上证明。
 
 ### `5a44fea Update v2 claim upgrade documentation`
 
-Type: documentation and safe-claim update.
+类型：文档和 safe-claim 更新。
 
-Changed:
+变更：
 
-- `docs/improvement/19_claim_upgrade_completion_report_20260706.md`
-- `docs/improvement/artifacts/17_final_system_audit/17f_safe_claim_language.md`
-- selected report guides.
+- 历史 `docs/improvement/19_claim_upgrade_completion_report_20260706.md`
+- 历史 `docs/improvement/artifacts/17_final_system_audit/17f_safe_claim_language.md`
+- 部分 report guides。
 
-Resolution: mostly appropriate. It explicitly avoids formal external superiority. This audit adds a CodeAct historical warning to `docs/reports/v2_experiment_summary_20260703.md`.
+结论：总体合适。它明确没有升级 formal external superiority。本轮审计进一步在 `docs/reports/v2_experiment_summary_20260703.md` 添加 CodeAct 历史警告。
 
-Limit: documentation cannot substitute for formal external compare evidence.
+限制：文档不能替代 formal external compare 证据。
 
 ### `e20b8e9 Implement v2 claim upgrade benchmark support`
 
-Type: real implementation plus tests plus sample assets.
+类型：真实实现 + 测试 + sample assets。
 
-Changed:
+变更：
 
 - `scripts/run_v2_full_container_audit_suite.sh`
 - `tasks/formal/*`
 - `v2/benchmark/task_registry.py`
-- benchmark runners and state store
+- benchmark runners 与 state store
 - tests
 
-Resolution: real implementation of the 25-case, 5-family formal registry and `--state-pool-mode` plumbing.
+结论：真实实现了 25-case、5-family formal registry 和 `--state-pool-mode` plumbing。
 
-Limit: `tasks/formal/*/validator.py` helper files are not the primary runner validation path; actual quality gating uses `expected_facts` in `v2/runtime/smoke.py`.
+限制：`tasks/formal/*/validator.py` helper files 不是 primary runner validation path；实际 quality gate 使用 `v2/runtime/smoke.py` 的 `expected_facts`。
 
 ### `4692c93 Add execution prompt for claim upgrade plan`
 
-Type: prompt/documentation only.
+类型：prompt/documentation only。
 
-Resolution: useful as work instruction only. It does not prove implementation.
+结论：只适合作为工作指令。不能证明实现。
 
-## Worktree at audit start
+## 审计开始时 worktree
 
-Pre-existing user changes:
+预先存在的用户改动：
 
 - `M docs/improvement/PROMPT_FOR_CLAIM_UPGRADE_EXECUTION.md`
 - `?? docs/improvement/PROMPT_FOR_V2_COMPREHENSIVE_TRUTH_AUDIT.md`
 
-Audit-created changes:
+本审计产生的改动：
 
-- replay metric code and test fix.
-- CodeAct historical-report wording fix.
-- new comprehensive audit directory and benchmark artifacts.
+- replay metric code/test fix。
+- CodeAct historical-report wording fix。
+- 新综合审计目录和 benchmark artifacts。
 
-## Over-interpretation guard
+## 防止过度解读
 
-Do not infer from recent commits that:
+不能从近期 commits 推断：
 
-- formal external API comparison was rerun.
-- realtime LLM code generation is part of the current formal benchmark.
-- deterministic formal results prove API mode behavior.
-- container activation works.
-- openEuler VM validation occurred.
+- formal external API comparison 已重跑。
+- realtime LLM code generation 是当前 formal benchmark 的一部分。
+- deterministic formal results 证明 API mode behavior。
+- container activation 可用。
+- 已执行 openEuler VM validation。

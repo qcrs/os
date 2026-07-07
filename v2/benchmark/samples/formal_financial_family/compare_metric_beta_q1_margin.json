@@ -8,6 +8,8 @@
     "q1-2026"
   ],
   "expected_facts": {
+    "metric_name": "gross_margin",
+    "metric_value": "31",
     "revenue_value": "31",
     "selected_doc_hashes": [
       "sha256:doc-beta-2026q1"

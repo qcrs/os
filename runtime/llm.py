@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass, field, replace
@@ -7,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 DEFAULT_LLM_MODEL = "deepseek-v4-flash"
@@ -59,6 +60,9 @@ class ProviderConfig:
     api_key: str | None = None
     api_key_env: str | None = "STATEBUS_LLM_API_KEY"
     timeout_s: float = 60.0
+    request_max_attempts: int = 3
+    retry_initial_delay_s: float = 1.0
+    retry_max_delay_s: float = 8.0
     default_headers: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -119,6 +123,15 @@ class LLMConfig:
                 else "OPENAI_API_KEY"
             ),
             timeout_s=float(os.getenv("STATEBUS_LLM_TIMEOUT_S", "60")),
+            request_max_attempts=max(1, int(os.getenv("STATEBUS_LLM_REQUEST_MAX_ATTEMPTS") or "3")),
+            retry_initial_delay_s=max(
+                0.0,
+                float(os.getenv("STATEBUS_LLM_RETRY_INITIAL_DELAY_S") or "1"),
+            ),
+            retry_max_delay_s=max(
+                0.0,
+                float(os.getenv("STATEBUS_LLM_RETRY_MAX_DELAY_S") or "8"),
+            ),
         )
         roles = {
             role: _role_from_env(default_model=default_model, role_name=role)
@@ -255,11 +268,11 @@ class OpenAICompatibleLLMClient:
         role_config = self.config.role_config(purpose)
         provider_name = role_config.provider
         request = _build_openai_request(role_config, messages, temperature=temperature)
-        client = self._build_provider_client(provider_name)
-        try:
-            response = await client.chat.completions.create(**request)
-        finally:
-            await client.close()
+        response = await self._create_completion_with_retry(
+            provider_name=provider_name,
+            provider=self.config.provider_config(provider_name),
+            request=request,
+        )
         choice = response.choices[0]
         content = _coerce_content_to_text(choice.message.content)
         usage = getattr(response, "usage", None)
@@ -272,6 +285,33 @@ class OpenAICompatibleLLMClient:
                 total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
             ),
         )
+
+    async def _create_completion_with_retry(
+        self,
+        *,
+        provider_name: str,
+        provider: ProviderConfig,
+        request: dict[str, Any],
+    ) -> Any:
+        max_attempts = max(1, int(provider.request_max_attempts))
+        delay_s = max(0.0, provider.retry_initial_delay_s)
+        max_delay_s = max(0.0, provider.retry_max_delay_s)
+        last_error: BaseException | None = None
+        for attempt_index in range(max_attempts):
+            client = self._build_provider_client(provider_name)
+            try:
+                return await client.chat.completions.create(**request)
+            except BaseException as exc:
+                if not _is_transient_openai_error(exc) or attempt_index + 1 >= max_attempts:
+                    raise
+                last_error = exc
+            finally:
+                await client.close()
+            if delay_s > 0.0:
+                await asyncio.sleep(delay_s)
+                if max_delay_s > 0.0:
+                    delay_s = min(max_delay_s, delay_s * 2)
+        raise RuntimeError("unreachable OpenAI retry loop exit") from last_error
 
     def describe(self) -> dict[str, object]:
         return {
@@ -294,6 +334,7 @@ class OpenAICompatibleLLMClient:
                 name: {
                     "kind": provider.kind,
                     "base_url": provider.base_url,
+                    "request_max_attempts": provider.request_max_attempts,
                 }
                 for name, provider in self.config.providers.items()
             },
@@ -1075,6 +1116,9 @@ def _provider_from_mapping(name: str, payload: dict[str, Any]) -> ProviderConfig
         api_key=payload.get("api_key"),
         api_key_env=payload.get("api_key_env", "STATEBUS_LLM_API_KEY"),
         timeout_s=float(payload.get("timeout_s", 60.0)),
+        request_max_attempts=max(1, int(payload.get("request_max_attempts") or 3)),
+        retry_initial_delay_s=max(0.0, float(payload.get("retry_initial_delay_s") or 1.0)),
+        retry_max_delay_s=max(0.0, float(payload.get("retry_max_delay_s") or 8.0)),
         default_headers=dict(payload.get("default_headers") or {}),
     )
 
@@ -1147,6 +1191,14 @@ def _coerce_content_to_text(content: Any) -> str:
                 chunks.append(str(item["text"]))
         return "\n".join(chunks)
     return str(content or "")
+
+
+def _is_transient_openai_error(exc: BaseException) -> bool:
+    if isinstance(exc, (APIConnectionError, APITimeoutError)):
+        return True
+    if isinstance(exc, APIStatusError):
+        return int(getattr(exc, "status_code", 0) or 0) in {408, 409, 429, 500, 502, 503, 504}
+    return False
 
 
 def _strip_code_fence(text: str) -> str:

@@ -8,6 +8,8 @@
     "acme"
   ],
   "expected_facts": {
+    "metric_name": "revenue",
+    "metric_value": "109",
     "revenue_value": "109",
     "selected_doc_hashes": [
       "sha256:doc-acme-2025q4"

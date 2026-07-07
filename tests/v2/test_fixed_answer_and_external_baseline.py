@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
+import httpx
+from openai import APIConnectionError
 import pytest
 
-from runtime.llm import LLMResult, LLMUsage, parse_tagged_json
+from runtime.llm import (
+    ChatMessage,
+    LLMConfig,
+    LLMResult,
+    LLMUsage,
+    OpenAICompatibleLLMClient,
+    ProviderConfig,
+    RoleLLMConfig,
+    parse_tagged_json,
+)
 from v2.benchmark import (
     compare_fixed_answer_with_external,
     load_fixed_answer_family,
@@ -19,8 +32,123 @@ from v2.benchmark import (
     run_fixed_answer_suite,
 )
 from v2.benchmark.models import BenchmarkLayer
-from v2.runtime.role_path import RolePathRunner, RoleToolCandidate
+from v2.runtime.role_path import RolePathRunner, RoleSelectionError, RoleToolCandidate
 from v2.runtime.driver import RuntimeDriverProfile
+
+
+def _api_connection_error() -> APIConnectionError:
+    return APIConnectionError(
+        message="temporary dns failure",
+        request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+    )
+
+
+def test_openai_compatible_client_retries_transient_transport_error() -> None:
+    class FakeCompletions:
+        def __init__(self, attempts: list[str]) -> None:
+            self.attempts = attempts
+
+        async def create(self, **request):
+            self.attempts.append(str(request["model"]))
+            if len(self.attempts) == 1:
+                raise _api_connection_error()
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content='{"status":"ok"}')),
+                ],
+                model="retry-model",
+                usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5),
+            )
+
+    class FakeProviderClient:
+        def __init__(self, attempts: list[str], close_count: list[int]) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions(attempts))
+            self.close_count = close_count
+
+        async def close(self) -> None:
+            self.close_count[0] += 1
+
+    class RetryClient(OpenAICompatibleLLMClient):
+        def __init__(self, config: LLMConfig) -> None:
+            super().__init__(config)
+            self.attempts: list[str] = []
+            self.close_count = [0]
+
+        def _build_provider_client(self, provider_name: str):
+            assert provider_name == "default"
+            return FakeProviderClient(self.attempts, self.close_count)
+
+    config = LLMConfig(
+        mode="api",
+        providers={
+            "default": ProviderConfig(
+                api_key="test-key",
+                request_max_attempts=2,
+                retry_initial_delay_s=0.0,
+            )
+        },
+        roles={"planner": RoleLLMConfig(model="retry-model")},
+    )
+    client = RetryClient(config)
+
+    result = asyncio.run(
+        client.complete([ChatMessage(role="user", content="return json")], purpose="planner")
+    )
+
+    assert result.text == '{"status":"ok"}'
+    assert result.usage.total_tokens == 5
+    assert client.attempts == ["retry-model", "retry-model"]
+    assert client.close_count[0] == 2
+
+
+def test_openai_compatible_client_stops_after_transport_retry_budget() -> None:
+    class AlwaysFailCompletions:
+        def __init__(self, attempts: list[int]) -> None:
+            self.attempts = attempts
+
+        async def create(self, **request):
+            del request
+            self.attempts.append(1)
+            raise _api_connection_error()
+
+    class FakeProviderClient:
+        def __init__(self, attempts: list[int], close_count: list[int]) -> None:
+            self.chat = SimpleNamespace(completions=AlwaysFailCompletions(attempts))
+            self.close_count = close_count
+
+        async def close(self) -> None:
+            self.close_count[0] += 1
+
+    class RetryClient(OpenAICompatibleLLMClient):
+        def __init__(self, config: LLMConfig) -> None:
+            super().__init__(config)
+            self.attempts: list[int] = []
+            self.close_count = [0]
+
+        def _build_provider_client(self, provider_name: str):
+            assert provider_name == "default"
+            return FakeProviderClient(self.attempts, self.close_count)
+
+    config = LLMConfig(
+        mode="api",
+        providers={
+            "default": ProviderConfig(
+                api_key="test-key",
+                request_max_attempts=2,
+                retry_initial_delay_s=0.0,
+            )
+        },
+        roles={"planner": RoleLLMConfig(model="retry-model")},
+    )
+    client = RetryClient(config)
+
+    with pytest.raises(APIConnectionError):
+        asyncio.run(
+            client.complete([ChatMessage(role="user", content="return json")], purpose="planner")
+        )
+
+    assert len(client.attempts) == 2
+    assert client.close_count[0] == 2
 
 
 def test_external_text_normalizes_candidate_key_route_payload() -> None:
@@ -69,6 +197,58 @@ def test_external_fairness_gate_rejects_raw_invisible_choice_after_normalization
     )
 
     assert gate["pass_hard_gate"] is False
+    assert gate["checks"]["planner_visible_choice_only"] is False
+    assert "planner_visible_choice_only" in gate["failed_checks"]
+
+
+def test_external_fairness_gate_accepts_visible_candidate_key_echoed_in_route_slot() -> None:
+    from v2.benchmark.external_text_baseline import PublicRouteCandidate, _fairness_gate
+
+    candidate = PublicRouteCandidate(
+        route="compare_metric",
+        tool_name="table_retriever",
+        support_terms=(),
+        source_doc_hashes=(),
+        support_doc_count=0,
+    )
+    gate = _fairness_gate(
+        route_candidates=(candidate,),
+        planner_payload_raw={
+            "route": "compare_metric::table_retriever",
+            "tool_name": "table_retriever",
+        },
+        retriever_payload_raw={"route": "compare_metric", "tool_name": "table_retriever"},
+        executor_payload_raw={"route": "compare_metric", "tool_name": "table_retriever"},
+        summarizer_payload={"summary": "ok"},
+        combined_surface="",
+    )
+
+    assert gate["checks"]["planner_visible_choice_only"] is True
+    assert gate["pass_hard_gate"] is True
+
+
+def test_external_fairness_gate_rejects_candidate_key_route_slot_with_conflicting_tool() -> None:
+    from v2.benchmark.external_text_baseline import PublicRouteCandidate, _fairness_gate
+
+    candidate = PublicRouteCandidate(
+        route="compare_metric",
+        tool_name="table_retriever",
+        support_terms=(),
+        source_doc_hashes=(),
+        support_doc_count=0,
+    )
+    gate = _fairness_gate(
+        route_candidates=(candidate,),
+        planner_payload_raw={
+            "route": "compare_metric::table_retriever",
+            "tool_name": "semantic_retriever",
+        },
+        retriever_payload_raw={"route": "compare_metric", "tool_name": "table_retriever"},
+        executor_payload_raw={"route": "compare_metric", "tool_name": "table_retriever"},
+        summarizer_payload={"summary": "ok"},
+        combined_surface="",
+    )
+
     assert gate["checks"]["planner_visible_choice_only"] is False
     assert "planner_visible_choice_only" in gate["failed_checks"]
 
@@ -507,6 +687,8 @@ def _fake_external_result_for_fairness_gate(sample, runtime_root: Path, *, fairn
         tool_name=sample.expected_tool_name,
         summary_text="summary",
         revenue_value=str(sample.expected_facts.get("revenue_value", "1")),
+        metric_name=str(sample.expected_facts.get("metric_name", "")),
+        metric_value=str(sample.expected_facts.get("metric_value", sample.expected_facts.get("revenue_value", "1"))),
         output_path=str(output_path),
         report_path=str(report_path),
         message_count=4,
@@ -520,6 +702,8 @@ def _fake_external_result_for_fairness_gate(sample, runtime_root: Path, *, fairn
         llm_call_count=4,
         route_exact=True,
         tool_exact=True,
+        metric_name_exact=True,
+        metric_value_exact=True,
         revenue_fallback_used=False,
         exact_match=True,
         admissible_match=True,
@@ -638,17 +822,70 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     payload = json.loads(Path(report.report_path).read_text(encoding="utf-8"))
     assert payload["metadata"]["formal_headline_eligible"] is False
     assert payload["metadata"]["formal_efficiency_claim_allowed"] is False
+    assert payload["metadata"]["formal_efficiency_superiority_claim_allowed"] is False
+    assert payload["metadata"]["formal_quality_superiority_claim_allowed"] is False
     assert payload["metadata"]["formal_superiority_claim_allowed"] is False
+    assert payload["metadata"]["strict_equal_quality_comparison_valid"] is False
+    assert payload["metadata"]["quality_superiority_comparison_valid"] is True
+    assert payload["metadata"]["formal_external_claim_kind"] == "none"
     assert payload["metadata"]["fixed_answer_external_comparison_valid"] is False
     assert (
         payload["metadata"]["claim_restriction"]
-        == "external_compare_debug_only_until_four_role_fairness_gate_passes"
+        == "external_compare_debug_only_until_strict_or_quality_gate_passes"
     )
     assert payload["mode_reports"][0]["role_path_mode"] == "deterministic"
     assert payload["mode_reports"][0]["comparison_valid"] is False
+    assert payload["mode_reports"][0]["comparison_summary"]["strict_equal_quality_comparison_valid"] == 0.0
+    assert payload["mode_reports"][0]["comparison_summary"]["quality_superiority_comparison_valid"] == 1.0
     assert payload["mode_reports"][0]["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert payload["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert "deterministic_debug_exact_match_delta" in payload["comparison_summary"]
+
+
+def test_formal_external_comparator_splits_strict_and_quality_superiority(tmp_path: Path) -> None:
+    family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
+    report = compare_fixed_answer_with_external(
+        samples=family,
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        role_path_modes=("deterministic",),
+        benchmark_tier="formal",
+    )
+
+    payload = json.loads(Path(report.report_path).read_text(encoding="utf-8"))
+    metadata = payload["metadata"]
+    assert metadata["strict_equal_quality_comparison_valid"] is False
+    assert metadata["quality_superiority_comparison_valid"] is True
+    assert metadata["formal_quality_superiority_claim_allowed"] is True
+    assert metadata["formal_efficiency_superiority_claim_allowed"] is False
+    assert metadata["formal_efficiency_claim_allowed"] is False
+    assert metadata["formal_superiority_claim_allowed"] is True
+    assert metadata["formal_external_claim_kind"] == "quality_superiority"
+    assert metadata["fixed_answer_external_comparison_valid"] is False
+    assert metadata["legacy_comparison_valid_semantics"] == "strict_equal_quality_comparison_valid"
+    assert metadata["formal_compare_scope_label"] == "formal_partial_1family_3case_compare"
+    assert metadata["formal_compare_case_count"] == 3
+    assert metadata["formal_compare_family_count"] == 1
+    assert metadata["formal_registry_case_count"] == 25
+    assert metadata["formal_compare_full_registry_coverage"] is False
+    assert payload["comparison_summary"]["strict_equal_quality_comparison_valid"] == 0.0
+    assert payload["comparison_summary"]["quality_superiority_comparison_valid"] == 1.0
+    assert payload["comparison_summary"]["formal_quality_superiority_claim_allowed"] == 1.0
+    assert payload["comparison_summary"]["formal_efficiency_superiority_claim_allowed"] == 0.0
+
+
+def test_formal_financial_compare_scope_metadata_is_not_full_registry() -> None:
+    from v2.benchmark.comparator_runner import _formal_compare_scope_metadata
+
+    samples = load_fixed_answer_family(Path("v2/benchmark/samples/formal_financial_family"))
+    metadata = _formal_compare_scope_metadata(samples=samples, benchmark_tier="formal")
+
+    assert metadata["formal_compare_scope_label"] == "formal_financial_family_8case_compare"
+    assert metadata["formal_compare_case_count"] == 8
+    assert metadata["formal_compare_family_count"] == 1
+    assert metadata["formal_registry_case_count"] == 25
+    assert metadata["formal_compare_full_registry_coverage"] is False
 
 
 def test_fixed_answer_external_comparator_fails_closed_on_external_fairness_gate_failure(
@@ -987,6 +1224,112 @@ def test_role_path_accepts_unique_route_when_tool_name_echoes_route() -> None:
     assert decision.candidate_rank == 3
 
 
+def test_role_path_accepts_tool_only_selection_when_route_hint_is_unambiguous() -> None:
+    class StubLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            if purpose == "retriever":
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "route": "table_retriever",
+                            "tool_name": "table_retriever",
+                            "supporting_doc_ids": ["sha256:doc-acme-2026q1"],
+                        }
+                    ),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=12, completion_tokens=6, total_tokens=18),
+                )
+            raise AssertionError(f"unexpected purpose {purpose}")
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    candidates = (
+        RoleToolCandidate(route="compare_metric", tool_name="table_retriever", helper_rank=1),
+        RoleToolCandidate(route="summarize_risk", tool_name="semantic_retriever", helper_rank=2),
+        RoleToolCandidate(route="generate_chart", tool_name="table_retriever", helper_rank=3),
+    )
+    runner = RolePathRunner(llm_client=StubLLMClient())
+    decision = runner.choose_retrieval_candidate(
+        query_text="ACME 2026Q1 revenue compare_metric",
+        retrieved_doc_ids=("sha256:doc-acme-2026q1",),
+        visible_candidates=candidates,
+        allow_assisted_correction=False,
+        route_hints=("compare_metric",),
+    )
+
+    assert decision.route == "compare_metric"
+    assert decision.tool_name == "table_retriever"
+    assert decision.candidate_rank == 1
+
+
+def test_role_path_rejects_ambiguous_tool_only_selection_without_route_hint() -> None:
+    class StubLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            if purpose == "retriever":
+                return LLMResult(
+                    text=json.dumps({"route": "table_retriever", "tool_name": "table_retriever"}),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=12, completion_tokens=6, total_tokens=18),
+                )
+            raise AssertionError(f"unexpected purpose {purpose}")
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    candidates = (
+        RoleToolCandidate(route="compare_metric", tool_name="table_retriever", helper_rank=1),
+        RoleToolCandidate(route="generate_chart", tool_name="table_retriever", helper_rank=2),
+    )
+    runner = RolePathRunner(llm_client=StubLLMClient())
+    with pytest.raises(RoleSelectionError):
+        runner.choose_retrieval_candidate(
+            query_text="ACME 2026Q1 revenue",
+            retrieved_doc_ids=("sha256:doc-acme-2026q1",),
+            visible_candidates=candidates,
+            allow_assisted_correction=False,
+        )
+
+
+def test_role_path_accepts_swapped_route_tool_selection_when_pair_is_visible() -> None:
+    class StubLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            if purpose == "retriever":
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "route": "table_retriever",
+                            "tool_name": "compare_metric",
+                        }
+                    ),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=12, completion_tokens=6, total_tokens=18),
+                )
+            raise AssertionError(f"unexpected purpose {purpose}")
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    candidates = (
+        RoleToolCandidate(route="compare_metric", tool_name="table_retriever", helper_rank=1),
+        RoleToolCandidate(route="summarize_risk", tool_name="semantic_retriever", helper_rank=2),
+    )
+    runner = RolePathRunner(llm_client=StubLLMClient())
+    decision = runner.choose_retrieval_candidate(
+        query_text="ACME 2026Q1 revenue compare_metric",
+        retrieved_doc_ids=("sha256:doc-acme-2026q1",),
+        visible_candidates=candidates,
+        allow_assisted_correction=False,
+    )
+
+    assert decision.route == "compare_metric"
+    assert decision.tool_name == "table_retriever"
+    assert decision.candidate_rank == 1
+
+
 def test_role_path_accepts_candidate_key_echoed_in_tool_name_slot() -> None:
     class StubLLMClient:
         async def complete(self, messages, *, purpose, temperature=None):
@@ -1024,6 +1367,193 @@ def test_role_path_accepts_candidate_key_echoed_in_tool_name_slot() -> None:
     assert decision.route == "aggregate_and_extreme"
     assert decision.tool_name == "table_retriever"
     assert decision.candidate_rank == 1
+
+
+def test_role_path_accepts_candidate_key_echoed_in_route_slot_with_matching_tool() -> None:
+    class StubLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            if purpose == "retriever":
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "route": "compare_metric::table_retriever",
+                            "tool_name": "table_retriever",
+                        }
+                    ),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=12, completion_tokens=6, total_tokens=18),
+                )
+            raise AssertionError(f"unexpected purpose {purpose}")
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    candidates = (
+        RoleToolCandidate(route="compare_metric", tool_name="table_retriever", helper_rank=1),
+        RoleToolCandidate(route="generate_chart", tool_name="table_retriever", helper_rank=2),
+    )
+    runner = RolePathRunner(llm_client=StubLLMClient())
+    decision = runner.choose_retrieval_candidate(
+        query_text="ACME 2026Q1 revenue compare_metric",
+        retrieved_doc_ids=("sha256:doc-acme-2026q1",),
+        visible_candidates=candidates,
+        allow_assisted_correction=False,
+    )
+
+    assert decision.route == "compare_metric"
+    assert decision.tool_name == "table_retriever"
+    assert decision.candidate_rank == 1
+
+
+def test_role_path_rejects_candidate_key_route_slot_with_conflicting_tool() -> None:
+    class StubLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            if purpose == "retriever":
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "route": "compare_metric::table_retriever",
+                            "tool_name": "semantic_retriever",
+                        }
+                    ),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=12, completion_tokens=6, total_tokens=18),
+                )
+            raise AssertionError(f"unexpected purpose {purpose}")
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    candidates = (
+        RoleToolCandidate(route="compare_metric", tool_name="table_retriever", helper_rank=1),
+        RoleToolCandidate(route="summarize_risk", tool_name="semantic_retriever", helper_rank=2),
+    )
+    runner = RolePathRunner(llm_client=StubLLMClient())
+    with pytest.raises(RoleSelectionError):
+        runner.choose_retrieval_candidate(
+            query_text="ACME 2026Q1 revenue compare_metric",
+            retrieved_doc_ids=("sha256:doc-acme-2026q1",),
+            visible_candidates=candidates,
+            allow_assisted_correction=False,
+        )
+
+
+def test_role_path_retries_strict_retriever_visible_candidate_mismatch() -> None:
+    class StubLLMClient:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.prompts: list[str] = []
+
+        async def complete(self, messages, *, purpose, temperature=None):
+            del temperature
+            assert purpose == "retriever"
+            self.calls += 1
+            self.prompts.append(messages[0].content)
+            if self.calls == 1:
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "route": "csv_profiler",
+                            "tool_name": "csv_profiler",
+                        }
+                    ),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+                )
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "candidate_key": "aggregate_and_extreme::table_retriever",
+                        "route": "aggregate_and_extreme",
+                        "tool_name": "table_retriever",
+                    }
+                ),
+                model="stub-model",
+                usage=LLMUsage(prompt_tokens=9, completion_tokens=4, total_tokens=13),
+            )
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    llm = StubLLMClient()
+    candidates = (
+        RoleToolCandidate(route="profile_table", tool_name="csv_profiler", helper_rank=1),
+        RoleToolCandidate(route="aggregate_and_extreme", tool_name="table_retriever", helper_rank=2),
+        RoleToolCandidate(route="profile_and_mean", tool_name="csv_profiler", helper_rank=3),
+    )
+    runner = RolePathRunner(llm_client=llm, json_response_max_attempts=2)
+    decision = runner.choose_retrieval_candidate(
+        query_text="disease_estimates aggregate_and_extreme task/csv/estimated_numbers.csv",
+        retrieved_doc_ids=("sha256:csv-disease_estimates",),
+        visible_candidates=candidates,
+        allow_assisted_correction=False,
+    )
+
+    assert llm.calls == 2
+    assert "Selection retry instruction" in llm.prompts[1]
+    assert decision.route == "aggregate_and_extreme"
+    assert decision.tool_name == "table_retriever"
+    assert decision.prompt_tokens == 16
+    assert decision.total_tokens == 23
+
+
+def test_role_path_retries_strict_executor_visible_candidate_mismatch() -> None:
+    class StubLLMClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            assert purpose == "executor"
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "route": "csv_profiler",
+                            "tool_name": "csv_profiler",
+                            "action_contract": "materialize_validated_artifact",
+                        }
+                    ),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=5, completion_tokens=3, total_tokens=8),
+                )
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "candidate_key": "aggregate_and_extreme::table_retriever",
+                        "route": "aggregate_and_extreme",
+                        "tool_name": "table_retriever",
+                        "action_contract": "materialize_validated_artifact",
+                    }
+                ),
+                model="stub-model",
+                usage=LLMUsage(prompt_tokens=6, completion_tokens=4, total_tokens=10),
+            )
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    llm = StubLLMClient()
+    candidates = (
+        RoleToolCandidate(route="profile_table", tool_name="csv_profiler", helper_rank=1),
+        RoleToolCandidate(route="aggregate_and_extreme", tool_name="table_retriever", helper_rank=2),
+    )
+    runner = RolePathRunner(llm_client=llm, json_response_max_attempts=2)
+    decision = runner.validate_execution_choice(
+        route="aggregate_and_extreme",
+        tool_name="table_retriever",
+        visible_candidates=candidates,
+        action_contract="materialize_validated_artifact",
+        allow_assisted_correction=False,
+    )
+
+    assert llm.calls == 2
+    assert decision.route == "aggregate_and_extreme"
+    assert decision.tool_name == "table_retriever"
+    assert decision.total_tokens == 18
 
 
 def test_role_path_accepts_executor_candidate_key_and_compact_action_alias() -> None:
@@ -1069,6 +1599,141 @@ def test_role_path_accepts_executor_candidate_key_and_compact_action_alias() -> 
     assert decision.tool_name == sample.expected_tool_name
     assert decision.action_contract == "execute_validated_tool"
     assert decision.reason == "candidate-key response"
+
+
+def test_role_path_retries_empty_executor_json_response() -> None:
+    class StubLLMClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            assert purpose == "executor"
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResult(
+                    text="",
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=3, completion_tokens=0, total_tokens=3),
+                )
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "candidate_key": "compare_metric::table_retriever",
+                        "route": "compare_metric",
+                        "tool_name": "table_retriever",
+                        "action_contract": "materialize_validated_artifact",
+                        "reason": "valid retry",
+                    }
+                ),
+                model="stub-model",
+                usage=LLMUsage(prompt_tokens=5, completion_tokens=4, total_tokens=9),
+            )
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    llm = StubLLMClient()
+    runner = RolePathRunner(llm_client=llm)
+    decision = runner.validate_execution_choice(
+        route="compare_metric",
+        tool_name="table_retriever",
+        visible_candidates=(
+            RoleToolCandidate(route="compare_metric", tool_name="table_retriever", helper_rank=1),
+        ),
+        action_contract="materialize_validated_artifact",
+        allow_assisted_correction=False,
+    )
+
+    assert llm.calls == 2
+    assert decision.route == "compare_metric"
+    assert decision.tool_name == "table_retriever"
+    assert decision.reason == "valid retry"
+    assert decision.prompt_tokens == 8
+    assert decision.total_tokens == 12
+
+
+def test_role_path_retries_malformed_summarizer_json_response() -> None:
+    class StubLLMClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            assert purpose == "summarizer"
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResult(
+                    text='{"summary": "ok"; "reusable_steps": ["retrieve"], "confidence": 0.9, "tags": []}',
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+                )
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "summary": "retry summary",
+                        "reusable_steps": ["retrieve", "execute"],
+                        "confidence": "high",
+                        "tags": ["finance"],
+                    }
+                ),
+                model="stub-model",
+                usage=LLMUsage(prompt_tokens=8, completion_tokens=5, total_tokens=13),
+            )
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    llm = StubLLMClient()
+    runner = RolePathRunner(llm_client=llm)
+    decision = runner.summarize(
+        task_id="task-1",
+        task_theme="financial_report_analysis",
+        summary_hint="hint",
+        actions_text="route=compare_metric",
+        tags=("finance",),
+    )
+
+    assert llm.calls == 2
+    assert decision.summary_text == "retry summary"
+    assert decision.confidence == 0.9
+    assert decision.prompt_tokens == 15
+    assert decision.total_tokens == 23
+
+
+def test_role_path_summarizer_accepts_textual_confidence_label() -> None:
+    class StubLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del messages, temperature
+            if purpose == "summarizer":
+                return LLMResult(
+                    text=json.dumps(
+                        {
+                            "summary": "ok",
+                            "reusable_steps": ["retrieve", "execute"],
+                            "confidence": "high",
+                            "tags": ["finance"],
+                        }
+                    ),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=12, completion_tokens=6, total_tokens=18),
+                )
+            raise AssertionError(f"unexpected purpose {purpose}")
+
+        def describe(self):
+            return {"backend": "stub"}
+
+    runner = RolePathRunner(llm_client=StubLLMClient())
+    decision = runner.summarize(
+        task_id="task-1",
+        task_theme="financial_report_analysis",
+        summary_hint="hint",
+        actions_text="route=compare_metric",
+        tags=("table_retriever",),
+    )
+
+    assert decision.confidence == 0.9
+    assert decision.summary_text == "ok"
 
 
 def test_role_path_structured_prompts_use_compact_payloads() -> None:
