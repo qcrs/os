@@ -278,6 +278,54 @@ def test_quality_floor_result_is_shared_case_level_contract() -> None:
     assert score.selected_doc_hashes_exact is True
 
 
+def test_fixed_answer_metric_value_schema_distinguishes_requested_metric_from_revenue() -> None:
+    from v2.benchmark.scoring import FixedAnswerLaneResult, score_fixed_answer_case
+
+    expected = {
+        "metric_name": "operating_income",
+        "metric_value": "19",
+        "revenue_value": "19",
+        "selected_doc_hashes": ["sha256:doc-acme-2026q1"],
+    }
+    correct_metric = score_fixed_answer_case(
+        observed=FixedAnswerLaneResult(
+            task_id="benchmark-sample-7",
+            route="compare_metric",
+            tool_name="table_retriever",
+            summary_text="operating income is 19",
+            metric_name="operating_income",
+            metric_value="19",
+            revenue_value="",
+            selected_doc_hashes=("sha256:doc-acme-2026q1",),
+        ),
+        expected_route="compare_metric",
+        expected_tool_name="table_retriever",
+        expected_facts=expected,
+    )
+    wrong_revenue = score_fixed_answer_case(
+        observed=FixedAnswerLaneResult(
+            task_id="benchmark-sample-7",
+            route="compare_metric",
+            tool_name="table_retriever",
+            summary_text="operating income is 19",
+            metric_name="revenue",
+            metric_value="120",
+            revenue_value="120",
+            selected_doc_hashes=("sha256:doc-acme-2026q1",),
+        ),
+        expected_route="compare_metric",
+        expected_tool_name="table_retriever",
+        expected_facts=expected,
+    )
+
+    assert correct_metric.metric_name_exact is True
+    assert correct_metric.metric_value_exact is True
+    assert correct_metric.quality_floor.quality_floor_pass is True
+    assert wrong_revenue.metric_name_exact is False
+    assert wrong_revenue.metric_value_exact is False
+    assert wrong_revenue.quality_floor.quality_floor_pass is False
+
+
 def test_replay_gate_distinguishes_exact_validated_and_assist() -> None:
     compiler = TaskCompiler()
     compiled = compiler.compile(

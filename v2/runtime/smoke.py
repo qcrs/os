@@ -392,15 +392,19 @@ def _render_output_payload(
     summary_suffix: str,
     downgraded: bool = False,
 ) -> dict[str, object]:
-    revenue_value = ""
+    metric_name = ""
+    metric_value = ""
     if bundle.evidence_pack.hard_facts:
-        revenue_value = str(bundle.evidence_pack.hard_facts[0].metadata.get("value", ""))
+        metric_name = str(bundle.evidence_pack.hard_facts[0].metadata.get("metric_name", ""))
+        metric_value = str(bundle.evidence_pack.hard_facts[0].metadata.get("value", ""))
     return {
         "task_id": task_id,
         "task_family": bundle.evidence_pack.task_id,
         "query_text": bundle.query_text,
         "summary_text": summary_suffix,
-        "revenue_value": revenue_value,
+        "metric_name": metric_name,
+        "metric_value": metric_value,
+        "revenue_value": metric_value,
         "selected_doc_hashes": list(bundle.selected_doc_hashes),
         "evidence_pack_hash": bundle.evidence_pack.pack_hash,
         "retrieval_log_hash": bundle.log_hash,
@@ -408,14 +412,22 @@ def _render_output_payload(
     }
 
 
-def _default_fact_value(bundle: RetrievalBundle) -> str:
+def _default_fact_metric(bundle: RetrievalBundle) -> tuple[str, str]:
     if bundle.evidence_pack.hard_facts:
-        return str(bundle.evidence_pack.hard_facts[0].metadata.get("value", ""))
+        item = bundle.evidence_pack.hard_facts[0]
+        return (
+            str(item.metadata.get("metric_name", "")),
+            str(item.metadata.get("value", "")),
+        )
     if bundle.evidence_pack.semantic_contexts:
-        return str(bundle.evidence_pack.semantic_contexts[0].rendered_text)
+        return "", str(bundle.evidence_pack.semantic_contexts[0].rendered_text)
     if bundle.evidence_pack.lexical_hints:
-        return str(bundle.evidence_pack.lexical_hints[0].rendered_text)
-    return ""
+        return "", str(bundle.evidence_pack.lexical_hints[0].rendered_text)
+    return "", ""
+
+
+def _default_fact_value(bundle: RetrievalBundle) -> str:
+    return _default_fact_metric(bundle)[1]
 
 
 def _elapsed_ms(start_ns: int) -> float:
@@ -2283,6 +2295,7 @@ def run_smoke(
             prompt_slice=retriever_prompt_slice,
             strict_surface=True,
             allow_assisted_correction=False,
+            route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route),
         )
         executor_prompt_slice = (
             RolePromptSlice(
@@ -2321,6 +2334,7 @@ def run_smoke(
             prompt_slice=executor_prompt_slice,
             strict_surface=True,
             allow_assisted_correction=False,
+            route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route),
         )
         actions_text = (
             f"route={executor_decision.route}\n"
@@ -2328,6 +2342,7 @@ def run_smoke(
             f"action_contract={executor_decision.action_contract}\n"
             f"supporting_docs={','.join(retriever_decision.supporting_doc_ids or retrieval.selected_doc_hashes)}"
         )
+        metric_name, metric_value = _default_fact_metric(retrieval)
         codeact_stage_start_ns = time.perf_counter_ns()
         codeact_result = _get_codeact_runner().run(
             workspace=workspace,
@@ -2340,7 +2355,9 @@ def run_smoke(
                 execution_goal="downgrade_execution_goal" if downgraded_execution_goal else "full_execution_goal",
                 query_text=retrieval.query_text,
                 summary_suffix=summary_hint,
-                revenue_value=_default_fact_value(retrieval),
+                metric_name=metric_name,
+                metric_value=metric_value,
+                revenue_value=metric_value,
                 selected_doc_hashes=retrieval.selected_doc_hashes,
                 evidence_pack_hash=retrieval.evidence_pack.pack_hash,
                 retrieval_log_hash=retrieval.log_hash,
@@ -2376,6 +2393,8 @@ def run_smoke(
             {
                 "route": candidate_output_payload.get("route", ""),
                 "tool_name": candidate_output_payload.get("tool_name", ""),
+                "metric_name": candidate_output_payload.get("metric_name", ""),
+                "metric_value": candidate_output_payload.get("metric_value", ""),
                 "revenue_value": candidate_output_payload.get("revenue_value", ""),
                 "selected_doc_hashes": candidate_output_payload.get("selected_doc_hashes", []),
                 "supporting_doc_ids": candidate_output_payload.get("supporting_doc_ids", []),

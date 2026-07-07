@@ -16,7 +16,8 @@
 - `runs/host_goal_eval_20260608_093111_planner_contract_refresh/`
 - `runs/host_goal_eval_20260608_112452_plan_sideband_runtime_profile_refresh/`
 - `runs/host_goal_eval_20260608_113845_runtime_drop_reuse_signature_query_refresh/`
-- `docs/planning/goal_prompt_host_mainline_despecialize_then_deepen_20260608.md`
+- `docs/README.md`
+- `docs/improvement/README.md`
 
 如果本文件后面某些段落仍保留 design-first 或 Docker/openEuler 终态表达，应理解为**历史规划参考或后续阶段对象**，不能覆盖当前 host-mainline 事实。
 

@@ -8,6 +8,8 @@
     "q1-2026"
   ],
   "expected_facts": {
+    "metric_name": "operating_income",
+    "metric_value": "19",
     "revenue_value": "19",
     "selected_doc_hashes": [
       "sha256:doc-acme-2026q1"

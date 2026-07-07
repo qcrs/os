@@ -5,8 +5,9 @@
 > 当前定位：历史演讲提纲，不是当前 active source-of-truth。
 > 本文保留历史 frozen headline 叙事，只能作为背景材料阅读。
 > 2026-07-06 claim-upgrade 后，当前可声明内容请优先读取：
-> `docs/improvement/19_claim_upgrade_completion_report_20260706.md`
-> 和 `docs/improvement/artifacts/17_final_system_audit/17f_safe_claim_language.md`。
+> `docs/README.md`、`docs/improvement/README.md`、
+> `docs/improvement/20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
+> 和最新 local+api 深挖文档。
 > 当前仓库和当前 communication 读法请优先看：
 > `docs/reports/statebus_system_method_task_and_results_explainer.md`
 > `docs/reports/current_task_results_overview_20260622.md`

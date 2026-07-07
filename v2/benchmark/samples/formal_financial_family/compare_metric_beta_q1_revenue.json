@@ -8,6 +8,8 @@
     "beta"
   ],
   "expected_facts": {
+    "metric_name": "revenue",
+    "metric_value": "87",
     "revenue_value": "87",
     "selected_doc_hashes": [
       "sha256:doc-beta-2026q1"

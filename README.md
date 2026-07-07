@@ -130,7 +130,8 @@ python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-p
 - 以上是 host 环境口径；如果在 `openEuler` 容器内执行，同样命令请改用 `python3`
 - `role-path-mode=api` 需要有效的 `STATEBUS_LLM_API_KEY`
 - `embedding-mode=local` 需要本地 embedding 模型目录和可用 device
-- formal tier 默认跑 `formal_financial_family`
+- formal internal benchmark 默认跑 registered formal samples：25 cases / 5 families
+- formal compare 当前默认仍是 `formal_financial_family` 8-case compare，不是 full 25-case registry compare
 - dev tier 的 fixed-answer / assisted comparator 只用于开发诊断，不承载 formal headline
 - 在正式 live 跑之前，建议先执行 `--suite preflight`
 
@@ -138,19 +139,33 @@ python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-p
 
 如果你现在要快速搞清楚“当前可信结果是什么、任务怎么构造、`text` 和 StateBus 怎么比较”，按这个顺序看：
 
-1. `docs/reports/statebus_system_method_task_and_results_explainer.md`
-2. `docs/reader_guide/README.md`
-3. `docs/reports/current_task_results_overview_20260622.md`
-4. `tasks/README.md`
+1. `docs/README.md`
+2. `docs/improvement/README.md`
+3. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
+4. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/code_truth_vs_experiment_issue_matrix_zh.md`
+5. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_163354/`
+6. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_130958/`
+7. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_115051/`
+8. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_091807/`
+9. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260706_191835/deep_dive_analysis_and_fix_plan_zh.md`
+10. `docs/reports/final_v2_evidence_index_20260703.md`
+11. `tasks/README.md`
 
 它们分别承担：
 
-- 新人总览
-- 模块化延伸阅读入口
-- 当前冻结口径与 authoritative artifact 索引
+- 当前文档入口和 source-of-truth 顺序
+- 当前 improvement / 修复入口
+- 最新真实性审计入口
+- 代码事实与实验证据矩阵
+- 最新 full `RUN_FLAGSHIP=1` local+api comprehensive artifact；13 stages 全部 exit 0，required failed stage count 为 0；formal internal 25/25、formal financial 8-case strict equal-quality、continuous/replay、replay negative 和 flagship stage 都跑完；flagship stress 为 3/6，不是 all-pass
+- `local_api_20260707_130958` 是 transport retry 后、selection retry 前的失败证据；required/continuous/replay clean，但 flagship 因 `strict_visible_candidate_mismatch:csv_profiler::csv_profiler` 失败
+- `local_api_20260707_115051` 是 `RUN_FLAGSHIP=1` transport failure 证据；required stages clean，但 optional continuous/replay/flagship 因 API connection/timeout 失败
+- `local_api_20260707_091807` 是历史 passing comprehensive core artifact；required stages 全部 exit 0，但 flagship 显式关闭
+- historical local+api 深挖和修复计划
+- v2 历史证据索引
 - 任务包和 pack 角色索引
 
-当前正式读法的最短版本是：
+历史 v1 / v3 pack 读法仍有参考价值，但不要覆盖当前 v2 truth audit。历史正式读法的最短版本是：
 
 - active communication headline：`superiority_comm_v1`
 - formal-secondary support：`typed_state_mechanism_v3`、`typed_state_consumer_sensitivity_v3`、`superiority_memory_v1`
@@ -179,11 +194,11 @@ python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-p
 
 如果你要快速理解当前主线，建议先看：
 
-1. `docs/constraints/current_host_and_migration.md`
-2. `docs/constraints/current_feature_scope.md`
-3. `docs/reports/statebus_system_method_task_and_results_explainer.md`
-4. `docs/reader_guide/README.md`
-5. `docs/reports/current_task_results_overview_20260622.md`
+1. `docs/README.md`
+2. `docs/constraints/current_host_and_migration.md`
+3. `docs/constraints/current_feature_scope.md`
+4. `docs/improvement/README.md`
+5. `docs/improvement/20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
 
 ## 8. 历史说明
 

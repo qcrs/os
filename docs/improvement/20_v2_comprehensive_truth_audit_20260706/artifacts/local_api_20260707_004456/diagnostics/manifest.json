@@ -1,0 +1,153 @@
+{
+  "schema_version": "statebus.local_api_diagnostics_copy.v1",
+  "run_root": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456",
+  "artifact_root": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456",
+  "copied_file_count": 29,
+  "copied_files": [
+    {
+      "reason": "nested_benchmark_report",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_11_replay_negative_api_local/runtime/replay-negative-audit/benchmark_reports/v2-local-api-20260707_004456-r01_11_replay_negative_api_local-replay-negative-audit.md",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_11_replay_negative_api_local/runtime/replay-negative-audit/benchmark_reports/v2-local-api-20260707_004456-r01_11_replay_negative_api_local-replay-negative-audit.md"
+    },
+    {
+      "reason": "nested_benchmark_report",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_11_replay_negative_api_local/runtime/replay-negative-audit/benchmark_reports/v2-local-api-20260707_004456-r01_11_replay_negative_api_local-replay-negative-audit.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_11_replay_negative_api_local/runtime/replay-negative-audit/benchmark_reports/v2-local-api-20260707_004456-r01_11_replay_negative_api_local-replay-negative-audit.json"
+    },
+    {
+      "reason": "statebus_case_output",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-2/outputs/result.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-2/outputs/result.json"
+    },
+    {
+      "reason": "statebus_case_output",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-1/outputs/result.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-1/outputs/result.json"
+    },
+    {
+      "reason": "statebus_case_output",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-7/outputs/result.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-7/outputs/result.json"
+    },
+    {
+      "reason": "statebus_case_output",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-6/outputs/result.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-6/outputs/result.json"
+    },
+    {
+      "reason": "state_metadata",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_07_dev_compare_api_local_memfd/runtime/api/statebus/fixed-answer-auth-001/state/metadata/state-fixed-answer-auth-001.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_07_dev_compare_api_local_memfd/runtime/api/statebus/fixed-answer-auth-001/state/metadata/state-fixed-answer-auth-001.json"
+    },
+    {
+      "reason": "state_metadata",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_06_formal_compare_api_local_memfd/runtime/api/statebus/benchmark-sample-1/state/metadata/state-benchmark-sample-1.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_06_formal_compare_api_local_memfd/runtime/api/statebus/benchmark-sample-1/state/metadata/state-benchmark-sample-1.json"
+    },
+    {
+      "reason": "hydration_audit",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-2/logs/hydration_audit.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-2/logs/hydration_audit.json"
+    },
+    {
+      "reason": "hydration_audit",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-1/logs/hydration_audit.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-1/logs/hydration_audit.json"
+    },
+    {
+      "reason": "hydration_audit",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-7/logs/hydration_audit.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-7/logs/hydration_audit.json"
+    },
+    {
+      "reason": "hydration_audit",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-6/logs/hydration_audit.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/workspaces/L0/benchmark-sample-6/logs/hydration_audit.json"
+    },
+    {
+      "reason": "ref_registry",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-2/registry/ref_registry.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-2/registry/ref_registry.json"
+    },
+    {
+      "reason": "ref_registry",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-1/registry/ref_registry.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-1/registry/ref_registry.json"
+    },
+    {
+      "reason": "ref_registry",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-7/registry/ref_registry.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-7/registry/ref_registry.json"
+    },
+    {
+      "reason": "ref_registry",
+      "source": "/home/qcrs/statebus/runs/v2-local-api-20260707_004456/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-6/registry/ref_registry.json",
+      "artifact_relpath": "diagnostics/runtime_files/work/r01_05_formal_api_local_memfd/runtime/L0/benchmark-sample-6/registry/ref_registry.json"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/00_env_probe/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/00_env_probe/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_07_dev_compare_api_local_memfd/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_07_dev_compare_api_local_memfd/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_05_formal_api_local_memfd/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_05_formal_api_local_memfd/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_11_replay_negative_api_local/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_11_replay_negative_api_local/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_04_preflight_api_local/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_04_preflight_api_local/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_12_flagship_ablation_api_local/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_12_flagship_ablation_api_local/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/01_py_compile/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/01_py_compile/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_09_continuous_api_local/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_09_continuous_api_local/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_08_carrier_compare_api_local_memfd/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_08_carrier_compare_api_local_memfd/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_06_formal_compare_api_local_memfd/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_06_formal_compare_api_local_memfd/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/02_pytest_focused_v2/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/02_pytest_focused_v2/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/03_runtime_smoke/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/03_runtime_smoke/console.log"
+    },
+    {
+      "reason": "socket_path_audit",
+      "source": "/home/qcrs/statebus/project/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/stages/r01_10_continuous_replay_api_local/console.log",
+      "artifact_relpath": "diagnostics/runtime_files/artifacts/stages/r01_10_continuous_replay_api_local/console.log"
+    }
+  ]
+}

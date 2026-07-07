@@ -1,106 +1,82 @@
-# StateBus v2 改进计划
+# StateBus v2 改进与修复入口
 
-> 2026-07-06 current-source note: 本 README 下方的评分和实验数字保留为 2026-07-04 historical snapshot。
->
-> **当前最高优先级 source-of-truth：** `17_final_system_audit_20260706.md` + 6 个子文档
->
-> 次要参考：`14_full_validation_rollup_20260706.md`、`15_fairness_gate_propagation_audit_20260706.md`、`16_deep_contest_audit_20260706.md` 以及对应 `docs/improvement/artifacts/` 证据日志。
+这个目录只保留当前仍然会影响实现判断、claim 边界和下一步修复的材料。早期 01-19 的阶段性审计、prompt 和中间态 artifacts 已清理；需要追溯时请从 git 历史读取，不再把它们作为日常阅读入口。
 
-**审计基准**：HEAD `6ece8a0`，实验数据 `full-experiment-20260704_111950`
-**代码路径**：基于实际代码探索，所有行号均已核实
+## 当前必读
 
----
+1. `20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
+   - 当前 v2 claim-upgrade 真实性审计入口。
+   - 说明哪些已经真实落地，哪些仍是 deterministic、历史或文档层证据。
 
-## 当前评分预估（2026-07-04 更新）
+2. `20_v2_comprehensive_truth_audit_20260706/05_merged_issue_ledger.md`
+   - 当前问题分类账。
+   - 后续修复应优先从这里和本轮 local+api 深挖文档交叉读取。
 
-| 评分维度 | 满分 | 当前预估 | 核心缺口 |
-|---|---|---|---|
-| 通信效率 | 25 | 20~23 | comparison_valid=False，formal headline 未激活；carrier 数据强但需要在报告中前置展示 |
-| 状态传递创新 | 20 | 15~17 | stress_pass=3/6；memfd 已实现但 formal compare 未激活；lookup_by_tags 仍 Python 扫描 |
-| 记忆复用 | 20 | 16~18 | SQLite FTS5 已实现；COMMITTED 已降为 quality_floor_pass；FAISS 未实装 |
-| 系统完整性 | 20 | 15~17 | 同进程顺序执行；SubprocessExecutorTransport 未在 formal 中激活；incident_diagnosis_v2 已上线 |
-| 实验验证 | 15 | 12~14 | CodeAct 5/5 ✅；codeact -65.7% ✅；stress_pass 3/6 是薄弱点 |
-| **合计** | **100** | **78~89** | |
+3. `20_v2_comprehensive_truth_audit_20260706/code_truth_vs_experiment_issue_matrix_zh.md`
+   - 当前最重要的代码事实与实验证据对照矩阵。
+   - 用来判断结构化控制面、非文本中间状态、共享记忆/replay、formal compare 是否被实验真实测到。
+   - 后续修复应优先按这个矩阵中的 P0/P1 排序。
 
----
+4. `20_v2_comprehensive_truth_audit_20260706/07_fix_plan.md`
+   - 当前修复计划基线。
+   - 注意：它已结合 local+api formal compare 与代码事实矩阵更新。
 
-## 文件索引
+5. `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_163354/`
+   - 最新 full `RUN_FLAGSHIP=1` local+api comprehensive artifact。
+   - 13 stages 全部 exit 0；required failed stage count 为 0；formal compare 8-case strict equal-quality 通过但不支持 efficiency superiority；flagship stage 跑完但 stress pass 为 3/6。
 
-| 优先级 | 文件 | 解决的核心问题 | 状态 |
-|---|---|---|---|
-| **P0** | `01_p0_critical_fixes.md` | CodeAct 生成、memory 设计、claim 路径 | 大部分已完成 |
-| **P0** | `02_competition_claim_hardening.md` | 竞赛声明精确表述与答辩防御 | 最新数据已更新 |
-| **P1** | `03_agent_role_and_task_redesign.md` | 3类任务、角色真实性、10轮连续 | incident_v2 已上线 |
-| **P1** | `04_codeact_and_sandbox_hardening.md` | CodeAct 完整修复（代码级） | LLM 5/5 已验证 |
-| **P1** | `05_memory_and_replay_complete_design.md` | SQLite FTS、replay 完整实现 | FTS5 已实现，FAISS 待做 |
-| **P1** | `07_non_text_state_transfer_audit.md` | 非文本传递四环节审计 | MemfdStatePool 已实现 |
-| **P1** | `08_performance_and_overhead_breakdown.md` | overhead 分解与答辩口径 | benchmark_balanced+cache 已实现 |
-| **P2** | `06_kv_cache_implementation.md` | KV Cache 机制（保留原文，Future Work） | 未实现，不计分 |
+6. `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260706_191835/deep_dive_analysis_and_fix_plan_zh.md`
+   - historical local+api 全面测试深度拆解。
+   - 重点定位 formal compare gate 语义混用、8-case compare 覆盖缺口、external metric schema 问题。
 
-最新补充：
+7. `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_034412/`
+   - post-fix comprehensive diagnostic rerun。
+   - 注意：不是 passing comprehensive evidence；required formal internal timeout，formal compare debug-only，但 diagnostics bundle 自足。
 
-- **`17_final_system_audit_20260706.md`**：✨ **最终系统审计报告（答辩前必读）**
-  - 基于文档 12-16、代码深度审查、benchmark JSON 交叉验证的全面审计
-  - 明确 StateBus v2 能支撑和不能支撑的声明
-  - 包含 6 个详细子文档：
-    - `17a_evidence_table.md` - 声明强度分级（Strong/Medium/Weak/Unsupported）
-    - `17b_code_review_findings.md` - 10 个核心文件代码审查结果
-    - `17c_benchmark_json_analysis.md` - Benchmark JSON 指标交叉验证
-    - `17d_issue_ledger.md` - 完整问题分类账（P0/P1/P2）
-    - `17e_remediation_plan.md` - 详细修复方案（赛前必修 4 项）
-    - `17f_safe_claim_language.md` - 推荐答辩口径和禁用表述
-  - **关键发现**：
-    - ✅ 所有 P1 问题已修复（5 个）
-    - 🔴 6 个 P2 问题开放（4 个赛前强烈建议修）
-    - ❌ 明确不能声称：端到端速度优势、形式化广泛推理、openEuler VM 验证
-    - ✅ 可以声称：类型化控制平面、非文本状态传输（4/6）、连续降级复用、dev 外部公平门通过
+8. `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_130958/`
+   - transport retry 后、selection retry 前的 `RUN_FLAGSHIP=1` rerun。
+   - 注意：required、continuous、continuous replay 都 clean，但 flagship 因 strict visible-candidate mismatch 失败。
 
-- `16_deep_contest_audit_20260706.md`：从赛题要求出发复核 v2 的代码、benchmark JSON、历史审计链路和 claim 边界；修复 full audit script 指标解析/socket 隔离问题，并新增 replay 保守语义指标。
+9. `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_115051/`
+   - `RUN_FLAGSHIP=1` transport failure rerun。
+   - 注意：required stages clean，但 optional continuous/replay/flagship 因 API connection/timeout 失败，不是 optional passing comprehensive evidence。
 
-- `15_fairness_gate_propagation_audit_20260706.md`：修复 external pure-text per-case fairness gate 未上卷到 family/comparator hard gate 的问题，并归档 `api + local` compare JSON 证据。
+## 当前可引用证据
 
----
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/formal_auto.stdout.json`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/formal_shared_memory.stdout.json`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/formal_memfd_local.stdout.json`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/preflight_deterministic.stdout.json`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260706_191835/`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_034412/`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_091807/`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_130958/`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_115051/`
+- `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_163354/`
 
-## 最新实验关键数字（full-experiment-20260704_111950）
+## 当前不要再引用为 source-of-truth 的内容
 
-```
-pytest:              194 passed
-CodeAct LLM gen:     5/5 success，generation_fallback_used=False，attempt_count=1
-codeact_stage_ms:    2455→843ms（-65.7%，runner cache 已实现）
-formal compare:      superiority_claim=True，efficiency_claim=True
-                     StateBus 8/8 vs External 6/8（quality_delta=+2）
-                     tokens_delta=-743，bytes_delta=-10928B
-                     comparison_valid=False（external 6/8 未过 quality floor gate）
-carrier compare:     task_ms_delta=-6114ms，llm_prompt_bytes_delta=-1922B，valid=True
-continuous replay:   validated_replay=15，exact_replay=10，missing_target_rounds=0
-incident_diag_v2:    eligible_for_replay_headline=True，skipped_step_count=16，
-                     exact_replay=7，validated_replay=2
-replay neg audit:    7/7 pass
-stress_pass:         3/6 families（flagship ablation）
-```
+- 已删除的 `01_*` 到 `19_*` 阶段性 improvement 文档。
+- 已删除的 prompt / new-window / handoff 文档。
+- 已删除的 `docs/improvement/artifacts/15_*`、`16_*`、`17_*` 中间审计过程日志。
 
----
+这些内容的价值是历史追溯，不是当前实现判断。保留在主目录只会让 claim 口径继续摇摆。
 
-## 执行顺序（剩余工作）
+## 当前核心判断
 
-```
-高优先级（影响评分）：
-  1. lookup_by_tags() 加 SQL WHERE 子句（B1，1小时）
-  2. comparison_valid=False 答辩口径完善（B3，不改代码）
-  3. cross_period_financial_v1 任务族实装（提升系统完整性）
+- `formal internal` 证据强：API+local+memfd 下 25 cases / 5 families 跑通并 25/25 通过。
+- `formal compare` 仍不能写成 full formal external superiority：当前 compare 只覆盖 formal financial 8 cases，不是 full 25-case registry compare。
+- compare gate 语义、8-case scope metadata 和 external metric schema 已拆清；`local_api_20260707_163354` 证明 formal financial 8-case strict equal-quality compare valid，但本次 API timing 下没有 efficiency superiority claim。
+- `local_api_20260707_034412` 中 external compare 的 metric fields 8/8 quality pass，但 `benchmark-sample-6` fairness hard gate fail，因此该旧 diagnostic run 不支持 formal external claim。
+- 非文本中间状态当前应精确写成 embedding semantic state + refs + hydration accounting；证据文本/表格仍通过 hydration 进入 prompt，不能扩大为 hidden-state/KV transfer。
+- formal runtime 的 UDS/protobuf 主 benchmark 路径是 loopback harness；subprocess memfd 目前主要由单测覆盖。
+- 端到端速度优势、openEuler VM validation、nsjail production sandbox、hidden-state/KV transfer 仍不能 claim。
+- `local_api_20260707_163354` 证明 transport retry 与 strict selection retry 后 full `RUN_FLAGSHIP=1` comprehensive 可跑完；但 flagship stress pass 为 3/6，不能写成 all-pass。
 
-中优先级（锦上添花）：
-  4. FAISS optional backend（C1）
-  5. per-family replay breakdown 报告（C6）
-  6. SubprocessExecutorTransport 集成到 formal bench（C5）
-```
+## 下一步修复顺序
 
----
-
-## 核心约束（写报告/答辩时）
-
-1. formal claim 只引用 `--embedding-mode local`（Qwen3-Embedding-0.6B）结果
-2. CodeAct LLM 生成 5/5（generation_fallback_used=False）已在 rerun artifact 中验证
-3. comparison_valid=False 是设计意图：质量优越路径（8/8 vs 6/8）不要求 external all-pass
-4. task_ms_delta 的两个数字（-6,114ms vs +26,224ms）测量不同视角，均正确
-5. stress_pass=3/6 是薄弱点，答辩时重点用 continuous replay 数据（15+10）补强
+1. 再实现 registry-backed formal external compare，覆盖 25 cases / 5 families。
+2. 拆解 `local_api_20260707_163354` 的 flagship stress 3/6，区分 family 定义、semantic selection 与 StateRef prompt-saving failure。
+3. 继续验证 diagnostics host-copy 在后续 failure/nonzero container exit 后也能自动填充 docs artifact。
+4. 如要 claim subprocess execution，新增 subprocess benchmark stage，而不是只靠单测。
+5. 增强 memfd unavailable fallback 负向验证。
