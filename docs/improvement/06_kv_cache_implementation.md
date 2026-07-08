@@ -14,7 +14,14 @@
     - `EngineLocalPrefixRegistry`
     - `PrefixReuseScheduleHint`
     - `order_prefix_schedule_hints`
+    - `order_prefix_schedule_hints_by_task_ids`
     - `estimate_engine_local_prefix_reuse`
+  - `v2/runtime/role_path.py`
+    - `PrefixLayoutPlan`
+    - `compile_prefix_layout`
+    - 默认关闭的 `STATEBUS_PREFIX_ALIGNMENT_MODE=shared_evidence_prefix`
+    - 支持四角色 prompt 先写入相同 evidence prefix，再追加角色后缀
+    - shared-prefix 模式下 role suffix 去重 evidence，避免 prefix 与 suffix 双写同一段证据
   - `v2/benchmark/kv_analysis.py`
     - `ReplayClass × KV` 理论分层
     - corpus prefix hash 复用统计
@@ -23,10 +30,9 @@
     - local vLLM OpenAI-compatible prefix alignment probe
     - streaming TTFT 采集
     - `/metrics` prefix cache delta 读取
-  - `v2/runtime/role_path.py`
-    - 默认关闭的 `STATEBUS_PREFIX_ALIGNMENT_MODE=shared_evidence_prefix`
-    - 支持四角色 prompt 先写入相同 evidence prefix，再追加角色后缀
-    - shared-prefix 模式下 role suffix 去重 evidence，避免 prefix 与 suffix 双写同一段证据
+  - `v2/benchmark/kv_prefix_schedule.py`
+    - 从 `kv_prefix_reuse_v1` manifest 生成 cache-friendly / cache-hostile schedule plan
+    - 输出 contiguous same-corpus window、affinity switch、adjacent reuse opportunity 等控制面指标
   - `v2/retrieval/models.py`、`v2/retrieval/pipeline.py`
     - `EvidencePruningHint`
     - input-level pruning profile
@@ -40,7 +46,8 @@
     - 记录当前 cu121 + vLLM 0.7.3 部署路线、模型选择和边界
   - `v2/benchmark/samples/continuous_task_families/kv_prefix_reuse/manifest.json`
     - `kv_prefix_reuse_v1` mechanism probe family
-    - 暂不注册进默认 formal/continuous runner
+    - 可通过 explicit `--family kv_prefix_reuse_v1` 或 schedule plan 显式使用
+    - 不进入默认 formal continuous collection，不作为 headline claim
 
 **仍然不宣称**：
 
@@ -61,7 +68,7 @@ StateBus 的 KV 方向不是"把模型内部 KV tensor 从一个 Agent 直接搬
 |---|---:|---|---|
 | Agent 内部 | 间接相关 | 单个角色 prompt 中减少无关 evidence，降低 prefill/KV token | 不是模型内部 KV 剪枝算法 |
 | 跨 Agent，同一任务 | 策略层已实现，机制验证待 GPU 跑证据 | 让 Planner/Retriever/Executor/Summarizer 共享相同 evidence prefix，再追加角色后缀 | 不是把 Planner 的 KV tensor 传给 Executor |
-| 跨任务，同一 corpus | 估算层已实现，调度数据集待补 | 用 `corpus_prefix_hash` 识别相同文档/证据前缀，连续调度同 corpus 任务，提高 APC 命中概率 | 不是跨 engine 或跨模型 KV sharing |
+| 跨任务，同一 corpus | 估算层与机制 probe 数据集已实现，默认 formal 链路不启用 | 用 `corpus_prefix_hash` 识别相同文档/证据前缀，连续调度同 corpus 任务，提高 APC 命中概率 | 不是跨 engine 或跨模型 KV sharing |
 | 跨进程/跨模型 KV tensor | 不实现 | 只记录兼容性、估算收益和观测指标 | 不能 claim 支持 |
 
 一句话：**KV 在这里不是 StateBus 的数据面对象，而是本地 LLM engine 内部的短生命周期缓存；StateBus 创新点是围绕它做控制面、调度面和证据面。**
@@ -429,9 +436,9 @@ Orion warmup -> Nova warmup -> Orion metric -> Nova metric -> Orion metric -> No
 |---|---|---|
 | 复用估算字段 | 已在 continuous evidence pack 中聚合 | 保留 |
 | vLLM metrics probe | 已有独立脚本 | 接入 `kv_prefix_reuse_v1` 产物 |
-| 专用 family manifest | 已实现，暂未注册 | 保持独立，等需要机制验证时显式接入 |
-| cache-friendly/cache-hostile schedule | 已在 manifest 中声明；runtime 有 schedule hint 工具 | 后续接 runner 或独立 probe 的 `--schedule` |
-| 正式 benchmark 接入 | 暂不接入 | 等用户允许跑测试链路后再接入 |
+| 专用 family manifest | 已实现，explicit family 可加载 | 保持 `demo_secondary` |
+| cache-friendly/cache-hostile schedule | 已在 manifest 中声明，并可由 `kv_prefix_schedule.py` 生成计划 | 后续接真实 vLLM probe 产物 |
+| 正式 benchmark 接入 | 可显式运行，不进入默认 formal collection | 等本地 vLLM metrics 稳定后再考虑升 claim tier |
 
 ---
 
@@ -485,7 +492,15 @@ evidence_prefix_hash = hash(corpus_prefix_hash + evidence_pack_hash + hydrate_ma
 
 这些字段不表示 StateBus 持有 KV tensor，只表示调度器对 engine-local cache residency 的估计。
 
-### 5.4 将 vLLM probe 输出并入 evidence pack
+### 5.4 当前 review 后仍需完善的点
+
+当前实现和创新口径已经基本一致，但有三个边界要继续守住：
+
+1. `PrefixLayoutPlan` 现在能审计 shared-prefix 去重，但默认仍不打开 `STATEBUS_PREFIX_ALIGNMENT_MODE=shared_evidence_prefix`；机制证据必须显式打开后采集。
+2. `kv_prefix_reuse_v1` 已能生成 cache-friendly / cache-hostile schedule plan，也能 explicit family 运行；默认 formal collection 仍排除它，避免 demo probe 混入 headline。
+3. `EngineLocalPrefixRegistry` 只记录 lease 和观测字段，不记录、不持有、不传递任何 KV tensor；命中数和 resident 时间只能作为调度控制面信号。
+
+### 5.5 将 vLLM probe 输出并入 evidence pack
 
 `kv_prefix_experiment.py` 当前是独立 probe。后续应把输出标准化为：
 
