@@ -514,11 +514,11 @@
 
 影响：将 stage exit 0 或总 savings 37884 bytes 写成 flagship all-pass 会掩盖 family-specific failure。
 
-修复策略：报告中保留 stress pass count 与 per-family `quality_headline_eligible`、`replay_headline_eligible`、`llm_prompt_saved_by_state_ref_bytes`；后续修复按 family 拆：incident/long_doc_metric 优先 quality/replay，cross_period 优先 semantic-selection-vs-StateRef gate。
+修复策略：报告中保留 stress pass count 与 per-family `quality_headline_eligible`、`replay_headline_eligible`、`llm_prompt_saved_by_state_ref_bytes`；新增 per-family `stress_fail_reasons` 与 `family_claim_scope`，把 quality/replay failure 和 `no_extra_state_ref_prompt_saving_vs_t2` 分开。后续优化按 family 拆：incident/long_doc_metric 优先 quality/replay，cross_period 优先 semantic-selection-vs-StateRef gate。
 
-验证：`non_text_state_stress_summary` 可直接复盘上述 fields。
+验证：`non_text_state_stress_summary` 可直接复盘上述 fields；新增 unit test 覆盖 claimable family 和 diagnostic-only family。
 
-状态：diagnosis complete；implementation fixes open
+状态：code updated；needs local+api rerun evidence
 
 ## ID: V2-AUDIT-027
 
@@ -536,9 +536,11 @@
 
 修复策略：设计 registry-to-compare adapter，明确每个 family 的 expected route/tool/facts、external prompt、scoring contract 和 unsupported reason；再新增 `formal_registry_25case_5family_compare` scope。
 
+2026-07-08 code update：新增 `v2/benchmark/formal_registry_adapter.py`；formal compare 默认加载 registered 25/5 adapter；fixed-answer runner 支持 `metric_projection_key`，用于把 `trend_direction`、`monthly_avg_windspeed.month_1`、`baro_outlier_count` 等 registry facts 投影到 unified `metric_name` / `metric_value` scorer；external baseline 改为使用真实 route catalog，并为 non-financial formal samples 构造公共 evidence context。
+
 验证：summary 输出 `formal_compare_scope_label=formal_registry_25case_5family_compare`、case count 25、family count 5、full registry coverage true，且 unsupported family count 为 0 或逐项解释。
 
-状态：open
+状态：code updated；needs local+api rerun evidence
 
 ## ID: V2-AUDIT-028
 

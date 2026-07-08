@@ -254,6 +254,7 @@ class FixedAnswerSample:
     expected_tool_name: str
     summary_hint: str
     scenario_tags: tuple[str, ...] = ()
+    metric_projection_key: str = ""
 
     @classmethod
     def from_path(cls, path: Path) -> "FixedAnswerSample":
@@ -283,11 +284,42 @@ class FixedAnswerSample:
             expected_tool_name=str(payload["expected_tool_name"]),
             summary_hint=str(payload.get("summary_hint", "")),
             scenario_tags=tuple(str(item) for item in payload.get("scenario_tags", [])),
+            metric_projection_key=str(payload.get("metric_projection_key", "")),
         )
 
 
 def load_fixed_answer_family(directory: Path) -> list[FixedAnswerSample]:
     return [FixedAnswerSample.from_path(path) for path in sorted(directory.glob("*.json"))]
+
+
+def _lookup_output_value(output_payload: dict[str, object], key: str) -> object:
+    if key in output_payload:
+        return output_payload.get(key)
+    current: object = output_payload
+    for segment in key.split("."):
+        if not isinstance(current, dict) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
+def _project_metric_for_scoring(
+    *,
+    sample: FixedAnswerSample,
+    output_payload: dict[str, object],
+) -> tuple[str, str]:
+    metric_name = str(output_payload.get("metric_name", "")).strip()
+    metric_value = str(output_payload.get("metric_value", "")).strip()
+    if (metric_name and metric_value) or not sample.metric_projection_key:
+        return metric_name, metric_value
+    projected_value = _lookup_output_value(output_payload, sample.metric_projection_key)
+    if projected_value is None:
+        return metric_name, metric_value
+    if isinstance(projected_value, (dict, list, tuple)):
+        projected_value_text = stable_json_dumps(projected_value)
+    else:
+        projected_value_text = str(projected_value)
+    return sample.metric_projection_key, projected_value_text
 
 
 def _metric(report: BenchmarkFamilyReport, key: str) -> float:
@@ -337,6 +369,35 @@ def _build_internal_carrier_debug_metrics(
         - _metric(text_report, "executor_prompt_scaffolding_bytes"),
         "summarizer_prompt_scaffolding_bytes_delta": _metric(structured_report, "summarizer_prompt_scaffolding_bytes")
         - _metric(text_report, "summarizer_prompt_scaffolding_bytes"),
+    }
+
+
+def _formal_registry_scope_metadata(
+    *,
+    samples: list[FixedAnswerSample],
+    benchmark_tier: str,
+) -> dict[str, object]:
+    if benchmark_tier != "formal":
+        return {}
+    from v2.benchmark.task_registry import formal_family_specs
+
+    case_count = len(samples)
+    family_count = len({sample.task_family for sample in samples}) if samples else 0
+    registry_case_count = sum(spec.expected_case_count for spec in formal_family_specs())
+    registry_family_count = len(formal_family_specs())
+    full_registry = case_count == registry_case_count and family_count == registry_family_count
+    return {
+        "formal_compare_scope_label": (
+            f"formal_registry_{registry_case_count}case_{registry_family_count}family_text_protocol_compare"
+            if full_registry
+            else f"formal_partial_{family_count}family_{case_count}case_text_protocol_compare"
+        ),
+        "formal_compare_case_count": case_count,
+        "formal_compare_family_count": family_count,
+        "formal_registry_case_count": registry_case_count,
+        "formal_registry_family_count": registry_family_count,
+        "formal_compare_full_registry_coverage": full_registry,
+        "formal_text_protocol_benchmark": True,
     }
 
 
@@ -600,6 +661,10 @@ def run_fixed_answer_benchmark_family(
         output_payload = json.loads(Path(smoke.output_artifact_path).read_text(encoding="utf-8"))
         observed_route = str(output_payload.get("route", "")).strip()
         observed_tool_name = str(output_payload.get("tool_name", "")).strip()
+        observed_metric_name, observed_metric_value = _project_metric_for_scoring(
+            sample=sample,
+            output_payload=output_payload,
+        )
         shared_score = score_fixed_answer_case(
             observed=FixedAnswerLaneResult(
                 task_id=sample.task_id,
@@ -607,8 +672,8 @@ def run_fixed_answer_benchmark_family(
                 tool_name=observed_tool_name,
                 summary_text=str(output_payload.get("summary_text", "")),
                 revenue_value=str(output_payload.get("revenue_value", "")),
-                metric_name=str(output_payload.get("metric_name", "")),
-                metric_value=str(output_payload.get("metric_value", "")),
+                metric_name=observed_metric_name,
+                metric_value=observed_metric_value,
                 selected_doc_hashes=tuple(
                     str(item).strip() for item in output_payload.get("selected_doc_hashes", []) if str(item).strip()
                 ),
@@ -649,6 +714,7 @@ def run_fixed_answer_benchmark_family(
                 audit_summary=smoke.audit_summary,
                 metrics={
                     **smoke_metrics,
+                    "metric_projection_used": 1.0 if sample.metric_projection_key else 0.0,
                     "route_exact": 1.0 if shared_score.route_exact else 0.0,
                     "tool_exact": 1.0 if shared_score.tool_exact else 0.0,
                     "metric_name_exact": 1.0 if shared_score.metric_name_exact else 0.0,
@@ -1006,6 +1072,11 @@ def run_fixed_answer_internal_carrier_compare_suite(
         task_family=task_family,
         mode_reports=tuple(mode_reports),
         comparison_summary=suite_comparison_summary,
+        metadata={
+            **_formal_registry_scope_metadata(samples=samples, benchmark_tier=benchmark_tier),
+            "comparison_contract": "same_mainline_internal_text_vs_structured_carrier",
+            "text_protocol_claim_scope": "internal_carrier_only_not_external_superiority",
+        },
         benchmark_tier=benchmark_tier,
         claim_level=claim_level,
         report_path=str(benchmark_report_root / f"{suite_id}.json"),

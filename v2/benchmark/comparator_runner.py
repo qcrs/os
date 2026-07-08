@@ -47,6 +47,14 @@ def _statebus_llm_call_count(report: BenchmarkFamilyReport) -> float:
     )
 
 
+def _statebus_prompt_tokens(report: BenchmarkFamilyReport) -> float:
+    return _metric(report, "prompt_tokens") or _metric(report, "llm_prompt_tokens")
+
+
+def _statebus_completion_tokens(report: BenchmarkFamilyReport) -> float:
+    return _metric(report, "completion_tokens") or _metric(report, "llm_completion_tokens")
+
+
 def _build_debug_metrics(
     *,
     statebus_report: BenchmarkFamilyReport,
@@ -54,6 +62,12 @@ def _build_debug_metrics(
 ) -> dict[str, float]:
     if statebus_report.missing_reason or external_report.missing_reason:
         return {}
+    statebus_prompt_tokens = _statebus_prompt_tokens(statebus_report)
+    external_prompt_tokens = _metric(external_report, "prompt_tokens")
+    statebus_completion_tokens = _statebus_completion_tokens(statebus_report)
+    external_completion_tokens = _metric(external_report, "completion_tokens")
+    statebus_total_tokens = _metric(statebus_report, "llm_total_tokens")
+    external_total_tokens = _metric(external_report, "llm_total_tokens")
     return {
         "case_count": max(
             statebus_report.aggregated_metrics.get("case_count", 0.0),
@@ -63,8 +77,15 @@ def _build_debug_metrics(
         "external_quality_floor_pass_count": external_report.aggregated_metrics.get("quality_floor_pass_count", 0.0),
         "statebus_exact_match_count": _metric(statebus_report, "exact_match"),
         "external_exact_match_count": _metric(external_report, "exact_match"),
-        "llm_total_tokens_delta": _metric(statebus_report, "llm_total_tokens")
-        - _metric(external_report, "llm_total_tokens"),
+        "statebus_prompt_tokens": statebus_prompt_tokens,
+        "external_prompt_tokens": external_prompt_tokens,
+        "prompt_tokens_delta": statebus_prompt_tokens - external_prompt_tokens,
+        "statebus_completion_tokens": statebus_completion_tokens,
+        "external_completion_tokens": external_completion_tokens,
+        "completion_tokens_delta": statebus_completion_tokens - external_completion_tokens,
+        "statebus_llm_total_tokens": statebus_total_tokens,
+        "external_llm_total_tokens": external_total_tokens,
+        "llm_total_tokens_delta": statebus_total_tokens - external_total_tokens,
         "llm_call_count_delta": _statebus_llm_call_count(statebus_report) - _metric(external_report, "llm_call_count"),
         "prompt_bytes_delta": _metric(statebus_report, "llm_prompt_bytes") - _metric(external_report, "prompt_bytes"),
         "llm_ms_delta": _metric(statebus_report, "llm_wall_ms") - _metric(external_report, "llm_ms"),
@@ -534,6 +555,15 @@ def run_fixed_answer_external_comparator_suite(
             "formal_efficiency_claim_allowed": 1.0
             if mode_formal_efficiency_superiority_claim_allowed
             else 0.0,
+            "statebus_prompt_tokens": debug_metrics.get("statebus_prompt_tokens", 0.0),
+            "external_prompt_tokens": debug_metrics.get("external_prompt_tokens", 0.0),
+            "prompt_tokens_delta": debug_metrics.get("prompt_tokens_delta", 0.0),
+            "statebus_completion_tokens": debug_metrics.get("statebus_completion_tokens", 0.0),
+            "external_completion_tokens": debug_metrics.get("external_completion_tokens", 0.0),
+            "completion_tokens_delta": debug_metrics.get("completion_tokens_delta", 0.0),
+            "statebus_llm_total_tokens": debug_metrics.get("statebus_llm_total_tokens", 0.0),
+            "external_llm_total_tokens": debug_metrics.get("external_llm_total_tokens", 0.0),
+            "llm_total_tokens_delta": debug_metrics.get("llm_total_tokens_delta", 0.0),
         }
         if comparison_valid:
             comparison_summary.update(headline_metrics)
@@ -612,6 +642,12 @@ def run_fixed_answer_external_comparator_suite(
         if benchmark_tier == "formal" and mode_reports
         else "none"
     )
+    serialized_latency_superiority_claim_allowed = (
+        benchmark_tier == "formal"
+        and strict_equal_quality_comparison_valid
+        and bool(mode_reports)
+        and all(report.debug_metrics.get("task_ms_delta", 0.0) < 0.0 for report in mode_reports)
+    )
     formal_compare_scope_metadata = _formal_compare_scope_metadata(
         samples=samples,
         benchmark_tier=benchmark_tier,
@@ -633,6 +669,9 @@ def run_fixed_answer_external_comparator_suite(
         if formal_efficiency_superiority_claim_allowed
         else 0.0,
         "formal_efficiency_claim_allowed": 1.0 if formal_efficiency_superiority_claim_allowed else 0.0,
+        "serialized_latency_superiority_claim_allowed": 1.0
+        if serialized_latency_superiority_claim_allowed
+        else 0.0,
     }
     for mode_report in mode_reports:
         mode_key = mode_report.role_path_mode.replace("-", "_")
@@ -653,6 +692,10 @@ def run_fixed_answer_external_comparator_suite(
         metadata={
             **formal_compare_scope_metadata,
             "legacy_comparison_valid_semantics": "strict_equal_quality_comparison_valid",
+            "comparator_token_split_schema": "statebus.comparator.token_split.v1",
+            "timing_execution_contract": "serialized_statebus_then_external_within_each_mode_v1",
+            "timing_delta_direction": "statebus_minus_external",
+            "serialized_latency_superiority_claim_allowed": serialized_latency_superiority_claim_allowed,
             "strict_equal_quality_comparison_valid": strict_equal_quality_comparison_valid,
             "quality_superiority_comparison_valid": quality_superiority_comparison_valid,
             "formal_quality_superiority_claim_allowed": formal_quality_superiority_claim_allowed,

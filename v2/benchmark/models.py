@@ -215,6 +215,11 @@ class BenchmarkComparatorSuiteReport:
             "formal_registry_case_count",
             "formal_registry_family_count",
             "formal_compare_full_registry_coverage",
+            "formal_text_protocol_benchmark",
+            "comparator_token_split_schema",
+            "timing_execution_contract",
+            "timing_delta_direction",
+            "serialized_latency_superiority_claim_allowed",
             "state_pool_mode_requested",
             "state_pool_mode_used",
             "memfd_transfer_count",
@@ -224,6 +229,14 @@ class BenchmarkComparatorSuiteReport:
             if key in self.metadata:
                 payload[key] = self.metadata[key]
         for key, value in self.comparison_summary.items():
-            if key.endswith("_quality_floor_pass_count") or key.endswith("_tokens_delta") or key.endswith("_task_ms_delta"):
+            if (
+                key.endswith("_quality_floor_pass_count")
+                or key.endswith("_tokens_delta")
+                or key.endswith("_task_ms_delta")
+                or key.endswith("_prompt_tokens")
+                or key.endswith("_completion_tokens")
+                or key.endswith("_llm_total_tokens")
+                or key.endswith("_latency_superiority_claim_allowed")
+            ):
                 payload[key] = value
         return payload

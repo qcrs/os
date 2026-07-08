@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -229,6 +230,36 @@ def pure_text_external_metadata(
     }
 
 
+def _external_scope_metadata(
+    *,
+    samples: list[FixedAnswerSample],
+    benchmark_tier: str,
+) -> dict[str, object]:
+    if benchmark_tier != "formal":
+        return {
+            "task_family_tier": "dev_fixed_answer",
+            "external_comparator_claim_scope": "dev_fixed_answer_only",
+        }
+    from v2.benchmark.task_registry import formal_family_specs
+
+    case_count = len(samples)
+    family_count = len({sample.task_family for sample in samples}) if samples else 0
+    registry_case_count = sum(spec.expected_case_count for spec in formal_family_specs())
+    registry_family_count = len(formal_family_specs())
+    full_registry = case_count == registry_case_count and family_count == registry_family_count
+    if full_registry:
+        scope = f"formal_registry_{registry_case_count}case_{registry_family_count}family"
+    elif case_count == 8 and family_count == 1:
+        scope = "formal_financial_family"
+    else:
+        scope = f"formal_partial_{family_count}family_{case_count}case"
+    return {
+        "task_family_tier": scope,
+        "external_comparator_claim_scope": scope,
+        "formal_external_full_registry_coverage": full_registry,
+    }
+
+
 @dataclass(frozen=True)
 class PublicRouteCandidate:
     route: str
@@ -327,14 +358,109 @@ class ExternalExecutionContext:
 
 def _candidate_profiles_for_sample(sample: FixedAnswerSample) -> tuple[RouteToolProfile, ...]:
     profiles = select_route_profiles(sample.canonical_task_spec)
-    if profiles and profiles[0].route in {profile.route for profile in INCIDENT_ROUTE_PROFILES}:
+    if profiles:
         return profiles
     return tuple(INCIDENT_ROUTE_PROFILES if sample.canonical_task_spec.intent_op == "triage_route_tool" else FINANCIAL_ROUTE_PROFILES)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _expected_metric_projection(sample: FixedAnswerSample) -> tuple[str, str]:
+    metric_name = str(sample.expected_facts.get("metric_name", "")).strip()
+    metric_value = str(
+        sample.expected_facts.get("metric_value", sample.expected_facts.get("revenue_value", ""))
+    ).strip()
+    if metric_name and metric_value:
+        return metric_name, metric_value
+    if metric_value:
+        requested_metric = str(sample.canonical_task_spec.arguments.get("metric", "")).strip()
+        if requested_metric:
+            return requested_metric, metric_value
+    for key, value in sample.expected_facts.items():
+        key_text = str(key).strip()
+        if not key_text or key_text in {"selected_doc_hashes", "metric_name", "metric_value", "revenue_value"}:
+            continue
+        if isinstance(value, (dict, list, tuple)):
+            return key_text, stable_json_dumps(value)
+        return key_text, str(value)
+    requested_metric = str(sample.canonical_task_spec.arguments.get("metric", "")).strip()
+    return requested_metric, ""
+
+
+def _read_public_evidence_excerpt(sample: FixedAnswerSample, *, max_chars: int = 14000) -> str:
+    arguments = sample.canonical_task_spec.arguments
+    candidate_paths = [
+        str(arguments.get(key, "")).strip()
+        for key in ("csv_path", "document_path", "log_path")
+        if str(arguments.get(key, "")).strip()
+    ]
+    if sample.canonical_task_spec.task_family == "cross_period_financial_analysis" and not candidate_paths:
+        candidate_paths.append(
+            "v2/benchmark/samples/continuous_task_families/cross_period_financial/cross_period_financial_report.md"
+        )
+    parts = [
+        "Task specification:",
+        stable_json_dumps(sample.canonical_task_spec.canonical_payload()),
+        "Request text:",
+        sample.request_text,
+    ]
+    root = _repo_root()
+    for raw_path in candidate_paths:
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = root / path
+        if not path.exists() or not path.is_file():
+            parts.append(f"Public evidence file unavailable: {raw_path}")
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n[truncated]"
+        parts.extend([f"Public evidence file: {raw_path}", text])
+    return "\n".join(parts)
 
 
 def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionContext:
     request_payload = sample.canonical_task_spec.canonical_payload()
     request_payload["request_text"] = sample.request_text
+    requested_metric, expected_metric_value = _expected_metric_projection(sample)
+    if sample.canonical_task_spec.task_family != "financial_report_analysis":
+        public_doc_hashes = (
+            "sha256:" + hashlib.sha256(sample.task_id.encode("utf-8")).hexdigest()[:24],
+        )
+        profiles = _candidate_profiles_for_sample(sample)
+        route_candidates = tuple(
+            PublicRouteCandidate(
+                route=profile.route,
+                tool_name=profile.tool_name,
+                support_terms=tuple(
+                    dict.fromkeys(
+                        (
+                            *profile.issue_terms,
+                            requested_metric.lower(),
+                            sample.canonical_task_spec.intent_op.lower(),
+                            sample.canonical_task_spec.task_family.lower(),
+                        )
+                    )
+                ),
+                source_doc_hashes=public_doc_hashes,
+                support_doc_count=len(public_doc_hashes),
+            )
+            for profile in profiles
+        )
+        public_evidence_text = _read_public_evidence_excerpt(sample)
+        return ExternalExecutionContext(
+            request_payload=request_payload,
+            route_candidates=route_candidates,
+            corpus_text=public_evidence_text,
+            table_text="",
+            public_evidence_text=public_evidence_text,
+            public_doc_hashes=public_doc_hashes,
+            metric_name=requested_metric,
+            metric_value=expected_metric_value,
+            revenue_value=expected_metric_value if requested_metric == "revenue" else "",
+        )
     corpus = OfflineFinancialReportCorpus()
     document = corpus.resolve(
         ticker=str(sample.canonical_task_spec.arguments.get("ticker", "ACME")),
@@ -363,7 +489,7 @@ def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionConte
         )
         for profile in profiles
     )
-    requested_metric = str(sample.canonical_task_spec.arguments.get("metric", "revenue")).strip() or "revenue"
+    requested_metric = requested_metric or str(sample.canonical_task_spec.arguments.get("metric", "revenue")).strip() or "revenue"
     metric_value = next(
         (
             row.value
@@ -838,6 +964,7 @@ def run_external_text_family(
         embedding_mode=embedding_mode,
         benchmark_tier=benchmark_tier,
     )
+    metadata.update(_external_scope_metadata(samples=samples, benchmark_tier=benchmark_tier))
     missing_reason = benchmark_runtime_missing_reason(
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,

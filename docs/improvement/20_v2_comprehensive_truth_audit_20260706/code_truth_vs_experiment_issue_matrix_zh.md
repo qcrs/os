@@ -71,6 +71,18 @@
 | G. docs claim risk | `docs/reports/v2_experiment_summary_20260703.md` 是历史报告，仍含 openEuler container、bwrap、old efficiency 字段 | 已加更强 warning；对外 claim 必须优先引用本审计目录和 latest artifact |
 | H. schema/reporting gap | comparator canonical payload 已有核心 delta，但 prompt/input 与 completion/output split 仍不够显式 | 后续应把 prompt tokens、completion tokens、prompt bytes、completion bytes/total tokens 分开输出，避免再次把 prompt saving 写成 total-token superiority |
 
+## 1.2 2026-07-08 code updates queued for rerun
+
+本节记录代码状态，不替代 `local_api_20260707_163354` 的实验事实。新的实验 claim 仍需重新运行 `scripts/run_v2_local_api_comprehensive_stats.sh` 后引用新 artifact。
+
+| 项目 | 代码状态 | 仍需实验证据 |
+|---|---|---|
+| formal registry external compare | 新增 `v2/benchmark/formal_registry_adapter.py`，formal `--suite compare` 默认使用 registered 25 cases / 5 families 的 fixed-answer adapter；非 financial samples 通过 `metric_projection_key` 接入 unified scorer | 需要 rerun 后确认 `formal_compare_full_registry_coverage=true`、25/5 scope、每 family quality/fairness 结果 |
+| formal text vs protocol | formal `--suite carrier-compare` 不再被 minimal formal branch 截走，默认使用同一个 25/5 adapter，输出 internal text-vs-structured scope metadata；综合脚本新增 `r*_06_formal_carrier_compare_api_local_memfd` required stage | 需要 rerun 后引用 text/protocol prompt/token/byte delta；该 stage 仍是 same-mainline internal carrier claim，不是 external superiority |
+| comparator token split | comparator debug/summary/canonical payload 显式输出 StateBus/external prompt tokens、completion tokens、total tokens 和 delta；metadata 增加 `statebus.comparator.token_split.v1` | 需要 rerun 后用新 summary 中的 split 字段替代旧 total-token 混写 |
+| serialized timing guard | comparator metadata 标注 `serialized_statebus_then_external_within_each_mode_v1`，并新增 `serialized_latency_superiority_claim_allowed`；只有 strict equal-quality 且所有 mode `task_ms_delta<0` 才允许 latency superiority claim | 旧 artifact 不能补 claim；必须用新 rerun 的 guard 字段决定是否能写 latency 优势 |
+| flagship family-level fix | `non_text_state_stress_summary` 增加 `stress_fail_family_count`、`diagnostic_only_family_count`、`stress_failure_reason_counts`、per-family `stress_fail_reasons` 和 `family_claim_scope` | 需要 rerun 后确认 3/6 或新 pass count；未通过 family 只能按 fail reason 写 diagnostic/remediation |
+
 ## 2. 代码事实 vs 实验证据矩阵
 
 | 能力 / Claim 对象 | 代码真实路径 | local+api / 测试证据 | 实验是否测到真实结构 | 当前问题 | 级别 | 修复方向 |
