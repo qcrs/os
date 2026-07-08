@@ -819,6 +819,10 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert "statebus_completion_tokens" in mode_report.debug_metrics
     assert "external_completion_tokens" in mode_report.debug_metrics
     assert "completion_tokens_delta" in mode_report.debug_metrics
+    assert "statebus_planner_completion_tokens" in mode_report.debug_metrics
+    assert "statebus_retriever_completion_tokens" in mode_report.debug_metrics
+    assert "statebus_executor_completion_tokens" in mode_report.debug_metrics
+    assert "statebus_summarizer_completion_tokens" in mode_report.debug_metrics
     assert "llm_call_count_delta" in mode_report.debug_metrics
     assert mode_report.debug_metrics["external_quality_floor_pass_count"] == 0.0
     assert mode_report.fairness_manifest["external_formal_eligible"] is True
@@ -849,9 +853,17 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert payload["mode_reports"][0]["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert "prompt_tokens_delta" in payload["mode_reports"][0]["comparison_summary"]
     assert "completion_tokens_delta" in payload["mode_reports"][0]["comparison_summary"]
+    assert "statebus_planner_completion_tokens" in payload["mode_reports"][0]["comparison_summary"]
+    assert payload["mode_reports"][0]["role_completion_tokens"] == {
+        "planner": 0.0,
+        "retriever": 0.0,
+        "executor": 0.0,
+        "summarizer": 0.0,
+    }
     assert payload["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
     assert "deterministic_prompt_tokens_delta" in payload["comparison_summary"]
     assert "deterministic_completion_tokens_delta" in payload["comparison_summary"]
+    assert "deterministic_statebus_planner_completion_tokens" in payload["comparison_summary"]
     assert "deterministic_debug_exact_match_delta" in payload["comparison_summary"]
 
 
@@ -1987,6 +1999,121 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
     assert "Hydrated Slice Summary" not in summarizer_prompt
     assert "<statebus-summary-evidence>" not in summarizer_prompt
     assert "<statebus-summary-actions>" not in summarizer_prompt
+
+
+def test_role_path_lean_completion_accepts_minimal_compact_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STATEBUS_LEAN_COMPLETION", "1")
+    captured_messages: list[tuple[str, str]] = []
+    family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
+    sample = family[0]
+    selected_candidate_key = f"{sample.expected_route}::{sample.expected_tool_name}"
+
+    class RecordingLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del temperature
+            captured_messages.append((purpose, messages[-1].content))
+            if purpose == "planner":
+                return LLMResult(
+                    text=json.dumps({"r": {"q": "q"}, "x": {}, "s": {}}),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=4, completion_tokens=2, total_tokens=6),
+                )
+            if purpose == "retriever":
+                return LLMResult(
+                    text=json.dumps({"k": selected_candidate_key, "r": sample.expected_route, "t": sample.expected_tool_name}),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=4, completion_tokens=2, total_tokens=6),
+                )
+            if purpose == "executor":
+                return LLMResult(
+                    text=json.dumps({"k": selected_candidate_key, "r": sample.expected_route, "t": sample.expected_tool_name}),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=4, completion_tokens=2, total_tokens=6),
+                )
+            if purpose == "summarizer":
+                return LLMResult(
+                    text=json.dumps({"s": "lean summary"}),
+                    model="stub-model",
+                    usage=LLMUsage(prompt_tokens=4, completion_tokens=2, total_tokens=6),
+                )
+            raise AssertionError(f"unexpected purpose {purpose}")
+
+        def describe(self):
+            return {"backend": "recording"}
+
+    from v2.retrieval import RetrieverFanoutPipeline
+    from v2.runtime.role_path import RolePromptSlice, financial_tool_candidates
+
+    retrieval = RetrieverFanoutPipeline().run(task_id=sample.task_id, spec=sample.canonical_task_spec)
+    candidates = financial_tool_candidates(sample.canonical_task_spec, retrieval.candidate_pool)
+    expected_candidate = next(
+        candidate
+        for candidate in candidates
+        if candidate.route == sample.expected_route and candidate.tool_name == sample.expected_tool_name
+    )
+    prompt_slice = RolePromptSlice(
+        role="retriever",
+        hydrated_text="evidence text",
+        hydrated_bytes=len("evidence text".encode("utf-8")),
+        item_count=1,
+        table_text="table fact",
+        table_bytes=len("table fact".encode("utf-8")),
+        table_item_count=1,
+    )
+    runner = RolePathRunner(llm_client=RecordingLLMClient())
+    planner = runner.plan_workflow(
+        task_id=sample.task_id,
+        task_group=sample.task_family,
+        task_theme=sample.task_family,
+        goal="compare ACME revenue",
+        query_text=retrieval.query_text,
+        summary_hint=sample.summary_hint,
+        visible_candidates=candidates,
+        prompt_slice=prompt_slice,
+        tags=sample.scenario_tags,
+    )
+    retriever = runner.choose_retrieval_candidate(
+        query_text=retrieval.query_text,
+        retrieved_doc_ids=retrieval.selected_doc_hashes,
+        visible_candidates=candidates,
+        prompt_slice=prompt_slice,
+    )
+    executor = runner.validate_execution_choice(
+        route=sample.expected_route,
+        tool_name=sample.expected_tool_name,
+        visible_candidates=candidates,
+        action_contract="execute_validated_tool",
+        prompt_slice=prompt_slice,
+    )
+    summarizer = runner.summarize(
+        task_id=sample.task_id,
+        task_theme=sample.task_family,
+        summary_hint=sample.summary_hint,
+        prompt_slice=prompt_slice,
+        actions_text="did the thing",
+        tags=sample.scenario_tags,
+    )
+
+    assert planner.retrieval_objective["query_text"] == retrieval.query_text
+    assert retriever.route == sample.expected_route
+    assert retriever.tool_name == sample.expected_tool_name
+    assert retriever.supporting_doc_ids == expected_candidate.supporting_doc_ids
+    assert executor.action_contract == "execute_validated_tool"
+    assert executor.reason == ""
+    assert summarizer.summary_text == "lean summary"
+    assert summarizer.reusable_steps == ("retrieve", "execute")
+    assert summarizer.tags == sample.scenario_tags
+    assert summarizer.confidence == 0.0
+
+    prompt_by_purpose = {purpose: content for purpose, content in captured_messages}
+    assert "Prefer compact workflow keys r, x, and s" in prompt_by_purpose["planner"]
+    assert "candidate_key" in prompt_by_purpose["retriever"]
+    assert "Do not invent labels" in prompt_by_purpose["retriever"]
+    assert "candidate_key" in prompt_by_purpose["executor"]
+    assert "Do not invent labels" in prompt_by_purpose["executor"]
+    assert "key s for the summary text" in prompt_by_purpose["summarizer"]
 
 
 def test_formal_trend_002_structured_prompt_exposes_preferred_candidate_tiebreak() -> None:

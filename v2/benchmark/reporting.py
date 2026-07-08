@@ -171,6 +171,10 @@ def comparator_mode_report_to_dict(report: BenchmarkComparatorModeReport) -> dic
         "comparison_summary": dict(sorted(report.comparison_summary.items())),
         "headline_metrics": dict(sorted(report.headline_metrics.items())),
         "debug_metrics": dict(sorted(report.debug_metrics.items())),
+        "role_completion_tokens": {
+            role: float(report.debug_metrics.get(f"statebus_{role}_completion_tokens", 0.0))
+            for role in ("planner", "retriever", "executor", "summarizer")
+        },
         "fairness_manifest": dict(sorted(report.fairness_manifest.items())),
         "external_report": family_report_to_dict(report.external_report),
         "statebus_report": family_report_to_dict(report.statebus_report),
