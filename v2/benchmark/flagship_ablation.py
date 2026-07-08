@@ -285,6 +285,19 @@ def _non_text_state_stress_summary(
     for family in families:
         for reason in family["stress_fail_reasons"]:
             failure_reason_counts[str(reason)] = failure_reason_counts.get(str(reason), 0) + 1
+    per_family_stress_result = {
+        str(family["family_id"]): {
+            "pass": bool(family["stress_pass"]),
+            "reason": str(family["stress_fail_reasons"][0]) if family["stress_fail_reasons"] else "",
+            "reasons": list(family["stress_fail_reasons"]),
+            "scope": str(family["family_claim_scope"]),
+            "group": str(family["group"]),
+            "llm_prompt_saved": float(family["llm_prompt_saved_by_state_ref_bytes"]),
+            "visible_saved": float(family["prompt_visible_saved_by_state_ref_bytes"]),
+            "interpretation": str(family["interpretation"]),
+        }
+        for family in ranked
+    }
     return {
         "schema_version": "statebus.non_text_state_stress_summary.v1",
         "stress_family_count": len(families),
@@ -300,6 +313,7 @@ def _non_text_state_stress_summary(
             float(family["prompt_visible_saved_by_state_ref_bytes"]) for family in families
         ),
         "top_prompt_visible_saving_family": ranked[0] if ranked else {},
+        "per_family_stress_result": per_family_stress_result,
         "families": ranked,
         "claim_boundary": (
             "This stress summary isolates L2 StateRef/semantic-state transfer from T2 text handoff with the same semantic selection. "
