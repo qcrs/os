@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from v2.benchmark.continuous_task_family import ContinuousTaskFamily
+from v2.benchmark.kv_analysis import summarize_case_kv_reuse
 from v2.benchmark.minimal_runner import LAYER_PROFILES, LAYER_SMOKE_CONFIGS
 from v2.benchmark.models import (
     BenchmarkCaseReport,
@@ -724,6 +725,18 @@ def _family_layer_evidence(report: BenchmarkFamilyReport) -> dict[str, object]:
                 0.0,
             )
         ),
+        "kv_corpus_prefix_hash_unique_count": float(
+            report.aggregated_metrics.get("kv_corpus_prefix_hash_unique_count", 0.0)
+        ),
+        "kv_corpus_prefix_hash_reuse_count": float(
+            report.aggregated_metrics.get("kv_corpus_prefix_hash_reuse_count", 0.0)
+        ),
+        "kv_corpus_level_prefill_saved_tokens_estimate": float(
+            report.aggregated_metrics.get("kv_corpus_level_prefill_saved_tokens_estimate", 0.0)
+        ),
+        "kv_engine_local_prefill_saved_tokens_estimate": float(
+            report.aggregated_metrics.get("kv_engine_local_prefill_saved_tokens_estimate", 0.0)
+        ),
         "skipped_step_count": float(report.telemetry_summary.get("skipped_step_count", 0.0)),
         "runtime_overhead": _runtime_overhead_summary(report),
         "report_path": report.report_path,
@@ -733,6 +746,11 @@ def _family_layer_evidence(report: BenchmarkFamilyReport) -> dict[str, object]:
 def _case_round_evidence(case: BenchmarkCaseReport) -> dict[str, object]:
     hydration = dict(case.audit_summary.get("hydration", {})) if isinstance(case.audit_summary, dict) else {}
     replay = dict(case.audit_summary.get("replay", {})) if isinstance(case.audit_summary, dict) else {}
+    neural_prefix = (
+        dict(case.audit_summary.get("neural_prefix_reuse", {}))
+        if isinstance(case.audit_summary, dict)
+        else {}
+    )
     return {
         "task_id": case.task_id,
         "round_number": int(case.metrics.get("round_number", 0.0)),
@@ -751,6 +769,13 @@ def _case_round_evidence(case: BenchmarkCaseReport) -> dict[str, object]:
         "exact_replay_count": float(case.metrics.get("exact_replay_count", 0.0)),
         "answer_restoration_replay_count": float(
             case.metrics.get("answer_restoration_replay_count", 0.0)
+        ),
+        "corpus_prefix_hash": str(neural_prefix.get("prefix_hash", "")),
+        "kv_prefill_saved_tokens_estimate": float(
+            case.metrics.get("neural_prefix_prefill_saved_tokens_estimate", 0.0)
+        ),
+        "kv_prefix_cache_hit_rate_estimate": float(
+            case.metrics.get("neural_prefix_cache_hit_rate_estimate", 0.0)
         ),
         "skipped_step_count": float(case.metrics.get("skipped_step_count", 0.0)),
         "decision_reason": str(replay.get("decision_reason", "")),
@@ -781,6 +806,10 @@ def _continuous_suite_evidence_pack(
         "round_count": family.round_count,
         "reuse_edge_count": sum(len(round_.depends_on_rounds) for round_ in family.rounds),
         "layer_summaries": [_family_layer_evidence(layer_report) for layer_report in report.layer_reports],
+        "kv_reuse_analysis_by_layer": {
+            layer_report.layer.value: dict(layer_report.metadata.get("kv_reuse_analysis", {}))
+            for layer_report in report.layer_reports
+        },
         "runtime_overhead_summary": _aggregate_runtime_overhead((report,)),
         "l0_l3_delta": {
             metric: _metric_delta(
@@ -885,6 +914,16 @@ def _continuous_suite_markdown(evidence_pack: dict[str, object]) -> str:
     for bucket in overhead.get("top_outer_stage_buckets", []):
         bucket_payload = dict(bucket)
         lines.append(f"- outer {bucket_payload['bucket']}: `{bucket_payload['stage_ms']}` ms")
+    lines.extend(["", "## KV Prefix Reuse Estimate"])
+    kv_by_layer = dict(evidence_pack.get("kv_reuse_analysis_by_layer", {}))
+    for layer_name, payload in sorted(kv_by_layer.items()):
+        layer_kv = dict(payload)
+        lines.append(
+            f"- {layer_name}: unique_prefixes=`{layer_kv.get('corpus_prefix_hash_unique_count', 0)}`, "
+            f"reuse_count=`{layer_kv.get('corpus_prefix_hash_reuse_count', 0)}`, "
+            f"engine_local_saved_tokens=`{layer_kv.get('estimated_engine_local_prefill_saved_tokens', 0.0)}`, "
+            f"corpus_saved_tokens=`{layer_kv.get('estimated_corpus_level_prefill_saved_tokens', 0.0)}`"
+        )
     lines.extend(["", "## Layer Summaries", "| layer | quality | llm_prompt_bytes | raw_evidence | prompt_visible | semantic | replay |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"])
     for layer in evidence_pack["layer_summaries"]:
         layer_payload = dict(layer)
@@ -897,14 +936,15 @@ def _continuous_suite_markdown(evidence_pack: dict[str, object]) -> str:
             f"{layer_payload['prompt_visible_total_bytes']} | {layer_payload['semantic_state_transfer_count']} | "
             f"{replay_total} |"
         )
-    lines.extend(["", "## Round Evidence", "| round | task | replay_class | min_reuse | raw_evidence | prompt_visible | skipped | audit |", "| ---: | --- | --- | --- | ---: | ---: | ---: | --- |"])
+    lines.extend(["", "## Round Evidence", "| round | task | replay_class | min_reuse | raw_evidence | prompt_visible | kv_saved | skipped | audit |", "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |"])
     for case in evidence_pack["round_evidence"]:
         case_payload = dict(case)
         audit_path = dict(case_payload.get("audit_paths", {})).get("replay", "")
         lines.append(
             f"| {case_payload['round_number']} | {case_payload['task_id']} | {case_payload['replay_class']} | "
             f"{case_payload['minimum_reuse_class']} | {case_payload['raw_evidence_bytes_seen_by_llm']} | "
-            f"{case_payload['prompt_visible_total_bytes']} | {case_payload['skipped_step_count']} | `{audit_path}` |"
+            f"{case_payload['prompt_visible_total_bytes']} | {case_payload['kv_prefill_saved_tokens_estimate']} | "
+            f"{case_payload['skipped_step_count']} | `{audit_path}` |"
         )
     return "\n".join(lines)
 
@@ -1063,6 +1103,13 @@ def run_continuous_benchmark_family(
     replay_class_distribution: dict[str, float] = {}
     for case in cases:
         replay_class_distribution[case.replay_class] = replay_class_distribution.get(case.replay_class, 0.0) + 1.0
+    kv_reuse_analysis = summarize_case_kv_reuse(cases)
+    aggregated_metrics.update(
+        {
+            key: float(value)
+            for key, value in dict(kv_reuse_analysis.get("metrics", {})).items()
+        }
+    )
     quality_floor_breakdown = {
         "deterministic_checks_passed_count": float(
             sum(1 for case in cases if case.quality_floor.deterministic_checks_passed)
@@ -1086,6 +1133,7 @@ def run_continuous_benchmark_family(
         "role_path_mode": role_path_mode,
         "embedding_mode": embedding_mode,
         "layer_contract_gate_enabled": enforce_expected_metric_effects and layer in {BenchmarkLayer.L2, BenchmarkLayer.L3},
+        "kv_reuse_analysis": kv_reuse_analysis,
     }
     if metadata_extra:
         metadata.update(metadata_extra)
@@ -1211,6 +1259,18 @@ def run_continuous_benchmark_suite(
             "L3_history_step_reduction_count": layer_reports[3].telemetry_summary.get(
                 "history_step_reduction_count", 0.0
             ),
+            "L3_kv_corpus_prefix_hash_unique_count": layer_reports[3].aggregated_metrics.get(
+                "kv_corpus_prefix_hash_unique_count", 0.0
+            ),
+            "L3_kv_corpus_prefix_hash_reuse_count": layer_reports[3].aggregated_metrics.get(
+                "kv_corpus_prefix_hash_reuse_count", 0.0
+            ),
+            "L3_kv_corpus_level_prefill_saved_tokens_estimate": layer_reports[3].aggregated_metrics.get(
+                "kv_corpus_level_prefill_saved_tokens_estimate", 0.0
+            ),
+            "L3_kv_engine_local_prefill_saved_tokens_estimate": layer_reports[3].aggregated_metrics.get(
+                "kv_engine_local_prefill_saved_tokens_estimate", 0.0
+            ),
             "L3_validated_downgraded_reuse_count": layer_reports[3].telemetry_summary.get(
                 "validated_downgraded_reuse_count",
                 layer_reports[3].telemetry_summary.get("validated_replay_count", 0.0),
@@ -1323,6 +1383,24 @@ def run_continuous_benchmark_collection(
         ),
         "L3_history_step_reduction_count": float(
             sum(report.waterfall_metrics.get("L3_history_step_reduction_count", 0.0) for report in family_reports)
+        ),
+        "L3_kv_corpus_prefix_hash_unique_count": float(
+            sum(report.waterfall_metrics.get("L3_kv_corpus_prefix_hash_unique_count", 0.0) for report in family_reports)
+        ),
+        "L3_kv_corpus_prefix_hash_reuse_count": float(
+            sum(report.waterfall_metrics.get("L3_kv_corpus_prefix_hash_reuse_count", 0.0) for report in family_reports)
+        ),
+        "L3_kv_corpus_level_prefill_saved_tokens_estimate": float(
+            sum(
+                report.waterfall_metrics.get("L3_kv_corpus_level_prefill_saved_tokens_estimate", 0.0)
+                for report in family_reports
+            )
+        ),
+        "L3_kv_engine_local_prefill_saved_tokens_estimate": float(
+            sum(
+                report.waterfall_metrics.get("L3_kv_engine_local_prefill_saved_tokens_estimate", 0.0)
+                for report in family_reports
+            )
         ),
         "history_backed_reuse_count": float(
             sum(

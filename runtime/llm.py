@@ -189,7 +189,7 @@ class LLMConfig:
 
     @property
     def use_api(self) -> bool:
-        return self.mode == "api"
+        return self.mode in {"api", "local_vllm"}
 
     def provider_config(self, name: str) -> ProviderConfig:
         if name not in self.providers:
@@ -226,7 +226,9 @@ class LLMConfig:
         for provider_name, provider in self.providers.items():
             if provider.kind != "openai_compatible":
                 raise ValueError(f"unsupported llm provider kind: {provider.kind}")
-            if not provider.resolved_api_key:
+            if not provider.base_url:
+                raise ValueError(f"provider {provider_name} missing base_url")
+            if self.mode != "local_vllm" and not provider.resolved_api_key:
                 raise ValueError(
                     f"provider {provider_name} missing api key; set {provider.api_key_env or 'api_key'}"
                 )
@@ -252,7 +254,7 @@ class OpenAICompatibleLLMClient:
     def _build_provider_client(self, provider_name: str) -> AsyncOpenAI:
         provider = self.config.provider_config(provider_name)
         return AsyncOpenAI(
-            api_key=provider.resolved_api_key,
+            api_key=provider.resolved_api_key or ("EMPTY" if self.config.mode == "local_vllm" else None),
             base_url=provider.base_url,
             timeout=provider.timeout_s,
             default_headers=provider.default_headers or None,

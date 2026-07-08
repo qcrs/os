@@ -5,6 +5,7 @@ from v2.retrieval.corpus import (
     OfflineFinancialReportCorpus,
 )
 from v2.retrieval.models import (
+    EvidencePruningHint,
     RetrievalBundle,
     RetrievalCandidatePool,
     RetrievalCandidateRecord,
@@ -26,6 +27,7 @@ from v2.retrieval.pipeline import (
 __all__ = [
     "CorpusTableRow",
     "CorpusTextFragment",
+    "EvidencePruningHint",
     "FinancialReportDocument",
     "LexicalMetadataRetriever",
     "OfflineFinancialReportCorpus",

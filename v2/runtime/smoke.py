@@ -99,6 +99,7 @@ from v2.runtime import (
     TelemetryEvent,
     WorkspaceManager,
     best_visible_candidate,
+    build_corpus_prefix_hash,
     constrain_visible_candidates,
     build_extended_output_manifest,
     capture_runtime_signature,
@@ -111,6 +112,7 @@ from v2.runtime import (
     planner_handoff_replay_hash,
     SignatureManifestEntry,
     count_exact_replay_candidates,
+    estimate_engine_local_prefix_reuse,
     select_history_replay_candidate,
 )
 from v2.runtime.preflight import runtime_preflight
@@ -462,6 +464,15 @@ def _role_non_external_prompt_visible_bytes(slice_: RoleHydratedSlice) -> int:
 
 def _prompt_scaffolding_bytes(*, prompt_bytes: int, slice_: RoleHydratedSlice) -> int:
     return max(prompt_bytes - _role_total_prompt_visible_bytes(slice_), 0)
+
+
+def _neural_prefix_consumer_roles(role_hydrated_slices: dict[str, RoleHydratedSlice]) -> tuple[str, ...]:
+    roles: list[str] = []
+    for role in ("executor", "summarizer"):
+        slice_ = role_hydrated_slices.get(role)
+        if slice_ is not None and _role_external_evidence_bytes(slice_) > 0:
+            roles.append(role)
+    return tuple(roles)
 
 
 def _role_hydration_audit_payload(slice_: RoleHydratedSlice) -> dict[str, object]:
@@ -991,6 +1002,11 @@ def _build_semantic_state_ref(
     bundle: RetrievalBundle,
     materialized_state: MaterializedStateHandle,
 ) -> SemanticStateRef:
+    corpus_prefix_hash = build_corpus_prefix_hash(
+        source_doc_hashes=bundle.selected_doc_hashes,
+        evidence_pack_hash=bundle.evidence_pack.pack_hash,
+        hydrate_manifest_hash=bundle.hydrate_manifest.manifest_hash,
+    )
     return SemanticStateRef(
         state_id=f"state-{task_id}",
         state_kind="EMBEDDING_STATE",
@@ -1004,6 +1020,10 @@ def _build_semantic_state_ref(
             "encoding": bundle.query_embedding.encoding,
             "storage_metadata_path": str(materialized_state.metadata_path),
             "shared_memory_name": materialized_state.shared_memory_name,
+            "corpus_prefix_hash": corpus_prefix_hash,
+            "neural_reuse_scope": "task_session",
+            "neural_reuse_mode": "shared_prefix_role_suffix",
+            "neural_reuse_claim_boundary": "engine_local_prefix_reuse_estimate_only_no_kv_tensor_export",
         },
     )
 
@@ -2863,6 +2883,27 @@ def run_smoke(
     task_metrics["prompt_visible_total_bytes"] = prompt_visible_total_bytes
     task_metrics["non_external_prompt_visible_bytes"] = non_external_prompt_visible_bytes
     task_metrics["prompt_scaffolding_bytes_total"] = prompt_scaffolding_bytes_total
+    task_metrics["evidence_pruning_hint_count"] = float(len(retrieval.pruning_profile.pruning_hints))
+    task_metrics["evidence_pruning_keep_count"] = float(
+        sum(1 for hint in retrieval.pruning_profile.pruning_hints if hint.keep_in_budget)
+    )
+    task_metrics["evidence_pruning_drop_count"] = float(
+        sum(1 for hint in retrieval.pruning_profile.pruning_hints if not hint.keep_in_budget)
+    )
+    task_metrics["evidence_pruning_estimated_kv_tokens_saved"] = float(
+        retrieval.pruning_profile.estimated_kv_tokens_saved
+    )
+    neural_prefix_hash = build_corpus_prefix_hash(
+        source_doc_hashes=retrieval.selected_doc_hashes,
+        evidence_pack_hash=retrieval.evidence_pack.pack_hash,
+        hydrate_manifest_hash=retrieval.hydrate_manifest.manifest_hash,
+    )
+    neural_prefix_estimate = estimate_engine_local_prefix_reuse(
+        prefix_hash=neural_prefix_hash,
+        shared_prefix_bytes=retrieval.selected_evidence_bytes,
+        consumer_roles=_neural_prefix_consumer_roles(role_hydrated_slices),
+    )
+    task_metrics.update(neural_prefix_estimate.metrics())
     for key, value in continuous_reuse_metrics.items():
         task_metrics[key] = float(value)
 
@@ -3148,6 +3189,15 @@ def run_smoke(
                 for role in ("planner", "retriever", "executor", "summarizer")
             },
         },
+        "evidence_pruning": {
+            "profile_hash": retrieval.pruning_profile.profile_hash,
+            "importance_threshold": retrieval.pruning_profile.importance_threshold,
+            "hint_count": len(retrieval.pruning_profile.pruning_hints),
+            "keep_count": sum(1 for hint in retrieval.pruning_profile.pruning_hints if hint.keep_in_budget),
+            "drop_count": sum(1 for hint in retrieval.pruning_profile.pruning_hints if not hint.keep_in_budget),
+            "estimated_kv_tokens_saved": retrieval.pruning_profile.estimated_kv_tokens_saved,
+        },
+        "neural_prefix_reuse": neural_prefix_estimate.canonical_payload(),
         "artifact": {
             "replay_ready": finalized_artifact.replay_ready,
             "verification_state": finalized_artifact.verification_state.value,

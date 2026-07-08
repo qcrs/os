@@ -8,6 +8,17 @@ from v2.runtime.execution import (
 from v2.runtime.fallback import FallbackAction, FallbackDag, FallbackPlanner, FallbackResolutionRecord
 from v2.runtime.ledger import ReplayLedger, ReplayLedgerEntry
 from v2.runtime.lineage import TaskLineageView, build_task_lineage_view
+from v2.runtime.neural_state import (
+    NeuralPrefixReuseEstimate,
+    NeuralStateHandle,
+    build_corpus_prefix_hash,
+    estimate_engine_local_prefix_reuse,
+)
+from v2.runtime.vllm_metrics import (
+    VllmPrefixCacheMetrics,
+    fetch_vllm_prefix_cache_metrics,
+    parse_vllm_prefix_cache_metrics,
+)
 from v2.runtime.compiler import TaskCompiler
 from v2.runtime.role_path import (
     best_visible_candidate,
@@ -94,6 +105,8 @@ __all__ = [
     "MaterializedFile",
     "MaterializedInputBundle",
     "MaterializedOutputBundle",
+    "NeuralPrefixReuseEstimate",
+    "NeuralStateHandle",
     "PlannerRoleResult",
     "RolePromptSlice",
     "ReplayLedger",
@@ -129,14 +142,19 @@ __all__ = [
     "TaskCompiler",
     "TelemetryEmitter",
     "TelemetryEvent",
+    "VllmPrefixCacheMetrics",
     "build_extended_output_manifest",
+    "build_corpus_prefix_hash",
     "build_task_lineage_view",
     "capture_execution_logs",
     "count_exact_replay_candidates",
     "evidence_pack_replay_hash",
+    "estimate_engine_local_prefix_reuse",
     "financial_tool_candidates",
+    "fetch_vllm_prefix_cache_metrics",
     "hydrate_manifest_replay_hash",
     "planner_handoff_replay_hash",
+    "parse_vllm_prefix_cache_metrics",
     "runtime_signature_json",
     "runtime_signature_payload",
     "runtime_preflight",
