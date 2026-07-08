@@ -1923,6 +1923,7 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
     assert '"rd"' in retriever_prompt
     retriever_payload = parse_tagged_json(retriever_prompt, "sb-retriever-v1")
     assert retriever_payload["e"] == "evidence text\ntable fact"
+    assert retriever_payload["pc"]["k"] == f"{sample.expected_route}::{sample.expected_tool_name}"
     assert f"{sample.expected_route}::{sample.expected_tool_name}" in {
         item["k"] for item in retriever_payload["tc"]
     }
@@ -1939,6 +1940,7 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
     assert '"a"' in executor_prompt
     executor_payload = parse_tagged_json(executor_prompt, "sb-executor-v1")
     assert executor_payload["e"] == "evidence text\ntable fact"
+    assert executor_payload["pc"]["k"] == f"{sample.expected_route}::{sample.expected_tool_name}"
     assert f"{sample.expected_route}::{sample.expected_tool_name}" in {
         item["k"] for item in executor_payload["tc"]
     }
@@ -1961,6 +1963,55 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
     assert "Hydrated Slice Summary" not in summarizer_prompt
     assert "<statebus-summary-evidence>" not in summarizer_prompt
     assert "<statebus-summary-actions>" not in summarizer_prompt
+
+
+def test_formal_trend_002_structured_prompt_exposes_preferred_candidate_tiebreak() -> None:
+    class PreferenceAwareLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None):
+            del temperature
+            assert purpose == "retriever"
+            prompt = messages[-1].content
+            payload = parse_tagged_json(prompt, "sb-retriever-v1")
+            preferred = payload.get("pc")
+            selected = preferred if isinstance(preferred, dict) else payload["tc"][-1]
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "candidate_key": selected["k"],
+                        "route": selected["r"],
+                        "tool_name": selected["t"],
+                        "reason": "follow preferred candidate tie-break",
+                    }
+                ),
+                model="stub-model",
+                usage=LLMUsage(prompt_tokens=12, completion_tokens=8, total_tokens=20),
+            )
+
+        def describe(self):
+            return {"backend": "preference-aware"}
+
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+    from v2.retrieval import RetrieverFanoutPipeline
+    from v2.runtime.role_path import financial_tool_candidates
+
+    sample = next(
+        item for item in load_registered_formal_fixed_answer_samples() if item.task_id == "formal-trend-002"
+    )
+    retrieval = RetrieverFanoutPipeline().run(task_id=sample.task_id, spec=sample.canonical_task_spec)
+    candidates = financial_tool_candidates(sample.canonical_task_spec, retrieval.candidate_pool)
+    runner = RolePathRunner(llm_client=PreferenceAwareLLMClient())
+
+    decision = runner.choose_retrieval_candidate(
+        query_text=retrieval.query_text,
+        retrieved_doc_ids=retrieval.selected_doc_hashes,
+        visible_candidates=candidates,
+        allow_assisted_correction=False,
+        route_hints=(sample.canonical_task_spec.intent_op, sample.expected_route),
+    )
+
+    assert decision.route == "compare_metric"
+    assert decision.tool_name == "table_retriever"
+    assert decision.candidate_rank == 1
 
 
 def test_fixed_answer_external_comparator_suite_skips_api_when_not_configured(
