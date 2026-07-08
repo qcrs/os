@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from v2.benchmark.external_text_baseline import run_external_text_family
@@ -53,6 +54,16 @@ def _statebus_prompt_tokens(report: BenchmarkFamilyReport) -> float:
 
 def _statebus_completion_tokens(report: BenchmarkFamilyReport) -> float:
     return _metric(report, "completion_tokens") or _metric(report, "llm_completion_tokens")
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 def _build_debug_metrics(
@@ -633,6 +644,12 @@ def run_fixed_answer_external_comparator_suite(
     formal_quality_superiority_claim_allowed = (
         benchmark_tier == "formal" and quality_superiority_comparison_valid
     )
+    serialized_repeat_count = max(_env_int("STATEBUS_COMPARATOR_SERIALIZED_REPEAT_COUNT", 1), 1)
+    serialized_repeat_index = max(_env_int("STATEBUS_COMPARATOR_SERIALIZED_REPEAT_INDEX", 1), 1)
+    timing_execution_contract = (
+        os.getenv("STATEBUS_COMPARATOR_TIMING_CONTRACT", "").strip()
+        or "serialized_statebus_then_external_within_each_mode_v1"
+    )
     formal_external_claim_kind = (
         "quality_superiority"
         if formal_quality_superiority_claim_allowed
@@ -672,6 +689,8 @@ def run_fixed_answer_external_comparator_suite(
         "serialized_latency_superiority_claim_allowed": 1.0
         if serialized_latency_superiority_claim_allowed
         else 0.0,
+        "serialized_repeat_count": float(serialized_repeat_count),
+        "serialized_repeat_index": float(serialized_repeat_index),
     }
     for mode_report in mode_reports:
         mode_key = mode_report.role_path_mode.replace("-", "_")
@@ -693,8 +712,10 @@ def run_fixed_answer_external_comparator_suite(
             **formal_compare_scope_metadata,
             "legacy_comparison_valid_semantics": "strict_equal_quality_comparison_valid",
             "comparator_token_split_schema": "statebus.comparator.token_split.v1",
-            "timing_execution_contract": "serialized_statebus_then_external_within_each_mode_v1",
+            "timing_execution_contract": timing_execution_contract,
             "timing_delta_direction": "statebus_minus_external",
+            "serialized_repeat_count": serialized_repeat_count,
+            "serialized_repeat_index": serialized_repeat_index,
             "serialized_latency_superiority_claim_allowed": serialized_latency_superiority_claim_allowed,
             "strict_equal_quality_comparison_valid": strict_equal_quality_comparison_valid,
             "quality_superiority_comparison_valid": quality_superiority_comparison_valid,
