@@ -2,6 +2,8 @@
 
 更新时间：2026-06-07
 
+2026-07-08 维护说明：本文件描述的是 host-mainline / v1 功能边界。当前主要实现工作已转向 `v2/` clean-room；v2 的当前事实以 `docs/README.md`、`docs/improvement/20_v2_comprehensive_truth_audit_20260706/`、`v2/` 代码和最新 local+api artifacts 为准。本文中关于 Docker/openEuler、StatePool 后端和 benchmark 读法的旧约束不能覆盖 v2 例外路径。
+
 适用范围：当前 `/home/qcrs/statebus/project` 实现仓库已经落地到什么程度，哪些能力可以在当前 Linux 宿主机继续做，哪些需要 Docker / openEuler VM / 更强系统权限后再做。
 
 ---

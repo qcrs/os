@@ -19,7 +19,7 @@ rerun of the full evidence suite on 2026-07-03.
 | Worktree status when indexed | clean, from `git status --short` |
 | Evidence readout | `docs/reports/v2_api_evidence_readout_and_claim_boundary_20260702.md` |
 | openEuler container report | `docs/reports/openeuler_container_validation_20260703.md` |
-| Remediation source | `docs/review/v2_issue_remediation_plan_20260703.md` P0-001 |
+| Remediation source | `docs/archive/legacy_202606_host_mainline/review/v2_issue_remediation_plan_20260703.md` P0-001 |
 
 ## 2. Evidence Root
 
@@ -141,7 +141,7 @@ candidate. This is still not a full 12-case persisted-live-history audit.
 ## 9. First-Stage P0 Status
 
 First-stage P0 remediation status from
-`docs/review/v2_issue_remediation_plan_20260703.md`:
+`docs/archive/legacy_202606_host_mainline/review/v2_issue_remediation_plan_20260703.md`:
 
 - P0-001: final evidence index. Completed in remediation commit `c0be113`.
 - P0-004: make memory metadata first-class on `MemoryRef` / memory commits. Completed in remediation commit `c2d3064`.

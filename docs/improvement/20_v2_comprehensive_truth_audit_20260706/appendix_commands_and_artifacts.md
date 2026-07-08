@@ -12,7 +12,7 @@
 - `docs/improvement/PROMPT_FOR_CLAIM_UPGRADE_EXECUTION.md`
 - `docs/improvement/18_claim_upgrade_execution_plan.md`
 - `docs/improvement/17_final_system_audit_20260706.md`
-- `docs/improvement/artifacts/17_final_system_audit/17a_evidence_table.md`
+- `docs/improvement/artifacts/17_final_system_audit/17a_evidence_table.md`（历史路径，已从 active docs tree 清理）
 - `17b_code_review_findings.md`
 - `17c_benchmark_json_analysis.md`
 - `17d_issue_ledger.md`
@@ -24,7 +24,7 @@
 同时扫描了：
 
 - `docs/improvement/`
-- `docs/improvement/artifacts/`
+- `docs/improvement/artifacts/`（历史路径，已从 active docs tree 清理）
 - `v2/`
 - `tests/v2/`
 - `tasks/formal/`

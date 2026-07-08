@@ -90,7 +90,7 @@ git switch -c feat/statebus-v2-container-runtime
 
 1. [题目.md](/home/qcrs/statebus/project/docs/reference/题目.md)
 2. [statebus_v2_clean_room_rebuild_plan_20260625.md](/home/qcrs/statebus/project/docs/planning/statebus_v2_clean_room_rebuild_plan_20260625.md)
-3. [three_way_system_audit_20260625.md](/home/qcrs/statebus/project/docs/review/three_way_system_audit_20260625.md)
+3. [three_way_system_audit_20260625.md](/home/qcrs/statebus/project/docs/archive/legacy_202606_host_mainline/review/three_way_system_audit_20260625.md)
 
 ## 4.2 七份核心合同
 
@@ -448,7 +448,7 @@ git switch -c feat/statebus-v2-container-runtime
 必须先读的文档，按优先级顺序：
 1. docs/reference/题目.md
 2. docs/planning/statebus_v2_clean_room_rebuild_plan_20260625.md
-3. docs/review/three_way_system_audit_20260625.md
+3. docs/archive/legacy_202606_host_mainline/review/three_way_system_audit_20260625.md
 4. docs/planning/runtime_state_machine_contract.md
 5. docs/planning/semantic_provenance_and_hydration_contract.md
 6. docs/planning/replay_admissibility_contract.md

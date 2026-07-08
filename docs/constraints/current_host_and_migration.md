@@ -2,6 +2,8 @@
 
 更新时间：2026-06-06 17:42:57 CST
 
+2026-07-08 维护说明：本文件描述的是 host-mainline / v1 开发约束。当前主要实现工作已转向 `v2/` clean-room；v2 允许并预期使用 single-container Docker + openEuler 路径，正式控制面为 `UDS + typed Protobuf`。读取本文件时不要把 host-mainline 的“不以 Docker 为主开发前提”扩展成 v2 禁止 Docker。
+
 适用范围：本仓库从 design-first 转向实现阶段时的环境约束、开发边界与迁移策略说明。
 
 ---
