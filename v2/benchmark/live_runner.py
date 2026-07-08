@@ -15,6 +15,7 @@ from v2.benchmark.fixed_answer_runner import (
     run_fixed_answer_suite,
 )
 from v2.benchmark.flagship_ablation import run_non_text_flagship_ablation_report
+from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
 from v2.benchmark.minimal_runner import load_sample_family, run_minimal_benchmark_suite
 from v2.benchmark.reporting import continuous_collection_report_to_dict, suite_report_to_dict
 from v2.benchmark.replay_negative_audit import run_replay_negative_audit
@@ -162,7 +163,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--role-path-mode",
         default="deterministic",
-        choices=("deterministic", "api"),
+        choices=("deterministic", "api", "local_vllm"),
         help="planner/retriever/executor/summarizer mode",
     )
     parser.add_argument(
@@ -352,7 +353,7 @@ def main() -> None:
     if args.benchmark_tier == "formal":
         if args.suite in {"external"}:
             raise SystemExit("formal tier does not expose standalone external suites; use --suite compare")
-        if args.suite not in {"compare"}:
+        if args.suite not in {"compare", "carrier-compare"}:
             # Non-compare formal suites: use MinimalBenchmarkSample via load_sample_family
             formal_samples = (
                 load_registered_formal_samples()
@@ -377,10 +378,14 @@ def main() -> None:
             payload["formal_registry"] = formal_family_payload()
             print(stable_json_dumps(payload))
             return
-        # formal + compare: fall through to the dev compare path below,
-        # using load_fixed_answer_family (formal samples now have expected_route/tool/hint)
+        # formal compare/carrier-compare: fall through to fixed-answer compare paths.
+        # The default formal path adapts the full registered 25-case/5-family registry.
 
-    samples = load_fixed_answer_family(family_dir)
+    samples = (
+        load_registered_formal_fixed_answer_samples()
+        if args.benchmark_tier == "formal" and args.family_dir is None and not args.family
+        else load_fixed_answer_family(family_dir)
+    )
     statebus_suite_prefix = _statebus_suite_prefix(
         suite_id=args.suite_id,
         statebus_mode=args.statebus_mode,

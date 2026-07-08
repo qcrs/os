@@ -231,11 +231,19 @@ def _non_text_state_stress_summary(
             t2_transfer_count = float(t2.get("semantic_state_transfer_count", 0.0))
             llm_prompt_saved = max(-llm_prompt_delta, 0.0)
             prompt_visible_saved = max(-prompt_visible_delta, 0.0)
+            stress_fail_reasons: list[str] = []
+            if not bool(family.get("quality_headline_eligible", False)):
+                stress_fail_reasons.append("quality_headline_not_eligible")
+            if group_name == "continuous_replay" and not bool(family.get("replay_headline_eligible", False)):
+                stress_fail_reasons.append("replay_headline_not_eligible")
+            if l2_transfer_count <= 0.0:
+                stress_fail_reasons.append("semantic_state_transfer_missing")
+            if t2_transfer_count != 0.0:
+                stress_fail_reasons.append("text_control_transferred_semantic_state")
+            if llm_prompt_saved <= 0.0 and prompt_visible_saved <= 0.0:
+                stress_fail_reasons.append("no_extra_state_ref_prompt_saving_vs_t2")
             stress_pass = (
-                bool(family.get("quality_headline_eligible", False))
-                and l2_transfer_count > 0.0
-                and t2_transfer_count == 0.0
-                and (llm_prompt_saved > 0.0 or prompt_visible_saved > 0.0)
+                not stress_fail_reasons
             )
             families.append(
                 {
@@ -252,6 +260,8 @@ def _non_text_state_stress_summary(
                     "raw_evidence_delta_l2_vs_t2": raw_evidence_delta,
                     "llm_prompt_saved_by_state_ref_bytes": llm_prompt_saved,
                     "prompt_visible_saved_by_state_ref_bytes": prompt_visible_saved,
+                    "stress_fail_reasons": stress_fail_reasons,
+                    "family_claim_scope": "non_text_state_claimable" if stress_pass else "diagnostic_only",
                     "interpretation": (
                         "non_text_state_transfer_has_extra_prompt_saving"
                         if prompt_visible_saved > 0.0
@@ -271,10 +281,18 @@ def _non_text_state_stress_summary(
             str(payload["family_id"]),
         ),
     )
+    failure_reason_counts: dict[str, int] = {}
+    for family in families:
+        for reason in family["stress_fail_reasons"]:
+            failure_reason_counts[str(reason)] = failure_reason_counts.get(str(reason), 0) + 1
     return {
         "schema_version": "statebus.non_text_state_stress_summary.v1",
         "stress_family_count": len(families),
         "stress_pass_family_count": sum(1 for family in families if bool(family["stress_pass"])),
+        "stress_fail_family_count": sum(1 for family in families if not bool(family["stress_pass"])),
+        "claimable_non_text_state_family_count": sum(1 for family in families if bool(family["stress_pass"])),
+        "diagnostic_only_family_count": sum(1 for family in families if not bool(family["stress_pass"])),
+        "stress_failure_reason_counts": dict(sorted(failure_reason_counts.items())),
         "total_llm_prompt_saved_by_state_ref_bytes": sum(
             float(family["llm_prompt_saved_by_state_ref_bytes"]) for family in families
         ),
@@ -425,11 +443,23 @@ def _build_markdown(payload: dict[str, object]) -> str:
             "## Non-Text State Stress Summary",
             "",
             f"- stress_pass_family_count: `{stress.get('stress_pass_family_count', 0)}`",
+            f"- stress_fail_family_count: `{stress.get('stress_fail_family_count', 0)}`",
+            f"- diagnostic_only_family_count: `{stress.get('diagnostic_only_family_count', 0)}`",
             f"- total_llm_prompt_saved_by_state_ref_bytes: `{stress.get('total_llm_prompt_saved_by_state_ref_bytes', 0.0)}`",
             f"- total_prompt_visible_saved_by_state_ref_bytes: `{stress.get('total_prompt_visible_saved_by_state_ref_bytes', 0.0)}`",
             f"- top_prompt_visible_saving_family: `{top_stress.get('family_id', '')}`",
+            "",
+            "| family | group | claim_scope | fail_reasons |",
+            "| --- | --- | --- | --- |",
         ]
     )
+    for family in stress.get("families", []):
+        family_payload = dict(family)
+        fail_reasons = ",".join(str(item) for item in family_payload.get("stress_fail_reasons", [])) or "-"
+        lines.append(
+            f"| {family_payload.get('family_id', '')} | {family_payload.get('group', '')} | "
+            f"{family_payload.get('family_claim_scope', '')} | {fail_reasons} |"
+        )
     lines.extend(
         [
             "",

@@ -38,6 +38,7 @@ __all__ = [
     "run_continuous_text_semantic_selection_family",
     "load_sample_family",
     "load_fixed_answer_family",
+    "load_registered_formal_fixed_answer_samples",
     "compare_fixed_answer_with_external",
     "main_live_runner",
     "run_external_text_case",
@@ -64,6 +65,7 @@ def __getattr__(name: str) -> Any:
         "run_continuous_text_semantic_selection_family",
         "MinimalBenchmarkSample",
         "load_fixed_answer_family",
+        "load_registered_formal_fixed_answer_samples",
         "compare_fixed_answer_with_external",
         "main_live_runner",
         "run_external_text_case",
@@ -104,6 +106,7 @@ def __getattr__(name: str) -> Any:
             run_fixed_answer_suite,
         )
         from v2.benchmark.flagship_ablation import run_non_text_flagship_ablation_report
+        from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
         from v2.benchmark.external_text_baseline import (
             run_external_text_case,
             run_external_text_family,
@@ -124,6 +127,7 @@ def __getattr__(name: str) -> Any:
             "MinimalBenchmarkSample": MinimalBenchmarkSample,
             "load_sample_family": load_sample_family,
             "load_fixed_answer_family": load_fixed_answer_family,
+            "load_registered_formal_fixed_answer_samples": load_registered_formal_fixed_answer_samples,
             "compare_fixed_answer_with_external": compare_fixed_answer_with_external,
             "main_live_runner": main_live_runner,
             "run_external_text_case": run_external_text_case,

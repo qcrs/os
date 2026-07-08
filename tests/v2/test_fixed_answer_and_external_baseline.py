@@ -813,6 +813,12 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert "end_to_end_ms_delta" in mode_report.debug_metrics
     assert "llm_ms_delta" in mode_report.debug_metrics
     assert "prompt_bytes_delta" in mode_report.debug_metrics
+    assert "statebus_prompt_tokens" in mode_report.debug_metrics
+    assert "external_prompt_tokens" in mode_report.debug_metrics
+    assert "prompt_tokens_delta" in mode_report.debug_metrics
+    assert "statebus_completion_tokens" in mode_report.debug_metrics
+    assert "external_completion_tokens" in mode_report.debug_metrics
+    assert "completion_tokens_delta" in mode_report.debug_metrics
     assert "llm_call_count_delta" in mode_report.debug_metrics
     assert mode_report.debug_metrics["external_quality_floor_pass_count"] == 0.0
     assert mode_report.fairness_manifest["external_formal_eligible"] is True
@@ -823,6 +829,9 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert payload["metadata"]["formal_headline_eligible"] is False
     assert payload["metadata"]["formal_efficiency_claim_allowed"] is False
     assert payload["metadata"]["formal_efficiency_superiority_claim_allowed"] is False
+    assert payload["metadata"]["comparator_token_split_schema"] == "statebus.comparator.token_split.v1"
+    assert payload["metadata"]["timing_execution_contract"] == "serialized_statebus_then_external_within_each_mode_v1"
+    assert payload["metadata"]["serialized_latency_superiority_claim_allowed"] is False
     assert payload["metadata"]["formal_quality_superiority_claim_allowed"] is False
     assert payload["metadata"]["formal_superiority_claim_allowed"] is False
     assert payload["metadata"]["strict_equal_quality_comparison_valid"] is False
@@ -838,7 +847,11 @@ def test_fixed_answer_external_comparator_suite_runs(tmp_path: Path) -> None:
     assert payload["mode_reports"][0]["comparison_summary"]["strict_equal_quality_comparison_valid"] == 0.0
     assert payload["mode_reports"][0]["comparison_summary"]["quality_superiority_comparison_valid"] == 1.0
     assert payload["mode_reports"][0]["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
+    assert "prompt_tokens_delta" in payload["mode_reports"][0]["comparison_summary"]
+    assert "completion_tokens_delta" in payload["mode_reports"][0]["comparison_summary"]
     assert payload["comparison_summary"]["formal_efficiency_claim_allowed"] == 0.0
+    assert "deterministic_prompt_tokens_delta" in payload["comparison_summary"]
+    assert "deterministic_completion_tokens_delta" in payload["comparison_summary"]
     assert "deterministic_debug_exact_match_delta" in payload["comparison_summary"]
 
 
@@ -886,6 +899,62 @@ def test_formal_financial_compare_scope_metadata_is_not_full_registry() -> None:
     assert metadata["formal_compare_family_count"] == 1
     assert metadata["formal_registry_case_count"] == 25
     assert metadata["formal_compare_full_registry_coverage"] is False
+
+
+def test_registered_formal_fixed_answer_adapter_covers_full_registry() -> None:
+    from v2.benchmark.comparator_runner import _formal_compare_scope_metadata
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+
+    samples = load_registered_formal_fixed_answer_samples()
+    metadata = _formal_compare_scope_metadata(samples=samples, benchmark_tier="formal")
+    families = {sample.task_family for sample in samples}
+    projection_by_task = {sample.task_id: sample.metric_projection_key for sample in samples}
+    route_by_task = {sample.task_id: sample.expected_route for sample in samples}
+
+    assert len(samples) == 25
+    assert len(families) == 5
+    assert metadata["formal_compare_case_count"] == 25
+    assert metadata["formal_compare_family_count"] == 5
+    assert metadata["formal_compare_full_registry_coverage"] is True
+    assert projection_by_task["formal-trend-001"] == "trend_direction"
+    assert projection_by_task["formal-agg-004"] == "monthly_avg_windspeed.month_1"
+    assert projection_by_task["formal-anomaly-002"] == "baro_outlier_count"
+    assert route_by_task["formal-join-004"] == "compare_metric"
+
+
+def test_external_context_uses_registry_route_catalog_for_adapted_formal_samples() -> None:
+    from v2.benchmark.external_text_baseline import _load_execution_context
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+
+    samples = load_registered_formal_fixed_answer_samples()
+    sample = next(item for item in samples if item.task_id == "formal-anomaly-002")
+    context = _load_execution_context(sample)
+    visible_keys = {candidate.candidate_key() for candidate in context.route_candidates}
+
+    assert "detect_outliers::table_retriever" in visible_keys
+    assert "compare_metric::table_retriever" not in visible_keys
+    assert context.metric_name == "baro_outlier_count"
+
+
+def test_metric_projection_fills_partial_statebus_metric_output() -> None:
+    from v2.benchmark.fixed_answer_runner import _project_metric_for_scoring
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+
+    sample = next(
+        item
+        for item in load_registered_formal_fixed_answer_samples()
+        if item.task_id == "formal-agg-004"
+    )
+    metric_name, metric_value = _project_metric_for_scoring(
+        sample=sample,
+        output_payload={
+            "metric_name": "monthly_avg_windspeed.month_1",
+            "monthly_avg_windspeed": {"month_1": "7.17"},
+        },
+    )
+
+    assert metric_name == "monthly_avg_windspeed.month_1"
+    assert metric_value == "7.17"
 
 
 def test_fixed_answer_external_comparator_fails_closed_on_external_fairness_gate_failure(

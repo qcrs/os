@@ -22,7 +22,9 @@ PYTEST_MODE="${STATEBUS_LOCAL_API_PYTEST_MODE:-focused}" # focused | full | skip
 RUN_FLAGSHIP="${STATEBUS_LOCAL_API_RUN_FLAGSHIP:-0}"
 REPEAT_COUNT="${STATEBUS_LOCAL_API_REPEAT:-1}"
 STRICT_EXIT="${STATEBUS_LOCAL_API_STRICT_EXIT:-1}"
+NO_TIMEOUTS="${STATEBUS_LOCAL_API_NO_TIMEOUTS:-0}"
 
+PY_COMPILE_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_PY_COMPILE_TIMEOUT_SECONDS:-${PY_COMPILE_TIMEOUT_SECONDS:-300}}"
 PYTEST_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_PYTEST_TIMEOUT_SECONDS:-${PYTEST_TIMEOUT_SECONDS:-1800}}"
 SMOKE_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_SMOKE_TIMEOUT_SECONDS:-${SMOKE_TIMEOUT_SECONDS:-900}}"
 PREFLIGHT_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_PREFLIGHT_TIMEOUT_SECONDS:-${PREFLIGHT_TIMEOUT_SECONDS:-600}}"
@@ -32,6 +34,19 @@ CONTINUOUS_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_CONTINUOUS_TIMEOUT_SECONDS:-${C
 REPLAY_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_REPLAY_TIMEOUT_SECONDS:-${REPLAY_TIMEOUT_SECONDS:-2400}}"
 REPLAY_NEGATIVE_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_REPLAY_NEGATIVE_TIMEOUT_SECONDS:-${REPLAY_NEGATIVE_TIMEOUT_SECONDS:-900}}"
 FLAGSHIP_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_FLAGSHIP_TIMEOUT_SECONDS:-${FLAGSHIP_TIMEOUT_SECONDS:-7200}}"
+
+if [[ "$NO_TIMEOUTS" == "1" ]]; then
+  PY_COMPILE_TIMEOUT_SECONDS=0
+  PYTEST_TIMEOUT_SECONDS=0
+  SMOKE_TIMEOUT_SECONDS=0
+  PREFLIGHT_TIMEOUT_SECONDS=0
+  FORMAL_TIMEOUT_SECONDS=0
+  COMPARE_TIMEOUT_SECONDS=0
+  CONTINUOUS_TIMEOUT_SECONDS=0
+  REPLAY_TIMEOUT_SECONDS=0
+  REPLAY_NEGATIVE_TIMEOUT_SECONDS=0
+  FLAGSHIP_TIMEOUT_SECONDS=0
+fi
 
 if [[ "${STATEBUS_LOCAL_API_IN_CONTAINER:-0}" != "1" ]]; then
   mkdir -p "$HOST_RESULT_ROOT" "$AUDIT_ARTIFACT_ROOT"
@@ -62,6 +77,8 @@ Mode contract:
   - state_pool_mode=memfd for formal/compare/carrier stages
   - every stage uses its own runtime_root and workspace_root
   - AF_UNIX sockets use short /tmp/sb2-<hash>.sock paths
+  - timeout_contract=empty/0/none/unlimited disables per-stage timeout
+  - no_timeouts=${NO_TIMEOUTS}
   - no deterministic fallback is used for claim evidence
 EOF
 
@@ -74,10 +91,18 @@ EOF
     echo "repeat_count=${REPEAT_COUNT}"
     echo "pytest_mode=${PYTEST_MODE}"
     echo "run_flagship=${RUN_FLAGSHIP}"
+    echo "no_timeouts=${NO_TIMEOUTS}"
+    echo "timeout_contract=empty/0/none/unlimited disables per-stage timeout"
+    echo "socket_path_contract=/tmp/sb2-<16hex>.sock"
+    echo "py_compile_timeout_seconds=${PY_COMPILE_TIMEOUT_SECONDS}"
+    echo "pytest_timeout_seconds=${PYTEST_TIMEOUT_SECONDS}"
+    echo "smoke_timeout_seconds=${SMOKE_TIMEOUT_SECONDS}"
+    echo "preflight_timeout_seconds=${PREFLIGHT_TIMEOUT_SECONDS}"
     echo "formal_timeout_seconds=${FORMAL_TIMEOUT_SECONDS}"
     echo "compare_timeout_seconds=${COMPARE_TIMEOUT_SECONDS}"
     echo "continuous_timeout_seconds=${CONTINUOUS_TIMEOUT_SECONDS}"
     echo "replay_timeout_seconds=${REPLAY_TIMEOUT_SECONDS}"
+    echo "replay_negative_timeout_seconds=${REPLAY_NEGATIVE_TIMEOUT_SECONDS}"
     echo "flagship_timeout_seconds=${FLAGSHIP_TIMEOUT_SECONDS}"
     exit 0
   fi
@@ -95,6 +120,8 @@ EOF
     -e STATEBUS_LOCAL_API_RUN_FLAGSHIP="$RUN_FLAGSHIP"
     -e STATEBUS_LOCAL_API_REPEAT="$REPEAT_COUNT"
     -e STATEBUS_LOCAL_API_STRICT_EXIT="$STRICT_EXIT"
+    -e STATEBUS_LOCAL_API_NO_TIMEOUTS="$NO_TIMEOUTS"
+    -e STATEBUS_LOCAL_API_PY_COMPILE_TIMEOUT_SECONDS="$PY_COMPILE_TIMEOUT_SECONDS"
     -e STATEBUS_LOCAL_API_PYTEST_TIMEOUT_SECONDS="$PYTEST_TIMEOUT_SECONDS"
     -e STATEBUS_LOCAL_API_SMOKE_TIMEOUT_SECONDS="$SMOKE_TIMEOUT_SECONDS"
     -e STATEBUS_LOCAL_API_PREFLIGHT_TIMEOUT_SECONDS="$PREFLIGHT_TIMEOUT_SECONDS"
@@ -104,6 +131,7 @@ EOF
     -e STATEBUS_LOCAL_API_REPLAY_TIMEOUT_SECONDS="$REPLAY_TIMEOUT_SECONDS"
     -e STATEBUS_LOCAL_API_REPLAY_NEGATIVE_TIMEOUT_SECONDS="$REPLAY_NEGATIVE_TIMEOUT_SECONDS"
     -e STATEBUS_LOCAL_API_FLAGSHIP_TIMEOUT_SECONDS="$FLAGSHIP_TIMEOUT_SECONDS"
+    -e PY_COMPILE_TIMEOUT_SECONDS="$PY_COMPILE_TIMEOUT_SECONDS"
     -e PYTEST_TIMEOUT_SECONDS="$PYTEST_TIMEOUT_SECONDS"
     -e SMOKE_TIMEOUT_SECONDS="$SMOKE_TIMEOUT_SECONDS"
     -e PREFLIGHT_TIMEOUT_SECONDS="$PREFLIGHT_TIMEOUT_SECONDS"
@@ -340,6 +368,7 @@ echo "[statebus-v2-local-api] work root: $WORK_ROOT"
 echo "[statebus-v2-local-api] run id: ${STATEBUS_LOCAL_API_RUN_ID}"
 echo "[statebus-v2-local-api] pytest mode: ${STATEBUS_LOCAL_API_PYTEST_MODE:-focused}"
 echo "[statebus-v2-local-api] repeat: ${STATEBUS_LOCAL_API_REPEAT:-1}"
+echo "[statebus-v2-local-api] no timeouts: ${STATEBUS_LOCAL_API_NO_TIMEOUTS:-0}"
 echo "[statebus-v2-local-api] CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
 echo "[statebus-v2-local-api] STATEBUS_EMBED_DEVICE: ${STATEBUS_EMBED_DEVICE:-}"
 echo "[statebus-v2-local-api] STATEBUS_CODEACT_SANDBOX_BACKEND: ${STATEBUS_CODEACT_SANDBOX_BACKEND:-}"
@@ -391,6 +420,18 @@ PY
   printf '%s' "$socket_path"
 }
 
+is_unlimited_timeout() {
+  local timeout_s="${1:-}"
+  case "${timeout_s,,}" in
+    ""|"0"|"none"|"unlimited")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 run_text_stage() {
   local stage="$1"
   local timeout_s="$2"
@@ -402,9 +443,18 @@ run_text_stage() {
   mkdir -p "$stage_dir"
   echo
   echo "=== ${stage} ==="
+  if is_unlimited_timeout "$timeout_s"; then
+    echo "[statebus-v2-local-api] timeout=unlimited"
+  else
+    echo "[statebus-v2-local-api] timeout=${timeout_s}s"
+  fi
   start_s="$(date +%s)"
   set +e
-  timeout "$timeout_s" "$@" 2>&1 | tee "$log_path"
+  if is_unlimited_timeout "$timeout_s"; then
+    "$@" 2>&1 | tee "$log_path"
+  else
+    timeout "$timeout_s" "$@" 2>&1 | tee "$log_path"
+  fi
   exit_code=${PIPESTATUS[0]}
   set -u
   end_s="$(date +%s)"
@@ -440,19 +490,38 @@ run_live_stage() {
   echo
   echo "=== ${stage} ==="
   echo "[statebus-v2-local-api] socket_path=${socket_path} len=${#socket_path}"
+  if is_unlimited_timeout "$timeout_s"; then
+    echo "[statebus-v2-local-api] timeout=unlimited"
+  else
+    echo "[statebus-v2-local-api] timeout=${timeout_s}s"
+  fi
   start_s="$(date +%s)"
   set +e
-  timeout "$timeout_s" /usr/bin/python3 -m v2.benchmark.live_runner \
-    --suite "$suite" \
-    --role-path-mode api \
-    --embedding-mode local \
-    --runtime-root "$runtime_root" \
-    --workspace-root "$workspace_root" \
-    --socket-path "$socket_path" \
-    --suite-id "${STATEBUS_LOCAL_API_RUN_ID}-${stage}" \
-    "$@" \
-    > >(tee "$stdout_json") \
-    2> >(tee "$log_path" >&2)
+  if is_unlimited_timeout "$timeout_s"; then
+    /usr/bin/python3 -m v2.benchmark.live_runner \
+      --suite "$suite" \
+      --role-path-mode api \
+      --embedding-mode local \
+      --runtime-root "$runtime_root" \
+      --workspace-root "$workspace_root" \
+      --socket-path "$socket_path" \
+      --suite-id "${STATEBUS_LOCAL_API_RUN_ID}-${stage}" \
+      "$@" \
+      > >(tee "$stdout_json") \
+      2> >(tee "$log_path" >&2)
+  else
+    timeout "$timeout_s" /usr/bin/python3 -m v2.benchmark.live_runner \
+      --suite "$suite" \
+      --role-path-mode api \
+      --embedding-mode local \
+      --runtime-root "$runtime_root" \
+      --workspace-root "$workspace_root" \
+      --socket-path "$socket_path" \
+      --suite-id "${STATEBUS_LOCAL_API_RUN_ID}-${stage}" \
+      "$@" \
+      > >(tee "$stdout_json") \
+      2> >(tee "$log_path" >&2)
+  fi
   exit_code=$?
   set -u
   rm -f "$socket_path" || true
@@ -540,7 +609,7 @@ PY
 
 run_env_probe
 
-run_text_stage "01_py_compile" 300 1 /usr/bin/python3 -m py_compile \
+run_text_stage "01_py_compile" "$PY_COMPILE_TIMEOUT_SECONDS" 1 /usr/bin/python3 -m py_compile \
   v2/runtime/driver.py \
   v2/runtime/role_path.py \
   v2/runtime/smoke.py \
@@ -551,6 +620,7 @@ run_text_stage "01_py_compile" 300 1 /usr/bin/python3 -m py_compile \
   v2/benchmark/fixed_answer_runner.py \
   v2/benchmark/comparator_runner.py \
   v2/benchmark/external_text_baseline.py \
+  v2/benchmark/formal_registry_adapter.py \
   v2/benchmark/task_registry.py \
   v2/benchmark/reporting.py \
   v2/benchmark/models.py \
@@ -595,22 +665,25 @@ for repeat_idx in $(seq 1 "${STATEBUS_LOCAL_API_REPEAT:-1}"); do
   run_live_stage "${repeat_label}_05_formal_api_local_memfd" "$FORMAL_TIMEOUT_SECONDS" 1 "formal" \
     --benchmark-tier formal \
     --state-pool-mode memfd
-  run_live_stage "${repeat_label}_06_formal_compare_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 1 "compare" \
+  run_live_stage "${repeat_label}_06_formal_carrier_compare_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 1 "carrier-compare" \
     --benchmark-tier formal \
     --state-pool-mode memfd
-  run_live_stage "${repeat_label}_07_dev_compare_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 0 "compare" \
+  run_live_stage "${repeat_label}_07_formal_compare_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 1 "compare" \
+    --benchmark-tier formal \
+    --state-pool-mode memfd
+  run_live_stage "${repeat_label}_08_dev_compare_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 0 "compare" \
     --benchmark-tier dev \
     --state-pool-mode memfd
-  run_live_stage "${repeat_label}_08_carrier_compare_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 0 "carrier-compare" \
+  run_live_stage "${repeat_label}_09_carrier_compare_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 0 "carrier-compare" \
     --benchmark-tier dev \
     --state-pool-mode memfd
-  run_live_stage "${repeat_label}_09_continuous_api_local" "$CONTINUOUS_TIMEOUT_SECONDS" 0 "continuous" \
+  run_live_stage "${repeat_label}_10_continuous_api_local" "$CONTINUOUS_TIMEOUT_SECONDS" 0 "continuous" \
     --benchmark-tier dev
-  run_live_stage "${repeat_label}_10_continuous_replay_api_local" "$REPLAY_TIMEOUT_SECONDS" 0 "continuous-replay" \
+  run_live_stage "${repeat_label}_11_continuous_replay_api_local" "$REPLAY_TIMEOUT_SECONDS" 0 "continuous-replay" \
     --benchmark-tier dev
-  run_live_stage "${repeat_label}_11_replay_negative_api_local" "$REPLAY_NEGATIVE_TIMEOUT_SECONDS" 1 "replay-negative-audit"
+  run_live_stage "${repeat_label}_12_replay_negative_api_local" "$REPLAY_NEGATIVE_TIMEOUT_SECONDS" 1 "replay-negative-audit"
   if [[ "${STATEBUS_LOCAL_API_RUN_FLAGSHIP:-0}" == "1" ]]; then
-    run_live_stage "${repeat_label}_12_flagship_ablation_api_local" "$FLAGSHIP_TIMEOUT_SECONDS" 0 "flagship-ablation"
+    run_live_stage "${repeat_label}_13_flagship_ablation_api_local" "$FLAGSHIP_TIMEOUT_SECONDS" 0 "flagship-ablation"
   fi
 done
 
@@ -756,6 +829,11 @@ def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "formal_external_claim_kind": metadata.get("formal_external_claim_kind"),
                 "formal_superiority_claim_allowed": metadata.get("formal_superiority_claim_allowed"),
                 "formal_efficiency_claim_allowed": metadata.get("formal_efficiency_claim_allowed"),
+                "serialized_latency_superiority_claim_allowed": metadata.get(
+                    "serialized_latency_superiority_claim_allowed"
+                ),
+                "timing_execution_contract": metadata.get("timing_execution_contract"),
+                "comparator_token_split_schema": metadata.get("comparator_token_split_schema"),
                 "formal_headline_eligible": metadata.get("formal_headline_eligible"),
                 "api_comparison_valid": comparison.get("api_comparison_valid"),
                 "api_strict_equal_quality_comparison_valid": comparison.get(
@@ -765,9 +843,20 @@ def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
                     "api_quality_superiority_comparison_valid"
                 ),
                 "api_llm_total_tokens_delta": comparison.get("api_llm_total_tokens_delta"),
+                "api_statebus_prompt_tokens": comparison.get("api_statebus_prompt_tokens"),
+                "api_external_prompt_tokens": comparison.get("api_external_prompt_tokens"),
+                "api_prompt_tokens_delta": comparison.get("api_prompt_tokens_delta"),
+                "api_statebus_completion_tokens": comparison.get("api_statebus_completion_tokens"),
+                "api_external_completion_tokens": comparison.get("api_external_completion_tokens"),
+                "api_completion_tokens_delta": comparison.get("api_completion_tokens_delta"),
+                "api_statebus_llm_total_tokens": comparison.get("api_statebus_llm_total_tokens"),
+                "api_external_llm_total_tokens": comparison.get("api_external_llm_total_tokens"),
                 "api_prompt_bytes_delta": comparison.get("api_prompt_bytes_delta"),
                 "api_control_bytes_delta": comparison.get("api_control_bytes_delta"),
                 "api_task_ms_delta": comparison.get("api_task_ms_delta"),
+                "api_serialized_latency_superiority_claim_allowed": comparison.get(
+                    "api_serialized_latency_superiority_claim_allowed"
+                ),
                 "external_fairness_gate_coverage": fairness.get("external_fairness_gate_coverage"),
                 "no_external_fairness_gate_failures": fairness.get("no_external_fairness_gate_failures"),
                 "external_fairness_gate_pass_count": fairness.get("external_fairness_gate_pass_count"),
@@ -818,6 +907,9 @@ def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
             {
                 "stress_family_count": stress.get("stress_family_count"),
                 "stress_pass_family_count": stress.get("stress_pass_family_count"),
+                "stress_fail_family_count": stress.get("stress_fail_family_count"),
+                "diagnostic_only_family_count": stress.get("diagnostic_only_family_count"),
+                "stress_failure_reason_counts": stress.get("stress_failure_reason_counts"),
                 "total_llm_prompt_saved_by_state_ref_bytes": stress.get(
                     "total_llm_prompt_saved_by_state_ref_bytes"
                 ),
@@ -840,6 +932,10 @@ def sample_index() -> dict[str, dict[str, Any]]:
             payload = load_json(str(path))
             if isinstance(payload, dict) and payload.get("task_id"):
                 samples[str(payload["task_id"])] = payload
+    for path in Path("tasks/formal").glob("*/samples/*.json"):
+        payload = load_json(str(path))
+        if isinstance(payload, dict) and payload.get("task_id"):
+            samples[str(payload["task_id"])] = payload
     return samples
 
 
@@ -851,11 +947,23 @@ def expected_case_fields(task_id: str) -> dict[str, Any]:
     expected_facts = sample.get("expected_facts") if isinstance(sample.get("expected_facts"), dict) else {}
     canonical = sample.get("canonical_task_spec") if isinstance(sample.get("canonical_task_spec"), dict) else {}
     arguments = canonical.get("arguments") if isinstance(canonical.get("arguments"), dict) else {}
+    metric_name = expected_facts.get("metric_name") or arguments.get("metric")
+    metric_value = expected_facts.get("metric_value", expected_facts.get("revenue_value"))
+    if not metric_name or metric_value is None:
+        for key, value in expected_facts.items():
+            key_text = str(key)
+            if key_text in {"selected_doc_hashes", "metric_name", "metric_value", "revenue_value"}:
+                continue
+            if key_text.endswith("_ref") or key_text.endswith("_artifact_ref"):
+                continue
+            metric_name = metric_name or key_text
+            metric_value = value
+            break
     return {
         "route": sample.get("expected_route"),
         "tool_name": sample.get("expected_tool_name"),
-        "metric_name": expected_facts.get("metric_name") or arguments.get("metric"),
-        "metric_value": expected_facts.get("metric_value", expected_facts.get("revenue_value")),
+        "metric_name": metric_name,
+        "metric_value": metric_value,
         "legacy_revenue_value": expected_facts.get("revenue_value"),
         "selected_doc_hashes": expected_facts.get("selected_doc_hashes", []),
     }

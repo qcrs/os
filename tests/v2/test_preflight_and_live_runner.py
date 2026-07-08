@@ -215,6 +215,71 @@ def test_live_runner_threads_statebus_mode_to_dev_compare_suite(
     assert payload["benchmark_tier"] == "dev"
 
 
+def test_live_runner_formal_compare_uses_registered_fixed_answer_adapter(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    sentinel_samples = ["formal-fixed-answer-registry"]
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.load_registered_formal_fixed_answer_samples",
+        lambda: sentinel_samples,
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.load_fixed_answer_family",
+        lambda _: (_ for _ in ()).throw(AssertionError("formal default compare should use registry adapter")),
+    )
+
+    def fake_compare_fixed_answer_with_external(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkComparatorSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family="formal_registry",
+            mode_reports=(),
+            comparison_summary={},
+            metadata={
+                "formal_compare_case_count": 25,
+                "formal_compare_family_count": 5,
+                "formal_compare_full_registry_coverage": True,
+            },
+            benchmark_tier="formal",
+            report_path=str(tmp_path / "formal-compare-report.json"),
+            markdown_report_path=str(tmp_path / "formal-compare-report.md"),
+        )
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.compare_fixed_answer_with_external",
+        fake_compare_fixed_answer_with_external,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "compare",
+            "--benchmark-tier",
+            "formal",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+        ],
+    )
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["samples"] == sentinel_samples
+    assert captured["benchmark_tier"] == "formal"
+    assert payload["formal_compare_case_count"] == 25
+    assert payload["formal_compare_family_count"] == 5
+    assert payload["formal_compare_full_registry_coverage"] is True
+
+
 def test_live_runner_threads_persistence_profile_to_compare_suite(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -313,6 +378,70 @@ def test_live_runner_routes_carrier_compare_suite(
     assert captured["statebus_mode"] == "cold-start"
     assert captured["benchmark_tier"] == "dev"
     assert payload["suite_id"] == "statebus-v2-benchmark-cold-start-carrier-compare"
+
+
+def test_live_runner_routes_formal_carrier_compare_to_registry_adapter(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    sentinel_samples = ["formal-carrier-registry"]
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.load_registered_formal_fixed_answer_samples",
+        lambda: sentinel_samples,
+    )
+
+    def fake_run_fixed_answer_internal_carrier_compare_suite(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkComparatorSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family="formal_registry",
+            mode_reports=(),
+            comparison_summary={},
+            metadata={
+                "formal_compare_case_count": 25,
+                "formal_compare_family_count": 5,
+                "formal_compare_full_registry_coverage": True,
+                "formal_text_protocol_benchmark": True,
+            },
+            benchmark_tier="formal",
+            report_path=str(tmp_path / "formal-carrier-report.json"),
+            markdown_report_path=str(tmp_path / "formal-carrier-report.md"),
+        )
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_fixed_answer_internal_carrier_compare_suite",
+        fake_run_fixed_answer_internal_carrier_compare_suite,
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_minimal_benchmark_suite",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("formal carrier compare should not use minimal ladder")),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "carrier-compare",
+            "--benchmark-tier",
+            "formal",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+        ],
+    )
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["samples"] == sentinel_samples
+    assert captured["benchmark_tier"] == "formal"
+    assert payload["formal_text_protocol_benchmark"] is True
 
 
 def test_live_runner_routes_flagship_ablation_suite(
