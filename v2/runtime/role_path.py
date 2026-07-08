@@ -27,6 +27,10 @@ PREFIX_LAYOUT_CLAIM_BOUNDARY = (
 )
 
 
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _run_sync(awaitable: Any) -> Any:
     return asyncio.run(awaitable)
 
@@ -876,6 +880,7 @@ class RolePathRunner:
     prefix_alignment_mode: str = field(
         default_factory=lambda: os.getenv("STATEBUS_PREFIX_ALIGNMENT_MODE", "independent")
     )
+    lean_completion_enabled: bool = field(default_factory=lambda: _env_flag("STATEBUS_LEAN_COMPLETION"))
 
     def _render_prompt(
         self,
@@ -900,6 +905,40 @@ class RolePathRunner:
             shared_prefix_text=shared_prefix_text,
         )
         return compiled.prompt
+
+    def _planner_instruction(self) -> str:
+        if self.lean_completion_enabled:
+            return (
+                "Return exactly one compact JSON object (json only). Prefer compact workflow keys r, x, and s; "
+                "omit retrieval_objective, verbose step metadata, and empty fields."
+            )
+        return "Return a JSON object with stable retrieval_objective and steps."
+
+    def _retriever_instruction(self) -> str:
+        return (
+            "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
+            "exactly from a single visible tc item. Treat pc as the default tie-break when multiple tc "
+            "items look plausible and the hydrated evidence does not clearly contradict pc or its route "
+            "hints. Do not invent labels or use placeholders such as 'tool' or 'route'. Return a JSON "
+            "object with keys candidate_key, route, tool_name, supporting_doc_ids, and reason."
+        )
+
+    def _executor_instruction(self) -> str:
+        return (
+            "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
+            "and tool_name exactly from a single visible tc item. Treat pc as the default tie-break when "
+            "multiple tc items share the same tool and the hydrated evidence does not clearly contradict pc "
+            "or its route hints. Do not invent labels or use placeholders such as 'tool' or 'route'. "
+            "Return a JSON object with keys candidate_key, route, tool_name, action_contract, and reason."
+        )
+
+    def _summarizer_instruction(self) -> str:
+        if self.lean_completion_enabled:
+            return (
+                "Return exactly one compact JSON object (json only) with key s for the summary text. "
+                "Omit reusable_steps, confidence, and tags unless they materially change the answer."
+            )
+        return "Return JSON with summary text, reusable steps, confidence, and tags."
 
     def _complete_json_role(
         self,
@@ -1090,6 +1129,7 @@ class RolePathRunner:
         required_roles: tuple[str, ...] = ("retrieve", "execute", "summarize"),
     ) -> PlannerRoleResult:
         prompt_slice = prompt_slice or RolePromptSlice(role="planner")
+        instruction = self._planner_instruction()
         _, _candidate_notes = _candidate_surface_payload(
             visible_candidates,
             include_helper_fields=not strict_surface,
@@ -1108,7 +1148,7 @@ class RolePathRunner:
             payload["e"] = evidence_text
         prompt = self._render_prompt(
             role_label="planner",
-            instruction="Return a JSON object with stable retrieval_objective and steps.",
+            instruction=instruction,
             payload_tag="sb-plan-v1",
             payload=payload,
             text_sections=(
@@ -1130,7 +1170,7 @@ class RolePathRunner:
         ):
             prompt = (
                 "You are the StateBus v2 planner role.\n"
-                "Return a JSON object with stable retrieval_objective and steps.\n\n"
+                f"{instruction}\n\n"
                 f"Task ID: {task_id}\n"
                 f"Task group: {task_group}\n"
                 f"Task theme: {task_theme}\n"
@@ -1177,6 +1217,7 @@ class RolePathRunner:
         route_hints: tuple[str, ...] = (),
     ) -> RetrieverRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="retriever")
+        instruction = self._retriever_instruction()
         candidate_payload, _candidate_notes = _candidate_surface_payload(
             visible_candidates,
             include_helper_fields=not strict_surface,
@@ -1199,13 +1240,7 @@ class RolePathRunner:
             payload["e"] = evidence_text
         prompt = self._render_prompt(
             role_label="retriever",
-            instruction=(
-                "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
-                "exactly from a single visible tc item. Treat pc as the default tie-break when multiple tc "
-                "items look plausible and the hydrated evidence does not clearly contradict pc or its route "
-                "hints. Do not invent labels or use placeholders such as 'tool' or 'route'. Return a JSON "
-                "object with keys candidate_key, route, tool_name, supporting_doc_ids, and reason."
-            ),
+            instruction=instruction,
             payload_tag="sb-retriever-v1",
             payload=payload,
             text_sections=(
@@ -1222,9 +1257,7 @@ class RolePathRunner:
         ):
             prompt = (
                 "You are the StateBus v2 retriever role.\n"
-                "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
-                "exactly from one visible candidate and return JSON. Do not use placeholders such as "
-                "'tool' or 'route'.\n\n"
+                f"{instruction}\n\n"
                 f"Query: {query_text}\n"
                 f"Retrieved docs: {','.join(retrieved_doc_ids)}\n"
                 f"Visible candidates: {_candidate_identity_line(visible_candidates)}\n"
@@ -1291,6 +1324,7 @@ class RolePathRunner:
         route_hints: tuple[str, ...] = (),
     ) -> ExecutorRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="executor")
+        instruction = self._executor_instruction()
         candidate_payload, _candidate_notes = _candidate_surface_payload(
             visible_candidates,
             include_helper_fields=not strict_surface,
@@ -1314,13 +1348,7 @@ class RolePathRunner:
             payload["e"] = evidence_text
         prompt = self._render_prompt(
             role_label="executor",
-            instruction=(
-                "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
-                "and tool_name exactly from a single visible tc item. Treat pc as the default tie-break when "
-                "multiple tc items share the same tool and the hydrated evidence does not clearly contradict pc "
-                "or its route hints. Do not invent labels or use placeholders such as 'tool' or 'route'. "
-                "Return a JSON object with keys candidate_key, route, tool_name, action_contract, and reason."
-            ),
+            instruction=instruction,
             payload_tag="sb-executor-v1",
             payload=payload,
             text_sections=(
@@ -1338,9 +1366,7 @@ class RolePathRunner:
         ):
             prompt = (
                 "You are the StateBus v2 executor role.\n"
-                "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
-                "and tool_name exactly from one visible candidate and return JSON. Do not use placeholders "
-                "such as 'tool' or 'route'.\n\n"
+                f"{instruction}\n\n"
                 f"Route: {route}\n"
                 f"Tool: {tool_name}\n"
                 f"Validated route: {route}\n"
@@ -1410,6 +1436,7 @@ class RolePathRunner:
         reusable_steps: tuple[str, ...] = ("retrieve", "execute"),
     ) -> SummarizerRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="summarizer")
+        instruction = self._summarizer_instruction()
         payload = {
             "tf": task_theme,
             "h": summary_hint,
@@ -1424,7 +1451,7 @@ class RolePathRunner:
             payload["a"] = compact_actions_text
         prompt = self._render_prompt(
             role_label="summarizer",
-            instruction="Return JSON with summary text, reusable steps, confidence, and tags.",
+            instruction=instruction,
             payload_tag="sb-summary-v1",
             payload=payload,
             text_sections=(
@@ -1443,7 +1470,7 @@ class RolePathRunner:
         ):
             prompt = (
                 "You are the StateBus v2 summarizer role.\n"
-                "Return JSON with summary text, reusable steps, confidence, and tags.\n\n"
+                f"{instruction}\n\n"
                 f"Task ID: {task_id}\n"
                 f"Task theme: {task_theme}\n"
                 f"Tags: {', '.join(tags)}\n"
@@ -1456,14 +1483,15 @@ class RolePathRunner:
         result = completion.result
         payload = completion.payload
         summary_text = str(payload.get("summary", payload.get("s", ""))).strip()
-        reusable = payload.get("reusable_steps", payload.get("r", []))
-        tags_payload = payload.get("tags", payload.get("t", []))
-        confidence = _coerce_confidence(payload.get("confidence", payload.get("c", 0.0)))
+        reusable = _coerce_string_tuple(payload.get("reusable_steps", payload.get("r", [])))
+        tags_payload = _coerce_string_tuple(payload.get("tags", payload.get("t", [])))
+        confidence_raw = payload.get("confidence", payload.get("c"))
+        confidence = _coerce_confidence(confidence_raw) if confidence_raw not in (None, "") else 0.0
         return SummarizerRoleDecision(
             summary_text=summary_text,
-            reusable_steps=tuple(str(item) for item in reusable if str(item).strip()),
+            reusable_steps=reusable or tuple(str(item) for item in reusable_steps if str(item).strip()),
             confidence=confidence,
-            tags=tuple(str(item) for item in tags_payload if str(item).strip()),
+            tags=tags_payload or tuple(str(item) for item in tags if str(item).strip()),
             raw_text=result.text,
             model=result.model,
             prompt_tokens=result.usage.prompt_tokens,

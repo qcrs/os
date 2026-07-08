@@ -56,6 +56,13 @@ def _statebus_completion_tokens(report: BenchmarkFamilyReport) -> float:
     return _metric(report, "completion_tokens") or _metric(report, "llm_completion_tokens")
 
 
+def _statebus_role_completion_tokens(report: BenchmarkFamilyReport) -> dict[str, float]:
+    return {
+        role: _metric(report, f"{role}_completion_tokens")
+        for role in ("planner", "retriever", "executor", "summarizer")
+    }
+
+
 def _env_int(name: str, default: int) -> int:
     value = os.getenv(name, "").strip()
     if not value:
@@ -73,6 +80,7 @@ def _build_debug_metrics(
 ) -> dict[str, float]:
     if statebus_report.missing_reason or external_report.missing_reason:
         return {}
+    statebus_role_completion_tokens = _statebus_role_completion_tokens(statebus_report)
     statebus_prompt_tokens = _statebus_prompt_tokens(statebus_report)
     external_prompt_tokens = _metric(external_report, "prompt_tokens")
     statebus_completion_tokens = _statebus_completion_tokens(statebus_report)
@@ -94,6 +102,10 @@ def _build_debug_metrics(
         "statebus_completion_tokens": statebus_completion_tokens,
         "external_completion_tokens": external_completion_tokens,
         "completion_tokens_delta": statebus_completion_tokens - external_completion_tokens,
+        "statebus_planner_completion_tokens": statebus_role_completion_tokens["planner"],
+        "statebus_retriever_completion_tokens": statebus_role_completion_tokens["retriever"],
+        "statebus_executor_completion_tokens": statebus_role_completion_tokens["executor"],
+        "statebus_summarizer_completion_tokens": statebus_role_completion_tokens["summarizer"],
         "statebus_llm_total_tokens": statebus_total_tokens,
         "external_llm_total_tokens": external_total_tokens,
         "llm_total_tokens_delta": statebus_total_tokens - external_total_tokens,
@@ -572,6 +584,12 @@ def run_fixed_answer_external_comparator_suite(
             "statebus_completion_tokens": debug_metrics.get("statebus_completion_tokens", 0.0),
             "external_completion_tokens": debug_metrics.get("external_completion_tokens", 0.0),
             "completion_tokens_delta": debug_metrics.get("completion_tokens_delta", 0.0),
+            "statebus_planner_completion_tokens": debug_metrics.get("statebus_planner_completion_tokens", 0.0),
+            "statebus_retriever_completion_tokens": debug_metrics.get("statebus_retriever_completion_tokens", 0.0),
+            "statebus_executor_completion_tokens": debug_metrics.get("statebus_executor_completion_tokens", 0.0),
+            "statebus_summarizer_completion_tokens": debug_metrics.get(
+                "statebus_summarizer_completion_tokens", 0.0
+            ),
             "statebus_llm_total_tokens": debug_metrics.get("statebus_llm_total_tokens", 0.0),
             "external_llm_total_tokens": debug_metrics.get("external_llm_total_tokens", 0.0),
             "llm_total_tokens_delta": debug_metrics.get("llm_total_tokens_delta", 0.0),

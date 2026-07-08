@@ -2755,6 +2755,7 @@ def run_smoke(
                 if isinstance(planner_scope_payload.get("history_artifact_summaries", []), list)
                 else 0
             ),
+            "lean_completion_enabled": 1.0 if role_path_runner.lean_completion_enabled else 0.0,
             "llm_prompt_bytes": float(
                 planner_result.prompt_bytes
                 + retriever_decision.prompt_bytes
@@ -2773,6 +2774,10 @@ def run_smoke(
                 + executor_decision.completion_tokens
                 + summarizer_decision.completion_tokens
             ),
+            "planner_completion_tokens": float(planner_result.completion_tokens),
+            "retriever_completion_tokens": float(retriever_decision.completion_tokens),
+            "executor_completion_tokens": float(executor_decision.completion_tokens),
+            "summarizer_completion_tokens": float(summarizer_decision.completion_tokens),
             "llm_total_tokens": float(
                 planner_result.total_tokens
                 + retriever_decision.total_tokens
