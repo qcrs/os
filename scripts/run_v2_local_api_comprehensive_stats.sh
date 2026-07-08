@@ -704,6 +704,10 @@ for repeat_idx in $(seq 1 "${STATEBUS_LOCAL_API_REPEAT:-1}"); do
   if [[ "${STATEBUS_LOCAL_API_RUN_FLAGSHIP:-0}" == "1" ]]; then
     run_live_stage "${repeat_label}_13_flagship_ablation_api_local" "$FLAGSHIP_TIMEOUT_SECONDS" 0 "flagship-ablation"
   fi
+  run_live_stage "${repeat_label}_14_subprocess_formal_api_local_memfd" "$FORMAL_TIMEOUT_SECONDS" 0 "formal" \
+    --benchmark-tier formal \
+    --state-pool-mode memfd \
+    --transport subprocess
 done
 
 if [[ "${STATEBUS_LOCAL_API_LATENCY_RERUN:-0}" == "1" ]]; then
@@ -864,6 +868,7 @@ def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "api_summarizer_call_count": telemetry.get("summarizer_call_count"),
                 "formal_text_protocol_benchmark": payload.get("formal_text_protocol_benchmark")
                 or metadata.get("formal_text_protocol_benchmark"),
+                "transport": payload.get("transport", metadata.get("transport")),
                 "text_L0_total_tokens": comparison.get("text_L0_total_tokens", l0_telemetry.get("llm_total_tokens")),
                 "text_L0_prompt_tokens": comparison.get(
                     "text_L0_prompt_tokens", l0_telemetry.get("llm_prompt_tokens")

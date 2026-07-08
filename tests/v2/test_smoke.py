@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import platform
 from pathlib import Path
+
+import pytest
 
 from runtime.llm import LLMResult, LLMUsage
 from v2.contracts import CanonicalTaskSpec
@@ -354,6 +357,58 @@ def test_v2_smoke_formal_single_attempt_profile_is_distinct_from_resilience(tmp_
     assert result.quality_floor.quality_floor_pass is True
     assert result.task_metrics["handoff_mode_text_collaboration"] == 0.0
     assert result.task_metrics["handoff_mode_structured_collaboration"] == 1.0
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux",
+    reason="subprocess transport + memfd validation is Linux-only",
+)
+def test_v2_smoke_subprocess_transport_avoids_loopback(tmp_path: Path, monkeypatch) -> None:
+    calls = {"subprocess_exchange_count": 0}
+
+    def _unexpected_loopback(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("loopback transport should not be used when executor_transport=subprocess")
+
+    from v2.control.transport import SubprocessExecutorTransport
+
+    original_exchange = SubprocessExecutorTransport.exchange_sequence
+
+    def _recording_exchange(self, request, *, memfd_refs=None):
+        calls["subprocess_exchange_count"] += 1
+        return original_exchange(self, request, memfd_refs=memfd_refs)
+
+    monkeypatch.setattr(
+        "v2.runtime.driver.ControlPlaneLoopbackServer.exchange_sequence_by_contract",
+        _unexpected_loopback,
+    )
+    monkeypatch.setattr(
+        "v2.runtime.driver.SubprocessExecutorTransport.exchange_sequence",
+        _recording_exchange,
+    )
+
+    result = run_smoke(
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        layer_config=SmokeLayerConfig(
+            layer_name="L3-subprocess",
+            structured_control_enabled=True,
+            semantic_pruning_enabled=True,
+            replay_enabled=False,
+            multi_attempt_enabled=False,
+            force_first_attempt_trap=False,
+            state_pool_mode="memfd",
+            executor_transport="subprocess",
+        ),
+    )
+
+    assert calls["subprocess_exchange_count"] == 1
+    assert result.response_sequence == ("ACK_RECV", "RUN_START", "HEARTBEAT", "RES_SUCC")
+    assert result.quality_floor.quality_floor_pass is True
+    assert result.task_metrics["control_message_count"] == 4.0
+    assert result.task_metrics["semantic_state_transfer_count"] == 1.0
+    assert result.state_storage_kind in {"memfd", "shared_memory"}
 
 
 def test_v2_smoke_aggregates_role_path_token_usage(tmp_path: Path, monkeypatch) -> None:

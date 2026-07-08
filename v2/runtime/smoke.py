@@ -319,6 +319,7 @@ class SmokeLayerConfig:
     embedding_mode: str = "deterministic"
     state_pool_mode: str = "auto"
     persistence_profile: str = "audit_full"
+    executor_transport: str = "loopback"
 
 
 @dataclass(frozen=True)
@@ -1730,6 +1731,7 @@ def _driver_profile_from_layer_config(layer_config: SmokeLayerConfig) -> Runtime
         force_first_attempt_trap=layer_config.force_first_attempt_trap,
         persistence_verification_level="strict_roundtrip",
         persistence_profile=layer_config.persistence_profile,
+        executor_transport=layer_config.executor_transport,
     )
 
 
@@ -2755,7 +2757,7 @@ def run_smoke(
                 if isinstance(planner_scope_payload.get("history_artifact_summaries", []), list)
                 else 0
             ),
-            "lean_completion_enabled": 1.0 if role_path_runner.lean_completion_enabled else 0.0,
+            "lean_completion_enabled": 1.0 if getattr(role_path_runner, "lean_completion_enabled", False) else 0.0,
             "llm_prompt_bytes": float(
                 planner_result.prompt_bytes
                 + retriever_decision.prompt_bytes

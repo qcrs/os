@@ -178,6 +178,80 @@ def test_live_runner_formal_suite_uses_formal_family_by_default(
     assert payload["protocol_L3_quality_pass_count"] == 25.0
 
 
+def test_live_runner_formal_suite_threads_subprocess_transport(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr("v2.benchmark.live_runner.load_sample_family", lambda _: [])
+
+    profile = BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L3,
+        description="formal financial family",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=True,
+    )
+
+    def fake_run_minimal_benchmark_suite(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family="financial_report_analysis",
+            layer_reports=(
+                BenchmarkFamilyReport(
+                    suite_id="formal",
+                    layer=BenchmarkLayer.L3,
+                    task_family="financial_report_analysis",
+                    profile=profile,
+                    cases=(),
+                    metadata={"benchmark_tier": "formal"},
+                ),
+            ),
+            waterfall_metrics={},
+            comparison_summary={},
+            metadata={
+                "benchmark_tier": "formal",
+                "transport": str(kwargs["executor_transport"]),
+                "state_pool_mode_requested": str(kwargs["state_pool_mode"]),
+                "state_pool_mode_used": "memfd",
+                "memfd_transfer_count": 1.0,
+                "memfd_publish_count": 1.0,
+                "memfd_bytes_transferred": 1024.0,
+            },
+            family_case_count=0,
+            report_path=str(tmp_path / "statebus-report.json"),
+        )
+
+    monkeypatch.setattr("v2.benchmark.live_runner.run_minimal_benchmark_suite", fake_run_minimal_benchmark_suite)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "formal",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+            "--state-pool-mode",
+            "memfd",
+            "--transport",
+            "subprocess",
+        ],
+    )
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["executor_transport"] == "subprocess"
+    assert payload["transport"] == "subprocess"
+
+
 def test_live_runner_threads_statebus_mode_to_dev_compare_suite(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

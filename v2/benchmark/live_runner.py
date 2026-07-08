@@ -208,6 +208,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("audit_full", "benchmark_balanced"),
         help="audit persistence profile",
     )
+    parser.add_argument(
+        "--transport",
+        default="loopback",
+        choices=("loopback", "subprocess"),
+        help="executor control-plane transport for supported suites",
+    )
     return parser
 
 
@@ -245,6 +251,9 @@ def main() -> None:
     if not preflight.ok:
         print(stable_json_dumps(preflight.canonical_payload()))
         raise SystemExit(2)
+
+    if args.transport != "loopback" and not (args.suite == "formal" and args.benchmark_tier == "formal"):
+        raise SystemExit("--transport is currently only supported for --suite formal --benchmark-tier formal")
 
     family_dir = _resolved_family_dir(args)
     if args.suite == "replay-negative-audit":
@@ -375,6 +384,7 @@ def main() -> None:
                 claim_level="first_pass",
                 state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
+                executor_transport=args.transport,
             )
             payload = suite_report_to_dict(formal_report)
             payload["formal_registry"] = formal_family_payload()
