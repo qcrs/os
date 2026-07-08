@@ -18,6 +18,7 @@ from v2.control import (
     RefHandle,
     ReusePolicy,
     RunStart,
+    SubprocessExecutorTransport,
     SuccessResult,
     TrapFatal,
     frame_control_message,
@@ -87,6 +88,7 @@ class RuntimeDriverProfile:
     simulate_lease_timeout: bool = False
     persistence_verification_level: str = "strict_roundtrip"
     persistence_profile: str = "audit_full"
+    executor_transport: str = "loopback"
 
 
 class PersistenceVerificationLevel(StrEnum):
@@ -431,7 +433,7 @@ class RuntimeDriver:
                 ),
             )
             exchange_stage_start_ns = time.perf_counter_ns()
-            responses, current_control_bytes = self._exchange_loopback_messages(
+            responses, current_control_bytes = self._exchange_control_messages(
                 runtime_input=runtime_input,
                 current_attempt_id=current_attempt_id,
                 candidate_artifact=candidate_artifact,
@@ -1589,7 +1591,7 @@ class RuntimeDriver:
         )
         return session, _elapsed_ms(stage_start_ns)
 
-    def _exchange_loopback_messages(
+    def _exchange_control_messages(
         self,
         *,
         runtime_input: RuntimeDriverInput,
@@ -1603,9 +1605,28 @@ class RuntimeDriver:
             candidate_artifact=candidate_artifact,
             current_memory_commit=current_memory_commit,
         )
-        responses = ControlPlaneLoopbackServer(runtime_input.socket_path).exchange_sequence_by_contract(
-            loopback_message
-        )
+        if runtime_input.layer_profile.executor_transport == "subprocess":
+            memfd_refs = None
+            if (
+                runtime_input.semantic_ref is not None
+                and runtime_input.semantic_state_handle is not None
+                and runtime_input.semantic_state_handle.storage_kind == StorageKind.MEMFD
+                and runtime_input.semantic_state_handle.memfd_fd is not None
+            ):
+                memfd_refs = {
+                    runtime_input.semantic_ref.state_id: (
+                        runtime_input.semantic_state_handle.memfd_fd,
+                        runtime_input.semantic_state_handle.size_bytes,
+                    )
+                }
+            responses = SubprocessExecutorTransport(
+                socket_path=runtime_input.socket_path,
+                timeout_s=max(loopback_message.header.timeout_ms / 1000.0, 5.0),
+            ).exchange_sequence(loopback_message, memfd_refs=memfd_refs)
+        else:
+            responses = ControlPlaneLoopbackServer(runtime_input.socket_path).exchange_sequence_by_contract(
+                loopback_message
+            )
         control_bytes = (
             float(len(frame_control_message(loopback_message)))
             if runtime_input.layer_profile.structured_control_enabled

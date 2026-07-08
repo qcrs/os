@@ -97,6 +97,8 @@ def suite_report_to_dict(report: BenchmarkSuiteReport) -> dict[str, object]:
         payload["memfd_transfer_count"] = report.metadata.get("memfd_transfer_count", 0.0)
         payload["memfd_publish_count"] = report.metadata.get("memfd_publish_count", 0.0)
         payload["memfd_bytes_transferred"] = report.metadata.get("memfd_bytes_transferred", 0.0)
+    if "transport" in report.metadata:
+        payload["transport"] = report.metadata["transport"]
     if "formal_task_families" in report.metadata:
         payload["families"] = list(report.metadata.get("formal_task_families", []))
         payload["family_count"] = report.metadata.get("formal_task_family_count", len(payload["families"]))

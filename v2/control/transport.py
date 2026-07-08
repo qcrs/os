@@ -303,6 +303,109 @@ class SubprocessExecutorTransport:
     python_executable: str = sys.executable
     timeout_s: float = 30.0
 
+    def exchange_sequence(
+        self,
+        request: ExecRequest,
+        *,
+        memfd_refs: dict[str, tuple[int, int]] | None = None,
+    ) -> list[ControlMessage]:
+        """Start a worker subprocess and return the full response frame sequence."""
+        import os as _os
+
+        pass_fds: tuple[int, ...] = ()
+        exec_request = request
+        if memfd_refs:
+            new_state_refs = []
+            fds_to_pass: list[int] = []
+            for ref in request.state_refs:
+                entry = memfd_refs.get(ref.ref_id)
+                if entry is not None:
+                    fd, length = entry
+                    new_state_refs.append(
+                        encode_memfd_ref(fd=fd, length=length, state_id=ref.ref_id, ref_kind=ref.ref_kind)
+                    )
+                    fds_to_pass.append(fd)
+                else:
+                    new_state_refs.append(ref)
+            existing_ids = {ref.ref_id for ref in request.state_refs}
+            for state_id, (fd, length) in memfd_refs.items():
+                if state_id not in existing_ids:
+                    new_state_refs.append(encode_memfd_ref(fd=fd, length=length, state_id=state_id))
+                    fds_to_pass.append(fd)
+            exec_request = replace(request, state_refs=tuple(new_state_refs))
+            pass_fds = tuple(sorted(set(fds_to_pass)))
+
+        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+
+        responses: list[ControlMessage] = []
+        server_ready = threading.Event()
+
+        def _serve() -> None:
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                server.bind(str(self.socket_path))
+                server.listen(1)
+                server.settimeout(self.timeout_s)
+                server_ready.set()
+                conn, _ = server.accept()
+                try:
+                    send_control_message(conn, exec_request)
+                    while True:
+                        try:
+                            msg = recv_control_message(conn)
+                        except (ConnectionError, ConnectionResetError, socket.timeout):
+                            break
+                        responses.append(msg)
+                        if isinstance(msg, (SuccessResult, ErrorResult)):
+                            break
+                except Exception:
+                    pass
+                finally:
+                    conn.close()
+            finally:
+                server.close()
+                if self.socket_path.exists():
+                    self.socket_path.unlink()
+
+        t = threading.Thread(target=_serve, daemon=True)
+        t.start()
+        server_ready.wait(timeout=2.0)
+
+        worker_root = Path(__file__).resolve().parent.parent.parent
+        proc = subprocess.Popen(
+            [
+                self.python_executable,
+                "-m",
+                "v2.control.subprocess_worker",
+                "--socket-path",
+                str(self.socket_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_os.environ,
+            cwd=str(worker_root),
+            close_fds=True,
+            pass_fds=pass_fds,
+        )
+        t.join(timeout=self.timeout_s)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+        if any(isinstance(msg, (SuccessResult, ErrorResult)) for msg in responses):
+            return responses
+        return responses + [
+            ErrorResult(
+                header=replace(request.header, event_type=EventType.RES_ERR),
+                error_code="subprocess_timeout",
+                error_detail="worker subprocess did not return a result within timeout",
+                failed_at_ns=time.time_ns(),
+            )
+        ]
+
     def execute(
         self,
         request: ExecRequest,
@@ -318,99 +421,9 @@ class SubprocessExecutorTransport:
                 ``memfd_fd:`` handles and the FDs are inherited by the
                 subprocess via ``pass_fds``.
         """
-        import os as _os
-
-        # Rewrite state_refs and collect FDs to inherit.
-        pass_fds: tuple[int, ...] = ()
-        exec_request = request
-        if memfd_refs:
-            new_state_refs = []
-            fds_to_pass: list[int] = []
-            for ref in request.state_refs:
-                entry = memfd_refs.get(ref.ref_id)
-                if entry is not None:
-                    fd, length = entry
-                    new_state_refs.append(encode_memfd_ref(fd=fd, length=length, state_id=ref.ref_id, ref_kind=ref.ref_kind))
-                    fds_to_pass.append(fd)
-                else:
-                    new_state_refs.append(ref)
-            # Also encode any state_ids that appear in memfd_refs but not
-            # already present as explicit state_refs (append as new refs).
-            existing_ids = {ref.ref_id for ref in request.state_refs}
-            for state_id, (fd, length) in memfd_refs.items():
-                if state_id not in existing_ids:
-                    new_state_refs.append(encode_memfd_ref(fd=fd, length=length, state_id=state_id))
-                    fds_to_pass.append(fd)
-            exec_request = replace(request, state_refs=tuple(new_state_refs))
-            pass_fds = tuple(sorted(set(fds_to_pass)))
-
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.socket_path.exists():
-            self.socket_path.unlink()
-
-        result_holder: list[Union[SuccessResult, ErrorResult]] = []
-        server_ready = threading.Event()
-
-        def _serve() -> None:
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                server.bind(str(self.socket_path))
-                server.listen(1)
-                server.settimeout(self.timeout_s)
-                server_ready.set()
-                conn, _ = server.accept()
-                try:
-                    send_control_message(conn, exec_request)
-                    # Drain intermediate frames (ACK, RUN_START, HEARTBEAT).
-                    final = None
-                    for _ in range(4):
-                        try:
-                            msg = recv_control_message(conn)
-                        except (ConnectionError, ConnectionResetError):
-                            break
-                        if isinstance(msg, (SuccessResult, ErrorResult)):
-                            final = msg
-                            break
-                    if final is not None and isinstance(final, (SuccessResult, ErrorResult)):
-                        result_holder.append(final)
-                except Exception:
-                    pass
-                finally:
-                    conn.close()
-            finally:
-                server.close()
-                if self.socket_path.exists():
-                    self.socket_path.unlink()
-
-        t = threading.Thread(target=_serve, daemon=True)
-        t.start()
-        server_ready.wait(timeout=2.0)
-
-        # Determine project root (parent of the v2/ package directory)
-        _worker_file = Path(__file__).resolve().parent.parent.parent
-        proc = subprocess.Popen(
-            [
-                self.python_executable,
-                "-m",
-                "v2.control.subprocess_worker",
-                "--socket-path",
-                str(self.socket_path),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_os.environ,
-            cwd=str(_worker_file),
-            close_fds=True,
-            pass_fds=pass_fds,
-        )
-        t.join(timeout=self.timeout_s)
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-        if result_holder:
-            return result_holder[0]
+        for response in self.exchange_sequence(request, memfd_refs=memfd_refs):
+            if isinstance(response, (SuccessResult, ErrorResult)):
+                return response
         return ErrorResult(
             header=replace(request.header, event_type=EventType.RES_ERR),
             error_code="subprocess_timeout",

@@ -222,6 +222,7 @@ def run_minimal_benchmark(
     seed_replay_memory: bool = False,
     state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
+    executor_transport: str = "loopback",
 ) -> tuple[SmokeResult, BenchmarkRunReport]:
     _prepare_case_root(workspace_root)
     _prepare_case_root(runtime_root)
@@ -232,6 +233,7 @@ def run_minimal_benchmark(
             "embedding_mode": embedding_mode,
             "state_pool_mode": state_pool_mode,
             "persistence_profile": persistence_profile,
+            "executor_transport": executor_transport,
         }
     )
     smoke = run_smoke(
@@ -263,6 +265,7 @@ def run_minimal_benchmark_family(
     claim_level: str = "first_pass",
     state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
+    executor_transport: str = "loopback",
 ) -> BenchmarkFamilyReport:
     profile = LAYER_PROFILES[layer]
     cases: list[BenchmarkCaseReport] = []
@@ -286,6 +289,7 @@ def run_minimal_benchmark_family(
                     "embedding_mode": embedding_mode,
                     "state_pool_mode": state_pool_mode,
                     "persistence_profile": persistence_profile,
+                    "executor_transport": executor_transport,
                 }
             ),
             expected_facts=sample.expected_facts,
@@ -338,6 +342,7 @@ def run_minimal_benchmark_family(
             "role_graph": "planner->retriever->executor->summarizer",
             "role_path_mode": role_path_mode,
             "state_pool_mode": state_pool_mode,
+            "transport": executor_transport,
             "scoring_contract": "statebus_smoke_quality_floor_v1",
             "seed_replay_memory": seed_replay_memory,
             "task_family_tier": "formal_financial",
@@ -363,6 +368,7 @@ def run_minimal_benchmark_suite(
     claim_level: str = "first_pass",
     state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
+    executor_transport: str = "loopback",
 ) -> BenchmarkSuiteReport:
     seed_replay_memory_by_layer = seed_replay_memory_by_layer or {}
     layer_reports = tuple(
@@ -380,6 +386,7 @@ def run_minimal_benchmark_suite(
             claim_level=claim_level,
             state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
+            executor_transport=executor_transport,
         )
         for layer in BenchmarkLayer
     )
@@ -499,6 +506,7 @@ def run_minimal_benchmark_suite(
             "comparison_contract": "same_mainline_internal_attribution_ladder",
             "ladder_claim_scope": "internal_attribution_only_not_external_superiority",
             "role_path_mode": role_path_mode,
+            "transport": executor_transport,
             "state_pool_mode_requested": state_pool_mode,
             "state_pool_mode_used": state_pool_mode_used,
             "memfd_transfer_count": l3_report.telemetry_summary.get("memfd_transfer_count", 0.0),
