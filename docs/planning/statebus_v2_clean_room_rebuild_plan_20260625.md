@@ -152,7 +152,7 @@
 - `text_whole_lane`
 - `state_packet_minimal`
 
-见 [docs/reader_guide/05_text_vs_statebus_comparison_methodology.md](/home/qcrs/statebus/project/docs/reader_guide/05_text_vs_statebus_comparison_methodology.md)。
+见 [docs/archive/legacy_202606_host_mainline/reader_guide/05_text_vs_statebus_comparison_methodology.md](/home/qcrs/statebus/project/docs/archive/legacy_202606_host_mainline/reader_guide/05_text_vs_statebus_comparison_methodology.md)。
 
 这意味着当前比较更像：
 
@@ -207,8 +207,8 @@
 见：
 
 - [runtime/reuse_contract.py](/home/qcrs/statebus/project/runtime/reuse_contract.py)
-- [docs/reports/current_architecture_overview_20260622.md](/home/qcrs/statebus/project/docs/reports/current_architecture_overview_20260622.md)
-- [docs/review/three_way_system_audit_20260625.md](/home/qcrs/statebus/project/docs/review/three_way_system_audit_20260625.md)
+- [docs/archive/legacy_202606_host_mainline/reports/current_architecture_overview_20260622.md](/home/qcrs/statebus/project/docs/archive/legacy_202606_host_mainline/reports/current_architecture_overview_20260622.md)
+- [docs/archive/legacy_202606_host_mainline/review/three_way_system_audit_20260625.md](/home/qcrs/statebus/project/docs/archive/legacy_202606_host_mainline/review/three_way_system_audit_20260625.md)
 
 也就是说，之前 token 节省不大，一个关键原因是：
 
@@ -2537,9 +2537,9 @@ Dashboard 已经很具体，但后端事件流还不够具体。
 
 - [some_think.md](/home/qcrs/statebus/project/some_think.md)
 - [README.md](/home/qcrs/statebus/project/README.md)
-- [docs/review/three_way_system_audit_20260625.md](/home/qcrs/statebus/project/docs/review/three_way_system_audit_20260625.md)
-- [docs/reports/current_architecture_overview_20260622.md](/home/qcrs/statebus/project/docs/reports/current_architecture_overview_20260622.md)
-- [docs/reader_guide/05_text_vs_statebus_comparison_methodology.md](/home/qcrs/statebus/project/docs/reader_guide/05_text_vs_statebus_comparison_methodology.md)
+- [docs/archive/legacy_202606_host_mainline/review/three_way_system_audit_20260625.md](/home/qcrs/statebus/project/docs/archive/legacy_202606_host_mainline/review/three_way_system_audit_20260625.md)
+- [docs/archive/legacy_202606_host_mainline/reports/current_architecture_overview_20260622.md](/home/qcrs/statebus/project/docs/archive/legacy_202606_host_mainline/reports/current_architecture_overview_20260622.md)
+- [docs/archive/legacy_202606_host_mainline/reader_guide/05_text_vs_statebus_comparison_methodology.md](/home/qcrs/statebus/project/docs/archive/legacy_202606_host_mainline/reader_guide/05_text_vs_statebus_comparison_methodology.md)
 - [runtime/reuse_contract.py](/home/qcrs/statebus/project/runtime/reuse_contract.py)
 - [statepool/store.py](/home/qcrs/statebus/project/statepool/store.py)
 - [memory/store.py](/home/qcrs/statebus/project/memory/store.py)

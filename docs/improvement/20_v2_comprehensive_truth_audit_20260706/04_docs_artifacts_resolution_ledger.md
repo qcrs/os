@@ -52,7 +52,7 @@
 
 ## 条目：Evidence table
 
-来源文档：`docs/improvement/artifacts/17_final_system_audit/17a_evidence_table.md`
+来源文档：`docs/improvement/artifacts/17_final_system_audit/17a_evidence_table.md`（历史路径，已从 active docs tree 清理）
 
 声明 / 问题：before-state evidence matrix。
 
@@ -164,13 +164,13 @@
 
 ## 条目：Fairness gate artifacts
 
-来源文档：`docs/improvement/artifacts/15_fairness_gate_propagation/*`
+来源文档：`docs/improvement/artifacts/15_fairness_gate_propagation/*`（历史路径，已从 active docs tree 清理）
 
 声明 / 问题：External fairness gate propagation。
 
 预期修复：确保 fairness failures 能传播。
 
-当前证据：历史 commits 显示真实 fairness work。post-fix targeted formal compare 已重跑 8-case financial scope；`local_api_20260707_163354` 中该 scope fairness 8/8、strict equal-quality gate 通过；full registry compare 仍缺失。
+当前证据：历史 commits 显示真实 fairness work。post-fix targeted formal compare 已重跑 8-case financial scope；`local_api_20260707_163354` 中该 scope fairness 8/8、strict equal-quality gate 通过；代码已升级为 registry-backed full 25/5 adapter，但仍缺新的 live local+api artifact。
 
 状态：历史 fairness propagation 已解决；不是 formal superiority
 
@@ -180,7 +180,7 @@
 
 ## 条目：Deep contest audit artifacts
 
-来源文档：`docs/improvement/artifacts/16_deep_contest_audit/*`
+来源文档：`docs/improvement/artifacts/16_deep_contest_audit/*`（历史路径，已从 active docs tree 清理）
 
 声明 / 问题：宽范围 contest risks 与 issue list。
 

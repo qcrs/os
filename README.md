@@ -80,18 +80,22 @@ export STATEBUS_EMBED_DEVICE=cuda:0
 
 ## 4. 项目结构
 
+当前主要开发对象是 `v2/` clean-room package；下面这些顶层目录仍保留 host-mainline / v1 代码和历史参考。
+
 核心目录如下：
 
+- `v2/`
+  - 当前 v2 clean-room runtime、typed Protobuf/UDS control plane、benchmark、contracts、state refs 和 tests 主线
 - `agents/`
-  - `Planner / Retriever / Executor / Summarizer`
+  - host-mainline `Planner / Retriever / Executor / Summarizer`
 - `runtime/`
-  - 编排、合同、LLM、远端执行入口
+  - host-mainline 编排、合同、LLM、远端执行入口
 - `protocol/`
-  - 消息结构、序列化、协议辅助逻辑
+  - host-mainline 消息结构、序列化、协议辅助逻辑
 - `statepool/`
-  - 状态池与 mmap / shared state backend
+  - host-mainline 状态池与 mmap / shared state backend
 - `memory/`
-  - SQLite + 向量检索记忆层
+  - host-mainline SQLite + 向量检索记忆层
 - `eval/`
   - benchmark runner、指标与报告生成
 - `tasks/`
@@ -102,6 +106,8 @@ export STATEBUS_EMBED_DEVICE=cuda:0
   - 激活脚本与配置模板
 - `scripts/`
   - 环境初始化与维护脚本
+- `docs/archive/`
+  - 旧 host-mainline / v1 过程文档归档区，不作为当前 v2 source-of-truth
 
 ## 5. 测试命令
 
@@ -131,7 +137,7 @@ python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-p
 - `role-path-mode=api` 需要有效的 `STATEBUS_LLM_API_KEY`
 - `embedding-mode=local` 需要本地 embedding 模型目录和可用 device
 - formal internal benchmark 默认跑 registered formal samples：25 cases / 5 families
-- formal compare 当前默认仍是 `formal_financial_family` 8-case compare，不是 full 25-case registry compare
+- formal compare 代码已改成 registry-backed full 25-case adapter；live API 证据必须以后续 local+api rerun artifact 为准
 - dev tier 的 fixed-answer / assisted comparator 只用于开发诊断，不承载 formal headline
 - 在正式 live 跑之前，建议先执行 `--suite preflight`
 
@@ -179,12 +185,12 @@ python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-p
 - `typed_state_mechanism_v3`：正式机制 claim 的主读取对象
 - `external_text_baseline_audit_v3`：独立 external text baseline 审计对象，不并入 formal headline
 
-历史报告仍保留参考价值，但只能当背景材料，不能替代当前 source-of-truth：
+历史报告已归档，只能当背景材料，不能替代当前 source-of-truth：
 
-- `docs/reports/MASTER_PRESENTATION_GUIDE.md`
-- `docs/reports/task_design_and_mode_comparison.md`
-- `docs/reports/current_architecture_overview_20260622.md`
-- `docs/reports/benchmark_results_interpretation_20260610.md`
+- `docs/archive/legacy_202606_host_mainline/reports/MASTER_PRESENTATION_GUIDE.md`
+- `docs/archive/legacy_202606_host_mainline/reports/task_design_and_mode_comparison.md`
+- `docs/archive/legacy_202606_host_mainline/reports/current_architecture_overview_20260622.md`
+- `docs/archive/legacy_202606_host_mainline/reports/benchmark_results_interpretation_20260610.md`
 
 这些历史报告如果保留旧 headline、旧 pack 命名或旧实现假设，只能按“历史背景/机制示意”读取；当前 formal 结论以 active object、当前 docs 冻结口径和对应 `runs/*/benchmark_report.md` 为准。
 

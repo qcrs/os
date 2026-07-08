@@ -23,7 +23,7 @@
 
 5. `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_163354/`
    - 最新 full `RUN_FLAGSHIP=1` local+api comprehensive artifact。
-   - 13 stages 全部 exit 0；required failed stage count 为 0；formal compare 8-case strict equal-quality 通过但不支持 efficiency superiority；flagship stage 跑完但 stress pass 为 3/6。
+   - 13 stages 全部 exit 0；required failed stage count 为 0；该旧 artifact 的 formal compare 是 8-case strict equal-quality，通过但不支持 efficiency superiority；flagship stage 跑完但 stress pass 为 3/6。
 
 6. `20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260706_191835/deep_dive_analysis_and_fix_plan_zh.md`
    - historical local+api 全面测试深度拆解。
@@ -65,7 +65,7 @@
 ## 当前核心判断
 
 - `formal internal` 证据强：API+local+memfd 下 25 cases / 5 families 跑通并 25/25 通过。
-- `formal compare` 仍不能写成 full formal external superiority：当前 compare 只覆盖 formal financial 8 cases，不是 full 25-case registry compare。
+- `formal compare` 仍不能写成 full formal external superiority：`local_api_20260707_163354` 这份旧证据只覆盖 formal financial 8 cases；代码已升级为 registry-backed 25/5 adapter，但需要新的 live local+api rerun artifact 才能 claim。
 - compare gate 语义、8-case scope metadata 和 external metric schema 已拆清；`local_api_20260707_163354` 证明 formal financial 8-case strict equal-quality compare valid，但本次 API timing 下没有 efficiency superiority claim。
 - `local_api_20260707_034412` 中 external compare 的 metric fields 8/8 quality pass，但 `benchmark-sample-6` fairness hard gate fail，因此该旧 diagnostic run 不支持 formal external claim。
 - 非文本中间状态当前应精确写成 embedding semantic state + refs + hydration accounting；证据文本/表格仍通过 hydration 进入 prompt，不能扩大为 hidden-state/KV transfer。
@@ -75,7 +75,7 @@
 
 ## 下一步修复顺序
 
-1. 再实现 registry-backed formal external compare，覆盖 25 cases / 5 families。
+1. 用新的 local+api serialized rerun 证明 registry-backed formal external compare 覆盖 25 cases / 5 families。
 2. 拆解 `local_api_20260707_163354` 的 flagship stress 3/6，区分 family 定义、semantic selection 与 StateRef prompt-saving failure。
 3. 继续验证 diagnostics host-copy 在后续 failure/nonzero container exit 后也能自动填充 docs artifact。
 4. 如要 claim subprocess execution，新增 subprocess benchmark stage，而不是只靠单测。

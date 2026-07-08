@@ -7,7 +7,7 @@
 - `README.md`
 - `docs/constraints/current_host_and_migration.md`
 - `docs/constraints/current_feature_scope.md`
-- `docs/progress/contest_requirement_host_audit_20260607.md`
+- `docs/archive/legacy_202606_host_mainline/progress/contest_requirement_host_audit_20260607.md`
 - `runs/comprehensive_eval_20260607_131113/`
 - `runs/host_goal_eval_20260607_233858/`
 - `runs/host_goal_eval_20260608_002101/`

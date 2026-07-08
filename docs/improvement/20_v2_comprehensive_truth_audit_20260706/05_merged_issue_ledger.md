@@ -54,11 +54,11 @@
 
 影响：External superiority 是高价值 contest claim；当前证据只能作为 formal financial 8-case compare 的调试/局部质量信号，不能写成 full formal registry external superiority。
 
-修复策略：拆分 strict equal-quality compare 与 quality-superiority compare；补 formal compare scope metadata；修 external metric schema；再实现 registry-backed formal external compare。
+修复策略：拆分 strict equal-quality compare 与 quality-superiority compare；补 formal compare scope metadata；修 external metric schema；用新 local+api serialized rerun 验证 registry-backed formal external compare。
 
-验证：targeted rerun 已明确输出 compare scope、case count、claim kind。`local_api_20260707_163354` full comprehensive 输出 8-case scope fields、all-case structured diagnostics、fairness pass count 8、failed count 0。full registry compare 仍未实现。
+验证：targeted rerun 已明确输出 compare scope、case count、claim kind。`local_api_20260707_163354` full comprehensive 输出 8-case scope fields、all-case structured diagnostics、fairness pass count 8、failed count 0。代码已升级为 registry-backed full 25/5 adapter，但还缺新的 live local+api artifact。
 
-状态：partial；8-case formal financial strict equal-quality compare complete，targeted run 支持该 scope 下 prompt/token efficiency claim，但 latest full comprehensive 不支持本次 efficiency superiority；full 25/5 registry external compare 仍 open
+状态：partial；8-case formal financial strict equal-quality compare complete，targeted run 支持该 scope 下 prompt/token efficiency claim，但 latest full comprehensive 不支持本次 efficiency superiority；full 25/5 registry external compare 需要新复跑证据后才能 claim
 
 ## ID: V2-AUDIT-004
 
