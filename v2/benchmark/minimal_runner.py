@@ -394,6 +394,18 @@ def run_minimal_benchmark_suite(
         if l3_report.telemetry_summary.get("state_pool_mmap_mode_count", 0.0) > 0.0
         else state_pool_mode
     )
+    text_l0_report = layer_reports[0]
+    protocol_l3_report = layer_reports[3]
+    text_l0_total_tokens = text_l0_report.telemetry_summary.get("llm_total_tokens", 0.0)
+    text_l0_prompt_tokens = text_l0_report.telemetry_summary.get("llm_prompt_tokens", 0.0)
+    text_l0_prompt_bytes = text_l0_report.telemetry_summary.get("llm_prompt_bytes", 0.0)
+    text_l0_control_bytes = text_l0_report.telemetry_summary.get("control_bytes", 0.0)
+    text_l0_quality_pass_count = text_l0_report.aggregated_metrics.get("quality_floor_pass_count", 0.0)
+    protocol_l3_total_tokens = protocol_l3_report.telemetry_summary.get("llm_total_tokens", 0.0)
+    protocol_l3_prompt_tokens = protocol_l3_report.telemetry_summary.get("llm_prompt_tokens", 0.0)
+    protocol_l3_prompt_bytes = protocol_l3_report.telemetry_summary.get("llm_prompt_bytes", 0.0)
+    protocol_l3_control_bytes = protocol_l3_report.telemetry_summary.get("control_bytes", 0.0)
+    protocol_l3_quality_pass_count = protocol_l3_report.aggregated_metrics.get("quality_floor_pass_count", 0.0)
     waterfall_metrics = {
         "L0_case_count": float(len(layer_reports[0].cases)),
         "L0_raw_evidence_bytes_seen_by_llm": layer_reports[0].telemetry_summary.get(
@@ -408,6 +420,16 @@ def run_minimal_benchmark_suite(
         "L3_quality_floor_pass_count": layer_reports[3].aggregated_metrics.get("quality_floor_pass_count", 0.0),
         "L3_artifact_reuse_count": layer_reports[3].telemetry_summary.get("artifact_reuse_count", 0.0),
         "L3_reuse_gain": layer_reports[3].telemetry_summary.get("reuse_gain", 0.0),
+        "text_L0_total_tokens": text_l0_total_tokens,
+        "text_L0_prompt_tokens": text_l0_prompt_tokens,
+        "text_L0_prompt_bytes": text_l0_prompt_bytes,
+        "text_L0_control_bytes": text_l0_control_bytes,
+        "text_L0_quality_pass_count": text_l0_quality_pass_count,
+        "protocol_L3_total_tokens": protocol_l3_total_tokens,
+        "protocol_L3_prompt_tokens": protocol_l3_prompt_tokens,
+        "protocol_L3_prompt_bytes": protocol_l3_prompt_bytes,
+        "protocol_L3_control_bytes": protocol_l3_control_bytes,
+        "protocol_L3_quality_pass_count": protocol_l3_quality_pass_count,
     }
     comparison_summary = {
         "pruning_bytes_saved_vs_l0": max(
@@ -447,6 +469,21 @@ def run_minimal_benchmark_suite(
             layer_reports[3].telemetry_summary.get("codeact_plan_action_count", 0.0)
             - layer_reports[0].telemetry_summary.get("codeact_plan_action_count", 0.0)
         ),
+        "text_L0_total_tokens": text_l0_total_tokens,
+        "text_L0_prompt_tokens": text_l0_prompt_tokens,
+        "text_L0_prompt_bytes": text_l0_prompt_bytes,
+        "text_L0_control_bytes": text_l0_control_bytes,
+        "text_L0_quality_pass_count": text_l0_quality_pass_count,
+        "protocol_L3_total_tokens": protocol_l3_total_tokens,
+        "protocol_L3_prompt_tokens": protocol_l3_prompt_tokens,
+        "protocol_L3_prompt_bytes": protocol_l3_prompt_bytes,
+        "protocol_L3_control_bytes": protocol_l3_control_bytes,
+        "protocol_L3_quality_pass_count": protocol_l3_quality_pass_count,
+        "protocol_vs_text_token_delta": protocol_l3_total_tokens - text_l0_total_tokens,
+        "protocol_vs_text_prompt_token_delta": protocol_l3_prompt_tokens - text_l0_prompt_tokens,
+        "protocol_vs_text_prompt_bytes_delta": protocol_l3_prompt_bytes - text_l0_prompt_bytes,
+        "protocol_vs_text_control_bytes_delta": protocol_l3_control_bytes - text_l0_control_bytes,
+        "protocol_vs_text_quality_pass_delta": protocol_l3_quality_pass_count - text_l0_quality_pass_count,
     }
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}-suite.json"
     suite_report = BenchmarkSuiteReport(
@@ -473,6 +510,7 @@ def run_minimal_benchmark_suite(
             },
             "formal_task_families": list(formal_families),
             "formal_task_family_count": len(formal_families),
+            "formal_text_protocol_benchmark": benchmark_tier == "formal",
             "task_family_tier": "formal_financial",
         },
         family_case_count=len(samples),

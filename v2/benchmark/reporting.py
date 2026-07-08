@@ -100,6 +100,27 @@ def suite_report_to_dict(report: BenchmarkSuiteReport) -> dict[str, object]:
     if "formal_task_families" in report.metadata:
         payload["families"] = list(report.metadata.get("formal_task_families", []))
         payload["family_count"] = report.metadata.get("formal_task_family_count", len(payload["families"]))
+    if bool(report.metadata.get("formal_text_protocol_benchmark", False)):
+        payload["formal_text_protocol_benchmark"] = True
+        for key in (
+            "text_L0_total_tokens",
+            "text_L0_prompt_tokens",
+            "text_L0_prompt_bytes",
+            "text_L0_control_bytes",
+            "text_L0_quality_pass_count",
+            "protocol_L3_total_tokens",
+            "protocol_L3_prompt_tokens",
+            "protocol_L3_prompt_bytes",
+            "protocol_L3_control_bytes",
+            "protocol_L3_quality_pass_count",
+            "protocol_vs_text_token_delta",
+            "protocol_vs_text_prompt_token_delta",
+            "protocol_vs_text_prompt_bytes_delta",
+            "protocol_vs_text_control_bytes_delta",
+            "protocol_vs_text_quality_pass_delta",
+        ):
+            if key in report.comparison_summary:
+                payload[key] = report.comparison_summary[key]
     if "eligible_for_replay_headline" in report.metadata:
         payload["eligible_for_quality_headline"] = bool(report.metadata.get("eligible_for_quality_headline", False))
         payload["eligible_for_replay_headline"] = bool(report.metadata.get("eligible_for_replay_headline", False))
