@@ -18,6 +18,13 @@ from runtime.llm import (
 from v2.contracts import CanonicalTaskSpec
 from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
 from v2.retrieval.models import RetrievalCandidatePool
+from v2.utils import sha256_digest
+
+
+PREFIX_LAYOUT_PLAN_SCHEMA_VERSION = "statebus.prefix_layout_plan.v1"
+PREFIX_LAYOUT_CLAIM_BOUNDARY = (
+    "prompt_prefix_layout_control_plane_only_no_kv_tensor_export"
+)
 
 
 def _run_sync(awaitable: Any) -> Any:
@@ -159,6 +166,61 @@ class JsonRoleCompletion:
     prompt_bytes: int
     latency_ms: float
     attempt_count: int
+
+
+@dataclass(frozen=True)
+class PrefixLayoutPlan:
+    role_label: str
+    payload_tag: str
+    handoff_mode: str
+    prefix_alignment_mode: str
+    shared_prefix_enabled: bool
+    shared_prefix_hash: str = ""
+    shared_prefix_bytes: int = 0
+    role_suffix_hash: str = ""
+    role_suffix_bytes: int = 0
+    prompt_hash: str = ""
+    prompt_bytes: int = 0
+    removed_payload_evidence: bool = False
+    removed_text_section_count: int = 0
+    removed_evidence_block_count: int = 0
+    suffix_payload_keys: tuple[str, ...] = ()
+    claim_boundary: str = PREFIX_LAYOUT_CLAIM_BOUNDARY
+    schema_version: str = PREFIX_LAYOUT_PLAN_SCHEMA_VERSION
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "role_label": self.role_label,
+            "payload_tag": self.payload_tag,
+            "handoff_mode": self.handoff_mode,
+            "prefix_alignment_mode": self.prefix_alignment_mode,
+            "shared_prefix_enabled": self.shared_prefix_enabled,
+            "shared_prefix_hash": self.shared_prefix_hash,
+            "shared_prefix_bytes": self.shared_prefix_bytes,
+            "role_suffix_hash": self.role_suffix_hash,
+            "role_suffix_bytes": self.role_suffix_bytes,
+            "prompt_hash": self.prompt_hash,
+            "prompt_bytes": self.prompt_bytes,
+            "removed_payload_evidence": self.removed_payload_evidence,
+            "removed_text_section_count": self.removed_text_section_count,
+            "removed_evidence_block_count": self.removed_evidence_block_count,
+            "suffix_payload_keys": list(self.suffix_payload_keys),
+            "claim_boundary": self.claim_boundary,
+            "schema_version": self.schema_version,
+        }
+
+
+@dataclass(frozen=True)
+class CompiledRolePrompt:
+    prompt: str
+    layout_plan: PrefixLayoutPlan
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "prompt": self.prompt,
+            "layout_plan": self.layout_plan.canonical_payload(),
+            "schema_version": "statebus.compiled_role_prompt.v1",
+        }
 
 
 @dataclass(frozen=True)
@@ -320,6 +382,84 @@ def _role_suffix_blocks_without_shared_prefix(
 ) -> tuple[str, ...]:
     normalized_prefix = shared_prefix_text.strip()
     return tuple(block for block in evidence_blocks if block.strip() != normalized_prefix)
+
+
+def compile_prefix_layout(
+    *,
+    role_label: str,
+    instruction: str,
+    payload_tag: str,
+    payload: dict[str, Any],
+    text_sections: tuple[tuple[str, str], ...],
+    handoff_mode: str,
+    prefix_alignment_mode: str,
+    evidence_blocks: tuple[str, ...] = (),
+    shared_prefix_text: str = "",
+) -> CompiledRolePrompt:
+    normalized_prefix = shared_prefix_text.strip()
+    use_shared_prefix = _shared_prefix_enabled(prefix_alignment_mode, shared_prefix_text)
+    suffix_payload = dict(payload)
+    suffix_sections = text_sections
+    suffix_blocks = evidence_blocks
+    if use_shared_prefix:
+        suffix_payload = _role_suffix_payload_without_shared_prefix(
+            suffix_payload,
+            shared_prefix_text=shared_prefix_text,
+        )
+        suffix_sections = _role_suffix_sections_without_shared_prefix(
+            suffix_sections,
+            shared_prefix_text=shared_prefix_text,
+        )
+        suffix_blocks = _role_suffix_blocks_without_shared_prefix(
+            suffix_blocks,
+            shared_prefix_text=shared_prefix_text,
+        )
+    if handoff_mode == "text_collaboration":
+        role_suffix_prompt = _text_collaboration_prompt(
+            role_label=role_label,
+            instruction=instruction,
+            sections=suffix_sections,
+        )
+    else:
+        role_suffix_prompt = _structured_collaboration_prompt(
+            role_label=role_label,
+            instruction=instruction,
+            payload_tag=payload_tag,
+            payload=suffix_payload,
+            evidence_blocks=suffix_blocks,
+        )
+    prompt = (
+        _prefix_aligned_prompt(
+            role_label=role_label,
+            shared_prefix_text=shared_prefix_text,
+            role_suffix_prompt=role_suffix_prompt,
+        )
+        if use_shared_prefix
+        else role_suffix_prompt
+    )
+    removed_payload_evidence = bool(
+        use_shared_prefix
+        and "e" in payload
+        and "e" not in suffix_payload
+    )
+    layout_plan = PrefixLayoutPlan(
+        role_label=role_label,
+        payload_tag=payload_tag,
+        handoff_mode=handoff_mode,
+        prefix_alignment_mode=prefix_alignment_mode,
+        shared_prefix_enabled=use_shared_prefix,
+        shared_prefix_hash=sha256_digest(normalized_prefix) if use_shared_prefix else "",
+        shared_prefix_bytes=len(normalized_prefix.encode("utf-8")) if use_shared_prefix else 0,
+        role_suffix_hash=sha256_digest(role_suffix_prompt),
+        role_suffix_bytes=len(role_suffix_prompt.encode("utf-8")),
+        prompt_hash=sha256_digest(prompt),
+        prompt_bytes=len(prompt.encode("utf-8")),
+        removed_payload_evidence=removed_payload_evidence,
+        removed_text_section_count=max(len(text_sections) - len(suffix_sections), 0),
+        removed_evidence_block_count=max(len(evidence_blocks) - len(suffix_blocks), 0),
+        suffix_payload_keys=tuple(sorted(str(key) for key in suffix_payload)),
+    )
+    return CompiledRolePrompt(prompt=prompt, layout_plan=layout_plan)
 
 
 def _candidate_surface_payload(
@@ -724,41 +864,18 @@ class RolePathRunner:
         evidence_blocks: tuple[str, ...] = (),
         shared_prefix_text: str = "",
     ) -> str:
-        use_shared_prefix = _shared_prefix_enabled(self.prefix_alignment_mode, shared_prefix_text)
-        if use_shared_prefix:
-            payload = _role_suffix_payload_without_shared_prefix(
-                payload,
-                shared_prefix_text=shared_prefix_text,
-            )
-            text_sections = _role_suffix_sections_without_shared_prefix(
-                text_sections,
-                shared_prefix_text=shared_prefix_text,
-            )
-            evidence_blocks = _role_suffix_blocks_without_shared_prefix(
-                evidence_blocks,
-                shared_prefix_text=shared_prefix_text,
-            )
-        if self.handoff_mode == "text_collaboration":
-            prompt = _text_collaboration_prompt(
-                role_label=role_label,
-                instruction=instruction,
-                sections=text_sections,
-            )
-        else:
-            prompt = _structured_collaboration_prompt(
-                role_label=role_label,
-                instruction=instruction,
-                payload_tag=payload_tag,
-                payload=payload,
-                evidence_blocks=evidence_blocks,
-            )
-        if not use_shared_prefix:
-            return prompt
-        return _prefix_aligned_prompt(
+        compiled = compile_prefix_layout(
             role_label=role_label,
+            instruction=instruction,
+            payload_tag=payload_tag,
+            payload=payload,
+            text_sections=text_sections,
+            handoff_mode=self.handoff_mode,
+            prefix_alignment_mode=self.prefix_alignment_mode,
+            evidence_blocks=evidence_blocks,
             shared_prefix_text=shared_prefix_text,
-            role_suffix_prompt=prompt,
         )
+        return compiled.prompt
 
     def _complete_json_role(
         self,

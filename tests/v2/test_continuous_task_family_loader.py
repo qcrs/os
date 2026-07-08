@@ -109,6 +109,8 @@ def test_load_continuous_task_family_kv_prefix_reuse_manifest() -> None:
     assert family.rounds[2].reuse_contract.minimum_reuse_class == "assist"
     assert family.rounds[-1].reuse_contract.minimum_reuse_class == "validated_replay"
     assert family.l3_target_nonzero_rounds() == (3, 4, 5, 6, 8, 9, 10)
+    assert family.kv_prefix_probe["schedule_key"] == "corpus_prefix_hash"
+    assert len(family.kv_prefix_probe["cache_friendly_order"]) == 10
 
 
 def test_load_continuous_task_family_fails_closed_for_forward_dependency(tmp_path: Path) -> None:

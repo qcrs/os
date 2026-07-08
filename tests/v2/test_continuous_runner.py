@@ -201,6 +201,37 @@ def test_continuous_runner_executes_long_doc_family(tmp_path: Path) -> None:
     assert int(output_payload["reused_artifact_count"]) >= 7
 
 
+def test_continuous_runner_executes_kv_prefix_reuse_family_as_explicit_probe(tmp_path: Path) -> None:
+    family = load_continuous_task_family(
+        Path("v2/benchmark/samples/continuous_task_families/kv_prefix_reuse")
+    )
+    report = run_continuous_benchmark_suite(
+        family=family,
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        suite_id="continuous-kv-prefix-reuse",
+        role_path_mode="deterministic",
+        embedding_mode="deterministic",
+    )
+
+    assert report.family_case_count == 10
+    assert report.metadata["continuous_execution"] is True
+    assert report.metadata["claim_tier"] == "demo_secondary"
+    assert report.metadata["source_basis"]["not_default_formal_chain"] is True
+    assert "kv_prefix_reuse_v1" in report.metadata["supported_continuous_execution_families"]
+    assert report.waterfall_metrics["L2_semantic_state_transfer_count"] > 0.0
+    assert report.waterfall_metrics["L3_kv_corpus_prefix_hash_reuse_count"] > 0.0
+    assert report.waterfall_metrics["L3_kv_corpus_level_prefill_saved_tokens_estimate"] > 0.0
+    assert report.evidence_pack["kv_reuse_analysis_by_layer"]["L3"]["corpus_prefix_hash_reuse_count"] > 0
+    assert report.evidence_pack["headline_scope"] in {"history_backed_only", "replay_admissible"}
+    l3_report = next(layer_report for layer_report in report.layer_reports if layer_report.layer == BenchmarkLayer.L3)
+    assert l3_report.quality_floor_breakdown["quality_floor_pass_count"] == 10.0
+    assert l3_report.metadata["kv_reuse_analysis"]["claim_boundary"].endswith(
+        "actual_vllm_metrics_required_for_mechanism_claim"
+    )
+
+
 def test_continuous_runner_executes_replay_family(tmp_path: Path) -> None:
     family = load_continuous_task_family(
         Path("v2/benchmark/samples/continuous_task_families/long_doc_metric_replay")

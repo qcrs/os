@@ -107,6 +107,7 @@ class ContinuousTaskFamily:
     rounds: tuple[ContinuousTaskRound, ...]
     quality_floor: dict[str, object] = field(default_factory=dict)
     l0_l3_expectations: dict[str, object] = field(default_factory=dict)
+    kv_prefix_probe: dict[str, object] = field(default_factory=dict)
     source_basis: dict[str, object] = field(default_factory=dict)
     schema_version: str = CONTINUOUS_TASK_FAMILY_SCHEMA_VERSION
 
@@ -143,6 +144,7 @@ class ContinuousTaskFamily:
             "datasets": [dataset.canonical_payload() for dataset in self.datasets],
             "quality_floor": dict(sorted(self.quality_floor.items())),
             "l0_l3_expectations": dict(sorted(self.l0_l3_expectations.items())),
+            "kv_prefix_probe": dict(sorted(self.kv_prefix_probe.items())),
             "source_basis": dict(sorted(self.source_basis.items())),
             "rounds": [round_.canonical_payload() for round_ in self.rounds],
         }
@@ -163,6 +165,7 @@ class ContinuousTaskFamily:
             "exact_replay_target_rounds": list(replay_target_rounds["exact_replay"]),
             "validated_replay_target_rounds": list(replay_target_rounds["validated_replay"]),
             "l3_target_rounds": list(self.l3_target_nonzero_rounds()),
+            "kv_prefix_probe": dict(sorted(self.kv_prefix_probe.items())),
             "datasets": [dataset.canonical_payload() for dataset in self.datasets],
             "rounds": [
                 {
@@ -323,5 +326,6 @@ def load_continuous_task_family(directory: Path) -> ContinuousTaskFamily:
         rounds=tuple(rounds),
         quality_floor=dict(payload.get("quality_floor", {})),
         l0_l3_expectations=l0_l3_expectations,
+        kv_prefix_probe=dict(payload.get("kv_prefix_probe", {})),
         source_basis=dict(payload.get("source_basis", {})),
     )

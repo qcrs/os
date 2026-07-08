@@ -37,7 +37,7 @@ cache_hostile:
   Orion warmup -> Nova warmup -> Orion metric -> Nova metric -> ...
 ```
 
-The current manifest records both orders in `kv_prefix_probe`. It is intentionally not registered into the default formal continuous runner yet.
+The manifest records both orders in `kv_prefix_probe`. The family is available as an explicit mechanism probe, and `v2.benchmark.kv_prefix_schedule` can materialize both schedule plans. It is intentionally excluded from the default formal continuous collection and remains `demo_secondary`.
 
 ## Expected Evidence
 

@@ -20,6 +20,7 @@ from v2.runtime.neural_state import (
     build_neural_prefix_identity,
     estimate_engine_local_prefix_reuse,
     order_prefix_schedule_hints,
+    order_prefix_schedule_hints_by_task_ids,
 )
 from v2.runtime.kv_budget import (
     KVCacheFootprintEstimate,
@@ -37,8 +38,11 @@ from v2.runtime.vllm_metrics import (
 from v2.runtime.compiler import TaskCompiler
 from v2.runtime.role_path import (
     best_visible_candidate,
+    compile_prefix_layout,
+    CompiledRolePrompt,
     constrain_visible_candidates,
     ExecutorRoleDecision,
+    PrefixLayoutPlan,
     PlannerRoleResult,
     RetrieverRoleDecision,
     RolePathRunner,
@@ -106,6 +110,8 @@ __all__ = [
     "ArtifactSettlementRecord",
     "ArtifactValidatorReport",
     "best_visible_candidate",
+    "compile_prefix_layout",
+    "CompiledRolePrompt",
     "constrain_visible_candidates",
     "CommitGateDecision",
     "ExecutionLogCapture",
@@ -128,6 +134,7 @@ __all__ = [
     "NeuralPrefixRegistryResult",
     "NeuralStateHandle",
     "PrefixReuseScheduleHint",
+    "PrefixLayoutPlan",
     "PlannerRoleResult",
     "RolePromptSlice",
     "ReplayLedger",
@@ -174,6 +181,7 @@ __all__ = [
     "evidence_pack_replay_hash",
     "estimate_engine_local_prefix_reuse",
     "order_prefix_schedule_hints",
+    "order_prefix_schedule_hints_by_task_ids",
     "estimate_kv_cache_footprint",
     "financial_tool_candidates",
     "fetch_vllm_prefix_cache_metrics",

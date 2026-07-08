@@ -241,6 +241,10 @@ class EngineLocalPrefixRegistry:
         )
         existing = self.handles.get(key)
         if existing is not None:
+            merged_metadata = {
+                **dict(existing.metadata),
+                **dict(metadata or {}),
+            }
             updated = NeuralStateHandle(
                 engine_id=existing.engine_id,
                 session_id=existing.session_id,
@@ -251,8 +255,8 @@ class EngineLocalPrefixRegistry:
                 evidence_prefix_hash=existing.evidence_prefix_hash or evidence_prefix_hash,
                 lifetime_scope=existing.lifetime_scope,
                 created_step_id=existing.created_step_id,
-                expires_at_ns=existing.expires_at_ns,
-                prefix_token_count=existing.prefix_token_count,
+                expires_at_ns=max(existing.expires_at_ns, int(expires_at_ns or 0)),
+                prefix_token_count=max(existing.prefix_token_count, int(prefix_token_count or 0)),
                 cache_hit_count=existing.cache_hit_count + 1,
                 last_observed_query_ns=observed_ns or existing.last_observed_query_ns,
                 last_observed_hit_ns=observed_ns or existing.last_observed_hit_ns,
@@ -266,7 +270,7 @@ class EngineLocalPrefixRegistry:
                     schedule_priority if schedule_priority != 0.0 else existing.schedule_priority
                 ),
                 claim_boundary=existing.claim_boundary,
-                metadata=existing.metadata,
+                metadata=merged_metadata,
             )
             self.handles[key] = updated
             return NeuralPrefixRegistryResult(handle=updated, cache_hit=True)
@@ -475,6 +479,33 @@ def order_prefix_schedule_hints(
             ),
         )
     )
+
+
+def order_prefix_schedule_hints_by_task_ids(
+    hints: tuple[PrefixReuseScheduleHint, ...] | list[PrefixReuseScheduleHint],
+    task_ids: tuple[str, ...] | list[str],
+    *,
+    strict: bool = True,
+) -> tuple[PrefixReuseScheduleHint, ...]:
+    """Apply a manifest-declared schedule order to prefix schedule hints.
+
+    This bridges dataset-level schedules such as ``cache_friendly_order`` and
+    ``cache_hostile_order`` to the generic control-plane hint objects.
+    """
+    hints_by_task_id = {hint.task_id: hint for hint in hints}
+    ordered_task_ids = tuple(str(task_id).strip() for task_id in task_ids if str(task_id).strip())
+    missing = tuple(task_id for task_id in ordered_task_ids if task_id not in hints_by_task_id)
+    if strict and missing:
+        raise ValueError(f"schedule references unknown task ids: {', '.join(missing)}")
+    ordered = [hints_by_task_id[task_id] for task_id in ordered_task_ids if task_id in hints_by_task_id]
+    if strict:
+        extra = sorted(set(hints_by_task_id) - set(ordered_task_ids))
+        if extra:
+            raise ValueError(f"schedule omits task ids: {', '.join(extra)}")
+    else:
+        scheduled_ids = {hint.task_id for hint in ordered}
+        ordered.extend(hint for hint in hints if hint.task_id not in scheduled_ids)
+    return tuple(ordered)
 
 
 def _interleave_prefix_groups(
