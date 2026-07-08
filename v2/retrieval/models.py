@@ -267,6 +267,28 @@ class RetrievalPruningBucketStat:
 
 
 @dataclass(frozen=True)
+class EvidencePruningHint:
+    candidate_id: str
+    bucket: str
+    importance_score: float
+    rendered_text_bytes: int
+    keep_in_budget: bool
+    threshold: float
+    reason: str = ""
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "candidate_id": self.candidate_id,
+            "bucket": self.bucket,
+            "importance_score": self.importance_score,
+            "rendered_text_bytes": self.rendered_text_bytes,
+            "keep_in_budget": self.keep_in_budget,
+            "threshold": self.threshold,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
 class RetrievalPruningProfile:
     task_id: str
     full_corpus_bytes: int
@@ -275,6 +297,9 @@ class RetrievalPruningProfile:
     pruning_gain_bytes: int
     selected_candidate_ids: tuple[str, ...]
     bucket_stats: tuple[RetrievalPruningBucketStat, ...]
+    importance_threshold: float = 0.6
+    pruning_hints: tuple[EvidencePruningHint, ...] = ()
+    estimated_kv_tokens_saved: int = 0
     schema_version: str = RETRIEVAL_PRUNING_PROFILE_SCHEMA_VERSION
 
     def canonical_payload(self) -> dict[str, object]:
@@ -286,6 +311,9 @@ class RetrievalPruningProfile:
             "pruning_gain_bytes": self.pruning_gain_bytes,
             "selected_candidate_ids": list(self.selected_candidate_ids),
             "bucket_stats": [bucket.canonical_payload() for bucket in self.bucket_stats],
+            "importance_threshold": self.importance_threshold,
+            "pruning_hints": [hint.canonical_payload() for hint in self.pruning_hints],
+            "estimated_kv_tokens_saved": self.estimated_kv_tokens_saved,
             "schema_version": self.schema_version,
         }
 

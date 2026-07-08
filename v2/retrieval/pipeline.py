@@ -18,6 +18,7 @@ from v2.retrieval.corpus import (
     OfflineFinancialReportCorpus,
 )
 from v2.retrieval.models import (
+    EvidencePruningHint,
     RetrievalBundle,
     RetrievalCandidatePool,
     RetrievalCandidateRecord,
@@ -29,6 +30,22 @@ from v2.retrieval.models import (
     RetrieverKind,
     RetrieverOutput,
 )
+
+
+PRUNING_IMPORTANCE_THRESHOLD = 0.6
+KV_ESTIMATE_BYTES_PER_TOKEN = 4
+
+
+def _candidate_importance_score(candidate: RetrievalCandidateRecord) -> float:
+    if candidate.bucket == "hard_fact":
+        return max(float(candidate.score), 1.0)
+    if candidate.bucket == "semantic_context":
+        return float(candidate.score)
+    if candidate.bucket == "structured_evidence":
+        return max(float(candidate.score), 0.8)
+    if candidate.bucket == "lexical_hint":
+        return max(float(candidate.score), 0.25)
+    return float(candidate.score)
 
 
 def _stable_entry_key(candidate: EvidenceCandidate) -> str:
@@ -456,6 +473,7 @@ class RetrieverFanoutPipeline:
         for candidate in candidate_pool.candidates:
             bucket_map.setdefault(candidate.bucket, []).append(candidate)
         bucket_stats = []
+        pruning_hints: list[EvidencePruningHint] = []
         for bucket, candidates in sorted(bucket_map.items()):
             selected = [candidate for candidate in candidates if candidate.candidate_id in selected_candidate_ids]
             selected_bytes = sum(len(candidate.rendered_text.encode("utf-8")) for candidate in selected)
@@ -468,8 +486,30 @@ class RetrieverFanoutPipeline:
                     dropped_count=len(candidates) - len(selected),
                 )
             )
+            for candidate in candidates:
+                rendered_text_bytes = len(candidate.rendered_text.encode("utf-8"))
+                importance_score = _candidate_importance_score(candidate)
+                keep_in_budget = candidate.candidate_id in selected_candidate_ids
+                pruning_hints.append(
+                    EvidencePruningHint(
+                        candidate_id=candidate.candidate_id,
+                        bucket=candidate.bucket,
+                        importance_score=round(importance_score, 6),
+                        rendered_text_bytes=rendered_text_bytes,
+                        keep_in_budget=keep_in_budget,
+                        threshold=PRUNING_IMPORTANCE_THRESHOLD,
+                        reason=(
+                            "selected_for_budget"
+                            if keep_in_budget
+                            else "candidate_pruned_after_fan_in_or_scope_filter"
+                        ),
+                    )
+                )
         raw_evidence_bytes_seen_by_llm = selected_evidence_bytes
         pruning_gain_bytes = max(full_corpus_bytes - raw_evidence_bytes_seen_by_llm, 0)
+        dropped_candidate_bytes = sum(
+            hint.rendered_text_bytes for hint in pruning_hints if not hint.keep_in_budget
+        )
         return RetrievalPruningProfile(
             task_id=task_id,
             full_corpus_bytes=full_corpus_bytes,
@@ -478,6 +518,9 @@ class RetrieverFanoutPipeline:
             pruning_gain_bytes=pruning_gain_bytes,
             selected_candidate_ids=tuple(sorted(selected_candidate_ids)),
             bucket_stats=tuple(bucket_stats),
+            importance_threshold=PRUNING_IMPORTANCE_THRESHOLD,
+            pruning_hints=tuple(sorted(pruning_hints, key=lambda hint: hint.candidate_id)),
+            estimated_kv_tokens_saved=dropped_candidate_bytes // KV_ESTIMATE_BYTES_PER_TOKEN,
         )
 
     def _run_artifact_history_lineage(

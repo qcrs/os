@@ -55,12 +55,18 @@ def runtime_preflight(
     normalized_embedding_mode = str(embedding_mode).strip().lower()
     llm_config = LLMConfig.from_runtime().with_mode(normalized_role_mode)
 
-    if normalized_role_mode == "api":
+    if normalized_role_mode in {"api", "local_vllm"}:
         try:
             llm_config.require_api_ready()
-            checks.append(PreflightCheck("llm_api_ready", True, "api configuration ready"))
+            checks.append(PreflightCheck("llm_api_ready", True, f"{normalized_role_mode} configuration ready"))
         except Exception as exc:
-            checks.append(PreflightCheck("llm_api_ready", False, f"api configuration not ready: {exc}"))
+            checks.append(
+                PreflightCheck(
+                    "llm_api_ready",
+                    False,
+                    f"{normalized_role_mode} configuration not ready: {exc}",
+                )
+            )
     else:
         checks.append(PreflightCheck("llm_api_ready", True, "deterministic mode does not require live api"))
 
