@@ -142,6 +142,12 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     assert suite_report.metadata["benchmark_tier"] == "formal"
     assert suite_report.metadata["comparison_contract"] == "same_mainline_internal_attribution_ladder"
     assert suite_report.metadata["ladder_claim_scope"] == "internal_attribution_only_not_external_superiority"
+    assert suite_report.metadata["formal_text_protocol_benchmark"] is True
+    assert suite_report.comparison_summary["text_L0_quality_pass_count"] == 8.0
+    assert suite_report.comparison_summary["protocol_L3_quality_pass_count"] == 8.0
+    assert suite_report.comparison_summary["protocol_vs_text_quality_pass_delta"] == 0.0
+    assert suite_report.comparison_summary["protocol_vs_text_token_delta"] <= 0.0
+    assert suite_report.comparison_summary["protocol_vs_text_prompt_bytes_delta"] < 0.0
 
     payload = json.loads(Path(suite_report.report_path).read_text(encoding="utf-8"))
     assert payload["suite_id"] == "suite-sample-test"
@@ -149,6 +155,12 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     assert payload["family_case_count"] == 8
     assert len(payload["layers"]) == 4
     assert payload["metadata"]["comparison_contract"] == "same_mainline_internal_attribution_ladder"
+    assert payload["formal_text_protocol_benchmark"] is True
+    assert payload["text_L0_quality_pass_count"] == 8.0
+    assert payload["protocol_L3_quality_pass_count"] == 8.0
+    assert payload["protocol_vs_text_quality_pass_delta"] == 0.0
+    assert payload["protocol_vs_text_token_delta"] <= 0.0
+    assert payload["protocol_vs_text_prompt_bytes_delta"] < 0.0
 
 
 def test_minimal_benchmark_suite_reports_actual_state_pool_backend_after_release(

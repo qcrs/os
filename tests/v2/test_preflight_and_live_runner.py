@@ -122,9 +122,18 @@ def test_live_runner_formal_suite_uses_formal_family_by_default(
                 ),
             ),
             waterfall_metrics={},
-            comparison_summary={},
+            comparison_summary={
+                "text_L0_total_tokens": 120000.0,
+                "protocol_L3_total_tokens": 65000.0,
+                "protocol_vs_text_token_delta": -55000.0,
+                "protocol_vs_text_prompt_bytes_delta": -120000.0,
+                "protocol_vs_text_control_bytes_delta": -30000.0,
+                "text_L0_quality_pass_count": 25.0,
+                "protocol_L3_quality_pass_count": 25.0,
+            },
             metadata={
                 "benchmark_tier": "formal",
+                "formal_text_protocol_benchmark": True,
                 "state_pool_mode_requested": str(kwargs["state_pool_mode"]),
                 "state_pool_mode_used": "memfd",
                 "memfd_transfer_count": 25.0,
@@ -161,6 +170,12 @@ def test_live_runner_formal_suite_uses_formal_family_by_default(
     assert payload["memfd_transfer_count"] == 25.0
     assert payload["memfd_publish_count"] == 25.0
     assert payload["memfd_bytes_transferred"] == 247046.0
+    assert payload["formal_text_protocol_benchmark"] is True
+    assert payload["protocol_vs_text_token_delta"] == -55000.0
+    assert payload["protocol_vs_text_prompt_bytes_delta"] == -120000.0
+    assert payload["protocol_vs_text_control_bytes_delta"] == -30000.0
+    assert payload["text_L0_quality_pass_count"] == 25.0
+    assert payload["protocol_L3_quality_pass_count"] == 25.0
 
 
 def test_live_runner_threads_statebus_mode_to_dev_compare_suite(

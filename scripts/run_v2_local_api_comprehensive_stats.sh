@@ -797,12 +797,27 @@ def nested_mode_report(payload: dict[str, Any]) -> dict[str, Any]:
     return nested if isinstance(nested, dict) else first
 
 
-def l3_telemetry(payload: dict[str, Any]) -> dict[str, Any]:
+def layer_payload(payload: dict[str, Any], index: int) -> dict[str, Any]:
     layers = payload.get("layers")
-    if isinstance(layers, list) and len(layers) > 3 and isinstance(layers[3], dict):
-        telemetry = layers[3].get("telemetry_summary")
-        return telemetry if isinstance(telemetry, dict) else {}
+    if isinstance(layers, list) and 0 <= index < len(layers) and isinstance(layers[index], dict):
+        return layers[index]
     return {}
+
+
+def layer_telemetry(payload: dict[str, Any], index: int) -> dict[str, Any]:
+    layer = layer_payload(payload, index)
+    telemetry = layer.get("telemetry_summary")
+    return telemetry if isinstance(telemetry, dict) else {}
+
+
+def layer_aggregated(payload: dict[str, Any], index: int) -> dict[str, Any]:
+    layer = layer_payload(payload, index)
+    aggregated = layer.get("aggregated_metrics")
+    return aggregated if isinstance(aggregated, dict) else {}
+
+
+def l3_telemetry(payload: dict[str, Any]) -> dict[str, Any]:
+    return layer_telemetry(payload, 3)
 
 
 def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -825,6 +840,8 @@ def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
             }
         )
     elif "formal_api_local" in stage and "compare" not in stage:
+        l0_telemetry = layer_telemetry(payload, 0)
+        l0_aggregated = layer_aggregated(payload, 0)
         metrics.update(
             {
                 "suite_id": payload.get("suite_id"),
@@ -845,6 +862,33 @@ def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "api_retriever_call_count": telemetry.get("retriever_call_count"),
                 "api_executor_call_count": telemetry.get("executor_call_count"),
                 "api_summarizer_call_count": telemetry.get("summarizer_call_count"),
+                "formal_text_protocol_benchmark": payload.get("formal_text_protocol_benchmark")
+                or metadata.get("formal_text_protocol_benchmark"),
+                "text_L0_total_tokens": comparison.get("text_L0_total_tokens", l0_telemetry.get("llm_total_tokens")),
+                "text_L0_prompt_tokens": comparison.get(
+                    "text_L0_prompt_tokens", l0_telemetry.get("llm_prompt_tokens")
+                ),
+                "text_L0_prompt_bytes": comparison.get("text_L0_prompt_bytes", l0_telemetry.get("llm_prompt_bytes")),
+                "text_L0_control_bytes": comparison.get("text_L0_control_bytes", l0_telemetry.get("control_bytes")),
+                "text_L0_quality_pass_count": comparison.get(
+                    "text_L0_quality_pass_count", l0_aggregated.get("quality_floor_pass_count")
+                ),
+                "protocol_L3_total_tokens": comparison.get("protocol_L3_total_tokens", telemetry.get("llm_total_tokens")),
+                "protocol_L3_prompt_tokens": comparison.get(
+                    "protocol_L3_prompt_tokens", telemetry.get("llm_prompt_tokens")
+                ),
+                "protocol_L3_prompt_bytes": comparison.get(
+                    "protocol_L3_prompt_bytes", telemetry.get("llm_prompt_bytes")
+                ),
+                "protocol_L3_control_bytes": comparison.get("protocol_L3_control_bytes", telemetry.get("control_bytes")),
+                "protocol_L3_quality_pass_count": comparison.get(
+                    "protocol_L3_quality_pass_count", payload.get("L3_quality_pass_count")
+                ),
+                "protocol_vs_text_token_delta": comparison.get("protocol_vs_text_token_delta"),
+                "protocol_vs_text_prompt_token_delta": comparison.get("protocol_vs_text_prompt_token_delta"),
+                "protocol_vs_text_prompt_bytes_delta": comparison.get("protocol_vs_text_prompt_bytes_delta"),
+                "protocol_vs_text_control_bytes_delta": comparison.get("protocol_vs_text_control_bytes_delta"),
+                "protocol_vs_text_quality_pass_delta": comparison.get("protocol_vs_text_quality_pass_delta"),
             }
         )
     elif "compare" in stage or "carrier_compare" in stage:
