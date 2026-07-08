@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import os
 import time
 from typing import Any
 
@@ -255,6 +256,70 @@ def _structured_collaboration_prompt(
         if normalized:
             prompt += f"\n\n{normalized}"
     return prompt + "\n"
+
+
+def _prefix_aligned_prompt(
+    *,
+    role_label: str,
+    shared_prefix_text: str,
+    role_suffix_prompt: str,
+) -> str:
+    normalized_prefix = shared_prefix_text.strip()
+    if not normalized_prefix:
+        return role_suffix_prompt
+    return (
+        "<statebus-shared-prefix-v1>\n"
+        f"{normalized_prefix}\n"
+        "</statebus-shared-prefix-v1>\n\n"
+        f"[STATEBUS_ROLE_SUFFIX:{role_label}]\n"
+        f"{role_suffix_prompt}"
+    )
+
+
+def _shared_prefix_enabled(prefix_alignment_mode: str, shared_prefix_text: str) -> bool:
+    return (
+        prefix_alignment_mode.strip().lower() == "shared_evidence_prefix"
+        and bool(shared_prefix_text.strip())
+    )
+
+
+def _role_suffix_payload_without_shared_prefix(
+    payload: dict[str, Any],
+    *,
+    shared_prefix_text: str,
+) -> dict[str, Any]:
+    normalized_prefix = shared_prefix_text.strip()
+    suffix_payload = dict(payload)
+    if str(suffix_payload.get("e", "")).strip() == normalized_prefix:
+        suffix_payload.pop("e", None)
+        suffix_payload["sp"] = {
+            "contract": "statebus-shared-prefix-v1",
+            "contains": "hydrated_evidence",
+            "bytes": len(normalized_prefix.encode("utf-8")),
+        }
+    return suffix_payload
+
+
+def _role_suffix_sections_without_shared_prefix(
+    sections: tuple[tuple[str, str], ...],
+    *,
+    shared_prefix_text: str,
+) -> tuple[tuple[str, str], ...]:
+    normalized_prefix = shared_prefix_text.strip()
+    return tuple(
+        (title, body)
+        for title, body in sections
+        if not (body.strip() == normalized_prefix and title.lower() in {"evidence note", "hydrated evidence"})
+    )
+
+
+def _role_suffix_blocks_without_shared_prefix(
+    evidence_blocks: tuple[str, ...],
+    *,
+    shared_prefix_text: str,
+) -> tuple[str, ...]:
+    normalized_prefix = shared_prefix_text.strip()
+    return tuple(block for block in evidence_blocks if block.strip() != normalized_prefix)
 
 
 def _candidate_surface_payload(
@@ -644,6 +709,9 @@ class RolePathRunner:
     llm_client: LLMClient = field(default_factory=build_llm_client)
     handoff_mode: str = "structured_collaboration"
     json_response_max_attempts: int = 3
+    prefix_alignment_mode: str = field(
+        default_factory=lambda: os.getenv("STATEBUS_PREFIX_ALIGNMENT_MODE", "independent")
+    )
 
     def _render_prompt(
         self,
@@ -654,19 +722,42 @@ class RolePathRunner:
         payload: dict[str, Any],
         text_sections: tuple[tuple[str, str], ...],
         evidence_blocks: tuple[str, ...] = (),
+        shared_prefix_text: str = "",
     ) -> str:
+        use_shared_prefix = _shared_prefix_enabled(self.prefix_alignment_mode, shared_prefix_text)
+        if use_shared_prefix:
+            payload = _role_suffix_payload_without_shared_prefix(
+                payload,
+                shared_prefix_text=shared_prefix_text,
+            )
+            text_sections = _role_suffix_sections_without_shared_prefix(
+                text_sections,
+                shared_prefix_text=shared_prefix_text,
+            )
+            evidence_blocks = _role_suffix_blocks_without_shared_prefix(
+                evidence_blocks,
+                shared_prefix_text=shared_prefix_text,
+            )
         if self.handoff_mode == "text_collaboration":
-            return _text_collaboration_prompt(
+            prompt = _text_collaboration_prompt(
                 role_label=role_label,
                 instruction=instruction,
                 sections=text_sections,
             )
-        return _structured_collaboration_prompt(
+        else:
+            prompt = _structured_collaboration_prompt(
+                role_label=role_label,
+                instruction=instruction,
+                payload_tag=payload_tag,
+                payload=payload,
+                evidence_blocks=evidence_blocks,
+            )
+        if not use_shared_prefix:
+            return prompt
+        return _prefix_aligned_prompt(
             role_label=role_label,
-            instruction=instruction,
-            payload_tag=payload_tag,
-            payload=payload,
-            evidence_blocks=evidence_blocks,
+            shared_prefix_text=shared_prefix_text,
+            role_suffix_prompt=prompt,
         )
 
     def _complete_json_role(
@@ -890,8 +981,12 @@ class RolePathRunner:
                 ("Tags", ", ".join(tags)),
                 ("Evidence note", evidence_text),
             ),
+            shared_prefix_text=evidence_text,
         )
-        if self.handoff_mode == "text_collaboration":
+        if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
+            self.prefix_alignment_mode,
+            evidence_text,
+        ):
             prompt = (
                 "You are the StateBus v2 planner role.\n"
                 "Return a JSON object with stable retrieval_objective and steps.\n\n"
@@ -972,8 +1067,12 @@ class RolePathRunner:
                 ("Visible Candidates", "\n".join(_candidate_notes.split("; ")) if _candidate_notes else ""),
                 ("Hydrated Evidence", evidence_text),
             ),
+            shared_prefix_text=evidence_text,
         )
-        if self.handoff_mode == "text_collaboration":
+        if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
+            self.prefix_alignment_mode,
+            evidence_text,
+        ):
             prompt = (
                 "You are the StateBus v2 retriever role.\n"
                 "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
@@ -1078,8 +1177,12 @@ class RolePathRunner:
                 ("Visible Candidates", "\n".join(_candidate_notes.split("; ")) if _candidate_notes else ""),
                 ("Hydrated Evidence", evidence_text),
             ),
+            shared_prefix_text=evidence_text,
         )
-        if self.handoff_mode == "text_collaboration":
+        if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
+            self.prefix_alignment_mode,
+            evidence_text,
+        ):
             prompt = (
                 "You are the StateBus v2 executor role.\n"
                 "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
@@ -1179,8 +1282,12 @@ class RolePathRunner:
                 ("Hydrated Evidence", evidence_text),
                 ("Action Handoff", compact_actions_text),
             ),
+            shared_prefix_text=evidence_text,
         )
-        if self.handoff_mode == "text_collaboration":
+        if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
+            self.prefix_alignment_mode,
+            evidence_text,
+        ):
             prompt = (
                 "You are the StateBus v2 summarizer role.\n"
                 "Return JSON with summary text, reusable steps, confidence, and tags.\n\n"

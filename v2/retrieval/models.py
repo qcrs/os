@@ -15,6 +15,10 @@ from v2.refs import CanonicalEvidencePack, HydrateManifest
 from v2.utils import compact_json_payload, sha256_digest
 
 
+EVIDENCE_PRUNING_HINT_SCHEMA_VERSION = "statebus.evidence_pruning_hint.v1"
+EVIDENCE_PRUNING_CLAIM_BOUNDARY = (
+    "input_level_evidence_pruning_only_no_model_internal_kv_tensor_pruning"
+)
 _PLANNER_SCOPE_TEXT_KEYS = (
     "text_context",
     "table_context",
@@ -274,7 +278,13 @@ class EvidencePruningHint:
     rendered_text_bytes: int
     keep_in_budget: bool
     threshold: float
+    estimated_tokens: int = 0
+    estimated_kv_tokens_saved_if_dropped: int = 0
+    pruning_class: str = "candidate"
+    quality_guard: str = ""
     reason: str = ""
+    claim_boundary: str = EVIDENCE_PRUNING_CLAIM_BOUNDARY
+    schema_version: str = EVIDENCE_PRUNING_HINT_SCHEMA_VERSION
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -284,7 +294,13 @@ class EvidencePruningHint:
             "rendered_text_bytes": self.rendered_text_bytes,
             "keep_in_budget": self.keep_in_budget,
             "threshold": self.threshold,
+            "estimated_tokens": self.estimated_tokens,
+            "estimated_kv_tokens_saved_if_dropped": self.estimated_kv_tokens_saved_if_dropped,
+            "pruning_class": self.pruning_class,
+            "quality_guard": self.quality_guard,
             "reason": self.reason,
+            "claim_boundary": self.claim_boundary,
+            "schema_version": self.schema_version,
         }
 
 
@@ -299,7 +315,14 @@ class RetrievalPruningProfile:
     bucket_stats: tuple[RetrievalPruningBucketStat, ...]
     importance_threshold: float = 0.6
     pruning_hints: tuple[EvidencePruningHint, ...] = ()
+    full_corpus_tokens_estimate: int = 0
+    selected_evidence_tokens_estimate: int = 0
+    dropped_candidate_bytes: int = 0
+    dropped_candidate_tokens_estimate: int = 0
     estimated_kv_tokens_saved: int = 0
+    pruning_gain_ratio: float = 0.0
+    policy_name: str = "statebus_input_level_evidence_pruning_v1"
+    claim_boundary: str = EVIDENCE_PRUNING_CLAIM_BOUNDARY
     schema_version: str = RETRIEVAL_PRUNING_PROFILE_SCHEMA_VERSION
 
     def canonical_payload(self) -> dict[str, object]:
@@ -313,7 +336,14 @@ class RetrievalPruningProfile:
             "bucket_stats": [bucket.canonical_payload() for bucket in self.bucket_stats],
             "importance_threshold": self.importance_threshold,
             "pruning_hints": [hint.canonical_payload() for hint in self.pruning_hints],
+            "full_corpus_tokens_estimate": self.full_corpus_tokens_estimate,
+            "selected_evidence_tokens_estimate": self.selected_evidence_tokens_estimate,
+            "dropped_candidate_bytes": self.dropped_candidate_bytes,
+            "dropped_candidate_tokens_estimate": self.dropped_candidate_tokens_estimate,
             "estimated_kv_tokens_saved": self.estimated_kv_tokens_saved,
+            "pruning_gain_ratio": self.pruning_gain_ratio,
+            "policy_name": self.policy_name,
+            "claim_boundary": self.claim_boundary,
             "schema_version": self.schema_version,
         }
 
