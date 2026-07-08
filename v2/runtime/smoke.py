@@ -99,7 +99,7 @@ from v2.runtime import (
     TelemetryEvent,
     WorkspaceManager,
     best_visible_candidate,
-    build_corpus_prefix_hash,
+    build_neural_prefix_identity,
     constrain_visible_candidates,
     build_extended_output_manifest,
     capture_runtime_signature,
@@ -1002,7 +1002,7 @@ def _build_semantic_state_ref(
     bundle: RetrievalBundle,
     materialized_state: MaterializedStateHandle,
 ) -> SemanticStateRef:
-    corpus_prefix_hash = build_corpus_prefix_hash(
+    prefix_identity = build_neural_prefix_identity(
         source_doc_hashes=bundle.selected_doc_hashes,
         evidence_pack_hash=bundle.evidence_pack.pack_hash,
         hydrate_manifest_hash=bundle.hydrate_manifest.manifest_hash,
@@ -1020,7 +1020,9 @@ def _build_semantic_state_ref(
             "encoding": bundle.query_embedding.encoding,
             "storage_metadata_path": str(materialized_state.metadata_path),
             "shared_memory_name": materialized_state.shared_memory_name,
-            "corpus_prefix_hash": corpus_prefix_hash,
+            "corpus_prefix_hash": prefix_identity.corpus_prefix_hash,
+            "evidence_prefix_hash": prefix_identity.evidence_prefix_hash,
+            "neural_prefix_identity": prefix_identity.canonical_payload(),
             "neural_reuse_scope": "task_session",
             "neural_reuse_mode": "shared_prefix_role_suffix",
             "neural_reuse_claim_boundary": "engine_local_prefix_reuse_estimate_only_no_kv_tensor_export",
@@ -2893,13 +2895,15 @@ def run_smoke(
     task_metrics["evidence_pruning_estimated_kv_tokens_saved"] = float(
         retrieval.pruning_profile.estimated_kv_tokens_saved
     )
-    neural_prefix_hash = build_corpus_prefix_hash(
+    neural_prefix_identity = build_neural_prefix_identity(
         source_doc_hashes=retrieval.selected_doc_hashes,
         evidence_pack_hash=retrieval.evidence_pack.pack_hash,
         hydrate_manifest_hash=retrieval.hydrate_manifest.manifest_hash,
     )
     neural_prefix_estimate = estimate_engine_local_prefix_reuse(
-        prefix_hash=neural_prefix_hash,
+        prefix_hash=neural_prefix_identity.evidence_prefix_hash,
+        corpus_prefix_hash=neural_prefix_identity.corpus_prefix_hash,
+        evidence_prefix_hash=neural_prefix_identity.evidence_prefix_hash,
         shared_prefix_bytes=retrieval.selected_evidence_bytes,
         consumer_roles=_neural_prefix_consumer_roles(role_hydrated_slices),
     )
@@ -3197,6 +3201,7 @@ def run_smoke(
             "drop_count": sum(1 for hint in retrieval.pruning_profile.pruning_hints if not hint.keep_in_budget),
             "estimated_kv_tokens_saved": retrieval.pruning_profile.estimated_kv_tokens_saved,
         },
+        "neural_prefix_identity": neural_prefix_identity.canonical_payload(),
         "neural_prefix_reuse": neural_prefix_estimate.canonical_payload(),
         "artifact": {
             "replay_ready": finalized_artifact.replay_ready,

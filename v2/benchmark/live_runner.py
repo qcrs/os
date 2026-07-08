@@ -73,6 +73,8 @@ def _continuous_family_dir_by_id(family_id: str) -> Path:
         "incident_diagnosis": base / "incident_diagnosis",
         "cross_period_financial_v1": base / "cross_period_financial",
         "cross_period_financial": base / "cross_period_financial",
+        "kv_prefix_reuse_v1": base / "kv_prefix_reuse",
+        "kv_prefix_reuse": base / "kv_prefix_reuse",
     }
     resolved = mapping.get(family_id.strip())
     if resolved is None:

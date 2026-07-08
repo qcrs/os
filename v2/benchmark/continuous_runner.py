@@ -33,6 +33,7 @@ SUPPORTED_CONTINUOUS_FAMILY_IDS = {
     "csv_table_profile_v1",
     "cross_period_financial_v1",
     "incident_diagnosis_v2",
+    "kv_prefix_reuse_v1",
     "long_doc_table_v1",
     "long_doc_metric_replay_v1",
 }
@@ -770,7 +771,12 @@ def _case_round_evidence(case: BenchmarkCaseReport) -> dict[str, object]:
         "answer_restoration_replay_count": float(
             case.metrics.get("answer_restoration_replay_count", 0.0)
         ),
-        "corpus_prefix_hash": str(neural_prefix.get("prefix_hash", "")),
+        "corpus_prefix_hash": str(
+            neural_prefix.get("corpus_prefix_hash", neural_prefix.get("prefix_hash", ""))
+        ),
+        "evidence_prefix_hash": str(
+            neural_prefix.get("evidence_prefix_hash", neural_prefix.get("prefix_hash", ""))
+        ),
         "kv_prefill_saved_tokens_estimate": float(
             case.metrics.get("neural_prefix_prefill_saved_tokens_estimate", 0.0)
         ),

@@ -13,7 +13,8 @@ CONTAINER_RESULT_ROOT="${CONTAINER_RUNS_ROOT}/${RUN_ID}"
 AUDIT_ARTIFACT_ROOT="${STATEBUS_LOCAL_API_AUDIT_ARTIFACT_ROOT:-${HOST_PROJECT_ROOT}/docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_${STAMP}}"
 
 TARGET_CUDA_VISIBLE_DEVICES="${STATEBUS_CUDA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-0}}"
-TARGET_EMBED_DEVICE="${STATEBUS_EMBED_DEVICE:-cuda:0}"
+REQUESTED_EMBED_DEVICE="${STATEBUS_EMBED_DEVICE:-${STATEBUS_LOCAL_API_EMBED_DEVICE:-cuda:0}}"
+TARGET_EMBED_DEVICE="$REQUESTED_EMBED_DEVICE"
 TARGET_TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 TARGET_PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 TARGET_CODEACT_SANDBOX_BACKEND="${STATEBUS_CODEACT_SANDBOX_BACKEND:-auto}"
@@ -79,6 +80,9 @@ Mode contract:
   - AF_UNIX sockets use short /tmp/sb2-<hash>.sock paths
   - timeout_contract=empty/0/none/unlimited disables per-stage timeout
   - no_timeouts=${NO_TIMEOUTS}
+  - requested_embedding_device=${REQUESTED_EMBED_DEVICE}
+  - effective_embedding_device=${TARGET_EMBED_DEVICE}
+  - choose physical GPU with STATEBUS_CUDA_VISIBLE_DEVICES; cuda:0 is inside that visible set
   - no deterministic fallback is used for claim evidence
 EOF
 
@@ -92,6 +96,9 @@ EOF
     echo "pytest_mode=${PYTEST_MODE}"
     echo "run_flagship=${RUN_FLAGSHIP}"
     echo "no_timeouts=${NO_TIMEOUTS}"
+    echo "requested_embedding_device=${REQUESTED_EMBED_DEVICE}"
+    echo "effective_embedding_device=${TARGET_EMBED_DEVICE}"
+    echo "cuda_visible_devices=${TARGET_CUDA_VISIBLE_DEVICES}"
     echo "timeout_contract=empty/0/none/unlimited disables per-stage timeout"
     echo "socket_path_contract=/tmp/sb2-<16hex>.sock"
     echo "py_compile_timeout_seconds=${PY_COMPILE_TIMEOUT_SECONDS}"
