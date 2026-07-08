@@ -526,6 +526,30 @@ def _candidate_identity_line(visible_candidates: tuple["RoleToolCandidate", ...]
     return "; ".join(candidate.candidate_key() for candidate in visible_candidates)
 
 
+def _preferred_candidate_payload(
+    visible_candidates: tuple["RoleToolCandidate", ...],
+    *,
+    route_hints: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    preferred = best_visible_candidate(visible_candidates)
+    payload: dict[str, Any] = {
+        "k": preferred.candidate_key(),
+        "r": preferred.route,
+        "t": preferred.tool_name,
+        "why": "top_ranked_visible_candidate",
+    }
+    normalized_hints = tuple(
+        dict.fromkeys(
+            hint.strip()
+            for hint in route_hints
+            if hint.strip() and hint.strip() not in {preferred.route, preferred.candidate_key()}
+        )
+    )
+    if normalized_hints:
+        payload["rh"] = list(normalized_hints)
+    return payload
+
+
 def _selection_retry_prompt(
     *,
     prompt: str,
@@ -1165,6 +1189,11 @@ class RolePathRunner:
                 include_helper_fields=not strict_surface,
             ),
         }
+        if strict_surface and self.handoff_mode != "text_collaboration":
+            payload["pc"] = _preferred_candidate_payload(
+                visible_candidates,
+                route_hints=route_hints,
+            )
         evidence_text = _compact_text_value(prompt_slice.combined_text())
         if evidence_text:
             payload["e"] = evidence_text
@@ -1172,9 +1201,10 @@ class RolePathRunner:
             role_label="retriever",
             instruction=(
                 "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
-                "exactly from a single visible tc item. Do not invent labels or use placeholders such as "
-                "'tool' or 'route'. Return a JSON object with keys candidate_key, route, tool_name, "
-                "supporting_doc_ids, and reason."
+                "exactly from a single visible tc item. Treat pc as the default tie-break when multiple tc "
+                "items look plausible and the hydrated evidence does not clearly contradict pc or its route "
+                "hints. Do not invent labels or use placeholders such as 'tool' or 'route'. Return a JSON "
+                "object with keys candidate_key, route, tool_name, supporting_doc_ids, and reason."
             ),
             payload_tag="sb-retriever-v1",
             payload=payload,
@@ -1274,6 +1304,11 @@ class RolePathRunner:
                 include_helper_fields=not strict_surface,
             ),
         }
+        if strict_surface and self.handoff_mode != "text_collaboration":
+            payload["pc"] = _preferred_candidate_payload(
+                visible_candidates,
+                route_hints=route_hints,
+            )
         evidence_text = _compact_text_value(prompt_slice.combined_text())
         if evidence_text:
             payload["e"] = evidence_text
@@ -1281,9 +1316,10 @@ class RolePathRunner:
             role_label="executor",
             instruction=(
                 "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
-                "and tool_name exactly from a single visible tc item. Do not invent labels or use placeholders "
-                "such as 'tool' or 'route'. Return a JSON object with keys candidate_key, route, tool_name, "
-                "action_contract, and reason."
+                "and tool_name exactly from a single visible tc item. Treat pc as the default tie-break when "
+                "multiple tc items share the same tool and the hydrated evidence does not clearly contradict pc "
+                "or its route hints. Do not invent labels or use placeholders such as 'tool' or 'route'. "
+                "Return a JSON object with keys candidate_key, route, tool_name, action_contract, and reason."
             ),
             payload_tag="sb-executor-v1",
             payload=payload,
