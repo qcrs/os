@@ -22,8 +22,14 @@ TARGET_CODEACT_SANDBOX_BACKEND="${STATEBUS_CODEACT_SANDBOX_BACKEND:-auto}"
 PYTEST_MODE="${STATEBUS_LOCAL_API_PYTEST_MODE:-focused}" # focused | full | skip
 RUN_FLAGSHIP="${STATEBUS_LOCAL_API_RUN_FLAGSHIP:-0}"
 REPEAT_COUNT="${STATEBUS_LOCAL_API_REPEAT:-1}"
+LATENCY_RERUN="${STATEBUS_LOCAL_API_LATENCY_RERUN:-0}"
+LATENCY_RERUN_REPEAT_COUNT="${STATEBUS_LOCAL_API_LATENCY_RERUN_REPEAT_COUNT:-3}"
 STRICT_EXIT="${STATEBUS_LOCAL_API_STRICT_EXIT:-1}"
 NO_TIMEOUTS="${STATEBUS_LOCAL_API_NO_TIMEOUTS:-0}"
+
+if [[ "$LATENCY_RERUN" == "1" && "$LATENCY_RERUN_REPEAT_COUNT" -lt 3 ]]; then
+  LATENCY_RERUN_REPEAT_COUNT=3
+fi
 
 PY_COMPILE_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_PY_COMPILE_TIMEOUT_SECONDS:-${PY_COMPILE_TIMEOUT_SECONDS:-300}}"
 PYTEST_TIMEOUT_SECONDS="${STATEBUS_LOCAL_API_PYTEST_TIMEOUT_SECONDS:-${PYTEST_TIMEOUT_SECONDS:-1800}}"
@@ -93,6 +99,8 @@ EOF
     echo "audit_artifact_root=${AUDIT_ARTIFACT_ROOT}"
     echo "container=${CONTAINER_NAME}"
     echo "repeat_count=${REPEAT_COUNT}"
+    echo "latency_rerun=${LATENCY_RERUN}"
+    echo "latency_rerun_repeat_count=${LATENCY_RERUN_REPEAT_COUNT}"
     echo "pytest_mode=${PYTEST_MODE}"
     echo "run_flagship=${RUN_FLAGSHIP}"
     echo "no_timeouts=${NO_TIMEOUTS}"
@@ -126,6 +134,8 @@ EOF
     -e STATEBUS_LOCAL_API_PYTEST_MODE="$PYTEST_MODE"
     -e STATEBUS_LOCAL_API_RUN_FLAGSHIP="$RUN_FLAGSHIP"
     -e STATEBUS_LOCAL_API_REPEAT="$REPEAT_COUNT"
+    -e STATEBUS_LOCAL_API_LATENCY_RERUN="$LATENCY_RERUN"
+    -e STATEBUS_LOCAL_API_LATENCY_RERUN_REPEAT_COUNT="$LATENCY_RERUN_REPEAT_COUNT"
     -e STATEBUS_LOCAL_API_STRICT_EXIT="$STRICT_EXIT"
     -e STATEBUS_LOCAL_API_NO_TIMEOUTS="$NO_TIMEOUTS"
     -e STATEBUS_LOCAL_API_PY_COMPILE_TIMEOUT_SECONDS="$PY_COMPILE_TIMEOUT_SECONDS"
@@ -375,6 +385,8 @@ echo "[statebus-v2-local-api] work root: $WORK_ROOT"
 echo "[statebus-v2-local-api] run id: ${STATEBUS_LOCAL_API_RUN_ID}"
 echo "[statebus-v2-local-api] pytest mode: ${STATEBUS_LOCAL_API_PYTEST_MODE:-focused}"
 echo "[statebus-v2-local-api] repeat: ${STATEBUS_LOCAL_API_REPEAT:-1}"
+echo "[statebus-v2-local-api] latency rerun: ${STATEBUS_LOCAL_API_LATENCY_RERUN:-0}"
+echo "[statebus-v2-local-api] latency rerun repeat count: ${STATEBUS_LOCAL_API_LATENCY_RERUN_REPEAT_COUNT:-3}"
 echo "[statebus-v2-local-api] no timeouts: ${STATEBUS_LOCAL_API_NO_TIMEOUTS:-0}"
 echo "[statebus-v2-local-api] CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
 echo "[statebus-v2-local-api] STATEBUS_EMBED_DEVICE: ${STATEBUS_EMBED_DEVICE:-}"
@@ -694,6 +706,21 @@ for repeat_idx in $(seq 1 "${STATEBUS_LOCAL_API_REPEAT:-1}"); do
   fi
 done
 
+if [[ "${STATEBUS_LOCAL_API_LATENCY_RERUN:-0}" == "1" ]]; then
+  export STATEBUS_COMPARATOR_SERIALIZED_REPEAT_COUNT="${STATEBUS_LOCAL_API_LATENCY_RERUN_REPEAT_COUNT:-3}"
+  export STATEBUS_COMPARATOR_TIMING_CONTRACT="serialized_formal_compare_latency_rerun_v1"
+  for repeat_idx in $(seq 1 "${STATEBUS_LOCAL_API_LATENCY_RERUN_REPEAT_COUNT:-3}"); do
+    export STATEBUS_COMPARATOR_SERIALIZED_REPEAT_INDEX="$repeat_idx"
+    repeat_label="$(printf 'lr%02d' "$repeat_idx")"
+    run_live_stage "${repeat_label}_14_formal_compare_latency_rerun_api_local_memfd" "$COMPARE_TIMEOUT_SECONDS" 1 "compare" \
+      --benchmark-tier formal \
+      --state-pool-mode memfd
+  done
+  unset STATEBUS_COMPARATOR_SERIALIZED_REPEAT_INDEX
+  unset STATEBUS_COMPARATOR_SERIALIZED_REPEAT_COUNT
+  unset STATEBUS_COMPARATOR_TIMING_CONTRACT
+fi
+
 /usr/bin/python3 - "$STATUS_TSV" "$SUMMARY_MD" "$SUMMARY_JSON" <<'PY'
 from __future__ import annotations
 
@@ -701,6 +728,7 @@ import csv
 import importlib.metadata
 import json
 import os
+import statistics
 import sys
 from pathlib import Path
 from typing import Any
@@ -739,6 +767,23 @@ def load_json(path_value: str) -> dict[str, Any] | None:
     except Exception as exc:
         return {"_parse_error": str(exc), "_path": str(path)}
     return value if isinstance(value, dict) else {"_non_object_json": True, "value": value}
+
+
+def coerce_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def direction_consistent(values: list[float]) -> bool:
+    if not values:
+        return False
+    signs = {1 if value > 0 else -1 if value < 0 else 0 for value in values}
+    signs.discard(0)
+    return len(signs) == 1 and bool(signs)
 
 
 def nested_mode_report(payload: dict[str, Any]) -> dict[str, Any]:
@@ -861,9 +906,13 @@ def compact_metrics(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "api_prompt_bytes_delta": comparison.get("api_prompt_bytes_delta"),
                 "api_control_bytes_delta": comparison.get("api_control_bytes_delta"),
                 "api_task_ms_delta": comparison.get("api_task_ms_delta"),
+                "api_llm_ms_delta": comparison.get("api_llm_ms_delta"),
+                "api_system_overhead_ms_delta": comparison.get("api_system_overhead_ms_delta"),
                 "api_serialized_latency_superiority_claim_allowed": comparison.get(
                     "api_serialized_latency_superiority_claim_allowed"
                 ),
+                "serialized_repeat_count": metadata.get("serialized_repeat_count"),
+                "serialized_repeat_index": metadata.get("serialized_repeat_index"),
                 "external_fairness_gate_coverage": fairness.get("external_fairness_gate_coverage"),
                 "no_external_fairness_gate_failures": fairness.get("no_external_fairness_gate_failures"),
                 "external_fairness_gate_pass_count": fairness.get("external_fairness_gate_pass_count"),
@@ -1048,6 +1097,59 @@ def compare_case_diagnostics(stage: str, payload: dict[str, Any]) -> list[dict[s
     return diagnostics
 
 
+def serialized_latency_rerun_summary(rows: list[dict[str, str]]) -> dict[str, Any]:
+    reruns: list[dict[str, Any]] = []
+    for row in rows:
+        stage = row.get("stage", "")
+        if "formal_compare_latency_rerun_api_local_memfd" not in stage:
+            continue
+        payload = load_json(row.get("artifact", ""))
+        if not isinstance(payload, dict):
+            continue
+        metrics = compact_metrics(stage, payload)
+        task_ms_delta = coerce_float(metrics.get("api_task_ms_delta"))
+        llm_ms_delta = coerce_float(metrics.get("api_llm_ms_delta"))
+        system_overhead_ms_delta = coerce_float(metrics.get("api_system_overhead_ms_delta"))
+        if task_ms_delta is None or llm_ms_delta is None or system_overhead_ms_delta is None:
+            continue
+        reruns.append(
+            {
+                "stage": stage,
+                "task_ms_delta": task_ms_delta,
+                "llm_ms_delta": llm_ms_delta,
+                "system_overhead_ms_delta": system_overhead_ms_delta,
+                "strict_equal_quality_comparison_valid": metrics.get(
+                    "strict_equal_quality_comparison_valid"
+                ),
+                "serialized_repeat_index": metrics.get("serialized_repeat_index"),
+                "timing_execution_contract": metrics.get("timing_execution_contract"),
+            }
+        )
+    if not reruns:
+        return {}
+    task_ms_deltas = [entry["task_ms_delta"] for entry in reruns]
+    llm_ms_deltas = [entry["llm_ms_delta"] for entry in reruns]
+    system_overhead_ms_deltas = [entry["system_overhead_ms_delta"] for entry in reruns]
+    strict_all = all(entry.get("strict_equal_quality_comparison_valid") is True for entry in reruns)
+    return {
+        "serialized_repeat_count": len(reruns),
+        "strict_equal_quality_comparison_valid_all_repeats": strict_all,
+        "serialized_task_ms_direction_consistent": direction_consistent(task_ms_deltas),
+        "serialized_llm_ms_direction_consistent": direction_consistent(llm_ms_deltas),
+        "serialized_system_overhead_ms_direction_consistent": direction_consistent(system_overhead_ms_deltas),
+        "serialized_latency_superiority_claim_allowed": (
+            len(reruns) >= 3 and strict_all and all(value < 0.0 for value in task_ms_deltas)
+        ),
+        "serialized_task_ms_delta_mean": sum(task_ms_deltas) / len(task_ms_deltas),
+        "serialized_task_ms_delta_median": statistics.median(task_ms_deltas),
+        "serialized_llm_ms_delta_mean": sum(llm_ms_deltas) / len(llm_ms_deltas),
+        "serialized_llm_ms_delta_median": statistics.median(llm_ms_deltas),
+        "serialized_system_overhead_ms_delta_mean": sum(system_overhead_ms_deltas) / len(system_overhead_ms_deltas),
+        "serialized_system_overhead_ms_delta_median": statistics.median(system_overhead_ms_deltas),
+        "repeats": reruns,
+    }
+
+
 key_metrics: dict[str, dict[str, Any]] = {}
 case_diagnostics: dict[str, list[dict[str, Any]]] = {}
 for row in rows:
@@ -1075,6 +1177,7 @@ environment = {
     "llm_config_file": os.getenv("STATEBUS_LLM_CONFIG_FILE", ""),
     "llm_env_file": os.getenv("STATEBUS_LLM_ENV_FILE", ""),
 }
+latency_rerun = serialized_latency_rerun_summary(rows)
 try:
     import torch  # type: ignore
 
@@ -1099,6 +1202,7 @@ summary = {
     "failed_stages": [row["stage"] for row in failed_all],
     "failed_required_stages": [row["stage"] for row in failed_required],
     "key_metrics": key_metrics,
+    "latency_rerun": latency_rerun,
     "compare_case_diagnostics": case_diagnostics,
     "stages": rows,
 }
@@ -1132,6 +1236,58 @@ if key_metrics:
         lines.append("")
 else:
     lines.append("- none parsed")
+
+lines.extend(["", "## Serialized Latency Rerun", ""])
+if latency_rerun:
+    lines.append(f"- `serialized_repeat_count`: `{latency_rerun.get('serialized_repeat_count')}`")
+    lines.append(
+        f"- `strict_equal_quality_comparison_valid_all_repeats`: "
+        f"`{latency_rerun.get('strict_equal_quality_comparison_valid_all_repeats')}`"
+    )
+    lines.append(
+        f"- `serialized_latency_superiority_claim_allowed`: "
+        f"`{latency_rerun.get('serialized_latency_superiority_claim_allowed')}`"
+    )
+    lines.append(
+        f"- `serialized_task_ms_direction_consistent`: "
+        f"`{latency_rerun.get('serialized_task_ms_direction_consistent')}`"
+    )
+    lines.append(
+        f"- `serialized_llm_ms_direction_consistent`: "
+        f"`{latency_rerun.get('serialized_llm_ms_direction_consistent')}`"
+    )
+    lines.append(
+        f"- `serialized_system_overhead_ms_direction_consistent`: "
+        f"`{latency_rerun.get('serialized_system_overhead_ms_direction_consistent')}`"
+    )
+    lines.append(
+        f"- `serialized_task_ms_delta_mean`: `{latency_rerun.get('serialized_task_ms_delta_mean')}`"
+    )
+    lines.append(
+        f"- `serialized_task_ms_delta_median`: `{latency_rerun.get('serialized_task_ms_delta_median')}`"
+    )
+    lines.append(
+        f"- `serialized_llm_ms_delta_mean`: `{latency_rerun.get('serialized_llm_ms_delta_mean')}`"
+    )
+    lines.append(
+        f"- `serialized_llm_ms_delta_median`: `{latency_rerun.get('serialized_llm_ms_delta_median')}`"
+    )
+    lines.append(
+        f"- `serialized_system_overhead_ms_delta_mean`: "
+        f"`{latency_rerun.get('serialized_system_overhead_ms_delta_mean')}`"
+    )
+    lines.append(
+        f"- `serialized_system_overhead_ms_delta_median`: "
+        f"`{latency_rerun.get('serialized_system_overhead_ms_delta_median')}`"
+    )
+    for item in latency_rerun.get("repeats", []):
+        lines.append(
+            f"- `{item.get('stage', '')}` task_ms_delta `{item.get('task_ms_delta')}` "
+            f"llm_ms_delta `{item.get('llm_ms_delta')}` "
+            f"system_overhead_ms_delta `{item.get('system_overhead_ms_delta')}`"
+        )
+else:
+    lines.append("- not requested")
 
 lines.extend(["", "## Compare Case Structured Fields", ""])
 if case_diagnostics:

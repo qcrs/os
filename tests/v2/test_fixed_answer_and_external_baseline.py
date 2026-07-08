@@ -1063,6 +1063,30 @@ def test_fixed_answer_external_comparator_replay_ready_is_invalid_due_to_history
     assert mode_report.headline_metrics == {}
 
 
+def test_fixed_answer_external_comparator_records_serialized_repeat_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
+    monkeypatch.setenv("STATEBUS_COMPARATOR_SERIALIZED_REPEAT_COUNT", "3")
+    monkeypatch.setenv("STATEBUS_COMPARATOR_SERIALIZED_REPEAT_INDEX", "2")
+    monkeypatch.setenv("STATEBUS_COMPARATOR_TIMING_CONTRACT", "serialized_formal_compare_latency_rerun_v1")
+    report = compare_fixed_answer_with_external(
+        samples=family,
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        role_path_modes=("deterministic",),
+        statebus_mode="cold-start",
+    )
+
+    assert report.metadata["serialized_repeat_count"] == 3
+    assert report.metadata["serialized_repeat_index"] == 2
+    assert report.metadata["timing_execution_contract"] == "serialized_formal_compare_latency_rerun_v1"
+    assert report.comparison_summary["serialized_repeat_count"] == 3.0
+    assert report.comparison_summary["serialized_repeat_index"] == 2.0
+
+
 def test_role_path_normalizes_invalid_api_route_to_best_visible_candidate() -> None:
     class StubLLMClient:
         async def complete(self, messages, *, purpose, temperature=None):
