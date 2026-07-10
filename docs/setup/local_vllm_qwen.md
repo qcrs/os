@@ -73,7 +73,7 @@ CUDA_VISIBLE_DEVICES=1 VLLM_USE_V1=0 vllm serve /data/models/Qwen3-8B \
 - KV cache 预留约 `11.44 GiB`
 - 8192 token 请求最大并发估算约 `10x`
 
-## 4. 32B 单卡验证
+## 4. 32B 验证
 
 先用 4096 判断是否稳定：
 
@@ -116,6 +116,24 @@ STATEBUS_VLLM_PORT=53334 \
 STATEBUS_VLLM_MAX_MODEL_LEN=8192 \
 STATEBUS_VLLM_MAX_NUM_SEQS=1 \
 STATEBUS_VLLM_GPU_MEMORY_UTILIZATION=0.95 \
+scripts/start_vllm_qwen3_32b_prefix_cache.sh
+```
+
+如果卡 0 和卡 1 都可用，推荐走 2-GPU tensor parallel profile：
+
+```bash
+source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b-2gpu
+scripts/start_vllm_qwen3_32b_prefix_cache.sh
+```
+
+等价的显式覆盖方式是：
+
+```bash
+STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=0,1 \
+STATEBUS_VLLM_TENSOR_PARALLEL_SIZE=2 \
+STATEBUS_VLLM_MAX_MODEL_LEN=8192 \
+STATEBUS_VLLM_MAX_NUM_SEQS=1 \
+STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS=8192 \
 scripts/start_vllm_qwen3_32b_prefix_cache.sh
 ```
 
@@ -209,7 +227,7 @@ scripts/run_v2_local_vllm_formal_suite.sh
 后续切换到 `32B` 时，命令形态保持不变，只换 profile 和启动脚本：
 
 ```bash
-source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b
+source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b-2gpu
 scripts/start_vllm_qwen3_32b_prefix_cache.sh
 
 STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID=v2-local-vllm-qwen3-32b-formal \
@@ -222,6 +240,13 @@ scripts/run_v2_local_vllm_formal_suite.sh
 
 ```bash
 export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=<free_gpu_index>
+```
+
+如果改成多卡，必须同时覆盖 tensor parallel size，例如：
+
+```bash
+export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=0,1
+export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE=2
 ```
 
 ## 6. KV 预算估算

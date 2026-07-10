@@ -12,6 +12,7 @@ MAX_NUM_BATCHED_TOKENS="${STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS:-$MAX_MODEL_LEN}"
 DTYPE="${STATEBUS_VLLM_DTYPE:-bfloat16}"
 ENFORCE_EAGER="${STATEBUS_VLLM_ENFORCE_EAGER:-1}"
 KV_CACHE_DTYPE="${STATEBUS_VLLM_KV_CACHE_DTYPE:-}"
+TENSOR_PARALLEL_SIZE="${STATEBUS_VLLM_TENSOR_PARALLEL_SIZE:-1}"
 VLLM_ENV_PREFIX="${STATEBUS_VLLM_ENV_PREFIX:-/home/qcrs/statebus/conda-envs/vllm-qwen-cu121}"
 DEFAULT_CUDA_VISIBLE_DEVICES="${STATEBUS_VLLM_CUDA_VISIBLE_DEVICES:-1}"
 
@@ -45,6 +46,7 @@ args=(
   --max-num-seqs "$MAX_NUM_SEQS"
   --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
+  --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
   --enable-prefix-caching
 )
 
@@ -60,6 +62,7 @@ echo "[statebus-vllm] model_path=$MODEL_PATH"
 echo "[statebus-vllm] served_model_name=$SERVED_MODEL_NAME"
 echo "[statebus-vllm] endpoint=http://$HOST:$PORT/v1"
 echo "[statebus-vllm] cuda_visible_devices=$CUDA_VISIBLE_DEVICES"
+echo "[statebus-vllm] tensor_parallel_size=$TENSOR_PARALLEL_SIZE"
 echo "[statebus-vllm] max_model_len=$MAX_MODEL_LEN"
 echo "[statebus-vllm] gpu_memory_utilization=$GPU_MEMORY_UTILIZATION"
 

@@ -70,7 +70,7 @@ Non-KV baseline tag: v2-non-kv-baseline-20260710
 ```
 路径: /data/models/
 当前先测: Qwen3-8B
-后续质量验证: Qwen3-32B (单卡空闲后再切)
+后续质量验证: Qwen3-32B (优先 2-GPU tensor parallel: GPU 0,1；单卡空闲时也可走单卡 profile)
 备选: Qwen2.5-14B-Instruct (fp16, 28GB)
 ```
 
@@ -209,17 +209,24 @@ jq '.layers[] | {layer, quality_floor_pass_count}' \
 
 ### Step 5: 32B Full Formal（当前不是第一优先）
 
-只有在单卡 32B 资源空出来之后，才切换到 `Qwen3-32B` 做 full formal。当前 GPU 被占用时，不要把 32B full formal 当成 Phase 1 的先决条件。
+只有在 32B 所需 GPU 资源空出来之后，才切换到 `Qwen3-32B` 做 full formal。当前 GPU 被占用时，不要把 32B full formal 当成 Phase 1 的先决条件。若 GPU 0 和 GPU 1 可用，优先使用 2-GPU tensor parallel profile。
 
 ```bash
-source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b
+source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b-2gpu
 scripts/start_vllm_qwen3_32b_prefix_cache.sh
 ```
 
-如果当时 `32B` 不在 GPU 2，只在 source 之后额外改：
+如果改回单卡，只使用原单卡 profile：
 
 ```bash
-export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=<free_gpu_index>
+source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b
+```
+
+如果需要手动覆盖多卡设备，必须同时覆盖 tensor parallel size：
+
+```bash
+export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=0,1
+export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE=2
 ```
 
 然后直接沿用同一套 formal wrapper，无需再手改 `base_url` / `model` / `port`。
