@@ -280,6 +280,11 @@ class EvidencePruningHint:
     threshold: float
     estimated_tokens: int = 0
     estimated_kv_tokens_saved_if_dropped: int = 0
+    available_kv_cache_bytes: int = 0
+    kv_bytes_per_token: int = 0
+    dynamic_threshold: float = 0.0
+    capacity_ratio: float = 0.0
+    budget_decision: str = ""
     pruning_class: str = "candidate"
     quality_guard: str = ""
     reason: str = ""
@@ -296,6 +301,11 @@ class EvidencePruningHint:
             "threshold": self.threshold,
             "estimated_tokens": self.estimated_tokens,
             "estimated_kv_tokens_saved_if_dropped": self.estimated_kv_tokens_saved_if_dropped,
+            "available_kv_cache_bytes": self.available_kv_cache_bytes,
+            "kv_bytes_per_token": self.kv_bytes_per_token,
+            "dynamic_threshold": self.dynamic_threshold,
+            "capacity_ratio": self.capacity_ratio,
+            "budget_decision": self.budget_decision,
             "pruning_class": self.pruning_class,
             "quality_guard": self.quality_guard,
             "reason": self.reason,
@@ -314,6 +324,8 @@ class RetrievalPruningProfile:
     selected_candidate_ids: tuple[str, ...]
     bucket_stats: tuple[RetrievalPruningBucketStat, ...]
     importance_threshold: float = 0.6
+    base_importance_threshold: float = 0.6
+    dynamic_pruning_enabled: bool = False
     pruning_hints: tuple[EvidencePruningHint, ...] = ()
     full_corpus_tokens_estimate: int = 0
     selected_evidence_tokens_estimate: int = 0
@@ -321,6 +333,11 @@ class RetrievalPruningProfile:
     dropped_candidate_tokens_estimate: int = 0
     estimated_kv_tokens_saved: int = 0
     pruning_gain_ratio: float = 0.0
+    available_kv_cache_bytes: int = 0
+    kv_bytes_per_token: int = 0
+    target_sequence_tokens_estimate: int = 0
+    capacity_ratio: float = 0.0
+    budget_decision: str = ""
     policy_name: str = "statebus_input_level_evidence_pruning_v1"
     claim_boundary: str = EVIDENCE_PRUNING_CLAIM_BOUNDARY
     schema_version: str = RETRIEVAL_PRUNING_PROFILE_SCHEMA_VERSION
@@ -335,6 +352,8 @@ class RetrievalPruningProfile:
             "selected_candidate_ids": list(self.selected_candidate_ids),
             "bucket_stats": [bucket.canonical_payload() for bucket in self.bucket_stats],
             "importance_threshold": self.importance_threshold,
+            "base_importance_threshold": self.base_importance_threshold,
+            "dynamic_pruning_enabled": self.dynamic_pruning_enabled,
             "pruning_hints": [hint.canonical_payload() for hint in self.pruning_hints],
             "full_corpus_tokens_estimate": self.full_corpus_tokens_estimate,
             "selected_evidence_tokens_estimate": self.selected_evidence_tokens_estimate,
@@ -342,6 +361,11 @@ class RetrievalPruningProfile:
             "dropped_candidate_tokens_estimate": self.dropped_candidate_tokens_estimate,
             "estimated_kv_tokens_saved": self.estimated_kv_tokens_saved,
             "pruning_gain_ratio": self.pruning_gain_ratio,
+            "available_kv_cache_bytes": self.available_kv_cache_bytes,
+            "kv_bytes_per_token": self.kv_bytes_per_token,
+            "target_sequence_tokens_estimate": self.target_sequence_tokens_estimate,
+            "capacity_ratio": self.capacity_ratio,
+            "budget_decision": self.budget_decision,
             "policy_name": self.policy_name,
             "claim_boundary": self.claim_boundary,
             "schema_version": self.schema_version,

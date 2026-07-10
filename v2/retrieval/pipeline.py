@@ -9,6 +9,12 @@ from v2.memory import DeterministicEmbeddingEncoder, EmbeddingEncoder, build_emb
 from v2.memory.embedding import cosine_similarity as _cosine_sim
 from v2.provenance import DeterministicFanInBuilder, EvidenceCandidate
 from v2.refs import CanonicalEvidencePack, HydrateManifest, HydrateManifestEntry
+from v2.retrieval.pruning import (
+    DynamicPruningConfig,
+    DynamicPruningDecision,
+    PrunableEvidenceCandidate,
+    apply_dynamic_pruning,
+)
 from v2.retrieval.corpus import (
     CsvTableDocument,
     FinancialReportDocument,
@@ -35,6 +41,10 @@ from v2.retrieval.models import (
 
 PRUNING_IMPORTANCE_THRESHOLD = 0.6
 KV_ESTIMATE_BYTES_PER_TOKEN = 4
+
+
+def _default_dynamic_pruning_config() -> DynamicPruningConfig:
+    return DynamicPruningConfig.from_env()
 
 
 def _candidate_importance_score(candidate: RetrievalCandidateRecord) -> float:
@@ -300,6 +310,7 @@ class RetrieverFanoutPipeline:
     semantic_retriever: SemanticChunkRetriever = field(default_factory=SemanticChunkRetriever)
     table_retriever: TableStructureRetriever = field(default_factory=TableStructureRetriever)
     fan_in_builder: DeterministicFanInBuilder = field(default_factory=DeterministicFanInBuilder)
+    dynamic_pruning_config: DynamicPruningConfig = field(default_factory=_default_dynamic_pruning_config)
 
     @classmethod
     def with_embedding_mode(
@@ -487,14 +498,22 @@ class RetrieverFanoutPipeline:
         task_id: str,
         candidate_pool: RetrievalCandidatePool,
         selected_candidate_ids: set[str],
+        pre_pruning_selected_candidate_ids: set[str],
         full_corpus_bytes: int,
         selected_evidence_bytes: int,
+        dynamic_pruning_decision: DynamicPruningDecision | None = None,
     ) -> RetrievalPruningProfile:
         bucket_map: dict[str, list[RetrievalCandidateRecord]] = {}
         for candidate in candidate_pool.candidates:
             bucket_map.setdefault(candidate.bucket, []).append(candidate)
         bucket_stats = []
         pruning_hints: list[EvidencePruningHint] = []
+        applied_threshold = (
+            dynamic_pruning_decision.dynamic_threshold
+            if dynamic_pruning_decision is not None
+            else PRUNING_IMPORTANCE_THRESHOLD
+        )
+        base_threshold = self.dynamic_pruning_config.base_threshold
         for bucket, candidates in sorted(bucket_map.items()):
             selected = [candidate for candidate in candidates if candidate.candidate_id in selected_candidate_ids]
             selected_bytes = sum(len(candidate.rendered_text.encode("utf-8")) for candidate in selected)
@@ -512,6 +531,11 @@ class RetrieverFanoutPipeline:
                 importance_score = _candidate_importance_score(candidate)
                 keep_in_budget = candidate.candidate_id in selected_candidate_ids
                 estimated_tokens = _estimate_tokens_from_bytes(rendered_text_bytes)
+                dynamically_pruned = (
+                    dynamic_pruning_decision is not None
+                    and candidate.candidate_id in dynamic_pruning_decision.dropped_candidate_ids
+                    and candidate.candidate_id in pre_pruning_selected_candidate_ids
+                )
                 pruning_hints.append(
                     EvidencePruningHint(
                         candidate_id=candidate.candidate_id,
@@ -519,15 +543,36 @@ class RetrieverFanoutPipeline:
                         importance_score=round(importance_score, 6),
                         rendered_text_bytes=rendered_text_bytes,
                         keep_in_budget=keep_in_budget,
-                        threshold=PRUNING_IMPORTANCE_THRESHOLD,
+                        threshold=applied_threshold,
                         estimated_tokens=estimated_tokens,
                         estimated_kv_tokens_saved_if_dropped=0 if keep_in_budget else estimated_tokens,
-                        pruning_class="selected_candidate" if keep_in_budget else "candidate_drop",
+                        available_kv_cache_bytes=(
+                            0 if dynamic_pruning_decision is None else dynamic_pruning_decision.available_kv_cache_bytes
+                        ),
+                        kv_bytes_per_token=(
+                            0 if dynamic_pruning_decision is None else dynamic_pruning_decision.kv_bytes_per_token
+                        ),
+                        dynamic_threshold=applied_threshold,
+                        capacity_ratio=(
+                            0.0 if dynamic_pruning_decision is None else round(dynamic_pruning_decision.capacity_ratio, 6)
+                        ),
+                        budget_decision=(
+                            "" if dynamic_pruning_decision is None else dynamic_pruning_decision.budget_decision
+                        ),
+                        pruning_class=(
+                            "selected_candidate"
+                            if keep_in_budget
+                            else ("dynamic_budget_drop" if dynamically_pruned else "candidate_drop")
+                        ),
                         quality_guard=_candidate_quality_guard(candidate, keep_in_budget),
                         reason=(
                             "selected_for_budget"
                             if keep_in_budget
-                            else "candidate_pruned_after_fan_in_or_scope_filter"
+                            else (
+                                "candidate_pruned_by_dynamic_budget"
+                                if dynamically_pruned
+                                else "candidate_pruned_after_fan_in_or_scope_filter"
+                            )
                         ),
                     )
                 )
@@ -555,9 +600,22 @@ class RetrieverFanoutPipeline:
                     importance_score=0.0,
                     rendered_text_bytes=corpus_remainder_bytes,
                     keep_in_budget=False,
-                    threshold=PRUNING_IMPORTANCE_THRESHOLD,
+                    threshold=applied_threshold,
                     estimated_tokens=corpus_remainder_tokens,
                     estimated_kv_tokens_saved_if_dropped=corpus_remainder_tokens,
+                    available_kv_cache_bytes=(
+                        0 if dynamic_pruning_decision is None else dynamic_pruning_decision.available_kv_cache_bytes
+                    ),
+                    kv_bytes_per_token=(
+                        0 if dynamic_pruning_decision is None else dynamic_pruning_decision.kv_bytes_per_token
+                    ),
+                    dynamic_threshold=applied_threshold,
+                    capacity_ratio=(
+                        0.0 if dynamic_pruning_decision is None else round(dynamic_pruning_decision.capacity_ratio, 6)
+                    ),
+                    budget_decision=(
+                        "" if dynamic_pruning_decision is None else dynamic_pruning_decision.budget_decision
+                    ),
                     pruning_class="corpus_remainder_drop",
                     quality_guard="not_hydrated_into_llm_prompt_after_retrieval_scope_selection",
                     reason="not_materialized_after_retriever_scope_selection",
@@ -575,7 +633,9 @@ class RetrieverFanoutPipeline:
             pruning_gain_bytes=pruning_gain_bytes,
             selected_candidate_ids=tuple(sorted(selected_candidate_ids)),
             bucket_stats=tuple(sorted(bucket_stats, key=lambda item: item.bucket)),
-            importance_threshold=PRUNING_IMPORTANCE_THRESHOLD,
+            importance_threshold=applied_threshold,
+            base_importance_threshold=base_threshold,
+            dynamic_pruning_enabled=dynamic_pruning_decision is not None,
             pruning_hints=tuple(sorted(pruning_hints, key=lambda hint: hint.candidate_id)),
             full_corpus_tokens_estimate=full_corpus_tokens,
             selected_evidence_tokens_estimate=selected_evidence_tokens,
@@ -585,7 +645,105 @@ class RetrieverFanoutPipeline:
             pruning_gain_ratio=(
                 pruning_gain_bytes / full_corpus_bytes if full_corpus_bytes > 0 else 0.0
             ),
+            available_kv_cache_bytes=(
+                0 if dynamic_pruning_decision is None else dynamic_pruning_decision.available_kv_cache_bytes
+            ),
+            kv_bytes_per_token=(
+                0 if dynamic_pruning_decision is None else dynamic_pruning_decision.kv_bytes_per_token
+            ),
+            target_sequence_tokens_estimate=(
+                0 if dynamic_pruning_decision is None else dynamic_pruning_decision.target_sequence_tokens_estimate
+            ),
+            capacity_ratio=(
+                0.0 if dynamic_pruning_decision is None else round(dynamic_pruning_decision.capacity_ratio, 6)
+            ),
+            budget_decision=(
+                "" if dynamic_pruning_decision is None else dynamic_pruning_decision.budget_decision
+            ),
+            policy_name=(
+                "statebus_budget_aware_dynamic_pruning_v1"
+                if dynamic_pruning_decision is not None
+                else "statebus_input_level_evidence_pruning_v1"
+            ),
         )
+
+    @staticmethod
+    def _selected_evidence_bytes_for_pack(evidence_pack: CanonicalEvidencePack) -> int:
+        visible_buckets = (
+            evidence_pack.hard_facts,
+            evidence_pack.structured_evidence,
+            evidence_pack.semantic_contexts,
+        )
+        return sum(len(item.rendered_text.encode("utf-8")) for bucket in visible_buckets for item in bucket)
+
+    def _apply_dynamic_pruning_to_evidence_pack(
+        self,
+        *,
+        candidate_pool: RetrievalCandidatePool,
+        evidence_pack: CanonicalEvidencePack,
+        selected_candidate_ids: set[str],
+    ) -> tuple[CanonicalEvidencePack, set[str], DynamicPruningDecision | None]:
+        config = self.dynamic_pruning_config
+        if not config.enabled:
+            return evidence_pack, selected_candidate_ids, None
+        selected_records = [
+            candidate
+            for candidate in candidate_pool.candidates
+            if candidate.candidate_id in selected_candidate_ids
+        ]
+        if not selected_records:
+            return evidence_pack, selected_candidate_ids, None
+        decision = apply_dynamic_pruning(
+            [
+                PrunableEvidenceCandidate(
+                    candidate_id=candidate.candidate_id,
+                    bucket=candidate.bucket,
+                    importance_score=round(_candidate_importance_score(candidate), 6),
+                    rendered_text_bytes=len(candidate.rendered_text.encode("utf-8")),
+                )
+                for candidate in selected_records
+            ],
+            available_kv_cache_bytes=config.available_kv_cache_bytes,
+            kv_bytes_per_token=config.kv_bytes_per_token,
+            base_threshold=config.base_threshold,
+            capacity_buffer=config.capacity_buffer,
+            protected_candidate_ids={
+                candidate.candidate_id
+                for candidate in selected_records
+                if candidate.bucket in {"hard_fact", "structured_evidence"}
+            },
+            min_keep_by_bucket={
+                "semantic_context": config.min_keep_semantic_contexts,
+                "lexical_hint": config.min_keep_lexical_hints,
+            },
+        )
+        kept_candidate_ids = set(decision.kept_candidate_ids)
+        filtered_pack = CanonicalEvidencePack(
+            pack_id=evidence_pack.pack_id,
+            task_id=evidence_pack.task_id,
+            source_doc_hashes=evidence_pack.source_doc_hashes,
+            hard_facts=tuple(item for item in evidence_pack.hard_facts if item.item_id in kept_candidate_ids),
+            structured_evidence=tuple(
+                item for item in evidence_pack.structured_evidence if item.item_id in kept_candidate_ids
+            ),
+            semantic_contexts=tuple(
+                item for item in evidence_pack.semantic_contexts if item.item_id in kept_candidate_ids
+            ),
+            lexical_hints=tuple(
+                item for item in evidence_pack.lexical_hints if item.item_id in kept_candidate_ids
+            ),
+            conflicts=evidence_pack.conflicts,
+            budget_meta={
+                **evidence_pack.budget_meta,
+                "dynamic_pruning_enabled": True,
+                "dynamic_threshold": round(decision.dynamic_threshold, 6),
+                "capacity_ratio": round(decision.capacity_ratio, 6),
+                "budget_decision": decision.budget_decision,
+                "kept_candidate_count": len(decision.kept_candidate_ids),
+                "dropped_candidate_count": len(decision.dropped_candidate_ids),
+            },
+        )
+        return filtered_pack, kept_candidate_ids, decision
 
     def _run_artifact_history_lineage(
         self,
@@ -714,19 +872,27 @@ class RetrieverFanoutPipeline:
             item.item_id
             for item in (*evidence_pack.structured_evidence, *evidence_pack.lexical_hints)
         }
+        pre_pruning_selected_candidate_ids = set(selected_candidate_ids)
+        evidence_pack, selected_candidate_ids, dynamic_pruning_decision = self._apply_dynamic_pruning_to_evidence_pack(
+            candidate_pool=candidate_pool,
+            evidence_pack=evidence_pack,
+            selected_candidate_ids=selected_candidate_ids,
+        )
         rerank_result = self._rerank_candidate_pool(
             task_id=task_id,
             candidate_pool=candidate_pool,
             selected_candidate_ids=selected_candidate_ids,
         )
-        selected_evidence_bytes = sum(len(item.rendered_text.encode("utf-8")) for item in structured_candidates)
+        selected_evidence_bytes = self._selected_evidence_bytes_for_pack(evidence_pack)
         full_corpus_bytes = selected_evidence_bytes + sum(len(item.encode("utf-8")) for item in lineage_items)
         pruning_profile = self._build_pruning_profile(
             task_id=task_id,
             candidate_pool=candidate_pool,
             selected_candidate_ids=selected_candidate_ids,
+            pre_pruning_selected_candidate_ids=pre_pruning_selected_candidate_ids,
             full_corpus_bytes=full_corpus_bytes,
             selected_evidence_bytes=selected_evidence_bytes,
+            dynamic_pruning_decision=dynamic_pruning_decision,
         )
         hydrate_manifest = HydrateManifest(
             manifest_id=f"manifest-{task_id}",
@@ -851,6 +1017,12 @@ class RetrieverFanoutPipeline:
                 *evidence_pack.lexical_hints,
             )
         }
+        pre_pruning_selected_candidate_ids = set(selected_candidate_ids)
+        evidence_pack, selected_candidate_ids, dynamic_pruning_decision = self._apply_dynamic_pruning_to_evidence_pack(
+            candidate_pool=candidate_pool,
+            evidence_pack=evidence_pack,
+            selected_candidate_ids=selected_candidate_ids,
+        )
         rerank_result = self._rerank_candidate_pool(
             task_id=task_id,
             candidate_pool=candidate_pool,
@@ -874,15 +1046,15 @@ class RetrieverFanoutPipeline:
             canonicalizer_version="canon-v1",
             extractor_version="retriever-fanout-v1",
         )
-        selected_evidence_bytes = sum(len(candidate.rendered_text.encode("utf-8")) for candidate in semantic_candidates) + sum(
-            len(candidate.rendered_text.encode("utf-8")) for candidate in table_candidates
-        )
+        selected_evidence_bytes = self._selected_evidence_bytes_for_pack(evidence_pack)
         pruning_profile = self._build_pruning_profile(
             task_id=task_id,
             candidate_pool=candidate_pool,
             selected_candidate_ids=selected_candidate_ids,
+            pre_pruning_selected_candidate_ids=pre_pruning_selected_candidate_ids,
             full_corpus_bytes=document.full_corpus_bytes,
             selected_evidence_bytes=selected_evidence_bytes,
+            dynamic_pruning_decision=dynamic_pruning_decision,
         )
         if semantic.query_embedding is None:
             raise RuntimeError("semantic retriever must emit query embedding")

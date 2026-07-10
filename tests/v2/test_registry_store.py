@@ -748,11 +748,17 @@ def test_json_contract_store_reuses_materialized_workspace_json_when_persisting_
     assert persisted.input_manifest_path is not None
     assert persisted.artifact_manifest_path is not None
     assert persisted.retrieval_log_path is not None
+    assert persisted.retrieval_pruning_profile_path is not None
     assert persisted.hydrate_manifest_path.read_bytes() == hydrate_workspace_path.read_bytes()
     assert persisted.evidence_pack_path.read_bytes() == evidence_workspace_path.read_bytes()
     assert persisted.input_manifest_path.read_bytes() == input_manifest_workspace_path.read_bytes()
     assert persisted.artifact_manifest_path.read_bytes() == artifact_manifest_workspace_path.read_bytes()
     assert persisted.retrieval_log_path.read_bytes() == retrieval_log_workspace_path.read_bytes()
+    reloaded_pruning_profile = store.read_retrieval_pruning_profile(
+        retrieval_bundle.pruning_profile.profile_hash
+    )
+    assert reloaded_pruning_profile.profile_hash == retrieval_bundle.pruning_profile.profile_hash
+    assert reloaded_pruning_profile.selected_candidate_ids == retrieval_bundle.pruning_profile.selected_candidate_ids
 
 
 def test_json_contract_store_externalizes_codeact_audit_details_from_execution_step(tmp_path: Path) -> None:

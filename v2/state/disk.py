@@ -37,7 +37,7 @@ from v2.memory import (
 )
 from v2.refs import CanonicalEvidencePack, HydrateManifest
 from v2.retrieval import RetrievalBundle
-from v2.retrieval.models import RetrievalPruningBucketStat, RetrievalPruningProfile
+from v2.retrieval.models import EvidencePruningHint, RetrievalPruningBucketStat, RetrievalPruningProfile
 from v2.runtime.codeact import (
     CodeActAction,
     CodeActExecutionRecord,
@@ -1416,6 +1416,45 @@ class JsonContractStore:
                 )
                 for item in payload.get("bucket_stats", [])
             ),
+            importance_threshold=float(payload.get("importance_threshold", 0.6)),
+            base_importance_threshold=float(payload.get("base_importance_threshold", payload.get("importance_threshold", 0.6))),
+            dynamic_pruning_enabled=bool(payload.get("dynamic_pruning_enabled", False)),
+            pruning_hints=tuple(
+                EvidencePruningHint(
+                    candidate_id=str(item.get("candidate_id", "")),
+                    bucket=str(item.get("bucket", "")),
+                    importance_score=float(item.get("importance_score", 0.0)),
+                    rendered_text_bytes=int(item.get("rendered_text_bytes", 0)),
+                    keep_in_budget=bool(item.get("keep_in_budget", False)),
+                    threshold=float(item.get("threshold", 0.6)),
+                    estimated_tokens=int(item.get("estimated_tokens", 0)),
+                    estimated_kv_tokens_saved_if_dropped=int(item.get("estimated_kv_tokens_saved_if_dropped", 0)),
+                    available_kv_cache_bytes=int(item.get("available_kv_cache_bytes", 0)),
+                    kv_bytes_per_token=int(item.get("kv_bytes_per_token", 0)),
+                    dynamic_threshold=float(item.get("dynamic_threshold", 0.0)),
+                    capacity_ratio=float(item.get("capacity_ratio", 0.0)),
+                    budget_decision=str(item.get("budget_decision", "")),
+                    pruning_class=str(item.get("pruning_class", "candidate")),
+                    quality_guard=str(item.get("quality_guard", "")),
+                    reason=str(item.get("reason", "")),
+                    claim_boundary=str(item.get("claim_boundary", "")),
+                    schema_version=str(item.get("schema_version", "")),
+                )
+                for item in payload.get("pruning_hints", [])
+            ),
+            full_corpus_tokens_estimate=int(payload.get("full_corpus_tokens_estimate", 0)),
+            selected_evidence_tokens_estimate=int(payload.get("selected_evidence_tokens_estimate", 0)),
+            dropped_candidate_bytes=int(payload.get("dropped_candidate_bytes", 0)),
+            dropped_candidate_tokens_estimate=int(payload.get("dropped_candidate_tokens_estimate", 0)),
+            estimated_kv_tokens_saved=int(payload.get("estimated_kv_tokens_saved", 0)),
+            pruning_gain_ratio=float(payload.get("pruning_gain_ratio", 0.0)),
+            available_kv_cache_bytes=int(payload.get("available_kv_cache_bytes", 0)),
+            kv_bytes_per_token=int(payload.get("kv_bytes_per_token", 0)),
+            target_sequence_tokens_estimate=int(payload.get("target_sequence_tokens_estimate", 0)),
+            capacity_ratio=float(payload.get("capacity_ratio", 0.0)),
+            budget_decision=str(payload.get("budget_decision", "")),
+            policy_name=str(payload.get("policy_name", "statebus_input_level_evidence_pruning_v1")),
+            claim_boundary=str(payload.get("claim_boundary", "")),
             schema_version=str(payload.get("schema_version", "")),
         )
 
