@@ -13,6 +13,7 @@ DTYPE="${STATEBUS_VLLM_DTYPE:-bfloat16}"
 ENFORCE_EAGER="${STATEBUS_VLLM_ENFORCE_EAGER:-1}"
 KV_CACHE_DTYPE="${STATEBUS_VLLM_KV_CACHE_DTYPE:-}"
 TENSOR_PARALLEL_SIZE="${STATEBUS_VLLM_TENSOR_PARALLEL_SIZE:-1}"
+CPU_OFFLOAD_GB="${STATEBUS_VLLM_CPU_OFFLOAD_GB:-}"
 VLLM_ENV_PREFIX="${STATEBUS_VLLM_ENV_PREFIX:-/home/qcrs/statebus/conda-envs/vllm-qwen-cu121}"
 DEFAULT_CUDA_VISIBLE_DEVICES="${STATEBUS_VLLM_CUDA_VISIBLE_DEVICES:-1}"
 
@@ -58,6 +59,10 @@ if [[ -n "$KV_CACHE_DTYPE" ]]; then
   args+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
 fi
 
+if [[ -n "$CPU_OFFLOAD_GB" ]]; then
+  args+=(--cpu-offload-gb "$CPU_OFFLOAD_GB")
+fi
+
 echo "[statebus-vllm] model_path=$MODEL_PATH"
 echo "[statebus-vllm] served_model_name=$SERVED_MODEL_NAME"
 echo "[statebus-vllm] endpoint=http://$HOST:$PORT/v1"
@@ -65,5 +70,8 @@ echo "[statebus-vllm] cuda_visible_devices=$CUDA_VISIBLE_DEVICES"
 echo "[statebus-vllm] tensor_parallel_size=$TENSOR_PARALLEL_SIZE"
 echo "[statebus-vllm] max_model_len=$MAX_MODEL_LEN"
 echo "[statebus-vllm] gpu_memory_utilization=$GPU_MEMORY_UTILIZATION"
+if [[ -n "$CPU_OFFLOAD_GB" ]]; then
+  echo "[statebus-vllm] cpu_offload_gb=$CPU_OFFLOAD_GB"
+fi
 
 exec "${args[@]}"
