@@ -156,6 +156,20 @@ roles:
 
 如果 vLLM 跑在宿主机、`StateBus` smoke / benchmark 跑在 `statebus-dev-qcrs` root 容器里，当前推荐让 `docker/compose.yaml` 直接使用 `network_mode: host`。这样容器内可以直接访问宿主机的 `127.0.0.1:53333`，不必再猜 bridge / gateway 地址。
 
+当前 `Budget-Aware Dynamic Pruning` 走环境变量配置，而不是单独的 YAML 段。常用开关可直接写到 `deploy/statebus_llm.env.local`：
+
+```bash
+export STATEBUS_EVIDENCE_DYNAMIC_PRUNING_ENABLED=1
+export STATEBUS_EVIDENCE_AVAILABLE_KV_CACHE_BYTES=$((8 * 1024 * 1024 * 1024))
+export STATEBUS_EVIDENCE_KV_BYTES_PER_TOKEN=256
+export STATEBUS_EVIDENCE_BASE_IMPORTANCE_THRESHOLD=0.6
+export STATEBUS_EVIDENCE_CAPACITY_BUFFER=0.2
+export STATEBUS_EVIDENCE_MIN_KEEP_SEMANTIC_CONTEXTS=1
+export STATEBUS_EVIDENCE_MIN_KEEP_LEXICAL_HINTS=0
+```
+
+这组变量由 `deploy/activate_statebus_host.sh` 自动加载的 `deploy/statebus_llm.env.local` 提供。默认保持关闭；只有在 local_vllm / KV 机制实验里才建议显式打开。
+
 推荐先 source 一个本地 profile。这样后面从 `8B` 切到 `32B` 时，只需要重新 source 一次 profile，`model/base_url/port` 会一起切换：
 
 ```bash

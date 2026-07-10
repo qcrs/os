@@ -23,11 +23,13 @@ from v2.retrieval.pipeline import (
     SemanticChunkRetriever,
     TableStructureRetriever,
 )
+from v2.retrieval.pruning import DynamicPruningConfig, compute_dynamic_pruning_threshold
 
 __all__ = [
     "CorpusTableRow",
     "CorpusTextFragment",
     "EvidencePruningHint",
+    "DynamicPruningConfig",
     "FinancialReportDocument",
     "LexicalMetadataRetriever",
     "OfflineFinancialReportCorpus",
@@ -44,4 +46,5 @@ __all__ = [
     "RetrieverOutput",
     "SemanticChunkRetriever",
     "TableStructureRetriever",
+    "compute_dynamic_pruning_threshold",
 ]
