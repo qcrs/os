@@ -137,6 +137,12 @@ STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS=8192 \
 scripts/start_vllm_qwen3_32b_prefix_cache.sh
 ```
 
+如果 0/1 卡有轻度占用导致 32B 加载阶段 OOM，可以显式加 CPU offload 做保守尝试；默认 profile 不启用它：
+
+```bash
+export STATEBUS_VLLM_CPU_OFFLOAD_GB=8
+```
+
 ## 5. StateBus 配置
 
 复制本地 vLLM 配置模板：
@@ -247,6 +253,12 @@ export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=<free_gpu_index>
 ```bash
 export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=0,1
 export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE=2
+```
+
+显存被其它进程占用但仍想尝试 32B 时，可以额外设置：
+
+```bash
+export STATEBUS_VLLM_CPU_OFFLOAD_GB=8
 ```
 
 ## 6. KV 预算估算
