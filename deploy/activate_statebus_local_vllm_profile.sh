@@ -49,6 +49,7 @@ _statebus_activate_local_vllm_profile_main() {
       export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.35"
       export STATEBUS_VLLM_MAX_NUM_SEQS="4"
       export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
+      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
       ;;
     qwen3-32b|32b|formal-32b)
       export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-32b"
@@ -65,6 +66,24 @@ _statebus_activate_local_vllm_profile_main() {
       export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.92"
       export STATEBUS_VLLM_MAX_NUM_SEQS="1"
       export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="4096"
+      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
+      ;;
+    qwen3-32b-2gpu|32b-2gpu|formal-32b-2gpu)
+      export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-32b-2gpu"
+      export STATEBUS_VLLM_MODEL_PATH="/data/models/Qwen3-32B"
+      export STATEBUS_VLLM_SERVED_MODEL_NAME="qwen3-32b"
+      export STATEBUS_LOCAL_VLLM_MODEL="qwen3-32b"
+      export STATEBUS_VLLM_HOST="127.0.0.1"
+      export STATEBUS_VLLM_PORT="53334"
+      export STATEBUS_LOCAL_VLLM_PORT="53334"
+      export STATEBUS_LOCAL_VLLM_BASE_URL="http://127.0.0.1:53334/v1"
+      export STATEBUS_LOCAL_VLLM_HEALTH_URL="http://127.0.0.1:53334/health"
+      export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="0,1"
+      export STATEBUS_VLLM_MAX_MODEL_LEN="8192"
+      export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.90"
+      export STATEBUS_VLLM_MAX_NUM_SEQS="1"
+      export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
+      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="2"
       ;;
     qwen2.5-14b|14b|fallback-14b)
       export STATEBUS_LOCAL_VLLM_PROFILE="qwen2.5-14b"
@@ -81,10 +100,11 @@ _statebus_activate_local_vllm_profile_main() {
       export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.50"
       export STATEBUS_VLLM_MAX_NUM_SEQS="2"
       export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="4096"
+      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
       ;;
     *)
       echo "[statebus-local-vllm] unsupported profile: $profile" >&2
-      echo "[statebus-local-vllm] supported profiles: qwen3-8b, qwen3-32b, qwen2.5-14b" >&2
+      echo "[statebus-local-vllm] supported profiles: qwen3-8b, qwen3-32b, qwen3-32b-2gpu, qwen2.5-14b" >&2
       return 1
       ;;
   esac
@@ -95,6 +115,7 @@ _statebus_activate_local_vllm_profile_main() {
   echo "[statebus-local-vllm] base_url=$STATEBUS_LOCAL_VLLM_BASE_URL"
   echo "[statebus-local-vllm] health_url=$STATEBUS_LOCAL_VLLM_HEALTH_URL"
   echo "[statebus-local-vllm] cuda_visible_devices=$STATEBUS_VLLM_CUDA_VISIBLE_DEVICES"
+  echo "[statebus-local-vllm] tensor_parallel_size=$STATEBUS_VLLM_TENSOR_PARALLEL_SIZE"
 }
 
 _STATEBUS_LOCAL_VLLM_HAD_ERREXIT=0
