@@ -7,6 +7,7 @@ from pathlib import Path
 
 from v2.benchmark.continuous_task_family import ContinuousTaskFamily
 from v2.benchmark.kv_analysis import summarize_case_kv_reuse
+from v2.benchmark.kv_prefix_schedule import KVPrefixSchedulePlan, build_kv_prefix_schedule_plan
 from v2.benchmark.minimal_runner import LAYER_PROFILES, LAYER_SMOKE_CONFIGS
 from v2.benchmark.models import (
     BenchmarkCaseReport,
@@ -58,6 +59,53 @@ CONTINUOUS_TEXT_SEMANTIC_SELECTION_SMOKE_CONFIG = SmokeLayerConfig(
     multi_attempt_enabled=False,
     force_first_attempt_trap=False,
 )
+
+
+def _normalise_task_schedule_plan(task_schedule_plan: str) -> str:
+    normalized = task_schedule_plan.strip().lower()
+    if normalized in {"", "input", "input_order", "none"}:
+        return "input"
+    if normalized in {"cache_friendly", "cache_hostile"}:
+        return normalized
+    raise ValueError(f"unsupported task_schedule_plan: {task_schedule_plan}")
+
+
+def _task_schedule_plan_for_family(
+    family: ContinuousTaskFamily,
+    *,
+    task_schedule_plan: str,
+) -> KVPrefixSchedulePlan | None:
+    normalized = _normalise_task_schedule_plan(task_schedule_plan)
+    if normalized == "input":
+        return None
+    return build_kv_prefix_schedule_plan(family, mode=normalized)
+
+
+def _ordered_family_rounds(
+    family: ContinuousTaskFamily,
+    *,
+    task_schedule_plan: str,
+) -> tuple:
+    schedule_plan = _task_schedule_plan_for_family(family, task_schedule_plan=task_schedule_plan)
+    if schedule_plan is None:
+        return tuple(family.rounds)
+    rounds_by_task_id = {round_.task_id: round_ for round_ in family.rounds}
+    return tuple(rounds_by_task_id[task_id] for task_id in schedule_plan.task_ids)
+
+
+def _task_schedule_metadata(schedule_plan: KVPrefixSchedulePlan | None) -> dict[str, object]:
+    if schedule_plan is None:
+        return {"task_schedule_plan": "input"}
+    return {
+        "task_schedule_plan": schedule_plan.mode,
+        "task_schedule_key": schedule_plan.schedule_key,
+        "task_schedule_task_ids": list(schedule_plan.task_ids),
+        "task_schedule_affinity_groups": list(schedule_plan.affinity_groups),
+        "task_schedule_max_contiguous_same_affinity_run": schedule_plan.max_contiguous_same_affinity_run,
+        "task_schedule_adjacent_reuse_opportunity_count": schedule_plan.adjacent_reuse_opportunity_count,
+        "task_schedule_affinity_switch_count": schedule_plan.affinity_switch_count,
+        "task_schedule_claim_boundary": schedule_plan.claim_boundary,
+    }
 
 
 @dataclass(frozen=True)
@@ -1004,6 +1052,7 @@ def run_continuous_benchmark_family(
     enforce_expected_metric_effects: bool = True,
     metadata_extra: dict[str, object] | None = None,
     persistence_profile: str = "audit_full",
+    task_schedule_plan: str = "input",
 ) -> BenchmarkFamilyReport:
     if family.family_id not in SUPPORTED_CONTINUOUS_FAMILY_IDS:
         raise ValueError(
@@ -1025,8 +1074,10 @@ def run_continuous_benchmark_family(
     )
     history_runtime_root_by_round: dict[int, Path] = {}
     raw_cases: list[BenchmarkCaseReport] = []
+    schedule_plan = _task_schedule_plan_for_family(family, task_schedule_plan=task_schedule_plan)
+    ordered_rounds = _ordered_family_rounds(family, task_schedule_plan=task_schedule_plan)
 
-    for round_ in family.rounds:
+    for round_ in ordered_rounds:
         sample = _continuous_sample(round_)
         round_runtime_root = layer_runtime_root / sample.task_id
         history_runtime_roots: tuple[Path, ...] = tuple(
@@ -1142,6 +1193,7 @@ def run_continuous_benchmark_family(
         "embedding_mode": embedding_mode,
         "layer_contract_gate_enabled": enforce_expected_metric_effects and layer in {BenchmarkLayer.L2, BenchmarkLayer.L3},
         "kv_reuse_analysis": kv_reuse_analysis,
+        **_task_schedule_metadata(schedule_plan),
     }
     if metadata_extra:
         metadata.update(metadata_extra)
@@ -1211,7 +1263,9 @@ def run_continuous_benchmark_suite(
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
     persistence_profile: str = "audit_full",
+    task_schedule_plan: str = "input",
 ) -> BenchmarkSuiteReport:
+    schedule_plan = _task_schedule_plan_for_family(family, task_schedule_plan=task_schedule_plan)
     layer_reports = tuple(
         run_continuous_benchmark_family(
             family=family,
@@ -1223,6 +1277,7 @@ def run_continuous_benchmark_suite(
             role_path_mode=role_path_mode,
             embedding_mode=embedding_mode,
             persistence_profile=persistence_profile,
+            task_schedule_plan=task_schedule_plan,
         )
         for layer in BenchmarkLayer
     )
@@ -1313,6 +1368,7 @@ def run_continuous_benchmark_suite(
             "continuous_execution": True,
             "source_basis": dict(family.source_basis),
             "kv_prefix_probe": dict(family.kv_prefix_probe),
+            **_task_schedule_metadata(schedule_plan),
             "eligible_for_quality_headline": quality_headline_eligible,
             "eligible_for_replay_headline": replay_headline_eligible,
             "replay_gate_reason": str(replay_audit.get("gate_reason", "")),
@@ -1340,6 +1396,7 @@ def run_continuous_benchmark_collection(
     embedding_mode: str = "deterministic",
     collection_scope: str = "formal_continuous_task_families",
     persistence_profile: str = "audit_full",
+    task_schedule_plan: str = "input",
 ) -> BenchmarkContinuousCollectionReport:
     if not families:
         raise ValueError("continuous benchmark collection requires at least one family")
@@ -1357,6 +1414,7 @@ def run_continuous_benchmark_collection(
                 role_path_mode=role_path_mode,
                 embedding_mode=embedding_mode,
                 persistence_profile=persistence_profile,
+                task_schedule_plan=task_schedule_plan,
             )
         )
 
@@ -1569,6 +1627,7 @@ def run_continuous_benchmark_collection(
             "role_path_mode": role_path_mode,
             "embedding_mode": embedding_mode,
             "collection_scope": collection_scope,
+            "task_schedule_plan": _normalise_task_schedule_plan(task_schedule_plan),
         },
         report_path=str(report_path),
         markdown_report_path=str(markdown_report_path),

@@ -220,6 +220,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("loopback", "subprocess"),
         help="executor control-plane transport for supported suites",
     )
+    parser.add_argument(
+        "--task-schedule-plan",
+        default="input",
+        choices=("input", "cache_friendly", "cache_hostile"),
+        help="continuous task order for KV prefix probes",
+    )
     return parser
 
 
@@ -291,6 +297,7 @@ def main() -> None:
                 role_path_mode=args.role_path_mode,
                 embedding_mode=args.embedding_mode,
                 persistence_profile=args.persistence_profile,
+                task_schedule_plan=args.task_schedule_plan,
             )
             print(stable_json_dumps(continuous_collection_report_to_dict(report)))
             return
@@ -304,6 +311,7 @@ def main() -> None:
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
             persistence_profile=args.persistence_profile,
+            task_schedule_plan=args.task_schedule_plan,
         )
         print(stable_json_dumps(suite_report_to_dict(report)))
         return
@@ -320,6 +328,7 @@ def main() -> None:
                 embedding_mode=args.embedding_mode,
                 collection_scope="formal_replay_task_families",
                 persistence_profile=args.persistence_profile,
+                task_schedule_plan=args.task_schedule_plan,
             )
             print(stable_json_dumps(continuous_collection_report_to_dict(report)))
             return
@@ -333,6 +342,7 @@ def main() -> None:
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
             persistence_profile=args.persistence_profile,
+            task_schedule_plan=args.task_schedule_plan,
         )
         print(stable_json_dumps(suite_report_to_dict(report)))
         return
@@ -367,6 +377,7 @@ def main() -> None:
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
             persistence_profile=args.persistence_profile,
+            task_schedule_plan=args.task_schedule_plan,
         )
         print(stable_json_dumps(suite_report_to_dict(report)))
         return

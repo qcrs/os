@@ -711,11 +711,14 @@ def test_live_runner_routes_statebus_family_alias_to_continuous_suite(
             "deterministic",
             "--embedding-mode",
             "deterministic",
+            "--task-schedule-plan",
+            "cache_hostile",
         ],
     )
     live_runner_main()
     payload = json.loads(capsys.readouterr().out)
     assert captured["family"].family_id == "incident_diagnosis_v2"
+    assert captured["task_schedule_plan"] == "cache_hostile"
     assert payload["suite_id"] == "statebus-v2-benchmark-continuous-incident_diagnosis_v2"
 
 

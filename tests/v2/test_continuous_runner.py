@@ -213,10 +213,14 @@ def test_continuous_runner_executes_kv_prefix_reuse_family_as_explicit_probe(tmp
         suite_id="continuous-kv-prefix-reuse",
         role_path_mode="deterministic",
         embedding_mode="deterministic",
+        task_schedule_plan="cache_friendly",
     )
 
     assert report.family_case_count == 10
     assert report.metadata["continuous_execution"] is True
+    assert report.metadata["task_schedule_plan"] == "cache_friendly"
+    assert report.metadata["task_schedule_task_ids"] == list(family.kv_prefix_probe["cache_friendly_order"])
+    assert report.metadata["task_schedule_adjacent_reuse_opportunity_count"] == 8
     assert report.metadata["claim_tier"] == "demo_secondary"
     assert report.metadata["source_basis"]["not_default_formal_chain"] is True
     assert "kv_prefix_reuse_v1" in report.metadata["supported_continuous_execution_families"]
@@ -227,6 +231,8 @@ def test_continuous_runner_executes_kv_prefix_reuse_family_as_explicit_probe(tmp
     assert report.evidence_pack["headline_scope"] in {"history_backed_only", "replay_admissible"}
     l3_report = next(layer_report for layer_report in report.layer_reports if layer_report.layer == BenchmarkLayer.L3)
     assert l3_report.quality_floor_breakdown["quality_floor_pass_count"] == 10.0
+    assert [case.task_id for case in l3_report.cases] == list(family.kv_prefix_probe["cache_friendly_order"])
+    assert l3_report.metadata["task_schedule_max_contiguous_same_affinity_run"] == 5
     assert l3_report.metadata["kv_reuse_analysis"]["claim_boundary"].endswith(
         "actual_vllm_metrics_required_for_mechanism_claim"
     )
