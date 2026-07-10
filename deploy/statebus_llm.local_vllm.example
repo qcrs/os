@@ -15,21 +15,33 @@ roles:
     json_output: true
     temperature: 0.0
     max_tokens: 1024
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
   retriever:
     provider: default
     model: qwen3-8b
     json_output: true
     temperature: 0.0
     max_tokens: 1024
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
   executor:
     provider: default
     model: qwen3-8b
     json_output: true
     temperature: 0.0
     max_tokens: 1536
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
   summarizer:
     provider: default
     model: qwen3-8b
     json_output: true
     temperature: 0.0
     max_tokens: 1024
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false

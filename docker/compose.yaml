@@ -18,6 +18,7 @@ services:
     init: true
     stdin_open: true
     tty: true
+    network_mode: host
     runtime: ${STATEBUS_DOCKER_RUNTIME:-nvidia}
     shm_size: 1g
     working_dir: /workspace/statebus/project
