@@ -178,6 +178,77 @@ def test_live_runner_formal_suite_uses_formal_family_by_default(
     assert payload["protocol_L3_quality_pass_count"] == 25.0
 
 
+def test_live_runner_formal_dev_max_cases_runs_bounded_formal_subset(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    sentinel_samples = [object() for _ in range(7)]
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr("v2.benchmark.live_runner.load_registered_formal_samples", lambda: sentinel_samples)
+
+    profile = BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L3,
+        description="mini formal subset",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=True,
+    )
+
+    def fake_run_minimal_benchmark_suite(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family="mini_formal",
+            layer_reports=(
+                BenchmarkFamilyReport(
+                    suite_id="mini-formal",
+                    layer=BenchmarkLayer.L3,
+                    task_family="mini_formal",
+                    profile=profile,
+                    cases=(),
+                    metadata={"benchmark_tier": kwargs["benchmark_tier"]},
+                ),
+            ),
+            waterfall_metrics={},
+            comparison_summary={},
+            metadata={"benchmark_tier": kwargs["benchmark_tier"]},
+            family_case_count=len(kwargs["samples"]),
+            report_path=str(tmp_path / "mini-formal-report.json"),
+        )
+
+    monkeypatch.setattr("v2.benchmark.live_runner.run_minimal_benchmark_suite", fake_run_minimal_benchmark_suite)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "formal",
+            "--benchmark-tier",
+            "dev",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+            "--max-cases",
+            "5",
+        ],
+    )
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["benchmark_tier"] == "dev"
+    assert captured["claim_level"] == "dev_mini_formal"
+    assert len(captured["samples"]) == 5
+    assert payload["selected_case_count"] == 5
+    assert payload["available_case_count"] == 7
+    assert payload["max_cases"] == 5
+
+
 def test_live_runner_formal_suite_threads_subprocess_transport(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

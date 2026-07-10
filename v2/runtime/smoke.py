@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import json
@@ -3297,13 +3298,47 @@ def run_smoke(
     return result
 
 
-def main() -> None:
-    cli_root = Path(tempfile.mkdtemp(prefix="statebus-v2-smoke-"))
-    result = run_smoke(
-        workspace_root=cli_root / "workspaces",
-        runtime_root=cli_root / "runtime",
-        socket_path=cli_root / "control.sock",
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run a StateBus v2 runtime smoke path.")
+    parser.add_argument("--role-path-mode", default="deterministic", choices=("deterministic", "api", "local_vllm"))
+    parser.add_argument("--embedding-mode", default="deterministic", choices=("deterministic", "local"))
+    parser.add_argument("--state-pool-mode", default="auto", choices=("auto", "shared_memory", "memfd"))
+    parser.add_argument(
+        "--persistence-profile",
+        default="audit_full",
+        choices=("audit_full", "benchmark_balanced"),
     )
+    parser.add_argument("--executor-transport", default="loopback", choices=("loopback", "subprocess"))
+    parser.add_argument("--workspace-root", type=Path, default=None)
+    parser.add_argument("--runtime-root", type=Path, default=None)
+    parser.add_argument("--socket-path", type=Path, default=None)
+    parser.add_argument("--verbose", action="store_true", help="accepted for execution-prompt compatibility")
+    return parser
+
+
+def main() -> None:
+    parser = _build_cli_parser()
+    args = parser.parse_args()
+    cli_root = Path(tempfile.mkdtemp(prefix="statebus-v2-smoke-"))
+    workspace_root = args.workspace_root or cli_root / "workspaces"
+    runtime_root = args.runtime_root or cli_root / "runtime"
+    socket_path = args.socket_path or cli_root / "control.sock"
+    layer_config = SmokeLayerConfig(
+        role_path_mode=args.role_path_mode,
+        embedding_mode=args.embedding_mode,
+        state_pool_mode=args.state_pool_mode,
+        persistence_profile=args.persistence_profile,
+        executor_transport=args.executor_transport,
+    )
+    result = run_smoke(
+        workspace_root=workspace_root,
+        runtime_root=runtime_root,
+        socket_path=socket_path,
+        layer_config=layer_config,
+    )
+    print("ok=true")
+    print(f"role_path_mode={args.role_path_mode}")
+    print(f"embedding_mode={args.embedding_mode}")
     print(f"compiler_status={result.compiler_status}")
     print(f"supervisor_state={result.supervisor_state}")
     print(f"response_sequence={','.join(result.response_sequence)}")

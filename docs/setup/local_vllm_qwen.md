@@ -147,9 +147,68 @@ roles:
     json_output: true
     temperature: 0.0
     max_tokens: 1024
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
 ```
 
-四个角色都使用同一个 served model name。32B 验证时改为 `http://127.0.0.1:53334/v1` 和 `qwen3-32b`。
+四个角色都使用同一个 served model name。`Qwen3` 本地 OpenAI-compatible 路径建议显式关闭 thinking：`extra_body.chat_template_kwargs.enable_thinking=false`，否则 `Retriever/Planner` 容易拖长输出并破坏 JSON 稳定性。32B 验证时改为 `http://127.0.0.1:53334/v1` 和 `qwen3-32b`。
+
+如果 vLLM 跑在宿主机、`StateBus` smoke / benchmark 跑在 `statebus-dev-qcrs` root 容器里，当前推荐让 `docker/compose.yaml` 直接使用 `network_mode: host`。这样容器内可以直接访问宿主机的 `127.0.0.1:53333`，不必再猜 bridge / gateway 地址。
+
+推荐先 source 一个本地 profile。这样后面从 `8B` 切到 `32B` 时，只需要重新 source 一次 profile，`model/base_url/port` 会一起切换：
+
+```bash
+source deploy/activate_statebus_local_vllm_profile.sh qwen3-8b
+```
+
+然后直接用仓库脚本生成临时 `local_vllm` 配置并在容器里执行：
+
+```bash
+docker compose -f docker/compose.yaml up -d --force-recreate
+
+scripts/start_vllm_qwen3_8b_prefix_cache.sh
+```
+
+另一个终端里：
+
+```bash
+scripts/run_v2_local_vllm_container_check.sh
+```
+
+默认命令就是：
+
+```bash
+/usr/bin/python3 -m v2.runtime.smoke --role-path-mode local_vllm
+```
+
+要在 root 容器里跑隔离 mini formal，可直接用 wrapper：
+
+```bash
+STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID=v2-local-vllm-qwen3-8b-dev-mini5 \
+STATEBUS_LOCAL_VLLM_FORMAL_MAX_CASES=5 \
+scripts/run_v2_local_vllm_formal_suite.sh
+```
+
+这条路径会先 `source /usr/local/bin/activate_statebus_container.sh`，再在 root 容器里执行命令；更符合当前 `v2` 容器验证口径。
+
+后续切换到 `32B` 时，命令形态保持不变，只换 profile 和启动脚本：
+
+```bash
+source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b
+scripts/start_vllm_qwen3_32b_prefix_cache.sh
+
+STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID=v2-local-vllm-qwen3-32b-formal \
+STATEBUS_LOCAL_VLLM_FORMAL_BENCHMARK_TIER=formal \
+STATEBUS_LOCAL_VLLM_FORMAL_MAX_CASES= \
+scripts/run_v2_local_vllm_formal_suite.sh
+```
+
+如果 `32B` 当时不在 GPU 2，也只需要在 source 之后额外改一项：
+
+```bash
+export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=<free_gpu_index>
+```
 
 ## 6. KV 预算估算
 

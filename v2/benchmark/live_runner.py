@@ -186,6 +186,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suite id prefix",
     )
     parser.add_argument(
+        "--max-cases",
+        type=int,
+        default=0,
+        help="optional cap for fixed/formal sample count; 0 means no cap",
+    )
+    parser.add_argument(
         "--statebus-mode",
         default="cold-start",
         choices=("replay-ready", "cold-start"),
@@ -233,6 +239,12 @@ def _resolved_family_dir(args: argparse.Namespace) -> Path:
 
 def _uses_explicit_single_family(args: argparse.Namespace) -> bool:
     return bool(args.family) or args.family_dir is not None
+
+
+def _limit_cases(samples: list, max_cases: int) -> list:
+    if max_cases <= 0:
+        return samples
+    return samples[:max_cases]
 
 
 def main() -> None:
@@ -361,6 +373,36 @@ def main() -> None:
 
     if args.statebus_mode == "cold-start" and args.seed_replay_memory:
         raise SystemExit("cold-start mode forbids synthetic replay seeding")
+    if args.suite == "formal" and args.benchmark_tier != "formal":
+        formal_samples = (
+            load_registered_formal_samples()
+            if args.family_dir is None and not args.family
+            else load_sample_family(family_dir)
+        )
+        selected_samples = _limit_cases(formal_samples, args.max_cases)
+        formal_report = run_minimal_benchmark_suite(
+            samples=selected_samples,
+            workspace_root=args.workspace_root,
+            runtime_root=args.runtime_root,
+            socket_path=args.socket_path,
+            suite_id=f"{args.suite_id}-formal",
+            role_path_mode=args.role_path_mode,
+            embedding_mode=args.embedding_mode,
+            seed_replay_memory_by_layer={},
+            benchmark_tier=args.benchmark_tier,
+            claim_level="dev_mini_formal",
+            state_pool_mode=args.state_pool_mode,
+            persistence_profile=args.persistence_profile,
+            executor_transport=args.transport,
+        )
+        payload = suite_report_to_dict(formal_report)
+        if args.family_dir is None and not args.family:
+            payload["formal_registry"] = formal_family_payload()
+        payload["selected_case_count"] = len(selected_samples)
+        payload["available_case_count"] = len(formal_samples)
+        payload["max_cases"] = args.max_cases
+        print(stable_json_dumps(payload))
+        return
     if args.benchmark_tier == "formal":
         if args.suite in {"external"}:
             raise SystemExit("formal tier does not expose standalone external suites; use --suite compare")
@@ -371,8 +413,9 @@ def main() -> None:
                 if args.family_dir is None and not args.family
                 else load_sample_family(family_dir)
             )
+            selected_samples = _limit_cases(formal_samples, args.max_cases)
             formal_report = run_minimal_benchmark_suite(
-                samples=formal_samples,
+                samples=selected_samples,
                 workspace_root=args.workspace_root,
                 runtime_root=args.runtime_root,
                 socket_path=args.socket_path,
@@ -388,6 +431,9 @@ def main() -> None:
             )
             payload = suite_report_to_dict(formal_report)
             payload["formal_registry"] = formal_family_payload()
+            payload["selected_case_count"] = len(selected_samples)
+            payload["available_case_count"] = len(formal_samples)
+            payload["max_cases"] = args.max_cases
             print(stable_json_dumps(payload))
             return
         # formal compare/carrier-compare: fall through to fixed-answer compare paths.
@@ -398,6 +444,7 @@ def main() -> None:
         if args.benchmark_tier == "formal" and args.family_dir is None and not args.family
         else load_fixed_answer_family(family_dir)
     )
+    samples = _limit_cases(samples, args.max_cases)
     statebus_suite_prefix = _statebus_suite_prefix(
         suite_id=args.suite_id,
         statebus_mode=args.statebus_mode,
