@@ -19,8 +19,17 @@ TRANSPORT="${STATEBUS_LOCAL_VLLM_FORMAL_TRANSPORT:-loopback}"
 STDOUT_JSON="${RUN_ROOT}/formal_suite.stdout.json"
 SUMMARY_JSON="${RUN_ROOT}/formal_suite.summary.json"
 CONTAINER_STDOUT_JSON="${CONTAINER_RUN_ROOT}/formal_suite.stdout.json"
+CONTAINER_SOCKET_PATH="${CONTAINER_RUN_ROOT}/control.sock"
+AF_UNIX_SOCKET_PATH_MAX_BYTES="${STATEBUS_AF_UNIX_SOCKET_PATH_MAX_BYTES:-107}"
 
 mkdir -p "$RUN_ROOT"
+
+socket_path_bytes="$(printf '%s' "$CONTAINER_SOCKET_PATH" | wc -c | tr -d ' ')"
+if (( socket_path_bytes > AF_UNIX_SOCKET_PATH_MAX_BYTES )); then
+  echo "[statebus-local-vllm-formal] AF_UNIX path too long: bytes=${socket_path_bytes} max=${AF_UNIX_SOCKET_PATH_MAX_BYTES} path=${CONTAINER_SOCKET_PATH}" >&2
+  echo "[statebus-local-vllm-formal] shorten STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID or STATEBUS_CONTAINER_RUNS_ROOT" >&2
+  exit 2
+fi
 
 max_cases_arg=""
 if [[ -n "$MAX_CASES" ]]; then
@@ -38,7 +47,7 @@ container_command="
   ${max_cases_arg} \
   --workspace-root '${CONTAINER_RUN_ROOT}/workspaces' \
   --runtime-root '${CONTAINER_RUN_ROOT}/runtime' \
-  --socket-path '${CONTAINER_RUN_ROOT}/control.sock' \
+  --socket-path '${CONTAINER_SOCKET_PATH}' \
   --suite-id '${RUN_ID}' \
   > '${CONTAINER_STDOUT_JSON}'
 "

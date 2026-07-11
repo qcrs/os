@@ -1,0 +1,1327 @@
+{
+  "aggregate": {
+    "attribution_counts": {
+      "executor JSON truncation risk reduced by context cap": 1,
+      "final pass": 1,
+      "partial formal run without suite summary": 2,
+      "summarizer JSON truncation risk": 1,
+      "unattributed empty wrapper stdout": 2,
+      "vLLM context 400 risk": 1,
+      "wrapper timeout 120s": 1
+    },
+    "final_pass_runs": [
+      "sb32bcompact"
+    ],
+    "run_count": 8
+  },
+  "claim_boundary": "audit_evidence_only_no_true_kv_tensor_transfer_claim; prefix/cache metrics are reported only when exposed by the current vLLM endpoint",
+  "generated_at_utc": "2026-07-11T04:36:56.259257+00:00",
+  "global_logs": {
+    "exists": true,
+    "failure_snippets": [],
+    "file_count": 1,
+    "files_sample": [
+      "/home/qcrs/statebus/logs/vllm_qwen3_8b_prefix_cache_53333.log"
+    ],
+    "logs_root": "/home/qcrs/statebus/logs"
+  },
+  "inputs": {
+    "health_url": "http://127.0.0.1:53334/health",
+    "logs_root": "/home/qcrs/statebus/logs",
+    "metrics_url": "http://127.0.0.1:53334/metrics",
+    "run_roots": [
+      "/home/qcrs/statebus/runs/sb32bcompact",
+      "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234",
+      "/home/qcrs/statebus/runs/sb32bformal900",
+      "/home/qcrs/statebus/runs/sb32bformal3k",
+      "/home/qcrs/statebus/runs/sb32bcap3k",
+      "/home/qcrs/statebus/runs/sb32bformalx4k",
+      "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250",
+      "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015"
+    ]
+  },
+  "runs": [
+    {
+      "available_case_count": 25,
+      "benchmark_reports": [
+        {
+          "aggregated_metrics": {
+            "case_count": 25.0,
+            "quality_floor_pass_count": 25.0,
+            "telemetry_event_count": 700.0
+          },
+          "case_count": 25,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L0",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/sb32bcompact/runtime/L0/benchmark_reports/sb32bcompact-formal-L0.json",
+          "suite_id": "sb32bcompact-formal"
+        },
+        {
+          "aggregated_metrics": {
+            "case_count": 25.0,
+            "quality_floor_pass_count": 25.0,
+            "telemetry_event_count": 700.0
+          },
+          "case_count": 25,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L1",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/sb32bcompact/runtime/L1/benchmark_reports/sb32bcompact-formal-L1.json",
+          "suite_id": "sb32bcompact-formal"
+        },
+        {
+          "aggregated_metrics": {
+            "case_count": 25.0,
+            "quality_floor_pass_count": 25.0,
+            "telemetry_event_count": 800.0
+          },
+          "case_count": 25,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L2",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/sb32bcompact/runtime/L2/benchmark_reports/sb32bcompact-formal-L2.json",
+          "suite_id": "sb32bcompact-formal"
+        },
+        {
+          "aggregated_metrics": {
+            "case_count": 25.0,
+            "quality_floor_pass_count": 25.0,
+            "telemetry_event_count": 800.0
+          },
+          "case_count": 25,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L3",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/sb32bcompact/runtime/L3/benchmark_reports/sb32bcompact-formal-L3.json",
+          "suite_id": "sb32bcompact-formal"
+        },
+        {
+          "aggregated_metrics": null,
+          "case_count": 0,
+          "comparison_summary": {
+            "artifact_reuse_delta_l2_to_l3": 0.0,
+            "codeact_action_delta_l0_to_l3": 0.0,
+            "control_bytes_delta_l0_to_l1": 33240.0,
+            "protocol_L3_control_bytes": 11345.0,
+            "protocol_L3_prompt_bytes": 143306.0,
+            "protocol_L3_prompt_tokens": 50372.0,
+            "protocol_L3_quality_pass_count": 25.0,
+            "protocol_L3_total_tokens": 64839.0,
+            "protocol_vs_text_control_bytes_delta": -31581.0,
+            "protocol_vs_text_prompt_bytes_delta": -138610.0,
+            "protocol_vs_text_prompt_token_delta": -51606.0,
+            "protocol_vs_text_quality_pass_delta": 0.0,
+            "protocol_vs_text_token_delta": -57946.0,
+            "pruning_bytes_saved_vs_l0": 119996.0,
+            "quality_floor_pass_delta_l0_to_l3": 0.0,
+            "replan_history_delta_l0_to_l3": 0.0,
+            "reuse_gain_delta_l2_to_l3": 0.0,
+            "selected_evidence_bytes_delta_l0_to_l2": 0.0,
+            "text_L0_control_bytes": 42926.0,
+            "text_L0_prompt_bytes": 281916.0,
+            "text_L0_prompt_tokens": 101978.0,
+            "text_L0_quality_pass_count": 25.0,
+            "text_L0_total_tokens": 122785.0
+          },
+          "json_ok": true,
+          "layer": "",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "comparison_contract": "same_mainline_internal_attribution_ladder",
+            "embedding_mode": "deterministic",
+            "formal_task_families": [
+              "financial_report_analysis",
+              "multi_period_trend_analysis_v1",
+              "cross_table_join_analysis_v1",
+              "conditional_aggregation_v1",
+              "anomaly_detection_v1"
+            ],
+            "formal_task_family_count": 5,
+            "formal_text_protocol_benchmark": true,
+            "ladder_claim_scope": "internal_attribution_only_not_external_superiority",
+            "memfd_bytes_transferred": 0.0,
+            "memfd_publish_count": 0.0,
+            "memfd_transfer_count": 0.0,
+            "role_path_mode": "local_vllm",
+            "seed_replay_memory_by_layer": {
+              "L0": false,
+              "L1": false,
+              "L2": false,
+              "L3": false
+            },
+            "state_pool_mode_requested": "auto",
+            "state_pool_mode_used": "shared_memory",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback"
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/sb32bcompact/runtime/benchmark_reports/sb32bcompact-formal-suite.json",
+          "suite_id": "sb32bcompact-formal"
+        }
+      ],
+      "comparison_summary": {
+        "protocol_L3_control_bytes": 11345,
+        "protocol_L3_prompt_tokens": 50372,
+        "protocol_L3_total_tokens": 64839,
+        "protocol_vs_text_control_bytes_delta": -31581,
+        "protocol_vs_text_prompt_token_delta": -51606,
+        "protocol_vs_text_token_delta": -57946,
+        "text_L0_control_bytes": 42926,
+        "text_L0_prompt_tokens": 101978,
+        "text_L0_total_tokens": 122785
+      },
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "inferred",
+        "signals": [
+          "all extracted L0-L3 layers have case_count=25 and quality_floor_pass_count=25"
+        ],
+        "types": [
+          "final pass"
+        ]
+      },
+      "failure_snippets": [],
+      "layers": [
+        {
+          "case_count": 25,
+          "layer": "L0",
+          "quality_floor_pass_count": 25,
+          "source": "payload.layers"
+        },
+        {
+          "case_count": 25,
+          "layer": "L1",
+          "quality_floor_pass_count": 25,
+          "source": "payload.layers"
+        },
+        {
+          "case_count": 25,
+          "layer": "L2",
+          "quality_floor_pass_count": 25,
+          "source": "payload.layers"
+        },
+        {
+          "case_count": 25,
+          "layer": "L3",
+          "quality_floor_pass_count": 25,
+          "source": "payload.layers"
+        }
+      ],
+      "metadata": {
+        "benchmark_tier": "formal",
+        "embedding_mode": "deterministic",
+        "local_vllm_base_url": "http://127.0.0.1:53334/v1",
+        "local_vllm_model": "qwen3-32b",
+        "role_path_mode": "local_vllm",
+        "state_pool_mode_used": "shared_memory",
+        "transport": "loopback"
+      },
+      "payload_source": "summary",
+      "run_id": "sb32bcompact",
+      "run_root": "/home/qcrs/statebus/runs/sb32bcompact",
+      "selected_case_count": 25,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/sb32bcompact/control.sock",
+        "container_socket_path_bytes": 40,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/sb32bcompact/control.sock",
+        "host_socket_path_bytes": 50
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/sb32bcompact/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 3072,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 1536,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 900,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": true,
+        "exists": true,
+        "json_ok": true,
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/sb32bcompact/formal_suite.stdout.json",
+        "size_bytes": 1270414
+      },
+      "summary": {
+        "complete_json": true,
+        "exists": true,
+        "json_ok": true,
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/sb32bcompact/formal_suite.summary.json",
+        "size_bytes": 1417
+      }
+    },
+    {
+      "available_case_count": 25,
+      "benchmark_reports": [
+        {
+          "aggregated_metrics": {
+            "case_count": 5.0,
+            "quality_floor_pass_count": 5.0,
+            "telemetry_event_count": 140.0
+          },
+          "case_count": 5,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L0",
+          "metadata": {
+            "benchmark_tier": "dev",
+            "claim_level": "dev_mini_formal",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/runtime/L0/benchmark_reports/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal-L0.json",
+          "suite_id": "v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal"
+        },
+        {
+          "aggregated_metrics": {
+            "case_count": 5.0,
+            "quality_floor_pass_count": 5.0,
+            "telemetry_event_count": 140.0
+          },
+          "case_count": 5,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L1",
+          "metadata": {
+            "benchmark_tier": "dev",
+            "claim_level": "dev_mini_formal",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/runtime/L1/benchmark_reports/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal-L1.json",
+          "suite_id": "v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal"
+        },
+        {
+          "aggregated_metrics": {
+            "case_count": 5.0,
+            "quality_floor_pass_count": 5.0,
+            "telemetry_event_count": 160.0
+          },
+          "case_count": 5,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L2",
+          "metadata": {
+            "benchmark_tier": "dev",
+            "claim_level": "dev_mini_formal",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/runtime/L2/benchmark_reports/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal-L2.json",
+          "suite_id": "v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal"
+        },
+        {
+          "aggregated_metrics": {
+            "case_count": 5.0,
+            "quality_floor_pass_count": 5.0,
+            "telemetry_event_count": 160.0
+          },
+          "case_count": 5,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L3",
+          "metadata": {
+            "benchmark_tier": "dev",
+            "claim_level": "dev_mini_formal",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/runtime/L3/benchmark_reports/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal-L3.json",
+          "suite_id": "v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal"
+        },
+        {
+          "aggregated_metrics": null,
+          "case_count": 0,
+          "comparison_summary": {
+            "artifact_reuse_delta_l2_to_l3": 0.0,
+            "codeact_action_delta_l0_to_l3": 0.0,
+            "control_bytes_delta_l0_to_l1": 207.0,
+            "protocol_L3_control_bytes": 2490.0,
+            "protocol_L3_prompt_bytes": 20115.0,
+            "protocol_L3_prompt_tokens": 6098.0,
+            "protocol_L3_quality_pass_count": 5.0,
+            "protocol_L3_total_tokens": 8322.0,
+            "protocol_vs_text_control_bytes_delta": 133.0,
+            "protocol_vs_text_prompt_bytes_delta": -8420.0,
+            "protocol_vs_text_prompt_token_delta": -1418.0,
+            "protocol_vs_text_quality_pass_delta": 0.0,
+            "protocol_vs_text_token_delta": -2436.0,
+            "pruning_bytes_saved_vs_l0": 5832.0,
+            "quality_floor_pass_delta_l0_to_l3": 0.0,
+            "replan_history_delta_l0_to_l3": 0.0,
+            "reuse_gain_delta_l2_to_l3": 0.0,
+            "selected_evidence_bytes_delta_l0_to_l2": 0.0,
+            "text_L0_control_bytes": 2357.0,
+            "text_L0_prompt_bytes": 28535.0,
+            "text_L0_prompt_tokens": 7516.0,
+            "text_L0_quality_pass_count": 5.0,
+            "text_L0_total_tokens": 10758.0
+          },
+          "json_ok": true,
+          "layer": "",
+          "metadata": {
+            "benchmark_tier": "dev",
+            "claim_level": "dev_mini_formal",
+            "comparison_contract": "same_mainline_internal_attribution_ladder",
+            "embedding_mode": "deterministic",
+            "formal_task_families": [
+              "financial_report_analysis"
+            ],
+            "formal_task_family_count": 1,
+            "formal_text_protocol_benchmark": false,
+            "ladder_claim_scope": "internal_attribution_only_not_external_superiority",
+            "memfd_bytes_transferred": 0.0,
+            "memfd_publish_count": 0.0,
+            "memfd_transfer_count": 0.0,
+            "role_path_mode": "local_vllm",
+            "seed_replay_memory_by_layer": {
+              "L0": false,
+              "L1": false,
+              "L2": false,
+              "L3": false
+            },
+            "state_pool_mode_requested": "auto",
+            "state_pool_mode_used": "shared_memory",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback"
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/runtime/benchmark_reports/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal-suite.json",
+          "suite_id": "v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234-formal"
+        }
+      ],
+      "comparison_summary": {
+        "protocol_L3_control_bytes": 2490,
+        "protocol_L3_prompt_tokens": 6098,
+        "protocol_L3_total_tokens": 8322,
+        "protocol_vs_text_control_bytes_delta": 133,
+        "protocol_vs_text_prompt_token_delta": -1418,
+        "protocol_vs_text_token_delta": -2436,
+        "text_L0_control_bytes": 2357,
+        "text_L0_prompt_tokens": 7516,
+        "text_L0_total_tokens": 10758
+      },
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "none",
+        "signals": [],
+        "types": []
+      },
+      "failure_snippets": [],
+      "layers": [
+        {
+          "case_count": 5,
+          "layer": "L0",
+          "quality_floor_pass_count": 5,
+          "source": "payload.layers"
+        },
+        {
+          "case_count": 5,
+          "layer": "L1",
+          "quality_floor_pass_count": 5,
+          "source": "payload.layers"
+        },
+        {
+          "case_count": 5,
+          "layer": "L2",
+          "quality_floor_pass_count": 5,
+          "source": "payload.layers"
+        },
+        {
+          "case_count": 5,
+          "layer": "L3",
+          "quality_floor_pass_count": 5,
+          "source": "payload.layers"
+        }
+      ],
+      "metadata": {
+        "benchmark_tier": "dev",
+        "embedding_mode": "deterministic",
+        "local_vllm_base_url": "http://127.0.0.1:53334/v1",
+        "local_vllm_model": "qwen3-32b",
+        "role_path_mode": "local_vllm",
+        "state_pool_mode_used": "shared_memory",
+        "transport": "loopback"
+      },
+      "payload_source": "summary",
+      "run_id": "v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234",
+      "run_root": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234",
+      "selected_case_count": 5,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/control.sock",
+        "container_socket_path_bytes": 76,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/control.sock",
+        "host_socket_path_bytes": 86
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1536,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 120,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": true,
+        "exists": true,
+        "json_ok": true,
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/formal_suite.stdout.json",
+        "size_bytes": 289694
+      },
+      "summary": {
+        "complete_json": true,
+        "exists": true,
+        "json_ok": true,
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234/formal_suite.summary.json",
+        "size_bytes": 1573
+      }
+    },
+    {
+      "available_case_count": null,
+      "benchmark_reports": [
+        {
+          "aggregated_metrics": {
+            "case_count": 25.0,
+            "quality_floor_pass_count": 25.0,
+            "telemetry_event_count": 700.0
+          },
+          "case_count": 25,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L0",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/sb32bformal900/runtime/L0/benchmark_reports/sb32bformal900-formal-L0.json",
+          "suite_id": "sb32bformal900-formal"
+        }
+      ],
+      "comparison_summary": {},
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "inferred",
+        "signals": [
+          "benchmark reports exist but top-level summary is missing; timeout_s=900"
+        ],
+        "types": [
+          "partial formal run without suite summary"
+        ]
+      },
+      "failure_snippets": [],
+      "layers": [
+        {
+          "case_count": 25.0,
+          "layer": "L0",
+          "path": "/home/qcrs/statebus/runs/sb32bformal900/runtime/L0/benchmark_reports/sb32bformal900-formal-L0.json",
+          "quality_floor_pass_count": 25.0,
+          "source": "benchmark_report"
+        }
+      ],
+      "metadata": {},
+      "payload_source": "none",
+      "run_id": "sb32bformal900",
+      "run_root": "/home/qcrs/statebus/runs/sb32bformal900",
+      "selected_case_count": null,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/sb32bformal900/control.sock",
+        "container_socket_path_bytes": 42,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/sb32bformal900/control.sock",
+        "host_socket_path_bytes": 52
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/sb32bformal900/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1536,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 900,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": false,
+        "exists": true,
+        "json_ok": false,
+        "parse_error": "empty",
+        "path": "/home/qcrs/statebus/runs/sb32bformal900/formal_suite.stdout.json",
+        "size_bytes": 0
+      },
+      "summary": {
+        "complete_json": false,
+        "exists": false,
+        "json_ok": false,
+        "parse_error": "missing",
+        "path": "/home/qcrs/statebus/runs/sb32bformal900/formal_suite.summary.json",
+        "size_bytes": 0
+      }
+    },
+    {
+      "available_case_count": null,
+      "benchmark_reports": [],
+      "comparison_summary": {},
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "inferred",
+        "signals": [
+          "formal_suite.stdout.json is empty and no direct failure snippet was found"
+        ],
+        "types": [
+          "unattributed empty wrapper stdout"
+        ]
+      },
+      "failure_snippets": [],
+      "layers": [],
+      "metadata": {},
+      "payload_source": "none",
+      "run_id": "sb32bformal3k",
+      "run_root": "/home/qcrs/statebus/runs/sb32bformal3k",
+      "selected_case_count": null,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/sb32bformal3k/control.sock",
+        "container_socket_path_bytes": 41,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/sb32bformal3k/control.sock",
+        "host_socket_path_bytes": 51
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/sb32bformal3k/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 3072,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 900,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": false,
+        "exists": true,
+        "json_ok": false,
+        "parse_error": "empty",
+        "path": "/home/qcrs/statebus/runs/sb32bformal3k/formal_suite.stdout.json",
+        "size_bytes": 0
+      },
+      "summary": {
+        "complete_json": false,
+        "exists": false,
+        "json_ok": false,
+        "parse_error": "missing",
+        "path": "/home/qcrs/statebus/runs/sb32bformal3k/formal_suite.summary.json",
+        "size_bytes": 0
+      }
+    },
+    {
+      "available_case_count": null,
+      "benchmark_reports": [
+        {
+          "aggregated_metrics": {
+            "case_count": 25.0,
+            "quality_floor_pass_count": 25.0,
+            "telemetry_event_count": 700.0
+          },
+          "case_count": 25,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L0",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/sb32bcap3k/runtime/L0/benchmark_reports/sb32bcap3k-formal-L0.json",
+          "suite_id": "sb32bcap3k-formal"
+        }
+      ],
+      "comparison_summary": {},
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "inferred",
+        "signals": [
+          "benchmark reports exist but top-level summary is missing; timeout_s=900",
+          "context cap present with large executor max_tokens, but no direct JSON snippet found",
+          "summarizer max_tokens <= 1024 after context-cap runs and no suite summary was produced"
+        ],
+        "types": [
+          "partial formal run without suite summary",
+          "executor JSON truncation risk reduced by context cap",
+          "summarizer JSON truncation risk"
+        ]
+      },
+      "failure_snippets": [],
+      "layers": [
+        {
+          "case_count": 25.0,
+          "layer": "L0",
+          "path": "/home/qcrs/statebus/runs/sb32bcap3k/runtime/L0/benchmark_reports/sb32bcap3k-formal-L0.json",
+          "quality_floor_pass_count": 25.0,
+          "source": "benchmark_report"
+        }
+      ],
+      "metadata": {},
+      "payload_source": "none",
+      "run_id": "sb32bcap3k",
+      "run_root": "/home/qcrs/statebus/runs/sb32bcap3k",
+      "selected_case_count": null,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/sb32bcap3k/control.sock",
+        "container_socket_path_bytes": 38,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/sb32bcap3k/control.sock",
+        "host_socket_path_bytes": 48
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/sb32bcap3k/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 3072,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": 64,
+            "max_context_tokens": 4096,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 900,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": false,
+        "exists": true,
+        "json_ok": false,
+        "parse_error": "empty",
+        "path": "/home/qcrs/statebus/runs/sb32bcap3k/formal_suite.stdout.json",
+        "size_bytes": 0
+      },
+      "summary": {
+        "complete_json": false,
+        "exists": false,
+        "json_ok": false,
+        "parse_error": "missing",
+        "path": "/home/qcrs/statebus/runs/sb32bcap3k/formal_suite.summary.json",
+        "size_bytes": 0
+      }
+    },
+    {
+      "available_case_count": null,
+      "benchmark_reports": [],
+      "comparison_summary": {},
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "inferred",
+        "signals": [
+          "executor max_tokens >= 4096 without context cap and no suite summary was produced"
+        ],
+        "types": [
+          "vLLM context 400 risk"
+        ]
+      },
+      "failure_snippets": [],
+      "layers": [],
+      "metadata": {},
+      "payload_source": "none",
+      "run_id": "sb32bformalx4k",
+      "run_root": "/home/qcrs/statebus/runs/sb32bformalx4k",
+      "selected_case_count": null,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/sb32bformalx4k/control.sock",
+        "container_socket_path_bytes": 42,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/sb32bformalx4k/control.sock",
+        "host_socket_path_bytes": 52
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/sb32bformalx4k/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 4096,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 900,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": false,
+        "exists": true,
+        "json_ok": false,
+        "parse_error": "empty",
+        "path": "/home/qcrs/statebus/runs/sb32bformalx4k/formal_suite.stdout.json",
+        "size_bytes": 0
+      },
+      "summary": {
+        "complete_json": false,
+        "exists": false,
+        "json_ok": false,
+        "parse_error": "missing",
+        "path": "/home/qcrs/statebus/runs/sb32bformalx4k/formal_suite.summary.json",
+        "size_bytes": 0
+      }
+    },
+    {
+      "available_case_count": null,
+      "benchmark_reports": [
+        {
+          "aggregated_metrics": {
+            "case_count": 25.0,
+            "quality_floor_pass_count": 25.0,
+            "telemetry_event_count": 700.0
+          },
+          "case_count": 25,
+          "comparison_summary": null,
+          "json_ok": true,
+          "layer": "L0",
+          "metadata": {
+            "benchmark_tier": "formal",
+            "claim_level": "first_pass",
+            "embedding_mode": "deterministic",
+            "formal_comparator_eligible": false,
+            "quality_floor_contract": "statebus_smoke_quality_floor_v1",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "role_path_mode": "local_vllm",
+            "scoring_contract": "statebus_smoke_quality_floor_v1",
+            "seed_replay_memory": false,
+            "state_pool_mode": "auto",
+            "task_family_tier": "formal_financial",
+            "transport": "loopback",
+            "uses_internal_helpers": false
+          },
+          "parse_error": "",
+          "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250/runtime/L0/benchmark_reports/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250-formal-L0.json",
+          "suite_id": "v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250-formal"
+        }
+      ],
+      "comparison_summary": {},
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "inferred",
+        "signals": [
+          "config timeout_s=120 and wrapper stdout is empty with no summary JSON"
+        ],
+        "types": [
+          "wrapper timeout 120s"
+        ]
+      },
+      "failure_snippets": [],
+      "layers": [
+        {
+          "case_count": 25.0,
+          "layer": "L0",
+          "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250/runtime/L0/benchmark_reports/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250-formal-L0.json",
+          "quality_floor_pass_count": 25.0,
+          "source": "benchmark_report"
+        }
+      ],
+      "metadata": {},
+      "payload_source": "none",
+      "run_id": "v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250",
+      "run_root": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250",
+      "selected_case_count": null,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250/control.sock",
+        "container_socket_path_bytes": 77,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250/control.sock",
+        "host_socket_path_bytes": 87
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1536,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 120,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": false,
+        "exists": true,
+        "json_ok": false,
+        "parse_error": "empty",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250/formal_suite.stdout.json",
+        "size_bytes": 0
+      },
+      "summary": {
+        "complete_json": false,
+        "exists": false,
+        "json_ok": false,
+        "parse_error": "missing",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250/formal_suite.summary.json",
+        "size_bytes": 0
+      }
+    },
+    {
+      "available_case_count": null,
+      "benchmark_reports": [],
+      "comparison_summary": {},
+      "exists": true,
+      "failure_attribution": {
+        "direct_snippet_categories": [],
+        "evidence_strength": "inferred",
+        "signals": [
+          "formal_suite.stdout.json is empty and no direct failure snippet was found"
+        ],
+        "types": [
+          "unattributed empty wrapper stdout"
+        ]
+      },
+      "failure_snippets": [],
+      "layers": [],
+      "metadata": {},
+      "payload_source": "none",
+      "run_id": "v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015",
+      "run_root": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015",
+      "selected_case_count": null,
+      "socket_path_audit": {
+        "af_unix_limit_bytes": 107,
+        "container_path_within_limit": true,
+        "container_socket_path": "/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015/control.sock",
+        "container_socket_path_bytes": 88,
+        "host_path_within_limit": true,
+        "host_socket_path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015/control.sock",
+        "host_socket_path_bytes": 98
+      },
+      "statebus_llm_config": {
+        "base_url": "http://127.0.0.1:53334/v1",
+        "exists": true,
+        "mode": "local_vllm",
+        "parse_error": "",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015/statebus_llm.local_vllm.yaml",
+        "request_max_attempts": 1,
+        "roles": {
+          "executor": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1536,
+            "model": "qwen3-32b"
+          },
+          "planner": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "retriever": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          },
+          "summarizer": {
+            "json_output": true,
+            "max_context_safety_margin_tokens": null,
+            "max_context_tokens": null,
+            "max_tokens": 1024,
+            "model": "qwen3-32b"
+          }
+        },
+        "timeout_s": 900,
+        "yaml_ok": true
+      },
+      "stdout": {
+        "complete_json": false,
+        "exists": true,
+        "json_ok": false,
+        "parse_error": "empty",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015/formal_suite.stdout.json",
+        "size_bytes": 0
+      },
+      "summary": {
+        "complete_json": false,
+        "exists": false,
+        "json_ok": false,
+        "parse_error": "missing",
+        "path": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015/formal_suite.summary.json",
+        "size_bytes": 0
+      }
+    }
+  ],
+  "schema_version": "statebus.local_vllm_kv_audit.v1",
+  "vllm_service": {
+    "health": {
+      "body_sample": "",
+      "error": "URLError: <urlopen error [Errno 111] Connection refused>",
+      "ok": false,
+      "status_code": null,
+      "url": "http://127.0.0.1:53334/health"
+    },
+    "metrics": {
+      "claim_boundary": "raw_metrics_only_no_hit_miss_claim_without_explicit_exposed_counters",
+      "error": "URLError: <urlopen error [Errno 111] Connection refused>",
+      "ok": false,
+      "prefix_cache_metric_status": "metrics unavailable or no prefix-cache metric exposed",
+      "raw_metric_names": [],
+      "raw_metric_values": {},
+      "status_code": null,
+      "url": "http://127.0.0.1:53334/metrics"
+    }
+  }
+}
