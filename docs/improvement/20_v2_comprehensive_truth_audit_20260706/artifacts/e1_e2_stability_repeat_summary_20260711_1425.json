@@ -1,0 +1,89 @@
+{
+  "schema_version": "statebus.local_vllm_e1_e2_stability_repeat_summary.v1",
+  "generated_at_utc": "2026-07-11T06:30:16Z",
+  "claim_boundary": "stability_repeat_for_engine_local_prefix_reuse_only_no_kv_tensor_export_no_hidden_state_transfer_no_cross_engine_reuse",
+  "service_profile": {
+    "model": "qwen3-32b",
+    "base_url": "http://127.0.0.1:53334/v1",
+    "cuda_visible_devices": "0",
+    "max_model_len": 8192,
+    "gpu_memory_utilization": 0.82,
+    "num_gpu_blocks_override": 573,
+    "tensor_parallel_size": 1
+  },
+  "interpretation": {
+    "primary_result": "e1_and_e2_direction_reproduced_without_service_restart",
+    "hit_rate_note": "prefix hit-rate gauges are service-lifetime-sensitive; E2 independent was non-zero in this repeat, so TTFT and latency deltas are stronger stability signals than absolute hit-rate",
+    "next_recommended_step": "do_not_run_E4_E5_by_default; either accept E1_E2 as stable enough for E6_formal_guard_or_rerun_E1_E2_after_a_clean_service_restart_when_safe"
+  },
+  "e1_schedule_repeat": {
+    "probe_order": [
+      "cache_hostile",
+      "cache_friendly"
+    ],
+    "artifacts": {
+      "cache_hostile": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_hostile_stability_r1_20260711_1425.json",
+      "cache_friendly": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_friendly_stability_r1_20260711_1425.json"
+    },
+    "cache_hostile": {
+      "request_count": 10,
+      "ok_count": 10,
+      "error_count": 0,
+      "final_gpu_prefix_cache_hit_rate": 0.34446130500758726,
+      "mean_ttft_ms": 1735.7151357999999,
+      "mean_latency_ms": 4126.309611800001
+    },
+    "cache_friendly": {
+      "request_count": 10,
+      "ok_count": 10,
+      "error_count": 0,
+      "final_gpu_prefix_cache_hit_rate": 0.520883396269596,
+      "mean_ttft_ms": 871.1502527000002,
+      "mean_latency_ms": 3177.8692379
+    },
+    "delta_friendly_minus_hostile": {
+      "final_gpu_prefix_cache_hit_rate": 0.17642209126200875,
+      "mean_ttft_ms": -864.5648830999996,
+      "mean_latency_ms": -948.4403739000013
+    },
+    "result": "cache_friendly_remains_better_than_cache_hostile"
+  },
+  "e2_prefix_alignment_repeat": {
+    "probe_order": [
+      "independent",
+      "shared_evidence_prefix"
+    ],
+    "artifacts": {
+      "independent": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_independent_stability_r1_20260711_1425.json",
+      "shared_evidence_prefix": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_shared_stability_r1_20260711_1425.json"
+    },
+    "independent": {
+      "request_count": 5,
+      "ok_count": 5,
+      "error_count": 0,
+      "mean_prompt_bytes": 29539.6,
+      "mean_shared_prefix_bytes": 0.0,
+      "final_gpu_prefix_cache_hit_rate": 0.4315100957436724,
+      "mean_ttft_ms": 3517.5921984,
+      "mean_latency_ms": 5942.2817772
+    },
+    "shared_evidence_prefix": {
+      "request_count": 5,
+      "ok_count": 5,
+      "error_count": 0,
+      "mean_prompt_bytes": 29437.0,
+      "mean_shared_prefix_bytes": 28926.0,
+      "final_gpu_prefix_cache_hit_rate": 0.4811956786613597,
+      "mean_ttft_ms": 939.1132115999999,
+      "mean_latency_ms": 3338.8077392
+    },
+    "delta_shared_minus_independent": {
+      "mean_prompt_bytes": -102.59999999999854,
+      "mean_shared_prefix_bytes": 28926.0,
+      "final_gpu_prefix_cache_hit_rate": 0.04968558291768732,
+      "mean_ttft_ms": -2578.4789868000003,
+      "mean_latency_ms": -2603.474038
+    },
+    "result": "shared_evidence_prefix_remains_faster_than_independent_layout"
+  }
+}

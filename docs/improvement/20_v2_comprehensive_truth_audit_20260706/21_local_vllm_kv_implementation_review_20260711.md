@@ -231,6 +231,7 @@ After the GPU0/8192 service recovered, three small mechanism probes were run. Th
 | E1 cache-friendly vs cache-hostile schedule | `artifacts/e1_kv_schedule_ablation_summary_20260711_134159.json` | Passed under repeat=4 / 573-block stress: friendly final GPU prefix hit-rate `0.788866` vs hostile `0.523494`; mean TTFT `657.55 ms` vs `1378.70 ms`. |
 | E2 shared evidence prefix on/off | `artifacts/e2_prefix_alignment_ablation_summary_20260711_1359.json` | Passed: shared final GPU prefix hit-rate `0.780876` vs independent `0.0`; mean TTFT `951.61 ms` vs `3540.27 ms`. |
 | E3 dynamic pruning on/off | `artifacts/e3_dynamic_pruning_ablation_20260711.json` | Passed at retrieval level: selected evidence bytes `333 -> 112`, estimated KV tokens saved `36 -> 92`, hard fact `fact-revenue-1` preserved. |
+| E1/E2 stability repeat | `26_e1_e2_stability_repeat_20260711.md`; `artifacts/e1_e2_stability_repeat_summary_20260711_1425.json` | Direction reproduced without service restart: E1 friendly TTFT `871.15 ms` vs hostile `1735.72 ms`; E2 shared TTFT `939.11 ms` vs independent `3517.59 ms`. |
 
 Mechanism-probe claim boundary:
 
@@ -302,12 +303,13 @@ Mechanism-probe claim boundary:
 | E1 | Complete | `23_e1_kv_schedule_ablation_20260711.md`; friendly hit-rate and TTFT beat hostile under repeat=4 / 573-block stress. | Engine-local prefix reuse from schedule control only. |
 | E2 | Complete | `24_e2_prefix_alignment_ablation_20260711.md`; shared evidence prefix beat independent layout on hit-rate and TTFT. | Prompt layout enabling engine-local prefix reuse only. |
 | E3 | Complete | `25_e3_dynamic_pruning_ablation_20260711.md`; retrieval-level dynamic pruning reduced selected evidence pressure while preserving the hard fact proxy. | Input-level pruning only. |
+| E1/E2 stability repeat | Complete | `26_e1_e2_stability_repeat_20260711.md`; direction reproduced without service restart, with service-lifetime hit-rate caveat. | Repeatability check only. |
 
 Remaining work should stay narrow:
 
 | ID | Next condition | Suggested action | Claim boundary | Risk |
 | --- | --- | --- | --- | --- |
-| Stability repeat | Before promoting E1/E2 numbers into a headline mechanism claim. | Rerun the small E1/E2 probes once against the same GPU0/8192 profile, preserving fresh metric snapshots. | Repeatability check only. | Metrics gauges can be affected by service lifetime and prior traffic. |
+| Clean-service repeat | Only if the headline needs cleaner raw hit-rate evidence. | Rerun E1/E2 after a safe vLLM restart so service-lifetime gauges start cold. | Repeatability check only. | Requires restart; do not disturb unrelated GPU jobs. |
 | E4 | Only if GPU capacity and service restart risk are acceptable. | Treat as a longer-than-8192 capacity smoke, for example 12288 before any 16384 attempt. | Context capacity only. | GPU0 has limited headroom; do not disturb unrelated GPU jobs. |
 | E5 | Only if GPU0/GPU1 are proven free and the operator approves a restart. | Try `qwen3-32b-2gpu` and run E0 plus a mini formal subset. | Multi-GPU service validation only. | No two-GPU claim until health, metrics, and mini quality pass. |
 | E6 | Only after the mechanism/profile choice is accepted and the user approves a long run. | Run the formal 25-case guard with captured metric snapshots. | Formal quality guard. No true KV tensor claim. | Several hours; not started in this audit. |
