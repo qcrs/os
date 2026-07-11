@@ -559,6 +559,7 @@ def probe_vllm_service(*, health_url: str, metrics_url: str, timeout_s: float) -
             "error": metrics["error"],
             "prefix_cache_metric_status": parsed_metrics["status"],
             "raw_metric_values": parsed_metrics["raw_metric_values"],
+            "raw_metric_lines": parsed_metrics["raw_metric_lines"],
             "raw_metric_names": sorted(parsed_metrics["raw_metric_values"]),
             "claim_boundary": "raw_metrics_only_no_hit_miss_claim_without_explicit_exposed_counters",
         },
@@ -583,6 +584,7 @@ def fetch_url(url: str, *, timeout_s: float) -> dict[str, Any]:
 
 def parse_prefix_cache_metrics(metrics_text: str) -> dict[str, Any]:
     values: dict[str, float] = {}
+    lines: list[str] = []
     for raw_line in metrics_text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -590,6 +592,7 @@ def parse_prefix_cache_metrics(metrics_text: str) -> dict[str, Any]:
         metric_name = line.split("{", 1)[0].split(" ", 1)[0]
         if not re.search(r"(prefix|cache|kv)", metric_name, re.IGNORECASE):
             continue
+        lines.append(line)
         value_text = line.rsplit(" ", 1)[-1]
         try:
             values[metric_name] = float(value_text)
@@ -601,7 +604,7 @@ def parse_prefix_cache_metrics(metrics_text: str) -> dict[str, Any]:
         status = "metrics available but no prefix-cache metric exposed"
     else:
         status = "metrics unavailable or no prefix-cache metric exposed"
-    return {"status": status, "raw_metric_values": values}
+    return {"status": status, "raw_metric_values": values, "raw_metric_lines": lines}
 
 
 def aggregate_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
