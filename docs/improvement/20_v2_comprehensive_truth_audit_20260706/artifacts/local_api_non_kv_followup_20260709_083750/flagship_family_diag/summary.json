@@ -1,0 +1,69 @@
+{
+  "mode": "flagship_family_diag",
+  "stage_count": 1,
+  "failed_stage_count": 0,
+  "failed_required_stage_count": 0,
+  "failed_stages": [],
+  "key_metrics": {
+    "flagship_failed_family_diagnostics": {
+      "family_count": 3,
+      "failed_family_count": 2,
+      "failed_family_ids": [
+        "incident_diagnosis_v2",
+        "cross_period_financial_v1"
+      ],
+      "stress_failure_reason_counts": {
+        "no_extra_state_ref_prompt_saving_vs_t2": 1,
+        "quality_headline_not_eligible": 1
+      }
+    }
+  },
+  "failed_family_summaries": [
+    {
+      "family_id": "incident_diagnosis_v2",
+      "group": "continuous",
+      "headline_scope": "not_eligible",
+      "interpretation": "non_text_state_transfer_has_extra_prompt_saving",
+      "l3_exact_replay_count": 4.0,
+      "l3_quality_floor_pass_count": 7.0,
+      "l3_skipped_step_count": 13.0,
+      "l3_validated_replay_count": 5.0,
+      "llm_prompt_delta_l2_vs_t2": -1931.0,
+      "llm_prompt_saved_by_state_ref_bytes": 1931.0,
+      "prompt_visible_delta_l2_vs_t2": -2465.0,
+      "prompt_visible_saved_by_state_ref_bytes": 2465.0,
+      "quality_headline_eligible": false,
+      "replay_gate_reason": "quality_gate_failed;missing_target_replay_rounds;missing_exact_target_rounds",
+      "replay_headline_eligible": false,
+      "statebus_suite_report_path": "/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship-families/work/flagship_family_diagnostics/continuous/incident_diagnosis_v2/statebus/runtime/benchmark_reports/v2-local-api-non-kv-followup-20260709_083750-flagship-families-incident_diagnosis_v2-statebus.json",
+      "stress_fail_reasons": [
+        "quality_headline_not_eligible"
+      ],
+      "stress_pass": false,
+      "text_same_semantic_selection_report_path": "/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship-families/work/flagship_family_diagnostics/continuous/incident_diagnosis_v2/t2/runtime/benchmark_reports/v2-local-api-non-kv-followup-20260709_083750-flagship-families-incident_diagnosis_v2-t2-T2.json"
+    },
+    {
+      "family_id": "cross_period_financial_v1",
+      "group": "continuous_replay",
+      "headline_scope": "replay_admissible",
+      "interpretation": "semantic_selection_dominates_this_family",
+      "l3_exact_replay_count": 0.0,
+      "l3_quality_floor_pass_count": 10.0,
+      "l3_skipped_step_count": 4.0,
+      "l3_validated_replay_count": 4.0,
+      "llm_prompt_delta_l2_vs_t2": 14912.0,
+      "llm_prompt_saved_by_state_ref_bytes": 0.0,
+      "prompt_visible_delta_l2_vs_t2": 17973.0,
+      "prompt_visible_saved_by_state_ref_bytes": 0.0,
+      "quality_headline_eligible": true,
+      "replay_gate_reason": "",
+      "replay_headline_eligible": true,
+      "statebus_suite_report_path": "/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship-families/work/flagship_family_diagnostics/continuous_replay/cross_period_financial_v1/statebus/runtime/benchmark_reports/v2-local-api-non-kv-followup-20260709_083750-flagship-families-cross_period_financial_v1-statebus.json",
+      "stress_fail_reasons": [
+        "no_extra_state_ref_prompt_saving_vs_t2"
+      ],
+      "stress_pass": false,
+      "text_same_semantic_selection_report_path": "/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship-families/work/flagship_family_diagnostics/continuous_replay/cross_period_financial_v1/t2/runtime/benchmark_reports/v2-local-api-non-kv-followup-20260709_083750-flagship-families-cross_period_financial_v1-t2-T2.json"
+    }
+  ]
+}

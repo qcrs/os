@@ -1,0 +1,2 @@
+stage	exit_code	required	kind	artifact	log_path	duration_s
+lr01_14_formal_compare_latency_rerun_api_local_memfd	0	1	live_runner	/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-lr01/artifacts/stages/lr01_14_formal_compare_latency_rerun_api_local_memfd/stdout.json	/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-lr01/artifacts/stages/lr01_14_formal_compare_latency_rerun_api_local_memfd/console.log	1107

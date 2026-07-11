@@ -1,0 +1,20 @@
+{
+  "mode": "lr01",
+  "stage_count": 1,
+  "failed_stage_count": 0,
+  "failed_required_stage_count": 0,
+  "failed_stages": [],
+  "key_metrics": {
+    "lr01_14_formal_compare_latency_rerun_api_local_memfd": {
+      "strict_equal_quality_comparison_valid": false,
+      "quality_superiority_comparison_valid": false,
+      "formal_superiority_claim_allowed": false,
+      "serialized_latency_superiority_claim_allowed": 0.0,
+      "claim_restriction": "external_compare_debug_only_until_strict_or_quality_gate_passes",
+      "api_task_ms_delta": -92795.82755099982,
+      "api_prompt_tokens_delta": -63088.0,
+      "api_llm_total_tokens_delta": -81991.0
+    }
+  },
+  "failed_family_summaries": []
+}
