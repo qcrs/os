@@ -164,7 +164,7 @@ Audit schema and aggregate:
 | Field | Value |
 | --- | --- |
 | Schema | `statebus.local_vllm_kv_audit.v1` |
-| Generated UTC | `2026-07-11T04:57:35.580845+00:00` |
+| Generated UTC | `2026-07-11T05:16:39.322547+00:00` |
 | Run count | 8 |
 | Final pass runs | `sb32bcompact` |
 | Claim boundary | Audit evidence only; no true KV tensor transfer claim. |

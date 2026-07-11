@@ -15,7 +15,7 @@
     "run_count": 8
   },
   "claim_boundary": "audit_evidence_only_no_true_kv_tensor_transfer_claim; prefix/cache metrics are reported only when exposed by the current vLLM endpoint",
-  "generated_at_utc": "2026-07-11T04:57:35.580845+00:00",
+  "generated_at_utc": "2026-07-11T05:16:39.322547+00:00",
   "global_logs": {
     "exists": true,
     "failure_snippets": [],
