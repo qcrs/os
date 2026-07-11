@@ -72,6 +72,7 @@ Dirty worktree note:
 - Writes a temporary local vLLM config for the container path.
 - Sources `/usr/local/bin/activate_statebus_container.sh` before running the command.
 - Keeps the check rooted in the existing single-container v2 validation path.
+- The default profile is the 8B development endpoint unless the caller first sources the 32B profile or exports the 32B URL/model variables.
 
 `scripts/run_v2_local_vllm_formal_suite.sh`
 
@@ -83,7 +84,9 @@ Dirty worktree note:
 
 - Define the local vLLM service profile and the Qwen3-32B prefix-cache launch path.
 - Current evidence assumes service URL `http://127.0.0.1:53334/v1`, max model length 4096, and tensor parallelism 1.
+- Host-side commands that use the local profile should source `deploy/activate_statebus_local_vllm_profile.sh qwen3-32b`, which itself sources `deploy/activate_statebus_host.sh`.
 - No current audited evidence proves two-GPU success.
+- The setup doc explicitly warns that Qwen3 under current cu121 + vLLM 0.7.3 uses Transformers fallback, so API functionality and quality evidence should not be treated as final vLLM-native performance evidence.
 
 `v2/runtime/neural_state.py`
 
@@ -132,7 +135,7 @@ Dirty worktree note:
 | Timeout increased to 900s | `/home/qcrs/statebus/runs/sb32bformal900` | Empty stdout, no summary, L0 report 25/25 exists | Partial formal run without suite summary. |
 | Long run-id AF_UNIX risk | Objective timeline plus wrapper behavior | Current audited named run IDs are within the container socket limit; no direct path-too-long snippet was found | Historical failure class preserved, now guarded by `scripts/run_v2_local_vllm_formal_suite.sh`. |
 | Executor `max_tokens=4096` without context cap | `/home/qcrs/statebus/runs/sb32bformalx4k` | Empty stdout, no summary | Inferred vLLM context-400 risk from config and missing summary; no direct BadRequest snippet found. |
-| Executor `max_tokens=3072` without context cap | `/home/qcrs/statebus/runs/sb32bformal3k` | Empty stdout, no summary | Unattributed empty wrapper stdout in current artifacts. |
+| Executor `max_tokens=3072` without context cap | `/home/qcrs/statebus/runs/sb32bformal3k` | Empty stdout, no summary | The objective timeline treats this as a long-prompt context-400 class failure, but current scanned artifacts only prove an unattributed empty wrapper stdout. |
 | Context cap introduced | `/home/qcrs/statebus/runs/sb32bcap3k` | Empty stdout, no summary, L0 report 25/25 exists | Context cap reduced executor risk, but summarizer JSON truncation risk remained inferred. |
 | Compact planner/summarizer and larger summarizer budget | `/home/qcrs/statebus/runs/sb32bcompact` | Complete summary and stdout; L0-L3 all 25/25 | Final pass. |
 
@@ -161,7 +164,7 @@ Audit schema and aggregate:
 | Field | Value |
 | --- | --- |
 | Schema | `statebus.local_vllm_kv_audit.v1` |
-| Generated UTC | `2026-07-11T04:36:56.259257+00:00` |
+| Generated UTC | `2026-07-11T04:57:35.580845+00:00` |
 | Run count | 8 |
 | Final pass runs | `sb32bcompact` |
 | Claim boundary | Audit evidence only; no true KV tensor transfer claim. |
@@ -227,34 +230,58 @@ Post-audit validation readout:
 5. Context cap handling is useful but broad.
    `runtime/llm.py` can cap `max_tokens` and retry on maximum-context 400 responses. The retry match should remain scoped in claims to local vLLM/Qwen until provider-specific behavior is tested.
 
-6. JSON truncation risk moved rather than disappeared.
+6. Runtime token estimation is rough.
+   `_estimate_chat_prompt_tokens` is a character-based approximation, not a tokenizer-accurate count. It is acceptable as a defensive guardrail, but a future local vLLM/Qwen hardening pass should prefer tokenizer-aware estimation when the tokenizer is cheaply available.
+
+7. JSON truncation risk moved rather than disappeared.
    The compact pass indicates the final planner/summarizer/executor budgets can work for this corpus. It does not prove arbitrary financial reports or longer contexts are safe.
 
-7. Qwen3-32B local evidence is single-GPU.
+8. Compact summarizer JSON can reduce reusable-step detail.
+   The compact summarizer fix helped `sb32bcompact` finish, but shorter JSON may suppress `reusable_steps` richness. That is acceptable for the current quality-path proof, but it should be checked before making stronger replay or reuse claims.
+
+9. Formal wrapper run IDs now have an active UDS guard.
+   The wrapper should continue to fail before container execution when the computed AF_UNIX socket path is too long. This avoids opaque UDS failures and keeps the failure mode auditable.
+
+10. Container activation is centralized in the wrapper but was not reached in the failed final probe.
+    `scripts/run_v2_local_vllm_container_check.sh` sources `/usr/local/bin/activate_statebus_container.sh` inside `docker exec`; the final run failed during the host health probe before container execution. This is a service-availability failure, not evidence that container activation is broken.
+
+11. The 4096 context cap limits mechanism validation.
+    It enabled the 32B formal quality path but constrains long-prefix experiments. E4 below is required before claiming an 8192-token mechanism result.
+
+12. Qwen3-32B local evidence is single-GPU.
    No current audited result proves tensor parallel 2, multi-GPU launch stability, or multi-GPU prefix-cache behavior.
 
-8. Current memory reuse is assist-style unless measured otherwise.
+13. Current memory reuse is assist-style unless measured otherwise.
    Existing evidence should not be described as skipped execution or replay gain unless a benchmark shows non-zero `reuse_gain` or `skipped_step_count`.
 
-9. Docker/openEuler boundary is not a compatibility claim.
+14. Prefix cache metrics do not currently prove hit/miss behavior.
+    The final audit could not reach `/metrics`, and previous gauge-only reads are not a controlled before/after experiment. Do not claim cache hits or misses without exposed counters or a defensible hit-rate delta captured around a specific probe.
+
+15. Dynamic pruning is an estimate-driven input optimization.
+    `STATEBUS_EVIDENCE_DYNAMIC_PRUNING_ENABLED` controls evidence selection before prompting. It is not KV tensor pruning, vLLM cache eviction control, or hidden-state reuse.
+
+16. Qwen3 fallback performance is not final vLLM-native performance.
+    `docs/setup/local_vllm_qwen.md` states that cu121 + vLLM 0.7.3 can run Qwen3 through Transformers fallback, but its speed and prefix-cache behavior should not be treated as final native-vLLM evidence.
+
+17. Docker/openEuler boundary is not a compatibility claim.
    The container check validates the current dev container path. openEuler compatibility must still be validated in the VM or final delivery environment.
 
-10. `ExecutionArtifactRef` must remain separate from `StateRef`.
+18. `ExecutionArtifactRef` must remain separate from `StateRef`.
     Execution outputs should stay in workspaces/artifact root/CAS. Collapsing them into generic state refs would obscure replay semantics.
 
 ## 7. Next KV Test Plan
 
 | ID | Hypothesis | Command | Expected metrics | Pass/fail | Claim boundary | Est. runtime | Risk |
 | --- | --- | --- | --- | --- | --- | ---: | --- |
-| E0 | The current local vLLM service exposes stable prefix/cache metrics before any probe. | `curl -sS http://127.0.0.1:53334/health` and `curl -sS http://127.0.0.1:53334/metrics | rg 'prefix|cache|kv'` | HTTP 200; raw metric names and gauge values captured. | Pass if health is 200 and at least one prefix/cache/KV metric is exposed; fail otherwise. | Service observability only. No reuse claim. | <1 min | Metrics names may vary by vLLM version. |
-| E1 | Shared-prefix prompts produce a better vLLM prefix-cache signal than chain or cache-hostile prompts. | `source deploy/activate_statebus_host.sh && python -m v2.benchmark.kv_prefix_experiment --shared-prefix-file v2/benchmark/samples/continuous_task_families/kv_prefix_reuse/orion_factory_ops_report_2026.md --strategy shared-prefix --output /home/qcrs/statebus/runs/kv-e1-prefix-shared.json` | Before/after `gpu_prefix_cache_hit_rate` or explicit query/hit counters if exposed. | Pass if shared-prefix run improves exposed prefix-cache signal versus baseline run under the same service lifetime. | Engine-local prefix reuse only. No KV tensor export. | 10-20 min | Gauge can be contaminated by prior traffic unless service lifetime is controlled. |
-| E2 | Cache-friendly corpus scheduling improves prefix reuse relative to cache-hostile ordering on the same task family. | `source deploy/activate_statebus_host.sh && python -m v2.benchmark.kv_prefix_schedule --family-dir v2/benchmark/samples/continuous_task_families/kv_prefix_reuse --mode cache_friendly --output /home/qcrs/statebus/runs/kv-e2-friendly-plan.json` then run the paired live probe for friendly and hostile order. | Schedule plan hash groups; vLLM prefix/cache gauge or counters before/after each paired order. | Pass if friendly order shows higher exposed prefix-cache signal without quality regression. | Control-plane prefix scheduling only. | 20-40 min | Needs clean service or reliable metric reset to avoid carryover. |
-| E3 | Dynamic pruning keeps prompt size within a configured KV budget while preserving quality floor. | `source deploy/activate_statebus_host.sh && python -m pytest -q tests/v2/test_dynamic_pruning.py` plus one local-vLLM dev suite with constrained `STATEBUS_EVIDENCE_AVAILABLE_KV_CACHE_BYTES`. | Pruning decision, selected evidence bytes, prompt tokens, quality pass count. | Pass if budget is respected and quality floor remains green on the selected dev suite. | Input-level pruning only. No vLLM eviction control. | 20-60 min | Too aggressive budget can lower answer quality. |
-| E4 | The compact context-cap profile is reproducible on a small formal subset without relying on stale artifacts. | `STATEBUS_LOCAL_VLLM_FORMAL_MAX_CASES=5 STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID=kv-e4-mini5 scripts/run_v2_local_vllm_formal_suite.sh` | Complete summary JSON; L0-L3 5/5; context cap config captured. | Pass if summary JSON completes and all selected cases pass. | Reproducibility of current path, not new KV mechanism proof. | 30-90 min | Slow local 32B generation. |
-| E5 | A full formal rerun with the compact profile reproduces `sb32bcompact`. | `STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID=kv-e5-formal-compact scripts/run_v2_local_vllm_formal_suite.sh` | Complete summary JSON; L0-L3 25/25; token/control deltas close to `sb32bcompact`. | Pass if all 25 cases pass all layers and summary is complete. | Full local vLLM formal reproducibility. No KV tensor claim. | Several hours | Expensive; should run only after E0-E4 are stable. |
-| E6 | A two-GPU Qwen3-32B launch either works or fails with captured evidence. | Launch the dedicated two-GPU service profile only after preserving current one-GPU evidence; then run E0 and E4. | vLLM startup logs, health, metrics, summary JSON, GPU allocation. | Pass only if service starts, health is 200, metrics expose prefix/cache state, and E4 passes. | Multi-GPU local service validation only. | 1-3 hours plus setup | Must not be claimed until actually run; can disrupt current service. |
+| E0 | The current local 32B service is observable before any mechanism probe. | `source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b && curl -sS http://127.0.0.1:53334/health && curl -sS http://127.0.0.1:53334/metrics | rg 'prefix|cache|kv'` | HTTP 200 health; raw prefix/cache/KV metric names and values if exposed. | Pass if health is 200 and metrics are either captured or explicitly absent; fail on connection refusal. | Service observability only. No reuse claim. | <1 min | Service is currently down; restarting requires safe GPU availability and explicit operator intent. |
+| E1 | `kv_prefix_reuse_v1` cache-friendly ordering produces stronger engine-local prefix-cache evidence than cache-hostile ordering. | `source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b && python -m v2.benchmark.kv_prefix_schedule --family-dir v2/benchmark/samples/continuous_task_families/kv_prefix_reuse --mode cache_friendly --output /home/qcrs/statebus/runs/kv-e1-friendly-plan.json` and the paired `--mode cache_hostile` plan, followed by the local_vllm live probe for both orders. | Task order, affinity run length, prompt tokens, TTFT if available, and before/after vLLM prefix/cache metrics. | Pass if friendly ordering improves exposed cache signal or TTFT versus hostile without quality regression; fail if no controlled delta is captured. | Engine-Local Prefix Reuse plus control-plane scheduling only. No KV tensor export. | 30-60 min | Metrics gauges can be polluted by prior traffic unless the service lifetime is controlled. |
+| E2 | `STATEBUS_PREFIX_ALIGNMENT_MODE=shared_evidence_prefix` improves prefix-cache observability versus default layout. | Run the same small local_vLLM KV probe twice: once with `STATEBUS_PREFIX_ALIGNMENT_MODE=` and once with `STATEBUS_PREFIX_ALIGNMENT_MODE=shared_evidence_prefix`, preserving metric snapshots around each run. | Layout plan fields, shared prefix bytes, prompt tokens, raw vLLM prefix/cache metrics, quality pass count. | Pass if shared alignment improves exposed cache signal or TTFT and preserves quality; fail if no measurable delta or quality regresses. | Prompt prefix layout control plane only. No hidden-state handoff. | 30-60 min | Current 4096 context may limit shared-prefix length. |
+| E3 | Dynamic pruning reduces prompt/KV pressure without lowering quality. | Run paired local_vLLM probes with `STATEBUS_EVIDENCE_DYNAMIC_PRUNING_ENABLED=0` and `STATEBUS_EVIDENCE_DYNAMIC_PRUNING_ENABLED=1`, using the same task subset and captured configs. | Selected evidence bytes, prompt tokens, pruning decision, quality pass count, and vLLM prefix/cache metrics if available. | Pass if pruning reduces prompt pressure while preserving quality floor; fail if answer quality drops or evidence selection is not auditable. | Input-level evidence pruning only. No KV tensor pruning or vLLM cache control. | 30-90 min | Over-pruning can hide required financial evidence. |
+| E4 | 8192 context allows stronger mechanism probes than 4096, but only if 32B can restart safely. | After confirming no job disruption risk, compare the documented 4096 profile with an 8192 profile from `docs/setup/local_vllm_qwen.md`; then rerun E0 and a mini E1/E2 probe. | Startup logs, health, model max length, request context caps, prompt tokens, quality pass count, metrics. | Pass only if 8192 service starts cleanly and mini quality/mechanism probes complete; fail on OOM, startup instability, or quality regression. | Context feasibility and local service capacity only. | 1-3 hr | Do not kill other GPU jobs; current final audit saw GPU 2 heavily occupied. |
+| E5 | Tensor parallel size 2 can run Qwen3-32B and preserve the local_vLLM quality path only if GPU0/GPU1 are actually free. | Use the `qwen3-32b-2gpu` profile only after `nvidia-smi` proves GPU0/GPU1 are free; then run E0 plus a mini formal subset. | Health, metrics, GPU allocation, summary JSON, L0-L3 pass counts. | Pass only with service health, metric capture, and mini formal pass; fail otherwise. | Multi-GPU service validation only. No 2-GPU claim until this passes. | 1-3 hr | Must not kill or preempt other users' GPU jobs. |
+| E6 | Any mechanism change preserves the 25-case formal quality guard. | After E1-E5 identify a stable mechanism/profile change, run `STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID=kv-e6-formal-guard scripts/run_v2_local_vllm_formal_suite.sh` only with explicit approval for a full run. | Complete summary JSON; L0-L3 25/25; token/control deltas; metric snapshots before/after. | Pass if all 25 cases pass all layers and summary is complete; fail on missing summary, quality regression, or opaque logs. | Formal quality guard. No true KV tensor claim. | Several hours | Full formal is expensive and was explicitly not restarted in this audit. |
 
-Highest-priority next test: E0, then E1 after a successful E0 metric snapshot. The final audit probe could not reach the local vLLM service, so service observability must be restored before measuring prefix behavior.
+Highest-priority next test: E0, then E1. The final audit probe could not reach the local vLLM service, so service observability must be restored before measuring prefix behavior.
 
 ## 8. Recommendations
 
@@ -275,3 +302,5 @@ Highest-priority next test: E0, then E1 after a successful E0 metric snapshot. T
 8. Keep benchmark claims serialized. Concurrent API launches should remain engineering smoke evidence, not formal API latency evidence.
 
 9. Preserve the current untracked `tatus --short --branch` file as unrelated workspace state unless the user explicitly asks to remove it.
+
+10. Do not pursue true KV tensor handoff or a vLLM fork next. The current evidence is not ready for that path; finish the engine-local prefix-cache mechanism probes first.
