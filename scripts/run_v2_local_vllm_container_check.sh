@@ -15,6 +15,13 @@ CONTAINER_RESULT_ROOT="${CONTAINER_RUNS_ROOT}/${RUN_ID}"
 HOST_CONFIG_PATH="${HOST_RESULT_ROOT}/statebus_llm.local_vllm.yaml"
 CONTAINER_CONFIG_PATH="${CONTAINER_RESULT_ROOT}/statebus_llm.local_vllm.yaml"
 HEALTH_TIMEOUT_S="${STATEBUS_LOCAL_VLLM_HEALTH_TIMEOUT_S:-10}"
+REQUEST_TIMEOUT_S="${STATEBUS_LOCAL_VLLM_REQUEST_TIMEOUT_S:-120}"
+PLANNER_MAX_TOKENS="${STATEBUS_LOCAL_VLLM_PLANNER_MAX_TOKENS:-1024}"
+RETRIEVER_MAX_TOKENS="${STATEBUS_LOCAL_VLLM_RETRIEVER_MAX_TOKENS:-1024}"
+EXECUTOR_MAX_TOKENS="${STATEBUS_LOCAL_VLLM_EXECUTOR_MAX_TOKENS:-1536}"
+SUMMARIZER_MAX_TOKENS="${STATEBUS_LOCAL_VLLM_SUMMARIZER_MAX_TOKENS:-1024}"
+MAX_CONTEXT_TOKENS="${STATEBUS_LOCAL_VLLM_MAX_CONTEXT_TOKENS:-4096}"
+MAX_CONTEXT_SAFETY_MARGIN_TOKENS="${STATEBUS_LOCAL_VLLM_MAX_CONTEXT_SAFETY_MARGIN_TOKENS:-64}"
 
 optional_env_args=()
 
@@ -36,7 +43,7 @@ providers:
     kind: openai_compatible
     base_url: ${VLLM_BASE_URL}
     api_key: EMPTY
-    timeout_s: 120
+    timeout_s: ${REQUEST_TIMEOUT_S}
     request_max_attempts: 1
 
 roles:
@@ -45,7 +52,9 @@ roles:
     model: ${VLLM_MODEL}
     json_output: true
     temperature: 0.0
-    max_tokens: 1024
+    max_tokens: ${PLANNER_MAX_TOKENS}
+    max_context_tokens: ${MAX_CONTEXT_TOKENS}
+    max_context_safety_margin_tokens: ${MAX_CONTEXT_SAFETY_MARGIN_TOKENS}
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
@@ -54,7 +63,9 @@ roles:
     model: ${VLLM_MODEL}
     json_output: true
     temperature: 0.0
-    max_tokens: 1024
+    max_tokens: ${RETRIEVER_MAX_TOKENS}
+    max_context_tokens: ${MAX_CONTEXT_TOKENS}
+    max_context_safety_margin_tokens: ${MAX_CONTEXT_SAFETY_MARGIN_TOKENS}
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
@@ -63,7 +74,9 @@ roles:
     model: ${VLLM_MODEL}
     json_output: true
     temperature: 0.0
-    max_tokens: 1536
+    max_tokens: ${EXECUTOR_MAX_TOKENS}
+    max_context_tokens: ${MAX_CONTEXT_TOKENS}
+    max_context_safety_margin_tokens: ${MAX_CONTEXT_SAFETY_MARGIN_TOKENS}
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
@@ -72,7 +85,9 @@ roles:
     model: ${VLLM_MODEL}
     json_output: true
     temperature: 0.0
-    max_tokens: 1024
+    max_tokens: ${SUMMARIZER_MAX_TOKENS}
+    max_context_tokens: ${MAX_CONTEXT_TOKENS}
+    max_context_safety_margin_tokens: ${MAX_CONTEXT_SAFETY_MARGIN_TOKENS}
     extra_body:
       chat_template_kwargs:
         enable_thinking: false

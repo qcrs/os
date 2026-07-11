@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -81,6 +82,8 @@ class RoleLLMConfig:
     json_output: bool = True
     temperature: float | None = 0.0
     max_tokens: int | None = None
+    max_context_tokens: int | None = None
+    max_context_safety_margin_tokens: int = 64
     reasoning_effort: str | None = None
     extra_body: dict[str, Any] = field(default_factory=dict)
     request_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -304,6 +307,12 @@ class OpenAICompatibleLLMClient:
             try:
                 return await client.chat.completions.create(**request)
             except BaseException as exc:
+                context_adjusted_request = _context_window_adjusted_request(request, exc)
+                if context_adjusted_request is not None:
+                    try:
+                        return await client.chat.completions.create(**context_adjusted_request)
+                    except BaseException as retry_exc:
+                        exc = retry_exc
                 if not _is_transient_openai_error(exc) or attempt_index + 1 >= max_attempts:
                     raise
                 last_error = exc
@@ -1133,6 +1142,10 @@ def _role_from_mapping(role_name: str, payload: dict[str, Any]) -> RoleLLMConfig
         json_output=bool(payload.get("json_output", True)),
         temperature=_coerce_optional_float(payload.get("temperature"), 0.0),
         max_tokens=_coerce_optional_int(payload.get("max_tokens")),
+        max_context_tokens=_coerce_optional_int(payload.get("max_context_tokens")),
+        max_context_safety_margin_tokens=int(
+            payload.get("max_context_safety_margin_tokens", 64)
+        ),
         reasoning_effort=_coerce_optional_str(payload.get("reasoning_effort")),
         extra_body=dict(payload.get("extra_body") or {}),
         request_kwargs=dict(payload.get("request_kwargs") or {}),
@@ -1147,6 +1160,10 @@ def _role_from_env(*, default_model: str, role_name: str) -> RoleLLMConfig:
         json_output=_env_bool(f"{env_prefix}_JSON_MODE", True),
         temperature=_env_optional_float(f"{env_prefix}_TEMPERATURE", 0.0),
         max_tokens=_env_optional_int(f"{env_prefix}_MAX_TOKENS"),
+        max_context_tokens=_env_optional_int(f"{env_prefix}_MAX_CONTEXT_TOKENS"),
+        max_context_safety_margin_tokens=int(
+            os.getenv(f"{env_prefix}_MAX_CONTEXT_SAFETY_MARGIN_TOKENS", "64")
+        ),
         reasoning_effort=os.getenv(f"{env_prefix}_REASONING_EFFORT"),
         extra_body=_env_json(f"{env_prefix}_EXTRA_BODY"),
         request_kwargs=_env_json(f"{env_prefix}_REQUEST_KWARGS"),
@@ -1167,7 +1184,7 @@ def _build_openai_request(
     if effective_temperature is not None:
         request["temperature"] = effective_temperature
     if role_config.max_tokens is not None:
-        request["max_tokens"] = role_config.max_tokens
+        request["max_tokens"] = _cap_max_tokens_for_context(role_config, messages)
     if role_config.json_output:
         request["response_format"] = {"type": "json_object"}
     if role_config.reasoning_effort is not None:
@@ -1177,6 +1194,64 @@ def _build_openai_request(
     if role_config.request_kwargs:
         request.update(role_config.request_kwargs)
     return request
+
+
+def _cap_max_tokens_for_context(
+    role_config: RoleLLMConfig,
+    messages: list[ChatMessage],
+) -> int:
+    max_tokens = int(role_config.max_tokens or 0)
+    if role_config.max_context_tokens is None:
+        return max_tokens
+    available_tokens = (
+        int(role_config.max_context_tokens)
+        - _estimate_chat_prompt_tokens(messages)
+        - max(0, int(role_config.max_context_safety_margin_tokens))
+    )
+    return max(1, min(max_tokens, available_tokens))
+
+
+def _estimate_chat_prompt_tokens(messages: list[ChatMessage]) -> int:
+    total = 3
+    for item in messages:
+        content = str(item.content or "")
+        byte_len = len(content.encode("utf-8"))
+        total += 4
+        total += max(len(content.split()), (byte_len + 2) // 3)
+    return max(1, total)
+
+
+_CONTEXT_WINDOW_ERROR_RE = re.compile(
+    r"maximum context length is (?P<context>\d+) tokens.*?"
+    r"\((?P<prompt>\d+) in the messages,\s*(?P<completion>\d+) in the completion\)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _context_window_adjusted_request(
+    request: dict[str, Any],
+    exc: BaseException,
+) -> dict[str, Any] | None:
+    if not isinstance(exc, APIStatusError):
+        return None
+    if int(getattr(exc, "status_code", 0) or 0) != 400:
+        return None
+    message = str(exc)
+    if "maximum context length" not in message:
+        return None
+    match = _CONTEXT_WINDOW_ERROR_RE.search(message)
+    if not match:
+        return None
+    context_tokens = int(match.group("context"))
+    prompt_tokens = int(match.group("prompt"))
+    completion_tokens = int(match.group("completion"))
+    current_max_tokens = int(request.get("max_tokens") or completion_tokens)
+    adjusted_max_tokens = max(1, context_tokens - prompt_tokens - 16)
+    if adjusted_max_tokens >= current_max_tokens:
+        return None
+    adjusted_request = dict(request)
+    adjusted_request["max_tokens"] = adjusted_max_tokens
+    return adjusted_request
 
 
 def _coerce_content_to_text(content: Any) -> str:
