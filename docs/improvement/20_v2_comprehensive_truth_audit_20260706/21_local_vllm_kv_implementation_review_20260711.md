@@ -232,12 +232,15 @@ After the GPU0/8192 service recovered, three small mechanism probes were run. Th
 | E2 shared evidence prefix on/off | `artifacts/e2_prefix_alignment_ablation_summary_20260711_1359.json` | Passed: shared final GPU prefix hit-rate `0.780876` vs independent `0.0`; mean TTFT `951.61 ms` vs `3540.27 ms`. |
 | E3 dynamic pruning on/off | `artifacts/e3_dynamic_pruning_ablation_20260711.json` | Passed at retrieval level: selected evidence bytes `333 -> 112`, estimated KV tokens saved `36 -> 92`, hard fact `fact-revenue-1` preserved. |
 | E1/E2 stability repeat | `26_e1_e2_stability_repeat_20260711.md`; `artifacts/e1_e2_stability_repeat_summary_20260711_1425.json` | Direction reproduced without service restart: E1 friendly TTFT `871.15 ms` vs hostile `1735.72 ms`; E2 shared TTFT `939.11 ms` vs independent `3517.59 ms`. |
+| E1/E2 clean-service repeat | `27_e1_e2_clean_service_repeat_20260711.md`; `artifacts/e1_e2_clean_service_repeat_summary_20260711_1438.json` | Each mode started from `gpu_prefix_cache_hit_rate=0.0`. E1 friendly final hit-rate `0.789094` vs hostile `0.523947`; E2 shared final hit-rate `0.779545` vs independent `0.0`. |
+| E6 formal guard | `28_e6_formal_guard_20260711.md`; `artifacts/e6_formal_guard_summary_20260711_1448.json` | Passed 25/25 on L0-L3 with shared evidence prefix and dynamic pruning enabled. Protocol L3 total tokens `62667` vs text L0 `113949`, with quality delta `0`. |
 
 Mechanism-probe claim boundary:
 
 - E1/E2 support engine-local prefix reuse through schedule/layout control.
 - E3 supports input-level evidence pruning.
-- None of E1/E2/E3 proves KV tensor export, hidden-state transfer, cross-engine KV reuse, or full formal quality on its own.
+- E6 supports formal quality preservation for the current mechanism profile.
+- None of E1/E2/E3/E6 proves KV tensor export, hidden-state transfer, cross-engine KV reuse, or multi-GPU success.
 
 ## 7. Bugs, Risks, and Missing Work
 
@@ -268,11 +271,11 @@ Mechanism-probe claim boundary:
 9. Formal wrapper run IDs now have an active UDS guard.
    The wrapper should continue to fail before container execution when the computed AF_UNIX socket path is too long. This avoids opaque UDS failures and keeps the failure mode auditable.
 
-10. Container activation is centralized in the wrapper, but E1/E2/E3 are not formal container guards.
-    `scripts/run_v2_local_vllm_container_check.sh` sources `/usr/local/bin/activate_statebus_container.sh` inside `docker exec`, and the recovered 32B profile check passed. The mechanism probes are narrower local-vLLM probes, not a replacement for the later formal guard.
+10. Container activation is centralized in the wrapper, and E6 covered the formal container path.
+    `scripts/run_v2_local_vllm_container_check.sh` sources `/usr/local/bin/activate_statebus_container.sh` inside `docker exec`. The wrapper now also passes `STATEBUS_EVIDENCE_*` dynamic-pruning variables into the container.
 
-11. The completed formal quality point and current mechanism point use different context baselines.
-    `sb32bcompact` remains the 4096-token formal quality evidence. E1/E2/E3 ran against the recovered 8192-token service and support mechanism claims only within their probe scope. A longer-than-8192 capacity test is separate E4 work, not a prerequisite for citing the current 8192 E1/E2/E3 results.
+11. The historical and current formal quality points use different context baselines.
+    `sb32bcompact` remains the 4096-token historical quality evidence. E6 is the current GPU0/8192 mechanism-profile formal guard. A longer-than-8192 capacity test is separate E4 work, not a prerequisite for citing the current 8192 E1/E2/E3/E6 results.
 
 12. Qwen3-32B local evidence is single-GPU.
    No current audited result proves tensor parallel 2, multi-GPU launch stability, or multi-GPU prefix-cache behavior.
@@ -304,15 +307,16 @@ Mechanism-probe claim boundary:
 | E2 | Complete | `24_e2_prefix_alignment_ablation_20260711.md`; shared evidence prefix beat independent layout on hit-rate and TTFT. | Prompt layout enabling engine-local prefix reuse only. |
 | E3 | Complete | `25_e3_dynamic_pruning_ablation_20260711.md`; retrieval-level dynamic pruning reduced selected evidence pressure while preserving the hard fact proxy. | Input-level pruning only. |
 | E1/E2 stability repeat | Complete | `26_e1_e2_stability_repeat_20260711.md`; direction reproduced without service restart, with service-lifetime hit-rate caveat. | Repeatability check only. |
+| E1/E2 clean-service repeat | Complete | `27_e1_e2_clean_service_repeat_20260711.md`; each mode started from cold prefix-cache metrics. | Cleaner hit-rate repeatability check only. |
+| E6 formal guard | Complete | `28_e6_formal_guard_20260711.md`; 25/25 formal guard passed across L0-L3 with mechanism switches enabled. | Formal quality preservation only. No true KV tensor claim. |
 
 Remaining work should stay narrow:
 
 | ID | Next condition | Suggested action | Claim boundary | Risk |
 | --- | --- | --- | --- | --- |
-| Clean-service repeat | Only if the headline needs cleaner raw hit-rate evidence. | Rerun E1/E2 after a safe vLLM restart so service-lifetime gauges start cold. | Repeatability check only. | Requires restart; do not disturb unrelated GPU jobs. |
 | E4 | Only if GPU capacity and service restart risk are acceptable. | Treat as a longer-than-8192 capacity smoke, for example 12288 before any 16384 attempt. | Context capacity only. | GPU0 has limited headroom; do not disturb unrelated GPU jobs. |
 | E5 | Only if GPU0/GPU1 are proven free and the operator approves a restart. | Try `qwen3-32b-2gpu` and run E0 plus a mini formal subset. | Multi-GPU service validation only. | No two-GPU claim until health, metrics, and mini quality pass. |
-| E6 | Only after the mechanism/profile choice is accepted and the user approves a long run. | Run the formal 25-case guard with captured metric snapshots. | Formal quality guard. No true KV tensor claim. | Several hours; not started in this audit. |
+| Post-E6 packaging | Before using the result in a final claim deck. | Consolidate E1/E2/E3/E6 artifacts into a short claim table and keep the boundary wording precise. | Evidence packaging only. | Avoid broadening to KV tensor or multi-GPU claims. |
 
 ## 8. Recommendations
 
@@ -322,7 +326,7 @@ Remaining work should stay narrow:
 
 3. Keep the new AF_UNIX socket guard in the formal wrapper. It is cheap, deterministic, and prevents an avoidable container failure mode.
 
-4. Do not start another full formal run until the E1/E2 mechanism numbers are either repeated or explicitly accepted, and the user approves E6.
+4. Treat E6 as the current formal quality guard for the mechanism profile. Another full formal run should only be started for a new mechanism/profile change.
 
 5. Keep the local vLLM service on the documented GPU0/8192 profile for comparable mechanism probes. Longer context attempts belong to E4 and should not overwrite the current baseline.
 
@@ -334,4 +338,4 @@ Remaining work should stay narrow:
 
 9. Preserve the current untracked `tatus --short --branch` file as unrelated workspace state unless the user explicitly asks to remove it.
 
-10. Do not pursue true KV tensor handoff or a vLLM fork next. The current evidence supports engine-local prefix reuse and input pruning; the next decision is repeatability or formal guard, not KV tensor ownership.
+10. Do not pursue true KV tensor handoff or a vLLM fork next. The current evidence supports engine-local prefix reuse, input pruning, and formal quality preservation under that profile; KV tensor ownership remains future work.

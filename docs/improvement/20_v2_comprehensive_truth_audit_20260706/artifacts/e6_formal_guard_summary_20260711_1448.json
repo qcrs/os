@@ -1,0 +1,49 @@
+{
+  "run_id": "kv-e6-guard-20260711-1448",
+  "selected_case_count": 25,
+  "available_case_count": 25,
+  "layers": [
+    {
+      "layer": "L0",
+      "case_count": 25,
+      "quality_floor_pass_count": 25
+    },
+    {
+      "layer": "L1",
+      "case_count": 25,
+      "quality_floor_pass_count": 25
+    },
+    {
+      "layer": "L2",
+      "case_count": 25,
+      "quality_floor_pass_count": 25
+    },
+    {
+      "layer": "L3",
+      "case_count": 25,
+      "quality_floor_pass_count": 25
+    }
+  ],
+  "comparison_summary": {
+    "protocol_L3_total_tokens": 62667,
+    "text_L0_total_tokens": 113949,
+    "protocol_vs_text_token_delta": -51282,
+    "protocol_L3_prompt_tokens": 53548,
+    "text_L0_prompt_tokens": 99200,
+    "protocol_vs_text_prompt_token_delta": -45652,
+    "protocol_L3_control_bytes": 11670,
+    "text_L0_control_bytes": 42926,
+    "protocol_vs_text_control_bytes_delta": -31256
+  },
+  "metadata": {
+    "benchmark_tier": "formal",
+    "role_path_mode": "local_vllm",
+    "embedding_mode": "deterministic",
+    "state_pool_mode_used": "shared_memory",
+    "transport": "loopback",
+    "local_vllm_model": "qwen3-32b",
+    "local_vllm_base_url": "http://127.0.0.1:53334/v1"
+  },
+  "report_path": "/home/qcrs/statebus/runs/kv-e6-guard-20260711-1448/runtime/benchmark_reports/kv-e6-guard-20260711-1448-formal-suite.json",
+  "container_report_path": "/statebus/runs/kv-e6-guard-20260711-1448/runtime/benchmark_reports/kv-e6-guard-20260711-1448-formal-suite.json"
+}
