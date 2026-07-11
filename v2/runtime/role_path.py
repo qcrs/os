@@ -938,7 +938,11 @@ class RolePathRunner:
                 "Return exactly one compact JSON object (json only) with key s for the summary text. "
                 "Omit reusable_steps, confidence, and tags unless they materially change the answer."
             )
-        return "Return JSON with summary text, reusable steps, confidence, and tags."
+        return (
+            "Return exactly one compact JSON object and no prose. Use keys summary, reusable_steps, "
+            "confidence, and tags. Keep summary under 80 words. reusable_steps must contain at most 2 "
+            "short generic step names, not detailed instructions."
+        )
 
     def _complete_json_role(
         self,
@@ -951,7 +955,7 @@ class RolePathRunner:
         current_prompt = prompt
         retry_note = (
             "\n\nJSON retry instruction: the prior response was empty or malformed. "
-            "Return exactly one valid JSON object and no prose."
+            "Return exactly one valid compact JSON object and no prose. Keep string values short."
         )
         max_attempts = max(1, self.json_response_max_attempts)
         start_ns = time.perf_counter_ns()

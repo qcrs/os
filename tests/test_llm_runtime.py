@@ -65,6 +65,8 @@ roles:
     model: deepseek-v4-flash
     json_output: true
     max_tokens: 1200
+    max_context_tokens: 4096
+    max_context_safety_margin_tokens: 32
     extra_body:
       thinking:
         type: disabled
@@ -89,6 +91,8 @@ roles:
     assert config.use_api is True
     assert config.source == str(config_path)
     assert config.role_config("planner").extra_body["thinking"]["type"] == "disabled"
+    assert config.role_config("planner").max_context_tokens == 4096
+    assert config.role_config("planner").max_context_safety_margin_tokens == 32
     assert config.role_config("retriever").model == "gpt-4.1-nano"
     assert config.role_config("executor").model == "gpt-4.1"
     assert config.role_config("summarizer").request_kwargs["top_p"] == 0.8
@@ -158,6 +162,77 @@ def test_openai_compatible_llm_client_closes_provider_client_per_complete(monkey
     assert len(created_clients) == 2
     assert len(closed_clients) == 2
     assert closed_clients == created_clients
+
+
+def test_openai_compatible_llm_caps_max_tokens_to_context_window(monkeypatch) -> None:
+    created_clients: list[object] = []
+
+    class FakeUsage:
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+
+    class FakeMessage:
+        content = '{"ok": true}'
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeResponse:
+        choices = [FakeChoice()]
+        model = "fake-openai-model"
+        usage = FakeUsage()
+
+    class FakeCompletions:
+        def __init__(self, owner) -> None:  # type: ignore[no-untyped-def]
+            self.owner = owner
+
+        async def create(self, **request):  # type: ignore[no-untyped-def]
+            self.owner.requests.append(request)
+            return FakeResponse()
+
+    class FakeChat:
+        def __init__(self, owner) -> None:  # type: ignore[no-untyped-def]
+            self.completions = FakeCompletions(owner)
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            self.requests: list[dict[str, object]] = []
+            self.chat = FakeChat(self)
+            created_clients.append(self)
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("runtime.llm.AsyncOpenAI", FakeAsyncOpenAI)
+    config = LLMConfig(
+        mode="api",
+        providers={"default": ProviderConfig(api_key="test-key")},
+        roles={
+            "planner": RoleLLMConfig(
+                provider="default",
+                model="fake-model",
+                max_tokens=4096,
+                max_context_tokens=4096,
+                max_context_safety_margin_tokens=64,
+            ),
+            "retriever": RoleLLMConfig(provider="default", model="fake-model"),
+            "executor": RoleLLMConfig(provider="default", model="fake-model"),
+            "summarizer": RoleLLMConfig(provider="default", model="fake-model"),
+        },
+    )
+    client = OpenAICompatibleLLMClient(config)
+
+    result = asyncio.run(
+        client.complete(
+            [ChatMessage(role="user", content="alpha " * 1200)],
+            purpose="planner",
+        )
+    )
+
+    assert result.text == '{"ok": true}'
+    request = created_clients[0].requests[0]  # type: ignore[attr-defined]
+    assert 1 <= request["max_tokens"] < 4096
 
 
 def test_plan_parser_accepts_nested_deepseek_shape() -> None:

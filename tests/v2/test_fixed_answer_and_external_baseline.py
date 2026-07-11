@@ -1992,6 +1992,8 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
     assert '"tf"' in summarizer_prompt
     assert '"h"' in summarizer_prompt
     assert '"r"' in summarizer_prompt
+    assert "Keep summary under 80 words" in summarizer_prompt
+    assert "at most 2" in summarizer_prompt
     summarizer_payload = parse_tagged_json(summarizer_prompt, "sb-summary-v1")
     assert summarizer_payload["e"] == "evidence text\ntable fact"
     assert summarizer_payload["a"] == "did the thing"
