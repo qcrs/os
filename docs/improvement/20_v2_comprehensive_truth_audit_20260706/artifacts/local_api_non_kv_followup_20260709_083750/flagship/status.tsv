@@ -1,0 +1,2 @@
+stage	exit_code	required	kind	artifact	log_path	duration_s
+r01_13_flagship_ablation_api_local	0	1	live_runner	/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship/artifacts/stages/r01_13_flagship_ablation_api_local/stdout.json	/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship/artifacts/stages/r01_13_flagship_ablation_api_local/console.log	7118

@@ -8,6 +8,11 @@
 - 机器汇总：`12_artifact_mining_summary_20260708.json`
 - 可读索引：`12_artifact_mining_readout_20260708.md`
 
+诊断补充：
+
+- `14_diagnostic_artifact_mining_readout_20260708.md` 专门补 latency decomposition、`formal-trend-002` route miss forensic、completion/schema inflation。
+- 对应脚本为 `scripts/diagnose_v2_artifact_mining.py`，机器 JSON 为 `14_diagnostic_artifact_mining_summary_20260708.json`。
+
 抽取覆盖面：
 
 | Run | JSON seen | JSON loaded | Benchmark reports | Prompt slices | Telemetry files | Load errors |
