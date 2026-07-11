@@ -2,9 +2,11 @@
 
 ## Conclusion
 
-E0 is not passable in the current host state. The Qwen3-32B local vLLM endpoint is not listening on `127.0.0.1:53334`, so E1/E2/E3 mechanism ablations should not run yet.
+E0 was initially blocked because the Qwen3-32B local vLLM endpoint was not listening on `127.0.0.1:53334`.
 
-This is a service-availability blocker, not a StateBus benchmark failure.
+After operator clarification that GPU0 should be used, E0 was recovered on GPU0 as a single-card Qwen3-32B vLLM service with `max_model_len=8192`, prefix caching enabled, and live `/health` plus `/metrics` observability. E1/E2/E3 mechanism ablations can proceed cautiously against this service.
+
+This was a service-availability/configuration blocker, not a StateBus benchmark failure.
 
 ## Commands Run
 
@@ -19,9 +21,14 @@ ss -ltnp
 ps -fp 2906243 3391328 3394943
 source deploy/activate_statebus_host.sh && python scripts/audit_local_vllm_kv_results.py
 source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b && scripts/run_v2_local_vllm_container_check.sh
+kill 3008883
+setsid env CUDA_VISIBLE_DEVICES=0 VLLM_USE_V1=0 /home/qcrs/statebus/conda-envs/vllm-qwen-cu121/bin/vllm serve /data/models/Qwen3-32B --served-model-name qwen3-32b --host 127.0.0.1 --port 53334 --dtype bfloat16 --max-model-len 8192 --max-num-seqs 1 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.82 --tensor-parallel-size 1 --enable-prefix-caching --enforce-eager
+bash -n deploy/activate_statebus_local_vllm_profile.sh
+bash -n scripts/start_vllm_qwen3_32b_prefix_cache.sh
+source deploy/activate_statebus_host.sh && python -m py_compile scripts/audit_local_vllm_kv_results.py
 ```
 
-## Findings
+## Initial Findings
 
 | Check | Result |
 | --- | --- |
@@ -43,20 +50,38 @@ Observed GPU2 processes:
 | `3391328` | `dev001` | `llamafactory-cli webui` |
 | `3394943` | `dev001` | `llamafactory-cli train ... Qwen2.5-32B-Instruct ...` |
 
+## Recovery Update
+
+The service was restarted on GPU0 only. No unrelated GPU0/GPU1/GPU2 processes were killed.
+
+| Check | Result |
+| --- | --- |
+| Active profile | `qwen3-32b` now defaults to `STATEBUS_VLLM_CUDA_VISIBLE_DEVICES=0`, `STATEBUS_VLLM_MAX_MODEL_LEN=8192`, `STATEBUS_VLLM_GPU_MEMORY_UTILIZATION=0.82`, `STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS=8192`, `STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE=573`. |
+| Start script defaults | `scripts/start_vllm_qwen3_32b_prefix_cache.sh` now defaults to GPU0 and `gpu_memory_utilization=0.82`. |
+| Launch log | `/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_20260711_133225.log`. |
+| Parent / engine PID | Parent `3021478`; engine `3021678`. |
+| vLLM version/backend | vLLM `0.7.3`; Qwen3 falls back to the Transformers backend. |
+| Context | `max_model_len=8192`, `max_num_batched_tokens=8192`, `max_num_seqs=1`, `tensor_parallel_size=1`. |
+| Memory profile | Weights `61.0249 GiB`; activation peak `1.62 GiB`; KV cache `2.25 GiB`. |
+| KV blocks | `num_gpu_blocks=575`, `num_cpu_blocks=1024`; vLLM reported maximum concurrency `1.12x` for 8192-token requests. |
+| Health | `HTTP/1.1 200 OK` for `http://127.0.0.1:53334/health`. |
+| Metrics | Prefix/cache/KV gauge lines are exposed, including `enable_prefix_caching="True"`, `gpu_memory_utilization="0.82"`, `num_gpu_blocks="575"`, `gpu_prefix_cache_hit_rate=0.0`, and `cpu_prefix_cache_hit_rate=0.0`. |
+| Audit JSON | Refreshed `local_vllm_kv_audit_20260711.json`; it records health `ok=true` and preserves raw prefix/cache/KV metric lines. |
+
+Important claim boundary: these metrics prove observability and prefix-cache configuration, not a hit/miss mechanism win yet. The hit-rate gauges were still `0.0` at idle.
+
 ## Decision
 
-Do not run E1/E2/E3 while E0 is failing. Their metrics would be absent or misleading because the local vLLM service is unavailable.
+E0 now passes for a GPU0 single-card Qwen3-32B service at 8192 context. E1/E2/E3 can run as small mechanism probes.
 
-Do not start, kill, or restart GPU processes from this audit path. Starting Qwen3-32B on GPU2 is not safe while the current non-StateBus GPU workloads are present.
+Do not run E4/E5 yet. The 8192 service has limited single-request headroom, and no two-GPU success is claimed.
 
 ## Next Action
 
-Wait for GPU2/service availability or get explicit operator approval for a safe service launch window. Once the 32B service is listening again, rerun E0:
+Run E1 cache-friendly/cache-hostile first, then E2 shared evidence prefix on/off, then E3 dynamic pruning on/off. Before each probe, recheck:
 
 ```bash
 source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b
 curl -sS http://127.0.0.1:53334/health
 curl -sS http://127.0.0.1:53334/metrics | rg 'prefix|cache|kv'
 ```
-
-Only after E0 passes should E1 cache-friendly/cache-hostile, E2 shared-prefix on/off, and E3 dynamic-pruning on/off probes run.

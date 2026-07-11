@@ -50,6 +50,7 @@ _statebus_activate_local_vllm_profile_main() {
       export STATEBUS_VLLM_MAX_NUM_SEQS="4"
       export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
       export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
+      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE=""
       ;;
     qwen3-32b|32b|formal-32b)
       export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-32b"
@@ -61,12 +62,13 @@ _statebus_activate_local_vllm_profile_main() {
       export STATEBUS_LOCAL_VLLM_PORT="53334"
       export STATEBUS_LOCAL_VLLM_BASE_URL="http://127.0.0.1:53334/v1"
       export STATEBUS_LOCAL_VLLM_HEALTH_URL="http://127.0.0.1:53334/health"
-      export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="2"
-      export STATEBUS_VLLM_MAX_MODEL_LEN="4096"
-      export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.92"
+      export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="0"
+      export STATEBUS_VLLM_MAX_MODEL_LEN="8192"
+      export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.82"
       export STATEBUS_VLLM_MAX_NUM_SEQS="1"
-      export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="4096"
+      export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
       export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
+      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE="573"
       ;;
     qwen3-32b-2gpu|32b-2gpu|formal-32b-2gpu)
       export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-32b-2gpu"
@@ -84,6 +86,7 @@ _statebus_activate_local_vllm_profile_main() {
       export STATEBUS_VLLM_MAX_NUM_SEQS="1"
       export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
       export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="2"
+      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE=""
       ;;
     qwen2.5-14b|14b|fallback-14b)
       export STATEBUS_LOCAL_VLLM_PROFILE="qwen2.5-14b"
@@ -101,6 +104,7 @@ _statebus_activate_local_vllm_profile_main() {
       export STATEBUS_VLLM_MAX_NUM_SEQS="2"
       export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="4096"
       export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
+      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE=""
       ;;
     *)
       echo "[statebus-local-vllm] unsupported profile: $profile" >&2
@@ -116,6 +120,9 @@ _statebus_activate_local_vllm_profile_main() {
   echo "[statebus-local-vllm] health_url=$STATEBUS_LOCAL_VLLM_HEALTH_URL"
   echo "[statebus-local-vllm] cuda_visible_devices=$STATEBUS_VLLM_CUDA_VISIBLE_DEVICES"
   echo "[statebus-local-vllm] tensor_parallel_size=$STATEBUS_VLLM_TENSOR_PARALLEL_SIZE"
+  if [[ -n "${STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE:-}" ]]; then
+    echo "[statebus-local-vllm] num_gpu_blocks_override=$STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE"
+  fi
 }
 
 _STATEBUS_LOCAL_VLLM_HAD_ERREXIT=0

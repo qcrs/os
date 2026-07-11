@@ -15,12 +15,87 @@
     "run_count": 8
   },
   "claim_boundary": "audit_evidence_only_no_true_kv_tensor_transfer_claim; prefix/cache metrics are reported only when exposed by the current vLLM endpoint",
-  "generated_at_utc": "2026-07-11T05:16:39.322547+00:00",
+  "generated_at_utc": "2026-07-11T06:18:13.649306+00:00",
   "global_logs": {
     "exists": true,
-    "failure_snippets": [],
-    "file_count": 1,
+    "failure_snippets": [
+      {
+        "categories": [
+          "error"
+        ],
+        "line": 79,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] Error in preprocessing prompt inputs"
+      },
+      {
+        "categories": [
+          "traceback"
+        ],
+        "line": 80,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] Traceback (most recent call last):"
+      },
+      {
+        "categories": [
+          "maximum_context_length"
+        ],
+        "line": 101,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] ValueError: This model's maximum context length is 8192 tokens. However, you requested 11270 tokens (11246 in the messages, 24 in the completion). Please reduce the length of the messages or completion."
+      },
+      {
+        "categories": [
+          "error"
+        ],
+        "line": 105,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] Error in preprocessing prompt inputs"
+      },
+      {
+        "categories": [
+          "traceback"
+        ],
+        "line": 106,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] Traceback (most recent call last):"
+      },
+      {
+        "categories": [
+          "maximum_context_length"
+        ],
+        "line": 127,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] ValueError: This model's maximum context length is 8192 tokens. However, you requested 11274 tokens (11250 in the messages, 24 in the completion). Please reduce the length of the messages or completion."
+      },
+      {
+        "categories": [
+          "error"
+        ],
+        "line": 131,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] Error in preprocessing prompt inputs"
+      },
+      {
+        "categories": [
+          "traceback"
+        ],
+        "line": 132,
+        "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+        "text": "ERROR 07-11 14:01:55 serving_chat.py:197] Traceback (most recent call last):"
+      }
+    ],
+    "file_count": 11,
     "files_sample": [
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_20260711_1320.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_20260711_1322.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_20260711_1324.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_20260711_133225.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_hostile_20260711_134345.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_r4_friendly_20260711_134733.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_r4_hostile_20260711_134955.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_r4_hostile_blocks573_20260711_134955.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+      "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_shared_blocks573_20260711_1355.log",
       "/home/qcrs/statebus/logs/vllm_qwen3_8b_prefix_cache_53333.log"
     ],
     "logs_root": "/home/qcrs/statebus/logs"
@@ -1308,19 +1383,38 @@
   "vllm_service": {
     "health": {
       "body_sample": "",
-      "error": "URLError: <urlopen error [Errno 111] Connection refused>",
-      "ok": false,
-      "status_code": null,
+      "error": "",
+      "ok": true,
+      "status_code": 200,
       "url": "http://127.0.0.1:53334/health"
     },
     "metrics": {
       "claim_boundary": "raw_metrics_only_no_hit_miss_claim_without_explicit_exposed_counters",
-      "error": "URLError: <urlopen error [Errno 111] Connection refused>",
-      "ok": false,
-      "prefix_cache_metric_status": "metrics unavailable or no prefix-cache metric exposed",
-      "raw_metric_names": [],
-      "raw_metric_values": {},
-      "status_code": null,
+      "error": "",
+      "ok": true,
+      "prefix_cache_metric_status": "prefix/cache/kv metrics exposed",
+      "raw_metric_lines": [
+        "vllm:gpu_cache_usage_perc{model_name=\"qwen3-32b\"} 0.0",
+        "vllm:cpu_cache_usage_perc{model_name=\"qwen3-32b\"} 0.0",
+        "vllm:cpu_prefix_cache_hit_rate{model_name=\"qwen3-32b\"} 0.0",
+        "vllm:gpu_prefix_cache_hit_rate{model_name=\"qwen3-32b\"} 0.0",
+        "vllm:cache_config_info{block_size=\"16\",cache_dtype=\"auto\",calculate_kv_scales=\"False\",cpu_offload_gb=\"0\",enable_prefix_caching=\"True\",gpu_memory_utilization=\"0.82\",is_attention_free=\"False\",num_cpu_blocks=\"1024\",num_gpu_blocks=\"573\",num_gpu_blocks_override=\"573\",sliding_window=\"None\",swap_space_bytes=\"4294967296\"} 1.0"
+      ],
+      "raw_metric_names": [
+        "vllm:cache_config_info",
+        "vllm:cpu_cache_usage_perc",
+        "vllm:cpu_prefix_cache_hit_rate",
+        "vllm:gpu_cache_usage_perc",
+        "vllm:gpu_prefix_cache_hit_rate"
+      ],
+      "raw_metric_values": {
+        "vllm:cache_config_info": 1.0,
+        "vllm:cpu_cache_usage_perc": 0.0,
+        "vllm:cpu_prefix_cache_hit_rate": 0.0,
+        "vllm:gpu_cache_usage_perc": 0.0,
+        "vllm:gpu_prefix_cache_hit_rate": 0.0
+      },
+      "status_code": 200,
       "url": "http://127.0.0.1:53334/metrics"
     }
   }

@@ -1,0 +1,58 @@
+{
+  "schema_version": "statebus.e1_kv_schedule_ablation_summary.v1",
+  "generated_at_utc": "2026-07-11T05:54:12Z",
+  "claim_boundary": "engine_local_prefix_reuse_only_no_kv_tensor_export; single-run mechanism probe not formal guard",
+  "primary_result": "cache_friendly improves prefix-cache hit-rate and TTFT under repeat=4 fixed 573 GPU-block stress",
+  "artifacts": {
+    "cache_friendly": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_friendly_r4_20260711_134159.json",
+    "cache_hostile": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_hostile_r4_20260711_134159.json"
+  },
+  "controls": {
+    "model": "qwen3-32b",
+    "base_url": "http://127.0.0.1:53334/v1",
+    "corpus_repeat": 4,
+    "request_count_friendly": 10,
+    "request_count_hostile": 10,
+    "friendly_cache_config": "vllm:cache_config_info{block_size=\"16\",cache_dtype=\"auto\",calculate_kv_scales=\"False\",cpu_offload_gb=\"0\",enable_prefix_caching=\"True\",gpu_memory_utilization=\"0.82\",is_attention_free=\"False\",num_cpu_blocks=\"1024\",num_gpu_blocks=\"573\",num_gpu_blocks_override=\"None\",sliding_window=\"None\",swap_space_bytes=\"4294967296\"} 1.0",
+    "hostile_cache_config": "vllm:cache_config_info{block_size=\"16\",cache_dtype=\"auto\",calculate_kv_scales=\"False\",cpu_offload_gb=\"0\",enable_prefix_caching=\"True\",gpu_memory_utilization=\"0.82\",is_attention_free=\"False\",num_cpu_blocks=\"1024\",num_gpu_blocks=\"573\",num_gpu_blocks_override=\"573\",sliding_window=\"None\",swap_space_bytes=\"4294967296\"} 1.0"
+  },
+  "schedules": {
+    "friendly": {
+      "max_contiguous_same_affinity_run": 5,
+      "affinity_switch_count": 1
+    },
+    "hostile": {
+      "max_contiguous_same_affinity_run": 1,
+      "affinity_switch_count": 9
+    }
+  },
+  "metrics": {
+    "friendly": {
+      "error_count": 0,
+      "final_cpu_cache_usage_perc": 0,
+      "final_cpu_prefix_cache_hit_rate": 0,
+      "final_gpu_cache_usage_perc": 0,
+      "final_gpu_prefix_cache_hit_rate": 0.7888664551485435,
+      "mean_latency_ms": 2340.7891575,
+      "mean_ttft_ms": 657.5529117,
+      "ok_count": 10,
+      "request_count": 10
+    },
+    "hostile": {
+      "error_count": 0,
+      "final_cpu_cache_usage_perc": 0,
+      "final_cpu_prefix_cache_hit_rate": 0,
+      "final_gpu_cache_usage_perc": 0,
+      "final_gpu_prefix_cache_hit_rate": 0.5234938022484865,
+      "mean_latency_ms": 3424.9292303,
+      "mean_ttft_ms": 1378.6957706,
+      "ok_count": 10,
+      "request_count": 10
+    },
+    "delta": {
+      "mean_ttft_ms_hostile_minus_friendly": 721.1428589000001,
+      "mean_latency_ms_hostile_minus_friendly": 1084.1400728000003,
+      "final_gpu_prefix_cache_hit_rate_friendly_minus_hostile": 0.26537265290005696
+    }
+  }
+}
