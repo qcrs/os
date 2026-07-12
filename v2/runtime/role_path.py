@@ -18,7 +18,7 @@ from runtime.llm import (
 from v2.contracts import CanonicalTaskSpec
 from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
 from v2.retrieval.models import RetrievalCandidatePool
-from v2.runtime.logit_state import serialize_logit_state
+from v2.runtime.logit_state import serialize_logit_state_v2
 from v2.utils import sha256_digest
 
 
@@ -150,6 +150,9 @@ class ExecutorRoleDecision:
     logit_entropy: float = 0.0
     logit_confidence_proxy: float = 0.0
     logit_state_bytes: int = 0
+    logit_varentropy: float = 0.0
+    logit_top_gap: float = 0.0
+    logit_peak_position: int = -1
 
 
 @dataclass(frozen=True)
@@ -1470,12 +1473,18 @@ class RolePathRunner:
         _logit_entropy = 0.0
         _logit_confidence_proxy = 0.0
         _logit_state_bytes = 0
+        _logit_varentropy = 0.0
+        _logit_top_gap = 0.0
+        _logit_peak_position = -1
         if result.top_logprobs:
             try:
-                payload_bytes, _logit_entropy, _logit_confidence_proxy = serialize_logit_state(
-                    result.top_logprobs
-                )
-                _logit_state_bytes = len(payload_bytes)
+                _logit_result = serialize_logit_state_v2(result.top_logprobs)
+                _logit_entropy = _logit_result.entropy
+                _logit_confidence_proxy = _logit_result.confidence_proxy
+                _logit_state_bytes = len(_logit_result.payload_bytes)
+                _logit_varentropy = _logit_result.varentropy
+                _logit_top_gap = _logit_result.top_gap
+                _logit_peak_position = _logit_result.peak_position
             except Exception:
                 pass
         return ExecutorRoleDecision(
@@ -1495,6 +1504,9 @@ class RolePathRunner:
             logit_entropy=_logit_entropy,
             logit_confidence_proxy=_logit_confidence_proxy,
             logit_state_bytes=_logit_state_bytes,
+            logit_varentropy=_logit_varentropy,
+            logit_top_gap=_logit_top_gap,
+            logit_peak_position=_logit_peak_position,
         )
 
     def summarize(

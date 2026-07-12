@@ -345,6 +345,7 @@ class SmokeResult:
     output_artifact_path: str
     output_artifact_hash: str
     telemetry_path: str
+    task_metrics_path: str
     runtime_event_log_path: str
     runtime_fact_log_path: str
     replay_audit_path: str
@@ -2910,6 +2911,16 @@ def run_smoke(
     task_metrics["logit_confidence_gate_trigger_count"] = float(
         1 if executor_decision.logit_state_bytes > 0 and executor_decision.logit_confidence_proxy < 0.3 else 0
     )
+    # Extended logit-state signals (v2 peak-entropy implementation).
+    # logit_varentropy: variance of per-position entropy across the output sequence.
+    #   High value → specific decision point exists; low value → grammar-constrained uniform output.
+    # logit_top_gap: p1 − p2 at the peak-entropy position.
+    #   Near-zero → genuine token ambiguity; large → confident selection.
+    # logit_peak_position: index in the output token sequence of the peak-entropy position.
+    #   Useful for offline analysis of where the model hesitates.
+    task_metrics["logit_varentropy"] = float(executor_decision.logit_varentropy)
+    task_metrics["logit_top_gap"] = float(executor_decision.logit_top_gap)
+    task_metrics["logit_peak_position"] = float(executor_decision.logit_peak_position)
     neural_prefix_identity = build_neural_prefix_identity(
         source_doc_hashes=retrieval.selected_doc_hashes,
         evidence_pack_hash=retrieval.evidence_pack.pack_hash,
@@ -2937,6 +2948,14 @@ def run_smoke(
             )
         )
         + "\n",
+        encoding="utf-8",
+    )
+    # Persist the full smoke-layer task_metrics dict (superset of TASK_SUMMARY_METRICS).
+    # Includes logit_varentropy, logit_top_gap, logit_peak_position and ~100 other keys
+    # that are assembled after the driver returns and are not present in telemetry.json.
+    task_metrics_path = layout.logs_dir / "task_metrics.json"
+    task_metrics_path.write_text(
+        stable_json_dumps(task_metrics) + "\n",
         encoding="utf-8",
     )
     runtime_event_log_path = runtime_root / "telemetry" / "runtime_events.jsonl"
@@ -3248,6 +3267,7 @@ def run_smoke(
         output_artifact_path=str(driver_result.materialized_outputs.files[0].path),
         output_artifact_hash=driver_result.output_artifact_hash,
         telemetry_path=str(telemetry_path),
+        task_metrics_path=str(task_metrics_path),
         runtime_event_log_path=str(runtime_event_log_path),
         runtime_fact_log_path=str(runtime_fact_log_path),
         replay_audit_path=str(replay_audit_file.path),
@@ -3391,6 +3411,7 @@ def main() -> None:
     print(f"runtime_fallback_count={result.runtime_fallback_count}")
     print(f"codeact_script_path={result.codeact_script_path}")
     print(f"codeact_request_path={result.codeact_request_path}")
+    print(f"task_metrics_path={result.task_metrics_path}")
     print(f"task_metric_keys={','.join(sorted(result.task_metrics.keys()))}")
     print(f"telemetry_event_count={result.telemetry_event_count}")
 
