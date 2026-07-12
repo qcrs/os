@@ -192,7 +192,7 @@ def test_minimal_benchmark_family_api_mode_accepts_compact_role_alias_responses(
     monkeypatch,
 ) -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "planner":
                 return LLMResult(
@@ -272,7 +272,7 @@ def test_minimal_benchmark_family_api_mode_accepts_string_candidate_alias(
     monkeypatch,
 ) -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "planner":
                 return LLMResult(

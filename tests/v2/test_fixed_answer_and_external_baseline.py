@@ -1101,7 +1101,7 @@ def test_fixed_answer_external_comparator_records_serialized_repeat_metadata(
 
 def test_role_path_normalizes_invalid_api_route_to_best_visible_candidate() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1164,7 +1164,7 @@ def test_role_path_strict_selection_uses_visible_candidate_surface_for_fixed_ans
 
 def test_role_path_strict_selection_fails_closed_for_invalid_route_choice() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1204,7 +1204,7 @@ def test_role_path_strict_selection_fails_closed_for_invalid_route_choice() -> N
 
 def test_role_path_accepts_compact_api_retriever_alias_keys() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1247,7 +1247,7 @@ def test_role_path_accepts_compact_api_retriever_alias_keys() -> None:
 
 def test_role_path_accepts_string_candidate_key_alias() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1286,7 +1286,7 @@ def test_role_path_accepts_string_candidate_key_alias() -> None:
 
 def test_role_path_accepts_unique_route_when_tool_name_echoes_route() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1331,7 +1331,7 @@ def test_role_path_accepts_unique_route_when_tool_name_echoes_route() -> None:
 
 def test_role_path_accepts_tool_only_selection_when_route_hint_is_unambiguous() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1371,7 +1371,7 @@ def test_role_path_accepts_tool_only_selection_when_route_hint_is_unambiguous() 
 
 def test_role_path_rejects_ambiguous_tool_only_selection_without_route_hint() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1400,7 +1400,7 @@ def test_role_path_rejects_ambiguous_tool_only_selection_without_route_hint() ->
 
 def test_role_path_accepts_swapped_route_tool_selection_when_pair_is_visible() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1437,7 +1437,7 @@ def test_role_path_accepts_swapped_route_tool_selection_when_pair_is_visible() -
 
 def test_role_path_accepts_candidate_key_echoed_in_tool_name_slot() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1476,7 +1476,7 @@ def test_role_path_accepts_candidate_key_echoed_in_tool_name_slot() -> None:
 
 def test_role_path_accepts_candidate_key_echoed_in_route_slot_with_matching_tool() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1513,7 +1513,7 @@ def test_role_path_accepts_candidate_key_echoed_in_route_slot_with_matching_tool
 
 def test_role_path_rejects_candidate_key_route_slot_with_conflicting_tool() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "retriever":
                 return LLMResult(
@@ -1551,7 +1551,7 @@ def test_role_path_retries_strict_retriever_visible_candidate_mismatch() -> None
             self.calls = 0
             self.prompts: list[str] = []
 
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del temperature
             assert purpose == "retriever"
             self.calls += 1
@@ -1609,7 +1609,7 @@ def test_role_path_retries_strict_executor_visible_candidate_mismatch() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             assert purpose == "executor"
             self.calls += 1
@@ -1663,7 +1663,7 @@ def test_role_path_retries_strict_executor_visible_candidate_mismatch() -> None:
 
 def test_role_path_accepts_executor_candidate_key_and_compact_action_alias() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "executor":
                 return LLMResult(
@@ -1711,7 +1711,7 @@ def test_role_path_retries_empty_executor_json_response() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             assert purpose == "executor"
             self.calls += 1
@@ -1763,7 +1763,7 @@ def test_role_path_retries_malformed_summarizer_json_response() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             assert purpose == "summarizer"
             self.calls += 1
@@ -1808,7 +1808,7 @@ def test_role_path_retries_malformed_summarizer_json_response() -> None:
 
 def test_role_path_summarizer_accepts_textual_confidence_label() -> None:
     class StubLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, temperature
             if purpose == "summarizer":
                 return LLMResult(
@@ -1845,7 +1845,7 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
     captured_messages: list[tuple[str, str]] = []
 
     class RecordingLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del temperature
             captured_messages.append((purpose, messages[-1].content))
             if purpose == "planner":
@@ -2013,7 +2013,7 @@ def test_role_path_lean_completion_accepts_minimal_compact_outputs(
     selected_candidate_key = f"{sample.expected_route}::{sample.expected_tool_name}"
 
     class RecordingLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del temperature
             captured_messages.append((purpose, messages[-1].content))
             if purpose == "planner":
@@ -2120,7 +2120,7 @@ def test_role_path_lean_completion_accepts_minimal_compact_outputs(
 
 def test_formal_trend_002_structured_prompt_exposes_preferred_candidate_tiebreak() -> None:
     class PreferenceAwareLLMClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del temperature
             assert purpose == "retriever"
             prompt = messages[-1].content

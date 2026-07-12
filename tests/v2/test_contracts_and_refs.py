@@ -11,7 +11,7 @@ from v2.contracts import (
     StorageKind,
 )
 from v2.memory import MemoryCommitStatus, MemoryRef, MemoryType, MemoryValidationStatus
-from v2.refs import ExecutionArtifactRef, SemanticStateRef
+from v2.refs import ExecutionArtifactRef, LogitStateRef, SemanticStateRef
 from v2.utils import stable_json_dumps
 
 
@@ -74,6 +74,24 @@ def test_execution_artifact_ref_is_separate_ref_family_from_semantic_state() -> 
     assert state_ref.registry_entry().ref_kind == RefKind.SEMANTIC_STATE
     assert artifact_ref.registry_entry().ref_kind == RefKind.EXECUTION_ARTIFACT
     assert artifact_ref.registry_entry().status == RefStatus.CANDIDATE
+
+
+def test_logit_state_ref_is_separate_ref_family_from_semantic_state() -> None:
+    logit_ref = LogitStateRef(
+        state_id="logit-1",
+        producer_role="executor",
+        consumer_role="summarizer",
+        storage_kind=StorageKind.MEMFD,
+        length=80,
+        blob_hash="sha256:logit",
+        entropy=0.42,
+        confidence_proxy=0.73,
+    )
+
+    registry_entry = logit_ref.registry_entry()
+    assert registry_entry.ref_kind == RefKind.LOGIT_STATE
+    assert registry_entry.status == RefStatus.ACTIVE
+    assert registry_entry.storage_kind == StorageKind.MEMFD
 
 
 def test_ref_registry_entry_exposes_small_index_payload() -> None:

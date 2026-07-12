@@ -110,7 +110,7 @@ def test_bounded_codeact_api_generation_repairs_syntax_error(monkeypatch) -> Non
         def __init__(self) -> None:
             self.calls = 0
 
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, purpose, temperature
             self.calls += 1
             if self.calls == 1:
@@ -139,7 +139,7 @@ def test_bounded_codeact_api_generation_repairs_syntax_error(monkeypatch) -> Non
 
 def test_bounded_codeact_api_generation_unwraps_repaired_json_code(monkeypatch) -> None:
     class StubClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, purpose, temperature
             return type("Result", (), {"text": json.dumps({"code": _deterministic_generated_source()})})()
 
@@ -157,7 +157,7 @@ def test_bounded_codeact_api_generation_unwraps_repaired_json_code(monkeypatch) 
 
 def test_bounded_codeact_api_generation_falls_back_after_policy_failures(monkeypatch) -> None:
     class StubClient:
-        async def complete(self, messages, *, purpose, temperature=None):
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
             del messages, purpose, temperature
             return type("Result", (), {"text": "result = {}\n"})()
 

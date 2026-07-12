@@ -389,7 +389,9 @@ def _expected_metric_projection(sample: FixedAnswerSample) -> tuple[str, str]:
     return requested_metric, ""
 
 
-def _read_public_evidence_excerpt(sample: FixedAnswerSample, *, max_chars: int = 14000) -> str:
+# NOTE: max_chars 从 14000 降到 6000，防止 retriever prompt 在 Qwen3-32B（8192 ctx）下超出上下文窗口。
+# 6000 chars ≈ 2000 tokens，留足 planner payload + 候选项 + 900 completion 的余量。
+def _read_public_evidence_excerpt(sample: FixedAnswerSample, *, max_chars: int = 6000) -> str:
     arguments = sample.canonical_task_spec.arguments
     candidate_paths = [
         str(arguments.get(key, "")).strip()

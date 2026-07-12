@@ -1,0 +1,1453 @@
+{
+  "claim_boundary": "Engine-Local Prefix Reuse via schedule/layout control and input-level dynamic pruning only; no KV tensor export, hidden-state transfer, cross-engine reuse, 2-GPU success, or openEuler VM validation is claimed.",
+  "generated_at_utc": "2026-07-11T08:24:12.760257+00:00",
+  "historical_run_roots": [
+    {
+      "available_case_count": 25,
+      "comparison_summary": {
+        "protocol_L3_control_bytes": 11670,
+        "protocol_L3_prompt_tokens": 53548,
+        "protocol_L3_total_tokens": 62667,
+        "protocol_vs_text_control_bytes_delta": -31256,
+        "protocol_vs_text_prompt_token_delta": -45652,
+        "protocol_vs_text_token_delta": -51282,
+        "text_L0_control_bytes": 42926,
+        "text_L0_prompt_tokens": 99200,
+        "text_L0_total_tokens": 113949
+      },
+      "layers": [
+        {
+          "case_count": 25,
+          "layer": "L0",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L1",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L2",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L3",
+          "quality_floor_pass_count": 25
+        }
+      ],
+      "quality_status": "formal_pass_all_L0_L3",
+      "report_count_scanned": 5,
+      "run_id": "kv-e6-guard-20260711-1448",
+      "run_root": "/home/qcrs/statebus/runs/kv-e6-guard-20260711-1448",
+      "selected_case_count": 25,
+      "stdout_json_ok": true,
+      "stdout_json_size_bytes": 1278433,
+      "summary_json_ok": true,
+      "summary_json_size_bytes": 1481
+    },
+    {
+      "available_case_count": null,
+      "comparison_summary": null,
+      "layers": [
+        {
+          "case_count": 25.0,
+          "layer": "L0",
+          "quality_floor_pass_count": 25.0
+        }
+      ],
+      "quality_status": "partial_layer_reports_present",
+      "report_count_scanned": 1,
+      "run_id": "sb32bcap3k",
+      "run_root": "/home/qcrs/statebus/runs/sb32bcap3k",
+      "selected_case_count": null,
+      "stdout_json_ok": false,
+      "stdout_json_size_bytes": 0,
+      "summary_json_ok": false,
+      "summary_json_size_bytes": 0
+    },
+    {
+      "available_case_count": 25,
+      "comparison_summary": {
+        "protocol_L3_control_bytes": 11345,
+        "protocol_L3_prompt_tokens": 50372,
+        "protocol_L3_total_tokens": 64839,
+        "protocol_vs_text_control_bytes_delta": -31581,
+        "protocol_vs_text_prompt_token_delta": -51606,
+        "protocol_vs_text_token_delta": -57946,
+        "text_L0_control_bytes": 42926,
+        "text_L0_prompt_tokens": 101978,
+        "text_L0_total_tokens": 122785
+      },
+      "layers": [
+        {
+          "case_count": 25,
+          "layer": "L0",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L1",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L2",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L3",
+          "quality_floor_pass_count": 25
+        }
+      ],
+      "quality_status": "formal_pass_all_L0_L3",
+      "report_count_scanned": 5,
+      "run_id": "sb32bcompact",
+      "run_root": "/home/qcrs/statebus/runs/sb32bcompact",
+      "selected_case_count": 25,
+      "stdout_json_ok": true,
+      "stdout_json_size_bytes": 1270414,
+      "summary_json_ok": true,
+      "summary_json_size_bytes": 1417
+    },
+    {
+      "available_case_count": null,
+      "comparison_summary": null,
+      "layers": [],
+      "quality_status": "no_suite_summary_empty_stdout",
+      "report_count_scanned": 0,
+      "run_id": "sb32bformal3k",
+      "run_root": "/home/qcrs/statebus/runs/sb32bformal3k",
+      "selected_case_count": null,
+      "stdout_json_ok": false,
+      "stdout_json_size_bytes": 0,
+      "summary_json_ok": false,
+      "summary_json_size_bytes": 0
+    },
+    {
+      "available_case_count": null,
+      "comparison_summary": null,
+      "layers": [
+        {
+          "case_count": 25.0,
+          "layer": "L0",
+          "quality_floor_pass_count": 25.0
+        }
+      ],
+      "quality_status": "partial_layer_reports_present",
+      "report_count_scanned": 1,
+      "run_id": "sb32bformal900",
+      "run_root": "/home/qcrs/statebus/runs/sb32bformal900",
+      "selected_case_count": null,
+      "stdout_json_ok": false,
+      "stdout_json_size_bytes": 0,
+      "summary_json_ok": false,
+      "summary_json_size_bytes": 0
+    },
+    {
+      "available_case_count": null,
+      "comparison_summary": null,
+      "layers": [],
+      "quality_status": "no_suite_summary_empty_stdout",
+      "report_count_scanned": 0,
+      "run_id": "sb32bformalx4k",
+      "run_root": "/home/qcrs/statebus/runs/sb32bformalx4k",
+      "selected_case_count": null,
+      "stdout_json_ok": false,
+      "stdout_json_size_bytes": 0,
+      "summary_json_ok": false,
+      "summary_json_size_bytes": 0
+    },
+    {
+      "available_case_count": null,
+      "comparison_summary": null,
+      "layers": [
+        {
+          "case_count": 25.0,
+          "layer": "L0",
+          "quality_floor_pass_count": 25.0
+        }
+      ],
+      "quality_status": "partial_layer_reports_present",
+      "report_count_scanned": 1,
+      "run_id": "v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250",
+      "run_root": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-20260710_2250",
+      "selected_case_count": null,
+      "stdout_json_ok": false,
+      "stdout_json_size_bytes": 0,
+      "summary_json_ok": false,
+      "summary_json_size_bytes": 0
+    },
+    {
+      "available_case_count": null,
+      "comparison_summary": null,
+      "layers": [],
+      "quality_status": "no_suite_summary_empty_stdout",
+      "report_count_scanned": 0,
+      "run_id": "v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015",
+      "run_root": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-formal-timeout900-20260711_0015",
+      "selected_case_count": null,
+      "stdout_json_ok": false,
+      "stdout_json_size_bytes": 0,
+      "summary_json_ok": false,
+      "summary_json_size_bytes": 0
+    },
+    {
+      "available_case_count": 25,
+      "comparison_summary": {
+        "protocol_L3_control_bytes": 2490,
+        "protocol_L3_prompt_tokens": 6098,
+        "protocol_L3_total_tokens": 8322,
+        "protocol_vs_text_control_bytes_delta": 133,
+        "protocol_vs_text_prompt_token_delta": -1418,
+        "protocol_vs_text_token_delta": -2436,
+        "text_L0_control_bytes": 2357,
+        "text_L0_prompt_tokens": 7516,
+        "text_L0_total_tokens": 10758
+      },
+      "layers": [
+        {
+          "case_count": 5,
+          "layer": "L0",
+          "quality_floor_pass_count": 5
+        },
+        {
+          "case_count": 5,
+          "layer": "L1",
+          "quality_floor_pass_count": 5
+        },
+        {
+          "case_count": 5,
+          "layer": "L2",
+          "quality_floor_pass_count": 5
+        },
+        {
+          "case_count": 5,
+          "layer": "L3",
+          "quality_floor_pass_count": 5
+        }
+      ],
+      "quality_status": "partial_layer_reports_present",
+      "report_count_scanned": 5,
+      "run_id": "v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234",
+      "run_root": "/home/qcrs/statebus/runs/v2-local-vllm-qwen3-32b-gpu0-mini5-20260710_2234",
+      "selected_case_count": 5,
+      "stdout_json_ok": true,
+      "stdout_json_size_bytes": 289694,
+      "summary_json_ok": true,
+      "summary_json_size_bytes": 1573
+    }
+  ],
+  "inputs": {
+    "artifacts_root": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts",
+    "doc_root": "docs/improvement/20_v2_comprehensive_truth_audit_20260706",
+    "kv_artifacts": {
+      "e0_local_vllm_audit": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_vllm_kv_audit_20260711.json",
+      "e1_e2_clean_service_repeat": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_e2_clean_service_repeat_summary_20260711_1438.json",
+      "e1_e2_stability_repeat": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_e2_stability_repeat_summary_20260711_1425.json",
+      "e1_schedule_primary": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_ablation_summary_20260711_134159.json",
+      "e2_prefix_alignment_primary": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_ablation_summary_20260711_1359.json",
+      "e3_dynamic_pruning": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e3_dynamic_pruning_ablation_20260711.json",
+      "e6_formal_guard_mechanism_excerpt": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e6_formal_guard_mechanism_excerpt_20260711_1448.json",
+      "e6_formal_guard_summary": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e6_formal_guard_summary_20260711_1448.json"
+    },
+    "logs_root": "/home/qcrs/statebus/logs",
+    "runs_root": "/home/qcrs/statebus/runs"
+  },
+  "judgment": {
+    "formal_pass_run_roots": [
+      "kv-e6-guard-20260711-1448",
+      "sb32bcompact"
+    ],
+    "local_api_required_failed_count_scanned": 5,
+    "mechanism_ready": true,
+    "overall": "mechanism evidence is sufficient for a careful Engine-Local Prefix Reuse claim",
+    "recommended_next_steps": [
+      "freeze this evidence as the current mechanism-benefit package",
+      "promote the clean E1/E2 and E6 numbers into the main report/presentation tables",
+      "rerun E6 only after changing schedule, prefix layout, pruning policy, or prompt budgets",
+      "defer E4/E5 context-length and multi-GPU tests until GPU restart risk is explicitly acceptable"
+    ],
+    "supported_claims": [
+      "cache-friendly scheduling improves vLLM engine-local prefix reuse behavior",
+      "shared_evidence_prefix exposes a reusable common prompt prefix to vLLM",
+      "dynamic pruning reduces input evidence/KV pressure at retrieval scope",
+      "combined mechanism profile preserves the formal 25-case quality floor"
+    ],
+    "unsupported_claims": [
+      "KV tensor export or transfer",
+      "hidden-state transfer",
+      "cross-engine KV reuse",
+      "2-GPU success",
+      "openEuler VM validation"
+    ]
+  },
+  "local_api_package_summaries": [
+    {
+      "important_failed_stages": [],
+      "json_ok": true,
+      "package": "local_api_20260706_191835",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260706_191835/summary.json",
+      "stage_summary": {
+        "optional_failed": [],
+        "optional_failed_count": 0,
+        "required_count": 8,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 13,
+        "total_duration_s": 6374.0
+      }
+    },
+    {
+      "important_failed_stages": [
+        {
+          "duration_s": 108.0,
+          "exit_code": "1",
+          "required": true,
+          "stage": "r01_05_formal_api_local_memfd"
+        },
+        {
+          "duration_s": 52.0,
+          "exit_code": "1",
+          "required": true,
+          "stage": "r01_06_formal_compare_api_local_memfd"
+        },
+        {
+          "duration_s": 36.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_07_dev_compare_api_local_memfd"
+        },
+        {
+          "duration_s": 25.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_08_carrier_compare_api_local_memfd"
+        },
+        {
+          "duration_s": 31.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_09_continuous_api_local"
+        },
+        {
+          "duration_s": 24.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_10_continuous_replay_api_local"
+        },
+        {
+          "duration_s": 27.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_12_flagship_ablation_api_local"
+        }
+      ],
+      "json_ok": true,
+      "package": "local_api_20260707_004456",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_004456/summary.json",
+      "stage_summary": {
+        "optional_failed": [
+          {
+            "duration_s": 36.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_07_dev_compare_api_local_memfd"
+          },
+          {
+            "duration_s": 25.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_08_carrier_compare_api_local_memfd"
+          },
+          {
+            "duration_s": 31.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_09_continuous_api_local"
+          },
+          {
+            "duration_s": 24.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_10_continuous_replay_api_local"
+          },
+          {
+            "duration_s": 27.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_12_flagship_ablation_api_local"
+          }
+        ],
+        "optional_failed_count": 5,
+        "required_count": 8,
+        "required_failed": [
+          {
+            "duration_s": 108.0,
+            "exit_code": "1",
+            "required": true,
+            "stage": "r01_05_formal_api_local_memfd"
+          },
+          {
+            "duration_s": 52.0,
+            "exit_code": "1",
+            "required": true,
+            "stage": "r01_06_formal_compare_api_local_memfd"
+          }
+        ],
+        "required_failed_count": 2,
+        "stage_count": 13,
+        "total_duration_s": 714.0
+      }
+    },
+    {
+      "important_failed_stages": [
+        {
+          "duration_s": 1800.0,
+          "exit_code": "124",
+          "required": true,
+          "stage": "r01_05_formal_api_local_memfd"
+        },
+        {
+          "duration_s": 2400.0,
+          "exit_code": "124",
+          "required": false,
+          "stage": "r01_09_continuous_api_local"
+        },
+        {
+          "duration_s": 2401.0,
+          "exit_code": "124",
+          "required": false,
+          "stage": "r01_10_continuous_replay_api_local"
+        },
+        {
+          "duration_s": 7200.0,
+          "exit_code": "124",
+          "required": false,
+          "stage": "r01_12_flagship_ablation_api_local"
+        }
+      ],
+      "json_ok": true,
+      "package": "local_api_20260707_034412",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_034412/summary.json",
+      "stage_summary": {
+        "optional_failed": [
+          {
+            "duration_s": 2400.0,
+            "exit_code": "124",
+            "required": false,
+            "stage": "r01_09_continuous_api_local"
+          },
+          {
+            "duration_s": 2401.0,
+            "exit_code": "124",
+            "required": false,
+            "stage": "r01_10_continuous_replay_api_local"
+          },
+          {
+            "duration_s": 7200.0,
+            "exit_code": "124",
+            "required": false,
+            "stage": "r01_12_flagship_ablation_api_local"
+          }
+        ],
+        "optional_failed_count": 3,
+        "required_count": 8,
+        "required_failed": [
+          {
+            "duration_s": 1800.0,
+            "exit_code": "124",
+            "required": true,
+            "stage": "r01_05_formal_api_local_memfd"
+          }
+        ],
+        "required_failed_count": 1,
+        "stage_count": 13,
+        "total_duration_s": 14783.0
+      }
+    },
+    {
+      "important_failed_stages": [],
+      "json_ok": true,
+      "package": "local_api_20260707_091807",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_091807/summary.json",
+      "stage_summary": {
+        "optional_failed": [],
+        "optional_failed_count": 0,
+        "required_count": 8,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 12,
+        "total_duration_s": 8269.0
+      }
+    },
+    {
+      "important_failed_stages": [
+        {
+          "duration_s": 970.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_09_continuous_api_local"
+        },
+        {
+          "duration_s": 29.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_10_continuous_replay_api_local"
+        },
+        {
+          "duration_s": 140.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_12_flagship_ablation_api_local"
+        }
+      ],
+      "json_ok": true,
+      "package": "local_api_20260707_115051",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_115051/summary.json",
+      "stage_summary": {
+        "optional_failed": [
+          {
+            "duration_s": 970.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_09_continuous_api_local"
+          },
+          {
+            "duration_s": 29.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_10_continuous_replay_api_local"
+          },
+          {
+            "duration_s": 140.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_12_flagship_ablation_api_local"
+          }
+        ],
+        "optional_failed_count": 3,
+        "required_count": 8,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 13,
+        "total_duration_s": 3969.0
+      }
+    },
+    {
+      "important_failed_stages": [
+        {
+          "duration_s": 673.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_12_flagship_ablation_api_local"
+        }
+      ],
+      "json_ok": true,
+      "package": "local_api_20260707_130958",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_130958/summary.json",
+      "stage_summary": {
+        "optional_failed": [
+          {
+            "duration_s": 673.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_12_flagship_ablation_api_local"
+          }
+        ],
+        "optional_failed_count": 1,
+        "required_count": 8,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 13,
+        "total_duration_s": 9149.0
+      }
+    },
+    {
+      "important_failed_stages": [],
+      "json_ok": true,
+      "package": "local_api_20260707_163354",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260707_163354/summary.json",
+      "stage_summary": {
+        "optional_failed": [],
+        "optional_failed_count": 0,
+        "required_count": 8,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 13,
+        "total_duration_s": 15587.0
+      }
+    },
+    {
+      "important_failed_stages": [
+        {
+          "duration_s": 582.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "r01_13_flagship_ablation_api_local"
+        }
+      ],
+      "json_ok": true,
+      "package": "local_api_20260708_084458",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260708_084458/summary.json",
+      "stage_summary": {
+        "optional_failed": [
+          {
+            "duration_s": 582.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "r01_13_flagship_ablation_api_local"
+          }
+        ],
+        "optional_failed_count": 1,
+        "required_count": 9,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 14,
+        "total_duration_s": 4588.0
+      }
+    },
+    {
+      "important_failed_stages": [
+        {
+          "duration_s": 0.0,
+          "exit_code": "1",
+          "required": true,
+          "stage": "s01_00b_base_artifact_integrity_audit"
+        },
+        {
+          "duration_s": 0.0,
+          "exit_code": "1",
+          "required": true,
+          "stage": "s01_00c_base_claim_boundary_audit"
+        }
+      ],
+      "json_ok": true,
+      "package": "local_api_20260708_084458_supplement_20260708_110413",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_20260708_084458_supplement_20260708_110413/summary.json",
+      "stage_summary": {
+        "optional_failed": [],
+        "optional_failed_count": 0,
+        "required_count": 12,
+        "required_failed": [
+          {
+            "duration_s": 0.0,
+            "exit_code": "1",
+            "required": true,
+            "stage": "s01_00b_base_artifact_integrity_audit"
+          },
+          {
+            "duration_s": 0.0,
+            "exit_code": "1",
+            "required": true,
+            "stage": "s01_00c_base_claim_boundary_audit"
+          }
+        ],
+        "required_failed_count": 2,
+        "stage_count": 14,
+        "total_duration_s": 2802.0
+      }
+    },
+    {
+      "important_failed_stages": [
+        {
+          "duration_s": 2.0,
+          "exit_code": "1",
+          "required": false,
+          "stage": "x17b_continuous_gridops_world_api_local"
+        }
+      ],
+      "json_ok": true,
+      "package": "extras",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_non_kv_followup_20260709_083750/extras/summary.json",
+      "stage_summary": {
+        "optional_failed": [
+          {
+            "duration_s": 2.0,
+            "exit_code": "1",
+            "required": false,
+            "stage": "x17b_continuous_gridops_world_api_local"
+          }
+        ],
+        "optional_failed_count": 1,
+        "required_count": 15,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 35,
+        "total_duration_s": 23882.0
+      }
+    },
+    {
+      "important_failed_stages": [],
+      "json_ok": true,
+      "package": "flagship",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_non_kv_followup_20260709_083750/flagship/summary.json",
+      "stage_summary": {
+        "optional_failed": [],
+        "optional_failed_count": 0,
+        "required_count": 0,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 0,
+        "total_duration_s": 0
+      }
+    },
+    {
+      "important_failed_stages": [],
+      "json_ok": true,
+      "package": "flagship_family_diag",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_non_kv_followup_20260709_083750/flagship_family_diag/summary.json",
+      "stage_summary": {
+        "optional_failed": [],
+        "optional_failed_count": 0,
+        "required_count": 0,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 0,
+        "total_duration_s": 0
+      }
+    },
+    {
+      "important_failed_stages": [],
+      "json_ok": true,
+      "package": "lr01",
+      "path": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_api_non_kv_followup_20260709_083750/lr01/summary.json",
+      "stage_summary": {
+        "optional_failed": [],
+        "optional_failed_count": 0,
+        "required_count": 0,
+        "required_failed": [],
+        "required_failed_count": 0,
+        "stage_count": 0,
+        "total_duration_s": 0
+      }
+    }
+  ],
+  "schema_version": "statebus.local_vllm_kv_experiment_log_summary.v1",
+  "sections": {
+    "e0_observability": {
+      "aggregate": {
+        "attribution_counts": {
+          "executor JSON truncation risk reduced by context cap": 1,
+          "final pass": 1,
+          "partial formal run without suite summary": 2,
+          "summarizer JSON truncation risk": 1,
+          "unattributed empty wrapper stdout": 2,
+          "vLLM context 400 risk": 1,
+          "wrapper timeout 120s": 1
+        },
+        "final_pass_runs": [
+          "sb32bcompact"
+        ],
+        "run_count": 8
+      },
+      "artifact": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/local_vllm_kv_audit_20260711.json",
+      "cache_config_line": "vllm:cache_config_info{block_size=\"16\",cache_dtype=\"auto\",calculate_kv_scales=\"False\",cpu_offload_gb=\"0\",enable_prefix_caching=\"True\",gpu_memory_utilization=\"0.82\",is_attention_free=\"False\",num_cpu_blocks=\"1024\",num_gpu_blocks=\"573\",num_gpu_blocks_override=\"573\",sliding_window=\"None\",swap_space_bytes=\"4294967296\"} 1.0",
+      "gpu_prefix_cache_hit_rate": 0.0,
+      "health_ok": true,
+      "health_status_code": 200,
+      "metrics_ok": true,
+      "prefix_cache_metric_status": "prefix/cache/kv metrics exposed",
+      "readout": "32B service observability is restored if health_ok is true and prefix/cache metrics are exposed."
+    },
+    "e1_schedule": {
+      "artifacts": {
+        "clean_service_repeat": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_e2_clean_service_repeat_summary_20260711_1438.json",
+        "primary": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_ablation_summary_20260711_134159.json",
+        "stability_repeat": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_e2_stability_repeat_summary_20260711_1425.json"
+      },
+      "clean_repeat": {
+        "artifacts": {
+          "cache_friendly": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_friendly_clean_r1_20260711_1438.json",
+          "cache_hostile": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_hostile_clean_r1_20260711_1438.json"
+        },
+        "cache_friendly": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.7890940565493365,
+          "initial_gpu_prefix_cache_hit_rate": 0.0,
+          "mean_latency_ms": 3260.5892947999996,
+          "mean_ttft_ms": 884.8137107999999,
+          "ok_count": 10,
+          "request_count": 10
+        },
+        "cache_hostile": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.5239469128678592,
+          "initial_gpu_prefix_cache_hit_rate": 0.0,
+          "mean_latency_ms": 3477.672403400001,
+          "mean_ttft_ms": 1568.7791510000002,
+          "ok_count": 10,
+          "request_count": 10
+        },
+        "delta_friendly_minus_hostile": {
+          "final_gpu_prefix_cache_hit_rate": 0.2651471436814773,
+          "mean_latency_ms": -217.0831086000012,
+          "mean_ttft_ms": -683.9654402000003
+        },
+        "result": "cache_friendly_clean_service_hit_rate_and_ttft_better_than_cache_hostile"
+      },
+      "mechanism_readout": "cache-friendly schedule keeps same-corpus prefixes adjacent and improves engine-local prefix reuse versus cache-hostile interleaving.",
+      "primary_metrics": {
+        "delta": {
+          "final_gpu_prefix_cache_hit_rate_friendly_minus_hostile": 0.26537265290005696,
+          "mean_latency_ms_hostile_minus_friendly": 1084.1400728000003,
+          "mean_ttft_ms_hostile_minus_friendly": 721.1428589000001
+        },
+        "friendly": {
+          "error_count": 0,
+          "final_cpu_cache_usage_perc": 0,
+          "final_cpu_prefix_cache_hit_rate": 0,
+          "final_gpu_cache_usage_perc": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.7888664551485435,
+          "mean_latency_ms": 2340.7891575,
+          "mean_ttft_ms": 657.5529117,
+          "ok_count": 10,
+          "request_count": 10
+        },
+        "hostile": {
+          "error_count": 0,
+          "final_cpu_cache_usage_perc": 0,
+          "final_cpu_prefix_cache_hit_rate": 0,
+          "final_gpu_cache_usage_perc": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.5234938022484865,
+          "mean_latency_ms": 3424.9292303,
+          "mean_ttft_ms": 1378.6957706,
+          "ok_count": 10,
+          "request_count": 10
+        }
+      },
+      "primary_result": "cache_friendly improves prefix-cache hit-rate and TTFT under repeat=4 fixed 573 GPU-block stress",
+      "stability_repeat": {
+        "artifacts": {
+          "cache_friendly": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_friendly_stability_r1_20260711_1425.json",
+          "cache_hostile": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_kv_schedule_cache_hostile_stability_r1_20260711_1425.json"
+        },
+        "cache_friendly": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.520883396269596,
+          "mean_latency_ms": 3177.8692379,
+          "mean_ttft_ms": 871.1502527000002,
+          "ok_count": 10,
+          "request_count": 10
+        },
+        "cache_hostile": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.34446130500758726,
+          "mean_latency_ms": 4126.309611800001,
+          "mean_ttft_ms": 1735.7151357999999,
+          "ok_count": 10,
+          "request_count": 10
+        },
+        "delta_friendly_minus_hostile": {
+          "final_gpu_prefix_cache_hit_rate": 0.17642209126200875,
+          "mean_latency_ms": -948.4403739000013,
+          "mean_ttft_ms": -864.5648830999996
+        },
+        "probe_order": [
+          "cache_hostile",
+          "cache_friendly"
+        ],
+        "result": "cache_friendly_remains_better_than_cache_hostile"
+      }
+    },
+    "e2_prefix_alignment": {
+      "artifacts": {
+        "clean_service_repeat": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_e2_clean_service_repeat_summary_20260711_1438.json",
+        "primary": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_ablation_summary_20260711_1359.json",
+        "stability_repeat": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e1_e2_stability_repeat_summary_20260711_1425.json"
+      },
+      "clean_repeat": {
+        "artifacts": {
+          "independent": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_independent_clean_r1_20260711_1438.json",
+          "shared_evidence_prefix": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_shared_clean_r1_20260711_1438.json"
+        },
+        "delta_shared_minus_independent": {
+          "final_gpu_prefix_cache_hit_rate": 0.7795454545454544,
+          "mean_latency_ms": -2635.7106502,
+          "mean_prompt_bytes": -102.59999999999854,
+          "mean_shared_prefix_bytes": 28910.0,
+          "mean_ttft_ms": -2558.5576355999992
+        },
+        "independent": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.0,
+          "initial_gpu_prefix_cache_hit_rate": 0.0,
+          "mean_latency_ms": 5980.7582684,
+          "mean_prompt_bytes": 29519.6,
+          "mean_shared_prefix_bytes": 0.0,
+          "mean_ttft_ms": 3525.8395257999996,
+          "ok_count": 5,
+          "request_count": 5
+        },
+        "result": "shared_evidence_prefix_clean_service_hit_rate_and_ttft_better_than_independent_layout",
+        "shared_evidence_prefix": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.7795454545454544,
+          "initial_gpu_prefix_cache_hit_rate": 0.0,
+          "mean_latency_ms": 3345.0476181999998,
+          "mean_prompt_bytes": 29417.0,
+          "mean_shared_prefix_bytes": 28910.0,
+          "mean_ttft_ms": 967.2818902000001,
+          "ok_count": 5,
+          "request_count": 5
+        }
+      },
+      "mechanism_readout": "shared_evidence_prefix moves common evidence to the beginning of prompts so vLLM automatic prefix caching can see the reusable prefix.",
+      "primary_metrics": {
+        "delta": {
+          "final_gpu_prefix_cache_hit_rate_shared_minus_independent": 0.7808764940239042,
+          "mean_latency_ms_independent_minus_shared": 2619.0221361999993,
+          "mean_ttft_ms_independent_minus_shared": 2588.6560986000004
+        },
+        "independent": {
+          "error_count": 0,
+          "final_cpu_cache_usage_perc": 0,
+          "final_cpu_prefix_cache_hit_rate": 0,
+          "final_gpu_cache_usage_perc": 0,
+          "final_gpu_prefix_cache_hit_rate": 0,
+          "mean_latency_ms": 5957.383322799999,
+          "mean_ttft_ms": 3540.270315,
+          "ok_count": 5,
+          "request_count": 5
+        },
+        "shared": {
+          "error_count": 0,
+          "final_cpu_cache_usage_perc": 0,
+          "final_cpu_prefix_cache_hit_rate": 0,
+          "final_gpu_cache_usage_perc": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.7808764940239042,
+          "mean_latency_ms": 3338.3611866,
+          "mean_ttft_ms": 951.6142163999999,
+          "ok_count": 5,
+          "request_count": 5
+        }
+      },
+      "primary_result": "shared_evidence_prefix improves engine-local prefix-cache hit-rate and TTFT versus independent role-first prompts",
+      "stability_repeat": {
+        "artifacts": {
+          "independent": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_independent_stability_r1_20260711_1425.json",
+          "shared_evidence_prefix": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e2_prefix_alignment_shared_stability_r1_20260711_1425.json"
+        },
+        "delta_shared_minus_independent": {
+          "final_gpu_prefix_cache_hit_rate": 0.04968558291768732,
+          "mean_latency_ms": -2603.474038,
+          "mean_prompt_bytes": -102.59999999999854,
+          "mean_shared_prefix_bytes": 28926.0,
+          "mean_ttft_ms": -2578.4789868000003
+        },
+        "independent": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.4315100957436724,
+          "mean_latency_ms": 5942.2817772,
+          "mean_prompt_bytes": 29539.6,
+          "mean_shared_prefix_bytes": 0.0,
+          "mean_ttft_ms": 3517.5921984,
+          "ok_count": 5,
+          "request_count": 5
+        },
+        "probe_order": [
+          "independent",
+          "shared_evidence_prefix"
+        ],
+        "result": "shared_evidence_prefix_remains_faster_than_independent_layout",
+        "shared_evidence_prefix": {
+          "error_count": 0,
+          "final_gpu_prefix_cache_hit_rate": 0.4811956786613597,
+          "mean_latency_ms": 3338.8077392,
+          "mean_prompt_bytes": 29437.0,
+          "mean_shared_prefix_bytes": 28926.0,
+          "mean_ttft_ms": 939.1132115999999,
+          "ok_count": 5,
+          "request_count": 5
+        }
+      }
+    },
+    "e3_dynamic_pruning": {
+      "artifact": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e3_dynamic_pruning_ablation_20260711.json",
+      "baseline_off": {
+        "budget_decision": "",
+        "candidate_count": 6,
+        "drop_count": 1,
+        "dynamic_pruning_enabled": false,
+        "estimated_kv_tokens_saved": 36,
+        "hard_fact_ids": [
+          "fact-revenue-1"
+        ],
+        "importance_threshold": 0.6,
+        "keep_count": 6,
+        "selected_candidate_ids": [
+          "ctx-chunk-2",
+          "ctx-chunk-3",
+          "ctx-chunk-4",
+          "fact-revenue-1",
+          "hint-1",
+          "hint-2"
+        ],
+        "selected_evidence_bytes": 333,
+        "selected_evidence_tokens_estimate": 84,
+        "task_id": "e3-dynamic-pruning-off"
+      },
+      "delta": {
+        "dropped_candidate_count_on_minus_off": 4,
+        "estimated_kv_tokens_saved_on_minus_off": 56,
+        "selected_evidence_bytes_on_minus_off": -221,
+        "selected_evidence_tokens_on_minus_off": -56
+      },
+      "dynamic_on": {
+        "budget_decision": "capacity_critical",
+        "candidate_count": 6,
+        "drop_count": 5,
+        "dynamic_pruning_enabled": true,
+        "estimated_kv_tokens_saved": 92,
+        "hard_fact_ids": [
+          "fact-revenue-1"
+        ],
+        "importance_threshold": 0.9,
+        "keep_count": 2,
+        "selected_candidate_ids": [
+          "ctx-chunk-2",
+          "fact-revenue-1"
+        ],
+        "selected_evidence_bytes": 112,
+        "selected_evidence_tokens_estimate": 28,
+        "task_id": "e3-dynamic-pruning-on"
+      },
+      "mechanism_readout": "dynamic pruning is input-level evidence pruning: it reduces selected evidence and estimated KV pressure while preserving required hard facts.",
+      "primary_result": "dynamic_pruning_reduces_prompt_kv_pressure_with_quality_proxy_preserved",
+      "quality_proxy": {
+        "baseline_hard_fact_ids": [
+          "fact-revenue-1"
+        ],
+        "baseline_structured_evidence_ids": [],
+        "enabled_hard_fact_ids": [
+          "fact-revenue-1"
+        ],
+        "enabled_structured_evidence_ids": [],
+        "note": "retrieval-level proxy; formal quality floor still requires benchmark guard",
+        "pass": true,
+        "proxy_name": "hard_fact_and_structured_evidence_preservation"
+      }
+    },
+    "e6_formal_guard": {
+      "artifacts": {
+        "mechanism_excerpt": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e6_formal_guard_mechanism_excerpt_20260711_1448.json",
+        "summary": "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts/e6_formal_guard_summary_20260711_1448.json"
+      },
+      "available_case_count": 25,
+      "comparison_summary": {
+        "protocol_L3_control_bytes": 11670,
+        "protocol_L3_prompt_tokens": 53548,
+        "protocol_L3_total_tokens": 62667,
+        "protocol_vs_text_control_bytes_delta": -31256,
+        "protocol_vs_text_prompt_token_delta": -45652,
+        "protocol_vs_text_token_delta": -51282,
+        "text_L0_control_bytes": 42926,
+        "text_L0_prompt_tokens": 99200,
+        "text_L0_total_tokens": 113949
+      },
+      "final_vllm_metrics_excerpt": {
+        "vllm:cache_config_info": {
+          "enable_prefix_caching": true,
+          "gpu_memory_utilization": 0.82,
+          "num_gpu_blocks": 573,
+          "num_gpu_blocks_override": 573
+        },
+        "vllm:generation_tokens_total": 42653.0,
+        "vllm:gpu_prefix_cache_hit_rate": 0.6587643678160919,
+        "vllm:request_prompt_tokens_sum": 337210.0,
+        "vllm:request_success_total_length": 4.0,
+        "vllm:request_success_total_stop": 402.0
+      },
+      "formal_guard_passed": true,
+      "l3_telemetry_excerpt": {
+        "evidence_pruning_drop_count": 25,
+        "evidence_pruning_estimated_kv_tokens_saved": 9644,
+        "llm_prompt_tokens": 53548,
+        "llm_total_tokens": 62667,
+        "neural_prefix_cache_hit_count_estimate": 25,
+        "neural_prefix_reuse_estimate_count": 25,
+        "neural_prefix_shared_prefix_bytes": 4359,
+        "pruning_gain_bytes": 77134,
+        "quality_floor_pass": 25,
+        "selected_evidence_bytes": 4359,
+        "semantic_state_transfer_count": 25,
+        "state_pool_shared_memory_mode_count": 25
+      },
+      "layers": [
+        {
+          "case_count": 25,
+          "layer": "L0",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L1",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L2",
+          "quality_floor_pass_count": 25
+        },
+        {
+          "case_count": 25,
+          "layer": "L3",
+          "quality_floor_pass_count": 25
+        }
+      ],
+      "mechanism_readout": "combined shared-prefix layout plus dynamic pruning preserved the 25-case formal quality floor across L0-L3.",
+      "mechanism_switches": {
+        "STATEBUS_EVIDENCE_AVAILABLE_KV_CACHE_BYTES": "700000",
+        "STATEBUS_EVIDENCE_BASE_IMPORTANCE_THRESHOLD": "0.6",
+        "STATEBUS_EVIDENCE_CAPACITY_BUFFER": "0.2",
+        "STATEBUS_EVIDENCE_DYNAMIC_PRUNING_ENABLED": "1",
+        "STATEBUS_EVIDENCE_KV_BYTES_PER_TOKEN": "256",
+        "STATEBUS_EVIDENCE_MIN_KEEP_LEXICAL_HINTS": "0",
+        "STATEBUS_EVIDENCE_MIN_KEEP_SEMANTIC_CONTEXTS": "1",
+        "STATEBUS_PREFIX_ALIGNMENT_MODE": "shared_evidence_prefix"
+      },
+      "metadata": {
+        "benchmark_tier": "formal",
+        "embedding_mode": "deterministic",
+        "local_vllm_base_url": "http://127.0.0.1:53334/v1",
+        "local_vllm_model": "qwen3-32b",
+        "role_path_mode": "local_vllm",
+        "state_pool_mode_used": "shared_memory",
+        "transport": "loopback"
+      },
+      "run_id": "kv-e6-guard-20260711-1448",
+      "selected_case_count": 25
+    }
+  },
+  "vllm_launch_logs": [
+    {
+      "error_lines": [],
+      "interesting_lines": [],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_20260711_1320.log",
+      "size_bytes": 0
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_20260711_1322.log",
+      "size_bytes": 0
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "INFO 07-11 13:23:42 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 13:23:52 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 13:26:32 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 13:26:32 executor_base.py:116] Maximum concurrency for 4096 tokens per request: 3.09x",
+        "INFO:     Started server process [3008883]"
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_20260711_1324.log",
+      "size_bytes": 10692
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "INFO 07-11 13:32:38 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 13:32:48 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 13:33:18 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 13:33:18 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3021478]",
+        "INFO 07-11 13:42:15 metrics.py:455] Avg prompt throughput: 836.6 tokens/s, Avg generation throughput: 1.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 46.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:42:20 metrics.py:455] Avg prompt throughput: 1689.7 tokens/s, Avg generation throughput: 9.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 46.3%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:42:25 metrics.py:455] Avg prompt throughput: 1684.0 tokens/s, Avg generation throughput: 9.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 46.3%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:42:31 metrics.py:455] Avg prompt throughput: 825.6 tokens/s, Avg generation throughput: 4.9 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 45.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:42:36 metrics.py:455] Avg prompt throughput: 1668.8 tokens/s, Avg generation throughput: 9.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 45.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:42:41 metrics.py:455] Avg prompt throughput: 1654.4 tokens/s, Avg generation throughput: 9.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 45.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:42:53 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.7 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:43:03 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_20260711_133225.log",
+      "size_bytes": 239516
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "[statebus-vllm] max_model_len=8192",
+        "[statebus-vllm] gpu_memory_utilization=0.82",
+        "[statebus-vllm] num_gpu_blocks_override=573",
+        "INFO 07-11 14:39:52 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 14:40:02 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 14:40:31 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 14:40:31 llm_engine.py:425] Overriding num_gpu_blocks=575 with num_gpu_blocks_override=573",
+        "INFO 07-11 14:40:31 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3140530]",
+        "INFO 07-11 14:41:09 metrics.py:455] Avg prompt throughput: 945.0 tokens/s, Avg generation throughput: 0.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:41:14 metrics.py:455] Avg prompt throughput: 1111.9 tokens/s, Avg generation throughput: 9.4 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:41:20 metrics.py:455] Avg prompt throughput: 2195.7 tokens/s, Avg generation throughput: 9.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.3%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:41:26 metrics.py:455] Avg prompt throughput: 1827.4 tokens/s, Avg generation throughput: 4.4 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:41:31 metrics.py:455] Avg prompt throughput: 2133.3 tokens/s, Avg generation throughput: 9.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:41:36 metrics.py:455] Avg prompt throughput: 1106.3 tokens/s, Avg generation throughput: 9.4 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:41:48 metrics.py:455] Avg prompt throughput: 437.5 tokens/s, Avg generation throughput: 1.9 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:41:58 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_clean_e1_friendly_20260711T063948Z.log",
+      "size_bytes": 309760
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_clean_e1e2_e6_20260711T063536Z.log",
+      "size_bytes": 0
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "[statebus-vllm] max_model_len=8192",
+        "[statebus-vllm] gpu_memory_utilization=0.82",
+        "[statebus-vllm] num_gpu_blocks_override=573",
+        "INFO 07-11 14:37:14 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 14:37:24 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 14:37:53 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 14:37:53 llm_engine.py:425] Overriding num_gpu_blocks=575 with num_gpu_blocks_override=573",
+        "INFO 07-11 14:37:53 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3112372]",
+        "INFO 07-11 14:38:30 metrics.py:455] Avg prompt throughput: 1002.7 tokens/s, Avg generation throughput: 0.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:38:36 metrics.py:455] Avg prompt throughput: 973.6 tokens/s, Avg generation throughput: 4.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:38:41 metrics.py:455] Avg prompt throughput: 1088.9 tokens/s, Avg generation throughput: 7.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:38:47 metrics.py:455] Avg prompt throughput: 2126.9 tokens/s, Avg generation throughput: 6.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:38:52 metrics.py:455] Avg prompt throughput: 2043.8 tokens/s, Avg generation throughput: 8.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:38:57 metrics.py:455] Avg prompt throughput: 2037.2 tokens/s, Avg generation throughput: 8.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:39:12 metrics.py:455] Avg prompt throughput: 385.2 tokens/s, Avg generation throughput: 3.3 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:39:22 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_clean_e1e2_e6_20260711T063708Z.log",
+      "size_bytes": 309741
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "[statebus-vllm] max_model_len=8192",
+        "[statebus-vllm] gpu_memory_utilization=0.82",
+        "[statebus-vllm] num_gpu_blocks_override=573",
+        "INFO 07-11 14:42:58 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 14:43:09 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 14:43:38 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 14:43:38 llm_engine.py:425] Overriding num_gpu_blocks=575 with num_gpu_blocks_override=573",
+        "INFO 07-11 14:43:38 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3146158]",
+        "INFO 07-11 14:44:15 metrics.py:455] Avg prompt throughput: 1143.0 tokens/s, Avg generation throughput: 0.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:44:21 metrics.py:455] Avg prompt throughput: 970.7 tokens/s, Avg generation throughput: 4.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:44:27 metrics.py:455] Avg prompt throughput: 972.5 tokens/s, Avg generation throughput: 4.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:44:33 metrics.py:455] Avg prompt throughput: 995.8 tokens/s, Avg generation throughput: 4.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:44:39 metrics.py:455] Avg prompt throughput: 968.6 tokens/s, Avg generation throughput: 4.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:44:51 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.8 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_clean_e2_independent_20260711T064252Z.log",
+      "size_bytes": 167210
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "[statebus-vllm] max_model_len=8192",
+        "[statebus-vllm] gpu_memory_utilization=0.82",
+        "[statebus-vllm] num_gpu_blocks_override=573",
+        "INFO 07-11 14:45:24 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 14:45:36 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 14:46:05 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 14:46:06 llm_engine.py:425] Overriding num_gpu_blocks=575 with num_gpu_blocks_override=573",
+        "INFO 07-11 14:46:06 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3182724]",
+        "INFO 07-11 14:46:37 metrics.py:455] Avg prompt throughput: 648.4 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:46:42 metrics.py:455] Avg prompt throughput: 1122.9 tokens/s, Avg generation throughput: 9.2 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:46:47 metrics.py:455] Avg prompt throughput: 2237.9 tokens/s, Avg generation throughput: 8.9 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.8%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:47:00 metrics.py:455] Avg prompt throughput: 434.2 tokens/s, Avg generation throughput: 2.1 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:47:10 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:50:58 metrics.py:455] Avg prompt throughput: 33.7 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 3.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:03 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 3.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:08 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 12.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 4.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:13 metrics.py:455] Avg prompt throughput: 90.4 tokens/s, Avg generation throughput: 13.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:18 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 13.9 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:23 metrics.py:455] Avg prompt throughput: 87.0 tokens/s, Avg generation throughput: 13.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:28 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 13.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:33 metrics.py:455] Avg prompt throughput: 76.1 tokens/s, Avg generation throughput: 10.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 4.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:38 metrics.py:455] Avg prompt throughput: 55.4 tokens/s, Avg generation throughput: 13.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 3.5%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:43 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 14.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 4.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:49 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 14.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:54 metrics.py:455] Avg prompt throughput: 92.5 tokens/s, Avg generation throughput: 13.4 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:51:59 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 12.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 6.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:04 metrics.py:455] Avg prompt throughput: 88.6 tokens/s, Avg generation throughput: 9.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:09 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.9 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 6.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:14 metrics.py:455] Avg prompt throughput: 75.5 tokens/s, Avg generation throughput: 7.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 4.5%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:19 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:24 metrics.py:455] Avg prompt throughput: 53.5 tokens/s, Avg generation throughput: 9.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 3.5%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:29 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 4.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:34 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 4.5%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:39 metrics.py:455] Avg prompt throughput: 88.0 tokens/s, Avg generation throughput: 9.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:44 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:49 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 6.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:54 metrics.py:455] Avg prompt throughput: 85.8 tokens/s, Avg generation throughput: 9.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 4.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:52:59 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:53:04 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 9.9 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 5.9%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_clean_e2_shared_20260711T064519Z.log",
+      "size_bytes": 1704468
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "INFO 07-11 13:43:59 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 13:44:10 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 13:44:37 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 13:44:38 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3037207]",
+        "INFO 07-11 13:45:55 metrics.py:455] Avg prompt throughput: 1656.8 tokens/s, Avg generation throughput: 4.9 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 45.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:46:00 metrics.py:455] Avg prompt throughput: 1672.5 tokens/s, Avg generation throughput: 13.5 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 45.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:46:05 metrics.py:455] Avg prompt throughput: 2530.5 tokens/s, Avg generation throughput: 13.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 46.3%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:46:10 metrics.py:455] Avg prompt throughput: 2508.3 tokens/s, Avg generation throughput: 13.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 45.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:46:21 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.4 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:46:31 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_hostile_20260711_134345.log",
+      "size_bytes": 238191
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "INFO 07-11 13:47:46 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 13:47:57 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 13:48:23 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 13:48:23 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3042262]",
+        "INFO 07-11 13:49:00 metrics.py:455] Avg prompt throughput: 1112.4 tokens/s, Avg generation throughput: 3.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:49:05 metrics.py:455] Avg prompt throughput: 3338.0 tokens/s, Avg generation throughput: 12.8 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:49:11 metrics.py:455] Avg prompt throughput: 2033.3 tokens/s, Avg generation throughput: 7.5 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:49:16 metrics.py:455] Avg prompt throughput: 2183.0 tokens/s, Avg generation throughput: 13.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:49:30 metrics.py:455] Avg prompt throughput: 787.0 tokens/s, Avg generation throughput: 3.8 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_r4_friendly_20260711_134733.log",
+      "size_bytes": 307908
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "INFO 07-11 13:50:10 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 13:50:22 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 13:50:50 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 13:50:50 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.16x",
+        "INFO:     Started server process [3045738]"
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_r4_hostile_20260711_134955.log",
+      "size_bytes": 10225
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "INFO 07-11 13:51:40 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 13:51:51 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 13:52:16 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 13:52:17 llm_engine.py:425] Overriding num_gpu_blocks=574 with num_gpu_blocks_override=573",
+        "INFO 07-11 13:52:17 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3047956]",
+        "INFO 07-11 13:52:54 metrics.py:455] Avg prompt throughput: 1027.8 tokens/s, Avg generation throughput: 0.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:52:59 metrics.py:455] Avg prompt throughput: 1095.2 tokens/s, Avg generation throughput: 8.5 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:53:04 metrics.py:455] Avg prompt throughput: 2216.7 tokens/s, Avg generation throughput: 9.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:53:09 metrics.py:455] Avg prompt throughput: 2200.7 tokens/s, Avg generation throughput: 6.5 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:53:14 metrics.py:455] Avg prompt throughput: 1097.5 tokens/s, Avg generation throughput: 7.5 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.3%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:53:20 metrics.py:455] Avg prompt throughput: 1927.2 tokens/s, Avg generation throughput: 5.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:53:25 metrics.py:455] Avg prompt throughput: 1093.5 tokens/s, Avg generation throughput: 7.5 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:53:36 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.8 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:53:46 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e1_r4_hostile_blocks573_20260711_134955.log",
+      "size_bytes": 309255
+    },
+    {
+      "error_lines": [
+        "ERROR 07-11 14:01:55 serving_chat.py:197] Error in preprocessing prompt inputs",
+        "ERROR 07-11 14:01:55 serving_chat.py:197] Traceback (most recent call last):",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]   File \"/home/qcrs/statebus/conda-envs/vllm-qwen-cu121/lib/python3.11/site-packages/vllm/entrypoints/openai/serving_chat.py\", line 181, in create_chat_completion",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]     ) = await self._preprocess_chat(",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]   File \"/home/qcrs/statebus/conda-envs/vllm-qwen-cu121/lib/python3.11/site-packages/vllm/entrypoints/openai/serving_engine.py\", line 435, in _preprocess_chat",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]     prompt_inputs = await self._tokenize_prompt_input_async(",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]   File \"/home/qcrs/statebus/conda-envs/vllm-qwen-cu121/lib/python3.11/concurrent/futures/thread.py\", line 58, in run",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]     result = self.fn(*self.args, **self.kwargs)",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]   File \"/home/qcrs/statebus/conda-envs/vllm-qwen-cu121/lib/python3.11/site-packages/vllm/entrypoints/openai/serving_engine.py\", line 270, in _tokenize_prompt_input",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]     return next(",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]            ^^^^^",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]   File \"/home/qcrs/statebus/conda-envs/vllm-qwen-cu121/lib/python3.11/site-packages/vllm/entrypoints/openai/serving_engine.py\", line 293, in _tokenize_prompt_inputs",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]     yield self._normalize_prompt_text_to_input(",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]   File \"/home/qcrs/statebus/conda-envs/vllm-qwen-cu121/lib/python3.11/site-packages/vllm/entrypoints/openai/serving_engine.py\", line 185, in _normalize_prompt_text_to_input",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]     return self._validate_input(request, input_ids, input_text)",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]   File \"/home/qcrs/statebus/conda-envs/vllm-qwen-cu121/lib/python3.11/site-packages/vllm/entrypoints/openai/serving_engine.py\", line 248, in _validate_input",
+        "ERROR 07-11 14:01:55 serving_chat.py:197]     raise ValueError(",
+        "ERROR 07-11 14:01:55 serving_chat.py:197] ValueError: This model's maximum context length is 8192 tokens. However, you requested 11270 tokens (11246 in the messages, 24 in the completion). Please reduce the length of the messages or completion.",
+        "ERROR 07-11 14:01:55 serving_chat.py:197] ValueError: This model's maximum context length is 8192 tokens. However, you requested 11274 tokens (11250 in the messages, 24 in the completion). Please reduce the length of the messages or completion.",
+        "ERROR 07-11 14:01:55 serving_chat.py:197] ValueError: This model's maximum context length is 8192 tokens. However, you requested 11269 tokens (11245 in the messages, 24 in the completion). Please reduce the length of the messages or completion."
+      ],
+      "interesting_lines": [
+        "INFO 07-11 14:00:45 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 14:00:56 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 14:01:25 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 14:01:26 llm_engine.py:425] Overriding num_gpu_blocks=575 with num_gpu_blocks_override=573",
+        "INFO 07-11 14:01:26 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3063573]",
+        "INFO 07-11 14:03:01 metrics.py:455] Avg prompt throughput: 465.2 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:03:07 metrics.py:455] Avg prompt throughput: 966.1 tokens/s, Avg generation throughput: 4.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:03:12 metrics.py:455] Avg prompt throughput: 979.5 tokens/s, Avg generation throughput: 4.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:03:18 metrics.py:455] Avg prompt throughput: 994.9 tokens/s, Avg generation throughput: 4.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:03:24 metrics.py:455] Avg prompt throughput: 970.7 tokens/s, Avg generation throughput: 4.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:03:37 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.9 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:03:47 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:25:34 metrics.py:455] Avg prompt throughput: 848.9 tokens/s, Avg generation throughput: 0.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.7%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:25:40 metrics.py:455] Avg prompt throughput: 985.3 tokens/s, Avg generation throughput: 4.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:25:45 metrics.py:455] Avg prompt throughput: 1105.8 tokens/s, Avg generation throughput: 7.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:25:51 metrics.py:455] Avg prompt throughput: 1803.3 tokens/s, Avg generation throughput: 5.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:25:56 metrics.py:455] Avg prompt throughput: 1103.3 tokens/s, Avg generation throughput: 7.4 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:02 metrics.py:455] Avg prompt throughput: 1808.1 tokens/s, Avg generation throughput: 5.7 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:07 metrics.py:455] Avg prompt throughput: 1107.3 tokens/s, Avg generation throughput: 7.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:22 metrics.py:455] Avg prompt throughput: 374.9 tokens/s, Avg generation throughput: 2.3 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:32 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:37 metrics.py:455] Avg prompt throughput: 1095.7 tokens/s, Avg generation throughput: 1.4 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.9%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:42 metrics.py:455] Avg prompt throughput: 2200.1 tokens/s, Avg generation throughput: 9.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:47 metrics.py:455] Avg prompt throughput: 2206.6 tokens/s, Avg generation throughput: 9.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.1%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:53 metrics.py:455] Avg prompt throughput: 1018.3 tokens/s, Avg generation throughput: 3.9 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.2%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:26:58 metrics.py:455] Avg prompt throughput: 2129.6 tokens/s, Avg generation throughput: 9.2 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:27:03 metrics.py:455] Avg prompt throughput: 2162.8 tokens/s, Avg generation throughput: 9.4 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 60.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:27:15 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 2.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:27:25 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:27:50 metrics.py:455] Avg prompt throughput: 1134.5 tokens/s, Avg generation throughput: 3.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.5%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:27:55 metrics.py:455] Avg prompt throughput: 1139.5 tokens/s, Avg generation throughput: 3.3 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.5%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:00 metrics.py:455] Avg prompt throughput: 1156.4 tokens/s, Avg generation throughput: 3.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:06 metrics.py:455] Avg prompt throughput: 992.4 tokens/s, Avg generation throughput: 4.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:12 metrics.py:455] Avg prompt throughput: 983.4 tokens/s, Avg generation throughput: 4.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 63.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:24 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.9 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:34 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:45 metrics.py:455] Avg prompt throughput: 533.6 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.6%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:50 metrics.py:455] Avg prompt throughput: 1123.8 tokens/s, Avg generation throughput: 9.4 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:28:55 metrics.py:455] Avg prompt throughput: 2244.3 tokens/s, Avg generation throughput: 9.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 62.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_independent_blocks573_20260711_1400.log",
+      "size_bytes": 1091720
+    },
+    {
+      "error_lines": [],
+      "interesting_lines": [
+        "INFO 07-11 13:58:22 api_server.py:913] args: Namespace(subparser='serve', model_tag='/data/models/Qwen3-32B', config='', host='127.0.0.1', port=53334, uvicorn_log_level='info', allow_credentials=False, allowed_origins=['*'], allowed_methods=['*'], allowed_headers=['*'], api_key=None, lora_modules=None, prompt_adapters=None, chat_template=None, chat_template_content_format='auto', response_role='assistant', ssl_keyfile=None, ssl_certfile=None, ssl_ca_certs=None, ssl_cert_reqs=0, root_path=None, m",
+        "INFO 07-11 13:58:32 llm_engine.py:234] Initializing a V0 LLM engine (v0.7.3) with config: model='/data/models/Qwen3-32B', speculative_config=None, tokenizer='/data/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=LoadFormat.AUTO, tensor_parallel_size=1, pipeline_parallel_size=1, disable_custom_all_reduce=False, quan",
+        "INFO 07-11 13:59:00 worker.py:267] the current vLLM instance can use total_gpu_memory (79.25GiB) x gpu_memory_utilization (0.82) = 64.99GiB",
+        "INFO 07-11 13:59:00 llm_engine.py:425] Overriding num_gpu_blocks=575 with num_gpu_blocks_override=573",
+        "INFO 07-11 13:59:00 executor_base.py:116] Maximum concurrency for 8192 tokens per request: 1.12x",
+        "INFO:     Started server process [3060300]",
+        "INFO 07-11 13:59:35 metrics.py:455] Avg prompt throughput: 443.0 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.4%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:59:40 metrics.py:455] Avg prompt throughput: 1109.0 tokens/s, Avg generation throughput: 9.2 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:59:45 metrics.py:455] Avg prompt throughput: 2251.8 tokens/s, Avg generation throughput: 9.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 61.8%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 13:59:58 metrics.py:455] Avg prompt throughput: 435.0 tokens/s, Avg generation throughput: 2.1 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%.",
+        "INFO 07-11 14:00:08 metrics.py:455] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.0%, CPU KV cache usage: 0.0%."
+      ],
+      "path": "/home/qcrs/statebus/logs/vllm_qwen3_32b_gpu0_53334_8192_e2_shared_blocks573_20260711_1355.log",
+      "size_bytes": 165435
+    }
+  ]
+}

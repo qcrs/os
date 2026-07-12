@@ -18,6 +18,7 @@ from runtime.llm import (
 from v2.contracts import CanonicalTaskSpec
 from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
 from v2.retrieval.models import RetrievalCandidatePool
+from v2.runtime.logit_state import serialize_logit_state
 from v2.utils import sha256_digest
 
 
@@ -146,6 +147,9 @@ class ExecutorRoleDecision:
     total_tokens: int = 0
     prompt_bytes: int = 0
     latency_ms: float = 0.0
+    logit_entropy: float = 0.0
+    logit_confidence_proxy: float = 0.0
+    logit_state_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -528,6 +532,41 @@ def _compact_candidate_surface_payload(
 
 def _candidate_identity_line(visible_candidates: tuple["RoleToolCandidate", ...]) -> str:
     return "; ".join(candidate.candidate_key() for candidate in visible_candidates)
+
+
+def _closed_set_selection_schema(
+    visible_candidates: tuple["RoleToolCandidate", ...],
+) -> dict[str, Any] | None:
+    """Build a closed-set JSON schema for a role selection over visible candidates.
+
+    Every field is an enum drawn from the visible candidate surface, and
+    ``additionalProperties`` is false, so the response grammar contains NO
+    unbounded string/array value. This structurally removes the greedy
+    copy-attractor: with a poison prompt (e.g. a ``support_terms=a,b,c`` blob)
+    and temperature=0, an unbounded free-text field like ``reason`` or an
+    unbounded ``supporting_doc_ids`` array is a copy sink the model degenerates
+    into. Constraining the whole object to closed sets makes that impossible
+    while staying deterministic. Consumed only in local_vllm mode; other clients
+    ignore ``response_schema``.
+
+    Returns None when there are no visible candidates (an empty enum is an
+    invalid grammar), so the caller falls back to the generic object grammar.
+    """
+    keys = tuple(dict.fromkeys(c.candidate_key() for c in visible_candidates if c.candidate_key()))
+    routes = tuple(dict.fromkeys(c.route for c in visible_candidates if c.route))
+    tools = tuple(dict.fromkeys(c.tool_name for c in visible_candidates if c.tool_name))
+    if not keys or not routes or not tools:
+        return None
+    return {
+        "type": "object",
+        "properties": {
+            "candidate_key": {"type": "string", "enum": list(keys)},
+            "route": {"type": "string", "enum": list(routes)},
+            "tool_name": {"type": "string", "enum": list(tools)},
+        },
+        "required": ["candidate_key", "route", "tool_name"],
+        "additionalProperties": False,
+    }
 
 
 def _preferred_candidate_payload(
@@ -919,8 +958,9 @@ class RolePathRunner:
             "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
             "exactly from a single visible tc item. Treat pc as the default tie-break when multiple tc "
             "items look plausible and the hydrated evidence does not clearly contradict pc or its route "
-            "hints. Do not invent labels or use placeholders such as 'tool' or 'route'. Return a JSON "
-            "object with keys candidate_key, route, tool_name, supporting_doc_ids, and reason."
+            "hints. Do not invent labels or use placeholders such as 'tool' or 'route'. "
+            "Return a JSON object (starting with { and ending with }) "
+            "with keys candidate_key, route, tool_name, supporting_doc_ids, and reason."
         )
 
     def _executor_instruction(self) -> str:
@@ -929,7 +969,8 @@ class RolePathRunner:
             "and tool_name exactly from a single visible tc item. Treat pc as the default tie-break when "
             "multiple tc items share the same tool and the hydrated evidence does not clearly contradict pc "
             "or its route hints. Do not invent labels or use placeholders such as 'tool' or 'route'. "
-            "Return a JSON object with keys candidate_key, route, tool_name, action_contract, and reason."
+            "Return a JSON object (starting with { and ending with }) "
+            "with keys candidate_key, route, tool_name, action_contract, and reason."
         )
 
     def _summarizer_instruction(self) -> str:
@@ -949,13 +990,16 @@ class RolePathRunner:
         *,
         prompt: str,
         purpose: str,
+        response_schema: dict[str, Any] | None = None,
     ) -> JsonRoleCompletion:
         attempts: list[LLMResult] = []
         prompt_bytes = 0
         current_prompt = prompt
         retry_note = (
             "\n\nJSON retry instruction: the prior response was empty or malformed. "
-            "Return exactly one valid compact JSON object and no prose. Keep string values short."
+            "Return exactly one valid compact JSON object and no prose. "
+            "The response MUST start with { and end with }. Do NOT return a JSON array. "
+            "Keep string values short."
         )
         max_attempts = max(1, self.json_response_max_attempts)
         start_ns = time.perf_counter_ns()
@@ -966,6 +1010,7 @@ class RolePathRunner:
                 self.llm_client.complete(
                     [ChatMessage(role="user", content=current_prompt)],
                     purpose=purpose,
+                    response_schema=response_schema,
                 )
             )
             attempts.append(result)
@@ -1270,10 +1315,15 @@ class RolePathRunner:
             )
         completions: list[JsonRoleCompletion] = []
         current_prompt = prompt
+        _selection_schema = _closed_set_selection_schema(visible_candidates)
         max_attempts = max(1, self.json_response_max_attempts)
         last_error: RoleSelectionError | None = None
         for attempt_index in range(max_attempts):
-            completion = self._complete_json_role(prompt=current_prompt, purpose="retriever")
+            completion = self._complete_json_role(
+                prompt=current_prompt,
+                purpose="retriever",
+                response_schema=_selection_schema,
+            )
             completions.append(completion)
             payload = completion.payload
             parsed_selection = _parse_role_selection(payload)
@@ -1382,10 +1432,15 @@ class RolePathRunner:
             )
         completions: list[JsonRoleCompletion] = []
         current_prompt = prompt
+        _selection_schema = _closed_set_selection_schema(visible_candidates)
         max_attempts = max(1, self.json_response_max_attempts)
         last_error: RoleSelectionError | None = None
         for attempt_index in range(max_attempts):
-            completion = self._complete_json_role(prompt=current_prompt, purpose="executor")
+            completion = self._complete_json_role(
+                prompt=current_prompt,
+                purpose="executor",
+                response_schema=_selection_schema,
+            )
             completions.append(completion)
             payload = completion.payload
             parsed_selection = _parse_role_selection(payload)
@@ -1412,6 +1467,17 @@ class RolePathRunner:
         else:
             raise last_error or RoleSelectionError("selection_retry_exhausted")
         result = _merge_llm_results([completion.result for completion in completions])
+        _logit_entropy = 0.0
+        _logit_confidence_proxy = 0.0
+        _logit_state_bytes = 0
+        if result.top_logprobs:
+            try:
+                payload_bytes, _logit_entropy, _logit_confidence_proxy = serialize_logit_state(
+                    result.top_logprobs
+                )
+                _logit_state_bytes = len(payload_bytes)
+            except Exception:
+                pass
         return ExecutorRoleDecision(
             route=selected_candidate.route,
             tool_name=selected_candidate.tool_name,
@@ -1426,6 +1492,9 @@ class RolePathRunner:
             total_tokens=result.usage.total_tokens,
             prompt_bytes=sum(completion.prompt_bytes for completion in completions),
             latency_ms=sum(completion.latency_ms for completion in completions),
+            logit_entropy=_logit_entropy,
+            logit_confidence_proxy=_logit_confidence_proxy,
+            logit_state_bytes=_logit_state_bytes,
         )
 
     def summarize(

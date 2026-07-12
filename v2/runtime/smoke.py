@@ -2903,6 +2903,13 @@ def run_smoke(
     task_metrics["evidence_pruning_estimated_kv_tokens_saved"] = float(
         retrieval.pruning_profile.estimated_kv_tokens_saved
     )
+    task_metrics["logit_state_transfer_count"] = float(
+        1 if executor_decision.logit_state_bytes > 0 else 0
+    )
+    task_metrics["logit_state_mean_entropy"] = float(executor_decision.logit_entropy)
+    task_metrics["logit_confidence_gate_trigger_count"] = float(
+        1 if executor_decision.logit_state_bytes > 0 and executor_decision.logit_confidence_proxy < 0.3 else 0
+    )
     neural_prefix_identity = build_neural_prefix_identity(
         source_doc_hashes=retrieval.selected_doc_hashes,
         evidence_pack_hash=retrieval.evidence_pack.pack_hash,
