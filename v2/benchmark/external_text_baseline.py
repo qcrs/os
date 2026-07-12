@@ -623,6 +623,37 @@ def _summarizer_prompt(
     )
 
 
+def _build_baseline_selection_schema(
+    route_candidates: tuple[PublicRouteCandidate, ...],
+) -> dict[str, object] | None:
+    """Build a closed-set enum schema from visible route candidates.
+
+    Mirrors the logic of role_path._closed_set_selection_schema() without
+    importing from v2.runtime (which is forbidden for the external baseline).
+    Passed as ``response_schema`` to the retriever and executor LLM calls so
+    that local_vllm output constraints are identical across the protocol path
+    and this external-text baseline.  On non-local_vllm providers the schema
+    is ignored by llm.complete(); there is no behavioural difference.
+
+    Returns None when the candidate set is empty (invalid enum grammar).
+    """
+    keys = tuple(dict.fromkeys(c.candidate_key() for c in route_candidates if c.candidate_key()))
+    routes = tuple(dict.fromkeys(c.route for c in route_candidates if c.route))
+    tools = tuple(dict.fromkeys(c.tool_name for c in route_candidates if c.tool_name))
+    if not keys or not routes or not tools:
+        return None
+    return {
+        "type": "object",
+        "properties": {
+            "candidate_key": {"type": "string", "enum": list(keys)},
+            "route":         {"type": "string", "enum": list(routes)},
+            "tool_name":     {"type": "string", "enum": list(tools)},
+        },
+        "required": ["candidate_key", "route", "tool_name"],
+        "additionalProperties": False,
+    }
+
+
 def _usage_from_result(*, prompt: str, result) -> ExternalTextRoleUsage:
     return ExternalTextRoleUsage(
         prompt_bytes=len(prompt.encode("utf-8")),
@@ -682,7 +713,11 @@ def run_external_text_case(
     retriever_prompt = _retriever_prompt(sample=sample, context=context, planner_payload=planner_payload)
     retriever_start_ns = time.perf_counter_ns()
     retriever_result = _run_sync(
-        llm_client.complete([ChatMessage(role="user", content=retriever_prompt)], purpose="retriever")
+        llm_client.complete(
+            [ChatMessage(role="user", content=retriever_prompt)],
+            purpose="retriever",
+            response_schema=_build_baseline_selection_schema(context.route_candidates),
+        )
     )
     retriever_latency_ms = (time.perf_counter_ns() - retriever_start_ns) / 1_000_000.0
     retriever_payload_raw = extract_json_object(retriever_result.text)  # type: ignore[arg-type]
@@ -721,7 +756,11 @@ def run_external_text_case(
     )
     executor_start_ns = time.perf_counter_ns()
     executor_result = _run_sync(
-        llm_client.complete([ChatMessage(role="user", content=executor_prompt)], purpose="executor")
+        llm_client.complete(
+            [ChatMessage(role="user", content=executor_prompt)],
+            purpose="executor",
+            response_schema=_build_baseline_selection_schema(context.route_candidates),
+        )
     )
     executor_latency_ms = (time.perf_counter_ns() - executor_start_ns) / 1_000_000.0
     executor_payload_raw = extract_json_object(executor_result.text)  # type: ignore[arg-type]
