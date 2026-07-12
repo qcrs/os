@@ -229,7 +229,7 @@ def test_run_benchmark_failed_task_preserves_planner_raw_output_and_usage() -> N
     )
 
     class FailingPlannerClient(DeterministicLLMClient):
-        async def complete(self, messages, purpose=""):
+        async def complete(self, messages, purpose="", **kwargs):
             if purpose == "planner":
                 return LLMResult(
                     text=json.dumps(
@@ -6315,7 +6315,7 @@ def test_pure_text_open_baseline_v1_supports_api_mode_with_explicit_client() -> 
 
 
 class _StrictExternalAliasClient:
-    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+    async def complete(self, messages, *, purpose: str, temperature=None, **kwargs):  # type: ignore[no-untyped-def]
         del temperature, messages
         if purpose == "planner":
             return LLMResult(
@@ -6367,7 +6367,7 @@ class _StrictExternalAliasClient:
 
 
 class _StrictExternalInvalidRetrieverClient:
-    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+    async def complete(self, messages, *, purpose: str, temperature=None, **kwargs):  # type: ignore[no-untyped-def]
         del temperature, messages
         if purpose == "planner":
             return LLMResult(
@@ -6434,7 +6434,7 @@ class _LiveTextOpenFakeClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+    async def complete(self, messages, *, purpose: str, temperature=None, **kwargs):  # type: ignore[no-untyped-def]
         del temperature
         prompt = messages[-1].content
         self.calls.append((purpose, prompt))

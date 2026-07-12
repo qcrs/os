@@ -74,6 +74,35 @@ class SemanticStateRef:
 
 
 @dataclass(frozen=True)
+class LogitStateRef:
+    """Executor 输出层 logprob 向量的非文本状态 ref。
+    传递 top-k token 的 log 概率 float32 向量（binary），
+    是 LLM 输出分布的直接投影，不是文本字符串。
+    """
+    state_id: str
+    producer_role: str
+    consumer_role: str
+    storage_kind: StorageKind
+    length: int
+    blob_hash: str
+    top_k: int = 20
+    entropy: float = 0.0
+    confidence_proxy: float = 0.0
+    channel: str = "logit_state"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def registry_entry(self) -> RefRegistryEntry:
+        return RefRegistryEntry(
+            ref_id=self.state_id,
+            ref_kind=RefKind.LOGIT_STATE,
+            storage_kind=self.storage_kind,
+            status=RefStatus.ACTIVE,
+            blob_hash=self.blob_hash,
+            schema_version=self.metadata.get("schema_version", "logit_state.v1"),
+        )
+
+
+@dataclass(frozen=True)
 class ExecutionArtifactRef:
     artifact_id: str
     task_id: str

@@ -164,6 +164,76 @@ def test_openai_compatible_llm_client_closes_provider_client_per_complete(monkey
     assert closed_clients == created_clients
 
 
+def test_openai_compatible_llm_client_requests_executor_logprobs_in_local_vllm_mode(monkeypatch) -> None:
+    created_clients: list[object] = []
+
+    class FakeUsage:
+        prompt_tokens = 12
+        completion_tokens = 5
+        total_tokens = 17
+
+    class FakeTokenLogprob:
+        def __init__(self) -> None:
+            self.logprob = -0.25
+            self.top_logprobs = []
+
+    class FakeLogprobs:
+        content = [FakeTokenLogprob()]
+
+    class FakeMessage:
+        content = '{"ok": true}'
+
+    class FakeChoice:
+        message = FakeMessage()
+        logprobs = FakeLogprobs()
+
+    class FakeResponse:
+        choices = [FakeChoice()]
+        model = "fake-openai-model"
+        usage = FakeUsage()
+
+    class FakeCompletions:
+        def __init__(self, owner) -> None:  # type: ignore[no-untyped-def]
+            self.owner = owner
+
+        async def create(self, **request):  # type: ignore[no-untyped-def]
+            self.owner.requests.append(request)
+            return FakeResponse()
+
+    class FakeChat:
+        def __init__(self, owner) -> None:  # type: ignore[no-untyped-def]
+            self.completions = FakeCompletions(owner)
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            self.requests: list[dict[str, object]] = []
+            self.chat = FakeChat(self)
+            created_clients.append(self)
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("runtime.llm.AsyncOpenAI", FakeAsyncOpenAI)
+    config = LLMConfig(
+        mode="local_vllm",
+        providers={"default": ProviderConfig(api_key="EMPTY", base_url="http://127.0.0.1:53334/v1")},
+        roles={
+            "planner": RoleLLMConfig(provider="default", model="fake-model"),
+            "retriever": RoleLLMConfig(provider="default", model="fake-model"),
+            "executor": RoleLLMConfig(provider="default", model="fake-model"),
+            "summarizer": RoleLLMConfig(provider="default", model="fake-model"),
+        },
+    )
+    client = OpenAICompatibleLLMClient(config)
+
+    result = asyncio.run(client.complete([ChatMessage(role="user", content="hello")], purpose="executor"))
+
+    request = created_clients[0].requests[0]  # type: ignore[attr-defined]
+    assert request["logprobs"] is True
+    assert request["top_logprobs"] == 20
+    assert result.top_logprobs is not None
+
+
 def test_openai_compatible_llm_caps_max_tokens_to_context_window(monkeypatch) -> None:
     created_clients: list[object] = []
 
@@ -847,7 +917,7 @@ class _RepairingPlannerClient:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
-    async def complete(self, messages, *, purpose: str, temperature=None):  # type: ignore[no-untyped-def]
+    async def complete(self, messages, *, purpose: str, temperature=None, **kwargs):  # type: ignore[no-untyped-def]
         del temperature
         assert purpose == "planner"
         self.calls.append([msg.content for msg in messages])

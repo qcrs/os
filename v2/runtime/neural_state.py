@@ -385,6 +385,8 @@ class NeuralPrefixReuseEstimate:
             "neural_prefix_shared_prefix_bytes": float(self.shared_prefix_bytes),
             "neural_prefix_estimated_prefix_tokens": float(self.estimated_prefix_tokens),
             "neural_prefix_cache_query_count_estimate": float(self.estimated_prefix_cache_query_count),
+            # NOTE: neural_prefix_cache_hit_count_estimate 是控制面推断（estimated_prefix_tokens > 0）
+            # 不是 vLLM 内部 raw hit counter。直接 GPU 指标见 vllm:gpu_prefix_cache_hit_rate
             "neural_prefix_cache_hit_count_estimate": float(self.estimated_prefix_cache_hit_count),
             "neural_prefix_cache_hit_rate_estimate": float(self.estimated_prefix_cache_hit_rate),
             "neural_prefix_prefill_saved_tokens_estimate": float(self.estimated_prefill_saved_tokens),

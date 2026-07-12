@@ -641,6 +641,9 @@ class RetrieverFanoutPipeline:
             selected_evidence_tokens_estimate=selected_evidence_tokens,
             dropped_candidate_bytes=dropped_candidate_bytes,
             dropped_candidate_tokens_estimate=dropped_candidate_tokens,
+            # NOTE: estimated_kv_tokens_saved 是输入侧算术估算，不是 GPU KV cache 实测。
+            # 计算方式：max(full_corpus_tokens - selected_evidence_tokens, 0)
+            # 不得表述为"节省了 N 个 GPU KV cache token"
             estimated_kv_tokens_saved=max(full_corpus_tokens - selected_evidence_tokens, 0),
             pruning_gain_ratio=(
                 pruning_gain_bytes / full_corpus_bytes if full_corpus_bytes > 0 else 0.0

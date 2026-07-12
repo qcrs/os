@@ -59,6 +59,7 @@ class RefKind(StrEnum):
     MEMORY = "memory"
     HYDRATE_MANIFEST = "hydrate_manifest"
     CANONICAL_EVIDENCE_PACK = "canonical_evidence_pack"
+    LOGIT_STATE = "logit_state"
 
 
 class StorageKind(StrEnum):

@@ -52,6 +52,7 @@ class LLMResult:
     text: str
     model: str
     usage: LLMUsage = field(default_factory=LLMUsage)
+    top_logprobs: list | None = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +245,7 @@ class LLMClient(Protocol):
         *,
         purpose: str,
         temperature: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResult: ...
 
     def describe(self) -> dict[str, object]: ...
@@ -269,10 +271,58 @@ class OpenAICompatibleLLMClient:
         *,
         purpose: str,
         temperature: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResult:
         role_config = self.config.role_config(purpose)
         provider_name = role_config.provider
         request = _build_openai_request(role_config, messages, temperature=temperature)
+        # local_vllm: the bare {"type":"json_object"} grammar accepts ANY valid
+        # JSON, and a JSON array "[...]" is valid JSON. That lets Qwen3 pick "["
+        # as a legal first token and degenerate into "[\n\n[\n\n[..." on long
+        # prompts (observed with local-embedding hydration). Swapping to a
+        # json_schema makes "{" the sole legal root token, so the array branch
+        # is removed from the grammar entirely. When the caller supplies a
+        # closed-set response_schema (enum-only fields, no free-text sink), the
+        # copy-attractor degeneration on unbounded string/array values is also
+        # structurally impossible. Only applied for local_vllm; the DeepSeek API
+        # path keeps json_object untouched.
+        if (
+            self.config.mode == "local_vllm"
+            and isinstance(request.get("response_format"), dict)
+            and request["response_format"].get("type") == "json_object"
+        ):
+            schema = response_schema or {"type": "object", "additionalProperties": True}
+            request = {
+                **request,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "role_object",
+                        "strict": True,
+                        "schema": schema,
+                    },
+                },
+            }
+        # local_vllm: Qwen3 defaults to enable_thinking=True and emits a
+        # "<think>..." block before the answer. Under object-only JSON grammar the
+        # first token must be "{", so the model cannot emit "<think>" and ends up
+        # fighting the grammar (a contributor to token degeneration). These roles
+        # are structured routing/classification tasks where thinking adds latency
+        # without accuracy gain, so disable it to align generation with the
+        # grammar. Merged into any role-configured extra_body; vLLM-only knob.
+        if self.config.mode == "local_vllm":
+            existing_extra_body = dict(request.get("extra_body") or {})
+            chat_template_kwargs = dict(existing_extra_body.get("chat_template_kwargs") or {})
+            chat_template_kwargs.setdefault("enable_thinking", False)
+            existing_extra_body["chat_template_kwargs"] = chat_template_kwargs
+            request = {**request, "extra_body": existing_extra_body}
+        # local_vllm executor probes request token-level output distributions.
+        if self.config.mode == "local_vllm" and purpose == "executor":
+            request = {
+                **request,
+                "logprobs": True,
+                "top_logprobs": 20,
+            }
         response = await self._create_completion_with_retry(
             provider_name=provider_name,
             provider=self.config.provider_config(provider_name),
@@ -281,6 +331,7 @@ class OpenAICompatibleLLMClient:
         choice = response.choices[0]
         content = _coerce_content_to_text(choice.message.content)
         usage = getattr(response, "usage", None)
+        raw_logprobs = getattr(getattr(choice, "logprobs", None), "content", None)
         return LLMResult(
             text=content.strip(),
             model=getattr(response, "model", None) or role_config.model,
@@ -289,6 +340,7 @@ class OpenAICompatibleLLMClient:
                 completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
                 total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
             ),
+            top_logprobs=raw_logprobs,
         )
 
     async def _create_completion_with_retry(
@@ -362,8 +414,10 @@ class DeterministicLLMClient:
         *,
         purpose: str,
         temperature: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResult:
         del temperature
+        del response_schema
         if not messages:
             raise ValueError("deterministic llm requires at least one message")
         user_content = messages[-1].content
