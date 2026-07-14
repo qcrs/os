@@ -38,6 +38,10 @@ _PLANNER_SCOPE_AUDIT_KEYS = (
     "artifact_item_count",
     "history_runtime_root_count",
     "required_lineage",
+    "objective_source",
+    "planner_semantic_plan_hash",
+    "planner_fallback_semantic_plan_hash",
+    "planner_effective_semantic_plan_hash",
 )
 _CANDIDATE_METADATA_AUDIT_KEYS = (
     "hint",
@@ -460,6 +464,9 @@ class RetrievalBundle:
     full_corpus_bytes: int
     selected_evidence_bytes: int
     planner_scope_payload: dict[str, Any] = field(default_factory=dict)
+    consumed_objectives: dict[str, dict[str, Any]] = field(default_factory=dict)
+    consumed_objective_hashes: dict[str, str] = field(default_factory=dict)
+    memory_query_embedding: StructuredEmbedding | None = None
     schema_version: str = RETRIEVAL_LOG_SCHEMA_VERSION
 
     def log_payload(self) -> dict[str, object]:
@@ -468,6 +475,8 @@ class RetrievalBundle:
             "task_id": self.task_id,
             "query_text": self.query_text,
             "planner_scope_payload_hash": planner_scope_audit_hash(self.planner_scope_payload),
+            "consumed_objectives": dict(sorted(self.consumed_objectives.items())),
+            "consumed_objective_hashes": dict(sorted(self.consumed_objective_hashes.items())),
             "selected_doc_hashes": list(self.selected_doc_hashes),
             "full_corpus_bytes": self.full_corpus_bytes,
             "selected_evidence_bytes": self.selected_evidence_bytes,
@@ -480,6 +489,9 @@ class RetrievalBundle:
             "evidence_pack_hash": self.evidence_pack.pack_hash,
             "hydrate_manifest_hash": self.hydrate_manifest.manifest_hash,
             "query_embedding_hash": self.query_embedding.embedding_hash,
+            "memory_query_embedding_hash": (
+                "" if self.memory_query_embedding is None else self.memory_query_embedding.embedding_hash
+            ),
             "schema_version": self.schema_version,
             }
         )

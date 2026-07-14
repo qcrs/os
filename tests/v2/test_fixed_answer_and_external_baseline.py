@@ -172,6 +172,191 @@ def test_external_text_normalizes_candidate_key_route_payload() -> None:
     assert normalized["candidate_key"] == "worker_queue_starvation::semantic_retriever"
 
 
+def test_external_text_role_schemas_match_prompt_contracts() -> None:
+    from v2.benchmark.external_text_baseline import (
+        _build_baseline_executor_schema,
+        _build_baseline_planner_schema,
+        _build_baseline_retriever_schema,
+        _build_baseline_summarizer_schema,
+        _load_execution_context,
+    )
+
+    sample = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))[0]
+    context = _load_execution_context(sample)
+    planner = _build_baseline_planner_schema(context.route_candidates)
+    retriever = _build_baseline_retriever_schema(context)
+    executor = _build_baseline_executor_schema(context.route_candidates)
+    summarizer = _build_baseline_summarizer_schema()
+
+    assert planner is not None
+    assert retriever is not None
+    assert executor is not None
+    assert planner["additionalProperties"] is False
+    assert retriever["additionalProperties"] is False
+    assert executor["additionalProperties"] is False
+    assert summarizer["additionalProperties"] is False
+    assert set(planner["required"]) == {
+        "candidate_key",
+        "route",
+        "tool_name",
+        "retrieval_objective",
+    }
+    assert {
+        "candidate_key",
+        "route",
+        "tool_name",
+        "evidence_summary",
+        "metric_name",
+        "metric_value",
+        "selected_doc_hashes",
+    } == set(retriever["required"])
+    assert retriever["properties"]["metric_name"]["enum"] == [context.metric_name]
+    assert retriever["properties"]["selected_doc_hashes"]["items"]["enum"] == list(
+        context.public_doc_hashes
+    )
+    assert "uniqueItems" not in retriever["properties"]["selected_doc_hashes"]
+    assert all(
+        "maxLength" not in property_schema
+        for property_schema in retriever["properties"].values()
+    )
+    assert set(executor["required"]) == {
+        "candidate_key",
+        "route",
+        "tool_name",
+        "action_result",
+    }
+    assert summarizer["required"] == ["summary"]
+
+
+def test_external_text_retriever_schema_preserves_scoring_fields() -> None:
+    from v2.benchmark.external_text_baseline import (
+        _build_baseline_retriever_schema,
+        _load_execution_context,
+    )
+
+    sample = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))[0]
+    context = _load_execution_context(sample)
+    schema = _build_baseline_retriever_schema(context)
+
+    assert schema is not None
+    assert {
+        "evidence_summary",
+        "metric_name",
+        "metric_value",
+        "selected_doc_hashes",
+    }.issubset(schema["properties"])
+    assert "supporting_doc_ids" not in schema["properties"]
+    assert "revenue_value" not in schema["properties"]
+
+
+def test_external_execution_retriever_schema_omits_metric_guess_fields() -> None:
+    from v2.benchmark.external_text_baseline import (
+        _build_baseline_retriever_schema,
+        _load_execution_context,
+        _retriever_prompt,
+    )
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+
+    sample = next(
+        item
+        for item in load_registered_formal_fixed_answer_samples()
+        if item.task_id == "formal-anomaly-002"
+    )
+    context = _load_execution_context(sample)
+    schema = _build_baseline_retriever_schema(context)
+    prompt = _retriever_prompt(
+        sample=sample,
+        context=context,
+        planner_payload={"retrieval_objective": sample.request_text},
+    )
+
+    assert context.public_execution_required is True
+    assert schema is not None
+    assert "metric_name" not in schema["properties"]
+    assert "metric_value" not in schema["properties"]
+    assert schema["properties"]["selected_doc_hashes"]["minItems"] == 1
+    assert "Do not guess metric values" in prompt
+    assert "Do not add metric_name, metric_value" in prompt
+    assert "use metric_value for the requested metric" not in prompt
+
+
+def test_external_requested_metric_does_not_fall_back_to_oracle_metadata() -> None:
+    from dataclasses import replace
+
+    from v2.benchmark.external_text_baseline import _requested_metric_name
+
+    sample = load_fixed_answer_family(Path("v2/benchmark/samples/formal_financial_family"))[0]
+    sample_without_public_metric = replace(
+        sample,
+        canonical_task_spec=replace(sample.canonical_task_spec, arguments={}),
+        expected_facts={"metric_name": "oracle_metric", "metric_value": "999"},
+        metric_projection_key="oracle_metric",
+    )
+
+    assert _requested_metric_name(sample_without_public_metric) == ""
+
+
+def test_external_public_tools_cover_registered_execution_cases() -> None:
+    from v2.benchmark.external_public_tools import execute_public_task, supports_public_task
+    from v2.benchmark.external_text_baseline import _lookup_output_value, _project_public_tool_metric
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+    from v2.benchmark.scoring import expected_facts_for_scoring
+
+    supported = []
+    for sample in load_registered_formal_fixed_answer_samples():
+        if not supports_public_task(
+            task_family=sample.canonical_task_spec.task_family,
+            intent_op=sample.canonical_task_spec.intent_op,
+        ):
+            continue
+        result = execute_public_task(
+            project_root=Path.cwd(),
+            task_family=sample.canonical_task_spec.task_family,
+            intent_op=sample.canonical_task_spec.intent_op,
+            arguments=dict(sample.canonical_task_spec.arguments),
+        )
+        metric_name, metric_value = _project_public_tool_metric(
+            sample=sample,
+            outputs=result.outputs,
+        )
+        scoring_facts = expected_facts_for_scoring(
+            expected_facts=sample.expected_facts,
+            metric_projection_key=sample.metric_projection_key,
+        )
+        supported.append(sample.task_id)
+
+        assert metric_name == sample.metric_projection_key
+        assert metric_value == str(scoring_facts["metric_value"])
+        for expected_name, expected_value in sample.expected_facts.items():
+            if expected_name in {"metric_name", "metric_value", "selected_doc_hashes"}:
+                continue
+            if expected_name.endswith("_ref") or expected_name.endswith("_artifact_ref"):
+                continue
+            assert str(_lookup_output_value(result.outputs, expected_name)) == str(expected_value)
+        assert result.source_paths
+        assert all(Path(path).is_file() for path in result.source_paths)
+
+    assert len(supported) == 17
+
+
+def test_external_public_tool_rejects_paths_outside_project() -> None:
+    from v2.benchmark.external_public_tools import execute_public_task
+
+    with pytest.raises(ValueError, match="escapes project root"):
+        execute_public_task(
+            project_root=Path.cwd(),
+            task_family="continuous_csv_table_analysis",
+            intent_op="profile_and_mean",
+            arguments={"csv_path": "../../etc/passwd", "column": "value"},
+        )
+
+
+def test_external_public_tool_imports_remain_isolated() -> None:
+    from v2.benchmark.external_text_baseline import _external_imports_are_isolated
+
+    assert _external_imports_are_isolated() is True
+
+
 def test_external_fairness_gate_rejects_raw_invisible_choice_after_normalization() -> None:
     from v2.benchmark.external_text_baseline import PublicRouteCandidate, _fairness_gate
 
@@ -623,6 +808,70 @@ def test_external_text_case_runs(tmp_path: Path) -> None:
     assert output_payload["revenue_value"] == ""
 
 
+def test_external_public_tool_case_writes_auditable_provenance(tmp_path: Path) -> None:
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+
+    sample = next(
+        item
+        for item in load_registered_formal_fixed_answer_samples()
+        if item.task_id == "formal-anomaly-002"
+    )
+    result = run_external_text_case(sample=sample, runtime_root=tmp_path / "external")
+
+    assert result.metric_name == "baro_outlier_count"
+    assert result.metric_value == "111"
+    assert result.quality_floor.quality_floor.quality_floor_pass is True
+    assert result.tool_ms > 0.0
+    assert result.tool_execution["required"] is True
+    assert result.tool_execution["success"] is True
+    assert result.selected_doc_hashes
+    artifact_path = Path(str(result.tool_execution["artifact_path"]))
+    assert artifact_path.is_file()
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["execution_kind"] == "public_csv_detect_outliers"
+    assert artifact["outputs"]["baro_outlier_count"] == "111"
+    assert artifact["source_paths"] == [str(Path("task/csv/baro_2015.csv").resolve())]
+    report = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
+    assert report["public_tool_execution"]["artifact_path"] == str(artifact_path)
+    assert report["public_tool_outputs"]["baro_outlier_count"] == "111"
+    retriever_payload = report["role_payloads"]["retriever"]
+    retriever_doc_ids = retriever_payload.get(
+        "selected_doc_hashes",
+        retriever_payload.get("supporting_doc_ids", []),
+    )
+    assert retriever_doc_ids == list(result.selected_doc_hashes)
+
+
+def test_external_public_tool_failure_fails_fairness_gate_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from v2.benchmark import external_text_baseline as baseline
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+
+    sample = next(
+        item
+        for item in load_registered_formal_fixed_answer_samples()
+        if item.task_id == "formal-anomaly-002"
+    )
+
+    def fail_public_tool(**kwargs):
+        del kwargs
+        raise ValueError("forced public tool failure")
+
+    monkeypatch.setattr(baseline, "execute_public_task", fail_public_tool)
+    result = baseline.run_external_text_case(
+        sample=sample,
+        runtime_root=tmp_path / "external",
+    )
+
+    assert result.tool_execution["success"] is False
+    assert result.metric_value == ""
+    assert result.fairness_gate["pass_hard_gate"] is False
+    assert "public_tool_execution_success" in result.fairness_gate["failed_checks"]
+    assert result.quality_floor.quality_floor.quality_floor_pass is False
+
+
 def test_external_text_family_runs(tmp_path: Path) -> None:
     family = load_fixed_answer_family(Path("v2/benchmark/samples/fixed_answer_family"))
     report = run_external_text_family(samples=family, runtime_root=tmp_path / "external")
@@ -639,12 +888,12 @@ def test_external_text_family_runs(tmp_path: Path) -> None:
     assert report.aggregated_metrics["external_fairness_gate_pass_count"] == 3.0
     assert report.aggregated_metrics["external_fairness_gate_failed_case_count"] == 0.0
     assert report.metadata["external_fairness_gate_pass"] is True
-    assert report.metadata["baseline_kind"] == "external_pure_text_four_role"
+    assert report.metadata["baseline_kind"] == "external_pure_text_four_role_public_tool"
     assert report.metadata["formal_comparator_eligible"] is True
     assert report.metadata["external_comparator_claim_scope"] == "dev_fixed_answer_only"
     assert (
         report.metadata["claim_restriction"]
-        == "dev_fixed_answer_external_fairness_only_not_formal_financial_superiority"
+        == "dev_fixed_answer_external_fairness_only"
     )
 
 
@@ -929,9 +1178,12 @@ def test_registered_formal_fixed_answer_adapter_covers_full_registry() -> None:
     assert metadata["formal_compare_family_count"] == 5
     assert metadata["formal_compare_full_registry_coverage"] is True
     assert projection_by_task["formal-trend-001"] == "trend_direction"
+    assert projection_by_task["formal-join-001"] == "gap_value"
     assert projection_by_task["formal-agg-004"] == "monthly_avg_windspeed.month_1"
     assert projection_by_task["formal-anomaly-002"] == "baro_outlier_count"
     assert route_by_task["formal-join-004"] == "compare_metric"
+    adapted = next(item for item in samples if item.task_id == "formal-trend-003")
+    assert adapted.expected_facts == {"delta_value": "22"}
 
 
 def test_external_context_uses_registry_route_catalog_for_adapted_formal_samples() -> None:
@@ -1097,6 +1349,7 @@ def test_fixed_answer_external_comparator_records_serialized_repeat_metadata(
     assert report.metadata["timing_execution_contract"] == "serialized_formal_compare_latency_rerun_v1"
     assert report.comparison_summary["serialized_repeat_count"] == 3.0
     assert report.comparison_summary["serialized_repeat_index"] == 2.0
+    assert "serialized_latency_observation_favorable" in report.metadata
 
 
 def test_role_path_normalizes_invalid_api_route_to_best_visible_candidate() -> None:
@@ -1923,6 +2176,7 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
         retrieved_doc_ids=retrieval.selected_doc_hashes,
         visible_candidates=candidates,
         prompt_slice=prompt_slice,
+        route_hints=(sample.expected_route, sample.expected_tool_name),
     )
     runner.validate_execution_choice(
         route=sample.expected_route,
@@ -1930,6 +2184,7 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
         visible_candidates=candidates,
         action_contract="execute_validated_tool",
         prompt_slice=prompt_slice,
+        route_hints=(sample.expected_route, sample.expected_tool_name),
     )
     runner.summarize(
         task_id=sample.task_id,
@@ -1952,7 +2207,8 @@ def test_role_path_structured_prompts_use_compact_payloads() -> None:
     assert "Visible route/tool candidates" not in planner_prompt
     assert "<statebus-planner-evidence>" not in planner_prompt
     planner_payload = parse_tagged_json(planner_prompt, "sb-plan-v1")
-    assert planner_payload["e"] == "evidence text\ntable fact"
+    assert planner_payload["q"] == retrieval.query_text
+    assert "e" not in planner_payload
 
     assert '"tc"' in retriever_prompt
     assert '"q"' in retriever_prompt
@@ -2018,7 +2274,42 @@ def test_role_path_lean_completion_accepts_minimal_compact_outputs(
             captured_messages.append((purpose, messages[-1].content))
             if purpose == "planner":
                 return LLMResult(
-                    text=json.dumps({"r": {"q": "q"}, "x": {}, "s": {}}),
+                    text=json.dumps(
+                        {
+                            "semantic_task_plan": {
+                                "task_semantics": {
+                                    "goal": "compare ACME revenue",
+                                    "entities": ["ACME"],
+                                    "time_scope": "",
+                                },
+                                "retrieval_objectives": {
+                                    "lexical_metadata": {
+                                        "query_text": "ACME revenue report metadata",
+                                        "objective": "locate report metadata",
+                                        "evidence_types": ["lexical_metadata"],
+                                    },
+                                    "semantic_chunk": {
+                                        "query_text": "ACME revenue context",
+                                        "objective": "retrieve revenue context",
+                                        "evidence_types": ["semantic_context"],
+                                    },
+                                    "table_structure": {
+                                        "query_text": "ACME revenue table",
+                                        "objective": "retrieve revenue cells",
+                                        "evidence_types": ["table_cell", "table_schema"],
+                                    },
+                                    "memory": {
+                                        "query_text": "ACME revenue prior analysis",
+                                        "objective": "find compatible prior analysis",
+                                        "evidence_types": ["memory_artifact"],
+                                        "reuse_intent": "assist",
+                                    },
+                                },
+                                "required_evidence": ["semantic_context", "table_cell"],
+                                "required_outputs": [],
+                            }
+                        }
+                    ),
                     model="stub-model",
                     usage=LLMUsage(prompt_tokens=4, completion_tokens=2, total_tokens=6),
                 )
@@ -2098,7 +2389,7 @@ def test_role_path_lean_completion_accepts_minimal_compact_outputs(
         tags=sample.scenario_tags,
     )
 
-    assert planner.retrieval_objective["query_text"] == retrieval.query_text
+    assert planner.model_semantic_plan["retrieval_objectives"]["memory"]["reuse_intent"] == "assist"
     assert retriever.route == sample.expected_route
     assert retriever.tool_name == sample.expected_tool_name
     assert retriever.supporting_doc_ids == expected_candidate.supporting_doc_ids
@@ -2110,7 +2401,8 @@ def test_role_path_lean_completion_accepts_minimal_compact_outputs(
     assert summarizer.confidence == 0.0
 
     prompt_by_purpose = {purpose: content for purpose, content in captured_messages}
-    assert "Prefer compact workflow keys r, x, and s" in prompt_by_purpose["planner"]
+    assert "containing semantic_task_plan" in prompt_by_purpose["planner"]
+    assert "Do not emit workflow steps" in prompt_by_purpose["planner"]
     assert "candidate_key" in prompt_by_purpose["retriever"]
     assert "Do not invent labels" in prompt_by_purpose["retriever"]
     assert "candidate_key" in prompt_by_purpose["executor"]
@@ -2165,6 +2457,152 @@ def test_formal_trend_002_structured_prompt_exposes_preferred_candidate_tiebreak
     assert decision.route == "compare_metric"
     assert decision.tool_name == "table_retriever"
     assert decision.candidate_rank == 1
+
+
+def test_formal_agg_003_prefers_canonical_intent_over_global_candidate_rank() -> None:
+    class PreferenceAwareLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
+            del temperature, kwargs
+            assert purpose == "retriever"
+            payload = parse_tagged_json(messages[-1].content, "sb-retriever-v1")
+            preferred = payload["pc"]
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "candidate_key": preferred["k"],
+                        "route": preferred["r"],
+                        "tool_name": preferred["t"],
+                    }
+                ),
+                model="stub-model",
+                usage=LLMUsage(prompt_tokens=12, completion_tokens=8, total_tokens=20),
+            )
+
+        def describe(self):
+            return {"backend": "preference-aware"}
+
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+    from v2.retrieval import RetrieverFanoutPipeline
+    from v2.runtime.role_path import financial_tool_candidates
+
+    sample = next(
+        item
+        for item in load_registered_formal_fixed_answer_samples()
+        if item.task_id == "formal-agg-003"
+    )
+    retrieval = RetrieverFanoutPipeline().run(
+        task_id=sample.task_id,
+        spec=sample.canonical_task_spec,
+    )
+    candidates = financial_tool_candidates(sample.canonical_task_spec, retrieval.candidate_pool)
+    assert candidates[0].route == "profile_table"
+
+    decision = RolePathRunner(llm_client=PreferenceAwareLLMClient()).choose_retrieval_candidate(
+        query_text=retrieval.query_text,
+        retrieved_doc_ids=retrieval.selected_doc_hashes,
+        visible_candidates=candidates,
+        allow_assisted_correction=False,
+        route_hints=(sample.canonical_task_spec.intent_op, candidates[0].route),
+    )
+
+    assert sample.canonical_task_spec.intent_op == "profile_and_mean"
+    assert decision.route == "profile_and_mean"
+    assert decision.tool_name == "csv_profiler"
+
+
+def test_formal_trend_text_prompt_exposes_public_preferred_candidate() -> None:
+    captured_prompt = ""
+
+    class RecordingLLMClient:
+        async def complete(self, messages, *, purpose, temperature=None, **kwargs):
+            nonlocal captured_prompt
+            del temperature, kwargs
+            assert purpose == "retriever"
+            captured_prompt = messages[-1].content
+            return LLMResult(
+                text=json.dumps(
+                    {
+                        "candidate_key": "compare_metric::table_retriever",
+                        "route": "compare_metric",
+                        "tool_name": "table_retriever",
+                    }
+                ),
+                model="stub-model",
+                usage=LLMUsage(prompt_tokens=12, completion_tokens=8, total_tokens=20),
+            )
+
+        def describe(self):
+            return {"backend": "recording"}
+
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+    from v2.retrieval import RetrieverFanoutPipeline
+    from v2.runtime.role_path import RolePromptSlice, financial_tool_candidates
+
+    sample = next(
+        item
+        for item in load_registered_formal_fixed_answer_samples()
+        if item.task_id == "formal-trend-002"
+    )
+    retrieval = RetrieverFanoutPipeline().run(task_id=sample.task_id, spec=sample.canonical_task_spec)
+    candidates = financial_tool_candidates(sample.canonical_task_spec, retrieval.candidate_pool)
+    runner = RolePathRunner(
+        llm_client=RecordingLLMClient(),
+        handoff_mode="text_collaboration",
+        prefix_alignment_mode="shared_evidence_prefix",
+    )
+    runner.choose_retrieval_candidate(
+        query_text=retrieval.query_text,
+        retrieved_doc_ids=retrieval.selected_doc_hashes,
+        visible_candidates=candidates,
+        prompt_slice=RolePromptSlice(
+            role="retriever",
+            hydrated_text="public evidence",
+            hydrated_bytes=len("public evidence"),
+            item_count=1,
+        ),
+        strict_surface=True,
+        allow_assisted_correction=False,
+        route_hints=(sample.canonical_task_spec.intent_op, sample.expected_route),
+    )
+
+    assert "Preferred Candidate:" in captured_prompt
+    assert "candidate_key=compare_metric::table_retriever" in captured_prompt
+    assert "basis=top-ranked visible candidate" in captured_prompt
+
+
+def test_adapted_formal_replay_keeps_runtime_facts_unprojected(tmp_path: Path) -> None:
+    from v2.benchmark.formal_registry_adapter import load_registered_formal_fixed_answer_samples
+
+    sample = next(
+        item
+        for item in load_registered_formal_fixed_answer_samples()
+        if item.task_id == "formal-trend-003"
+    )
+    report = run_fixed_answer_benchmark_family(
+        samples=[sample],
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        suite_id="formal-trend-replay-regression",
+        layer=BenchmarkLayer.L3,
+        role_path_mode="deterministic",
+        embedding_mode="deterministic",
+        statebus_mode="replay-ready",
+        benchmark_tier="formal",
+    )
+
+    assert report.aggregated_metrics["quality_floor_pass_count"] == 1.0
+    replay_count = (
+        report.telemetry_summary["validated_replay_count"]
+        + report.telemetry_summary["exact_replay_count"]
+    )
+    assert replay_count == 1.0
+    assert report.telemetry_summary["skipped_step_count"] >= 1.0
+    assert report.cases[0].replay_class in {"validated_replay", "exact_replay"}
+    assert report.metadata["baseline_kind"] == "statebus_formal_registry_adapter"
+    assert report.metadata["task_family_tier"] == "formal_registry"
+    assert 0.0 <= report.telemetry_summary["neural_prefix_cache_hit_rate_estimate"] <= 1.0
+    assert 0.0 <= report.telemetry_summary["neural_prefix_prefill_savings_ratio_estimate"] <= 1.0
 
 
 def test_fixed_answer_external_comparator_suite_skips_api_when_not_configured(

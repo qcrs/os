@@ -435,9 +435,289 @@ def test_live_runner_formal_compare_uses_registered_fixed_answer_adapter(
     payload = json.loads(capsys.readouterr().out)
     assert captured["samples"] == sentinel_samples
     assert captured["benchmark_tier"] == "formal"
+    assert captured["claim_level"] == "first_pass"
     assert payload["formal_compare_case_count"] == 25
     assert payload["formal_compare_family_count"] == 5
     assert payload["formal_compare_full_registry_coverage"] is True
+
+
+def test_live_runner_formal_compare_selects_case_id_as_diagnostic(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    samples = [
+        SimpleNamespace(task_id="benchmark-sample-1"),
+        SimpleNamespace(task_id="benchmark-sample-7"),
+    ]
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.load_registered_formal_fixed_answer_samples",
+        lambda: samples,
+    )
+
+    def fake_compare(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkComparatorSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family="formal_registry",
+            mode_reports=(),
+            comparison_summary={},
+            benchmark_tier="formal",
+            claim_level=str(kwargs["claim_level"]),
+            report_path=str(tmp_path / "compare.json"),
+        )
+
+    monkeypatch.setattr("v2.benchmark.live_runner.compare_fixed_answer_with_external", fake_compare)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "compare",
+            "--benchmark-tier",
+            "formal",
+            "--case-id",
+            "benchmark-sample-7",
+        ],
+    )
+
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert [sample.task_id for sample in captured["samples"]] == ["benchmark-sample-7"]
+    assert captured["claim_level"] == "diagnostic"
+    assert payload["execution_scope"] == "diagnostic_partial"
+    assert payload["formal_headline_eligible"] is False
+
+
+def test_live_runner_continuous_max_cases_runs_two_round_l3_diagnostic(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    family = load_continuous_task_family(
+        Path("v2/benchmark/samples/continuous_task_families/cross_period_financial")
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr("v2.benchmark.live_runner.load_continuous_task_family", lambda _: family)
+
+    profile = BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L3,
+        description="continuous diagnostic",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=True,
+    )
+
+    def fake_run_family(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkFamilyReport(
+            suite_id=str(kwargs["suite_id"]),
+            layer=kwargs["layer"],
+            task_family=kwargs["family"].family_id,
+            profile=profile,
+            cases=(),
+            metadata=dict(kwargs["metadata_extra"]),
+            report_path=str(tmp_path / "continuous-l3.json"),
+        )
+
+    monkeypatch.setattr("v2.benchmark.live_runner.run_continuous_benchmark_family", fake_run_family)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "continuous",
+            "--family",
+            "cross_period_financial",
+            "--max-cases",
+            "2",
+            "--layer",
+            "L3",
+        ],
+    )
+
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["family"].round_count == 2
+    assert [round_.round for round_ in captured["family"].rounds] == [1, 2]
+    assert captured["layer"] == BenchmarkLayer.L3
+    assert captured["enforce_expected_metric_effects"] is False
+    assert payload["selected_round_count"] == 2
+    assert payload["available_round_count"] == 10
+    assert payload["formal_headline_eligible"] is False
+
+
+def test_live_runner_statebus_l3_replay_ready_uses_single_family_runner(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    samples = [SimpleNamespace(task_id="benchmark-sample-7")]
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.load_registered_formal_fixed_answer_samples",
+        lambda: samples,
+    )
+    profile = BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L3,
+        description="replay diagnostic",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=True,
+    )
+
+    def fake_run_family(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkFamilyReport(
+            suite_id=str(kwargs["suite_id"]),
+            layer=BenchmarkLayer.L3,
+            task_family="formal_registry",
+            profile=profile,
+            cases=(),
+            metadata={
+                **dict(kwargs["metadata_extra"]),
+                "statebus_mode": "replay_ready",
+                "replay_history_source": "history_bootstrap",
+            },
+            report_path=str(tmp_path / "statebus-l3.json"),
+        )
+
+    monkeypatch.setattr("v2.benchmark.live_runner.run_fixed_answer_benchmark_family", fake_run_family)
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_fixed_answer_suite",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("full suite must not run")),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "statebus",
+            "--benchmark-tier",
+            "formal",
+            "--statebus-mode",
+            "replay-ready",
+            "--case-id",
+            "benchmark-sample-7",
+            "--layer",
+            "L3",
+        ],
+    )
+
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["layer"] == BenchmarkLayer.L3
+    assert captured["statebus_mode"] == "replay-ready"
+    assert captured["claim_level"] == "diagnostic"
+    assert payload["effective_replay_history_source"] == "history_bootstrap"
+    assert payload["formal_headline_eligible"] is False
+
+
+def test_live_runner_formal_statebus_replay_ready_uses_fixed_answer_runner(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    sentinel_samples = ["formal-statebus-1", "formal-statebus-2"]
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.load_registered_formal_fixed_answer_samples",
+        lambda: sentinel_samples,
+    )
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_minimal_benchmark_suite",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("formal statebus must not use the minimal cold-start ladder")
+        ),
+    )
+
+    profile = BenchmarkLayerProfile(
+        layer=BenchmarkLayer.L3,
+        description="formal replay-ready",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=True,
+        replay_enabled=True,
+    )
+
+    def fake_run_fixed_answer_suite(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family="formal_registry",
+            layer_reports=(
+                BenchmarkFamilyReport(
+                    suite_id="formal-statebus-l3",
+                    layer=BenchmarkLayer.L3,
+                    task_family="formal_registry",
+                    profile=profile,
+                    cases=(),
+                    metadata={
+                        "benchmark_tier": "formal",
+                        "replay_history_source": "history_bootstrap",
+                    },
+                ),
+            ),
+            waterfall_metrics={},
+            comparison_summary={},
+            metadata={
+                "benchmark_tier": "formal",
+                "statebus_mode": "replay_ready",
+            },
+            family_case_count=len(kwargs["samples"]),
+            report_path=str(tmp_path / "formal-statebus-report.json"),
+        )
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_fixed_answer_suite",
+        fake_run_fixed_answer_suite,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "statebus",
+            "--benchmark-tier",
+            "formal",
+            "--statebus-mode",
+            "replay-ready",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+            "--max-cases",
+            "2",
+        ],
+    )
+
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["samples"] == sentinel_samples
+    assert captured["benchmark_tier"] == "formal"
+    assert captured["claim_level"] == "first_pass"
+    assert captured["statebus_mode"] == "replay-ready"
+    assert payload["effective_statebus_mode"] == "replay_ready"
+    assert payload["effective_replay_history_source"] == "history_bootstrap"
+    assert payload["selected_case_count"] == 2
+    assert payload["available_case_count"] == 2
 
 
 def test_live_runner_threads_persistence_profile_to_compare_suite(

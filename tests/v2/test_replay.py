@@ -18,6 +18,7 @@ from v2.runtime.replay import (
     ReplayAdmissibilityGate,
     ReplayCandidate,
     ReplayPolicy,
+    evidence_execution_input_replay_hash,
     evidence_pack_replay_hash,
     hydrate_manifest_replay_hash,
     history_replay_candidate,
@@ -350,6 +351,82 @@ def test_replay_normalized_hashes_change_when_core_inputs_change() -> None:
     )
 
     assert planner_handoff_replay_hash(planner_a) != planner_handoff_replay_hash(planner_b)
+
+
+def test_execution_input_evidence_hash_ignores_query_scores_but_not_content() -> None:
+    locator = TextSpanLocator(
+        source_doc_hash="sha256:doc-1",
+        canonical_text_id="section-3",
+        start_char=10,
+        end_char=42,
+        extractor_version="extractor-v1",
+    )
+    evidence_a = CanonicalEvidencePack(
+        pack_id="pack-a",
+        task_id="task-a",
+        source_doc_hashes=("sha256:doc-1",),
+        semantic_contexts=(
+            EvidenceItem(
+                item_id="context-1",
+                bucket="semantic_context",
+                locator=locator,
+                rendered_text="Revenue was 42 million.",
+                source_name="report",
+                rank=1,
+                score=0.7,
+                metadata={"score": 0.7, "section": "results"},
+            ),
+        ),
+        lexical_hints=(
+            EvidenceItem(
+                item_id="hint-1",
+                bucket="lexical_hint",
+                locator=None,
+                rendered_text="Route via report keyword.",
+                source_name="lexical",
+                rank=1,
+                metadata={"hint": "report"},
+            ),
+        ),
+    )
+    evidence_b = CanonicalEvidencePack(
+        pack_id="pack-b",
+        task_id="task-b",
+        source_doc_hashes=evidence_a.source_doc_hashes,
+        semantic_contexts=(
+            EvidenceItem(
+                item_id="context-1",
+                bucket="semantic_context",
+                locator=locator,
+                rendered_text="Revenue was 42 million.",
+                source_name="report",
+                rank=4,
+                score=0.91,
+                metadata={"score": 0.91, "section": "results"},
+            ),
+        ),
+    )
+    evidence_changed = CanonicalEvidencePack(
+        pack_id="pack-c",
+        task_id="task-c",
+        source_doc_hashes=evidence_a.source_doc_hashes,
+        semantic_contexts=(
+            EvidenceItem(
+                item_id="context-1",
+                bucket="semantic_context",
+                locator=locator,
+                rendered_text="Revenue was 43 million.",
+                source_name="report",
+                rank=1,
+                score=0.7,
+                metadata={"score": 0.7, "section": "results"},
+            ),
+        ),
+    )
+
+    assert evidence_pack_replay_hash(evidence_a) != evidence_pack_replay_hash(evidence_b)
+    assert evidence_execution_input_replay_hash(evidence_a) == evidence_execution_input_replay_hash(evidence_b)
+    assert evidence_execution_input_replay_hash(evidence_a) != evidence_execution_input_replay_hash(evidence_changed)
 
 
 def test_validated_replay_gate_rejects_unverified_candidate_output() -> None:

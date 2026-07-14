@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from v2.benchmark.models import QualityFloorResult
+from v2.utils import stable_json_dumps
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,31 @@ class FixedAnswerScore:
     quality_floor: QualityFloorResult
     metric_name_exact: bool = False
     metric_value_exact: bool = False
+
+
+def expected_facts_for_scoring(
+    *,
+    expected_facts: dict[str, object],
+    metric_projection_key: str = "",
+) -> dict[str, object]:
+    projected = dict(expected_facts)
+    if not metric_projection_key or projected.get("metric_name") or projected.get("metric_value"):
+        return projected
+    if metric_projection_key in projected:
+        current: object = projected[metric_projection_key]
+    else:
+        current = projected
+        for segment in metric_projection_key.split("."):
+            if not isinstance(current, dict) or segment not in current:
+                return projected
+            current = current[segment]
+    projected["metric_name"] = metric_projection_key
+    projected["metric_value"] = (
+        stable_json_dumps(current)
+        if isinstance(current, (dict, list, tuple))
+        else str(current)
+    )
+    return projected
 
 
 def score_fixed_answer_case(

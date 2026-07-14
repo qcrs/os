@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import json
 import sys
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from v2.runtime.role_path import compile_prefix_layout  # noqa: E402
+from v2.runtime.vllm_metrics import parse_vllm_prefix_cache_metrics  # noqa: E402
 from v2.utils import sha256_digest, stable_json_dumps  # noqa: E402
 
 
@@ -28,6 +30,7 @@ DEFAULT_ARTIFACT_ROOT = Path(
     "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts"
 )
 DEFAULT_ROLES = ("planner", "retriever", "executor", "summarizer", "verifier")
+JSON_RESPONSE_FORMAT = {"type": "json_object"}
 
 
 def main() -> int:
@@ -74,11 +77,13 @@ def main() -> int:
         response = _run_prompt(
             client=client,
             model=args.model,
+            expected_role=item["role"],
             prompt=item["prompt"],
             max_tokens=args.max_tokens,
             temperature=args.temperature,
         )
         metrics_post_request = _fetch_metrics(args.metrics_url, timeout_s=args.timeout_s)
+        counter_delta = _counter_delta(metrics_pre_request, metrics_post_request)
         requests.append(
             {
                 "index": index,
@@ -91,17 +96,18 @@ def main() -> int:
                 },
                 "metrics_before_request": metrics_pre_request,
                 "metrics_after_request": metrics_post_request,
+                "prefix_counter_delta": counter_delta,
                 **response,
             }
         )
 
     metrics_after = _fetch_metrics(args.metrics_url, timeout_s=args.timeout_s)
     payload = {
-        "schema_version": "statebus.local_vllm_prefix_alignment_probe.v1",
+        "schema_version": "statebus.local_vllm_prefix_alignment_probe.v2",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "claim_boundary": (
             "shared_evidence_prefix_layout_probe_only_no_kv_tensor_export; "
-            "raw vLLM metrics are gauges unless explicit hit/miss counters are exposed"
+            "task-local cache attribution uses only explicit query/hit counter deltas"
         ),
         "mode": args.mode,
         "model": args.model,
@@ -112,6 +118,10 @@ def main() -> int:
         "evidence_file": str(args.evidence_file),
         "evidence_repeat": args.evidence_repeat,
         "evidence_bytes": len(evidence_text.encode("utf-8")),
+        "max_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "response_format": JSON_RESPONSE_FORMAT,
+        "roles": list(DEFAULT_ROLES),
         "service_health_before": health,
         "metrics_before": metrics_before,
         "metrics_after": metrics_after,
@@ -168,6 +178,7 @@ def _run_prompt(
     *,
     client: OpenAI,
     model: str,
+    expected_role: str,
     prompt: str,
     max_tokens: int,
     temperature: float,
@@ -175,17 +186,21 @@ def _run_prompt(
     started_ns = time.perf_counter_ns()
     ttft_ms = 0.0
     completion_chunks: list[str] = []
+    finish_reason = ""
     try:
         stream = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
             max_tokens=max_tokens,
+            response_format=JSON_RESPONSE_FORMAT,
             stream=True,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         for chunk in stream:
             choice = chunk.choices[0] if chunk.choices else None
+            if choice is not None and getattr(choice, "finish_reason", None):
+                finish_reason = str(choice.finish_reason)
             delta = getattr(choice, "delta", None) if choice is not None else None
             content = getattr(delta, "content", None) or ""
             if content and ttft_ms == 0.0:
@@ -193,6 +208,16 @@ def _run_prompt(
             if content:
                 completion_chunks.append(content)
         completion = "".join(completion_chunks)
+        try:
+            completion_payload = json.loads(completion)
+        except json.JSONDecodeError:
+            completion_payload = None
+        completion_contract_valid = (
+            isinstance(completion_payload, dict)
+            and completion_payload.get("role") == expected_role
+            and isinstance(completion_payload.get("status"), str)
+            and isinstance(completion_payload.get("cited_metric_count"), int)
+        )
         return {
             "ok": True,
             "error": "",
@@ -200,6 +225,9 @@ def _run_prompt(
             "ttft_ms": ttft_ms,
             "completion_bytes": len(completion.encode("utf-8")),
             "completion_sample": completion[:500],
+            "completion_json_valid": isinstance(completion_payload, dict),
+            "completion_contract_valid": completion_contract_valid,
+            "finish_reason": finish_reason,
         }
     except Exception as exc:  # noqa: BLE001 - mechanism probe records request failures.
         return {
@@ -209,6 +237,9 @@ def _run_prompt(
             "ttft_ms": ttft_ms,
             "completion_bytes": 0,
             "completion_sample": "",
+            "completion_json_valid": False,
+            "completion_contract_valid": False,
+            "finish_reason": "",
         }
 
 
@@ -251,6 +282,7 @@ def _fetch_metrics(url: str, *, timeout_s: float) -> dict[str, Any]:
             values[metric_name] = float(line.rsplit(" ", 1)[-1])
         except ValueError:
             continue
+    parsed = parse_vllm_prefix_cache_metrics(str(fetched["body"]))
     return {
         "ok": True,
         "status_code": fetched["status_code"],
@@ -258,6 +290,48 @@ def _fetch_metrics(url: str, *, timeout_s: float) -> dict[str, Any]:
         "raw_metric_lines": lines,
         "raw_metric_values": values,
         "raw_metric_names": sorted(values),
+        "prefix_cache": parsed.canonical_payload(),
+    }
+
+
+def _counter_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    before_cache = before.get("prefix_cache", {}) if isinstance(before, dict) else {}
+    after_cache = after.get("prefix_cache", {}) if isinstance(after, dict) else {}
+    query_delta = float(after_cache.get("queries_total", 0.0)) - float(
+        before_cache.get("queries_total", 0.0)
+    )
+    hit_delta = float(after_cache.get("hits_total", 0.0)) - float(
+        before_cache.get("hits_total", 0.0)
+    )
+    before_counter_names = set(before_cache.get("counter_metric_names", []))
+    after_counter_names = set(after_cache.get("counter_metric_names", []))
+    has_before_pair = any("queries_total" in name for name in before_counter_names) and any(
+        "hits_total" in name for name in before_counter_names
+    )
+    has_after_pair = any("queries_total" in name for name in after_counter_names) and any(
+        "hits_total" in name for name in after_counter_names
+    )
+    available = has_before_pair and has_after_pair
+    valid = available and query_delta > 0.0 and 0.0 <= hit_delta <= query_delta
+    return {
+        "available": available,
+        "valid": valid,
+        "queries": query_delta if valid else 0.0,
+        "hits": hit_delta if valid else 0.0,
+        "hit_rate": hit_delta / query_delta if valid else None,
+        "unavailable_reason": (
+            ""
+            if valid
+            else (
+                "invalid_counter_delta"
+                if available
+                else (
+                    "service_lifetime_gauge_only"
+                    if before_cache.get("gauge_metric_names") or after_cache.get("gauge_metric_names")
+                    else "query_hit_counters_not_exposed"
+                )
+            )
+        ),
     }
 
 
@@ -287,12 +361,66 @@ def _summarize_requests(requests: list[dict[str, Any]]) -> dict[str, Any]:
     latencies = [float(request["latency_ms"]) for request in ok_requests]
     final_metrics = requests[-1]["metrics_after_request"] if requests else {}
     values = final_metrics.get("raw_metric_values", {}) if isinstance(final_metrics, dict) else {}
+    valid_deltas = [
+        request["prefix_counter_delta"]
+        for request in requests
+        if request.get("prefix_counter_delta", {}).get("valid") is True
+    ]
+    delta_queries = sum(float(item["queries"]) for item in valid_deltas)
+    delta_hits = sum(float(item["hits"]) for item in valid_deltas)
+    cold_reference = ok_requests[:1]
+    warm_candidates = ok_requests[1:]
+    cold_ttft_ms = float(cold_reference[0]["ttft_ms"]) if cold_reference else 0.0
+    cold_latency_ms = float(cold_reference[0]["latency_ms"]) if cold_reference else 0.0
+    warm_ttft_values = [
+        float(item["ttft_ms"]) for item in warm_candidates if float(item["ttft_ms"]) > 0.0
+    ]
+    warm_latency_values = [float(item["latency_ms"]) for item in warm_candidates]
+    warm_mean_ttft_ms = (
+        sum(warm_ttft_values) / len(warm_ttft_values) if warm_ttft_values else 0.0
+    )
+    warm_mean_latency_ms = (
+        sum(warm_latency_values) / len(warm_latency_values) if warm_latency_values else 0.0
+    )
+    unavailable_reasons: dict[str, int] = {}
+    for request in requests:
+        reason = str(request.get("prefix_counter_delta", {}).get("unavailable_reason", "")).strip()
+        if reason:
+            unavailable_reasons[reason] = unavailable_reasons.get(reason, 0) + 1
     return {
         "request_count": len(requests),
         "ok_count": len(ok_requests),
         "error_count": len(requests) - len(ok_requests),
+        "completion_json_valid_count": sum(
+            int(request.get("completion_json_valid") is True) for request in requests
+        ),
+        "completion_contract_valid_count": sum(
+            int(request.get("completion_contract_valid") is True) for request in requests
+        ),
         "mean_ttft_ms": sum(ttfts) / len(ttfts) if ttfts else 0.0,
         "mean_latency_ms": sum(latencies) / len(latencies) if latencies else 0.0,
+        "counter_delta_valid_request_count": len(valid_deltas),
+        "counter_delta_unavailable_request_count": len(requests) - len(valid_deltas),
+        "counter_delta_queries": delta_queries,
+        "counter_delta_hits": delta_hits,
+        "counter_delta_hit_rate": delta_hits / delta_queries if delta_queries > 0.0 else None,
+        "counter_delta_unavailable_reasons": dict(sorted(unavailable_reasons.items())),
+        "serialized_cold_reference_count": len(cold_reference),
+        "serialized_warm_candidate_count": len(warm_candidates),
+        "cold_reference_ttft_ms": cold_ttft_ms,
+        "warm_candidate_mean_ttft_ms": warm_mean_ttft_ms,
+        "observed_warm_ttft_reduction_ms": cold_ttft_ms - warm_mean_ttft_ms,
+        "observed_warm_ttft_reduction_ratio": (
+            (cold_ttft_ms - warm_mean_ttft_ms) / cold_ttft_ms if cold_ttft_ms > 0.0 else None
+        ),
+        "cold_reference_latency_ms": cold_latency_ms,
+        "warm_candidate_mean_latency_ms": warm_mean_latency_ms,
+        "observed_warm_latency_reduction_ms": cold_latency_ms - warm_mean_latency_ms,
+        "latency_observation_valid": bool(cold_reference and warm_candidates),
+        "latency_claim_boundary": (
+            "serialized_same_run_cold_first_vs_later_shared-prefix-eligible_requests; "
+            "requires independent-mode paired run for causal attribution"
+        ),
         "final_gpu_prefix_cache_hit_rate": values.get("vllm:gpu_prefix_cache_hit_rate"),
         "final_cpu_prefix_cache_hit_rate": values.get("vllm:cpu_prefix_cache_hit_rate"),
         "final_gpu_cache_usage_perc": values.get("vllm:gpu_cache_usage_perc"),

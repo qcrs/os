@@ -19,10 +19,12 @@ from v2.contracts import CanonicalTaskSpec
 from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
 from v2.retrieval.models import RetrievalCandidatePool
 from v2.runtime.logit_state import serialize_logit_state_v2
+from v2.runtime.semantic_plan import planner_semantic_plan_response_schema
 from v2.utils import sha256_digest
 
 
 PREFIX_LAYOUT_PLAN_SCHEMA_VERSION = "statebus.prefix_layout_plan.v1"
+RENDERED_ROLE_REQUEST_SCHEMA_VERSION = "statebus.rendered_role_request.v1"
 PREFIX_LAYOUT_CLAIM_BOUNDARY = (
     "prompt_prefix_layout_control_plane_only_no_kv_tensor_export"
 )
@@ -116,6 +118,8 @@ class PlannerRoleResult:
     total_tokens: int = 0
     prompt_bytes: int = 0
     latency_ms: float = 0.0
+    model_semantic_plan: dict[str, Any] = field(default_factory=dict)
+    model_generated_field_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -153,6 +157,8 @@ class ExecutorRoleDecision:
     logit_varentropy: float = 0.0
     logit_top_gap: float = 0.0
     logit_peak_position: int = -1
+    logit_sequence_length: int = 0
+    logit_decision_entropy: float = -1.0
 
 
 @dataclass(frozen=True)
@@ -577,23 +583,48 @@ def _preferred_candidate_payload(
     *,
     route_hints: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    preferred = best_visible_candidate(visible_candidates)
+    normalized_route_hints = tuple(
+        dict.fromkeys(hint.strip() for hint in route_hints if hint.strip())
+    )
+    if not normalized_route_hints:
+        return {}
+    preferred: RoleToolCandidate | None = None
+    for normalized_hint in normalized_route_hints:
+        matching = tuple(
+            candidate
+            for candidate in visible_candidates
+            if normalized_hint in {candidate.route, candidate.candidate_key()}
+        )
+        if matching:
+            preferred = best_visible_candidate(matching)
+            break
+    if preferred is None:
+        preferred = best_visible_candidate(visible_candidates)
     payload: dict[str, Any] = {
         "k": preferred.candidate_key(),
         "r": preferred.route,
         "t": preferred.tool_name,
         "why": "top_ranked_visible_candidate",
     }
-    normalized_hints = tuple(
-        dict.fromkeys(
-            hint.strip()
-            for hint in route_hints
-            if hint.strip() and hint.strip() not in {preferred.route, preferred.candidate_key()}
-        )
+    remaining_hints = tuple(
+        hint
+        for hint in normalized_route_hints
+        if hint not in {preferred.route, preferred.candidate_key()}
     )
-    if normalized_hints:
-        payload["rh"] = list(normalized_hints)
+    if remaining_hints:
+        payload["rh"] = list(remaining_hints)
     return payload
+
+
+def _preferred_candidate_text(payload: dict[str, Any]) -> str:
+    if not payload:
+        return ""
+    return (
+        f"candidate_key={payload.get('k', '')}; "
+        f"route={payload.get('r', '')}; "
+        f"tool_name={payload.get('t', '')}; "
+        "basis=top-ranked visible candidate"
+    )
 
 
 def _selection_retry_prompt(
@@ -814,6 +845,15 @@ def _parse_role_selection(payload: dict[str, Any]) -> ParsedRoleSelection:
 
 
 def _canonicalize_planner_workflow_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    def _with_semantic_plan(result: dict[str, Any]) -> dict[str, Any]:
+        semantic_plan = payload.get("semantic_task_plan")
+        if isinstance(semantic_plan, dict):
+            result["semantic_task_plan"] = semantic_plan
+        retrieval_objective = payload.get("retrieval_objective")
+        if isinstance(retrieval_objective, dict):
+            result["retrieval_objective"] = retrieval_objective
+        return result
+
     def _canonical_step(step: dict[str, Any]) -> dict[str, Any]:
         semantic_role = str(step.get("semantic_role", step.get("step_id", ""))).strip()
         params = dict(step.get("params", {})) if isinstance(step.get("params"), dict) else {}
@@ -843,13 +883,15 @@ def _canonicalize_planner_workflow_payload(payload: dict[str, Any]) -> dict[str,
     if "steps" in payload:
         steps = payload.get("steps")
         if isinstance(steps, list):
-            return {"steps": [_canonical_step(step) for step in steps if isinstance(step, dict)]}
-        return {"steps": []}
+            return _with_semantic_plan(
+                {"steps": [_canonical_step(step) for step in steps if isinstance(step, dict)]}
+            )
+        return _with_semantic_plan({"steps": []})
     retrieve = payload.get("r")
     execute = payload.get("x")
     summarize = payload.get("s")
     if not isinstance(retrieve, dict) or not isinstance(execute, dict) or not isinstance(summarize, dict):
-        return payload
+        return _with_semantic_plan({})
     steps: list[dict[str, Any]] = [
         _canonical_step(
             {
@@ -911,7 +953,7 @@ def _canonicalize_planner_workflow_payload(payload: dict[str, Any]) -> dict[str,
             }
         )
     )
-    return {"steps": steps}
+    return _with_semantic_plan({"steps": steps})
 
 
 @dataclass
@@ -923,6 +965,11 @@ class RolePathRunner:
         default_factory=lambda: os.getenv("STATEBUS_PREFIX_ALIGNMENT_MODE", "independent")
     )
     lean_completion_enabled: bool = field(default_factory=lambda: _env_flag("STATEBUS_LEAN_COMPLETION"))
+    rendered_request_audit: dict[str, list[dict[str, Any]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def _render_prompt(
         self,
@@ -949,29 +996,45 @@ class RolePathRunner:
         return compiled.prompt
 
     def _planner_instruction(self) -> str:
-        if self.lean_completion_enabled:
-            return (
-                "Return exactly one compact JSON object (json only). Prefer compact workflow keys r, x, and s; "
-                "omit retrieval_objective, verbose step metadata, and empty fields."
-            )
-        return "Return a JSON object with stable retrieval_objective and steps."
+        return (
+            "Return exactly one JSON object containing semantic_task_plan with these exact flat keys: goal, "
+            "entities, time_scope, lexical_query, lexical_objective, semantic_query, semantic_objective, "
+            "table_query, table_objective, memory_query, memory_objective, memory_reuse_intent, "
+            "required_evidence, required_outputs. Give lexical, semantic, table, and memory different retrieval "
+            "goals. memory_reuse_intent must be none, assist, artifact, or strategy. required_evidence may only "
+            "contain lexical_metadata, semantic_context, table_cell, table_schema, artifact_summary, "
+            "memory_artifact, memory_strategy, or citation. Use only allowed required outputs. Do not emit workflow "
+            "steps, DAGs, code, case IDs, routes, tools, candidate keys, expected facts, values, or answers."
+        )
 
-    def _retriever_instruction(self) -> str:
+    def _retriever_instruction(self, *, preferred_candidate_enabled: bool) -> str:
+        tie_break = (
+            "Treat pc as the default tie-break when multiple tc items look plausible and the hydrated "
+            "evidence does not clearly contradict pc or its route hints. "
+            if preferred_candidate_enabled
+            else "Choose independently from the complete visible tc candidate set using the request and evidence. "
+        )
         return (
             "Select exactly one visible route/tool candidate. Copy candidate_key, route, and tool_name "
-            "exactly from a single visible tc item. Treat pc as the default tie-break when multiple tc "
-            "items look plausible and the hydrated evidence does not clearly contradict pc or its route "
-            "hints. Do not invent labels or use placeholders such as 'tool' or 'route'. "
+            "exactly from a single visible tc item. "
+            f"{tie_break}"
+            "Do not invent labels or use placeholders such as 'tool' or 'route'. "
             "Return a JSON object (starting with { and ending with }) "
             "with keys candidate_key, route, tool_name, supporting_doc_ids, and reason."
         )
 
-    def _executor_instruction(self) -> str:
+    def _executor_instruction(self, *, preferred_candidate_enabled: bool) -> str:
+        tie_break = (
+            "Treat pc as the default tie-break when multiple tc items share the same tool and the hydrated "
+            "evidence does not clearly contradict pc or its route hints. "
+            if preferred_candidate_enabled
+            else "Validate only the Retriever-selected route/tool against the complete visible tc candidate set. "
+        )
         return (
             "Validate the chosen route/tool within the visible candidate set. Copy candidate_key, route, "
-            "and tool_name exactly from a single visible tc item. Treat pc as the default tie-break when "
-            "multiple tc items share the same tool and the hydrated evidence does not clearly contradict pc "
-            "or its route hints. Do not invent labels or use placeholders such as 'tool' or 'route'. "
+            "and tool_name exactly from a single visible tc item. "
+            f"{tie_break}"
+            "Do not invent labels or use placeholders such as 'tool' or 'route'. "
             "Return a JSON object (starting with { and ending with }) "
             "with keys candidate_key, route, tool_name, action_contract, and reason."
         )
@@ -1009,6 +1072,11 @@ class RolePathRunner:
         last_error: ValueError | None = None
         for attempt_index in range(max_attempts):
             prompt_bytes += len(current_prompt.encode("utf-8"))
+            self._record_rendered_request(
+                role=purpose,
+                prompt=current_prompt,
+                response_schema=response_schema,
+            )
             result = _run_sync(
                 self.llm_client.complete(
                     [ChatMessage(role="user", content=current_prompt)],
@@ -1038,6 +1106,49 @@ class RolePathRunner:
         raise ValueError(
             f"{purpose} role returned invalid JSON after {len(attempts)} attempt(s): {last_text!r}"
         ) from last_error
+
+    def _record_rendered_request(
+        self,
+        *,
+        role: str,
+        prompt: str,
+        response_schema: dict[str, Any] | None,
+    ) -> None:
+        role_requests = self.rendered_request_audit.setdefault(role, [])
+        request_payload: dict[str, Any] = {
+            "role": role,
+            "attempt_index": len(role_requests) + 1,
+            "purpose": role,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_schema": response_schema or {},
+            "prompt_sha256": sha256_digest(prompt.encode("utf-8")),
+            "prompt_bytes": len(prompt.encode("utf-8")),
+        }
+        request_payload["request_sha256"] = sha256_digest(request_payload)
+        role_requests.append(request_payload)
+
+    def rendered_request_audit_payload(
+        self,
+        role: str,
+        *,
+        include_content: bool = True,
+    ) -> dict[str, Any]:
+        requests: list[dict[str, Any]] = []
+        audit_by_role = getattr(self, "rendered_request_audit", {})
+        for request in audit_by_role.get(role, []):
+            item = dict(request)
+            if not include_content:
+                item.pop("messages", None)
+                response_schema = item.pop("response_schema", {})
+                item["response_schema_sha256"] = sha256_digest(response_schema)
+            requests.append(item)
+        return {
+            "schema_version": RENDERED_ROLE_REQUEST_SCHEMA_VERSION,
+            "role": role,
+            "content_persisted": include_content,
+            "request_count": len(requests),
+            "requests": requests,
+        }
 
     def build_retrieval_objective(
         self,
@@ -1179,72 +1290,50 @@ class RolePathRunner:
         strict_surface: bool = True,
         tags: tuple[str, ...] = (),
         required_roles: tuple[str, ...] = ("retrieve", "execute", "summarize"),
+        allowed_required_outputs: tuple[str, ...] = (),
+        target_entities: tuple[str, ...] = (),
+        time_scope: str = "",
     ) -> PlannerRoleResult:
+        del task_id, task_group, task_theme, visible_candidates, tags, required_roles
         prompt_slice = prompt_slice or RolePromptSlice(role="planner")
         instruction = self._planner_instruction()
-        _, _candidate_notes = _candidate_surface_payload(
-            visible_candidates,
-            include_helper_fields=not strict_surface,
-        )
+        del prompt_slice, strict_surface
         payload = {
             "g": goal,
             "q": query_text,
             "h": summary_hint,
-            "t": list(tags),
-            "rr": list(required_roles),
+            "ao": list(allowed_required_outputs),
+            "en": list(target_entities),
+            "ts": time_scope,
         }
-        if task_theme.strip():
-            payload["tf"] = task_theme
-        evidence_text = _compact_text_value(prompt_slice.combined_text())
-        if evidence_text:
-            payload["e"] = evidence_text
         prompt = self._render_prompt(
             role_label="planner",
             instruction=instruction,
             payload_tag="sb-plan-v1",
             payload=payload,
             text_sections=(
-                ("Task ID", task_id),
-                ("Task group", task_group),
-                ("Task Theme", task_theme),
                 ("Goal", goal),
-                ("Search query", query_text),
-                ("Required semantic roles", ", ".join(required_roles)),
+                ("Task request", query_text),
                 ("Summary hint", summary_hint),
-                ("Tags", ", ".join(tags)),
-                ("Evidence note", evidence_text),
+                ("Allowed required outputs", ", ".join(allowed_required_outputs)),
+                ("Entity hints", ", ".join(target_entities)),
+                ("Time scope hint", time_scope),
             ),
-            shared_prefix_text=evidence_text,
+            shared_prefix_text="",
         )
-        if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
-            self.prefix_alignment_mode,
-            evidence_text,
-        ):
-            prompt = (
-                "You are the StateBus v2 planner role.\n"
-                f"{instruction}\n\n"
-                f"Task ID: {task_id}\n"
-                f"Task group: {task_group}\n"
-                f"Task theme: {task_theme}\n"
-                f"Tags: {', '.join(tags)}\n\n"
-                f"Goal:\n{goal}\n\n"
-                f"Search query:\n{query_text}\n\n"
-                f"Required semantic roles:\n{', '.join(required_roles)}\n\n"
-                f"Summary hint:\n{summary_hint}\n\n"
-                f"Evidence note:\n{prompt_slice.combined_text()}\n\n"
-            )
-        completion = self._complete_json_role(prompt=prompt, purpose="planner")
+        completion = self._complete_json_role(
+            prompt=prompt,
+            purpose="planner",
+            response_schema=planner_semantic_plan_response_schema(
+                allowed_required_outputs=allowed_required_outputs,
+            ),
+        )
         result = completion.result
         payload = _canonicalize_planner_workflow_payload(completion.payload)
         retrieval_objective = payload.get("retrieval_objective", {})
-        if not isinstance(retrieval_objective, dict):
-            retrieval_objective = {}
-        if "query_text" not in retrieval_objective:
-            retrieval_objective["query_text"] = query_text
-        if "required_tools" not in retrieval_objective:
-            retrieval_objective["required_tools"] = list(tags)
-        if "candidate_keys" not in retrieval_objective:
-            retrieval_objective["candidate_keys"] = [candidate.candidate_key() for candidate in visible_candidates]
+        retrieval_objective = retrieval_objective if isinstance(retrieval_objective, dict) else {}
+        semantic_plan = payload.get("semantic_task_plan", {})
+        semantic_plan = semantic_plan if isinstance(semantic_plan, dict) else {}
         return PlannerRoleResult(
             workflow_payload=payload,
             retrieval_objective=retrieval_objective,
@@ -1255,6 +1344,7 @@ class RolePathRunner:
             total_tokens=result.usage.total_tokens,
             prompt_bytes=completion.prompt_bytes,
             latency_ms=completion.latency_ms,
+            model_semantic_plan=semantic_plan,
         )
 
     def choose_retrieval_candidate(
@@ -1269,7 +1359,6 @@ class RolePathRunner:
         route_hints: tuple[str, ...] = (),
     ) -> RetrieverRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="retriever")
-        instruction = self._retriever_instruction()
         candidate_payload, _candidate_notes = _candidate_surface_payload(
             visible_candidates,
             include_helper_fields=not strict_surface,
@@ -1282,11 +1371,16 @@ class RolePathRunner:
                 include_helper_fields=not strict_surface,
             ),
         }
-        if strict_surface and self.handoff_mode != "text_collaboration":
-            payload["pc"] = _preferred_candidate_payload(
-                visible_candidates,
-                route_hints=route_hints,
-            )
+        preferred_candidate = (
+            _preferred_candidate_payload(visible_candidates, route_hints=route_hints)
+            if strict_surface
+            else {}
+        )
+        instruction = self._retriever_instruction(
+            preferred_candidate_enabled=bool(preferred_candidate)
+        )
+        if preferred_candidate and self.handoff_mode != "text_collaboration":
+            payload["pc"] = preferred_candidate
         evidence_text = _compact_text_value(prompt_slice.combined_text())
         if evidence_text:
             payload["e"] = evidence_text
@@ -1299,6 +1393,7 @@ class RolePathRunner:
                 ("Query", query_text),
                 ("Retrieved Doc IDs", ", ".join(retrieved_doc_ids)),
                 ("Visible Candidates", "\n".join(_candidate_notes.split("; ")) if _candidate_notes else ""),
+                ("Preferred Candidate", _preferred_candidate_text(preferred_candidate)),
                 ("Hydrated Evidence", evidence_text),
             ),
             shared_prefix_text=evidence_text,
@@ -1307,6 +1402,11 @@ class RolePathRunner:
             self.prefix_alignment_mode,
             evidence_text,
         ):
+            preferred_candidate_section = (
+                f"Preferred candidate: {_preferred_candidate_text(preferred_candidate)}\n\n"
+                if preferred_candidate
+                else ""
+            )
             prompt = (
                 "You are the StateBus v2 retriever role.\n"
                 f"{instruction}\n\n"
@@ -1314,6 +1414,7 @@ class RolePathRunner:
                 f"Retrieved docs: {','.join(retrieved_doc_ids)}\n"
                 f"Visible candidates: {_candidate_identity_line(visible_candidates)}\n"
                 f"Candidate notes: {_candidate_notes}\n\n"
+                f"{preferred_candidate_section}"
                 f"Evidence note:\n{prompt_slice.combined_text()}\n"
             )
         completions: list[JsonRoleCompletion] = []
@@ -1381,7 +1482,6 @@ class RolePathRunner:
         route_hints: tuple[str, ...] = (),
     ) -> ExecutorRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="executor")
-        instruction = self._executor_instruction()
         candidate_payload, _candidate_notes = _candidate_surface_payload(
             visible_candidates,
             include_helper_fields=not strict_surface,
@@ -1395,11 +1495,16 @@ class RolePathRunner:
                 include_helper_fields=not strict_surface,
             ),
         }
-        if strict_surface and self.handoff_mode != "text_collaboration":
-            payload["pc"] = _preferred_candidate_payload(
-                visible_candidates,
-                route_hints=route_hints,
-            )
+        preferred_candidate = (
+            _preferred_candidate_payload(visible_candidates, route_hints=route_hints)
+            if strict_surface
+            else {}
+        )
+        instruction = self._executor_instruction(
+            preferred_candidate_enabled=bool(preferred_candidate)
+        )
+        if preferred_candidate and self.handoff_mode != "text_collaboration":
+            payload["pc"] = preferred_candidate
         evidence_text = _compact_text_value(prompt_slice.combined_text())
         if evidence_text:
             payload["e"] = evidence_text
@@ -1413,6 +1518,7 @@ class RolePathRunner:
                 ("Tool", tool_name),
                 ("Action Contract", action_contract),
                 ("Visible Candidates", "\n".join(_candidate_notes.split("; ")) if _candidate_notes else ""),
+                ("Preferred Candidate", _preferred_candidate_text(preferred_candidate)),
                 ("Hydrated Evidence", evidence_text),
             ),
             shared_prefix_text=evidence_text,
@@ -1421,6 +1527,11 @@ class RolePathRunner:
             self.prefix_alignment_mode,
             evidence_text,
         ):
+            preferred_candidate_section = (
+                f"Preferred candidate: {_preferred_candidate_text(preferred_candidate)}\n\n"
+                if preferred_candidate
+                else ""
+            )
             prompt = (
                 "You are the StateBus v2 executor role.\n"
                 f"{instruction}\n\n"
@@ -1431,6 +1542,7 @@ class RolePathRunner:
                 f"Validated action contract: {action_contract}\n"
                 f"Visible candidates: {_candidate_identity_line(visible_candidates)}\n"
                 f"Candidate notes: {_candidate_notes}\n\n"
+                f"{preferred_candidate_section}"
                 f"Evidence note:\n{prompt_slice.combined_text()}\n"
             )
         completions: list[JsonRoleCompletion] = []
@@ -1476,15 +1588,33 @@ class RolePathRunner:
         _logit_varentropy = 0.0
         _logit_top_gap = 0.0
         _logit_peak_position = -1
+        _logit_sequence_length = 0
+        _logit_decision_entropy = -1.0
         if result.top_logprobs:
             try:
-                _logit_result = serialize_logit_state_v2(result.top_logprobs)
+                _logit_result = serialize_logit_state_v2(
+                    result.top_logprobs,
+                    candidate_tokens=tuple(
+                        dict.fromkeys(
+                            value
+                            for candidate in visible_candidates
+                            for value in (
+                                candidate.candidate_key(),
+                                candidate.route,
+                                candidate.tool_name,
+                            )
+                            if value
+                        )
+                    ),
+                )
                 _logit_entropy = _logit_result.entropy
                 _logit_confidence_proxy = _logit_result.confidence_proxy
                 _logit_state_bytes = len(_logit_result.payload_bytes)
                 _logit_varentropy = _logit_result.varentropy
                 _logit_top_gap = _logit_result.top_gap
                 _logit_peak_position = _logit_result.peak_position
+                _logit_sequence_length = _logit_result.sequence_length
+                _logit_decision_entropy = _logit_result.decision_entropy
             except Exception:
                 pass
         return ExecutorRoleDecision(
@@ -1507,6 +1637,8 @@ class RolePathRunner:
             logit_varentropy=_logit_varentropy,
             logit_top_gap=_logit_top_gap,
             logit_peak_position=_logit_peak_position,
+            logit_sequence_length=_logit_sequence_length,
+            logit_decision_entropy=_logit_decision_entropy,
         )
 
     def summarize(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 CONTROL_PLANE_SCHEMA_VERSION = "statebus.control_plane.v2"
 CANONICAL_TASK_SPEC_SCHEMA_VERSION = "statebus.canonical_task_spec.v1"
-PLANNER_HANDOFF_SCHEMA_VERSION = "statebus.planner_handoff.v1"
+PLANNER_HANDOFF_SCHEMA_VERSION = "statebus.planner_handoff.v2"
 RUNTIME_SIGNATURE_MANIFEST_BUNDLE_SCHEMA_VERSION = "statebus.runtime_signature_manifest_bundle.v1"
 RUNTIME_COMPATIBILITY_SCHEMA_VERSION = "statebus.runtime_compatibility.v1"
 REF_REGISTRY_SCHEMA_VERSION = "statebus.ref_registry_entry.v1"

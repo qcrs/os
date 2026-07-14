@@ -31,7 +31,9 @@ from v2.runtime.kv_budget import (
     load_kv_cache_model_profile,
 )
 from v2.runtime.vllm_metrics import (
+    VllmPrefixCacheCounterDelta,
     VllmPrefixCacheMetrics,
+    compute_vllm_prefix_cache_counter_delta,
     fetch_vllm_prefix_cache_metrics,
     parse_vllm_prefix_cache_metrics,
 )
@@ -55,6 +57,7 @@ from v2.runtime.preflight import PreflightCheck, RuntimePreflightReport, runtime
 from v2.runtime.replay import (
     count_exact_replay_candidates,
     evidence_pack_replay_hash,
+    evidence_execution_input_replay_hash,
     HistoryReplayRecord,
     hydrate_manifest_replay_hash,
     planner_handoff_replay_hash,
@@ -171,6 +174,7 @@ __all__ = [
     "TelemetryEmitter",
     "TelemetryEvent",
     "VllmPrefixCacheMetrics",
+    "VllmPrefixCacheCounterDelta",
     "build_extended_output_manifest",
     "build_corpus_prefix_hash",
     "build_evidence_prefix_hash",
@@ -178,7 +182,9 @@ __all__ = [
     "build_task_lineage_view",
     "capture_execution_logs",
     "count_exact_replay_candidates",
+    "compute_vllm_prefix_cache_counter_delta",
     "evidence_pack_replay_hash",
+    "evidence_execution_input_replay_hash",
     "estimate_engine_local_prefix_reuse",
     "order_prefix_schedule_hints",
     "order_prefix_schedule_hints_by_task_ids",

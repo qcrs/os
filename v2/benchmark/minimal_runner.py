@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from v2.benchmark.models import (
     BenchmarkSuiteReport,
     QualityFloorResult,
 )
+from v2.benchmark.metric_aggregation import finalize_case_telemetry_summary
 from v2.benchmark.reporting import family_report_to_dict, suite_report_to_dict, write_json_report
 from v2.contracts import CanonicalTaskSpec
 from v2.runtime import TelemetryEmitter, TelemetryEvent
@@ -158,23 +160,36 @@ def _quality_floor_from_smoke(smoke: SmokeResult) -> QualityFloorResult:
     return smoke.quality_floor
 
 
-def _report_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> BenchmarkRunReport:
+def _report_from_smoke(
+    sample: MinimalBenchmarkSample,
+    smoke: SmokeResult,
+    *,
+    task_ms: float | None = None,
+) -> BenchmarkRunReport:
+    metrics = {
+        "telemetry_event_count": float(smoke.telemetry_event_count),
+        "registry_path_length": float(len(smoke.registry_path)),
+        "output_artifact_path_length": float(len(smoke.output_artifact_path)),
+        "workflow_step_count": float(smoke.workflow_step_count),
+        "attempt_count": float(smoke.attempt_count),
+        "runtime_replan_count": float(smoke.runtime_replan_count),
+    }
+    if task_ms is not None:
+        metrics["task_ms"] = float(task_ms)
     return BenchmarkRunReport(
         layer=BenchmarkLayer.L3,
         task_family=sample.task_family,
         quality_floor=_quality_floor_from_smoke(smoke),
-        metrics={
-            "telemetry_event_count": float(smoke.telemetry_event_count),
-            "registry_path_length": float(len(smoke.registry_path)),
-            "output_artifact_path_length": float(len(smoke.output_artifact_path)),
-            "workflow_step_count": float(smoke.workflow_step_count),
-            "attempt_count": float(smoke.attempt_count),
-            "runtime_replan_count": float(smoke.runtime_replan_count),
-        },
+        metrics=metrics,
     )
 
 
-def _case_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> BenchmarkCaseReport:
+def _case_from_smoke(
+    sample: MinimalBenchmarkSample,
+    smoke: SmokeResult,
+    *,
+    task_ms: float,
+) -> BenchmarkCaseReport:
     return BenchmarkCaseReport(
         task_id=sample.task_id,
         task_family=sample.task_family,
@@ -200,6 +215,7 @@ def _case_from_smoke(sample: MinimalBenchmarkSample, smoke: SmokeResult) -> Benc
             "workflow_step_count": float(smoke.workflow_step_count),
             "completed_workflow_step_count": float(smoke.completed_workflow_step_count),
             "replan_history_count": float(smoke.replan_history_count),
+            "task_ms": float(task_ms),
         },
     )
 
@@ -236,6 +252,7 @@ def run_minimal_benchmark(
             "executor_transport": executor_transport,
         }
     )
+    start_ns = time.perf_counter_ns()
     smoke = run_smoke(
         workspace_root=workspace_root,
         runtime_root=runtime_root,
@@ -247,7 +264,8 @@ def run_minimal_benchmark(
         expected_facts=sample.expected_facts,
         seed_replay_memory=seed_replay_memory,
     )
-    return smoke, _report_from_smoke(sample, smoke)
+    task_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+    return smoke, _report_from_smoke(sample, smoke, task_ms=task_ms)
 
 
 def run_minimal_benchmark_family(
@@ -273,6 +291,7 @@ def run_minimal_benchmark_family(
     layer_workspace_root = _prepare_case_root(workspace_root)
     for sample in samples:
         case_runtime_root = _prepare_case_root(runtime_root / sample.task_id)
+        start_ns = time.perf_counter_ns()
         smoke = run_smoke(
             workspace_root=layer_workspace_root,
             runtime_root=case_runtime_root,
@@ -295,7 +314,8 @@ def run_minimal_benchmark_family(
             expected_facts=sample.expected_facts,
             seed_replay_memory=seed_replay_memory,
         )
-        cases.append(_case_from_smoke(sample, smoke))
+        task_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        cases.append(_case_from_smoke(sample, smoke, task_ms=task_ms))
         suite_emitter.emit(
             TelemetryEvent.create(
                 trace_id=f"suite:{suite_id}",
@@ -310,7 +330,10 @@ def run_minimal_benchmark_family(
         "quality_floor_pass_count": float(sum(1 for case in cases if case.quality_floor.quality_floor_pass)),
         "telemetry_event_count": float(sum(case.telemetry_event_count for case in cases)),
     }
-    telemetry_summary = suite_emitter.summarize_suite([case.task_id for case in cases])
+    telemetry_summary = finalize_case_telemetry_summary(
+        suite_emitter.summarize_suite([case.task_id for case in cases]),
+        cases,
+    )
     replay_class_distribution: dict[str, float] = {}
     quality_floor_breakdown = {
         "deterministic_checks_passed_count": float(
@@ -322,6 +345,13 @@ def run_minimal_benchmark_family(
     for case in cases:
         replay_class_distribution[case.replay_class] = replay_class_distribution.get(case.replay_class, 0.0) + 1.0
     task_family = cases[0].task_family if cases else "financial_report_analysis"
+    family_tier = (
+        "formal_registry"
+        if benchmark_tier == "formal" and len({case.task_family for case in cases}) > 1
+        else "formal_financial"
+        if benchmark_tier == "formal"
+        else "dev"
+    )
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}-{layer.value}.json"
     family_report = BenchmarkFamilyReport(
         suite_id=suite_id,
@@ -345,7 +375,7 @@ def run_minimal_benchmark_family(
             "transport": executor_transport,
             "scoring_contract": "statebus_smoke_quality_floor_v1",
             "seed_replay_memory": seed_replay_memory,
-            "task_family_tier": "formal_financial",
+            "task_family_tier": family_tier,
             "uses_internal_helpers": False,
         },
         report_path=str(report_path),
@@ -493,6 +523,13 @@ def run_minimal_benchmark_suite(
         "protocol_vs_text_quality_pass_delta": protocol_l3_quality_pass_count - text_l0_quality_pass_count,
     }
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}-suite.json"
+    family_tier = (
+        "formal_registry"
+        if benchmark_tier == "formal" and len(formal_families) > 1
+        else "formal_financial"
+        if benchmark_tier == "formal"
+        else "dev"
+    )
     suite_report = BenchmarkSuiteReport(
         suite_id=suite_id,
         task_family=samples[0].task_family if samples else "financial_report_analysis",
@@ -519,7 +556,7 @@ def run_minimal_benchmark_suite(
             "formal_task_families": list(formal_families),
             "formal_task_family_count": len(formal_families),
             "formal_text_protocol_benchmark": benchmark_tier == "formal",
-            "task_family_tier": "formal_financial",
+            "task_family_tier": family_tier,
         },
         family_case_count=len(samples),
         report_path=str(report_path),

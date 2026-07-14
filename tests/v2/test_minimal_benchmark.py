@@ -85,6 +85,14 @@ def test_minimal_benchmark_family_runs_and_persists_report(tmp_path: Path) -> No
     assert family_report.aggregated_metrics["case_count"] == 2.0
     assert family_report.aggregated_metrics["quality_floor_pass_count"] == 2.0
     assert family_report.telemetry_summary["artifact_count"] == 2.0
+    assert family_report.telemetry_summary["task_ms"] > 0.0
+    assert all(case.metrics["task_ms"] > 0.0 for case in family_report.cases)
+    prefix_queries = family_report.telemetry_summary["neural_prefix_cache_query_count_estimate"]
+    prefix_hits = family_report.telemetry_summary["neural_prefix_cache_hit_count_estimate"]
+    assert family_report.telemetry_summary["neural_prefix_cache_hit_rate_estimate"] == (
+        prefix_hits / prefix_queries
+    )
+    assert 0.0 <= family_report.telemetry_summary["neural_prefix_prefill_savings_ratio_estimate"] <= 1.0
     assert family_report.replay_class_distribution["disallowed"] == 2.0
     assert family_report.quality_floor_breakdown["fact_coverage_passed_count"] == 2.0
     assert family_report.cases[0].session_state == "GC_DONE"
@@ -143,6 +151,7 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     assert suite_report.metadata["comparison_contract"] == "same_mainline_internal_attribution_ladder"
     assert suite_report.metadata["ladder_claim_scope"] == "internal_attribution_only_not_external_superiority"
     assert suite_report.metadata["formal_text_protocol_benchmark"] is True
+    assert suite_report.metadata["task_family_tier"] == "formal_financial"
     assert suite_report.comparison_summary["text_L0_quality_pass_count"] == 8.0
     assert suite_report.comparison_summary["protocol_L3_quality_pass_count"] == 8.0
     assert suite_report.comparison_summary["protocol_vs_text_quality_pass_delta"] == 0.0

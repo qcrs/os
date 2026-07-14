@@ -6,6 +6,7 @@ from pathlib import Path
 from v2.benchmark.fixed_answer_runner import FixedAnswerSample
 from v2.benchmark.minimal_runner import MinimalBenchmarkSample
 from v2.benchmark.task_registry import formal_family_specs
+from v2.contracts.models import CanonicalTaskSpec
 from v2.route_tool_catalog import build_route_tool_surface
 from v2.utils import stable_json_dumps
 
@@ -16,7 +17,24 @@ def _projection_value_text(value: object) -> str:
     return str(value)
 
 
-def _expected_metric_projection(expected_facts: dict[str, object]) -> tuple[str, str]:
+def _public_metric_projection_key(canonical_task_spec: CanonicalTaskSpec) -> str:
+    for raw_check in canonical_task_spec.arguments.get("quality_checks", []):
+        parts = str(raw_check).split(":")
+        if len(parts) >= 2 and parts[0] in {"exact", "numeric_tolerance"}:
+            metric_name = parts[1].strip()
+            if metric_name:
+                return metric_name
+    return str(canonical_task_spec.arguments.get("metric", "")).strip()
+
+
+def _expected_metric_projection(
+    expected_facts: dict[str, object],
+    *,
+    canonical_task_spec: CanonicalTaskSpec,
+) -> tuple[str, str]:
+    public_metric_name = _public_metric_projection_key(canonical_task_spec)
+    if public_metric_name and public_metric_name in expected_facts:
+        return public_metric_name, _projection_value_text(expected_facts[public_metric_name])
     metric_name = str(expected_facts.get("metric_name", "")).strip()
     metric_value = str(
         expected_facts.get("metric_value", expected_facts.get("revenue_value", ""))
@@ -62,19 +80,17 @@ def adapt_minimal_formal_sample_to_fixed_answer(
     if sample.canonical_task_spec is None:
         raise ValueError(f"formal registry sample lacks canonical_task_spec: {sample.task_id}")
     expected_facts = dict(sample.expected_facts or {})
-    metric_name, metric_value = _expected_metric_projection(expected_facts)
-    adapted_expected_facts = dict(expected_facts)
-    if metric_name:
-        adapted_expected_facts["metric_name"] = metric_name
-    if metric_value:
-        adapted_expected_facts["metric_value"] = metric_value
+    metric_name, _metric_value = _expected_metric_projection(
+        expected_facts,
+        canonical_task_spec=sample.canonical_task_spec,
+    )
     expected_route, expected_tool_name = _route_tool_projection(sample)
     return FixedAnswerSample(
         task_id=sample.task_id,
         request_text=sample.request_text,
         canonical_task_spec=sample.canonical_task_spec,
         task_family=sample.task_family,
-        expected_facts=adapted_expected_facts,
+        expected_facts=expected_facts,
         expected_route=expected_route,
         expected_tool_name=expected_tool_name,
         summary_hint=sample.request_text,

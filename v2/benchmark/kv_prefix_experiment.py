@@ -9,7 +9,11 @@ from typing import Any
 
 from openai import OpenAI
 
-from v2.runtime.vllm_metrics import VllmPrefixCacheMetrics, fetch_vllm_prefix_cache_metrics
+from v2.runtime.vllm_metrics import (
+    VllmPrefixCacheMetrics,
+    compute_vllm_prefix_cache_counter_delta,
+    fetch_vllm_prefix_cache_metrics,
+)
 from v2.utils import sha256_digest, stable_json_dumps
 
 
@@ -207,14 +211,8 @@ def _run_prompt(
     }
 
 
-def _metrics_delta(before: VllmPrefixCacheMetrics, after: VllmPrefixCacheMetrics) -> dict[str, float]:
-    queries_delta = max(after.queries_total - before.queries_total, 0.0)
-    hits_delta = max(after.hits_total - before.hits_total, 0.0)
-    return {
-        "queries_total_delta": queries_delta,
-        "hits_total_delta": hits_delta,
-        "hit_rate_delta_window": hits_delta / queries_delta if queries_delta else 0.0,
-    }
+def _metrics_delta(before: VllmPrefixCacheMetrics, after: VllmPrefixCacheMetrics) -> dict[str, object]:
+    return compute_vllm_prefix_cache_counter_delta(before, after).canonical_payload()
 
 
 def _usage_payload(usage: object | None) -> dict[str, int]:

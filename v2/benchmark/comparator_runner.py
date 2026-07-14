@@ -559,6 +559,7 @@ def run_fixed_answer_external_comparator_suite(
         )
         mode_formal_efficiency_superiority_claim_allowed = (
             benchmark_tier == "formal"
+            and claim_level != "diagnostic"
             and comparison_valid
             and debug_metrics.get("llm_total_tokens_delta", 0.0) < 0.0
             and debug_metrics.get("prompt_bytes_delta", 0.0) < 0.0
@@ -656,11 +657,14 @@ def run_fixed_answer_external_comparator_suite(
     )
     formal_prompt_byte_efficiency_claim_allowed = (
         benchmark_tier == "formal"
+        and claim_level != "diagnostic"
         and bool(mode_reports)
         and all(_mode_prompt_byte_efficiency_claim_allowed(r) for r in mode_reports)
     )
     formal_quality_superiority_claim_allowed = (
-        benchmark_tier == "formal" and quality_superiority_comparison_valid
+        benchmark_tier == "formal"
+        and claim_level != "diagnostic"
+        and quality_superiority_comparison_valid
     )
     serialized_repeat_count = max(_env_int("STATEBUS_COMPARATOR_SERIALIZED_REPEAT_COUNT", 1), 1)
     serialized_repeat_index = max(_env_int("STATEBUS_COMPARATOR_SERIALIZED_REPEAT_INDEX", 1), 1)
@@ -677,11 +681,15 @@ def run_fixed_answer_external_comparator_suite(
         if benchmark_tier == "formal" and mode_reports
         else "none"
     )
-    serialized_latency_superiority_claim_allowed = (
+    serialized_latency_observation_favorable = (
         benchmark_tier == "formal"
+        and claim_level != "diagnostic"
         and strict_equal_quality_comparison_valid
         and bool(mode_reports)
         and all(report.debug_metrics.get("task_ms_delta", 0.0) < 0.0 for report in mode_reports)
+    )
+    serialized_latency_superiority_claim_allowed = (
+        serialized_latency_observation_favorable and serialized_repeat_count >= 3
     )
     formal_compare_scope_metadata = _formal_compare_scope_metadata(
         samples=samples,
@@ -706,6 +714,9 @@ def run_fixed_answer_external_comparator_suite(
         "formal_efficiency_claim_allowed": 1.0 if formal_efficiency_superiority_claim_allowed else 0.0,
         "serialized_latency_superiority_claim_allowed": 1.0
         if serialized_latency_superiority_claim_allowed
+        else 0.0,
+        "serialized_latency_observation_favorable": 1.0
+        if serialized_latency_observation_favorable
         else 0.0,
         "serialized_repeat_count": float(serialized_repeat_count),
         "serialized_repeat_index": float(serialized_repeat_index),
@@ -735,6 +746,7 @@ def run_fixed_answer_external_comparator_suite(
             "serialized_repeat_count": serialized_repeat_count,
             "serialized_repeat_index": serialized_repeat_index,
             "serialized_latency_superiority_claim_allowed": serialized_latency_superiority_claim_allowed,
+            "serialized_latency_observation_favorable": serialized_latency_observation_favorable,
             "strict_equal_quality_comparison_valid": strict_equal_quality_comparison_valid,
             "quality_superiority_comparison_valid": quality_superiority_comparison_valid,
             "formal_quality_superiority_claim_allowed": formal_quality_superiority_claim_allowed,
@@ -742,8 +754,9 @@ def run_fixed_answer_external_comparator_suite(
             "formal_prompt_byte_efficiency_claim_allowed": formal_prompt_byte_efficiency_claim_allowed,
             "formal_external_claim_kind": formal_external_claim_kind,
             "formal_efficiency_claim_allowed": formal_efficiency_superiority_claim_allowed,
-            "formal_headline_eligible": bool(mode_reports)
+        "formal_headline_eligible": bool(mode_reports)
             and benchmark_tier == "formal"
+            and claim_level != "diagnostic"
             and all(report.eligible_for_headline for report in mode_reports),
             "claim_restriction": (
                 "formal_quality_superiority_external_compare"
