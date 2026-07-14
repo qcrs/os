@@ -452,7 +452,10 @@ class DeterministicLLMClient:
                     text=json.dumps(result_payload, ensure_ascii=False, sort_keys=True),
                     model=self.config.role_config("planner").model,
                 )
-            if "<sb-plan-v1>" in user_content:
+            if "Task request:\n" in user_content and "Allowed required outputs:\n" in user_content:
+                payload = parse_semantic_planner_brief(user_content)
+                plan = _build_compact_protocol_plan(payload)
+            elif "<sb-plan-v1>" in user_content:
                 payload = parse_compact_protocol_planner_brief(user_content)
                 plan = _build_compact_protocol_plan(payload)
             else:
@@ -776,6 +779,50 @@ def parse_compact_protocol_planner_brief(text: str) -> dict[str, Any]:
         "summary_hint": str(payload.get("h", "")),
         "tags": [str(tag) for tag in payload.get("t", [])],
         "required_plan_semantic_roles": [str(role) for role in payload.get("rr", [])],
+        "allowed_required_outputs": [str(item) for item in payload.get("ao", [])],
+        "entities": [str(item) for item in payload.get("en", [])],
+        "time_scope": str(payload.get("ts", "")),
+    }
+
+
+def parse_semantic_planner_brief(text: str) -> dict[str, Any]:
+    def section(title: str, following_titles: tuple[str, ...]) -> str:
+        marker = f"{title}:\n"
+        start = text.find(marker)
+        if start == -1:
+            return ""
+        start += len(marker)
+        ends = [
+            position
+            for next_title in following_titles
+            if (position := text.find(f"\n\n{next_title}:\n", start)) != -1
+        ]
+        end = min(ends) if ends else len(text)
+        return text[start:end].strip()
+
+    return {
+        "goal": section(
+            "Goal",
+            ("Task request", "Summary hint", "Allowed required outputs", "Entity hints", "Time scope hint"),
+        ),
+        "query": section(
+            "Task request",
+            ("Summary hint", "Allowed required outputs", "Entity hints", "Time scope hint"),
+        ),
+        "summary_hint": section(
+            "Summary hint",
+            ("Allowed required outputs", "Entity hints", "Time scope hint"),
+        ),
+        "allowed_required_outputs": _split_csv(
+            section("Allowed required outputs", ("Entity hints", "Time scope hint"))
+        ),
+        "entities": _split_csv(
+            section("Entity hints", ("Time scope hint",))
+        ),
+        "time_scope": section("Time scope hint", ()),
+        "evidence_text": "",
+        "tags": [],
+        "required_plan_semantic_roles": [],
     }
 
 
@@ -839,46 +886,50 @@ def _requires_validation_step(payload: dict[str, Any]) -> bool:
 
 
 def _build_compact_protocol_plan(payload: dict[str, Any]) -> dict[str, Any]:
-    plan: dict[str, Any] = {
-        "r": {
-            "sid": "retrieve",
-            "role": "retrieve",
-            "owner": "retriever",
-            "action": "RETRIEVE_EVIDENCE",
-            "dep": [],
-            "q": payload["query"],
-            "e": payload["evidence_text"],
-            "t": payload.get("tags", []),
-        },
-        "x": {
-            "sid": "execute",
-            "role": "execute",
-            "owner": "executor",
-            "action": "EXECUTE_PLAYBOOK",
-            "dep": ["retrieve"],
-        },
-        "s": {
-            "sid": "summarize",
-            "role": "summarize",
-            "owner": "summarizer",
-            "action": "SUMMARIZE_AND_COMMIT",
-            "dep": ["retrieve", "execute"],
-            "h": payload["summary_hint"],
-            "t": payload.get("tags", []),
-        },
+    query = str(payload.get("query", "")).strip()
+    goal = str(payload.get("goal", "")).strip() or query
+    entities = [str(item).strip() for item in payload.get("entities", []) if str(item).strip()]
+    time_scope = str(payload.get("time_scope", "")).strip()
+    lexical_query = " ".join(part for part in (" ".join(entities), time_scope) if part).strip() or query
+    table_query = " ".join(part for part in (query, "table cells schema") if part).strip()
+    return {
+        "semantic_task_plan": {
+            "task_semantics": {
+                "goal": goal,
+                "entities": entities,
+                "time_scope": time_scope,
+            },
+            "retrieval_objectives": {
+                "lexical_metadata": {
+                    "query_text": lexical_query,
+                    "objective": "locate the relevant corpus metadata and document scope",
+                    "evidence_types": ["lexical_metadata"],
+                },
+                "semantic_chunk": {
+                    "query_text": query,
+                    "objective": "retrieve explanatory context and citations for the request",
+                    "evidence_types": ["semantic_context", "citation"],
+                },
+                "table_structure": {
+                    "query_text": table_query,
+                    "objective": "retrieve table cells and schema needed for the computation",
+                    "evidence_types": ["table_cell", "table_schema"],
+                },
+                "memory": {
+                    "query_text": query,
+                    "objective": "find compatible prior artifacts or strategies without bypassing validation",
+                    "evidence_types": ["memory_artifact", "memory_strategy"],
+                    "reuse_intent": "assist",
+                },
+            },
+            "required_evidence": ["table_cell", "semantic_context", "citation"],
+            "required_outputs": [
+                str(item).strip()
+                for item in payload.get("allowed_required_outputs", [])
+                if str(item).strip()
+            ],
+        }
     }
-    if _requires_validation_step(payload):
-        plan["x"].update(
-            {
-                "dep": ["retrieve", "validate"],
-                "vsid": "validate",
-                "vrole": "validate",
-                "vowner": "executor",
-                "vaction": "VALIDATE_ROUTE",
-                "vdep": ["retrieve"],
-            }
-        )
-    return plan
 
 
 def _extract_optional_block(text: str, start_marker: str, end_marker: str) -> str:

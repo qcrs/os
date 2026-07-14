@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime.llm import LLMResult, LLMUsage
+from runtime.llm import LLMResult, LLMUsage, parse_tagged_json, tagged_json_block
 from v2.contracts import CanonicalTaskSpec
 from v2.runtime.smoke import SmokeLayerConfig, run_smoke
 from v2.runtime.role_path import (
@@ -97,6 +97,8 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert result.task_metrics["retriever_call_count"] == 0.0
     assert result.task_metrics["executor_call_count"] == 0.0
     assert result.task_metrics["summarizer_call_count"] == 0.0
+    assert result.task_metrics["llm_call_count"] == 1.0
+    assert result.task_metrics["answer_restoration_replay_count"] == 0.0
     assert result.task_metrics["llm_total_tokens"] == 0.0
     assert result.task_metrics["stdout_log_count"] == 1.0
     assert result.task_metrics["stderr_log_count"] == 1.0
@@ -172,7 +174,7 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert "output_relpath" not in metadata
     assert "output_sha256" not in metadata
     replay_ledger_payload = json.loads(Path(result.replay_ledger_path).read_text(encoding="utf-8"))
-    assert len(replay_ledger_payload["input_artifact_hashes"]) == 4
+    assert len(replay_ledger_payload["input_artifact_hashes"]) == 3
     assert replay_ledger_payload["planner_handoff_hash"]
     assert replay_ledger_payload["runtime_signature_manifest_bundle_hash"]
     assert replay_ledger_payload["runtime_signature"]["tool_registry_digest"]
@@ -183,6 +185,12 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert replay_audit_payload["candidate_id"]
     assert replay_audit_payload["history_runtime_root_count"] == 0
     assert replay_audit_payload["runtime_signature"]["combined_digest"]
+    observation_hashes = replay_audit_payload["retrieval_observation_hashes"]
+    assert observation_hashes["planner_handoff_replay_hash"]
+    assert observation_hashes["evidence_pack_replay_hash"]
+    assert observation_hashes["evidence_execution_input_replay_hash"] == replay_ledger_payload[
+        "input_artifact_hashes"
+    ][0]
     hydration_audit_payload = json.loads(Path(result.hydration_audit_path).read_text(encoding="utf-8"))
     assert hydration_audit_payload["counting_scope"] == "hydrated_external_evidence_only"
     assert hydration_audit_payload["raw_evidence_bytes_seen_by_llm"] == result.task_metrics["raw_evidence_bytes_seen_by_llm"]
@@ -237,7 +245,7 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert "state_root" not in session_payload
     assert session_payload["workspace_root_relpath"]
     assert session_payload["state_root_relpath"]
-    assert len(session_payload["replay_input_artifact_hashes"]) == 4
+    assert len(session_payload["replay_input_artifact_hashes"]) == 3
     assert session_payload["workflow_steps"][0]["output_ref_hash"]
     assert "output_ref_sample_count" not in session_payload["workflow_steps"][0]
     assert "output_ref_sample" not in session_payload["workflow_steps"][0]
@@ -290,6 +298,18 @@ def test_v2_smoke_benchmark_balanced_profile_hashes_prompt_slices(tmp_path: Path
     assert "table_text" not in role_payload
     assert "artifact_text" not in role_payload
     assert "memory_text" not in role_payload
+    rendered_request_payload = json.loads(
+        (
+            Path(result.workspace_root)
+            / "logs"
+            / "rendered_llm_requests"
+            / "planner.rendered_request.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert rendered_request_payload["content_persisted"] is False
+    assert rendered_request_payload["request_count"] >= 1
+    assert "messages" not in rendered_request_payload["requests"][0]
+    assert rendered_request_payload["requests"][0]["prompt_sha256"]
     telemetry_payload = json.loads(Path(result.telemetry_path).read_text(encoding="utf-8"))
     assert telemetry_payload["persistence_profile"] == "benchmark_balanced"
     assert telemetry_payload["event_count"] == result.telemetry_event_count
@@ -357,6 +377,116 @@ def test_v2_smoke_formal_single_attempt_profile_is_distinct_from_resilience(tmp_
     assert result.quality_floor.quality_floor_pass is True
     assert result.task_metrics["handoff_mode_text_collaboration"] == 0.0
     assert result.task_metrics["handoff_mode_structured_collaboration"] == 1.0
+
+
+def test_v2_smoke_no_route_hints_is_auditable(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("STATEBUS_ROUTE_HINTS_ENABLED", "0")
+    result = run_smoke(
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        layer_config=SmokeLayerConfig(
+            layer_name="L3-no-route-hints",
+            structured_control_enabled=True,
+            semantic_pruning_enabled=True,
+            replay_enabled=False,
+            multi_attempt_enabled=False,
+            force_first_attempt_trap=False,
+        ),
+    )
+    assert result.quality_floor.quality_floor_pass is True
+    assert result.task_metrics["route_hints_enabled"] == 0.0
+    assert result.task_metrics["planner_objective_present"] == 1.0
+    assert result.task_metrics["planner_semantic_plan_valid"] == 1.0
+    assert result.task_metrics["planner_retriever_consumed_hash_match_count"] == 4.0
+    assert result.task_metrics["planner_behavioral_effect"] == 1.0
+    assert result.task_metrics["rendered_role_request_artifact_count"] == 4.0
+    assert result.task_metrics["rendered_role_request_count"] >= 4.0
+    role_tags = {
+        "planner": "sb-plan-v1",
+        "retriever": "sb-retriever-v1",
+        "executor": "sb-executor-v1",
+        "summarizer": "sb-summary-v1",
+    }
+    for role, tag in role_tags.items():
+        request_path = (
+            Path(result.workspace_root)
+            / "logs"
+            / "rendered_llm_requests"
+            / f"{role}.rendered_request.json"
+        )
+        request_artifact = json.loads(request_path.read_text(encoding="utf-8"))
+        assert request_artifact["content_persisted"] is True
+        assert request_artifact["request_count"] >= 1
+        for request in request_artifact["requests"]:
+            prompt = request["messages"][-1]["content"]
+            payload = parse_tagged_json(prompt, tag)
+            if role in {"retriever", "executor"}:
+                assert "pc" not in payload
+                assert "rh" not in payload
+                assert "Preferred Candidate" not in prompt
+                assert "Treat pc" not in prompt
+
+    from scripts.run_v2_genericity_holdout import _prompt_taint_audit
+
+    request_audit = _prompt_taint_audit((tmp_path / "workspaces",))
+    assert request_audit["pass"] is True
+    assert request_audit["scanned_task_count"] == 1
+    assert request_audit["scanned_role_request_file_count"] == 4
+    assert request_audit["no_hint_preferred_candidate_absent"] is True
+
+    retriever_path = (
+        Path(result.workspace_root)
+        / "logs"
+        / "rendered_llm_requests"
+        / "retriever.rendered_request.json"
+    )
+    retriever_artifact = json.loads(retriever_path.read_text(encoding="utf-8"))
+    prompt = retriever_artifact["requests"][0]["messages"][-1]["content"]
+    retriever_payload = parse_tagged_json(prompt, "sb-retriever-v1")
+    tainted_payload = {**retriever_payload, "oracle_answer": "fixture-only"}
+    modified_prompt = prompt.replace(
+        tagged_json_block("sb-retriever-v1", retriever_payload),
+        tagged_json_block("sb-retriever-v1", tainted_payload),
+        1,
+    )
+    assert modified_prompt != prompt
+    retriever_artifact["requests"][0]["messages"][-1]["content"] = modified_prompt
+    retriever_path.write_text(json.dumps(retriever_artifact), encoding="utf-8")
+    rejected_audit = _prompt_taint_audit((tmp_path / "workspaces",))
+    assert rejected_audit["pass"] is False
+    assert any(
+        item["kind"] == "forbidden_oracle_field" and item["detail"] == "oracle_answer"
+        for item in rejected_audit["violations"]
+    )
+
+    shared_prefix = "fixture shared evidence"
+    invalid_sp_payload = {
+        **retriever_payload,
+        "sp": {
+            "contract": "statebus-shared-prefix-v1",
+            "contains": "oracle_answer",
+            "bytes": len(shared_prefix.encode("utf-8")),
+        },
+    }
+    invalid_sp_prompt = (
+        f"<statebus-shared-prefix-v1>\n{shared_prefix}\n"
+        "</statebus-shared-prefix-v1>\n\n"
+        + prompt.replace(
+            tagged_json_block("sb-retriever-v1", retriever_payload),
+            tagged_json_block("sb-retriever-v1", invalid_sp_payload),
+            1,
+        )
+    )
+    retriever_artifact["requests"][0]["messages"][-1]["content"] = invalid_sp_prompt
+    retriever_path.write_text(json.dumps(retriever_artifact), encoding="utf-8")
+    invalid_sp_audit = _prompt_taint_audit((tmp_path / "workspaces",))
+    assert invalid_sp_audit["pass"] is False
+    assert any(
+        item["kind"] == "invalid_shared_prefix_metadata"
+        and item["detail"]["reason"] == "contains"
+        for item in invalid_sp_audit["violations"]
+    )
 
 
 @pytest.mark.skipif(
@@ -455,6 +585,8 @@ def test_v2_smoke_aggregates_role_path_token_usage(tmp_path: Path, monkeypatch) 
                 prompt_tokens=12,
                 completion_tokens=7,
                 total_tokens=19,
+                logit_sequence_length=6,
+                logit_decision_entropy=0.75,
             )
 
         def summarize(self, **kwargs):
@@ -495,11 +627,12 @@ def test_v2_smoke_aggregates_role_path_token_usage(tmp_path: Path, monkeypatch) 
     assert result.task_metrics["retriever_hydrated_bytes"] > 0.0
     assert result.task_metrics["executor_hydrated_bytes"] == 0.0
     assert result.task_metrics["summarizer_hydrated_bytes"] > 0.0
-    assert result.task_metrics["planner_hydrated_bytes"] > 0.0
+    assert result.task_metrics["planner_hydrated_bytes"] == 0.0
     assert result.task_metrics["retriever_hydrated_item_count"] > 0.0
     assert result.task_metrics["executor_hydrated_item_count"] == 0.0
     assert result.task_metrics["summarizer_hydrated_item_count"] > 0.0
-    assert result.task_metrics["planner_table_bytes"] > 0.0
+    assert result.task_metrics["planner_hydrated_item_count"] == 0.0
+    assert result.task_metrics["planner_table_bytes"] == 0.0
     assert result.task_metrics["retriever_table_bytes"] > 0.0
     assert result.task_metrics["executor_table_bytes"] > 0.0
     assert result.task_metrics["summarizer_table_bytes"] > 0.0
@@ -507,6 +640,13 @@ def test_v2_smoke_aggregates_role_path_token_usage(tmp_path: Path, monkeypatch) 
     assert result.task_metrics["llm_prompt_tokens"] == 46.0
     assert result.task_metrics["llm_completion_tokens"] == 26.0
     assert result.task_metrics["llm_total_tokens"] == 72.0
+    assert result.task_metrics["logit_sequence_length"] == 6.0
+    assert result.task_metrics["logit_decision_entropy"] == 0.75
+    persisted_task_metrics = json.loads(
+        Path(result.task_metrics_path).read_text(encoding="utf-8")
+    )
+    assert persisted_task_metrics["logit_sequence_length"] == 6.0
+    assert persisted_task_metrics["logit_decision_entropy"] == 0.75
     assert result.task_metrics["raw_evidence_bytes_seen_by_llm"] == (
         result.task_metrics["planner_hydrated_bytes"]
         + result.task_metrics["planner_table_bytes"]
@@ -657,9 +797,12 @@ def test_v2_smoke_history_backed_exact_replay_restores_prior_output(tmp_path: Pa
 
     assert bootstrap.replay_class == "disallowed"
     assert replay.replay_class == "exact_replay"
+    assert replay.task_metrics["planner_call_count"] == 1.0
     assert replay.task_metrics["retriever_call_count"] == 0.0
     assert replay.task_metrics["executor_call_count"] == 0.0
     assert replay.task_metrics["summarizer_call_count"] == 0.0
+    assert replay.task_metrics["llm_call_count"] == 1.0
+    assert replay.task_metrics["answer_restoration_replay_count"] == 1.0
     assert replay.task_metrics["artifact_reuse_count"] == 1.0
     assert replay.task_metrics["memory_candidate_count"] == 1.0
     assert replay.task_metrics["memory_exact_replay_candidate_count"] == 1.0

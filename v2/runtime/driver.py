@@ -146,6 +146,7 @@ class RuntimeDriverInput:
     validator_reports: tuple[ArtifactValidatorReport, ...]
     input_validator_reports: tuple[InputValidatorReport, ...]
     quality_floor: QualityFloorResult
+    answer_restoration_performed: bool = False
     planner_artifact_ref_id: str = "planner-handoff"
     workspace_file_count: int = 0
     code_template_version: str = ""
@@ -321,7 +322,16 @@ class RuntimeDriver:
             },
             metrics={
                 "compiler_success_count": 1.0,
-                "planner_generated_retrieval_objective_count": 1.0,
+                "planner_generated_retrieval_objective_count": float(
+                    bool(runtime_input.planner_handoff.semantic_plan_audit.get("semantic_plan_valid"))
+                    and int(
+                        runtime_input.planner_handoff.semantic_plan_audit.get(
+                            "model_generated_field_count", 0
+                        )
+                        or 0
+                    )
+                    > 0
+                ),
             },
             completion_channel="planner_handoff",
         )
@@ -1229,7 +1239,12 @@ class RuntimeDriver:
                     "exact_replay_count": (
                         1.0 if runtime_input.replay_decision.replay_class == ReplayClass.EXACT_REPLAY else 0.0
                     ),
-                    "answer_restoration_replay_count": 0.0,
+                    "answer_restoration_replay_count": float(
+                        runtime_input.answer_restoration_performed
+                        and runtime_input.replay_decision.replay_class == ReplayClass.EXACT_REPLAY
+                        and finalized_artifact.verification_state == RefStatus.VERIFIED
+                        and finalized_artifact.blob_hash == runtime_input.output_artifact_hash
+                    ),
                     "pruning_gain_bytes": float(runtime_input.retrieval.pruning_profile.pruning_gain_bytes),
                     "codeact_plan_stage_count": (
                         0.0 if runtime_input.codeact_plan is None else float(runtime_input.codeact_plan.stage_count)

@@ -211,6 +211,9 @@ class PlannerHandoff:
     planner_plan_payload: dict[str, Any] = field(default_factory=dict)
     planner_scope_payload: dict[str, Any] = field(default_factory=dict)
     summary_hint: str = ""
+    semantic_plan_audit: dict[str, Any] = field(default_factory=dict)
+    retriever_consumed_objective_hashes: dict[str, str] = field(default_factory=dict)
+    planner_raw_output_hash: str = ""
     schema_version: str = PLANNER_HANDOFF_SCHEMA_VERSION
 
     def canonical_payload(self) -> dict[str, Any]:
@@ -221,6 +224,11 @@ class PlannerHandoff:
             "planner_plan_payload": dict(sorted(self.planner_plan_payload.items())),
             "planner_scope_payload": dict(sorted(self.planner_scope_payload.items())),
             "summary_hint": self.summary_hint,
+            "semantic_plan_audit": dict(self.semantic_plan_audit),
+            "retriever_consumed_objective_hashes": dict(
+                sorted(self.retriever_consumed_objective_hashes.items())
+            ),
+            "planner_raw_output_hash": self.planner_raw_output_hash,
             "schema_version": self.schema_version,
         }
 

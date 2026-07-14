@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -106,18 +107,22 @@ from v2.runtime import (
     capture_runtime_signature,
     capture_runtime_signature_manifest_bundle,
     build_task_lineage_view,
+    compute_vllm_prefix_cache_counter_delta,
     capture_execution_logs,
     evidence_pack_replay_hash,
+    evidence_execution_input_replay_hash,
     financial_tool_candidates,
     hydrate_manifest_replay_hash,
     planner_handoff_replay_hash,
     SignatureManifestEntry,
     count_exact_replay_candidates,
     estimate_engine_local_prefix_reuse,
+    fetch_vllm_prefix_cache_metrics,
     select_history_replay_candidate,
 )
 from v2.runtime.preflight import runtime_preflight
 from v2.runtime.runtime_signature import runtime_signature_payload
+from v2.runtime.semantic_plan import resolve_semantic_task_plan
 from v2.runtime.session import RuntimeTaskSession, RuntimeWorkflowStep
 from v2.runtime.driver import RuntimeDriver, RuntimeDriverInput, RuntimeDriverProfile
 from v2.state import JsonContractStore, LayeredStateStore, LayeredStoragePolicy, MaterializedStateHandle, RefRegistryQuery
@@ -346,6 +351,7 @@ class SmokeResult:
     output_artifact_hash: str
     telemetry_path: str
     task_metrics_path: str
+    prefix_cache_observation_path: str
     runtime_event_log_path: str
     runtime_fact_log_path: str
     replay_audit_path: str
@@ -437,6 +443,27 @@ def _default_fact_value(bundle: RetrievalBundle) -> str:
 
 def _elapsed_ms(start_ns: int) -> float:
     return (time.perf_counter_ns() - start_ns) / 1_000_000.0
+
+
+def _vllm_metrics_url() -> str:
+    explicit = os.getenv("STATEBUS_VLLM_METRICS_URL", "").strip()
+    if explicit:
+        return explicit
+    base_url = (
+        os.getenv("STATEBUS_LLM_BASE_URL", "").strip()
+        or os.getenv("OPENAI_BASE_URL", "").strip()
+        or os.getenv("STATEBUS_LOCAL_VLLM_BASE_URL", "").strip()
+    )
+    if base_url:
+        return f"{base_url.removesuffix('/').removesuffix('/v1')}/metrics"
+    return "http://127.0.0.1:8000/metrics"
+
+
+def _fetch_vllm_prefix_metrics_or_none(metrics_url: str):
+    try:
+        return fetch_vllm_prefix_cache_metrics(metrics_url, timeout_s=2.0)
+    except Exception:
+        return None
 
 
 def _empty_role_hydrated_slice(role: str) -> RoleHydratedSlice:
@@ -547,6 +574,33 @@ def _role_prompt_slice_relpath(role: str) -> str:
     return f"logs/prompt_slices/{role}.prompt_slice.json"
 
 
+def _rendered_role_request_relpath(role: str) -> str:
+    return f"logs/rendered_llm_requests/{role}.rendered_request.json"
+
+
+def _persist_rendered_role_request_artifact(
+    *,
+    task_id: str,
+    role: str,
+    role_path_runner: RolePathRunner,
+    workspace: WorkspaceManager,
+    layout,
+    persistence_profile: str,
+) -> MaterializedFile:
+    payload = role_path_runner.rendered_request_audit_payload(
+        role,
+        include_content=persistence_profile != "benchmark_balanced",
+    )
+    payload["task_id"] = task_id
+    payload["persistence_profile"] = persistence_profile
+    return workspace.write_json(
+        layout,
+        _rendered_role_request_relpath(role),
+        payload,
+        logical_name=f"{role}_rendered_llm_request",
+    )
+
+
 def _role_prompt_slice_payload(
     *,
     task_id: str,
@@ -613,7 +667,7 @@ def _role_prompt_slice_hash_only_payload(
         "prompt_scaffolding_bytes": _prompt_scaffolding_bytes(prompt_bytes=prompt_bytes, slice_=slice_),
         "prompt_bytes": prompt_bytes,
         "persistence_profile": "benchmark_balanced",
-        "combined_text_sha256": sha256_digest(combined_text.encode("utf-8")) if combined_text else "",
+        "combined_text_sha256": sha256_digest(combined_text.encode("utf-8")),
         "schema_version": ROLE_PROMPT_SLICE_SCHEMA_VERSION,
     }
 
@@ -1454,12 +1508,12 @@ def _prompt_manifests() -> tuple[SignatureManifestEntry, ...]:
     return (
         SignatureManifestEntry(
             entry_id="role_path.planner",
-            entry_version="v4",
+            entry_version="v5-bounded-semantic-plan",
             entry_kind="prompt",
             payload={
                 "role": "planner",
-                "input_contract": "goal+query+summary_hint+required_roles+tags+inline_evidence",
-                "output_contract": "retrieval_objective+ambiguity_checklist+downstream_target_role",
+                "input_contract": "goal+request+summary_hint+allowed_outputs+entity_and_time_hints_no_case_id_no_evidence",
+                "output_contract": "bounded_semantic_task_plan_with_per_retriever_objectives",
             },
         ),
         SignatureManifestEntry(
@@ -1788,6 +1842,15 @@ def run_smoke(
     driver_profile_override: RuntimeDriverProfile | None = None,
 ) -> SmokeResult:
     layer_config = layer_config or SmokeLayerConfig()
+    # Route hints are an explicit experimental aid, never an implicit oracle.
+    # Disabling them leaves candidate generation and validation intact while
+    # requiring the model to select from the visible candidate surface.
+    route_hints_enabled = os.getenv("STATEBUS_ROUTE_HINTS_ENABLED", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
     if layer_config.hermetic_runtime_root and runtime_root.exists():
         shutil.rmtree(runtime_root)
     preflight = runtime_preflight(
@@ -1824,9 +1887,17 @@ def run_smoke(
         role_path_runner = RolePathRunner(llm_client=build_llm_client(llm_config))
         if hasattr(role_path_runner, "handoff_mode"):
             object.__setattr__(role_path_runner, "handoff_mode", layer_config.handoff_mode)
+    prefix_metrics_url = _vllm_metrics_url()
+    prefix_metrics_enabled = layer_config.role_path_mode == "local_vllm"
+    prefix_metrics_before = (
+        _fetch_vllm_prefix_metrics_or_none(prefix_metrics_url)
+        if prefix_metrics_enabled
+        else None
+    )
     goal_text = _goal_from_spec(compiler_result.canonical_task_spec)
     summary_hint = _summary_hint_from_spec(compiler_result.canonical_task_spec)
-    planner_query_text = _query_text_from_spec(compiler_result.canonical_task_spec)
+    runtime_fallback_query_text = _query_text_from_spec(compiler_result.canonical_task_spec)
+    planner_query_text = str(request_text or "").strip() or runtime_fallback_query_text
     planner_scope_payload = _planner_scope_payload(
         compiler_result.canonical_task_spec,
         history_runtime_roots=history_runtime_roots,
@@ -1853,17 +1924,42 @@ def run_smoke(
             artifact_item_count=int(planner_scope_payload.get("artifact_item_count", 0)),
         ),
         strict_surface=True,
-        tags=tuple(compiler_result.canonical_task_spec.required_tools),
+        tags=(),
+        allowed_required_outputs=compiler_result.canonical_task_spec.required_outputs,
+        target_entities=compiler_result.canonical_task_spec.target_entities,
+        time_scope=compiler_result.canonical_task_spec.time_scope,
     )
+    semantic_plan_resolution = resolve_semantic_task_plan(
+        spec=compiler_result.canonical_task_spec,
+        goal=goal_text,
+        fallback_query_text=runtime_fallback_query_text,
+        model_payload={
+            **planner_result.workflow_payload,
+            **(
+                {"retrieval_objective": planner_result.retrieval_objective}
+                if planner_result.retrieval_objective
+                else {}
+            ),
+        },
+    )
+    effective_semantic_plan = semantic_plan_resolution.effective_plan
+    effective_objectives = dict(effective_semantic_plan.get("retrieval_objectives", {}))
+    semantic_objective = dict(effective_objectives.get("semantic_chunk", {}))
     planner_retrieval_objective = {
         **planner_scope_payload,
         **role_path_runner.build_retrieval_objective(
             spec=compiler_result.canonical_task_spec,
             goal=goal_text,
-            query_text=planner_query_text,
+            query_text=runtime_fallback_query_text,
             tags=tuple(compiler_result.canonical_task_spec.required_tools),
         ),
-        **dict(planner_result.retrieval_objective),
+        "query_text": str(semantic_objective.get("query_text", runtime_fallback_query_text)).strip()
+        or runtime_fallback_query_text,
+        "semantic_task_plan": effective_semantic_plan,
+        "objective_source": semantic_plan_resolution.objective_source,
+        "planner_semantic_plan_hash": semantic_plan_resolution.model_plan_hash,
+        "planner_fallback_semantic_plan_hash": semantic_plan_resolution.fallback_plan_hash,
+        "planner_effective_semantic_plan_hash": semantic_plan_resolution.effective_plan_hash,
     }
     retrieval_query_text = str(planner_retrieval_objective.get("query_text", planner_query_text)).strip() or planner_query_text
 
@@ -1884,19 +1980,10 @@ def run_smoke(
         planner_scope_payload=planner_retrieval_objective,
     )
     role_hydrated_slices = _build_role_hydrated_slices(retrieval)
-    role_hydrated_slices["planner"] = RoleHydratedSlice(
-        role="planner",
-        selected_stable_keys=(),
-        hydrated_text=str(planner_scope_payload.get("text_context", "")),
-        hydrated_bytes=int(planner_scope_payload.get("text_bytes", 0)),
-        item_count=int(planner_scope_payload.get("text_item_count", 0)),
-        table_text=str(planner_scope_payload.get("table_context", "")),
-        table_bytes=int(planner_scope_payload.get("table_bytes", 0)),
-        table_item_count=int(planner_scope_payload.get("table_item_count", 0)),
-        artifact_text=str(planner_scope_payload.get("artifact_context", "")),
-        artifact_bytes=int(planner_scope_payload.get("artifact_bytes", 0)),
-        artifact_item_count=int(planner_scope_payload.get("artifact_item_count", 0)),
-    )
+    # The bounded semantic Planner sees request semantics and output IDs only.
+    # Evidence hydration starts at Retriever fan-out, so Planner cannot copy facts
+    # or answers from the corpus into its plan.
+    role_hydrated_slices["planner"] = _empty_role_hydrated_slice("planner")
 
     state_store = LayeredStateStore(
         root=runtime_root / "state",
@@ -1938,6 +2025,9 @@ def run_smoke(
         planner_plan_payload=planner_result.workflow_payload,
         planner_scope_payload=planner_scope_payload,
         summary_hint=summary_hint,
+        semantic_plan_audit=semantic_plan_resolution.audit_payload(),
+        retriever_consumed_objective_hashes=retrieval.consumed_objective_hashes,
+        planner_raw_output_hash=sha256_digest(planner_result.raw_text) if planner_result.raw_text else "",
     )
     materialized_hydrate_manifest = workspace.write_json(
         layout,
@@ -2072,7 +2162,8 @@ def run_smoke(
 
     embedding_encoder = DeterministicEmbeddingEncoder(dims=retrieval.query_embedding.dims)
     memory_store = MemoryIndexStore(store_root=runtime_root / "memory_index")
-    memory_store.put_embedding(retrieval.query_embedding)
+    memory_query_embedding = retrieval.memory_query_embedding or retrieval.query_embedding
+    memory_store.put_embedding(memory_query_embedding)
     replay_candidate: ReplayCandidate | None = None
     history_records = load_history_replay_candidates(
         history_roots=history_runtime_roots,
@@ -2081,7 +2172,7 @@ def run_smoke(
     if seed_replay_memory:
         historical_embedding = embedding_encoder.encode(
             embedding_id=f"embedding-history-{task_id}",
-            text=retrieval.query_text,
+            text=str(retrieval.consumed_objectives.get("memory", {}).get("query_text", retrieval.query_text)),
         )
         memory_store.put_embedding(historical_embedding)
         seeded_memory_ref = MemoryRef(
@@ -2119,8 +2210,7 @@ def run_smoke(
             candidate_id=seeded_memory_ref.memory_id,
             canonical_task_spec=compiler_result.canonical_task_spec,
             input_artifact_hashes=(
-                planner_handoff_replay_hash(planner_handoff),
-                evidence_pack_replay_hash(retrieval.evidence_pack),
+                evidence_execution_input_replay_hash(retrieval.evidence_pack),
                 hydrate_manifest_replay_hash(retrieval.hydrate_manifest),
                 runtime_signature_manifest_bundle.manifest_bundle_hash,
             ),
@@ -2134,15 +2224,19 @@ def run_smoke(
     memory_match_result = memory_store.lookup(
         query_task_id=task_id,
         query_spec_hash=compiler_result.canonical_task_spec.spec_hash,
-        query_embedding=retrieval.query_embedding,
+        query_embedding=memory_query_embedding,
         allow_replay=layer_config.replay_enabled,
     )
     replay_input_artifact_hashes = (
-        planner_handoff_replay_hash(planner_handoff),
-        evidence_pack_replay_hash(retrieval.evidence_pack),
+        evidence_execution_input_replay_hash(retrieval.evidence_pack),
         hydrate_manifest_replay_hash(retrieval.hydrate_manifest),
         runtime_signature_manifest_bundle.manifest_bundle_hash,
     )
+    replay_observation_hashes = {
+        "planner_handoff_replay_hash": planner_handoff_replay_hash(planner_handoff),
+        "evidence_pack_replay_hash": evidence_pack_replay_hash(retrieval.evidence_pack),
+        "evidence_execution_input_replay_hash": replay_input_artifact_hashes[0],
+    }
     minimum_reuse_class = str(
         dict(compiler_result.canonical_task_spec.arguments.get("reuse_contract", {})).get("minimum_reuse_class", "")
     ).strip()
@@ -2321,7 +2415,9 @@ def run_smoke(
             prompt_slice=retriever_prompt_slice,
             strict_surface=True,
             allow_assisted_correction=False,
-            route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route),
+            route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route)
+            if route_hints_enabled
+            else (),
         )
         executor_prompt_slice = (
             RolePromptSlice(
@@ -2360,7 +2456,9 @@ def run_smoke(
             prompt_slice=executor_prompt_slice,
             strict_surface=True,
             allow_assisted_correction=False,
-            route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route),
+            route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route)
+            if route_hints_enabled
+            else (),
         )
         actions_text = (
             f"route={executor_decision.route}\n"
@@ -2502,6 +2600,11 @@ def run_smoke(
         executor_decision=executor_decision,
         summarizer_decision=summarizer_decision,
     )
+    prefix_metrics_after = (
+        _fetch_vllm_prefix_metrics_or_none(prefix_metrics_url)
+        if prefix_metrics_enabled
+        else None
+    )
 
     raw_evidence_bytes_seen_by_llm = (
         sum(_role_external_evidence_bytes(slice_) for slice_ in role_hydrated_slices.values())
@@ -2627,7 +2730,7 @@ def run_smoke(
             canonical_task_spec_hash=compiler_result.canonical_task_spec.spec_hash,
             artifact_ref_id="artifact-smoke",
             semantic_state_ref_id="" if semantic_ref is None else semantic_ref.state_id,
-            embedding_ref_id=retrieval.query_embedding.embedding_id,
+            embedding_ref_id=memory_query_embedding.embedding_id,
             manifest_hash=retrieval.hydrate_manifest.manifest_hash,
         ),
         canonical_task_spec=compiler_result.canonical_task_spec,
@@ -2711,6 +2814,9 @@ def run_smoke(
             validator_reports=validator_reports,
             input_validator_reports=input_validator_reports,
             quality_floor=quality_floor,
+            answer_restoration_performed=(
+                replay_restore_enabled and history_record is not None
+            ),
             workspace_file_count=workspace_files_during_driver,
             codeact_plan=None if codeact_result is None else codeact_result.plan,
             codeact_record=None if codeact_result is None else codeact_result.record,
@@ -2722,6 +2828,32 @@ def run_smoke(
     bundle = driver_result.persisted_paths
     telemetry = driver_result.telemetry
     task_metrics = dict(driver_result.task_metrics)
+    effective_objective_hashes = {
+        name: sha256_digest(objective)
+        for name, objective in effective_objectives.items()
+        if isinstance(objective, dict)
+    }
+    consumed_hash_match_names = {
+        name
+        for name, expected_hash in effective_objective_hashes.items()
+        if retrieval.consumed_objective_hashes.get(name) == expected_hash
+    }
+    planner_downstream_consumed_field_count = sum(
+        len(dict(retrieval.consumed_objectives.get(name, {})))
+        for name in consumed_hash_match_names
+    )
+    planner_model_downstream_consumed_field_count = sum(
+        1
+        for path, source in semantic_plan_resolution.field_provenance.items()
+        if path.startswith("retrieval_objectives.")
+        and len(path.split(".")) >= 3
+        and path.split(".")[1] in consumed_hash_match_names
+        and source in {"model_generated", "hybrid"}
+    )
+    planner_behavioral_effect = bool(
+        semantic_plan_resolution.behavioral_effect
+        and planner_model_downstream_consumed_field_count > 0
+    )
     task_metrics["memfd_transfer_count"] = float(state_store.memfd_transfer_count)
     task_metrics["memfd_bytes_transferred"] = float(state_store.memfd_bytes_transferred)
     task_metrics["state_pool_memfd_mode_count"] = 1.0 if state_store.backend_name == "memfd" else 0.0
@@ -2747,12 +2879,44 @@ def run_smoke(
             "handoff_mode_structured_collaboration": (
                 1.0 if layer_config.handoff_mode == "structured_collaboration" else 0.0
             ),
-            "planner_call_count": 1.0,
-            "retriever_call_count": 0.0 if replay_restore_enabled else 1.0,
-            "executor_call_count": 0.0 if replay_restore_enabled else 1.0,
-            "summarizer_call_count": 0.0 if replay_restore_enabled else 1.0,
-            "llm_call_count": 0.0 if replay_restore_enabled else 4.0,
-            "planner_generated_retrieval_objective_count": 1.0,
+            "planner_generated_retrieval_objective_count": float(
+                semantic_plan_resolution.semantic_plan_valid
+                and semantic_plan_resolution.model_generated_field_count > 0
+            ),
+            "planner_model_generated_field_count": float(
+                semantic_plan_resolution.model_generated_field_count
+            ),
+            "planner_fallback_field_count": float(
+                semantic_plan_resolution.fallback_field_count
+            ),
+            "planner_downstream_consumed_field_count": float(
+                planner_downstream_consumed_field_count
+            ),
+            "planner_model_downstream_consumed_field_count": float(
+                planner_model_downstream_consumed_field_count
+            ),
+            "planner_behavioral_effect": float(planner_behavioral_effect),
+            "planner_semantic_plan_valid": float(
+                semantic_plan_resolution.semantic_plan_valid
+            ),
+            "planner_semantic_equivalence": float(
+                semantic_plan_resolution.semantic_equivalence
+            ),
+            "planner_semantic_plan_validation_error_count": float(
+                len(semantic_plan_resolution.validation_errors)
+            ),
+            "planner_retriever_consumed_hash_match_count": float(
+                len(consumed_hash_match_names)
+            ),
+            "planner_objective_source_model_generated": float(
+                semantic_plan_resolution.objective_source == "model_generated"
+            ),
+            "planner_objective_source_runtime_fallback": float(
+                semantic_plan_resolution.objective_source == "runtime_fallback"
+            ),
+            "planner_objective_source_hybrid": float(
+                semantic_plan_resolution.objective_source == "hybrid"
+            ),
             "history_runtime_root_count": float(len(history_runtime_roots)),
             "history_artifact_summary_count": float(
                 len(planner_scope_payload.get("history_artifact_summaries", []))
@@ -2921,6 +3085,16 @@ def run_smoke(
     task_metrics["logit_varentropy"] = float(executor_decision.logit_varentropy)
     task_metrics["logit_top_gap"] = float(executor_decision.logit_top_gap)
     task_metrics["logit_peak_position"] = float(executor_decision.logit_peak_position)
+    task_metrics["route_hints_enabled"] = float(route_hints_enabled)
+    task_metrics["planner_effective_objective_present"] = float(bool(effective_semantic_plan))
+    task_metrics["planner_objective_present"] = task_metrics["planner_effective_objective_present"]
+    task_metrics["planner_workflow_step_count"] = float(
+        len(planner_result.workflow_payload.get("steps", []))
+        if isinstance(planner_result.workflow_payload, dict)
+        else 0
+    )
+    task_metrics["logit_sequence_length"] = float(executor_decision.logit_sequence_length)
+    task_metrics["logit_decision_entropy"] = float(executor_decision.logit_decision_entropy)
     neural_prefix_identity = build_neural_prefix_identity(
         source_doc_hashes=retrieval.selected_doc_hashes,
         evidence_pack_hash=retrieval.evidence_pack.pack_hash,
@@ -2934,8 +3108,68 @@ def run_smoke(
         consumer_roles=_neural_prefix_consumer_roles(role_hydrated_slices),
     )
     task_metrics.update(neural_prefix_estimate.metrics())
+    if prefix_metrics_before is not None and prefix_metrics_after is not None:
+        prefix_counter_delta = compute_vllm_prefix_cache_counter_delta(
+            prefix_metrics_before,
+            prefix_metrics_after,
+        )
+    else:
+        from v2.runtime.vllm_metrics import VllmPrefixCacheCounterDelta
+
+        prefix_counter_delta = VllmPrefixCacheCounterDelta(
+            available=False,
+            valid=False,
+            unavailable_reason=(
+                "metrics_fetch_failed" if prefix_metrics_enabled else "not_local_vllm"
+            ),
+        )
+    task_metrics.update(
+        {
+            "vllm_prefix_metrics_sample_enabled": float(prefix_metrics_enabled),
+            "vllm_prefix_counter_delta_available": float(prefix_counter_delta.available),
+            "vllm_prefix_counter_delta_valid": float(prefix_counter_delta.valid),
+            "vllm_prefix_observed_query_delta": float(prefix_counter_delta.queries),
+            "vllm_prefix_observed_hit_delta": float(prefix_counter_delta.hits),
+            "vllm_prefix_observed_hit_rate": float(
+                prefix_counter_delta.observed_hit_rate or 0.0
+            ),
+            "vllm_prefix_service_lifetime_hit_rate_before": float(
+                prefix_counter_delta.service_lifetime_hit_rate_before
+            ),
+            "vllm_prefix_service_lifetime_hit_rate_after": float(
+                prefix_counter_delta.service_lifetime_hit_rate_after
+            ),
+        }
+    )
     for key, value in continuous_reuse_metrics.items():
         task_metrics[key] = float(value)
+
+    rendered_role_request_files = {
+        role: _persist_rendered_role_request_artifact(
+            task_id=task_id,
+            role=role,
+            role_path_runner=role_path_runner,
+            workspace=workspace,
+            layout=layout,
+            persistence_profile=layer_config.persistence_profile,
+        )
+        for role in ("planner", "retriever", "executor", "summarizer")
+    }
+    task_metrics["rendered_role_request_artifact_count"] = float(
+        len(rendered_role_request_files)
+    )
+    rendered_request_audit = getattr(role_path_runner, "rendered_request_audit", {})
+    rendered_request_counts = {
+        role: len(rendered_request_audit.get(role, []))
+        for role in ("planner", "retriever", "executor", "summarizer")
+    }
+    for role, request_count in rendered_request_counts.items():
+        task_metrics[f"{role}_call_count"] = float(request_count)
+    task_metrics["llm_call_count"] = float(sum(rendered_request_counts.values()))
+    task_metrics["rendered_role_request_count"] = task_metrics["llm_call_count"]
+    task_metrics["rendered_role_request_artifact_bytes_total"] = float(
+        sum(item.size_bytes for item in rendered_role_request_files.values())
+    )
 
     session_snapshot = driver_result.session_snapshot
     lineage_view = driver_result.lineage_view
@@ -2951,11 +3185,36 @@ def run_smoke(
         encoding="utf-8",
     )
     # Persist the full smoke-layer task_metrics dict (superset of TASK_SUMMARY_METRICS).
-    # Includes logit_varentropy, logit_top_gap, logit_peak_position and ~100 other keys
+    # Includes extended logit-state fields and other smoke-layer metrics
     # that are assembled after the driver returns and are not present in telemetry.json.
     task_metrics_path = layout.logs_dir / "task_metrics.json"
     task_metrics_path.write_text(
         stable_json_dumps(task_metrics) + "\n",
+        encoding="utf-8",
+    )
+    prefix_cache_observation_path = layout.logs_dir / "prefix_cache_observation.json"
+    prefix_cache_observation_path.write_text(
+        stable_json_dumps(
+            {
+                "schema_version": "statebus.task_prefix_cache_observation.v1",
+                "claim_boundary": (
+                    "engine_local_prefix_reuse_observation_only_no_hidden_state_or_kv_tensor_transfer"
+                ),
+                "metrics_url": prefix_metrics_url,
+                "observation_isolation": (
+                    "serialized_task_window_without_exclusive_vllm_service_ownership"
+                ),
+                "metrics_before": (
+                    {} if prefix_metrics_before is None else prefix_metrics_before.canonical_payload()
+                ),
+                "metrics_after": (
+                    {} if prefix_metrics_after is None else prefix_metrics_after.canonical_payload()
+                ),
+                "counter_delta": prefix_counter_delta.canonical_payload(),
+                "control_plane_estimate": neural_prefix_estimate.canonical_payload(),
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     runtime_event_log_path = runtime_root / "telemetry" / "runtime_events.jsonl"
@@ -2993,6 +3252,7 @@ def run_smoke(
         "history_reuse_gain": float(continuous_reuse_metrics.get("history_reuse_gain", 0.0)),
         "planner_handoff_hash": planner_handoff.handoff_hash,
         "input_artifact_hashes": list(replay_input_artifact_hashes),
+        "retrieval_observation_hashes": replay_observation_hashes,
         "memory_commit_path": "" if bundle.memory_commit_path is None else str(bundle.memory_commit_path),
         "replay_ledger_path": "" if bundle.replay_ledger_path is None else str(bundle.replay_ledger_path),
         "session_path": "" if bundle.session_path is None else str(bundle.session_path),
@@ -3227,6 +3487,15 @@ def run_smoke(
                 for role in ("planner", "retriever", "executor", "summarizer")
             },
         },
+        "rendered_llm_requests": {
+            "content_persisted": layer_config.persistence_profile != "benchmark_balanced",
+            "artifact_count": len(rendered_role_request_files),
+            "request_count": int(task_metrics["rendered_role_request_count"]),
+            "role_relpaths": {
+                role: str(rendered_role_request_files[role].relpath)
+                for role in ("planner", "retriever", "executor", "summarizer")
+            },
+        },
         "evidence_pruning": {
             "profile_hash": retrieval.pruning_profile.profile_hash,
             "importance_threshold": retrieval.pruning_profile.importance_threshold,
@@ -3268,6 +3537,7 @@ def run_smoke(
         output_artifact_hash=driver_result.output_artifact_hash,
         telemetry_path=str(telemetry_path),
         task_metrics_path=str(task_metrics_path),
+        prefix_cache_observation_path=str(prefix_cache_observation_path),
         runtime_event_log_path=str(runtime_event_log_path),
         runtime_fact_log_path=str(runtime_fact_log_path),
         replay_audit_path=str(replay_audit_file.path),

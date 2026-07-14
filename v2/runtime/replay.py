@@ -214,6 +214,30 @@ def evidence_pack_replay_hash(pack: CanonicalEvidencePack) -> str:
     )
 
 
+def evidence_execution_input_replay_hash(pack: CanonicalEvidencePack) -> str:
+    """Hash evidence content while excluding query-derived ranking observations.
+
+    Planner objectives, lexical routing hints, and retriever scores are useful
+    selection/audit data, but they are not stable execution inputs. Exact replay
+    remains bound to hydrated evidence content, locators, source document
+    hashes, and schema.
+    """
+    return sha256_digest(
+        {
+            "source_doc_hashes": list(pack.source_doc_hashes),
+            "hard_facts": [_evidence_item_execution_input_payload(item) for item in pack.hard_facts],
+            "structured_evidence": [
+                _evidence_item_execution_input_payload(item) for item in pack.structured_evidence
+            ],
+            "semantic_contexts": [
+                _evidence_item_execution_input_payload(item) for item in pack.semantic_contexts
+            ],
+            "conflicts": [_evidence_item_execution_input_payload(item) for item in pack.conflicts],
+            "schema_version": pack.schema_version,
+        }
+    )
+
+
 def hydrate_manifest_replay_hash(manifest: HydrateManifest) -> str:
     return sha256_digest(
         {
@@ -557,6 +581,23 @@ def _evidence_item_replay_payload(item: object) -> dict[str, object]:
         "rank": int(getattr(item, "rank", 0)),
         "score": float(getattr(item, "score", 0.0)),
         "metadata": dict(sorted(dict(getattr(item, "metadata", {})).items())),
+    }
+
+
+def _evidence_item_execution_input_payload(item: object) -> dict[str, object]:
+    locator = getattr(item, "locator", None)
+    metadata = {
+        str(key): value
+        for key, value in dict(getattr(item, "metadata", {})).items()
+        if str(key) not in {"score", "semantic_score", "lexical_score", "rrf_score"}
+    }
+    return {
+        "item_id": str(getattr(item, "item_id", "")),
+        "bucket": str(getattr(item, "bucket", "")),
+        "locator": None if locator is None else asdict(locator),
+        "rendered_text": str(getattr(item, "rendered_text", "")),
+        "source_name": str(getattr(item, "source_name", "")),
+        "metadata": dict(sorted(metadata.items())),
     }
 
 

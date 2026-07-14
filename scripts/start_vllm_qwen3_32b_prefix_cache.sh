@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 MODEL_PATH="${STATEBUS_VLLM_MODEL_PATH:-/data/models/Qwen3-32B}"
 SERVED_MODEL_NAME="${STATEBUS_VLLM_SERVED_MODEL_NAME:-qwen3-32b}"
 HOST="${STATEBUS_VLLM_HOST:-127.0.0.1}"
@@ -17,6 +20,7 @@ CPU_OFFLOAD_GB="${STATEBUS_VLLM_CPU_OFFLOAD_GB:-}"
 NUM_GPU_BLOCKS_OVERRIDE="${STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE:-}"
 VLLM_ENV_PREFIX="${STATEBUS_VLLM_ENV_PREFIX:-/home/qcrs/statebus/conda-envs/vllm-qwen-cu121}"
 DEFAULT_CUDA_VISIBLE_DEVICES="${STATEBUS_VLLM_CUDA_VISIBLE_DEVICES:-0}"
+EXPORT_PREFIX_COUNTERS="${STATEBUS_VLLM_EXPORT_PREFIX_COUNTERS:-1}"
 export VLLM_USE_V1="${VLLM_USE_V1:-0}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-$DEFAULT_CUDA_VISIBLE_DEVICES}"
 
@@ -35,6 +39,11 @@ if [[ "${CONDA_PREFIX:-}" != "$VLLM_ENV_PREFIX" && -d "$VLLM_ENV_PREFIX" ]]; the
     source "$CONDA_BASE/etc/profile.d/conda.sh"
     conda activate "$VLLM_ENV_PREFIX"
   fi
+fi
+
+if [[ "$EXPORT_PREFIX_COUNTERS" == "1" || "$EXPORT_PREFIX_COUNTERS" == "true" ]]; then
+  export STATEBUS_VLLM_EXPORT_PREFIX_COUNTERS=1
+  export PYTHONPATH="$REPO_ROOT/scripts/vllm_exporter:$REPO_ROOT/scripts:$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 fi
 
 args=(
@@ -74,6 +83,7 @@ echo "[statebus-vllm] cuda_visible_devices=$CUDA_VISIBLE_DEVICES"
 echo "[statebus-vllm] tensor_parallel_size=$TENSOR_PARALLEL_SIZE"
 echo "[statebus-vllm] max_model_len=$MAX_MODEL_LEN"
 echo "[statebus-vllm] gpu_memory_utilization=$GPU_MEMORY_UTILIZATION"
+echo "[statebus-vllm] export_prefix_query_hit_counters=$EXPORT_PREFIX_COUNTERS"
 if [[ -n "$NUM_GPU_BLOCKS_OVERRIDE" ]]; then
   echo "[statebus-vllm] num_gpu_blocks_override=$NUM_GPU_BLOCKS_OVERRIDE"
 fi

@@ -37,10 +37,44 @@ from v2.retrieval.models import (
     RetrieverKind,
     RetrieverOutput,
 )
+from v2.utils import sha256_digest
 
 
 PRUNING_IMPORTANCE_THRESHOLD = 0.6
 KV_ESTIMATE_BYTES_PER_TOKEN = 4
+
+
+def _consumed_retrieval_objectives(
+    planner_scope_payload: dict[str, object],
+    *,
+    fallback_query_text: str,
+) -> dict[str, dict[str, object]]:
+    semantic_plan = planner_scope_payload.get("semantic_task_plan", {})
+    semantic_plan = semantic_plan if isinstance(semantic_plan, dict) else {}
+    raw_objectives = semantic_plan.get("retrieval_objectives", {})
+    raw_objectives = raw_objectives if isinstance(raw_objectives, dict) else {}
+    result: dict[str, dict[str, object]] = {}
+    defaults = {
+        "lexical_metadata": ("lexical_metadata",),
+        "semantic_chunk": ("semantic_context",),
+        "table_structure": ("table_cell", "table_schema"),
+        "memory": ("memory_artifact", "memory_strategy"),
+    }
+    for name, evidence_types in defaults.items():
+        raw = raw_objectives.get(name, {})
+        objective = dict(raw) if isinstance(raw, dict) else {}
+        objective["query_text"] = str(objective.get("query_text", "")).strip() or fallback_query_text
+        objective["objective"] = str(objective.get("objective", "")).strip() or f"retrieve {name} evidence"
+        raw_evidence = objective.get("evidence_types", [])
+        objective["evidence_types"] = (
+            [str(item).strip() for item in raw_evidence if str(item).strip()]
+            if isinstance(raw_evidence, (list, tuple))
+            else list(evidence_types)
+        )
+        if name == "memory":
+            objective["reuse_intent"] = str(objective.get("reuse_intent", "assist")).strip() or "assist"
+        result[name] = objective
+    return result
 
 
 def _default_dynamic_pruning_config() -> DynamicPruningConfig:
@@ -144,10 +178,22 @@ class LexicalMetadataRetriever:
         *,
         spec: CanonicalTaskSpec,
         document: FinancialReportDocument | CsvTableDocument | IncidentLogDocument,
+        objective: dict[str, object] | None = None,
     ) -> RetrieverOutput:
+        objective = dict(objective or {})
+        objective_query = str(objective.get("query_text", "")).strip()
         ticker = str(spec.arguments.get("ticker", getattr(document, "ticker", "")))
         quarter = str(spec.arguments.get("quarter", getattr(document, "quarter", "")))
         dataset_id = str(spec.arguments.get("dataset_id", getattr(document, "dataset_id", "")))
+        metadata_hints = list(document.metadata_hints)
+        query_tokens = set(objective_query.casefold().replace("_", " ").split())
+        if query_tokens:
+            metadata_hints.sort(
+                key=lambda hint: (
+                    -len(query_tokens & set(str(hint).casefold().replace("_", " ").split())),
+                    str(hint),
+                )
+            )
         hints = tuple(
             EvidenceCandidate(
                 item_id=f"hint-{index + 1}",
@@ -158,7 +204,7 @@ class LexicalMetadataRetriever:
                 rank=index + 1,
                 metadata={"hint": hint},
             )
-            for index, hint in enumerate(document.metadata_hints[:2])
+            for index, hint in enumerate(metadata_hints[:2])
         )
         return RetrieverOutput(
             retriever_kind=RetrieverKind.LEXICAL_METADATA,
@@ -168,7 +214,11 @@ class LexicalMetadataRetriever:
                 candidate_count=len(document.metadata_hints),
                 selected_count=len(hints),
                 selected_ids=tuple(candidate.item_id for candidate in hints),
-                diagnostics={"title": document.title},
+                diagnostics={
+                    "title": document.title,
+                    "consumed_objective_hash": sha256_digest(objective),
+                    "objective_query_hash": sha256_digest(objective_query) if objective_query else "",
+                },
             ),
         )
 
@@ -183,14 +233,17 @@ class SemanticChunkRetriever:
         *,
         spec: CanonicalTaskSpec,
         document: FinancialReportDocument | CsvTableDocument | IncidentLogDocument,
+        objective: dict[str, object] | None = None,
     ) -> RetrieverOutput:
+        objective = dict(objective or {})
         doc_identity = getattr(document, "ticker", getattr(document, "dataset_id", "dataset"))
         doc_scope = getattr(document, "quarter", Path(getattr(document, "csv_path", "")).name or "scope")
-        query_text = (
+        fallback_query_text = (
             f"{spec.task_family} {spec.intent_op} "
             f"{spec.arguments.get('ticker', doc_identity)} "
             f"{spec.arguments.get('quarter', doc_scope)}"
         )
+        query_text = str(objective.get("query_text", "")).strip() or fallback_query_text
         query_embedding = self.encoder.encode(
             embedding_id=f"embedding-query-{str(doc_identity).lower()}-{str(doc_scope).lower()}",
             text=query_text,
@@ -225,7 +278,11 @@ class SemanticChunkRetriever:
                 candidate_count=len(document.text_fragments),
                 selected_count=len(selected),
                 selected_ids=tuple(candidate.item_id for candidate in selected),
-                diagnostics={"top_k": self.top_k},
+                diagnostics={
+                    "top_k": self.top_k,
+                    "consumed_objective_hash": sha256_digest(objective),
+                    "objective_query_hash": sha256_digest(query_text),
+                },
             ),
         )
 
@@ -237,7 +294,10 @@ class TableStructureRetriever:
         *,
         spec: CanonicalTaskSpec,
         document: FinancialReportDocument | CsvTableDocument | IncidentLogDocument,
+        objective: dict[str, object] | None = None,
     ) -> RetrieverOutput:
+        objective = dict(objective or {})
+        objective_query = str(objective.get("query_text", "")).strip()
         requested_metric = str(
             spec.arguments.get(
                 "metric",
@@ -295,7 +355,11 @@ class TableStructureRetriever:
                 candidate_count=len(document.table_rows),
                 selected_count=len(selected),
                 selected_ids=tuple(candidate.item_id for candidate in selected),
-                diagnostics={"metric": requested_metric},
+                diagnostics={
+                    "metric": requested_metric,
+                    "consumed_objective_hash": sha256_digest(objective),
+                    "objective_query_hash": sha256_digest(objective_query) if objective_query else "",
+                },
             ),
         )
 
@@ -756,6 +820,14 @@ class RetrieverFanoutPipeline:
         normalized_scope: dict[str, object],
         query_text: str,
     ) -> RetrievalBundle:
+        consumed_objectives = _consumed_retrieval_objectives(
+            normalized_scope,
+            fallback_query_text=query_text,
+        )
+        consumed_objective_hashes = {
+            name: sha256_digest(objective)
+            for name, objective in consumed_objectives.items()
+        }
         history_items = [
             str(item).strip()
             for item in normalized_scope.get("history_artifact_summaries", [])
@@ -799,7 +871,10 @@ class RetrieverFanoutPipeline:
                 candidate_count=len(lineage_items),
                 selected_count=len(lexical_candidates),
                 selected_ids=tuple(candidate.item_id for candidate in lexical_candidates),
-                diagnostics={"source": "artifact_history_lineage"},
+                diagnostics={
+                    "source": "artifact_history_lineage",
+                    "consumed_objective_hash": consumed_objective_hashes["lexical_metadata"],
+                },
             ),
         )
         semantic = RetrieverOutput(
@@ -807,14 +882,23 @@ class RetrieverFanoutPipeline:
             candidates=(),
             query_embedding=self.semantic_retriever.encoder.encode(
                 embedding_id=f"embedding-query-artifact-lineage-{task_id}",
-                text=" ".join([query_text, *history_items, *lineage_items]),
+                text=" ".join(
+                    [
+                        str(consumed_objectives["semantic_chunk"]["query_text"]),
+                        *history_items,
+                        *lineage_items,
+                    ]
+                ),
             ),
             log_entry=RetrievalLogEntry(
                 retriever_kind=RetrieverKind.SEMANTIC_CHUNK,
                 candidate_count=len(history_items),
                 selected_count=0,
                 selected_ids=(),
-                diagnostics={"source": "artifact_history_lineage"},
+                diagnostics={
+                    "source": "artifact_history_lineage",
+                    "consumed_objective_hash": consumed_objective_hashes["semantic_chunk"],
+                },
             ),
         )
         table = RetrieverOutput(
@@ -825,7 +909,10 @@ class RetrieverFanoutPipeline:
                 candidate_count=len(history_items),
                 selected_count=len(structured_candidates),
                 selected_ids=tuple(candidate.item_id for candidate in structured_candidates),
-                diagnostics={"source": "artifact_history_lineage"},
+                diagnostics={
+                    "source": "artifact_history_lineage",
+                    "consumed_objective_hash": consumed_objective_hashes["table_structure"],
+                },
             ),
         )
         candidate_pool = self._build_candidate_pool(
@@ -906,6 +993,10 @@ class RetrieverFanoutPipeline:
         )
         if semantic.query_embedding is None:
             raise RuntimeError("semantic retriever must emit query embedding")
+        memory_query_embedding = self.semantic_retriever.encoder.encode(
+            embedding_id=f"embedding-memory-query-{task_id}",
+            text=str(consumed_objectives["memory"]["query_text"]),
+        )
         return RetrievalBundle(
             task_id=task_id,
             query_text=query_text,
@@ -920,6 +1011,9 @@ class RetrieverFanoutPipeline:
             full_corpus_bytes=full_corpus_bytes,
             selected_evidence_bytes=selected_evidence_bytes,
             planner_scope_payload=normalized_scope,
+            consumed_objectives=consumed_objectives,
+            consumed_objective_hashes=consumed_objective_hashes,
+            memory_query_embedding=memory_query_embedding,
         )
 
     def run(
@@ -934,6 +1028,14 @@ class RetrieverFanoutPipeline:
             planner_scope_payload=planner_scope_payload,
         )
         query_text = str(normalized_scope.get("query_text", "")).strip()
+        consumed_objectives = _consumed_retrieval_objectives(
+            normalized_scope,
+            fallback_query_text=query_text,
+        )
+        consumed_objective_hashes = {
+            name: sha256_digest(objective)
+            for name, objective in consumed_objectives.items()
+        }
         if spec.task_family == "continuous_csv_table_analysis" and spec.intent_op == "summarize_reuse_lineage":
             return self._run_artifact_history_lineage(
                 task_id=task_id,
@@ -975,9 +1077,21 @@ class RetrieverFanoutPipeline:
             ticker = str(spec.arguments.get("ticker", "ACME"))
             quarter = str(spec.arguments.get("quarter", "2026Q1"))
             document = self.corpus.resolve(ticker=ticker, quarter=quarter)
-        lexical = self.lexical_retriever.retrieve(spec=spec, document=document)
-        semantic = self.semantic_retriever.retrieve(spec=spec, document=document)
-        table = self.table_retriever.retrieve(spec=spec, document=document)
+        lexical = self.lexical_retriever.retrieve(
+            spec=spec,
+            document=document,
+            objective=consumed_objectives["lexical_metadata"],
+        )
+        semantic = self.semantic_retriever.retrieve(
+            spec=spec,
+            document=document,
+            objective=consumed_objectives["semantic_chunk"],
+        )
+        table = self.table_retriever.retrieve(
+            spec=spec,
+            document=document,
+            objective=consumed_objectives["table_structure"],
+        )
 
         lexical_candidates = tuple(
             EvidenceCandidate(**candidate) for candidate in lexical.candidates
@@ -1061,6 +1175,10 @@ class RetrieverFanoutPipeline:
         )
         if semantic.query_embedding is None:
             raise RuntimeError("semantic retriever must emit query embedding")
+        memory_query_embedding = self.semantic_retriever.encoder.encode(
+            embedding_id=f"embedding-memory-query-{task_id}",
+            text=str(consumed_objectives["memory"]["query_text"]),
+        )
         return RetrievalBundle(
             task_id=task_id,
             query_text=query_text,
@@ -1075,4 +1193,7 @@ class RetrieverFanoutPipeline:
             full_corpus_bytes=document.full_corpus_bytes,
             selected_evidence_bytes=selected_evidence_bytes,
             planner_scope_payload=normalized_scope,
+            consumed_objectives=consumed_objectives,
+            consumed_objective_hashes=consumed_objective_hashes,
+            memory_query_embedding=memory_query_embedding,
         )

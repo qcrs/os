@@ -15,7 +15,12 @@ from v2.benchmark.models import (
     BenchmarkLayerProfile,
     BenchmarkSuiteReport,
 )
-from v2.benchmark.scoring import FixedAnswerLaneResult, score_fixed_answer_case
+from v2.benchmark.metric_aggregation import finalize_case_telemetry_summary
+from v2.benchmark.scoring import (
+    FixedAnswerLaneResult,
+    expected_facts_for_scoring,
+    score_fixed_answer_case,
+)
 from v2.benchmark.reporting import (
     comparator_mode_report_to_dict,
     comparator_suite_report_to_dict,
@@ -215,8 +220,11 @@ def _fixed_answer_metadata(
     history_backed_replay_enabled: bool,
     replay_history_source: str,
 ) -> dict[str, object]:
+    formal_registry = benchmark_tier == "formal"
     return {
-        "baseline_kind": "statebus_fixed_answer_dev",
+        "baseline_kind": (
+            "statebus_formal_registry_adapter" if formal_registry else "statebus_fixed_answer_dev"
+        ),
         "benchmark_tier": benchmark_tier,
         "carrier_kind": "typed_statebus" if handoff_mode == "structured_collaboration" else "text_collaboration",
         "claim_level": claim_level,
@@ -234,7 +242,7 @@ def _fixed_answer_metadata(
         "history_backed_replay_enabled": history_backed_replay_enabled,
         "replay_history_source": replay_history_source,
         "synthetic_replay_seed_enabled": synthetic_replay_seed_enabled,
-        "task_family_tier": "dev_fixed_answer",
+        "task_family_tier": "formal_registry" if formal_registry else "dev_fixed_answer",
         "uses_internal_helpers": False,
     }
 
@@ -683,7 +691,10 @@ def run_fixed_answer_benchmark_family(
             ),
             expected_route=sample.expected_route,
             expected_tool_name=sample.expected_tool_name,
-            expected_facts=sample.expected_facts,
+            expected_facts=expected_facts_for_scoring(
+                expected_facts=sample.expected_facts,
+                metric_projection_key=sample.metric_projection_key,
+            ),
         )
         smoke_metrics = dict(sorted(smoke.task_metrics.items()))
         smoke_metrics["message_count"] = float(
@@ -737,6 +748,7 @@ def run_fixed_answer_benchmark_family(
     for case in cases:
         for key, value in case.metrics.items():
             telemetry_summary[key] = telemetry_summary.get(key, 0.0) + float(value)
+    telemetry_summary = finalize_case_telemetry_summary(telemetry_summary, cases)
     state_pool_mode_used = (
         "memfd"
         if telemetry_summary.get("memfd_transfer_count", 0.0) > 0.0
@@ -883,7 +895,8 @@ def run_fixed_answer_suite(
         "memfd_transfer_count": l3_report.telemetry_summary.get("memfd_transfer_count", 0.0),
         "memfd_publish_count": l3_report.telemetry_summary.get("memfd_publish_count", 0.0),
         "memfd_bytes_transferred": l3_report.telemetry_summary.get("memfd_bytes_transferred", 0.0),
-        "task_family_tier": "dev_fixed_answer",
+        "task_family_tier": "formal_registry" if benchmark_tier == "formal" else "dev_fixed_answer",
+        "effective_replay_history_source": l3_report.metadata.get("replay_history_source", "none"),
     }
     report = BenchmarkSuiteReport(
         suite_id=suite_id,

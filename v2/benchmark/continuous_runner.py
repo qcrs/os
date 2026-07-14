@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from v2.benchmark.continuous_task_family import ContinuousTaskFamily
 from v2.benchmark.kv_analysis import summarize_case_kv_reuse
 from v2.benchmark.kv_prefix_schedule import KVPrefixSchedulePlan, build_kv_prefix_schedule_plan
+from v2.benchmark.metric_aggregation import finalize_case_telemetry_summary
 from v2.benchmark.minimal_runner import LAYER_PROFILES, LAYER_SMOKE_CONFIGS
 from v2.benchmark.models import (
     BenchmarkCaseReport,
@@ -27,6 +30,8 @@ from v2.benchmark.reporting import (
 )
 from v2.contracts import CanonicalTaskSpec
 from v2.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
+from v2.runtime.prefix_feedback import PrefixCacheFeedbackLoop
+from v2.runtime.vllm_metrics import VllmPrefixCacheCounterDelta
 
 
 SUPPORTED_CONTINUOUS_FAMILY_IDS = {
@@ -168,6 +173,7 @@ def _case_from_smoke(
     smoke: SmokeResult,
     sample: ContinuousRoundSample,
     layer: BenchmarkLayer,
+    task_ms: float,
     enforce_expected_metric_effects: bool = True,
 ) -> BenchmarkCaseReport:
     quality_floor = (
@@ -213,6 +219,7 @@ def _case_from_smoke(
             **dict(sorted(smoke.task_metrics.items())),
             "round_number": float(sample.round_number),
             "history_dependency_count": float(len(sample.depends_on_rounds)),
+            "task_ms": float(task_ms),
         },
     )
 
@@ -1076,8 +1083,22 @@ def run_continuous_benchmark_family(
     raw_cases: list[BenchmarkCaseReport] = []
     schedule_plan = _task_schedule_plan_for_family(family, task_schedule_plan=task_schedule_plan)
     ordered_rounds = _ordered_family_rounds(family, task_schedule_plan=task_schedule_plan)
+    prefix_feedback = PrefixCacheFeedbackLoop(
+        window_size=max(int(os.getenv("STATEBUS_PREFIX_FEEDBACK_WINDOW", "8") or "8"), 1),
+        error_threshold=float(os.getenv("STATEBUS_PREFIX_FEEDBACK_ERROR_THRESHOLD", "0.15") or "0.15"),
+    )
+    adaptive_prefix_feedback_enabled = (
+        role_path_mode == "local_vllm"
+        and family.family_id == "kv_prefix_reuse_v1"
+        and _normalise_task_schedule_plan(task_schedule_plan) == "input"
+        and os.getenv("STATEBUS_PREFIX_FEEDBACK_ADAPTIVE", "1").strip().lower()
+        not in {"0", "false", "no", "off"}
+    )
+    adaptive_prefix_reorder_count = 0
+    pending_rounds = list(ordered_rounds)
 
-    for round_ in ordered_rounds:
+    while pending_rounds:
+        round_ = pending_rounds.pop(0)
         sample = _continuous_sample(round_)
         round_runtime_root = layer_runtime_root / sample.task_id
         history_runtime_roots: tuple[Path, ...] = tuple(
@@ -1085,6 +1106,7 @@ def run_continuous_benchmark_family(
             for dep in sample.depends_on_rounds
             if dep in history_runtime_root_by_round
         )
+        start_ns = time.perf_counter_ns()
         smoke = run_smoke(
             workspace_root=layer_workspace_root,
             runtime_root=round_runtime_root,
@@ -1099,15 +1121,51 @@ def run_continuous_benchmark_family(
             history_runtime_roots=history_runtime_roots,
             seed_replay_memory=False,
         )
+        task_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
         history_runtime_root_by_round[sample.round_number] = round_runtime_root
         raw_cases.append(
             _case_from_smoke(
                 smoke=smoke,
                 sample=sample,
                 layer=layer,
+                task_ms=task_ms,
                 enforce_expected_metric_effects=enforce_expected_metric_effects,
             )
         )
+        prefix_feedback.record_observation(
+            float(smoke.task_metrics.get("neural_prefix_cache_hit_rate_estimate", 0.0)),
+            VllmPrefixCacheCounterDelta(
+                available=bool(
+                    smoke.task_metrics.get("vllm_prefix_counter_delta_available", 0.0)
+                ),
+                valid=bool(smoke.task_metrics.get("vllm_prefix_counter_delta_valid", 0.0)),
+                queries=float(
+                    smoke.task_metrics.get("vllm_prefix_observed_query_delta", 0.0)
+                ),
+                hits=float(smoke.task_metrics.get("vllm_prefix_observed_hit_delta", 0.0)),
+                observed_hit_rate=(
+                    float(smoke.task_metrics.get("vllm_prefix_observed_hit_rate", 0.0))
+                    if smoke.task_metrics.get("vllm_prefix_counter_delta_valid", 0.0)
+                    else None
+                ),
+                unavailable_reason=(
+                    ""
+                    if smoke.task_metrics.get("vllm_prefix_counter_delta_valid", 0.0)
+                    else "task_counter_delta_unavailable"
+                ),
+            ),
+        )
+        if adaptive_prefix_feedback_enabled and prefix_feedback.should_reorder() and pending_rounds:
+            friendly_plan = build_kv_prefix_schedule_plan(family, mode="cache_friendly")
+            pending_by_task_id = {item.task_id: item for item in pending_rounds}
+            reordered = [
+                pending_by_task_id[task_id]
+                for task_id in friendly_plan.task_ids
+                if task_id in pending_by_task_id
+            ]
+            if [item.task_id for item in reordered] != [item.task_id for item in pending_rounds]:
+                pending_rounds = reordered
+                adaptive_prefix_reorder_count += 1
 
     previous_layer_cases_by_task_id: dict[str, BenchmarkCaseReport] = {}
     layer_order = list(BenchmarkLayer)
@@ -1159,6 +1217,7 @@ def run_continuous_benchmark_family(
     for case in cases:
         for key, value in case.metrics.items():
             telemetry_summary[key] = telemetry_summary.get(key, 0.0) + float(value)
+    telemetry_summary = finalize_case_telemetry_summary(telemetry_summary, cases)
     replay_class_distribution: dict[str, float] = {}
     for case in cases:
         replay_class_distribution[case.replay_class] = replay_class_distribution.get(case.replay_class, 0.0) + 1.0
@@ -1193,6 +1252,14 @@ def run_continuous_benchmark_family(
         "embedding_mode": embedding_mode,
         "layer_contract_gate_enabled": enforce_expected_metric_effects and layer in {BenchmarkLayer.L2, BenchmarkLayer.L3},
         "kv_reuse_analysis": kv_reuse_analysis,
+        "prefix_feedback": {
+            **prefix_feedback.snapshot().canonical_payload(),
+            "adaptive_enabled": adaptive_prefix_feedback_enabled,
+            "adaptive_reorder_count": adaptive_prefix_reorder_count,
+            "claim_boundary": (
+                "scheduler_feedback_uses_only_task_local_query_hit_counter_deltas"
+            ),
+        },
         **_task_schedule_metadata(schedule_plan),
     }
     if metadata_extra:
@@ -1264,7 +1331,12 @@ def run_continuous_benchmark_suite(
     embedding_mode: str = "deterministic",
     persistence_profile: str = "audit_full",
     task_schedule_plan: str = "input",
+    claim_level: str = "first_pass",
+    execution_scope: str = "full",
+    original_round_count: int | None = None,
 ) -> BenchmarkSuiteReport:
+    available_round_count = original_round_count or family.round_count
+    full_family_coverage = execution_scope == "full" and family.round_count == available_round_count
     schedule_plan = _task_schedule_plan_for_family(family, task_schedule_plan=task_schedule_plan)
     layer_reports = tuple(
         run_continuous_benchmark_family(
@@ -1278,6 +1350,13 @@ def run_continuous_benchmark_suite(
             embedding_mode=embedding_mode,
             persistence_profile=persistence_profile,
             task_schedule_plan=task_schedule_plan,
+            metadata_extra={
+                "claim_level": claim_level,
+                "execution_scope": execution_scope,
+                "selected_round_count": family.round_count,
+                "available_round_count": available_round_count,
+                "formal_headline_eligible": full_family_coverage,
+            },
         )
         for layer in BenchmarkLayer
     )
@@ -1286,9 +1365,9 @@ def run_continuous_benchmark_suite(
         task_family=family.family_id,
         layer_reports=layer_reports,
     )
-    quality_headline_eligible = _continuous_quality_headline_eligible(suite_stub)
+    quality_headline_eligible = full_family_coverage and _continuous_quality_headline_eligible(suite_stub)
     replay_audit = _continuous_replay_audit(family=family, report=suite_stub)
-    replay_headline_eligible = bool(replay_audit["eligible_for_replay_headline"])
+    replay_headline_eligible = full_family_coverage and bool(replay_audit["eligible_for_replay_headline"])
     headline_scope = _continuous_headline_scope(suite_stub, replay_audit=replay_audit)
     replay_summary_counts = _replay_audit_summary_counts(replay_audit)
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}.json"
@@ -1361,7 +1440,11 @@ def run_continuous_benchmark_suite(
         evidence_pack=evidence_pack,
         metadata={
             "benchmark_tier": "formal",
-            "claim_level": "first_pass",
+            "claim_level": claim_level,
+            "execution_scope": execution_scope,
+            "selected_round_count": family.round_count,
+            "available_round_count": available_round_count,
+            "formal_headline_eligible": full_family_coverage,
             "family_id": family.family_id,
             "claim_tier": family.claim_tier,
             "manifest_path": family.manifest_path,
@@ -1397,6 +1480,7 @@ def run_continuous_benchmark_collection(
     collection_scope: str = "formal_continuous_task_families",
     persistence_profile: str = "audit_full",
     task_schedule_plan: str = "input",
+    execution_scope: str = "full",
 ) -> BenchmarkContinuousCollectionReport:
     if not families:
         raise ValueError("continuous benchmark collection requires at least one family")
@@ -1415,6 +1499,8 @@ def run_continuous_benchmark_collection(
                 embedding_mode=embedding_mode,
                 persistence_profile=persistence_profile,
                 task_schedule_plan=task_schedule_plan,
+                claim_level="diagnostic" if execution_scope != "full" else "first_pass",
+                execution_scope=execution_scope,
             )
         )
 
@@ -1620,7 +1706,9 @@ def run_continuous_benchmark_collection(
         admissibility_summary=admissibility_summary,
         metadata={
             "benchmark_tier": "formal",
-            "claim_level": "first_pass",
+            "claim_level": "diagnostic" if execution_scope != "full" else "first_pass",
+            "execution_scope": execution_scope,
+            "formal_headline_eligible": execution_scope == "full",
             "continuous_execution": True,
             "family_count": len(family_reports),
             "supported_continuous_execution_families": [family.family_id for family in families],
