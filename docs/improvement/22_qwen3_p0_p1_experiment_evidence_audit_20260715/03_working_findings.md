@@ -1,0 +1,11 @@
+# Working Findings
+
+Updated by audit script version `20260715.8` at `2026-07-15T11:07:01.240396+00:00`.
+
+1. Full enumeration completed for all three input roots. The inventory records every file hash and every JSON/JSONL parse outcome; no conclusion here relies on a summary field alone.
+2. P0 must remain historically failed: its own stage list marks `01_pytest_v2` failed even though all other recorded stages completed. The later `320 passed` repair log is isolated evidence and not a replacement 16-stage run.
+3. P1 Stage 18 has four pair directories and a completed `repeat_summary.json`; its historical runner failure is treated separately from its artifact-level verifier result. Repaired default-verifier gates all pass: `True`. The preserved stderr root-cause evidence is `zero-byte stderr; run.log records only generic stage failure`. The summary remains immutable and historically failed.
+4. The primary metric ledger contains `948` rows: `870` StateBus and `78` external. `546` repair-root candidates are transparently excluded from experimental aggregation, while all repair files remain in the inventory.
+5. Rendered-request inventory found `5364` request artifacts containing `5368` actual request elements across all three roots: `{"p0_full":1884,"p1_extension":1600,"pytest_repair_partial":1884}`. Automated hits are triage signals, not leakage verdicts: `{"route_tool_candidate":7818,"scorer_or_validator":739,"state_or_evidence_contract":4023,"task_contract_identity":12}`. Every actual request element, including no-match requests, is present in `02_rendered_request_taint_ledger.csv`.
+6. StateRef evidence is bounded at publication, transfer and receiver hydration: `1380` publish events and `4140` hydrate events are recorded, but separately named consume events are `0`. Hydration is not treated as proof of behavior-changing consumption.
+7. Prefix and LogitState claims stay bounded. Prefix evidence may concern engine-local vLLM reuse only. `03_logitstate_participation_matrix.csv` records task-metric logit projections, but payload-byte persistence, ref registration, receiver evidence, consumption and a behavior-effect A/B are absent; this is not hidden-state/KV transfer or a benefit claim.

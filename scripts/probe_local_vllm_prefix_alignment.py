@@ -116,6 +116,7 @@ def main() -> int:
         "metrics_url": args.metrics_url,
         "run_salt": run_salt,
         "evidence_file": str(args.evidence_file),
+        "evidence_sha256": sha256_digest(evidence_text),
         "evidence_repeat": args.evidence_repeat,
         "evidence_bytes": len(evidence_text.encode("utf-8")),
         "max_tokens": args.max_tokens,

@@ -188,7 +188,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-pool-mode",
         default="auto",
-        choices=("auto", "shared_memory", "memfd"),
+        choices=("auto", "mmap", "shared_memory", "memfd"),
         help="semantic state pool backend selection for StateBus runtime lanes",
     )
     parser.add_argument(

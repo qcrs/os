@@ -24,8 +24,10 @@ def analyze_pair(shared: dict[str, object], independent: dict[str, object]) -> d
     compatibility = {
         "model_equal": shared.get("model") == independent.get("model"),
         "evidence_file_equal": shared.get("evidence_file") == independent.get("evidence_file"),
+        "evidence_sha256_equal": shared.get("evidence_sha256") == independent.get("evidence_sha256"),
         "evidence_repeat_equal": shared.get("evidence_repeat") == independent.get("evidence_repeat"),
         "evidence_bytes_equal": shared.get("evidence_bytes") == independent.get("evidence_bytes"),
+        "run_salt_equal": shared.get("run_salt") == independent.get("run_salt"),
         "request_count_equal": shared_summary.get("request_count")
         == independent_summary.get("request_count"),
         "roles_equal": shared.get("roles") == independent.get("roles"),
