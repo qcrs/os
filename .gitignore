@@ -1,45 +1,22 @@
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-.venv/
-venv/
-ENV/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Persistent shared memory
-.memory/
-
-# trueKV runtime artifacts
-exp/kv_cache_exp/**/true_kv_shared_storage/
-exp/kv_cache_exp/**/__pycache__/
-exp/kv_cache_exp/**/*.pyc
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+.agents/
+.codex/
+*.log
+*.sqlite3
+*.faiss
+*.index
+*.npy
+*.npz
+benchmark_results.json
+benchmark_compare.csv
+benchmark_report.md
+benchmark_message_breakdown.csv
+benchmark_message_sizes.md
+runs/
+work/
+deploy/statebus_llm.env.local
+deploy/statebus_llm.yaml.local
