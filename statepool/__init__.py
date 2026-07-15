@@ -1,1 +1,0 @@
-"""StatePool package for StateBus."""

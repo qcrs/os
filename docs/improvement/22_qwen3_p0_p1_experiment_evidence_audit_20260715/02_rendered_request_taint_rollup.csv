@@ -1,0 +1,1125 @@
+run_group,stage,case_id,role,match_rule,severity,raw_occurrence_count,unique_fragment_count,unique_source_count,conclusion
+p0_full,02_compare_full,statebus,executor,route_tool_candidate,high,75,20,25,triage only; requires provenance review
+p0_full,02_compare_full,statebus,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+p0_full,02_compare_full,statebus,retriever,route_tool_candidate,high,75,14,25,triage only; requires provenance review
+p0_full,02_compare_full,statebus,summarizer,no_match,none,25,0,25,no automated hit
+p0_full,03_replay_full,_history_bootstrap,executor,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+p0_full,03_replay_full,_history_bootstrap,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+p0_full,03_replay_full,_history_bootstrap,retriever,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+p0_full,03_replay_full,_history_bootstrap,summarizer,no_match,none,25,0,25,no automated hit
+p0_full,03_replay_full,benchmark-sample-1,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-1,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-1,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-1,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-2,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-2,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-2,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-2,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-2,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-2,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-3,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-3,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-3,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-3,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-3,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-3,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-4,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-4,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-4,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-4,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-5,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-5,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-5,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-5,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-5,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-5,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-6,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-6,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-6,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-6,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-7,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-7,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-7,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-7,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-7,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-7,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-8,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-8,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,benchmark-sample-8,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,benchmark-sample-8,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-agg-001,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-001,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-001,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-001,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-001,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-002,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-002,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-002,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-002,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-002,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-003,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-agg-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-003,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-agg-003,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-agg-004,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-004,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-004,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-004,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-004,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-agg-004,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-001,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-anomaly-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-001,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-anomaly-001,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-anomaly-002,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-002,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-002,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-002,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-002,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-003,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-003,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-003,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-003,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-anomaly-003,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-join-001,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-join-001,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-001,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-002,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-join-002,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-002,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-003,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-join-003,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-003,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-004,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-004,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-join-004,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-004,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-005,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-005,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-join-005,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-join-005,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-001,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-001,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-001,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-002,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-002,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-002,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-002,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-002,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-003,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-003,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-003,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-004,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-004,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-004,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-004,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-005,executor,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-005,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+p0_full,03_replay_full,formal-trend-005,retriever,no_match,none,1,0,1,no automated hit
+p0_full,03_replay_full,formal-trend-005,summarizer,no_match,none,1,0,1,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-002,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-002,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-002,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-002,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-003,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-003,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-003,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-003,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-004,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-004,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-004,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-004,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-004,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-005,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-005,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-005,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-005,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-005,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-006,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-006,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-006,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-006,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-006,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-006,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-006,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-007,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-007,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-007,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-007,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-007,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-007,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-007,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-008,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-008,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-008,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-008,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-008,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-008,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-008,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-009,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-009,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-009,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-009,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-009,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-009,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-009,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,executor,task_contract_identity,review,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,retriever,task_contract_identity,review,2,1,2,triage only; requires provenance review
+p0_full,04_continuous_csv_full,csv-profile-010,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,04_continuous_csv_full,csv-profile-010,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,05_continuous_cross_full,cross-period-002,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-002,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-002,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-002,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-002,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-002,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-003,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-003,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-003,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-003,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-003,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-004,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-004,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-004,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-004,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-004,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-005,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-005,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-005,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-005,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-005,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-006,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-006,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-006,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-006,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-006,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-006,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-006,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-007,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-007,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-007,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-007,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-007,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-007,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-007,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-008,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-008,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-008,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-008,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-008,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-008,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-008,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-009,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-009,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-009,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-009,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-009,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-009,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-009,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-010,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-010,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-010,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-010,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-010,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,05_continuous_cross_full,cross-period-010,summarizer,no_match,none,2,0,2,no automated hit
+p0_full,05_continuous_cross_full,cross-period-010,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-1,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-1,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-1,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-1,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,benchmark-sample-2,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-2,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-2,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-2,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,benchmark-sample-3,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-3,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-3,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-3,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,benchmark-sample-4,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-4,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-4,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-4,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,benchmark-sample-5,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-5,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-5,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-5,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,benchmark-sample-6,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-6,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-6,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-6,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,benchmark-sample-7,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-7,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-7,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-7,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,benchmark-sample-8,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-8,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-8,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,benchmark-sample-8,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-agg-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-agg-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-agg-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-agg-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-004,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-agg-004,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-anomaly-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-anomaly-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-anomaly-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-anomaly-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-join-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-join-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-002,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-join-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-join-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-004,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-join-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-join-005,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-trend-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-trend-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-trend-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-trend-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-004,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,06_formal_full,formal-trend-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,06_formal_full,formal-trend-005,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-1,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-1,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-1,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-1,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-2,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-2,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-2,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-2,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-3,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-3,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-3,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-3,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-4,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-4,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-4,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-4,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-5,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-5,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-5,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-5,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-6,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-6,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-6,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-6,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-7,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-7,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-7,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-7,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-8,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-8,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-8,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,benchmark-sample-8,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-agg-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-agg-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-agg-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-agg-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-004,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-agg-004,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-anomaly-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-join-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-join-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-002,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-join-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-join-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-004,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-join-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-join-005,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-trend-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-001,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-trend-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-002,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-trend-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-003,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-trend-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-004,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,07_formal_subprocess_uds_full,formal-trend-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+p0_full,07_formal_subprocess_uds_full,formal-trend-005,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,08_genericity_holdout,,executor,route_tool_candidate,high,36,5,12,triage only; requires provenance review
+p0_full,08_genericity_holdout,,planner,state_or_evidence_contract,review,36,2,12,triage only; requires provenance review
+p0_full,08_genericity_holdout,,retriever,route_tool_candidate,high,36,5,12,triage only; requires provenance review
+p0_full,08_genericity_holdout,,summarizer,no_match,none,12,0,12,no automated hit
+p0_full,08_genericity_holdout,logs,executor,route_tool_candidate,high,12,5,4,triage only; requires provenance review
+p0_full,08_genericity_holdout,logs,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+p0_full,08_genericity_holdout,logs,retriever,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+p0_full,08_genericity_holdout,logs,summarizer,no_match,none,4,0,4,no automated hit
+p0_full,11_carrier_compare_full,structured-collaboration,executor,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+p0_full,11_carrier_compare_full,structured-collaboration,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+p0_full,11_carrier_compare_full,structured-collaboration,retriever,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+p0_full,11_carrier_compare_full,structured-collaboration,summarizer,no_match,none,25,0,25,no automated hit
+p0_full,11_carrier_compare_full,text-collaboration,executor,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+p0_full,11_carrier_compare_full,text-collaboration,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+p0_full,11_carrier_compare_full,text-collaboration,retriever,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+p0_full,11_carrier_compare_full,text-collaboration,summarizer,no_match,none,25,0,25,no automated hit
+p0_full,12_compare_repeat_2,statebus,executor,route_tool_candidate,high,75,20,25,triage only; requires provenance review
+p0_full,12_compare_repeat_2,statebus,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+p0_full,12_compare_repeat_2,statebus,retriever,route_tool_candidate,high,75,14,25,triage only; requires provenance review
+p0_full,12_compare_repeat_2,statebus,summarizer,no_match,none,25,0,25,no automated hit
+p0_full,13_compare_repeat_3,statebus,executor,route_tool_candidate,high,75,20,25,triage only; requires provenance review
+p0_full,13_compare_repeat_3,statebus,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+p0_full,13_compare_repeat_3,statebus,retriever,route_tool_candidate,high,75,14,25,triage only; requires provenance review
+p0_full,13_compare_repeat_3,statebus,summarizer,no_match,none,25,0,25,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-1,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-1,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-1,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-1,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-2,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-2,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-2,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-2,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-3,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-3,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-3,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-3,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-4,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-4,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-4,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-4,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-5,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-5,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-5,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-5,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-6,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-6,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-6,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-6,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-7,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-7,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-7,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-7,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,benchmark-sample-8,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-8,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-8,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,benchmark-sample-8,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-agg-001,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-001,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-001,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-001,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-agg-002,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-002,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-002,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-002,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-agg-003,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-003,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-003,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-003,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-agg-004,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-004,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-004,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-agg-004,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-anomaly-001,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-001,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-001,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-001,summarizer,no_match,none,4,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-anomaly-002,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-002,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-002,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-002,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-anomaly-003,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-003,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-003,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-anomaly-003,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-join-001,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-001,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-001,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-001,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-join-002,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-002,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-002,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-002,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-join-003,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-003,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-003,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-003,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-join-004,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-004,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-004,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-004,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-join-005,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-005,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-005,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-join-005,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-trend-001,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-001,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-001,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-001,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-trend-002,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-002,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-002,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-002,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-trend-003,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-003,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-003,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-003,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-trend-004,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-004,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-004,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-004,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,16_backend_matrix,formal-trend-005,executor,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-005,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-005,retriever,route_tool_candidate,high,9,2,3,triage only; requires provenance review
+p1_extension,16_backend_matrix,formal-trend-005,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,17_flagship_refresh,continuous,executor,no_match,none,4,0,4,no automated hit
+p1_extension,17_flagship_refresh,continuous,executor,route_tool_candidate,high,348,42,116,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous,executor,scorer_or_validator,high,50,31,50,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous,executor,task_contract_identity,review,2,1,2,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous,planner,state_or_evidence_contract,review,360,2,120,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous,retriever,no_match,none,4,0,4,no automated hit
+p1_extension,17_flagship_refresh,continuous,retriever,route_tool_candidate,high,348,25,116,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous,retriever,scorer_or_validator,high,50,17,50,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous,retriever,task_contract_identity,review,2,1,2,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous,summarizer,no_match,none,70,0,70,no automated hit
+p1_extension,17_flagship_refresh,continuous,summarizer,scorer_or_validator,high,51,17,50,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay,executor,no_match,none,3,0,3,no automated hit
+p1_extension,17_flagship_refresh,continuous-replay,executor,route_tool_candidate,high,351,54,117,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay,executor,scorer_or_validator,high,51,47,51,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay,planner,state_or_evidence_contract,review,360,2,120,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay,retriever,no_match,none,3,0,3,no automated hit
+p1_extension,17_flagship_refresh,continuous-replay,retriever,route_tool_candidate,high,351,8,117,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay,retriever,scorer_or_validator,high,51,5,51,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay,summarizer,no_match,none,69,0,69,no automated hit
+p1_extension,17_flagship_refresh,continuous-replay,summarizer,scorer_or_validator,high,51,5,51,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay-text-semantic-selection,executor,route_tool_candidate,high,90,30,30,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay-text-semantic-selection,executor,scorer_or_validator,high,27,26,27,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay-text-semantic-selection,planner,state_or_evidence_contract,review,90,2,30,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay-text-semantic-selection,retriever,route_tool_candidate,high,90,6,30,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay-text-semantic-selection,retriever,scorer_or_validator,high,27,5,27,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-replay-text-semantic-selection,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,17_flagship_refresh,continuous-replay-text-semantic-selection,summarizer,scorer_or_validator,high,27,5,27,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-text-semantic-selection,executor,route_tool_candidate,high,90,31,30,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-text-semantic-selection,executor,scorer_or_validator,high,27,27,27,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-text-semantic-selection,planner,state_or_evidence_contract,review,90,2,30,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-text-semantic-selection,retriever,route_tool_candidate,high,90,18,30,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-text-semantic-selection,retriever,scorer_or_validator,high,27,17,27,triage only; requires provenance review
+p1_extension,17_flagship_refresh,continuous-text-semantic-selection,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,17_flagship_refresh,continuous-text-semantic-selection,summarizer,scorer_or_validator,high,27,17,27,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-carrier-compare,executor,route_tool_candidate,high,18,4,6,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-carrier-compare,planner,state_or_evidence_contract,review,18,2,6,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-carrier-compare,retriever,route_tool_candidate,high,18,4,6,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-carrier-compare,summarizer,no_match,none,6,0,6,no automated hit
+p1_extension,17_flagship_refresh,fixed-external-compare,executor,route_tool_candidate,high,9,4,3,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-external-compare,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-external-compare,retriever,route_tool_candidate,high,9,4,3,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-external-compare,summarizer,no_match,none,3,0,3,no automated hit
+p1_extension,17_flagship_refresh,fixed-ladder,executor,route_tool_candidate,high,36,7,12,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-ladder,planner,state_or_evidence_contract,review,36,2,12,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-ladder,retriever,route_tool_candidate,high,36,6,12,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-ladder,summarizer,no_match,none,14,0,12,no automated hit
+p1_extension,17_flagship_refresh,fixed-text-semantic-selection,executor,route_tool_candidate,high,9,4,3,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-text-semantic-selection,planner,state_or_evidence_contract,review,9,2,3,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-text-semantic-selection,retriever,route_tool_candidate,high,9,4,3,triage only; requires provenance review
+p1_extension,17_flagship_refresh,fixed-text-semantic-selection,summarizer,no_match,none,3,0,3,no automated hit
+pytest_repair_partial,02_compare_full,statebus,executor,route_tool_candidate,high,75,20,25,triage only; requires provenance review
+pytest_repair_partial,02_compare_full,statebus,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+pytest_repair_partial,02_compare_full,statebus,retriever,route_tool_candidate,high,75,14,25,triage only; requires provenance review
+pytest_repair_partial,02_compare_full,statebus,summarizer,no_match,none,25,0,25,no automated hit
+pytest_repair_partial,03_replay_full,_history_bootstrap,executor,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,_history_bootstrap,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,_history_bootstrap,retriever,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,_history_bootstrap,summarizer,no_match,none,25,0,25,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-1,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-1,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-1,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-1,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-2,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-2,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-2,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-2,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-3,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-3,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-3,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-3,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-3,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-3,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-4,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-4,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-4,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-4,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-5,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-5,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-5,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-5,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-6,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-6,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-6,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-6,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-7,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-7,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-7,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-7,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-7,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-7,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-8,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-8,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,benchmark-sample-8,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,benchmark-sample-8,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-agg-001,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-001,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-001,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-001,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-001,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-002,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-002,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-002,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-002,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-002,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-003,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-003,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-003,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-003,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-003,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-004,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-004,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-004,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-004,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-004,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-agg-004,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-001,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-anomaly-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-001,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-anomaly-001,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-anomaly-002,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-002,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-002,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-002,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-002,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-003,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-003,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-003,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-003,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-anomaly-003,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-join-001,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-join-001,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-001,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-002,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-join-002,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-002,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-003,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-join-003,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-003,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-004,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-004,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-join-004,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-004,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-005,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-005,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-join-005,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-join-005,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-001,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-001,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-001,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-001,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-002,executor,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-002,executor,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-002,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-002,retriever,route_tool_candidate,high,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-002,retriever,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-002,summarizer,scorer_or_validator,high,1,1,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-003,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-003,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-003,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-003,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-004,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-004,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-004,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-004,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-005,executor,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-005,planner,state_or_evidence_contract,review,3,2,1,triage only; requires provenance review
+pytest_repair_partial,03_replay_full,formal-trend-005,retriever,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,03_replay_full,formal-trend-005,summarizer,no_match,none,1,0,1,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-002,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-002,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-002,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-002,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-003,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-003,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-003,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-003,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-004,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-004,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-004,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-004,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-004,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-005,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-005,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-005,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-005,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-005,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-006,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-006,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-006,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-006,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-006,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-006,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-006,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-007,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-007,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-007,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-007,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-007,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-007,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-007,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-008,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-008,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-008,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-008,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-008,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-008,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-008,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-009,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-009,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-009,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-009,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-009,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-009,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-009,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,executor,task_contract_identity,review,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,retriever,task_contract_identity,review,2,1,2,triage only; requires provenance review
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,04_continuous_csv_full,csv-profile-010,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-002,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-002,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-002,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-002,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-002,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-003,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-003,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-003,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-003,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-003,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-004,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-004,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-004,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-004,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-004,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-005,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-005,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-005,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-005,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-005,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-006,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-006,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-006,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-006,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-006,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-006,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-006,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-007,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-007,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-007,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-007,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-007,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-007,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-007,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-008,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-008,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-008,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-008,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-008,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-008,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-008,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-009,executor,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-009,executor,scorer_or_validator,high,2,2,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-009,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-009,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-009,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-009,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-009,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-010,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-010,executor,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-010,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-010,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-010,retriever,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,05_continuous_cross_full,cross-period-010,summarizer,no_match,none,2,0,2,no automated hit
+pytest_repair_partial,05_continuous_cross_full,cross-period-010,summarizer,scorer_or_validator,high,2,1,2,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-1,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-1,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-1,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-1,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,benchmark-sample-2,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-2,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-2,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-2,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,benchmark-sample-3,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-3,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-3,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-3,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,benchmark-sample-4,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-4,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-4,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-4,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,benchmark-sample-5,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-5,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-5,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-5,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,benchmark-sample-6,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-6,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-6,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-6,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,benchmark-sample-7,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-7,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-7,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-7,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,benchmark-sample-8,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-8,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-8,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,benchmark-sample-8,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-agg-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-agg-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-agg-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-agg-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-004,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-agg-004,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-anomaly-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-anomaly-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-anomaly-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-anomaly-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-join-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-join-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-002,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-join-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-join-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-004,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-join-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-join-005,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-trend-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-trend-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-trend-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-trend-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-004,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,06_formal_full,formal-trend-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,06_formal_full,formal-trend-005,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-1,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-1,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-1,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-1,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-2,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-2,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-2,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-2,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-3,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-3,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-3,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-3,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-4,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-4,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-4,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-4,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-5,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-5,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-5,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-5,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-6,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-6,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-6,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-6,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-7,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-7,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-7,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-7,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-8,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-8,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-8,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,benchmark-sample-8,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-004,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-agg-004,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-001,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-003,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-anomaly-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-002,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-004,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-join-005,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-001,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-001,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-001,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-001,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-002,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-002,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-002,retriever,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-002,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-003,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-003,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-003,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-003,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-004,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-004,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-004,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-004,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-005,executor,route_tool_candidate,high,12,3,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-005,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-005,retriever,route_tool_candidate,high,12,2,4,triage only; requires provenance review
+pytest_repair_partial,07_formal_subprocess_uds_full,formal-trend-005,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,08_genericity_holdout,,executor,route_tool_candidate,high,36,5,12,triage only; requires provenance review
+pytest_repair_partial,08_genericity_holdout,,planner,state_or_evidence_contract,review,36,2,12,triage only; requires provenance review
+pytest_repair_partial,08_genericity_holdout,,retriever,route_tool_candidate,high,36,5,12,triage only; requires provenance review
+pytest_repair_partial,08_genericity_holdout,,summarizer,no_match,none,12,0,12,no automated hit
+pytest_repair_partial,08_genericity_holdout,logs,executor,route_tool_candidate,high,12,5,4,triage only; requires provenance review
+pytest_repair_partial,08_genericity_holdout,logs,planner,state_or_evidence_contract,review,12,2,4,triage only; requires provenance review
+pytest_repair_partial,08_genericity_holdout,logs,retriever,route_tool_candidate,high,12,4,4,triage only; requires provenance review
+pytest_repair_partial,08_genericity_holdout,logs,summarizer,no_match,none,4,0,4,no automated hit
+pytest_repair_partial,11_carrier_compare_full,structured-collaboration,executor,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+pytest_repair_partial,11_carrier_compare_full,structured-collaboration,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+pytest_repair_partial,11_carrier_compare_full,structured-collaboration,retriever,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+pytest_repair_partial,11_carrier_compare_full,structured-collaboration,summarizer,no_match,none,25,0,25,no automated hit
+pytest_repair_partial,11_carrier_compare_full,text-collaboration,executor,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+pytest_repair_partial,11_carrier_compare_full,text-collaboration,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+pytest_repair_partial,11_carrier_compare_full,text-collaboration,retriever,route_tool_candidate,high,75,9,25,triage only; requires provenance review
+pytest_repair_partial,11_carrier_compare_full,text-collaboration,summarizer,no_match,none,25,0,25,no automated hit
+pytest_repair_partial,12_compare_repeat_2,statebus,executor,route_tool_candidate,high,75,20,25,triage only; requires provenance review
+pytest_repair_partial,12_compare_repeat_2,statebus,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+pytest_repair_partial,12_compare_repeat_2,statebus,retriever,route_tool_candidate,high,75,12,25,triage only; requires provenance review
+pytest_repair_partial,12_compare_repeat_2,statebus,summarizer,no_match,none,25,0,25,no automated hit
+pytest_repair_partial,13_compare_repeat_3,statebus,executor,route_tool_candidate,high,75,20,25,triage only; requires provenance review
+pytest_repair_partial,13_compare_repeat_3,statebus,planner,state_or_evidence_contract,review,75,2,25,triage only; requires provenance review
+pytest_repair_partial,13_compare_repeat_3,statebus,retriever,route_tool_candidate,high,75,14,25,triage only; requires provenance review
+pytest_repair_partial,13_compare_repeat_3,statebus,summarizer,no_match,none,25,0,25,no automated hit
