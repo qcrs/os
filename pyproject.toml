@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "statebus-project"
+version = "0.1.0"
+description = "Host-side StateBus implementation repo"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy",
+  "protobuf",
+  "pydantic>=2",
+  "orjson",
+  "msgpack",
+  "openai",
+  "faiss-cpu",
+  "transformers>=4.51.3,<5",
+  "sentence-transformers==5.5.1",
+  "networkx",
+  "pyyaml",
+  "rich",
+]
+
+[project.optional-dependencies]
+langgraph = [
+  "langgraph>=0.2,<0.4",
+]
+
+[project.scripts]
+statebus-project-smoke = "runtime.smoke:main"
+statebus-project-benchmark = "eval.runner:main"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["third_party"]

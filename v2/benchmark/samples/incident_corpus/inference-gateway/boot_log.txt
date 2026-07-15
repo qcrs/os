@@ -1,0 +1,7 @@
+[00:00.000] systemd: Starting inference-gateway.service
+[00:00.012] inference-gateway: Loading model weights from /models/llm-7b
+[00:02.341] inference-gateway: Model load complete (2.3s)
+[00:02.342] inference-gateway: Waiting for storage mount: /data/inference-cache
+[00:08.891] inference-gateway: Storage mounted (6.5s wait) - high IO wait detected
+[00:09.001] inference-gateway: Initializing request queue
+[00:09.045] inference-gateway: Ready - total startup: 9.0s

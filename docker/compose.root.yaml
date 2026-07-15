@@ -1,0 +1,5 @@
+services:
+  statebus-dev:
+    # Kept as an explicit root profile for older commands. The base compose now
+    # also runs as root; this file remains harmless when stacked.
+    user: "0:0"

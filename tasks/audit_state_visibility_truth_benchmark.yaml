@@ -1,0 +1,68 @@
+task_set:
+  name: audit_state_visibility_truth_pack
+  pack_type: audit_state_visibility_truth
+  description: Audit-only pack that separates minimal typed packet from rich typed state_ref visibility under one fixed case family.
+  reading_contract: Read this pack only as audit evidence for state visibility truth. It isolates downstream typed visibility differences and should not replace the current v3 formal surface.
+  claim_lanes:
+  - state_transfer
+  evidence_tier: audit_only
+  benchmark_version: v3
+tasks:
+- task_id: audit-visibility-state-packet-001
+  task_group: audit_state_visibility_truth_lane
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Audit-only state visibility case. Hold task semantics fixed and compare minimal typed packet against rich typed-state visibility.
+  tags: [release, checkout, latency, database, audit-visibility]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-visibility-state-packet-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-visibility-state-ref-001
+  task_group: audit_state_visibility_truth_lane
+  task_order: 2
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_ref
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Audit-only state visibility case. Hold task semantics fixed and compare minimal typed packet against rich typed-state visibility.
+  tags: [release, checkout, latency, database, audit-visibility]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-visibility-state-ref-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""

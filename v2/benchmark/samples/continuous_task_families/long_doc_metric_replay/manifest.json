@@ -1,0 +1,679 @@
+{
+  "schema_version": "statebus.continuous_task_family.v1",
+  "family_id": "long_doc_metric_replay_v1",
+  "display_name": "Long document metric replay admissibility chain",
+  "claim_tier": "formal_secondary",
+  "source_basis": {
+    "design_note": "Replay-admissible continuous family built on the existing ACME long-document sample to produce validated and exact replay evidence without weakening the history-backed formal suite."
+  },
+  "round_count": 10,
+  "datasets": [
+    {
+      "dataset_id": "acme_ops_2026",
+      "path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+      "kind": "markdown_long_doc",
+      "primary_entities": [
+        "ACME",
+        "revenue",
+        "gross_margin",
+        "operating_expense",
+        "churn_rate",
+        "on_time_delivery"
+      ]
+    }
+  ],
+  "quality_floor": {
+    "deterministic_validator": [
+      "answer_fields_present",
+      "artifact_manifest_present",
+      "numeric_tolerance"
+    ],
+    "fact_coverage": [
+      "required_metric_values_match",
+      "metric_name_matches_request"
+    ],
+    "llm_judge": "not_required"
+  },
+  "l0_l3_expectations": {
+    "L0": {
+      "expected_zero_metrics": [
+        "semantic_state_transfer_count",
+        "skipped_step_count"
+      ]
+    },
+    "L1": {
+      "required": [
+        "control_bytes_delta_l0_to_l1 < 0"
+      ]
+    },
+    "L2": {
+      "required": [
+        "semantic_state_transfer_count > 0",
+        "raw_evidence_bytes_seen_by_llm_delta_l1_to_l2 < 0"
+      ]
+    },
+    "L3": {
+      "required": [
+        "memory_match_count > 0",
+        "validated_replay_count > 0",
+        "exact_replay_count > 0",
+        "skipped_step_count > 0"
+      ],
+      "target_nonzero_rounds": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ]
+    }
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "task_id": "replay-longdoc-001",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track bootstrap: ingest the ACME operations report, build the semantic evidence index, and persist the canonical metric table and entity locators.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "build_semantic_index",
+        "required_outputs": [
+          "semantic_state_ref",
+          "metric_table_ref",
+          "entity_index_ref"
+        ],
+        "required_tools": [
+          "semantic_retriever",
+          "table_extractor"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md"
+        }
+      },
+      "depends_on_rounds": [],
+      "reuse_contract": {
+        "produces": [
+          "semantic_state:acme_ops_2026",
+          "table_artifact:acme_metric_table",
+          "entity_index:acme_ops_2026"
+        ],
+        "consumes": [],
+        "minimum_reuse_class": "none"
+      },
+      "expected_facts": {
+        "metric_row_count": "3",
+        "semantic_state_ref_present": "true"
+      },
+      "quality_checks": [
+        "artifact_exists:semantic_state_ref",
+        "artifact_exists:metric_table_ref",
+        "field_gte:metric_row_count:3"
+      ],
+      "expected_metric_effects": {
+        "L2_semantic_state_transfer_count_min": 1
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "replay-longdoc-002",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=revenue_musd.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "revenue_musd",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:revenue_musd",
+          "strategy:generic_metric_triplet"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "metric_name": "revenue_musd",
+        "value_q1": "120",
+        "value_q2": "132",
+        "value_q3": "145"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {}
+    },
+    {
+      "round": 3,
+      "task_id": "replay-longdoc-003",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=gross_margin_pct.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "gross_margin_pct",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        2
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:gross_margin_pct"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "metric_name": "gross_margin_pct",
+        "value_q1": "42.5",
+        "value_q2": "41.8",
+        "value_q3": "40.6"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1,
+        "L3_downgrade_execution_goal_count_min": 1
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "replay-longdoc-004",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=operating_expense_musd.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "operating_expense_musd",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        2,
+        3
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:operating_expense_musd"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "metric_name": "operating_expense_musd",
+        "value_q1": "38",
+        "value_q2": "41",
+        "value_q3": "45"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1,
+        "L3_downgrade_execution_goal_count_min": 1
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "replay-longdoc-005",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=revenue_musd.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "revenue_musd",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        2
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:revenue_musd"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet",
+          "metric_triplet:revenue_musd"
+        ],
+        "minimum_reuse_class": "exact_replay"
+      },
+      "expected_facts": {
+        "metric_name": "revenue_musd",
+        "value_q1": "120",
+        "value_q2": "132",
+        "value_q3": "145"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 1,
+        "L3_exact_replay_count_min": 1,
+        "L3_skipped_step_count_min": 2
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "replay-longdoc-006",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=churn_rate_pct.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "churn_rate_pct",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:churn_rate_pct"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "metric_name": "churn_rate_pct",
+        "value_q1": "3.8",
+        "value_q2": "4.2",
+        "value_q3": "5.1"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1,
+        "L3_downgrade_execution_goal_count_min": 1
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "replay-longdoc-007",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=gross_margin_pct.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "gross_margin_pct",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        3
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:gross_margin_pct"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet",
+          "metric_triplet:gross_margin_pct"
+        ],
+        "minimum_reuse_class": "exact_replay"
+      },
+      "expected_facts": {
+        "metric_name": "gross_margin_pct",
+        "value_q1": "42.5",
+        "value_q2": "41.8",
+        "value_q3": "40.6"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 1,
+        "L3_exact_replay_count_min": 1,
+        "L3_skipped_step_count_min": 2
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "replay-longdoc-008",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=operating_expense_musd.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "operating_expense_musd",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        4
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:operating_expense_musd"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet",
+          "metric_triplet:operating_expense_musd"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "metric_name": "operating_expense_musd",
+        "value_q1": "38",
+        "value_q2": "41",
+        "value_q3": "45"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1,
+        "L3_downgrade_execution_goal_count_min": 1
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "replay-longdoc-009",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=on_time_delivery_pct.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "on_time_delivery_pct",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:on_time_delivery_pct"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "metric_name": "on_time_delivery_pct",
+        "value_q1": "94.0",
+        "value_q2": "91.5",
+        "value_q3": "88.0"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1,
+        "L3_downgrade_execution_goal_count_min": 1
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "replay-longdoc-010",
+      "dataset_id": "acme_ops_2026",
+      "request_text": "Replay-track metric triplet: extract ACME metric quarters using the canonical metric table. metric=on_time_delivery_pct.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_metric_series_generic",
+        "required_outputs": [
+          "metric_series_ref",
+          "metric_name",
+          "value_q1",
+          "value_q2",
+          "value_q3"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "dataset_id": "acme_ops_2026",
+          "document_path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+          "metric": "on_time_delivery_pct",
+          "quarters": [
+            "2026Q1",
+            "2026Q2",
+            "2026Q3"
+          ]
+        }
+      },
+      "depends_on_rounds": [
+        1,
+        9
+      ],
+      "reuse_contract": {
+        "produces": [
+          "metric_triplet:on_time_delivery_pct"
+        ],
+        "consumes": [
+          "table_artifact:acme_metric_table",
+          "strategy:generic_metric_triplet",
+          "metric_triplet:on_time_delivery_pct"
+        ],
+        "minimum_reuse_class": "exact_replay"
+      },
+      "expected_facts": {
+        "metric_name": "on_time_delivery_pct",
+        "value_q1": "94.0",
+        "value_q2": "91.5",
+        "value_q3": "88.0"
+      },
+      "quality_checks": [
+        "artifact_exists:metric_series_ref",
+        "exact:metric_name",
+        "exact:value_q1",
+        "exact:value_q3"
+      ],
+      "expected_metric_effects": {
+        "L3_artifact_reuse_count_min": 1,
+        "L3_exact_replay_count_min": 1,
+        "L3_skipped_step_count_min": 2
+      }
+    }
+  ]
+}

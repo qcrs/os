@@ -1,0 +1,12 @@
+services:
+  statebus-dev:
+    # bwrap needs mount/network namespace capabilities in this openEuler container.
+    # This profile intentionally runs as root because the default qcrs user cannot
+    # mount /proc inside the nested bwrap namespace in Docker.
+    user: "0:0"
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined

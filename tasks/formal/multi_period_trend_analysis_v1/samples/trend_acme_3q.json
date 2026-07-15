@@ -1,0 +1,23 @@
+{
+  "task_id": "formal-trend-001",
+  "task_family": "multi_period_trend_analysis_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["trend", "acme", "three-quarter"],
+  "expected_facts": {
+    "trend_direction": "increasing"
+  },
+  "request_text": "Compute the three-quarter ACME revenue trend for 2025Q3, 2025Q4, and 2026Q1.",
+  "canonical_task_spec": {
+    "task_family": "cross_period_financial_analysis",
+    "intent_op": "compute_trend",
+    "required_outputs": ["trend_values", "trend_direction", "summary_text"],
+    "required_tools": ["table_retriever"],
+    "arguments": {
+      "ticker": "ACME",
+      "metric": "revenue",
+      "quarters": ["2025Q3", "2025Q4", "2026Q1"],
+      "dataset_id": "cross_period_financial",
+      "quality_checks": ["exact:trend_direction"]
+    }
+  }
+}

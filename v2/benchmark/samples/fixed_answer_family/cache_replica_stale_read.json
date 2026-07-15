@@ -1,0 +1,25 @@
+{
+  "task_id": "fixed-answer-cache-001",
+  "task_family": "fixed_answer_route_tool",
+  "request_text": "reporting replica lag after failover caused stale reads",
+  "canonical_task_spec": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "triage_route_tool",
+    "required_outputs": ["summary_text"],
+    "required_tools": ["semantic_retriever", "table_retriever"],
+    "arguments": {
+      "ticker": "ACME",
+      "quarter": "2026Q1",
+      "metric": "revenue",
+      "request_text": "reporting replica lag after failover caused stale reads"
+    }
+  },
+  "expected_facts": {
+    "revenue_value": "120",
+    "selected_doc_hashes": ["sha256:doc-acme-2026q1"]
+  },
+  "expected_route": "cache_replica_stale_read",
+  "expected_tool_name": "semantic_retriever",
+  "summary_hint": "Choose the best incident route and keep evidence bounded.",
+  "scenario_tags": ["fixed-answer", "cache", "replica"]
+}

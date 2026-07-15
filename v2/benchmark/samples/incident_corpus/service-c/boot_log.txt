@@ -1,0 +1,6 @@
+[00:00.000] systemd: Starting service-c.service
+[00:00.018] service-c: Loading config bundle from /etc/service-c/config.yaml
+[00:00.731] service-c: Config load complete (0.7s)
+[00:00.732] service-c: Waiting for storage mount: /data/service-c-cache
+[00:02.102] service-c: Storage mounted (1.4s wait)
+[00:02.301] service-c: Ready - total startup: 2.3s

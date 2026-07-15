@@ -1,0 +1,38 @@
+{
+  "task_id": "benchmark-sample-7",
+  "task_family": "financial_report_analysis",
+  "expected_artifact_type": "json",
+  "scenario_tags": [
+    "operating-income",
+    "acme",
+    "q1-2026"
+  ],
+  "expected_facts": {
+    "metric_name": "operating_income",
+    "metric_value": "19",
+    "revenue_value": "19",
+    "selected_doc_hashes": [
+      "sha256:doc-acme-2026q1"
+    ]
+  },
+  "request_text": "What was ACME's operating income for 2026Q1? Produce a summary.",
+  "canonical_task_spec": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "compare_metric",
+    "required_outputs": [
+      "summary_text"
+    ],
+    "required_tools": [
+      "table_retriever",
+      "semantic_retriever"
+    ],
+    "arguments": {
+      "ticker": "ACME",
+      "quarter": "2026Q1",
+      "metric": "operating_income"
+    }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the operating_income value for ACME 2026Q1: 19."
+}

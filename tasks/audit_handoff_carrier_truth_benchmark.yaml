@@ -1,0 +1,126 @@
+task_set:
+  name: audit_handoff_carrier_truth_pack
+  pack_type: audit_handoff_carrier_truth
+  description: Audit-only pack that separates inline text, statepool-backed natural text, minimal text packet, and minimal typed packet under one fixed case family.
+  reading_contract: Read this pack only as audit evidence for carrier truth. It isolates handoff form differences and should not replace the current v3 formal surface.
+  claim_lanes:
+  - state_transfer
+  evidence_tier: audit_only
+  benchmark_version: v3
+tasks:
+- task_id: audit-checkout-inline-text-001
+  task_group: audit_handoff_carrier_truth_lane
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: inline_text_handoff
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Audit-only carrier truth case. Hold task semantics fixed and vary only handoff form.
+  tags: [release, checkout, latency, database, audit-carrier]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-checkout-inline-text-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-checkout-natural-text-001
+  task_group: audit_handoff_carrier_truth_lane
+  task_order: 2
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: natural_handoff_text
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Audit-only carrier truth case. Hold task semantics fixed and vary only handoff form.
+  tags: [release, checkout, latency, database, audit-carrier]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-checkout-natural-text-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-checkout-text-packet-001
+  task_group: audit_handoff_carrier_truth_lane
+  task_order: 3
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: text_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Audit-only carrier truth case. Hold task semantics fixed and vary only handoff form.
+  tags: [release, checkout, latency, database, audit-carrier]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-checkout-text-packet-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""
+- task_id: audit-checkout-state-packet-001
+  task_group: audit_handoff_carrier_truth_lane
+  task_order: 4
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  transfer_strategy: state_packet_minimal
+  runtime_reuse_contract: reuse_disabled
+  allowed_modes: [protocol]
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+  evidence_text: Audit-only carrier truth case. Hold task semantics fixed and vary only handoff form.
+  tags: [release, checkout, latency, database, audit-carrier]
+  reuse_tags: [release, checkout, database]
+  expected_reuse_mode: none
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  case_id: audit-checkout-state-packet-001
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes: [db_pool_saturation]
+  acceptable_tools: [tool.db_pool_triage]
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ""
+  abstain_only_when: ""

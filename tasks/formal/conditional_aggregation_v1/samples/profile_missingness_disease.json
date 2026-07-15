@@ -1,0 +1,27 @@
+{
+  "task_id": "formal-agg-001",
+  "task_family": "conditional_aggregation_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["aggregation", "missingness", "disease"],
+  "expected_facts": {
+    "percentage_cases_min": "36.45",
+    "percentage_deaths_max": "38.79"
+  },
+  "request_text": "Profile estimated_numbers.csv and compute missingness percentages for case and death bound columns.",
+  "canonical_task_spec": {
+    "task_family": "continuous_csv_table_analysis",
+    "intent_op": "profile_table",
+    "required_outputs": ["schema_profile_ref", "missingness_summary", "summary_text"],
+    "required_tools": ["csv_profiler", "codeact_executor"],
+    "arguments": {
+      "dataset_id": "disease_estimates",
+      "csv_path": "task/csv/estimated_numbers.csv",
+      "columns": ["No. of cases_min", "No. of deaths_max"],
+      "quality_checks": [
+        "numeric_tolerance:percentage_cases_min:0.01",
+        "numeric_tolerance:percentage_deaths_max:0.01",
+        "artifact_exists:schema_profile_ref"
+      ]
+    }
+  }
+}

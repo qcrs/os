@@ -1,0 +1,38 @@
+{
+  "task_id": "benchmark-sample-6",
+  "task_family": "financial_report_analysis",
+  "expected_artifact_type": "json",
+  "scenario_tags": [
+    "gross-margin",
+    "acme",
+    "q2-2026"
+  ],
+  "expected_facts": {
+    "metric_name": "gross_margin",
+    "metric_value": "39",
+    "revenue_value": "39",
+    "selected_doc_hashes": [
+      "sha256:doc-acme-2026q2"
+    ]
+  },
+  "request_text": "What was ACME's gross margin for 2026Q2? Produce a summary.",
+  "canonical_task_spec": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "compare_metric",
+    "required_outputs": [
+      "summary_text"
+    ],
+    "required_tools": [
+      "table_retriever",
+      "semantic_retriever"
+    ],
+    "arguments": {
+      "ticker": "ACME",
+      "quarter": "2026Q2",
+      "metric": "gross_margin"
+    }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the gross_margin value for ACME 2026Q2: 39."
+}

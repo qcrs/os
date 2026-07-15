@@ -1,0 +1,7 @@
+[00:00.000] systemd: Starting service-b.service
+[00:00.021] service-b: Restoring container image layers
+[00:01.874] service-b: Image restore complete (1.8s)
+[00:01.875] service-b: Waiting for storage mount: /data/service-b-cache
+[00:08.402] service-b: Storage mounted (6.5s wait) - sustained high IO wait detected
+[00:08.910] service-b: Starting grpc listeners
+[00:09.112] service-b: Ready - total startup: 9.1s

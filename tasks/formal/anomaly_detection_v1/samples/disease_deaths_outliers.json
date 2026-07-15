@@ -1,0 +1,32 @@
+{
+  "task_id": "formal-anomaly-001",
+  "task_family": "anomaly_detection_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["anomaly", "outlier", "disease"],
+  "expected_facts": {
+    "mean_no_of_deaths_with_outliers": "10149.43",
+    "mean_no_of_deaths_without_outliers": "5949.08"
+  },
+  "request_text": "Detect IQR outliers in No. of deaths_max and compare mean deaths before and after removal.",
+  "canonical_task_spec": {
+    "task_family": "continuous_csv_table_analysis",
+    "intent_op": "detect_outliers",
+    "required_outputs": [
+      "outlier_artifact_ref",
+      "mean_no_of_deaths_with_outliers",
+      "mean_no_of_deaths_without_outliers"
+    ],
+    "required_tools": ["table_retriever", "codeact_executor"],
+    "arguments": {
+      "dataset_id": "disease_estimates",
+      "csv_path": "task/csv/estimated_numbers.csv",
+      "column": "No. of deaths_max",
+      "method": "iqr",
+      "threshold": 3,
+      "quality_checks": [
+        "numeric_tolerance:mean_no_of_deaths_with_outliers:0.01",
+        "numeric_tolerance:mean_no_of_deaths_without_outliers:0.01"
+      ]
+    }
+  }
+}
