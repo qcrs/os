@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from runtime.llm import LLMResult, LLMUsage
+from v2.benchmark.models import BenchmarkLayer
 from v2.benchmark import (
     MinimalBenchmarkSample,
     load_sample_family,
@@ -194,6 +195,24 @@ def test_minimal_benchmark_suite_reports_actual_state_pool_backend_after_release
     assert payload["state_pool_mode_requested"] == "memfd"
     assert payload["state_pool_mode_used"] == "shared_memory"
     assert payload["memfd_transfer_count"] == 0.0
+
+
+def test_minimal_benchmark_family_explicit_mmap_reports_actual_backend(tmp_path: Path) -> None:
+    report = run_minimal_benchmark_family(
+        samples=load_sample_family(Path("v2/benchmark/samples/formal_financial_family"))[:1],
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        suite_id="family-state-pool-mmap-test",
+        layer=BenchmarkLayer.L2,
+        state_pool_mode="mmap",
+    )
+
+    assert report.metadata["state_pool_mode_requested"] == "mmap"
+    assert report.metadata["state_pool_mode_used"] == "mmap_file"
+    assert report.metadata["transport"] == "loopback"
+    assert report.telemetry_summary["state_pool_mmap_mode_count"] == 1.0
+    assert report.telemetry_summary["state_pool_fallback_count"] == 0.0
 
 
 def test_minimal_benchmark_family_api_mode_accepts_compact_role_alias_responses(

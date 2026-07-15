@@ -3158,15 +3158,34 @@ def run_smoke(
     task_metrics["rendered_role_request_artifact_count"] = float(
         len(rendered_role_request_files)
     )
-    rendered_request_audit = getattr(role_path_runner, "rendered_request_audit", {})
-    rendered_request_counts = {
-        role: len(rendered_request_audit.get(role, []))
-        for role in ("planner", "retriever", "executor", "summarizer")
+    rendered_request_audit = getattr(role_path_runner, "rendered_request_audit", None)
+    if isinstance(rendered_request_audit, dict):
+        rendered_request_counts = {
+            role: len(rendered_request_audit.get(role, []))
+            for role in ("planner", "retriever", "executor", "summarizer")
+        }
+    else:
+        rendered_request_counts = {
+            role: 0
+            for role in ("planner", "retriever", "executor", "summarizer")
+        }
+    rendered_request_count = sum(rendered_request_counts.values())
+    execution_role_call_counts = {
+        "planner": 1,
+        "retriever": 0 if replay_restore_enabled else 1,
+        "executor": 0 if replay_restore_enabled else 1,
+        "summarizer": 0 if replay_restore_enabled else 1,
     }
-    for role, request_count in rendered_request_counts.items():
-        task_metrics[f"{role}_call_count"] = float(request_count)
-    task_metrics["llm_call_count"] = float(sum(rendered_request_counts.values()))
-    task_metrics["rendered_role_request_count"] = task_metrics["llm_call_count"]
+    # Control flow is the source of truth for role invocation. Rendered requests
+    # remain an audit surface and may be absent on lightweight test runners.
+    role_call_counts = {
+        role: max(execution_role_call_counts[role], request_count)
+        for role, request_count in rendered_request_counts.items()
+    }
+    for role, call_count in role_call_counts.items():
+        task_metrics[f"{role}_call_count"] = float(call_count)
+    task_metrics["llm_call_count"] = float(sum(role_call_counts.values()))
+    task_metrics["rendered_role_request_count"] = float(rendered_request_count)
     task_metrics["rendered_role_request_artifact_bytes_total"] = float(
         sum(item.size_bytes for item in rendered_role_request_files.values())
     )
@@ -3599,7 +3618,7 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a StateBus v2 runtime smoke path.")
     parser.add_argument("--role-path-mode", default="deterministic", choices=("deterministic", "api", "local_vllm"))
     parser.add_argument("--embedding-mode", default="deterministic", choices=("deterministic", "local"))
-    parser.add_argument("--state-pool-mode", default="auto", choices=("auto", "shared_memory", "memfd"))
+    parser.add_argument("--state-pool-mode", default="auto", choices=("auto", "mmap", "shared_memory", "memfd"))
     parser.add_argument(
         "--persistence-profile",
         default="audit_full",

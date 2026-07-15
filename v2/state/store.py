@@ -59,6 +59,16 @@ class LayeredStoragePolicy:
                     "LOGIT_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
                 }
             )
+        elif normalized == "mmap":
+            # Explicit durable-file control for matched backend experiments.
+            # Do not silently select an in-memory backend in this mode.
+            policy.kind_preferences.update(
+                {
+                    "EMBEDDING_STATE": (StorageKind.MMAP_FILE,),
+                    "DENSE_SEMANTIC_STATE": (StorageKind.MMAP_FILE,),
+                    "LOGIT_STATE": (StorageKind.MMAP_FILE,),
+                }
+            )
         return policy
 
     def decide(
@@ -430,7 +440,9 @@ class LayeredStateStore:
 
 def _normalize_state_pool_mode(mode: str) -> str:
     normalized = mode.strip().lower().replace("-", "_")
-    if normalized not in {"auto", "shared_memory", "memfd"}:
+    if normalized == "mmap_file":
+        normalized = "mmap"
+    if normalized not in {"auto", "mmap", "shared_memory", "memfd"}:
         raise ValueError(f"unsupported state pool mode: {mode}")
     return normalized
 

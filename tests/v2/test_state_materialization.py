@@ -50,6 +50,21 @@ def test_layered_state_store_memfd_mode_round_trip(tmp_path: Path) -> None:
     store.teardown()
 
 
+def test_layered_state_store_explicit_mmap_mode_never_selects_memory_backend(tmp_path: Path) -> None:
+    store = LayeredStateStore(
+        root=tmp_path / "state",
+        policy=LayeredStoragePolicy.for_state_pool_mode("mmap_file"),
+    )
+    handle = store.publish(ref_id="state-mmap", object_kind="DENSE_SEMANTIC_STATE", payload=b"mmap-payload")
+
+    assert store.policy.state_pool_mode == "mmap"
+    assert handle.storage_kind == StorageKind.MMAP_FILE
+    assert handle.decision.fallback_used is False
+    assert store.backend_name == StorageKind.MMAP_FILE.value
+    assert store.load("state-mmap") == b"mmap-payload"
+    store.teardown()
+
+
 def test_layered_state_store_backend_name_survives_release(tmp_path: Path) -> None:
     store = LayeredStateStore(
         root=tmp_path / "state",

@@ -344,6 +344,15 @@ def run_minimal_benchmark_family(
     }
     for case in cases:
         replay_class_distribution[case.replay_class] = replay_class_distribution.get(case.replay_class, 0.0) + 1.0
+    state_pool_mode_used = (
+        "memfd"
+        if telemetry_summary.get("memfd_transfer_count", 0.0) > 0.0
+        else "shared_memory"
+        if telemetry_summary.get("state_pool_shared_memory_mode_count", 0.0) > 0.0
+        else "mmap_file"
+        if telemetry_summary.get("state_pool_mmap_mode_count", 0.0) > 0.0
+        else state_pool_mode
+    )
     task_family = cases[0].task_family if cases else "financial_report_analysis"
     family_tier = (
         "formal_registry"
@@ -372,6 +381,8 @@ def run_minimal_benchmark_family(
             "role_graph": "planner->retriever->executor->summarizer",
             "role_path_mode": role_path_mode,
             "state_pool_mode": state_pool_mode,
+            "state_pool_mode_requested": state_pool_mode,
+            "state_pool_mode_used": state_pool_mode_used,
             "transport": executor_transport,
             "scoring_contract": "statebus_smoke_quality_floor_v1",
             "seed_replay_memory": seed_replay_memory,
