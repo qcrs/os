@@ -174,6 +174,18 @@ class RuntimeTaskSession:
     runtime_replan_count: int = 0
     summary_artifact_ref_id: str = ""
     memory_match_result_hash: str = ""
+    workflow_mode: str = ""
+    adaptive_proposal_hash: str = ""
+    adaptive_approved_plan_hash: str = ""
+    adaptive_plan_policy_report_hash: str = ""
+    capability_grant_hashes: tuple[str, ...] = ()
+    evidence_coverage_report_hashes: tuple[str, ...] = ()
+    projection_report_hashes: tuple[str, ...] = ()
+    capability_quality_report_hashes: tuple[str, ...] = ()
+    transform_program_hashes: tuple[str, ...] = ()
+    code_source_hashes: tuple[str, ...] = ()
+    adaptive_decision_record_hashes: tuple[str, ...] = ()
+    state_consumption_record_hashes: tuple[str, ...] = ()
     current_attempt_id: str = ""
     last_fallback_action: str = ""
     session_state: str = ""
@@ -211,6 +223,18 @@ class RuntimeTaskSession:
             "runtime_replan_count": self.runtime_replan_count,
             "summary_artifact_ref_id": self.summary_artifact_ref_id,
             "memory_match_result_hash": self.memory_match_result_hash,
+            "workflow_mode": self.workflow_mode,
+            "adaptive_proposal_hash": self.adaptive_proposal_hash,
+            "adaptive_approved_plan_hash": self.adaptive_approved_plan_hash,
+            "adaptive_plan_policy_report_hash": self.adaptive_plan_policy_report_hash,
+            "capability_grant_hashes": list(self.capability_grant_hashes),
+            "evidence_coverage_report_hashes": list(self.evidence_coverage_report_hashes),
+            "projection_report_hashes": list(self.projection_report_hashes),
+            "capability_quality_report_hashes": list(self.capability_quality_report_hashes),
+            "transform_program_hashes": list(self.transform_program_hashes),
+            "code_source_hashes": list(self.code_source_hashes),
+            "adaptive_decision_record_hashes": list(self.adaptive_decision_record_hashes),
+            "state_consumption_record_hashes": list(self.state_consumption_record_hashes),
             "current_attempt_id": self.current_attempt_id,
             "last_fallback_action": self.last_fallback_action,
             "session_state": self.session_state,
@@ -293,6 +317,52 @@ class RuntimeSessionManager:
             session,
             workflow_steps=workflow_steps,
             current_step_id=current_step_id,
+            updated_at_ns=time.time_ns(),
+        )
+        self.sessions[session_id] = updated
+        return updated
+
+    def attach_adaptive_audit(
+        self,
+        session_id: str,
+        *,
+        workflow_mode: str,
+        proposal_hash: str = "",
+        approved_plan_hash: str = "",
+        plan_policy_report_hash: str = "",
+        capability_grant_hash: str = "",
+        evidence_coverage_report_hash: str = "",
+        projection_report_hash: str = "",
+        capability_quality_report_hash: str = "",
+        transform_program_hash: str = "",
+        code_source_hash: str = "",
+        adaptive_decision_record_hash: str = "",
+        state_consumption_record_hash: str = "",
+    ) -> RuntimeTaskSession:
+        session = self.sessions[session_id]
+
+        def append_unique(values: tuple[str, ...], value: str) -> tuple[str, ...]:
+            return values if not value or value in values else values + (value,)
+
+        updated = replace(
+            session,
+            workflow_mode=workflow_mode or session.workflow_mode,
+            adaptive_proposal_hash=proposal_hash or session.adaptive_proposal_hash,
+            adaptive_approved_plan_hash=approved_plan_hash or session.adaptive_approved_plan_hash,
+            adaptive_plan_policy_report_hash=(plan_policy_report_hash or session.adaptive_plan_policy_report_hash),
+            capability_grant_hashes=append_unique(session.capability_grant_hashes, capability_grant_hash),
+            evidence_coverage_report_hashes=append_unique(session.evidence_coverage_report_hashes, evidence_coverage_report_hash),
+            projection_report_hashes=append_unique(session.projection_report_hashes, projection_report_hash),
+            capability_quality_report_hashes=append_unique(
+                session.capability_quality_report_hashes, capability_quality_report_hash
+            ),
+            transform_program_hashes=append_unique(session.transform_program_hashes, transform_program_hash),
+            code_source_hashes=append_unique(session.code_source_hashes, code_source_hash),
+            adaptive_decision_record_hashes=append_unique(
+                session.adaptive_decision_record_hashes,
+                adaptive_decision_record_hash,
+            ),
+            state_consumption_record_hashes=append_unique(session.state_consumption_record_hashes, state_consumption_record_hash),
             updated_at_ns=time.time_ns(),
         )
         self.sessions[session_id] = updated

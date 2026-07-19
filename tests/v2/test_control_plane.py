@@ -18,6 +18,7 @@ from v2.control import (
     frame_control_message,
 )
 from v2.control.transport import (
+    ControlPlaneLoopbackServer,
     SubprocessExecutorTransport,
     decode_memfd_ref,
     encode_memfd_ref,
@@ -59,6 +60,32 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
     assert parsed.reuse_policy.allow_validated_replay is True
     assert parsed.runtime_reuse_contract == "benchmark_strict:exact_replay_allowed"
     assert parsed.workspace_root == "/statebus/workspaces/task-1"
+
+
+def test_loopback_transport_shortens_overlong_unix_socket_path(tmp_path: Path) -> None:
+    requested_socket = tmp_path / ("nested-" + "x" * 80) / "control.sock"
+    assert len(os.fsencode(requested_socket)) > 107
+    message = ExecRequest(
+        header=ControlHeader(
+            trace_id="trace-overlong-socket",
+            task_id="task-overlong-socket",
+            step_id="step-1",
+            attempt_id="attempt-1",
+            target_role="executor",
+            timeout_ms=5000,
+            event_type=EventType.REQ_EXEC,
+        ),
+        runtime_reuse_contract="no_semantic_state",
+        output_contract_version="output-v1",
+        workspace_root="/statebus/workspaces/task-overlong-socket",
+        input_manifest_hash="sha256:manifest",
+        artifact_refs=(RefHandle(ref_id="artifact-1", ref_kind="execution_artifact"),),
+    )
+
+    echoed = ControlPlaneLoopbackServer(requested_socket).round_trip(message)
+
+    assert echoed == message
+    assert not requested_socket.exists()
 
 
 def test_encode_decode_memfd_ref_round_trip() -> None:

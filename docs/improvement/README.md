@@ -4,6 +4,10 @@
 
 ## 当前必读
 
+0. `24_adaptive_codeact_runtime_closure_20260717/00_detailed_optimization_and_implementation_plan_zh.md`
+   - 基于 23 号受限自适应方案及 2026-07-17 当前代码/运行产物的重新复核。
+   - 明确此前已经实现的 adaptive 与 LLM CodeAct 基础、尚未完成的正式接线，以及真实数据、质量 validator、dispatcher、有限自由度、Docker/root+bwrap/local-vLLM 测试和最终实验证据的完整实施顺序。
+
 1. `20_v2_comprehensive_truth_audit_20260706/13_artifact_mining_deep_analysis_20260708.md`
    - 2026-07-08 base + supplement 两组 artifact 的全量抽取后深度拆解。
    - 当前最适合判断“优势在哪里、损耗在哪里、哪些不能 claim、哪些问题还要修”的文档；覆盖 formal external compare、formal layer waterfall、text/protocol carrier compare、continuous/replay、flagship、KV prefix 和 CodeAct。

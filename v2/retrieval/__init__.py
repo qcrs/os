@@ -18,6 +18,8 @@ from v2.retrieval.models import (
     RetrieverOutput,
 )
 from v2.retrieval.pipeline import (
+    BoundedRetrievalDecision,
+    BoundedRetrievalResult,
     LexicalMetadataRetriever,
     RetrieverFanoutPipeline,
     SemanticChunkRetriever,
@@ -28,6 +30,8 @@ from v2.retrieval.pruning import DynamicPruningConfig, compute_dynamic_pruning_t
 __all__ = [
     "CorpusTableRow",
     "CorpusTextFragment",
+    "BoundedRetrievalDecision",
+    "BoundedRetrievalResult",
     "EvidencePruningHint",
     "DynamicPruningConfig",
     "FinancialReportDocument",

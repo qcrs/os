@@ -3,8 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import ceil
 from pathlib import Path
+from typing import Callable
 
-from v2.contracts import CanonicalTaskSpec
+from v2.contracts import (
+    CanonicalTaskSpec,
+    EvidenceCoverageReport,
+    EvidenceCoverageStatus,
+    EvidenceRequest,
+)
 from v2.memory import DeterministicEmbeddingEncoder, EmbeddingEncoder, build_embedding_encoder
 from v2.memory.embedding import cosine_similarity as _cosine_sim
 from v2.provenance import DeterministicFanInBuilder, EvidenceCandidate
@@ -38,10 +44,52 @@ from v2.retrieval.models import (
     RetrieverOutput,
 )
 from v2.utils import sha256_digest
+from v2.runtime.evidence_coverage import EvidenceCoverageVerifier, validate_evidence_request
 
 
 PRUNING_IMPORTANCE_THRESHOLD = 0.6
 KV_ESTIMATE_BYTES_PER_TOKEN = 4
+
+
+@dataclass(frozen=True)
+class MultiQueryRetrievalResult:
+    query_hashes: tuple[str, ...]
+    bundles: tuple[RetrievalBundle, ...]
+    evidence_pack: CanonicalEvidencePack
+
+
+@dataclass(frozen=True)
+class BoundedRetrievalDecision:
+    decision: str
+    expansion_index: int
+    before_status: EvidenceCoverageStatus
+    after_status: EvidenceCoverageStatus
+    before_candidate_count: int
+    after_candidate_count: int
+    missing_evidence_types: tuple[str, ...]
+    query_hashes: tuple[str, ...]
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "decision": self.decision,
+            "expansion_index": self.expansion_index,
+            "before_status": self.before_status.value,
+            "after_status": self.after_status.value,
+            "before_candidate_count": self.before_candidate_count,
+            "after_candidate_count": self.after_candidate_count,
+            "missing_evidence_types": list(self.missing_evidence_types),
+            "query_hashes": list(self.query_hashes),
+        }
+
+
+@dataclass(frozen=True)
+class BoundedRetrievalResult:
+    request: EvidenceRequest
+    bundles: tuple[RetrievalBundle, ...]
+    evidence_pack: CanonicalEvidencePack
+    query_hashes: tuple[str, ...]
+    coverage_reports: tuple[EvidenceCoverageReport, ...]
+    decisions: tuple[BoundedRetrievalDecision, ...]
 
 
 def _consumed_retrieval_objectives(
@@ -325,14 +373,35 @@ class TableStructureRetriever:
                 )
             )
         else:
-            rows = tuple(
-                row
-                for row in document.table_rows
-                if row.metric_name == requested_metric or requested_metric in {"revenue", "storage_mount"}
-            )
+            normalized_metric = requested_metric.strip().lower().replace(" ", "_")
+
+            def metric_matches(row_metric_name: str) -> bool:
+                # Markdown-table extraction carries the period as a suffix
+                # (for example ``revenue_musd:2026Q1``).  Match the requested
+                # metric family, never every table cell merely because the
+                # request used a short name such as ``revenue``.
+                base_name = row_metric_name.split(":", 1)[0].lower()
+                return (
+                    base_name == normalized_metric
+                    or base_name.startswith(f"{normalized_metric}_")
+                )
+
+            rows = tuple(row for row in document.table_rows if metric_matches(row.metric_name))
         if not rows and document.table_rows:
             rows = tuple(document.table_rows[:1])
-        row_limit = 3 if spec.intent_op in {"compute_delta", "compute_trend"} else 1
+        # Table evidence is a bounded data object, not a single-answer hint.
+        # Retain up to three matching rows so any approved comparison,
+        # aggregation, or anomaly capability can consume the same verified
+        # EvidencePack.  The controller still limits the corpus and later
+        # validates rows through projection and capability-specific quality
+        # gates.
+        # This is Controller-owned task metadata, never an LLM retrieval
+        # request field.  It lets a registered grouped-analysis task retain a
+        # bounded complete table while the normal long-document path remains
+        # capped at three rows.
+        configured_limit = spec.arguments.get("table_row_limit", 3)
+        row_limit = int(configured_limit) if isinstance(configured_limit, int) else 3
+        row_limit = min(max(row_limit, 1), 16)
         if spec.task_family == "cross_period_financial_analysis" and rows:
             row_limit = max(row_limit, len(rows))
         selected = tuple(
@@ -343,7 +412,11 @@ class TableStructureRetriever:
                 rendered_text=row.rendered_text,
                 source_name="table",
                 rank=index + 1,
-                metadata={"metric_name": row.metric_name, "value": row.value},
+                metadata={
+                    "metric_name": row.metric_name,
+                    "value": row.value,
+                    **dict(row.metadata),
+                },
             )
             for index, row in enumerate(rows[:row_limit])
         )
@@ -1196,4 +1269,211 @@ class RetrieverFanoutPipeline:
             consumed_objectives=consumed_objectives,
             consumed_objective_hashes=consumed_objective_hashes,
             memory_query_embedding=memory_query_embedding,
+        )
+
+    def run_multi_query(
+        self,
+        *,
+        task_id: str,
+        spec: CanonicalTaskSpec,
+        query_texts: tuple[str, ...],
+        planner_scope_payload: dict[str, object] | None = None,
+    ) -> MultiQueryRetrievalResult:
+        """Run at most three approved queries and merge evidence deterministically without changing `run()`."""
+        normalized_queries = tuple(query.strip() for query in query_texts if query.strip())
+        if not 1 <= len(normalized_queries) <= 3:
+            raise ValueError("adaptive_multi_query_count_out_of_bounds")
+        if len(set(query.lower() for query in normalized_queries)) != len(normalized_queries):
+            raise ValueError("adaptive_multi_query_duplicate")
+        bundles: list[RetrievalBundle] = []
+        for index, query in enumerate(normalized_queries):
+            scope = dict(planner_scope_payload or {})
+            semantic_plan = scope.get("semantic_task_plan", {})
+            semantic_plan = dict(semantic_plan) if isinstance(semantic_plan, dict) else {}
+            objectives = semantic_plan.get("retrieval_objectives", {})
+            objectives = dict(objectives) if isinstance(objectives, dict) else {}
+            for objective_name in ("lexical_metadata", "semantic_chunk", "table_structure", "memory"):
+                objective = objectives.get(objective_name, {})
+                objective = dict(objective) if isinstance(objective, dict) else {}
+                objective["query_text"] = query
+                objectives[objective_name] = objective
+            semantic_plan["retrieval_objectives"] = objectives
+            scope["semantic_task_plan"] = semantic_plan
+            scope["query_text"] = query
+            bundles.append(self.run(task_id=f"{task_id}-q{index + 1}", spec=spec, planner_scope_payload=scope))
+        return MultiQueryRetrievalResult(
+            query_hashes=tuple(sha256_digest(query.lower()) for query in normalized_queries),
+            bundles=tuple(bundles),
+            evidence_pack=self._stable_fan_in_packs(task_id=task_id, packs=tuple(bundle.evidence_pack for bundle in bundles)),
+        )
+
+    def run_bounded_evidence_request(
+        self,
+        *,
+        request: EvidenceRequest,
+        spec: CanonicalTaskSpec,
+        allowed_corpus_scope_ids: tuple[str, ...],
+        planner_scope_payload: dict[str, object] | None = None,
+        propose_expansion: Callable[[EvidenceCoverageReport], EvidenceRequest | None] | None = None,
+        verifier: EvidenceCoverageVerifier | None = None,
+        max_expansions: int = 1,
+        decision_sink: Callable[[BoundedRetrievalDecision], None] | None = None,
+    ) -> BoundedRetrievalResult:
+        """Run registered fan-out for an approved request and allow one controller-owned retry.
+
+        The optional callback produces an untrusted *candidate* request only. This
+        method validates its scope and query hashes before it can reach any corpus,
+        then computes coverage exclusively from the resulting canonical pack.
+        """
+        if max_expansions not in {0, 1}:
+            raise ValueError("max_expansions_must_be_zero_or_one")
+        validate_evidence_request(request, allowed_corpus_scope_ids=allowed_corpus_scope_ids)
+        verifier = verifier or EvidenceCoverageVerifier()
+        initial = self.run_multi_query(
+            task_id=request.task_id,
+            spec=spec,
+            query_texts=request.queries,
+            planner_scope_payload=planner_scope_payload,
+        )
+        initial_report = verifier.evaluate(initial.evidence_pack, request)
+        reports = [initial_report]
+        decisions: list[BoundedRetrievalDecision] = []
+
+        def finish(
+            *,
+            decision: str,
+            expansion_index: int,
+            evidence_pack: CanonicalEvidencePack,
+            query_hashes: tuple[str, ...],
+            bundles: tuple[RetrievalBundle, ...],
+            after_report: EvidenceCoverageReport,
+        ) -> BoundedRetrievalResult:
+            record = BoundedRetrievalDecision(
+                decision=decision,
+                expansion_index=expansion_index,
+                before_status=initial_report.status,
+                after_status=after_report.status,
+                before_candidate_count=self._evidence_item_count(initial.evidence_pack),
+                after_candidate_count=self._evidence_item_count(evidence_pack),
+                missing_evidence_types=after_report.missing_evidence_types,
+                query_hashes=query_hashes,
+            )
+            decisions.append(record)
+            if decision_sink is not None:
+                decision_sink(record)
+            return BoundedRetrievalResult(
+                request=request,
+                bundles=bundles,
+                evidence_pack=evidence_pack,
+                query_hashes=query_hashes,
+                coverage_reports=tuple(reports),
+                decisions=tuple(decisions),
+            )
+
+        if initial_report.status != EvidenceCoverageStatus.INSUFFICIENT_EVIDENCE:
+            return finish(
+                decision="coverage_complete_no_expansion",
+                expansion_index=0,
+                evidence_pack=initial.evidence_pack,
+                query_hashes=initial.query_hashes,
+                bundles=initial.bundles,
+                after_report=initial_report,
+            )
+        if max_expansions == 0 or propose_expansion is None:
+            return finish(
+                decision="coverage_insufficient_no_expansion_authorized",
+                expansion_index=0,
+                evidence_pack=initial.evidence_pack,
+                query_hashes=initial.query_hashes,
+                bundles=initial.bundles,
+                after_report=initial_report,
+            )
+        expansion = propose_expansion(initial_report)
+        if expansion is None:
+            return finish(
+                decision="coverage_insufficient_expansion_not_proposed",
+                expansion_index=0,
+                evidence_pack=initial.evidence_pack,
+                query_hashes=initial.query_hashes,
+                bundles=initial.bundles,
+                after_report=initial_report,
+            )
+        self._validate_expansion_scope(request, expansion)
+        validate_evidence_request(
+            expansion,
+            allowed_corpus_scope_ids=allowed_corpus_scope_ids,
+            previous_query_hashes=initial.query_hashes,
+        )
+        follow_up = self.run_multi_query(
+            task_id=f"{request.task_id}-expansion-1",
+            spec=spec,
+            query_texts=expansion.queries,
+            planner_scope_payload=planner_scope_payload,
+        )
+        merged_pack = self._stable_fan_in_packs(
+            task_id=request.task_id,
+            packs=(initial.evidence_pack, follow_up.evidence_pack),
+        )
+        final_report = verifier.evaluate(merged_pack, request)
+        reports.append(final_report)
+        return finish(
+            decision=(
+                "coverage_complete_after_single_expansion"
+                if final_report.status == EvidenceCoverageStatus.COMPLETE
+                else "coverage_insufficient_after_single_expansion"
+            ),
+            expansion_index=1,
+            evidence_pack=merged_pack,
+            query_hashes=initial.query_hashes + follow_up.query_hashes,
+            bundles=initial.bundles + follow_up.bundles,
+            after_report=final_report,
+        )
+
+    @staticmethod
+    def _validate_expansion_scope(initial: EvidenceRequest, expansion: EvidenceRequest) -> None:
+        if expansion.task_id != initial.task_id or expansion.step_id != initial.step_id:
+            raise ValueError("expansion_request_scope_mismatch")
+        if set(expansion.corpus_scope_ids) - set(initial.corpus_scope_ids):
+            raise ValueError("expansion_corpus_scope_escalation")
+        if set(expansion.evidence_types) != set(initial.evidence_types):
+            raise ValueError("expansion_evidence_type_escalation")
+        if expansion.target_entities != initial.target_entities or expansion.time_scope != initial.time_scope:
+            raise ValueError("expansion_entity_or_time_scope_escalation")
+        if expansion.memory_policy != initial.memory_policy:
+            raise ValueError("expansion_memory_policy_escalation")
+
+    @staticmethod
+    def _evidence_item_count(pack: CanonicalEvidencePack) -> int:
+        return sum(
+            len(getattr(pack, bucket))
+            for bucket in (
+                "hard_facts",
+                "structured_evidence",
+                "semantic_contexts",
+                "lexical_hints",
+                "conflicts",
+            )
+        )
+
+    @staticmethod
+    def _stable_fan_in_packs(
+        *, task_id: str, packs: tuple[CanonicalEvidencePack, ...],
+    ) -> CanonicalEvidencePack:
+        def merge(bucket_name: str):
+            seen: set[tuple[str, str]] = set()
+            items = []
+            for pack in sorted(packs, key=lambda item: (item.pack_hash, item.pack_id)):
+                for item in getattr(pack, bucket_name):
+                    key = (item.item_id, repr(item.locator))
+                    if key not in seen:
+                        seen.add(key)
+                        items.append(item)
+            return tuple(sorted(items, key=lambda item: (item.rank, -item.score, item.item_id)))
+
+        return CanonicalEvidencePack(
+            pack_id=f"pack-{task_id}-multi-query", task_id=task_id,
+            source_doc_hashes=tuple(sorted({doc_hash for pack in packs for doc_hash in pack.source_doc_hashes})),
+            hard_facts=merge("hard_facts"), structured_evidence=merge("structured_evidence"),
+            semantic_contexts=merge("semantic_contexts"), lexical_hints=merge("lexical_hints"),
+            conflicts=merge("conflicts"), budget_meta={"query_count": len(packs), "fan_in": "stable"},
         )

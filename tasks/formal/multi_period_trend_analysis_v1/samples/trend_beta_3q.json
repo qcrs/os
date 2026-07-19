@@ -6,7 +6,7 @@
   "expected_facts": {
     "trend_direction": "increasing"
   },
-  "request_text": "Compute the three-quarter BETA revenue trend for 2025Q3, 2025Q4, and 2026Q1.",
+  "request_text": "Compute the three-quarter BETA revenue trend for 2025Q3, 2025Q4, and 2026Q1. Emit one row per requested quarter and repeat the canonical direction label: increasing when every adjacent value rises, decreasing when every adjacent value falls, flat when all values are equal, otherwise mixed.",
   "canonical_task_spec": {
     "task_family": "cross_period_financial_analysis",
     "intent_op": "compute_trend",

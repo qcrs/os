@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import socket
 import subprocess
 import sys
@@ -25,6 +27,26 @@ from v2.control.messages import (
     deframe_control_message,
     frame_control_message,
 )
+
+
+# Linux allows 107 pathname bytes plus the trailing NUL.  Keeping a few bytes
+# of headroom also makes the fallback usable on platforms with a 104-byte
+# sockaddr_un.sun_path field.
+_UNIX_SOCKET_PATH_BUDGET_BYTES = 103
+
+
+def effective_unix_socket_path(socket_path: Path) -> Path:
+    """Return a deterministic, bounded path for a filesystem Unix socket."""
+    if len(os.fsencode(socket_path)) <= _UNIX_SOCKET_PATH_BUDGET_BYTES:
+        return socket_path
+
+    digest = hashlib.sha256(os.fsencode(socket_path.absolute())).hexdigest()[:24]
+    sibling = socket_path.with_name(f".statebus-{digest}.sock")
+    if len(os.fsencode(sibling)) <= _UNIX_SOCKET_PATH_BUDGET_BYTES:
+        return sibling
+
+    uid = os.getuid() if hasattr(os, "getuid") else 0
+    return Path("/tmp") / f"statebus-v2-uds-{uid}" / f"{digest}.sock"
 
 
 def _recv_exact(sock: socket.socket, length: int) -> bytes:
@@ -55,16 +77,17 @@ class ControlPlaneLoopbackServer:
     socket_path: Path
 
     def round_trip(self, message: ControlMessage) -> ControlMessage:
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.socket_path.exists():
-            self.socket_path.unlink()
+        socket_path = effective_unix_socket_path(self.socket_path)
+        socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if socket_path.exists():
+            socket_path.unlink()
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            server.bind(str(self.socket_path))
+            server.bind(str(socket_path))
             server.listen(1)
             client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
-                client.connect(str(self.socket_path))
+                client.connect(str(socket_path))
                 conn, _ = server.accept()
                 try:
                     send_control_message(client, message)
@@ -77,14 +100,15 @@ class ControlPlaneLoopbackServer:
                 client.close()
         finally:
             server.close()
-            if self.socket_path.exists():
-                self.socket_path.unlink()
+            if socket_path.exists():
+                socket_path.unlink()
         return echoed
 
     def exchange_sequence(self, message: ControlMessage) -> list[ControlMessage]:
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.socket_path.exists():
-            self.socket_path.unlink()
+        socket_path = effective_unix_socket_path(self.socket_path)
+        socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if socket_path.exists():
+            socket_path.unlink()
 
         responses: list[ControlMessage] = []
         ready = threading.Event()
@@ -92,7 +116,7 @@ class ControlPlaneLoopbackServer:
         def _serve() -> None:
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
-                server.bind(str(self.socket_path))
+                server.bind(str(socket_path))
                 server.listen(1)
                 ready.set()
                 conn, _ = server.accept()
@@ -104,8 +128,8 @@ class ControlPlaneLoopbackServer:
                     conn.close()
             finally:
                 server.close()
-                if self.socket_path.exists():
-                    self.socket_path.unlink()
+                if socket_path.exists():
+                    socket_path.unlink()
 
         thread = threading.Thread(target=_serve, daemon=True)
         thread.start()
@@ -113,7 +137,7 @@ class ControlPlaneLoopbackServer:
 
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            client.connect(str(self.socket_path))
+            client.connect(str(socket_path))
             send_control_message(client, message)
             while True:
                 try:
@@ -335,9 +359,10 @@ class SubprocessExecutorTransport:
             exec_request = replace(request, state_refs=tuple(new_state_refs))
             pass_fds = tuple(sorted(set(fds_to_pass)))
 
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.socket_path.exists():
-            self.socket_path.unlink()
+        socket_path = effective_unix_socket_path(self.socket_path)
+        socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if socket_path.exists():
+            socket_path.unlink()
 
         responses: list[ControlMessage] = []
         server_ready = threading.Event()
@@ -345,7 +370,7 @@ class SubprocessExecutorTransport:
         def _serve() -> None:
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
-                server.bind(str(self.socket_path))
+                server.bind(str(socket_path))
                 server.listen(1)
                 server.settimeout(self.timeout_s)
                 server_ready.set()
@@ -366,8 +391,8 @@ class SubprocessExecutorTransport:
                     conn.close()
             finally:
                 server.close()
-                if self.socket_path.exists():
-                    self.socket_path.unlink()
+                if socket_path.exists():
+                    socket_path.unlink()
 
         t = threading.Thread(target=_serve, daemon=True)
         t.start()
@@ -380,7 +405,7 @@ class SubprocessExecutorTransport:
                 "-m",
                 "v2.control.subprocess_worker",
                 "--socket-path",
-                str(self.socket_path),
+                str(socket_path),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

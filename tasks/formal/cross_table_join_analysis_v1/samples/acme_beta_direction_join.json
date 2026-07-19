@@ -7,7 +7,7 @@
     "acme_trend_direction": "increasing",
     "beta_trend_direction": "increasing"
   },
-  "request_text": "Join the two company tables and verify whether both revenue series are increasing.",
+  "request_text": "Join the two company tables and evaluate both revenue series across 2025Q3, 2025Q4, and 2026Q1. Emit one row per ticker and quarter and repeat each ticker's canonical direction label: increasing when every adjacent value rises, decreasing when every adjacent value falls, flat when all values are equal, otherwise mixed.",
   "canonical_task_spec": {
     "task_family": "cross_period_financial_analysis",
     "intent_op": "compute_trend",

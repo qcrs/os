@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from v2.runtime.codeact import CodeActRequest, CodeActRunner
-from v2.runtime.codeact_sandbox import CodeActSandboxConfig
+from v2.runtime.codeact_sandbox import CodeActSandboxConfig, CodeActSandboxRunner
 from v2.runtime.workspace import WorkspaceManager
 
 
@@ -119,17 +119,31 @@ def _run_codeact_bwrap_smoke() -> dict[str, object]:
         }
 
 
+def _run_llm_bwrap_readiness() -> dict[str, object]:
+    readiness = CodeActSandboxRunner().check_llm_bwrap_readiness(refresh=True)
+    payload = readiness.canonical_payload()
+    payload["ok"] = readiness.ready
+    payload["readiness_digest"] = readiness.readiness_digest
+    return payload
+
+
 def main() -> None:
     bwrap_smoke = _run_bwrap_smoke()
     codeact_smoke = _run_codeact_bwrap_smoke() if bwrap_smoke.get("ok") else {
         "ok": False,
         "reason": "skipped_because_bwrap_smoke_failed",
     }
+    llm_bwrap_readiness = _run_llm_bwrap_readiness()
     payload = {
-        "schema_version": "statebus.codeact_bwrap_sandbox_check.v1",
-        "ok": bool(bwrap_smoke.get("ok")) and bool(codeact_smoke.get("ok")),
+        "schema_version": "statebus.codeact_bwrap_sandbox_check.v2",
+        "ok": (
+            bool(bwrap_smoke.get("ok"))
+            and bool(codeact_smoke.get("ok"))
+            and bool(llm_bwrap_readiness.get("ok"))
+        ),
         "bwrap_smoke": bwrap_smoke,
         "codeact_bwrap_smoke": codeact_smoke,
+        "llm_bwrap_readiness": llm_bwrap_readiness,
     }
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 

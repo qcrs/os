@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import os
 import time
 from typing import Any
@@ -15,7 +15,18 @@ from runtime.llm import (
     extract_json_object,
     tagged_json_block,
 )
-from v2.contracts import CanonicalTaskSpec
+from v2.contracts import (
+    AdaptiveTaskEnvelope,
+    CanonicalTaskSpec,
+    Claim,
+    ClaimSet,
+    ClaimSetStatus,
+    EvidenceRequest,
+    PlanProposal,
+    PlanStepProposal,
+    TransformProgram,
+    TransformStep,
+)
 from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
 from v2.retrieval.models import RetrievalCandidatePool
 from v2.runtime.logit_state import serialize_logit_state_v2
@@ -53,6 +64,339 @@ def _merge_llm_results(results: list[LLMResult]) -> LLMResult:
             total_tokens=sum(result.usage.total_tokens for result in results),
         ),
     )
+
+
+def _coerce_optional_string_tuple(value: object) -> tuple[str, ...]:
+    values = _coerce_string_tuple(value)
+    null_markers = {"", "[]", "none", "null", "n/a", "not_applicable"}
+    return tuple(item for item in values if item.strip().lower() not in null_markers)
+
+
+def _string_schema(values: tuple[str, ...]) -> dict[str, Any]:
+    # vLLM 0.7.3 routes any schema containing enum to outlines. Keep the
+    # generation grammar structural and enforce these values in policy code.
+    del values
+    return {"type": "string"}
+
+
+def _string_array_schema(
+    values: tuple[str, ...] = (),
+    *,
+    min_items: int = 0,
+    max_items: int = 16,
+) -> dict[str, Any]:
+    # vLLM 0.7.3 also routes minItems/maxItems to outlines. The caller's
+    # contract validator remains authoritative for cardinality and budgets.
+    del min_items, max_items
+    return {"type": "array", "items": _string_schema(values)}
+
+
+def _adaptive_plan_response_schema(
+    *,
+    capability_surface: tuple[dict[str, object], ...],
+    allowed_outputs: tuple[str, ...],
+    allowed_memory_policies: tuple[str, ...],
+    max_steps: int,
+    role_slot_layout: bool = False,
+) -> dict[str, Any]:
+    capability_ids = tuple(str(item.get("id", "")) for item in capability_surface)
+    roles = tuple(str(item.get("role", "")) for item in capability_surface)
+    output_contracts = tuple(
+        dict.fromkeys(
+            (
+                *allowed_outputs,
+                *(str(item.get("output_contract", "")) for item in capability_surface),
+            )
+        )
+    )
+    ref_kinds = tuple(
+        dict.fromkeys(
+            str(kind)
+            for item in capability_surface
+            for key in ("accepts", "produces")
+            for kind in (item.get(key, ()) if isinstance(item.get(key, ()), (list, tuple)) else ())
+        )
+    )
+    completion_criteria = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "min_locator_count": {"type": "integer"},
+            "min_rows": {"type": "integer"},
+            "required_evidence_types": _string_array_schema(max_items=8),
+            "required_fields": _string_array_schema(max_items=16),
+            "max_conflicts": {"type": "integer"},
+        },
+    }
+    step_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "step_id": {"type": "string"},
+            "role": _string_schema(roles),
+            "capability_id": _string_schema(capability_ids),
+            "goal": {"type": "string"},
+            "depends_on": _string_array_schema(max_items=max_steps),
+            "input_ref_ids": _string_array_schema(max_items=max_steps),
+            "input_ref_kinds": _string_array_schema(ref_kinds, max_items=max_steps),
+            "required_input_fields": _string_array_schema(max_items=64),
+            "output_contract_version": _string_schema(output_contracts),
+            "completion_criteria": completion_criteria,
+        },
+        "required": [
+            "step_id",
+            "role",
+            "capability_id",
+            "goal",
+            "depends_on",
+            "input_ref_ids",
+            "input_ref_kinds",
+            "output_contract_version",
+            "completion_criteria",
+        ],
+    }
+    plan_properties: dict[str, Any]
+    plan_required: list[str]
+    if role_slot_layout:
+        plan_properties = {
+            "retriever_step": step_schema,
+            "primary_executor_step": step_schema,
+            "additional_executor_steps": {"type": "array", "items": step_schema},
+            "summarizer_step": step_schema,
+        }
+        plan_required = [
+            "retriever_step",
+            "primary_executor_step",
+            "summarizer_step",
+        ]
+    else:
+        plan_properties = {"steps": {"type": "array", "items": step_schema}}
+        plan_required = ["steps"]
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "proposal_id": {"type": "string"},
+            **plan_properties,
+            "final_output_contract_version": _string_schema(allowed_outputs),
+            "requested_memory_policy": _string_schema(allowed_memory_policies),
+            "planner_notes": {"type": "string"},
+        },
+        "required": [
+            "proposal_id",
+            *plan_required,
+            "final_output_contract_version",
+            "requested_memory_policy",
+            "planner_notes",
+        ],
+    }
+
+
+def _evidence_request_response_schema(
+    *,
+    corpus_scope_ids: tuple[str, ...],
+    evidence_types: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "queries": _string_array_schema(min_items=1, max_items=3),
+            "evidence_types": _string_array_schema(evidence_types, min_items=1, max_items=8),
+            "corpus_scope_ids": _string_array_schema(corpus_scope_ids, min_items=1, max_items=8),
+            "max_candidates": {"type": "integer"},
+        },
+        "required": [
+            "queries",
+            "evidence_types",
+            "corpus_scope_ids",
+            "max_candidates",
+        ],
+    }
+
+
+def _operation_argument_contract(op: str) -> dict[str, object]:
+    contracts: dict[str, dict[str, object]] = {
+        "select": {"required": ["columns"], "fields": {"columns": "authorized column[]"}},
+        "rename": {
+            "required": ["source", "target"],
+            "fields": {
+                "source": "authorized existing column",
+                "target": "new output column that does not already exist",
+            },
+        },
+        "project_claim_fields": {"required": ["columns"], "fields": {"columns": "authorized column[]"}},
+        "sort": {"required": ["columns"], "fields": {"columns": "authorized column[]"}},
+        "group_by": {"required": ["columns"], "fields": {"columns": "authorized column[]"}},
+        "limit": {"required": ["count"], "fields": {"count": "integer 0..10000"}},
+        "filter_eq": {"required": ["column", "value"], "fields": {"column": "authorized column", "value": "scalar"}},
+        "filter_contains": {"required": ["column", "value"], "fields": {"column": "authorized column", "value": "string"}},
+        "filter_in": {"required": ["column", "values"], "fields": {"column": "authorized column", "values": "scalar[]"}},
+        "filter_range": {"required": ["column"], "fields": {"column": "authorized column", "min": "number|null", "max": "number|null"}},
+        "aggregate": {"required": ["column", "function", "output"], "fields": {"column": "authorized column", "function": "count|sum|mean|min|max", "output": "new column"}},
+        "aggregate_grouped": {
+            "required": ["group_field", "value_field"],
+            "fields": {
+                "group_field": "authorized group column",
+                "value_field": "authorized numeric column",
+                "group_output": "optional output group field",
+                "sum_output": "optional output sum field",
+                "mean_output": "optional output mean field",
+                "min_output": "optional output minimum field",
+                "max_output": "optional output maximum field",
+                "count_output": "optional output count field",
+            },
+        },
+        "derive_safe": {"required": ["numerator", "denominator", "output", "kind"], "fields": {"numerator": "authorized column", "denominator": "authorized column", "output": "new column", "kind": "difference|ratio|pct_change"}},
+        "compare_periods": {
+            "required": ["period_field", "value_field"],
+            "fields": {
+                "period_field": "authorized ordered period column",
+                "value_field": "authorized numeric column",
+                "carry_fields": "optional authorized column[]; each must have one invariant value across compared rows",
+                "baseline_period_output": "optional output field",
+                "comparison_period_output": "optional output field",
+                "baseline_value_output": "optional output field",
+                "comparison_value_output": "optional output field",
+                "difference_output": "optional output field",
+                "ratio_output": "optional output field",
+                "growth_pct_output": "optional output field",
+            },
+        },
+        "join_by_key": {"required": ["right_ref", "left_key", "right_key"], "fields": {"right_ref": "authorized ref", "left_key": "authorized column", "right_key": "authorized column"}},
+        "anomaly_check": {"required": ["column", "output"], "fields": {"column": "authorized numeric column", "output": "new boolean column"}},
+        "anomaly_zscore": {
+            "required": ["period_field", "value_field"],
+            "fields": {
+                "period_field": "authorized ordered period column",
+                "value_field": "authorized numeric column",
+                "z_threshold": "controller-defined non-negative scalar; required when operation_semantics provides it",
+                "baseline_output": "optional output mean field",
+                "threshold_output": "optional output threshold field",
+                "flag_output": "optional output boolean field",
+            },
+        },
+    }
+    return contracts.get(op, {"required": [], "fields": {}})
+
+
+def _transform_program_response_schema(
+    *,
+    authorized_input_refs: tuple[str, ...],
+    input_schema: dict[str, tuple[str, ...]],
+    output_contract_version: str,
+    operation_catalog: tuple[str, ...],
+) -> dict[str, Any]:
+    operation_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "op": _string_schema(operation_catalog),
+            "arguments": {"type": "object", "additionalProperties": True},
+        },
+        "required": ["op", "arguments"],
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "input_artifact_refs": _string_array_schema(
+                authorized_input_refs,
+                min_items=1,
+                max_items=max(1, len(authorized_input_refs)),
+            ),
+            "operations": {
+                "type": "array",
+                "items": operation_schema,
+            },
+            "output_contract_version": {"type": "string", "const": output_contract_version},
+        },
+        "required": ["input_artifact_refs", "operations", "output_contract_version"],
+    }
+
+
+def _claim_set_response_schema(
+    *,
+    verified_artifact_refs: tuple[str, ...],
+    evidence_items: tuple[dict[str, str], ...],
+    numeric_field_names: tuple[str, ...],
+) -> dict[str, Any]:
+    evidence_ids = tuple(item.get("id", "") for item in evidence_items)
+    locators = tuple(item.get("locator", "") for item in evidence_items)
+    claim_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "claim_id": {"type": "string"},
+            "claim_text": {"type": "string"},
+            "claim_type": _string_schema(("fact", "inference", "risk")),
+            "supporting_evidence_item_ids": _string_array_schema(evidence_ids, max_items=8),
+            "supporting_artifact_ref_ids": _string_array_schema(verified_artifact_refs, max_items=8),
+            "citation_locators": _string_array_schema(locators, max_items=8),
+            "numeric_fields": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    field: {"type": "number"}
+                    for field in numeric_field_names
+                },
+            },
+            "uncertainty_note": {"type": "string"},
+            "status": _string_schema(("ready", "missing_citation")),
+        },
+        "required": [
+            "claim_id",
+            "claim_text",
+            "claim_type",
+            "supporting_evidence_item_ids",
+            "supporting_artifact_ref_ids",
+            "citation_locators",
+            "numeric_fields",
+            "uncertainty_note",
+            "status",
+        ],
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "claims": {"type": "array", "items": claim_schema},
+            "status": _string_schema(("ready",)),
+        },
+        "required": ["claims", "status"],
+    }
+
+
+def _claim_citation_repair_response_schema(
+    *,
+    claim_ids: tuple[str, ...],
+    verified_artifact_refs: tuple[str, ...],
+    evidence_items: tuple[dict[str, str], ...],
+) -> dict[str, Any]:
+    evidence_ids = tuple(item.get("id", "") for item in evidence_items)
+    locators = tuple(item.get("locator", "") for item in evidence_items)
+    repair_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "claim_id": _string_schema(claim_ids),
+            "supporting_evidence_item_ids": _string_array_schema(evidence_ids, max_items=8),
+            "supporting_artifact_ref_ids": _string_array_schema(verified_artifact_refs, max_items=8),
+            "citation_locators": _string_array_schema(locators, max_items=8),
+        },
+        "required": [
+            "claim_id",
+            "supporting_evidence_item_ids",
+            "supporting_artifact_ref_ids",
+            "citation_locators",
+        ],
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"repairs": {"type": "array", "items": repair_schema}},
+        "required": ["repairs"],
+    }
 
 
 @dataclass(frozen=True)
@@ -1716,6 +2060,622 @@ class RolePathRunner:
             total_tokens=result.usage.total_tokens,
             prompt_bytes=completion.prompt_bytes,
             latency_ms=completion.latency_ms,
+        )
+
+    def propose_plan(
+        self,
+        *,
+        envelope: AdaptiveTaskEnvelope,
+        task_goal: str,
+        allowed_inputs: tuple[dict[str, str], ...],
+        capability_surface: tuple[dict[str, object], ...],
+        required_roles: tuple[str, ...] = (),
+        role_cardinality: dict[str, tuple[int, int]] | None = None,
+        replan_context: dict[str, object] | None = None,
+        role_slot_layout: bool = False,
+    ) -> PlanProposal:
+        """Return an untrusted plan candidate; policy approval remains in the Driver."""
+        unique_required_roles = tuple(dict.fromkeys(required_roles))
+        if role_cardinality is None and envelope.role_cardinality:
+            role_cardinality = dict(envelope.role_cardinality)
+        if role_cardinality is None:
+            role_cardinality = {
+                role: (
+                    (1, max(1, envelope.max_plan_steps - len(unique_required_roles) + 1))
+                    if role == "executor"
+                    else (1, 1)
+                )
+                for role in unique_required_roles
+            }
+        if role_slot_layout and (
+            role_cardinality.get("retriever") != (1, 1)
+            or role_cardinality.get("summarizer") != (1, 1)
+            or role_cardinality.get("executor", (0, 0))[0] != 1
+        ):
+            raise ValueError("adaptive_plan_role_slot_layout_cardinality_mismatch")
+        plan_response_layout = (
+            {
+                "kind": "required_role_slots",
+                "required_slots": [
+                    "retriever_step",
+                    "primary_executor_step",
+                    "summarizer_step",
+                ],
+                "optional_slots": ["additional_executor_steps"],
+                "additional_executor_limit": max(role_cardinality.get("executor", (1, 1))[1] - 1, 0),
+            }
+            if role_slot_layout
+            else {"kind": "steps_array", "required_slots": ["steps"]}
+        )
+        payload = {
+            "task": {"goal": task_goal, "allowed_inputs": list(allowed_inputs)},
+            "capability_surface": list(capability_surface),
+            "authority": {
+                "risk_class": envelope.risk_class.value,
+                "controller_owned_failure_actions": {
+                    "retriever": "request_replan for at most one eligible step",
+                    "executor": "fallback_deterministic",
+                    "summarizer": "fail",
+                },
+                "allowed_memory_policies": list(envelope.allowed_memory_policies),
+                "allowed_completion_keys": [
+                    "min_locator_count",
+                    "min_rows",
+                    "required_evidence_types",
+                    "required_fields",
+                    "max_conflicts",
+                ],
+                "required_roles": list(unique_required_roles),
+                "role_cardinality": {
+                    role: {"minimum": bounds[0], "maximum": bounds[1]}
+                    for role, bounds in sorted(role_cardinality.items())
+                },
+                "plan_response_layout": plan_response_layout,
+                # Python availability is an Envelope/Controller decision.  The
+                # Planner sees only its bounded capability closure; it cannot
+                # turn this flag on or change sandbox/validator readiness.
+                "allow_llm_python": envelope.allow_llm_python,
+                "risk_class_allows_bounded_code": envelope.risk_class.value == "bounded_code",
+                "authorized_python_capability_ids": [
+                    str(item.get("id", ""))
+                    for item in capability_surface
+                    if str(item.get("execution_kind", "")) == "llm_bounded_python"
+                ],
+            },
+            "budgets": {
+                "max_steps": envelope.max_plan_steps,
+                "max_replans": envelope.max_replans,
+                "max_retrieval_expansions": envelope.max_retrieval_expansions,
+            },
+            "allowed_outputs": list(envelope.allowed_output_contracts),
+            "replan_context": replan_context,
+        }
+        instruction = (
+            "You are StateBus Planner. Propose a bounded DAG only; you do not dispatch, call roles, "
+            "register capabilities, write code, shell commands, paths, or network addresses. Copy only "
+            "capability IDs in capability_surface and keep each role/output contract consistent with that same "
+            "capability entry. Return JSON using authority.plan_response_layout and final_output_contract_version. "
+            "Each step has step_id, role, capability_id, goal, depends_on, input_ref_ids, input_ref_kinds, "
+            "output_contract_version, and completion_criteria. Do not emit on_failure: it is controller-owned "
+            "recovery policy and will be attached after policy validation, with no more than budgets.max_replans "
+            "request_replan actions. Follow authority.role_cardinality exactly; extra duplicate role stages are invalid. "
+            "Use the fewest Executor stages that fully express the task. Add another Executor only when the first "
+            "produces a distinct, necessary intermediate artifact that retains every field the downstream stage needs. "
+            "Do not split one analysis merely to rename, project, summarize, or repeat work that one registered capability "
+            "can complete. A capability and its fallback_capability_id are alternative recovery paths and must never be "
+            "placed consecutively as ordinary plan stages. The plan may contain additional Executor steps only up to "
+            "budgets.max_steps. Each "
+            "capability_surface entry contains completion_criteria: only use "
+            "criteria keys, fields, list values, and numeric ranges listed on the same capability entry. For a derived Executor stage, "
+            "required_fields must name meaningful outputs produced by that stage, not merely repeat source columns. The final Executor's "
+            "required_fields must cover the required final analysis schema supplied in the task goal. Use stable short step IDs. A downstream step should name its producer in "
+            "depends_on and leave input_ref_ids/input_ref_kinds empty unless the task supplied an explicit input Ref. "
+            "Omit required_input_fields for the Retriever, the primary Executor, and the Summarizer. Every additional "
+            "Executor must include required_input_fields listing the exact fields it consumes from its immediate upstream "
+            "Executor; those fields must be a subset of that producer's completion_criteria.required_fields. "
+            "A retriever has no input Ref; the controller supplies the approved corpus. Only an executor may consume the "
+            "explicit task input Ref, and a downstream executor should consume its immediate upstream artifact through depends_on. "
+            "Choose the narrowest registered execution capability that fully expresses the task. Use bounded Python when the "
+            "declarative operation surface cannot represent a required categorical output, parsing rule, statistical method, or stage. "
+            "A linear declarative row pipeline cannot split one input into branches and recombine them, self-join or pivot category "
+            "rows into columns, or compare values that remain on different rows; choose bounded Python when any of those operations "
+            "is required. "
+            "Dependency values must be step IDs from this proposal, never a task Ref or capability ID. "
+            "Include exactly the role counts declared by authority.role_cardinality. Use only an "
+            "authority.allowed_memory_policies value for requested_memory_policy. Represent no dependencies or refs "
+            "with an empty JSON array []; never put none, null, n/a, or other sentinel strings in an array."
+        )
+        if role_slot_layout:
+            instruction += (
+                " Put exactly one Retriever object in retriever_step, the first Executor in "
+                "primary_executor_step and exactly one Summarizer in summarizer_step. Omit additional_executor_steps "
+                "when one Executor can satisfy the task; otherwise put only the necessary remaining Executors there. "
+                "Do not emit a top-level steps field. The slot fixes the role, but you still choose each registered "
+                "capability, goal, completion criteria, and optional extra Executor."
+            )
+        else:
+            instruction += " Put the complete proposed DAG in the top-level steps array."
+        if replan_context is not None:
+            instruction += (
+                " This is the one permitted policy repair. Return a complete replacement plan, not a patch and not "
+                "a copy of replan_context.invalid_proposal. Add, remove, or reorder steps when needed to satisfy every "
+                "authority.role_cardinality bound and every reported policy issue. Before returning, count the roles "
+                "in the replacement and verify that every depends_on value names a step in that same replacement."
+            )
+        prompt = self._render_prompt(
+            role_label="planner",
+            instruction=instruction,
+            payload_tag="sb-adaptive-plan-v1",
+            payload=payload,
+            text_sections=(("Task goal", task_goal),),
+            shared_prefix_text="",
+        )
+        completion = self._complete_json_role(
+            prompt=prompt,
+            purpose="planner",
+            response_schema=_adaptive_plan_response_schema(
+                capability_surface=capability_surface,
+                allowed_outputs=envelope.allowed_output_contracts,
+                allowed_memory_policies=envelope.allowed_memory_policies,
+                max_steps=envelope.max_plan_steps,
+                role_slot_layout=role_slot_layout,
+            ),
+        )
+        steps_with_roles: list[tuple[object, str | None]]
+        if role_slot_layout:
+            retriever_raw = completion.payload.get("retriever_step")
+            primary_executor_raw = completion.payload.get("primary_executor_step")
+            summarizer_raw = completion.payload.get("summarizer_step")
+            additional_raw = completion.payload.get("additional_executor_steps", [])
+            if not all(isinstance(item, dict) for item in (
+                retriever_raw, primary_executor_raw, summarizer_raw,
+            )):
+                raise ValueError("adaptive_plan_required_role_slot_not_object")
+            if not isinstance(additional_raw, list):
+                raise ValueError("adaptive_plan_additional_executors_not_list")
+            steps_with_roles = [
+                (retriever_raw, "retriever"),
+                (primary_executor_raw, "executor"),
+                *((item, "executor") for item in additional_raw),
+                (summarizer_raw, "summarizer"),
+            ]
+        else:
+            steps_raw = completion.payload.get("steps", [])
+            if not isinstance(steps_raw, list):
+                raise ValueError("adaptive_plan_steps_not_list")
+            steps_with_roles = [(item, None) for item in steps_raw]
+        steps: list[PlanStepProposal] = []
+        remaining_replan_slots = envelope.max_replans
+        for item, assigned_role in steps_with_roles:
+            if not isinstance(item, dict):
+                raise ValueError("adaptive_plan_step_not_object")
+            role = assigned_role or str(item.get("role", ""))
+            on_failure = "fail"
+            if role == "retriever" and remaining_replan_slots > 0:
+                on_failure = "request_replan"
+                remaining_replan_slots -= 1
+            elif role == "executor":
+                on_failure = "fallback_deterministic"
+            steps.append(
+                PlanStepProposal(
+                    step_id=str(item.get("step_id", "")),
+                    role=role,
+                    capability_id=str(item.get("capability_id", "")),
+                    goal=str(item.get("goal", "")),
+                    depends_on=_coerce_optional_string_tuple(item.get("depends_on", [])),
+                    input_ref_ids=_coerce_optional_string_tuple(item.get("input_ref_ids", [])),
+                    input_ref_kinds=_coerce_optional_string_tuple(item.get("input_ref_kinds", [])),
+                    output_contract_version=str(item.get("output_contract_version", "")),
+                    completion_criteria=(item.get("completion_criteria", {}) if isinstance(item.get("completion_criteria", {}), dict) else {}),
+                    on_failure=on_failure,
+                    required_input_fields=_coerce_optional_string_tuple(item.get("required_input_fields", [])),
+                )
+            )
+        result = completion.result
+        return PlanProposal(
+            proposal_id=str(completion.payload.get("proposal_id", f"proposal-{envelope.task_id}")),
+            task_id=envelope.task_id,
+            steps=tuple(steps),
+            final_output_contract_version=str(completion.payload.get("final_output_contract_version", "")),
+            requested_memory_policy=str(completion.payload.get("requested_memory_policy", "none")),
+            planner_notes=str(completion.payload.get("planner_notes", ""))[:512],
+            model_id=result.model,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            latency_ms=completion.latency_ms,
+            raw_output_hash=sha256_digest(result.text.encode("utf-8")),
+        )
+
+    def build_evidence_request(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        step_goal: str,
+        corpus_scope_ids: tuple[str, ...],
+        evidence_types: tuple[str, ...],
+        target_entities: tuple[str, ...] = (),
+        time_scope: str = "",
+        task_goal: str = "",
+        gap_context: dict[str, object] | None = None,
+    ) -> EvidenceRequest:
+        payload = {
+            "task": {"goal": task_goal or step_goal},
+            "step": {"id": step_id, "goal": step_goal},
+            "corpus_scope": list(corpus_scope_ids),
+            "evidence_types": list(evidence_types),
+            "authority": {
+                "target_entities": list(target_entities),
+                "time_scope": time_scope,
+                "controller_injects_target_entities_and_time_scope": True,
+            },
+            "gap_context": gap_context,
+            "limits": {"max_queries": 3, "max_candidates": 12},
+        }
+        instruction = (
+            "You are StateBus Retriever. Propose a bounded evidence request only. Return JSON with queries, "
+            "evidence_types, corpus_scope_ids and max_candidates. Use only supplied corpus IDs and evidence types. "
+            "authority.target_entities and authority.time_scope are read-only query context: do not emit either field. "
+            "The controller injects them after your request is validated, so you cannot add, remove, rename, infer, or "
+            "broaden those constraints. The task goal explains what the queries should seek, while authority defines "
+            "what the request is allowed to require. "
+            "Do not return an answer, paths, tools, code, or data sources."
+        )
+        prompt = self._render_prompt(
+            role_label="retriever",
+            instruction=instruction,
+            payload_tag="sb-evidence-request-v1",
+            payload=payload,
+            text_sections=(("Task goal", task_goal or step_goal), ("Evidence goal", step_goal)),
+            shared_prefix_text="",
+        )
+        completion = self._complete_json_role(
+            prompt=prompt,
+            purpose="retriever",
+            response_schema=_evidence_request_response_schema(
+                corpus_scope_ids=corpus_scope_ids,
+                evidence_types=evidence_types,
+            ),
+        )
+        response = completion.payload
+        queries = _coerce_string_tuple(response.get("queries", []))
+        selected_evidence_types = _coerce_string_tuple(response.get("evidence_types", evidence_types))
+        selected_corpus_scope_ids = _coerce_string_tuple(response.get("corpus_scope_ids", corpus_scope_ids))
+        max_candidates = int(response.get("max_candidates", 12))
+        if not 1 <= len(queries) <= 3:
+            raise ValueError("adaptive_evidence_query_count_out_of_bounds")
+        if not set(selected_evidence_types) <= set(evidence_types) or not selected_evidence_types:
+            raise ValueError("adaptive_evidence_type_outside_authority")
+        if not set(selected_corpus_scope_ids) <= set(corpus_scope_ids) or not selected_corpus_scope_ids:
+            raise ValueError("adaptive_corpus_scope_outside_authority")
+        if not 1 <= max_candidates <= 12:
+            raise ValueError("adaptive_candidate_budget_out_of_bounds")
+        return EvidenceRequest(
+            request_id=str(response.get("request_id", f"evidence-{task_id}-{step_id}")),
+            task_id=task_id,
+            step_id=step_id,
+            queries=queries,
+            evidence_types=selected_evidence_types,
+            target_entities=target_entities,
+            time_scope=time_scope,
+            corpus_scope_ids=selected_corpus_scope_ids,
+            memory_policy=str(response.get("memory_policy", "none")),
+            max_candidates=max_candidates,
+            source_plan_step_id=step_id,
+        )
+
+    def build_transform_program(
+        self,
+        *,
+        program_id: str,
+        authorized_input_refs: tuple[str, ...],
+        input_schema: dict[str, tuple[str, ...]],
+        output_contract_version: str,
+        operation_catalog: tuple[str, ...],
+        step_goal: str = "",
+        desired_output_fields: tuple[str, ...] = (),
+        input_preview: tuple[dict[str, object], ...] = (),
+        operation_semantics: dict[str, object] | None = None,
+        repair_context: dict[str, object] | None = None,
+    ) -> TransformProgram:
+        payload = {
+            "step_goal": step_goal,
+            "authorized_input_refs": list(authorized_input_refs),
+            "input_schema": {key: list(value) for key, value in sorted(input_schema.items())},
+            "input_preview": [dict(sorted(row.items())) for row in input_preview[:4]],
+            "desired_output_fields": list(desired_output_fields),
+            "output_contract_version": output_contract_version,
+            "operation_catalog": list(operation_catalog),
+            "operation_semantics": dict(operation_semantics or {}),
+            "repair_context": dict(repair_context or {}),
+            "operation_contracts": {
+                op: _operation_argument_contract(op)
+                for op in operation_catalog
+            },
+        }
+        instruction = (
+            "You are StateBus Executor. Return a TransformProgram JSON only. Do not generate Python, shell, paths, "
+            "or arbitrary expressions. Use only supplied input refs, columns, and operation_catalog. "
+            "Choose operations that satisfy step_goal and desired_output_fields. Copy argument field names from "
+            "operation_contracts exactly and satisfy the controller-owned operation_semantics exactly. "
+            "When an existing field only needs a new output name, use rename; never use derive_safe to copy or rename "
+            "a value, and never put a numeric literal where an operation contract requires a column. "
+            "Track the output columns of every operation in order and never reference a column that has not been "
+            "supplied or produced. compare_periods emits only its declared result fields plus carry_fields; use "
+            "carry_fields for invariant identifiers needed by desired_output_fields. When repair_context is non-empty, "
+            "replace the invalid program and address every "
+            "reported validation error without changing input authority or output contract. "
+            "Return input_artifact_refs, operations, and output_contract_version; "
+            "each operation has op and arguments."
+        )
+        prompt = self._render_prompt(
+            role_label="executor",
+            instruction=instruction,
+            payload_tag="sb-transform-program-v1",
+            payload=payload,
+            text_sections=(),
+            shared_prefix_text="",
+        )
+        completion = self._complete_json_role(
+            prompt=prompt,
+            purpose="executor",
+            response_schema=_transform_program_response_schema(
+                authorized_input_refs=authorized_input_refs,
+                input_schema=input_schema,
+                output_contract_version=output_contract_version,
+                operation_catalog=operation_catalog,
+            ),
+        )
+        response = completion.payload
+        if str(response.get("output_contract_version", "")) != output_contract_version:
+            raise ValueError("adaptive_transform_output_contract_mismatch")
+        operations_raw = response.get("operations", [])
+        if not isinstance(operations_raw, list):
+            raise ValueError("transform_operations_not_list")
+        operations = tuple(
+            TransformStep(
+                op=str(item.get("op", "")),
+                arguments=(item.get("arguments", {}) if isinstance(item.get("arguments", {}), dict) else {}),
+            )
+            for item in operations_raw
+            if isinstance(item, dict)
+        )
+        return TransformProgram(
+            program_id=program_id,
+            input_artifact_refs=_coerce_string_tuple(response.get("input_artifact_refs", authorized_input_refs)),
+            operations=operations,
+            output_contract_version=output_contract_version,
+        )
+
+    def build_claim_set(
+        self,
+        *,
+        task_id: str,
+        claim_set_id: str,
+        verified_artifact_refs: tuple[str, ...],
+        evidence_items: tuple[dict[str, str], ...],
+        task_goal: str = "",
+        artifact_summaries: tuple[dict[str, object], ...] = (),
+        expected_claim_count: int | None = None,
+    ) -> ClaimSet:
+        if expected_claim_count is not None and expected_claim_count < 1:
+            raise ValueError("adaptive_expected_claim_count_invalid")
+        numeric_field_names = tuple(sorted({
+            str(key)
+            for item in artifact_summaries
+            for row in item.get("rows", [])
+            if isinstance(row, dict)
+            for key, value in row.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }))
+        payload = {
+            "task_goal": task_goal,
+            "reference_catalog": {
+                "evidence": [
+                    {
+                        "evidence_id": item.get("id", ""),
+                        "citation_locator": item.get("locator", ""),
+                        "evidence_text": item.get("text", ""),
+                    }
+                    for item in evidence_items
+                ],
+                "artifacts": [
+                    {
+                        "artifact_ref_id": str(item.get("artifact_ref_id", "")),
+                        "status": str(item.get("status", "")),
+                        "verified_rows": item.get("rows", []),
+                        "numeric_field_names": sorted({
+                            str(key)
+                            for row in item.get("rows", [])
+                            if isinstance(row, dict)
+                            for key, value in row.items()
+                            if isinstance(value, (int, float)) and not isinstance(value, bool)
+                        }),
+                    }
+                    for item in artifact_summaries
+                ],
+            },
+        }
+        if expected_claim_count is not None:
+            payload["claim_contract"] = {
+                "expected_claim_count": expected_claim_count,
+                "evidence_is_support_only": True,
+                "one_claim_per_verified_row": True,
+            }
+        instruction = (
+            "You are StateBus Summarizer. Return a ClaimSet JSON only. Use reference_catalog as three typed columns: "
+            "supporting_evidence_item_ids may contain only evidence.evidence_id values; citation_locators may contain "
+            "only evidence.citation_locator values; supporting_artifact_ref_ids may contain only "
+            "artifacts.artifact_ref_id values. Never put an artifact ID in an evidence-ID field, never put an artifact "
+            "row or artifact ID in citation_locators, and never invent a reference. Artifact rows support numeric values "
+            "but are not citation locators. For every claim with numeric_fields, use only values present in its "
+            "supporting artifact's verified_rows, and use only that artifact's numeric_field_names as numeric_fields keys. "
+            "Do not encode or convert period/date/string labels as numbers, and do not assert a numeric value that appears "
+            "only in evidence text. "
+            "Do not modify verified numbers. Use the evidence text and verified rows to answer task_goal. claim_type "
+            "must be fact, inference, or risk. Claim status may only be ready or "
+            "missing_citation. Create one compact claim per verified output row; do not split a row across claims or "
+            "repeat a claim. Keep claim_text to one short sentence and put the exact numeric values in numeric_fields. "
+            "Use only the source locators needed for the claim and never repeat a locator within a claim. Use top-level "
+            "status ready because this request contains verified support."
+        )
+        if expected_claim_count is not None:
+            instruction += (
+                " Return exactly claim_contract.expected_claim_count claims and no others. Evidence items are support "
+                "for the supplied verified rows; they do not authorize claims for rows absent from verified_rows."
+            )
+        prompt = self._render_prompt(
+            role_label="summarizer",
+            instruction=instruction,
+            payload_tag="sb-claim-set-v1",
+            payload=payload,
+            text_sections=(),
+            shared_prefix_text="",
+        )
+        completion = self._complete_json_role(
+            prompt=prompt,
+            purpose="summarizer",
+            response_schema=_claim_set_response_schema(
+                verified_artifact_refs=verified_artifact_refs,
+                evidence_items=evidence_items,
+                numeric_field_names=numeric_field_names,
+            ),
+        )
+        response = completion.payload
+        claims_raw = response.get("claims", [])
+        if not isinstance(claims_raw, list):
+            raise ValueError("claims_not_list")
+        if expected_claim_count is not None and len(claims_raw) != expected_claim_count:
+            raise ValueError(
+                f"adaptive_claim_count_mismatch:{len(claims_raw)}:{expected_claim_count}"
+            )
+        claims: list[Claim] = []
+        for item in claims_raw:
+            if not isinstance(item, dict):
+                continue
+            claim_type = str(item.get("claim_type", "fact"))
+            claim_status = str(item.get("status", "ready"))
+            if claim_type not in {"fact", "inference", "risk"}:
+                raise ValueError("adaptive_claim_type_outside_contract")
+            if claim_status not in {"ready", "missing_citation"}:
+                raise ValueError("adaptive_claim_status_outside_contract")
+            numeric_raw = item.get("numeric_fields", {})
+            if isinstance(numeric_raw, dict) and not set(map(str, numeric_raw)) <= set(numeric_field_names):
+                raise ValueError("adaptive_claim_numeric_field_outside_contract")
+            numeric = {str(key): float(value) for key, value in numeric_raw.items()} if isinstance(numeric_raw, dict) else {}
+            claims.append(
+                Claim(
+                    claim_id=str(item.get("claim_id", "")),
+                    claim_text=str(item.get("claim_text", "")),
+                    claim_type=claim_type,
+                    supporting_evidence_item_ids=_coerce_string_tuple(item.get("supporting_evidence_item_ids", [])),
+                    supporting_artifact_ref_ids=_coerce_string_tuple(item.get("supporting_artifact_ref_ids", [])),
+                    citation_locators=_coerce_string_tuple(item.get("citation_locators", [])),
+                    numeric_fields=numeric,
+                    uncertainty_note=str(item.get("uncertainty_note", "")),
+                    status=claim_status,
+                )
+            )
+        status_value = str(response.get("status", ClaimSetStatus.READY.value))
+        try:
+            status = ClaimSetStatus(status_value)
+        except ValueError:
+            status = ClaimSetStatus.MISSING_CITATION
+        return ClaimSet(claim_set_id=claim_set_id, task_id=task_id, claims=tuple(claims), status=status)
+
+    def repair_claim_citations(
+        self,
+        *,
+        claim_set: ClaimSet,
+        verified_artifact_refs: tuple[str, ...],
+        evidence_items: tuple[dict[str, str], ...],
+        validation_errors: tuple[str, ...],
+    ) -> ClaimSet:
+        """Repair only typed reference fields; claim content and numbers remain controller-owned."""
+        if not claim_set.claims:
+            raise ValueError("adaptive_claim_repair_requires_claims")
+        payload = {
+            "validation_errors": list(validation_errors),
+            "claim_ids": [claim.claim_id for claim in claim_set.claims],
+            "reference_catalog": {
+                "evidence": [
+                    {
+                        "evidence_id": item.get("id", ""),
+                        "citation_locator": item.get("locator", ""),
+                    }
+                    for item in evidence_items
+                ],
+                "artifacts": [{"artifact_ref_id": artifact_id} for artifact_id in verified_artifact_refs],
+            },
+        }
+        instruction = (
+            "You are StateBus Summarizer performing one citation-only repair. Return JSON with repairs only. "
+            "Each repair must preserve its supplied claim_id and may change only supporting_evidence_item_ids, "
+            "supporting_artifact_ref_ids, and citation_locators. Do not return claim text, numeric fields, claim type, "
+            "status, or any new claims. Use only the matching typed reference_catalog column: evidence_id for "
+            "supporting_evidence_item_ids, citation_locator for citation_locators, artifact_ref_id for "
+            "supporting_artifact_ref_ids."
+        )
+        prompt = self._render_prompt(
+            role_label="summarizer",
+            instruction=instruction,
+            payload_tag="sb-claim-citation-repair-v1",
+            payload=payload,
+            text_sections=(),
+            shared_prefix_text="",
+        )
+        completion = self._complete_json_role(
+            prompt=prompt,
+            purpose="summarizer",
+            response_schema=_claim_citation_repair_response_schema(
+                claim_ids=tuple(claim.claim_id for claim in claim_set.claims),
+                verified_artifact_refs=verified_artifact_refs,
+                evidence_items=evidence_items,
+            ),
+        )
+        repairs_raw = completion.payload.get("repairs", [])
+        if not isinstance(repairs_raw, list):
+            raise ValueError("adaptive_claim_repair_not_list")
+        repairs_by_id: dict[str, dict[str, object]] = {}
+        for repair in repairs_raw:
+            if not isinstance(repair, dict):
+                raise ValueError("adaptive_claim_repair_not_object")
+            claim_id = str(repair.get("claim_id", ""))
+            if not claim_id or claim_id in repairs_by_id:
+                raise ValueError("adaptive_claim_repair_duplicate_or_empty_claim_id")
+            repairs_by_id[claim_id] = repair
+        expected_ids = {claim.claim_id for claim in claim_set.claims}
+        if set(repairs_by_id) != expected_ids:
+            raise ValueError("adaptive_claim_repair_claim_ids_mismatch")
+        allowed_evidence_ids = {item.get("id", "") for item in evidence_items}
+        allowed_locators = {item.get("locator", "") for item in evidence_items}
+        allowed_artifact_ids = set(verified_artifact_refs)
+        repaired_claims: list[Claim] = []
+        for claim in claim_set.claims:
+            repair = repairs_by_id[claim.claim_id]
+            evidence_ids = _coerce_string_tuple(repair.get("supporting_evidence_item_ids", []))
+            artifact_ids = _coerce_string_tuple(repair.get("supporting_artifact_ref_ids", []))
+            locators = _coerce_string_tuple(repair.get("citation_locators", []))
+            if (
+                not set(evidence_ids) <= allowed_evidence_ids
+                or not set(artifact_ids) <= allowed_artifact_ids
+                or not set(locators) <= allowed_locators
+            ):
+                raise ValueError("adaptive_claim_repair_reference_outside_authority")
+            repaired_claims.append(
+                replace(
+                    claim,
+                    supporting_evidence_item_ids=evidence_ids,
+                    supporting_artifact_ref_ids=artifact_ids,
+                    citation_locators=locators,
+                )
+            )
+        return ClaimSet(
+            claim_set_id=claim_set.claim_set_id,
+            task_id=claim_set.task_id,
+            claims=tuple(repaired_claims),
+            status=claim_set.status,
+            schema_version=claim_set.schema_version,
         )
 
 

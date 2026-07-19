@@ -245,6 +245,34 @@ class RuntimeDriver:
     _last_persist_and_reload_stage_ms: float = 0.0
     _last_persist_and_reload_breakdown: dict[str, float] = field(default_factory=dict)
 
+    def run_adaptive(self, runtime_request):
+        """Execute a policy-approved bounded DAG without changing strict `run()` semantics."""
+        from v2.runtime.adaptive_runtime import AdaptiveRuntimeEngine
+
+        return AdaptiveRuntimeEngine().run(runtime_request)
+
+    def run_adaptive_shadow(self, runtime_input: RuntimeDriverInput, shadow_request):
+        """Audit an adaptive plan, then execute the existing strict path exactly once."""
+        from v2.runtime.adaptive_runtime import AdaptiveShadowController
+
+        if runtime_input.task_id != shadow_request.task_id:
+            raise ValueError("adaptive_shadow_runtime_task_id_mismatch")
+        if runtime_input.trace_id != shadow_request.trace_id:
+            raise ValueError("adaptive_shadow_runtime_trace_id_mismatch")
+        fixed_workflow_hash = sha256_digest(
+            [
+                step.canonical_payload()
+                for step in build_default_workflow(
+                    step_id=runtime_input.step_id,
+                    artifact_id=runtime_input.artifact_id,
+                )
+            ]
+        )
+        return AdaptiveShadowController().run(
+            replace(shadow_request, fixed_workflow_hash=fixed_workflow_hash),
+            strict_runner=lambda: self.run(runtime_input),
+        )
+
     def run(self, runtime_input: RuntimeDriverInput) -> RuntimeDriverResult:
         session_manager = RuntimeSessionManager()
         session = session_manager.start(
