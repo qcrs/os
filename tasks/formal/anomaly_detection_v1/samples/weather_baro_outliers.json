@@ -6,7 +6,7 @@
   "expected_facts": {
     "baro_outlier_count": "111"
   },
-  "request_text": "Detect IQR outliers in BARO for the weather dataset.",
+  "request_text": "Count BARO outliers using inclusive linear-interpolation quartiles and 1.5 times the IQR fences.",
   "canonical_task_spec": {
     "task_family": "continuous_csv_table_analysis",
     "intent_op": "detect_outliers",
@@ -17,7 +17,7 @@
       "csv_path": "task/csv/baro_2015.csv",
       "column": "BARO",
       "method": "iqr",
-      "threshold": 3,
+      "threshold": 1.5,
       "quality_checks": ["exact:baro_outlier_count"]
     }
   }

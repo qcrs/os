@@ -417,7 +417,15 @@ class DeterministicLLMClient:
         response_schema: dict[str, Any] | None = None,
     ) -> LLMResult:
         del temperature
-        del response_schema
+        response_properties = (
+            response_schema.get("properties", {})
+            if isinstance(response_schema, dict)
+            else {}
+        )
+        semantic_task_plan_requested = (
+            isinstance(response_properties, dict)
+            and "semantic_task_plan" in response_properties
+        )
         if not messages:
             raise ValueError("deterministic llm requires at least one message")
         user_content = messages[-1].content
@@ -454,10 +462,14 @@ class DeterministicLLMClient:
                 )
             if "Task request:\n" in user_content and "Allowed required outputs:\n" in user_content:
                 payload = parse_semantic_planner_brief(user_content)
-                plan = _build_compact_protocol_plan(payload)
+                plan = _build_semantic_task_plan(payload)
             elif "<sb-plan-v1>" in user_content:
                 payload = parse_compact_protocol_planner_brief(user_content)
-                plan = _build_compact_protocol_plan(payload)
+                plan = (
+                    _build_semantic_task_plan(payload)
+                    if semantic_task_plan_requested
+                    else _build_compact_protocol_plan(payload)
+                )
             else:
                 payload = (
                     parse_tagged_json(user_content, "statebus-planner-input")
@@ -886,6 +898,49 @@ def _requires_validation_step(payload: dict[str, Any]) -> bool:
 
 
 def _build_compact_protocol_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    plan: dict[str, Any] = {
+        "r": {
+            "sid": "retrieve",
+            "role": "retrieve",
+            "owner": "retriever",
+            "action": "RETRIEVE_EVIDENCE",
+            "dep": [],
+            "q": payload["query"],
+            "e": payload["evidence_text"],
+            "t": payload.get("tags", []),
+        },
+        "x": {
+            "sid": "execute",
+            "role": "execute",
+            "owner": "executor",
+            "action": "EXECUTE_PLAYBOOK",
+            "dep": ["retrieve"],
+        },
+        "s": {
+            "sid": "summarize",
+            "role": "summarize",
+            "owner": "summarizer",
+            "action": "SUMMARIZE_AND_COMMIT",
+            "dep": ["retrieve", "execute"],
+            "h": payload["summary_hint"],
+            "t": payload.get("tags", []),
+        },
+    }
+    if _requires_validation_step(payload):
+        plan["x"].update(
+            {
+                "dep": ["retrieve", "validate"],
+                "vsid": "validate",
+                "vrole": "validate",
+                "vowner": "executor",
+                "vaction": "VALIDATE_ROUTE",
+                "vdep": ["retrieve"],
+            }
+        )
+    return plan
+
+
+def _build_semantic_task_plan(payload: dict[str, Any]) -> dict[str, Any]:
     query = str(payload.get("query", "")).strip()
     goal = str(payload.get("goal", "")).strip() or query
     entities = [str(item).strip() for item in payload.get("entities", []) if str(item).strip()]
@@ -1188,6 +1243,24 @@ def _deterministic_executor_choice(
     return tool_candidates[0]
 
 
+_ROUTE_AFFINITY_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "by",
+        "for",
+        "in",
+        "of",
+        "or",
+        "the",
+        "to",
+        "using",
+        "with",
+    }
+)
+
+
 def _candidate_query_affinity(query_tokens: set[str], item: dict[str, Any]) -> int:
     support_terms = [str(term) for term in item.get("support_terms", []) if str(term).strip()]
     if not support_terms:
@@ -1202,7 +1275,7 @@ def _candidate_query_affinity(query_tokens: set[str], item: dict[str, Any]) -> i
         ]
     ).lower()
     candidate_tokens = set(surface.replace("::", " ").replace(".", " ").replace("_", " ").split())
-    return len(query_tokens & candidate_tokens)
+    return len((query_tokens - _ROUTE_AFFINITY_STOPWORDS) & (candidate_tokens - _ROUTE_AFFINITY_STOPWORDS))
 
 
 def _candidate_identity(item: dict[str, Any]) -> tuple[str, str]:

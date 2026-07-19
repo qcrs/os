@@ -7,7 +7,7 @@
     "mean_wind_post": "5.76",
     "mean_atmos_temp_post": "52.47"
   },
-  "request_text": "Materialize a cleaned weather table after WINDSPEED outlier handling and AT imputation.",
+  "request_text": "Materialize a cleaned weather table: detect WINDSPEED outliers with inclusive linear-interpolation quartiles and 1.5 times the IQR fences, replace each outlier with the pre-replacement non-missing WINDSPEED mean, and mean-impute missing AT values while preserving every input row.",
   "canonical_task_spec": {
     "task_family": "continuous_csv_table_analysis",
     "intent_op": "materialize_clean_table",
@@ -19,7 +19,7 @@
       "outlier_column": "WINDSPEED",
       "impute_column": "AT",
       "outlier_method": "iqr",
-      "outlier_threshold": 3,
+      "outlier_threshold": 1.5,
       "quality_checks": [
         "numeric_tolerance:mean_wind_post:0.01",
         "numeric_tolerance:mean_atmos_temp_post:0.01",

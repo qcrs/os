@@ -768,6 +768,49 @@ async def test_deterministic_llm_retriever_uses_neutral_query_affinity_ranking_f
 
 
 @pytest.mark.asyncio
+async def test_deterministic_llm_affinity_ignores_route_name_stopwords() -> None:
+    client = DeterministicLLMClient()
+    retriever = await client.complete(
+        [
+            type("Msg", (), {"role": "system", "content": "sys"})(),
+            type(
+                "Msg",
+                (),
+                {
+                    "role": "user",
+                    "content": "<sb-retriever-v1>\n"
+                    + json.dumps(
+                        {
+                            "query": "Count BARO outliers using IQR fences and report the total",
+                            "retrieved_doc_ids": ["doc-1"],
+                            "tool_candidates": [
+                                {
+                                    "route": "aggregate_and_extreme",
+                                    "tool_name": "table_retriever",
+                                    "support_terms": ["mean", "highest", "max"],
+                                },
+                                {
+                                    "route": "detect_outliers",
+                                    "tool_name": "table_retriever",
+                                    "support_terms": ["outlier", "iqr", "threshold"],
+                                },
+                            ],
+                        }
+                    )
+                    + "\n</sb-retriever-v1>",
+                },
+            )(),
+        ],
+        purpose="retriever",
+    )
+
+    payload = json.loads(retriever.text)
+    assert payload["candidate_rank"] == 2
+    assert payload["route"] == "detect_outliers"
+    assert payload["tool_name"] == "table_retriever"
+
+
+@pytest.mark.asyncio
 async def test_deterministic_llm_retriever_prefers_explicit_score_over_catalog_helper_rank() -> None:
     client = DeterministicLLMClient()
     retriever = await client.complete(
@@ -1818,6 +1861,60 @@ def test_deterministic_llm_uses_compact_protocol_shapes() -> None:
     assert "Evidence:" not in normalized["summary"]
     assert "Playbook:" not in normalized["summary"]
     assert "Actions:" in normalized["summary"]
+
+
+def test_deterministic_llm_keeps_semantic_planner_shape_separate_from_compact_protocol() -> None:
+    client = DeterministicLLMClient()
+    result = asyncio.run(client.complete(
+        [ChatMessage(
+            role="user",
+            content=(
+                "Goal:\nAnalyze an authorized table.\n\n"
+                "Task request:\nCompare the first and last period.\n\n"
+                "Summary hint:\nCite the result.\n\n"
+                "Allowed required outputs:\ncomparison\n\n"
+                "Entity hints:\nACME\n\n"
+                "Time scope hint:\n2026Q1 to 2026Q4"
+            ),
+        )],
+        purpose="planner",
+    ))
+
+    payload = json.loads(result.text)
+    assert set(payload) == {"semantic_task_plan"}
+    assert payload["semantic_task_plan"]["task_semantics"]["entities"] == ["ACME"]
+
+
+def test_deterministic_llm_uses_requested_schema_for_compact_semantic_planner_input() -> None:
+    client = DeterministicLLMClient()
+    result = asyncio.run(client.complete(
+        [ChatMessage(
+            role="user",
+            content=(
+                "<sb-plan-v1>\n"
+                + json.dumps({
+                    "g": "Analyze an authorized table.",
+                    "q": "Compare the first and last period.",
+                    "h": "Cite the result.",
+                    "ao": ["comparison"],
+                    "en": ["ACME"],
+                    "ts": "2026Q1 to 2026Q4",
+                })
+                + "\n</sb-plan-v1>"
+            ),
+        )],
+        purpose="planner",
+        response_schema={
+            "type": "object",
+            "properties": {"semantic_task_plan": {"type": "object"}},
+            "required": ["semantic_task_plan"],
+        },
+    ))
+
+    payload = json.loads(result.text)
+    assert set(payload) == {"semantic_task_plan"}
+    assert payload["semantic_task_plan"]["required_outputs"] == ["comparison"]
+    assert payload["semantic_task_plan"]["task_semantics"]["entities"] == ["ACME"]
 
 
 def test_deterministic_protocol_planner_validate_path_uses_compact_shape() -> None:

@@ -7,7 +7,7 @@
     "mean_no_of_deaths_with_outliers": "10149.43",
     "mean_no_of_deaths_without_outliers": "5949.08"
   },
-  "request_text": "Detect IQR outliers in No. of deaths_max and compare mean deaths before and after removal.",
+  "request_text": "Detect No. of deaths_max outliers using inclusive linear-interpolation quartiles and 1.5 times the IQR fences, then compare the mean before and after removing those outliers.",
   "canonical_task_spec": {
     "task_family": "continuous_csv_table_analysis",
     "intent_op": "detect_outliers",
@@ -22,7 +22,7 @@
       "csv_path": "task/csv/estimated_numbers.csv",
       "column": "No. of deaths_max",
       "method": "iqr",
-      "threshold": 3,
+      "threshold": 1.5,
       "quality_checks": [
         "numeric_tolerance:mean_no_of_deaths_with_outliers:0.01",
         "numeric_tolerance:mean_no_of_deaths_without_outliers:0.01"

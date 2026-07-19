@@ -40,6 +40,10 @@ class CorpusTableRow:
     value: str
     rendered_text: str
     extractor_version: str = "table-v1"
+    # Most legacy corpus rows represent one metric cell.  Structured rows are
+    # used by the bounded adaptive path so Projection can preserve every input
+    # column and its table-cell locator without reparsing prompt text.
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def locator(self) -> TableCellLocator:
         return TableCellLocator(
@@ -777,6 +781,81 @@ class OfflineMarkdownLongDocCorpus:
         return tuple(rows)
 
     @staticmethod
+    def _generic_table_rows(
+        *,
+        source_doc_hash: str,
+        text: str,
+    ) -> tuple[CorpusTableRow, ...]:
+        """Parse small repo-local markdown tables as typed evidence rows.
+
+        The established five-column operating-metric parser above stays the
+        compatibility path. This narrower generic parser serves bounded
+        aggregation/anomaly tasks whose rows carry a group field or a metric
+        other than revenue. It accepts only plain scalar cells and supports a
+        two-column period/value table where the value header identifies the
+        metric; cross-period ticker rows are retained separately below.
+        """
+        rows: list[CorpusTableRow] = []
+        lines = text.splitlines()
+        table_index = 0
+        index = 0
+        while index + 2 < len(lines):
+            header_line = lines[index].strip()
+            divider_line = lines[index + 1].strip()
+            if not header_line.startswith("|") or not divider_line.startswith("|"):
+                index += 1
+                continue
+            headers = [cell.strip().lower().replace(" ", "_") for cell in header_line.strip("|").split("|")]
+            divider = [cell.strip() for cell in divider_line.strip("|").split("|")]
+            if (
+                len(headers) < 2
+                or len(headers) != len(divider)
+                or any(not cell or set(cell) - {"-", ":"} for cell in divider)
+            ):
+                index += 1
+                continue
+            table_index += 1
+            row_index = 0
+            index += 2
+            while index < len(lines) and lines[index].strip().startswith("|"):
+                cells = [cell.strip() for cell in lines[index].strip().strip("|").split("|")]
+                if len(cells) != len(headers):
+                    break
+                structured_row = {
+                    header: OfflineMarkdownLongDocCorpus._parse_scalar(cell)
+                    for header, cell in zip(headers, cells, strict=True)
+                }
+                numeric_fields = [
+                    key
+                    for key, value in structured_row.items()
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                ]
+                if numeric_fields:
+                    metric_name = numeric_fields[0]
+                    row_index += 1
+                    rows.append(CorpusTableRow(
+                        source_doc_hash=source_doc_hash,
+                        table_id=f"markdown_table_{table_index}",
+                        sheet_name="markdown",
+                        row_idx=row_index,
+                        col_idx=headers.index(metric_name) + 1,
+                        metric_name=metric_name,
+                        value=str(structured_row[metric_name]),
+                        rendered_text=json.dumps(structured_row, sort_keys=True, separators=(",", ":")),
+                        extractor_version="markdown-structured-table-v1",
+                        metadata={"structured_row": structured_row},
+                    ))
+                index += 1
+        return tuple(rows)
+
+    @staticmethod
+    def _parse_scalar(value: str) -> object:
+        normalized = value.strip()
+        if re.fullmatch(r"-?(?:\d+(?:\.\d*)?|\.\d+)", normalized):
+            return float(normalized)
+        return normalized
+
+    @staticmethod
     def _text_fragments(
         *,
         source_doc_hash: str,
@@ -826,7 +905,12 @@ class OfflineMarkdownLongDocCorpus:
         metric_section = metric_table_match.group(1) if metric_table_match else ""
         table_rows = self._metric_table_rows(source_doc_hash=source_doc_hash, section_text=metric_section)
         if not table_rows:
-            table_rows = self._cross_period_revenue_rows(source_doc_hash=source_doc_hash, text=text)
+            generic_rows = self._generic_table_rows(source_doc_hash=source_doc_hash, text=text)
+            cross_period_rows = self._cross_period_revenue_rows(source_doc_hash=source_doc_hash, text=text)
+            # Generic rows keep every column for bounded projection. The
+            # established cross-period rows retain ticker identity for the
+            # legacy financial-analysis family, which selects metric="revenue".
+            table_rows = generic_rows + cross_period_rows
         title_match = re.search(r"(?m)^# (.+)$", text)
         title = title_match.group(1).strip() if title_match else f"{dataset_id} markdown report"
         metadata_hints = (
