@@ -2,6 +2,12 @@
 
 这个目录只保留当前仍然会影响实现判断、claim 边界和下一步修复的材料。早期 01-19 的阶段性审计、prompt 和中间态 artifacts 已清理；需要追溯时请从 git 历史读取，不再把它们作为日常阅读入口。
 
+## 最新收口
+
+- `25_contest_evidence_closure_20260720/01_completion_audit_20260720.md`
+  - 将实施 Prompt 的完成定义逐条映射到代码、测试和 E0-E6 canonical run。
+  - 记录负结果、Runtime freeze、checksum、工作树污染审计和 Git 提交限制；赛题最终读数同时见 `../reports/contest_evidence_closure_final_report_20260720.md` 与 `../reports/final_v2_contest_evidence_index_20260720.md`。
+
 ## 当前必读
 
 0. `25_contest_evidence_closure_20260720/00_implementation_and_experiment_execution_prompt_zh.md`
