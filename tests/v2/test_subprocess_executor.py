@@ -65,6 +65,23 @@ def test_subprocess_executor_valid_round_trip(tmp_path: Path) -> None:
     assert result.artifact_refs == request.artifact_refs
 
 
+def test_subprocess_executor_utf8_text_round_trip(tmp_path: Path) -> None:
+    sock_path = tmp_path / "exec-text.sock"
+    transport = SubprocessExecutorTransport(socket_path=sock_path, timeout_s=20.0)
+    request = _make_exec_request(valid=True)
+
+    result = transport.execute(request, carrier="utf8_text")
+
+    assert isinstance(result, SuccessResult)
+    assert result.output_contract_version == "output-v1"
+    assert result.artifact_refs == ()
+    assert transport.last_exchange_audit is not None
+    assert transport.last_exchange_audit.carrier == "utf8_text"
+    assert transport.last_exchange_audit.backend == "uds_subprocess"
+    assert transport.last_exchange_audit.driver_pid != transport.last_exchange_audit.worker_pid
+    assert transport.last_exchange_audit.request_wire_bytes > 0
+
+
 def test_subprocess_executor_invalid_request_returns_error(tmp_path: Path) -> None:
     """An ExecRequest missing required fields returns ErrorResult from the worker."""
     sock_path = tmp_path / "exec-err.sock"

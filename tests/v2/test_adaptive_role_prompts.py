@@ -229,7 +229,14 @@ def test_adaptive_planner_prompt_and_schema_expose_only_authorized_capabilities(
         "extract_metric_series_v1",
         "compose_cited_report_v1",
     ]
-    assert payload["authority"]["allowed_memory_policies"] == ["none", "assist", "artifact", "strategy"]
+    assert payload["authority"]["allowed_memory_policies"] == [
+        "none",
+        "assist",
+        "artifact",
+        "strategy",
+        "validated_replay",
+        "exact_replay",
+    ]
     assert payload["authority"]["controller_owned_failure_actions"]["retriever"] == "request_replan for at most one eligible step"
     assert "steps" not in schema["properties"]
     assert {

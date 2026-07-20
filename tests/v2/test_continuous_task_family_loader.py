@@ -113,6 +113,39 @@ def test_load_continuous_task_family_kv_prefix_reuse_manifest() -> None:
     assert len(family.kv_prefix_probe["cache_friendly_order"]) == 10
 
 
+@pytest.mark.parametrize(
+    "family_name,fixture_source_round",
+    [
+        ("formal_financial_reports", 1),
+        ("formal_operating_metrics", 4),
+    ],
+)
+def test_formal_family_views_and_incompatible_fixture_contract(
+    family_name: str,
+    fixture_source_round: int,
+) -> None:
+    family = load_continuous_task_family(
+        Path("v2/benchmark/samples/continuous_task_families") / family_name
+    )
+
+    assert family.experiment_views == {
+        "causal_core": (1, 2, 3, 4, 5),
+        "long_horizon": (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+    }
+    assert family.select_view("causal_core").round_count == 5
+    assert family.select_view("long_horizon").round_count == 10
+    assert all(
+        round_number <= 5
+        for round_number in family.select_view("causal_core").l3_target_nonzero_rounds()
+    )
+    fixture = family.rounds[8].pre_run_fixtures[0]
+    assert fixture.kind == "incompatible_history_candidate"
+    assert fixture.source_round == fixture_source_round
+    assert fixture.runtime_signature_version == "legacy-runtime-v0"
+    assert fixture.output_contract_version == "output-v0"
+    assert fixture.validator_digest == "legacy-validator-v0"
+
+
 def test_load_continuous_task_family_fails_closed_for_forward_dependency(tmp_path: Path) -> None:
     source_dir = Path("v2/benchmark/samples/continuous_task_families/csv_table_profile")
     family_dir = tmp_path / "family"

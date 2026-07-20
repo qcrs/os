@@ -505,9 +505,22 @@ def test_v2_smoke_subprocess_transport_avoids_loopback(tmp_path: Path, monkeypat
 
     original_exchange = SubprocessExecutorTransport.exchange_sequence
 
-    def _recording_exchange(self, request, *, memfd_refs=None):
+    def _recording_exchange(
+        self,
+        request,
+        *,
+        memfd_refs=None,
+        carrier="protobuf",
+        text_payload="",
+    ):
         calls["subprocess_exchange_count"] += 1
-        return original_exchange(self, request, memfd_refs=memfd_refs)
+        return original_exchange(
+            self,
+            request,
+            memfd_refs=memfd_refs,
+            carrier=carrier,
+            text_payload=text_payload,
+        )
 
     monkeypatch.setattr(
         "v2.runtime.driver.ControlPlaneLoopbackServer.exchange_sequence_by_contract",
@@ -844,16 +857,29 @@ def test_v2_smoke_memory_slice_is_visible_to_retriever_and_executor(tmp_path: Pa
         ),
         seed_replay_memory=False,
     )
+    assist_spec = CanonicalTaskSpec(
+        task_family="financial_report_analysis",
+        intent_op="compare_metric",
+        required_outputs=("summary_text",),
+        required_tools=("table_retriever", "semantic_retriever"),
+        arguments={
+            "ticker": "ACME",
+            "quarter": "2026Q1",
+            "metric": "gross_margin",
+            "reuse_contract": {"minimum_reuse_class": "assist"},
+        },
+    )
     result = run_smoke(
         workspace_root=tmp_path / "workspaces-reuse",
         runtime_root=tmp_path / "runtime-reuse",
         socket_path=tmp_path / "reuse.sock",
         task_id="smoke-task-fresh",
+        canonical_task_spec=assist_spec,
         layer_config=SmokeLayerConfig(
             layer_name="L3-cold-start",
             structured_control_enabled=True,
             semantic_pruning_enabled=True,
-            replay_enabled=False,
+            replay_enabled=True,
             multi_attempt_enabled=False,
             force_first_attempt_trap=False,
         ),
@@ -862,6 +888,11 @@ def test_v2_smoke_memory_slice_is_visible_to_retriever_and_executor(tmp_path: Pa
     )
 
     assert result.replay_class == "disallowed"
+    assert result.task_metrics["memory_candidate_count"] == 1.0
+    assert result.task_metrics["memory_compatible_match_count"] == 1.0
+    assert result.task_metrics["memory_consumed_count"] == 1.0
+    assert result.task_metrics["memory_assist_count"] == 1.0
+    assert result.task_metrics["skipped_step_count"] == 0.0
     assert result.task_metrics["retriever_memory_bytes"] > 0.0
     assert result.task_metrics["executor_memory_bytes"] > 0.0
     assert result.task_metrics["summarizer_memory_bytes"] > 0.0
@@ -933,6 +964,62 @@ def test_v2_smoke_planner_scope_is_materialized_into_retrieval_sidecars(tmp_path
     assert candidate_pool_payload["candidate_count"] >= candidate_pool_payload["candidate_audit_sample_count"]
     assert candidate_pool_payload["candidate_rendered_text_bytes_total"] > 0
     assert "text_context" not in candidate_pool_payload["planner_scope_payload"]
+
+
+def test_v2_smoke_external_gold_mismatch_does_not_change_runtime_commit(tmp_path: Path) -> None:
+    layer_config = SmokeLayerConfig(
+        layer_name="gold-boundary",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=False,
+        replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
+    )
+    common = {
+        "request_text": "Extract the current revenue metric from the authorized source.",
+        "task_id": "gold-boundary-task",
+        "layer_config": layer_config,
+        "seed_replay_memory": False,
+    }
+    control = run_smoke(
+        workspace_root=tmp_path / "control-workspaces",
+        runtime_root=tmp_path / "control-runtime",
+        socket_path=tmp_path / "control.sock",
+        **common,
+    )
+    wrong_value = "benchmark-only-wrong-value-7f3a9c"
+    mismatch = run_smoke(
+        workspace_root=tmp_path / "mismatch-workspaces",
+        runtime_root=tmp_path / "mismatch-runtime",
+        socket_path=tmp_path / "mismatch.sock",
+        expected_facts={"revenue_value": wrong_value},
+        **common,
+    )
+
+    assert control.quality_floor.quality_floor_pass is True
+    assert mismatch.quality_floor.quality_floor_pass is False
+    assert control.output_artifact_hash == mismatch.output_artifact_hash
+    assert control.replay_class == mismatch.replay_class
+    assert control.task_metrics["memory_commit_count"] == mismatch.task_metrics["memory_commit_count"]
+    assert mismatch.task_metrics["memory_commit_count"] > 0.0
+    assert mismatch.task_metrics["runtime_quality_floor_pass"] == 1.0
+    assert mismatch.task_metrics["benchmark_external_gold_pass_count"] == 0.0
+    assert mismatch.task_metrics["benchmark_gold_runtime_decision_input_count"] == 0.0
+    control_artifact_audit = json.loads(Path(control.artifact_audit_path).read_text(encoding="utf-8"))
+    mismatch_artifact_audit = json.loads(Path(mismatch.artifact_audit_path).read_text(encoding="utf-8"))
+    assert control_artifact_audit["verification_state"] == "verified"
+    assert mismatch_artifact_audit["verification_state"] == "verified"
+    assert control_artifact_audit["replay_ready"] is True
+    assert mismatch_artifact_audit["replay_ready"] is True
+    assert Path(mismatch.memory_commit_path).is_file()
+    gold_boundary = mismatch.audit_summary["benchmark_gold_boundary"]
+    assert gold_boundary["runtime_decision_input"] is False
+    assert gold_boundary["runtime_memory_commit_preceded_external_score"] is True
+    assert gold_boundary["runtime_artifact_verification_state"] == "verified"
+    for relpath in mismatch.audit_summary["rendered_llm_requests"]["role_relpaths"].values():
+        rendered = (Path(mismatch.workspace_root) / relpath).read_text(encoding="utf-8")
+        assert wrong_value not in rendered
+        assert '"expected_facts"' not in rendered
 
 
 def test_v2_smoke_continuous_validated_reuse_metrics_are_output_backed(tmp_path: Path) -> None:

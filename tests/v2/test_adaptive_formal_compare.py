@@ -17,7 +17,14 @@ from v2.benchmark.adaptive_formal_mainline import (
     _adaptive_metrics,
     _build_formal_analysis_context,
     _case_system_gate_checks,
+    _evidence_types_for_retrieval_capability,
+    _formal_recomputation_repair_guidance,
+    _model_role_gate_passed,
     _terminal_quality_reports,
+)
+from v2.benchmark.adaptive_memory import (
+    _negative_fixture_gate,
+    load_adaptive_memory_cases,
 )
 from v2.benchmark.adaptive_formal import (
     adapt_formal_sample,
@@ -25,6 +32,7 @@ from v2.benchmark.adaptive_formal import (
     build_non_answer_source_profile,
     execution_task_parameters,
     expected_facts_report,
+    recompute_formal_rows,
 )
 from v2.benchmark.task_registry import load_registered_formal_samples
 from v2.contracts import (
@@ -66,6 +74,111 @@ def test_all_25_registered_formal_cases_have_real_adaptive_adapters() -> None:
     assert all(case.source_rows for case in cases)
     assert all(case.output_schema for case in cases)
     assert {case.capability_id for case in cases} == {"execute_bounded_python_v2"}
+
+
+def test_adaptive_memory_suite_is_five_financial_cases_plus_one_negative() -> None:
+    cases = load_adaptive_memory_cases()
+
+    assert [case.task_id for case in cases] == [
+        "benchmark-sample-1",
+        "benchmark-sample-2",
+        "benchmark-sample-3",
+        "benchmark-sample-4",
+        "benchmark-sample-5",
+        "adaptive-memory-negative-runtime",
+    ]
+    assert all(case.spec.task_family == "financial_report_analysis" for case in cases)
+    assert cases[-1].spec == cases[0].spec
+    assert cases[-1].sample.expected_facts == cases[0].sample.expected_facts
+
+
+def test_adaptive_memory_negative_requires_visible_but_unconsumed_fixture() -> None:
+    fixture_id = "memory:adaptive-incompatible-runtime-fixture"
+    gates = _negative_fixture_gate({
+        "memory_query_results": {
+            "retrieve-evidence": {
+                "candidate_pool": {"candidate_memory_ids": [fixture_id]},
+                "compatibility_decisions": [{
+                    "memory_id": fixture_id,
+                    "verdict": "incompatible",
+                    "replay_class": "disallowed",
+                    "policy_approved": False,
+                    "reasons": ["runtime_signature_mismatch"],
+                }],
+            }
+        },
+        "memory_role_inputs_by_step": {"execute-analysis": []},
+        "memory_consumption_records": [],
+        "expected_facts_report": {"passed": True},
+        "terminal_quality_reports": [{
+            "verified": True,
+            "recomputation_evaluated": True,
+            "recomputation_passed": True,
+        }],
+        "ok": True,
+    })
+
+    assert all(gates.values()), gates
+
+
+def test_validated_replay_may_skip_executor_model_role_only_when_explicit() -> None:
+    replay_roles = {"planner", "retriever", "summarizer"}
+
+    assert _model_role_gate_passed(
+        replay_roles,
+        require_executor_model_role=False,
+    )
+    assert not _model_role_gate_passed(
+        replay_roles,
+        require_executor_model_role=True,
+    )
+
+
+def test_retrieval_evidence_surface_is_bound_to_selected_generic_capability() -> None:
+    assert _evidence_types_for_retrieval_capability(
+        "retrieve_semantic_evidence_v1"
+    ) == ("semantic_context",)
+    assert _evidence_types_for_retrieval_capability(
+        "retrieve_table_evidence_v1"
+    ) == ("table",)
+
+
+def test_public_narrative_and_table_operations_recompute_without_expected_facts() -> None:
+    narrative_rows = (
+        {
+            "row_kind": "narrative_section",
+            "section": "Capacity review",
+            "text": "The binding constraint was dock availability. A separate detail was immaterial.",
+            "locator": "review.md#section-1",
+        },
+    )
+    narrative_arguments = {
+        "fact_selectors": [{
+            "output_field": "constraint",
+            "locator_field": "constraint_locator",
+            "section": "Capacity review",
+            "label": "The binding constraint",
+        }],
+    }
+    assert recompute_formal_rows(
+        "extract_narrative_facts", narrative_arguments, narrative_rows
+    ) == ({
+        "constraint": "dock availability",
+        "constraint_locator": "Capacity review",
+    },)
+
+    table_rows = (
+        {"site": "East", "period": "2026Q1", "units": "17"},
+        {"site": "West", "period": "2026Q1", "units": "23"},
+    )
+    table_arguments = {
+        "filters": {"site": "West", "period": "2026Q1"},
+        "value_fields": ["site", "units"],
+        "output_schema": {"site": "string", "units": "integer"},
+    }
+    assert recompute_formal_rows(
+        "lookup_table_record", table_arguments, table_rows
+    ) == ({"site": "West", "units": 23},)
 
 
 def test_independent_recomputation_matches_every_formal_expected_fact() -> None:
@@ -114,6 +227,25 @@ def test_executor_context_profile_describes_bracketed_numeric_encoding_without_v
     assert "2081990" not in serialized
 
 
+def test_financial_adapter_exposes_the_complete_authorized_table_with_locators() -> None:
+    case = next(case for case in _cases() if case.spec.task_family == "financial_report_analysis")
+
+    assert len(case.source_rows) == 3
+    assert {str(row["metric"]) for row in case.source_rows} == {
+        "revenue",
+        "gross_margin",
+        "operating_income",
+    }
+    assert all(str(row["source_doc_hash"]).startswith("sha256:doc-") for row in case.source_rows)
+    assert all(str(row["table_id"]) == "income" for row in case.source_rows)
+    assert len({int(row["row_idx"]) for row in case.source_rows}) == 3
+    assert not any(
+        str(key).startswith("expected")
+        for row in case.source_rows
+        for key in row
+    )
+
+
 def test_aggregation_rounding_contract_is_executor_visible_without_expected_facts() -> None:
     case = next(case for case in _cases() if case.task_id == "formal-agg-002")
     parameters = execution_task_parameters(case)
@@ -125,6 +257,22 @@ def test_aggregation_rounding_contract_is_executor_visible_without_expected_fact
         "task_parameters": parameters,
     })
     assert all(str(value) not in visible_contract for value in case.sample.expected_facts.values())
+
+
+def test_aggregation_numeric_encoding_and_repair_guidance_are_explicit_without_answers() -> None:
+    case = next(case for case in _cases() if case.task_id == "formal-agg-002")
+    context = _build_formal_analysis_context(
+        case,
+        build_non_answer_source_profile(case.source_rows),
+    )
+    guidance = _formal_recomputation_repair_guidance(context)
+
+    assert "text before the first [" in str(context["numeric_cell_encoding"])
+    assert "Never delete punctuation from the full cell" in str(context["numeric_cell_encoding"])
+    assert "text.partition('[')[0].strip()" in guidance
+    assert "Do not use re.sub" in guidance
+    serialized = stable_json_dumps({"context": context, "guidance": guidance})
+    assert all(str(value) not in serialized for value in case.sample.expected_facts.values())
 
 
 def test_formal_analysis_context_preserves_controller_operation_contract_without_answers() -> None:
@@ -139,6 +287,12 @@ def test_formal_analysis_context_preserves_controller_operation_contract_without
     assert "do not impute" in str(context["outlier_column_missing_policy"]).lower()
     assert "only missing impute_column" in str(context["impute_column_missing_policy"])
     assert context["expected_values_are_not_provided"] is True
+    assert context["formula_source"] == "public_task_contract"
+    assert context["capability_registry_contains_expected_answers"] is False
+    assert context["benchmark_gold_visible_to_runtime"] is False
+    assert context["declared_output_schema"] == case.output_schema
+    assert "integer fields must be serialized from Python int values" in context["json_output_type_contract"]
+    assert "business_formula_is_not_pre_registered" not in context
     serialized = stable_json_dumps(context)
     assert all(str(value) not in serialized for value in case.sample.expected_facts.values())
 

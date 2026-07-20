@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from v2.contracts import CanonicalTaskSpec, EvidenceRequest
+from v2.benchmark.adaptive_formal_mainline import _evidence_types_for_retrieval_capability
 from v2.retrieval import RetrieverFanoutPipeline, RetrieverKind
 
 
@@ -63,3 +64,12 @@ def test_evidence_request_routes_only_requested_semantic_retriever() -> None:
     assert output_by_kind[RetrieverKind.SEMANTIC_CHUNK].log_entry.candidate_count > 0
     assert output_by_kind[RetrieverKind.LEXICAL_METADATA].log_entry.candidate_count == 0
     assert output_by_kind[RetrieverKind.TABLE_STRUCTURE].log_entry.candidate_count == 0
+
+
+def test_generic_retriever_capability_controls_the_evidence_request_surface() -> None:
+    assert _evidence_types_for_retrieval_capability(
+        "retrieve_semantic_evidence_v1"
+    ) == ("semantic_context",)
+    assert _evidence_types_for_retrieval_capability(
+        "retrieve_table_evidence_v1"
+    ) == ("table",)
