@@ -840,6 +840,7 @@ def build_candidate_output_payload(request: dict[str, Any], root: Path) -> dict[
     consumed_artifact_refs = sorted(set(declared_artifact_consumes) & available_artifact_refs)
     consumed_strategy_refs = sorted(set(declared_strategy_consumes) & available_strategy_refs)
     if intent_op == "summarize_reuse_lineage":
+        produced_artifact_refs, produced_strategy_refs = _produced_refs(reuse_contract)
         reused_artifact_refs = {
             ref
             for payload in history_payloads
@@ -873,8 +874,8 @@ def build_candidate_output_payload(request: dict[str, Any], root: Path) -> dict[
             "dataset_id": "",
             "csv_path": "",
             "csv_source_path": "",
-            "produced_artifact_refs": ["reuse_report:csv_table_profile_v1"],
-            "produced_strategy_refs": [],
+            "produced_artifact_refs": produced_artifact_refs,
+            "produced_strategy_refs": produced_strategy_refs,
             "consumed_artifact_refs": consumed_artifact_refs,
             "consumed_strategy_refs": consumed_strategy_refs,
             "reused_artifact_refs": sorted(reused_artifact_refs),

@@ -31,7 +31,10 @@ from v2.runtime.domain_packs import (
     register_long_doc_analysis_capabilities,
 )
 from v2.runtime.driver import RuntimeDriver
-from v2.runtime.llm_codeact import LlmCodeActOutcome
+from v2.runtime.llm_codeact import (
+    LlmCodeActOutcome,
+    code_generation_prompt_bundle_digest,
+)
 from v2.runtime.plan_policy import PlanPolicyValidator
 from v2.utils import sha256_digest, stable_json_dumps
 
@@ -264,6 +267,24 @@ def test_python_executor_consumes_verified_retrieval_context_without_mounting_it
     assert request.retrieval_context[0]["item_id"] == "metric-definition"
     assert set(captured["input_files"]) == {"inputs/task.json"}
     assert "value is the requested operating metric" in captured["prompt"]
+    assert request.prompt_signature == code_generation_prompt_bundle_digest(
+        request,
+        rendered_prompt=captured["prompt"],
+    )
+    assert request.prompt_signature != sha256_digest(step.goal)
+    changed_contract = replace(
+        request,
+        output_contract_version="statebus.analysis_result.v3",
+    )
+    assert code_generation_prompt_bundle_digest(changed_contract) != request.prompt_signature
+    changed_tools = replace(
+        request,
+        policy=replace(request.policy, allowed_module_roots=("json",)),
+    )
+    assert code_generation_prompt_bundle_digest(changed_tools) != request.prompt_signature
+    request_payload = stable_json_dumps(request.canonical_payload())
+    assert '"vector"' not in request_payload
+    assert '"embedding"' not in request_payload
 
 
 def test_run_adaptive_dispatches_approved_python_through_bwrap_and_quality_gate(tmp_path) -> None:
@@ -551,6 +572,78 @@ def test_runtime_dispatcher_repairs_python_runtime_error_in_fresh_bwrap_workspac
         stored.artifact for artifact_id, stored in context.artifacts.items() if artifact_id != "input"
     )
     assert "codeact-runtime-repair-1" in repaired_artifact.root_id
+
+
+def test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace(tmp_path) -> None:
+    registry, envelope, approved = _approved_codeact_plan()
+    repair_calls: list[tuple[str, ...]] = []
+
+    def policy_factory(step) -> CodeGenerationPolicy:
+        return CodeGenerationPolicy(
+            capability_id=step.capability_id,
+            enabled=True,
+            require_bwrap=True,
+            allowed_module_roots=("json", "pathlib"),
+            allowed_input_relpaths=("inputs/task.json",),
+            output_relpath="outputs/result.json",
+            output_required_fields=("quarter", "revenue_musd"),
+        )
+
+    def source_with_value(value: str) -> str:
+        return (
+            "import json\nfrom pathlib import Path\n"
+            "rows=json.loads(Path('inputs/task.json').read_text(encoding='utf-8'))\n"
+            f"result={{'quarter': rows[0]['quarter'], 'revenue_musd': {value}}}\n"
+            "Path('outputs/result.json').write_text(json.dumps(result), encoding='utf-8')\n"
+        )
+
+    def repair_factory(request, prompt: str, previous_source: str, diagnostics: tuple[str, ...]) -> str:
+        del prompt
+        assert request.capability_id == "bounded_metric_python_v1"
+        assert diagnostics == ("quality_error:metric_series_value_not_from_input",)
+        assert "999.0" in previous_source
+        repair_calls.append(diagnostics)
+        return source_with_value("rows[0]['revenue_musd']")
+
+    context = AdaptiveDispatchContext(
+        registry=registry,
+        artifacts={"input": _input_artifact(tmp_path)},
+        code_policy_factory=policy_factory,
+        code_source_factory=lambda request, prompt: source_with_value("999.0"),
+        code_repair_factory=repair_factory,
+        output_schema_by_capability={
+            "bounded_metric_python_v1": {"quarter": "string", "revenue_musd": "number"}
+        },
+        builtin_handlers={"compose_cited_report_v1": _report_handler},
+    )
+    result = RuntimeDriver().run_adaptive(AdaptiveRuntimeRequest(
+        trace_id="quality-repair-trace",
+        task_id="code-task",
+        canonical_task_spec_hash="spec",
+        envelope=envelope,
+        approved_plan=approved,
+        registry=registry,
+        runtime_root=str(tmp_path / "quality-repair-runtime"),
+        workspace_root_id="workspace",
+        available_input_refs={
+            "input": "execution_artifact",
+            "evidence": "canonical_evidence_pack",
+        },
+        dispatcher=AdaptiveCapabilityDispatcher(context=context),
+    ))
+
+    assert result.completed
+    assert len(repair_calls) == 1
+    assert len(context.quality_reports) == 2
+    assert sum(not report.verified for report in context.quality_reports.values()) == 1
+    metrics = result.telemetry.summarize_task("code-task")
+    assert metrics["llm_codeact_repair_count"] == 1.0
+    assert metrics["llm_codeact_quality_repair_count"] == 1.0
+    assert metrics["llm_codeact_quality_rejected_count"] == 1.0
+    repaired_artifact = next(
+        stored.artifact for artifact_id, stored in context.artifacts.items() if artifact_id != "input"
+    )
+    assert "codeact-quality-repair-1" in repaired_artifact.root_id
 
 
 def test_policy_repair_does_not_consume_the_independent_runtime_repair_budget(tmp_path) -> None:

@@ -130,7 +130,8 @@ def test_retriever_consumes_all_bounded_objectives() -> None:
     }
     assert bundle.consumed_objective_hashes == expected_hashes
     assert bundle.memory_query_embedding is not None
-    assert bundle.memory_query_embedding.embedding_hash != bundle.query_embedding.embedding_hash
+    assert bundle.memory_query_embedding.embedding_hash == bundle.query_embedding.embedding_hash
+    assert bundle.memory_query_embedding.source_text_hash == bundle.query_embedding.source_text_hash
 
 
 def test_semantic_plan_comparison_allows_bounded_paraphrase_drift() -> None:

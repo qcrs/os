@@ -931,9 +931,8 @@ def test_live_runner_routes_flagship_ablation_suite(
     assert payload["suite_id"] == "statebus-v2-benchmark-non-text-flagship-ablation"
     assert captured["fixed_samples"] == ["fixed"]
     assert [family.family_id for family in captured["continuous_families"]] == [
-        "csv_table_profile",
-        "incident_diagnosis",
-        "long_doc_table",
+        "formal_operating_metrics",
+        "formal_financial_reports",
     ]
     assert [family.family_id for family in captured["replay_families"]] == [
         "csv_correlation_replay",
@@ -1209,12 +1208,10 @@ def test_live_runner_continuous_defaults_to_formal_collection(
 
     def fake_load_continuous_task_family(path: Path):
         family_name = path.name
-        if family_name == "csv_table_profile":
-            return SimpleNamespace(family_id="csv_table_profile_v1")
-        if family_name == "incident_diagnosis":
-            return SimpleNamespace(family_id="incident_diagnosis_v2")
-        if family_name == "long_doc_table":
-            return SimpleNamespace(family_id="long_doc_table_v1")
+        if family_name == "formal_operating_metrics":
+            return SimpleNamespace(family_id="formal_operating_metrics_v1")
+        if family_name == "formal_financial_reports":
+            return SimpleNamespace(family_id="formal_financial_reports_v1")
         raise AssertionError(f"unexpected family path: {path}")
 
     def fake_run_continuous_benchmark_collection(**kwargs):
@@ -1222,18 +1219,16 @@ def test_live_runner_continuous_defaults_to_formal_collection(
         return BenchmarkContinuousCollectionReport(
             suite_id=str(kwargs["suite_id"]),
             family_reports=(),
-            collection_summary={"family_count": 3.0, "continuous_round_count": 30.0},
+            collection_summary={"family_count": 2.0, "continuous_round_count": 10.0},
             admissibility_summary={
-                "csv_table_profile_v1": {},
-                "incident_diagnosis_v2": {},
-                "long_doc_table_v1": {},
+                "formal_operating_metrics_v1": {},
+                "formal_financial_reports_v1": {},
             },
             metadata={
                 "continuous_execution": True,
                 "supported_continuous_execution_families": [
-                    "csv_table_profile_v1",
-                    "incident_diagnosis_v2",
-                    "long_doc_table_v1",
+                    "formal_operating_metrics_v1",
+                    "formal_financial_reports_v1",
                 ],
             },
             report_path=str(tmp_path / "continuous-collection-report.json"),
@@ -1257,17 +1252,20 @@ def test_live_runner_continuous_defaults_to_formal_collection(
             "deterministic",
             "--embedding-mode",
             "deterministic",
+            "--state-pool-mode",
+            "shared_memory",
         ],
     )
     live_runner_main()
     payload = json.loads(capsys.readouterr().out)
     assert [family.family_id for family in captured["families"]] == [
-        "csv_table_profile_v1",
-        "incident_diagnosis_v2",
-        "long_doc_table_v1",
+        "formal_operating_metrics_v1",
+        "formal_financial_reports_v1",
     ]
     assert payload["metadata"]["continuous_execution"] is True
-    assert payload["collection_summary"]["family_count"] == 3.0
+    assert payload["collection_summary"]["family_count"] == 2.0
+    assert payload["collection_summary"]["continuous_round_count"] == 10.0
+    assert captured["state_pool_mode"] == "shared_memory"
 
 
 def test_live_runner_continuous_replay_defaults_to_replay_collection(

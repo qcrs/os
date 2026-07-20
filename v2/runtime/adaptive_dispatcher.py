@@ -29,15 +29,27 @@ from v2.runtime.capability_validators import (
     default_capability_validator_registry,
 )
 from v2.runtime.evidence_projection import EvidenceProjectionAdapter
-from v2.runtime.llm_codeact import LlmCodeActRunner, build_code_generation_prompt
-from v2.runtime.retrieval_adapter import AdaptiveRetrievalAdapter, AdaptiveRetrievalResult
+from v2.runtime.llm_codeact import (
+    LlmCodeActRunner,
+    build_code_generation_prompt,
+    code_generation_prompt_bundle_digest,
+)
+from v2.runtime.evidence_coverage import EvidenceCoverageVerifier
+from v2.runtime.retrieval_adapter import (
+    AdaptiveRetrievalAdapter,
+    AdaptiveRetrievalResult,
+    stable_fan_in_evidence_packs,
+)
 from v2.runtime.transform_dsl import TransformDslInterpreter, TransformProgramError
 from v2.runtime.claims import ClaimSetValidator
 from v2.runtime.workspace import ArtifactLifecycleManager
 from v2.utils import sha256_digest, stable_json_dumps
 
 if TYPE_CHECKING:
+    from v2.memory import MemoryIndexStore
     from v2.runtime.adaptive_runtime import AdaptiveStepResult
+    from v2.runtime.workspace import WorkspaceManager
+    from v2.state import LayeredStateStore
 
 
 class AdaptiveDispatchError(RuntimeError):
@@ -100,6 +112,18 @@ class AdaptiveDispatchContext:
     # issue the final cited-report ArtifactRef.
     claim_set_factory: ClaimSetFactory | None = None
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
+    # Product-runtime infrastructure. Handlers receive authority through the
+    # context assembled by AdaptiveMainlineRunner, never by diagnostics code.
+    state_store: "LayeredStateStore | None" = None
+    memory_store: "MemoryIndexStore | None" = None
+    workspace_manager: "WorkspaceManager | None" = None
+    socket_path: Path | None = None
+    semantic_state_publications: dict[str, object] = field(default_factory=dict)
+    semantic_state_selections: dict[str, object] = field(default_factory=dict)
+    memory_match_results: dict[str, object] = field(default_factory=dict)
+    memory_queries_by_task: dict[str, object] = field(default_factory=dict)
+    runtime_compatibility_signature: str = ""
+    state_consumption_records: list[object] = field(default_factory=list)
 
 
 class AdaptiveCapabilityDispatcher:
@@ -159,7 +183,6 @@ class AdaptiveCapabilityDispatcher:
         grant: CapabilityGrant,
         attempt_workspace: Path,
     ) -> "AdaptiveStepResult":
-        del envelope, approved_plan, attempt_workspace
         from v2.runtime.adaptive_runtime import AdaptiveStepResult
 
         if self.context.retrieval_adapter is None or self.context.retrieval_request_factory is None:
@@ -176,6 +199,27 @@ class AdaptiveCapabilityDispatcher:
             propose_expansion=(propose_expansion if self.context.retrieval_expansion_factory is not None else None),
             max_expansions=1,
         )
+        product_state_records: tuple[object, ...] = ()
+        data_plane_events: tuple[dict[str, object], ...] = ()
+        state_metrics: dict[str, float] = {}
+        if result.retrieval_bundles:
+            result, product_state_records, data_plane_events, state_metrics = self._consume_retrieval_semantic_state(
+                result=result,
+                envelope=envelope,
+                approved_plan=approved_plan,
+                step=step,
+                grant=grant,
+                attempt_workspace=attempt_workspace,
+            )
+            coverage_report = EvidenceCoverageVerifier().evaluate(result.evidence_pack, request)
+            result = replace(
+                result,
+                coverage_reports=(
+                    (*result.coverage_reports[:-1], coverage_report)
+                    if result.coverage_reports
+                    else (coverage_report,)
+                ),
+            )
         coverage = result.coverage_reports[-1] if result.coverage_reports else None
         if coverage is None or coverage.status != EvidenceCoverageStatus.COMPLETE:
             raise AdaptiveDispatchError("evidence_coverage_not_complete")
@@ -183,11 +227,13 @@ class AdaptiveCapabilityDispatcher:
         self.context.evidence_packs[ref_id] = result.evidence_pack
         self.context.evidence_statuses[ref_id] = coverage.status
         self.context.evidence_ref_scopes[ref_id] = (grant.session_id, grant.attempt_id)
-        state_consumption_records = (
+        observer_records = (
             self.context.retrieval_result_observer(result, step, grant)
             if self.context.retrieval_result_observer is not None
             else ()
         )
+        state_consumption_records = tuple((*product_state_records, *observer_records))
+        self.context.state_consumption_records.extend(state_consumption_records)
         evaluated_effect_records = tuple(
             record for record in state_consumption_records
             if record.behavioral_effect in {"changed", "no_effect"}
@@ -205,6 +251,7 @@ class AdaptiveCapabilityDispatcher:
                 decision.canonical_payload() for decision in result.coverage_decisions
             ),
             state_consumption_records=state_consumption_records,
+            data_plane_events=data_plane_events,
             metrics={
                 "retriever_model_query_count": float(len(result.query_hashes)),
                 "retriever_model_query_consumed_count": float(len(result.query_hashes)),
@@ -213,6 +260,282 @@ class AdaptiveCapabilityDispatcher:
                     record.behavioral_effect == "changed"
                     for record in evaluated_effect_records
                 )),
+                **state_metrics,
+            },
+        )
+
+    def _consume_retrieval_semantic_state(
+        self,
+        *,
+        result: AdaptiveRetrievalResult,
+        envelope: AdaptiveTaskEnvelope,
+        approved_plan: ApprovedPlan,
+        step: PlanStepProposal,
+        grant: CapabilityGrant,
+        attempt_workspace: Path,
+    ) -> tuple[
+        AdaptiveRetrievalResult,
+        tuple[object, ...],
+        tuple[dict[str, object], ...],
+        dict[str, float],
+    ]:
+        from v2.control import (
+            ControlHeader,
+            ErrorResult,
+            EventType,
+            ExecRequest,
+            RefHandle,
+            SubprocessExecutorTransport,
+            SuccessResult,
+        )
+        from v2.memory import MemoryQuery
+        from v2.retrieval import apply_semantic_state_selection
+        from v2.state import publish_dense_semantic_state, query_embedding_from_dense_state
+        from v2.runtime.state_consumption import build_state_consumption_record
+
+        if self.context.state_store is None or self.context.memory_store is None:
+            raise AdaptiveDispatchError("adaptive_product_state_infrastructure_missing")
+        if self.context.socket_path is None:
+            raise AdaptiveDispatchError("adaptive_product_control_socket_missing")
+
+        semantic_requested = bool(
+            {str(value).strip() for value in result.request.evidence_types}
+            & {"semantic", "semantic_chunk", "semantic_context", "citation", "narrative"}
+        )
+        selected_bundles = []
+        records = []
+        data_plane_events: list[dict[str, object]] = []
+        transfer_count = 0
+        publish_count = 0
+        selected_count = 0
+        selected_bytes = 0
+        for index, bundle in enumerate(result.retrieval_bundles, start=1):
+            if (
+                not semantic_requested
+                or bundle.semantic_state_manifest is None
+                or not bundle.semantic_candidate_embeddings
+            ):
+                selected_bundles.append(bundle)
+                continue
+            state_id = (
+                f"semantic-{grant.task_id}-{grant.step_id}-{grant.attempt_id}-{index}"
+                .replace(":", "-")
+                .replace("/", "-")
+            )
+            publication = publish_dense_semantic_state(
+                store=self.context.state_store,
+                state_id=state_id,
+                query_embedding=bundle.query_embedding,
+                candidate_embeddings=tuple(
+                    embedding for _candidate_id, embedding in bundle.semantic_candidate_embeddings
+                ),
+                hydrate_manifest=bundle.semantic_state_manifest,
+                owner_session_id=grant.session_id,
+                encoder_revision="retriever-fanout-v1",
+            )
+            self.context.semantic_state_publications[state_id] = publication
+            data_plane_events.append({
+                "event_type": "STATE_PUBLISHED",
+                "role": "retriever",
+                "payload": {
+                    "ref_id": state_id,
+                    "manifest_id": publication.ref.manifest_id,
+                    "producer_pid": publication.contract.producer_pid,
+                    "storage_kind": publication.handle.storage_kind.value,
+                },
+                "metrics": {
+                    "semantic_state_publish_count": 1.0,
+                    "semantic_state_bytes": float(publication.handle.size_bytes),
+                    "semantic_state_transfer_count": 0.0,
+                },
+            })
+            entries = bundle.semantic_state_manifest.entries
+            top_k = max(1, min(len(entries), max(len(bundle.evidence_pack.semantic_contexts), 1)))
+            reference_selected_ids = {
+                item.item_id for item in bundle.evidence_pack.semantic_contexts
+            }
+            evidence_budget_bytes = sum(
+                max(int(entry.byte_hint), 0)
+                for entry in entries
+                if entry.candidate_id in reference_selected_ids
+            )
+            if evidence_budget_bytes <= 0:
+                evidence_budget_bytes = sum(
+                    max(int(entry.byte_hint), 0) for entry in entries
+                )
+            request = ExecRequest(
+                header=ControlHeader(
+                    trace_id=f"adaptive:{grant.task_id}",
+                    task_id=grant.task_id,
+                    step_id=step.step_id,
+                    attempt_id=grant.attempt_id,
+                    target_role="executor",
+                    timeout_ms=min(max(grant.max_runtime_ms, 5_000), 30_000),
+                    event_type=EventType.REQ_EXEC,
+                ),
+                state_refs=(RefHandle(ref_id=state_id, ref_kind="semantic_state"),),
+                artifact_refs=(),
+                runtime_reuse_contract="semantic_state_required",
+                output_contract_version="statebus.evidence_selection.v1",
+                workspace_root=str(attempt_workspace),
+                input_manifest_hash=publication.contract.hydrate_manifest_hash,
+                operation="semantic_select_v1",
+                state_root=str(self.context.state_store.root),
+                hydrate_manifest_id=publication.contract.hydrate_manifest_id,
+                semantic_top_k=top_k,
+                evidence_budget_bytes=evidence_budget_bytes,
+                expected_encoder_signature=publication.contract.encoder_signature,
+                capability_grant_hash=grant.grant_hash,
+            )
+            response = SubprocessExecutorTransport(
+                socket_path=self.context.socket_path.with_name(
+                    f"{self.context.socket_path.stem}-semantic-{index}{self.context.socket_path.suffix}"
+                ),
+                timeout_s=max(request.header.timeout_ms / 1000.0, 5.0),
+            ).execute(request)
+            if isinstance(response, ErrorResult):
+                raise AdaptiveDispatchError(
+                    f"semantic_state_consume_failed:{response.error_code}:{response.error_detail}"
+                )
+            if not isinstance(response, SuccessResult):
+                raise AdaptiveDispatchError("semantic_state_consumer_result_invalid")
+            if response.consumed_state_ref_id != state_id:
+                raise AdaptiveDispatchError("semantic_state_consumer_ref_mismatch")
+            if response.consumer_pid <= 0 or response.consumer_pid == response.producer_pid:
+                raise AdaptiveDispatchError("semantic_state_consumer_not_cross_process")
+            selected = apply_semantic_state_selection(
+                bundle,
+                selected_candidate_ids=response.selected_candidate_ids,
+                selected_scores=response.selected_scores,
+                consumer_pid=response.consumer_pid,
+            )
+            query_embedding = query_embedding_from_dense_state(
+                state_root=self.context.state_store.root,
+                ref=publication.ref,
+                embedding_id=bundle.query_embedding.embedding_id,
+                expected_encoder_signature=publication.contract.encoder_signature,
+            )
+            selected = replace(
+                selected,
+                query_embedding=query_embedding,
+                memory_query_embedding=query_embedding,
+            )
+            selected_bundles.append(selected)
+            self.context.semantic_state_selections[state_id] = response
+            data_plane_events.extend((
+                {
+                    "event_type": "STATE_RESOLVED",
+                    "role": "executor",
+                    "payload": {
+                        "ref_id": state_id,
+                        "producer_pid": response.producer_pid,
+                        "consumer_pid": response.consumer_pid,
+                    },
+                    "metrics": {
+                        "semantic_state_resolve_count": 1.0,
+                        "semantic_state_transfer_count": 1.0,
+                        "semantic_state_consumer_pid": float(response.consumer_pid),
+                    },
+                },
+                {
+                    "event_type": "STATE_CONSUMED",
+                    "role": "executor",
+                    "payload": {
+                        "ref_id": state_id,
+                        "selected_candidate_ids": list(response.selected_candidate_ids),
+                    },
+                    "metrics": {
+                        "semantic_state_consume_count": 1.0,
+                        "selected_candidate_count": float(len(response.selected_candidate_ids)),
+                        "selected_evidence_bytes": float(response.selected_evidence_bytes),
+                    },
+                },
+            ))
+            downstream_ref_id = f"evidence:{grant.task_id}:{grant.step_id}:{grant.attempt_id}"
+            records.append(build_state_consumption_record(
+                state_ref_id=state_id,
+                consumer_role="executor",
+                consumer_step_id=step.step_id,
+                operation="cosine_topk_budget_pruning",
+                read_field_ids=tuple(
+                    f"row:{row_index}" for row_index in (0, *response.selected_row_indices)
+                ),
+                input_decision_surface_hash=bundle.candidate_pool.candidate_surface_hash,
+                output_decision_surface_hash=sha256_digest({
+                    "selected_candidate_ids": response.selected_candidate_ids,
+                    "selected_scores": response.selected_scores,
+                }),
+                selected_ids=response.selected_candidate_ids,
+                downstream_ref_ids=(downstream_ref_id,),
+            ))
+            publish_count += 1
+            transfer_count += int(response.consumer_pid != response.producer_pid)
+            selected_count += len(response.selected_candidate_ids)
+            selected_bytes += int(response.selected_evidence_bytes)
+
+        if not selected_bundles:
+            selected_bundles = list(result.retrieval_bundles)
+        selected_pack = stable_fan_in_evidence_packs(
+            task_id=result.request.task_id,
+            packs=tuple(bundle.evidence_pack for bundle in selected_bundles),
+        )
+        query_bundle = selected_bundles[0]
+        memory_query = MemoryQuery(
+            query_task_id=grant.task_id,
+            query_spec_hash=envelope.canonical_task_spec_hash,
+            query_text=" ".join(result.request.queries),
+            tags=tuple(result.request.target_entities),
+            query_embedding=query_bundle.memory_query_embedding or query_bundle.query_embedding,
+            limit=max(1, min(result.request.max_candidates, 5)),
+            allow_assist=result.request.memory_policy != "none",
+            allow_validated_replay=result.request.memory_policy in {"validated_replay", "exact_replay"},
+            allow_exact_replay=result.request.memory_policy == "exact_replay",
+            compatibility_signature=(
+                self.context.runtime_compatibility_signature
+                or self.context.registry.digest
+            ),
+            output_contract_version=approved_plan.final_output_contract_version,
+        )
+        if grant.task_id in self.context.memory_queries_by_task:
+            raise AdaptiveDispatchError("hybrid_memory_query_already_issued_for_task")
+        memory_result = self.context.memory_store.lookup_hybrid(memory_query)
+        self.context.memory_queries_by_task[grant.task_id] = memory_query
+        self.context.memory_match_results[step.step_id] = memory_result
+        raw_evidence_bytes = sum(
+            len(item.rendered_text.encode("utf-8"))
+            for bucket in (
+                selected_pack.hard_facts,
+                selected_pack.structured_evidence,
+                selected_pack.semantic_contexts,
+                selected_pack.lexical_hints,
+                selected_pack.conflicts,
+            )
+            for item in bucket
+        )
+        embedding_encode_count = sum(
+            1 + len(bundle.semantic_candidate_embeddings)
+            for bundle in result.retrieval_bundles
+        )
+        return (
+            replace(
+                result,
+                evidence_pack=selected_pack,
+                retrieval_bundles=tuple(selected_bundles),
+            ),
+            tuple(records),
+            tuple(data_plane_events),
+            {
+                "semantic_state_publish_count": float(publish_count),
+                "semantic_state_transfer_count": float(transfer_count),
+                "semantic_state_consume_count": float(publish_count),
+                "semantic_state_selected_count": float(selected_count),
+                "semantic_state_selected_bytes": float(selected_bytes),
+                "raw_evidence_bytes_seen_by_llm": float(raw_evidence_bytes),
+                "embedding_encode_count": float(embedding_encode_count),
+                "hybrid_memory_query_count": 1.0,
+                "memory_keyword_candidate_count": float(len(memory_result.source_ranks.get("keyword", ()))),
+                "memory_tag_candidate_count": float(len(memory_result.source_ranks.get("tags", ()))),
+                "memory_vector_candidate_count": float(len(memory_result.source_ranks.get("vector", ()))),
             },
         )
 
@@ -237,6 +560,11 @@ class AdaptiveCapabilityDispatcher:
         schema = self._output_schema(step.capability_id, rows, step.step_id)
         projected_inputs = {input_ref_id: [dict(row) for row in rows]}
         dsl_repair_count = 0
+        dsl_quality_repair_count = 0
+        quality_rejection_count = 0
+        quality_hashes: list[str] = []
+        program_hashes = [program.program_hash]
+        validator_id = self._business_validator_id(step.capability_id)
         while True:
             try:
                 self._validate_transform_semantics(
@@ -245,7 +573,6 @@ class AdaptiveCapabilityDispatcher:
                 )
                 transformed = tuple(self.transform_interpreter.run(program, inputs=projected_inputs))
                 recomputed = recompute_transform_program(program, inputs=projected_inputs)
-                break
             except (AdaptiveDispatchError, CapabilityRecomputeError, TransformProgramError) as exc:
                 if self.context.transform_program_repair_factory is None or dsl_repair_count >= 1:
                     raise AdaptiveDispatchError(str(exc)) from exc
@@ -257,38 +584,56 @@ class AdaptiveCapabilityDispatcher:
                     (str(exc),),
                 )
                 dsl_repair_count += 1
-        validator_id = self._business_validator_id(step.capability_id)
-        quality = self.context.validator_registry.validate(
-            CapabilityQualityContext(
-                capability_id=step.capability_id,
-                validator_id=validator_id,
-                input_rows=(rows,),
-                output_rows=transformed,
-                input_artifact_hashes=input_hashes,
-                output_artifact_hash=sha256_digest(stable_json_dumps(transformed).encode("utf-8")),
-                expected_rows=recomputed,
-                required_fields=tuple(schema),
-                completion_criteria=step.completion_criteria,
-                operation_semantics=dict(self.context.quality_semantics_by_capability.get(step.capability_id, {})),
-                provenance_item_ids=provenance,
+                program_hashes.append(program.program_hash)
+                continue
+            quality = self.context.validator_registry.validate(
+                CapabilityQualityContext(
+                    capability_id=step.capability_id,
+                    validator_id=validator_id,
+                    input_rows=(rows,),
+                    output_rows=transformed,
+                    input_artifact_hashes=input_hashes,
+                    output_artifact_hash=sha256_digest(stable_json_dumps(transformed).encode("utf-8")),
+                    expected_rows=recomputed,
+                    required_fields=tuple(schema),
+                    completion_criteria=step.completion_criteria,
+                    operation_semantics=dict(self.context.quality_semantics_by_capability.get(step.capability_id, {})),
+                    provenance_item_ids=provenance,
+                )
             )
-        )
-        self.context.quality_reports[quality.report_hash] = quality
-        if not quality.verified:
-            return AdaptiveStepResult(
-                grant_hash=grant.grant_hash,
-                success=False,
-                attempt_id=grant.attempt_id,
-                error_code="capability_quality_rejected",
-                validator_report_hashes=(quality.report_hash,),
-                quality_report_hashes=(quality.report_hash,),
-                projection_report_hashes=projection_hashes,
-                metrics={
-                    "dsl_execution_count": 1.0,
-                    "dsl_repair_count": float(dsl_repair_count),
-                    "llm_codeact_quality_rejected_count": 0.0,
-                },
+            self.context.quality_reports[quality.report_hash] = quality
+            quality_hashes.append(quality.report_hash)
+            if quality.verified:
+                break
+            quality_rejection_count += 1
+            if self.context.transform_program_repair_factory is None or dsl_repair_count >= 1:
+                return AdaptiveStepResult(
+                    grant_hash=grant.grant_hash,
+                    success=False,
+                    attempt_id=grant.attempt_id,
+                    error_code="capability_quality_rejected",
+                    validator_report_hashes=tuple(quality_hashes),
+                    quality_report_hashes=tuple(quality_hashes),
+                    projection_report_hashes=projection_hashes,
+                    program_hashes=tuple(program_hashes),
+                    metrics={
+                        "dsl_execution_count": 1.0,
+                        "dsl_repair_count": float(dsl_repair_count),
+                        "dsl_quality_repair_count": float(dsl_quality_repair_count),
+                        "dsl_quality_rejected_count": float(quality_rejection_count),
+                        "llm_codeact_quality_rejected_count": 0.0,
+                    },
+                )
+            program = self.context.transform_program_repair_factory(
+                step,
+                grant,
+                input_ref_id,
+                rows,
+                quality.error_codes,
             )
+            dsl_repair_count += 1
+            dsl_quality_repair_count += 1
+            program_hashes.append(program.program_hash)
         result = self.transform_interpreter.run_verified(
             program,
             inputs=projected_inputs,
@@ -309,14 +654,16 @@ class AdaptiveCapabilityDispatcher:
             attempt_id=grant.attempt_id,
             output_refs=(artifact.artifact_id,),
             output_ref_kinds=("execution_artifact",),
-            validator_report_hashes=(quality.report_hash,),
-            quality_report_hashes=(quality.report_hash,),
+            validator_report_hashes=tuple(quality_hashes),
+            quality_report_hashes=tuple(quality_hashes),
             projection_report_hashes=projection_hashes,
-            program_hashes=(program.program_hash,),
+            program_hashes=tuple(program_hashes),
             metrics={
                 "evidence_projection_count": float(bool(projection_hashes)),
                 "dsl_execution_count": 1.0,
                 "dsl_repair_count": float(dsl_repair_count),
+                "dsl_quality_repair_count": float(dsl_quality_repair_count),
+                "dsl_quality_rejected_count": float(quality_rejection_count),
             },
         )
 
@@ -415,7 +762,7 @@ class AdaptiveCapabilityDispatcher:
             }),
             output_schema=schema,
             model_signature="adaptive_executor",
-            prompt_signature=sha256_digest(step.goal),
+            prompt_signature="",
             runtime_signature=sha256_digest(envelope.canonical_payload()),
             policy=policy,
             session_id=grant.session_id,
@@ -432,6 +779,13 @@ class AdaptiveCapabilityDispatcher:
             retrieval_context=tuple(retrieval_context),
         )
         prompt = build_code_generation_prompt(request)
+        request = replace(
+            request,
+            prompt_signature=code_generation_prompt_bundle_digest(
+                request,
+                rendered_prompt=prompt,
+            ),
+        )
         source = self.context.code_source_factory(request, prompt)
 
         def repair_source(previous_source: str, violations: tuple[str, ...]) -> str:
@@ -448,11 +802,14 @@ class AdaptiveCapabilityDispatcher:
             repair_source=(repair_source if self.context.code_repair_factory is not None else None),
             model_id="adaptive_executor",
         )
-        quality_hashes = () if outcome.quality_report is None else (outcome.quality_report.report_hash,)
+        quality_reports = outcome.quality_reports
+        if not quality_reports and outcome.quality_report is not None:
+            quality_reports = (outcome.quality_report,)
+        quality_hashes = tuple(report.report_hash for report in quality_reports)
         self.context.code_execution_records[grant.grant_hash] = outcome.record
         self.context.code_policy_reports[grant.grant_hash] = outcome.policy_report
-        if outcome.quality_report is not None:
-            self.context.quality_reports[outcome.quality_report.report_hash] = outcome.quality_report
+        for quality_report in quality_reports:
+            self.context.quality_reports[quality_report.report_hash] = quality_report
         if outcome.artifact is None or outcome.output_payload is None:
             return AdaptiveStepResult(
                 grant_hash=grant.grant_hash,
@@ -469,7 +826,12 @@ class AdaptiveCapabilityDispatcher:
                     "llm_codeact_runtime_repair_count": float(sum(
                         item.repair_kind == "runtime" for item in outcome.repairs
                     )),
-                    "llm_codeact_quality_rejected_count": float(outcome.record.fallback_reason == "capability_quality_rejected"),
+                    "llm_codeact_quality_repair_count": float(sum(
+                        item.repair_kind == "quality" for item in outcome.repairs
+                    )),
+                    "llm_codeact_quality_rejected_count": float(sum(
+                        not report.verified for report in quality_reports
+                    )),
                     "llm_codeact_sandbox_fallback_count": float(outcome.record.sandbox_actual_backend != "bwrap"),
                 },
             )
@@ -497,6 +859,12 @@ class AdaptiveCapabilityDispatcher:
                 "llm_codeact_repair_count": float(len(outcome.repairs)),
                 "llm_codeact_runtime_repair_count": float(sum(
                     item.repair_kind == "runtime" for item in outcome.repairs
+                )),
+                "llm_codeact_quality_repair_count": float(sum(
+                    item.repair_kind == "quality" for item in outcome.repairs
+                )),
+                "llm_codeact_quality_rejected_count": float(sum(
+                    not report.verified for report in quality_reports
                 )),
                 "llm_codeact_execution_count": 1.0,
                 "llm_codeact_verified_count": 1.0,

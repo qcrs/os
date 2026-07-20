@@ -5,40 +5,35 @@ from pathlib import Path
 
 
 MANIFEST_ROOT = Path("v2/benchmark/samples/continuous_task_families")
+FAMILIES = (
+    "cross_period_financial",
+    "csv_table_profile",
+    "csv_correlation_replay",
+    "incident_diagnosis",
+    "long_doc_table",
+    "long_doc_metric_replay",
+    "gridops_world",
+    "formal_operating_metrics",
+    "formal_financial_reports",
+)
 
 
 def _load_manifest(family: str) -> dict[str, object]:
     return json.loads((MANIFEST_ROOT / family / "manifest.json").read_text(encoding="utf-8"))
 
 
-def test_continuous_task_family_manifests_have_ten_ordered_rounds() -> None:
-    for family in (
-        "cross_period_financial",
-        "csv_table_profile",
-        "csv_correlation_replay",
-        "incident_diagnosis",
-        "long_doc_table",
-        "long_doc_metric_replay",
-        "gridops_world",
-    ):
+def test_continuous_task_family_manifests_have_ordered_related_rounds() -> None:
+    for family in FAMILIES:
         manifest = _load_manifest(family)
         rounds = manifest["rounds"]
         assert manifest["schema_version"] == "statebus.continuous_task_family.v1"
-        assert manifest["round_count"] >= 10
-        assert len(rounds) >= 10
+        assert manifest["round_count"] >= 2
+        assert len(rounds) == manifest["round_count"]
         assert [round_payload["round"] for round_payload in rounds] == list(range(1, len(rounds) + 1))
 
 
 def test_continuous_task_family_dependencies_only_point_backward() -> None:
-    for family in (
-        "cross_period_financial",
-        "csv_table_profile",
-        "csv_correlation_replay",
-        "incident_diagnosis",
-        "long_doc_table",
-        "long_doc_metric_replay",
-        "gridops_world",
-    ):
+    for family in FAMILIES:
         manifest = _load_manifest(family)
         for round_payload in manifest["rounds"]:
             round_number = int(round_payload["round"])
@@ -46,15 +41,7 @@ def test_continuous_task_family_dependencies_only_point_backward() -> None:
 
 
 def test_continuous_task_family_rounds_declare_reuse_and_quality_contracts() -> None:
-    for family in (
-        "cross_period_financial",
-        "csv_table_profile",
-        "csv_correlation_replay",
-        "incident_diagnosis",
-        "long_doc_table",
-        "long_doc_metric_replay",
-        "gridops_world",
-    ):
+    for family in FAMILIES:
         manifest = _load_manifest(family)
         for round_payload in manifest["rounds"]:
             spec = round_payload["canonical_task_spec"]
@@ -70,18 +57,7 @@ def test_continuous_task_family_rounds_declare_reuse_and_quality_contracts() -> 
 
 
 def test_continuous_task_families_cover_formal_and_demo_tracks() -> None:
-    tiers = {
-        _load_manifest(family)["claim_tier"]
-        for family in (
-        "cross_period_financial",
-        "csv_table_profile",
-        "csv_correlation_replay",
-        "incident_diagnosis",
-        "long_doc_table",
-        "long_doc_metric_replay",
-        "gridops_world",
-        )
-    }
+    tiers = {_load_manifest(family)["claim_tier"] for family in FAMILIES}
     assert "formal_primary" in tiers
     assert "formal_secondary" in tiers
     assert "demo_secondary" in tiers

@@ -218,6 +218,12 @@ def test_adaptive_planner_prompt_and_schema_expose_only_authorized_capabilities(
         "retriever": {"minimum": 1, "maximum": 1},
         "summarizer": {"minimum": 1, "maximum": 1},
     }
+    assert payload["authority"]["capability_ids_by_role"] == {
+        "executor": ["extract_metric_series_v1"],
+        "retriever": ["retrieve_semantic_evidence_v1"],
+        "summarizer": ["compose_cited_report_v1"],
+    }
+    assert "authority.capability_ids_by_role[role]" in prompt
     assert [item["id"] for item in payload["capability_surface"]] == [
         "retrieve_semantic_evidence_v1",
         "extract_metric_series_v1",

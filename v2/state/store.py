@@ -47,7 +47,11 @@ class LayeredStoragePolicy:
             policy.kind_preferences.update(
                 {
                     "EMBEDDING_STATE": (StorageKind.MEMFD, StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
-                    "DENSE_SEMANTIC_STATE": (StorageKind.MEMFD, StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
+                    # Dense semantic state is consumed through a registry
+                    # resolver in another PID.  Keep it on a named backend;
+                    # anonymous memfd transfer remains available for the
+                    # legacy embedding/logit paths.
+                    "DENSE_SEMANTIC_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
                     "LOGIT_STATE": (StorageKind.MEMFD, StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
                 }
             )
@@ -148,6 +152,7 @@ class MaterializedStateHandle:
     mmap_path: Path | None = None
     inline_payload: bytes = b""
     root_id: str = "state_root"
+    contract_metadata: dict[str, object] = field(default_factory=dict)
 
     def metadata_payload(self) -> dict[str, object]:
         return {
@@ -168,6 +173,7 @@ class MaterializedStateHandle:
             "memfd_descriptor_available": self.memfd_fd is not None,
             "mmap_path": "" if self.mmap_path is None else str(self.mmap_path),
             "root_id": self.root_id,
+            "contract_metadata": dict(sorted(self.contract_metadata.items())),
         }
 
 
@@ -216,14 +222,27 @@ class LayeredStateStore:
             return StorageKind.MMAP_FILE.value
         return self.policy.state_pool_mode
 
-    def publish(self, *, ref_id: str, object_kind: str, payload: bytes) -> MaterializedStateHandle:
+    def publish(
+        self,
+        *,
+        ref_id: str,
+        object_kind: str,
+        payload: bytes,
+        contract_metadata: dict[str, object] | None = None,
+    ) -> MaterializedStateHandle:
         decision = self.policy.decide(
             object_kind=object_kind,
             size_bytes=len(payload),
             shared_memory_bytes_used=self.shared_memory_bytes_used,
         )
         try:
-            handle = self._materialize(ref_id=ref_id, object_kind=object_kind, payload=payload, decision=decision)
+            handle = self._materialize(
+                ref_id=ref_id,
+                object_kind=object_kind,
+                payload=payload,
+                decision=decision,
+                contract_metadata=contract_metadata,
+            )
         except OSError:
             if decision.selected not in {StorageKind.SHARED_MEMORY, StorageKind.MEMFD}:
                 raise
@@ -234,7 +253,13 @@ class LayeredStateStore:
                 size_bytes=len(payload),
                 shared_memory_bytes_used=self.shared_memory_bytes_used,
             )
-            handle = self._materialize(ref_id=ref_id, object_kind=object_kind, payload=payload, decision=fallback)
+            handle = self._materialize(
+                ref_id=ref_id,
+                object_kind=object_kind,
+                payload=payload,
+                decision=fallback,
+                contract_metadata=contract_metadata,
+            )
         self.materializations[ref_id] = handle
         self.storage_publish_counts[handle.storage_kind] = self.storage_publish_counts.get(handle.storage_kind, 0) + 1
         self.last_published_storage_kind = handle.storage_kind
@@ -302,6 +327,7 @@ class LayeredStateStore:
         object_kind: str,
         payload: bytes,
         decision: StorageDecision,
+        contract_metadata: dict[str, object] | None = None,
     ) -> MaterializedStateHandle:
         if decision.selected == StorageKind.SHARED_MEMORY:
             handle = self._materialize_shared_memory(
@@ -309,6 +335,7 @@ class LayeredStateStore:
                 object_kind=object_kind,
                 payload=payload,
                 decision=decision,
+                contract_metadata=contract_metadata,
             )
         elif decision.selected == StorageKind.MEMFD:
             handle = self._materialize_memfd(
@@ -316,6 +343,7 @@ class LayeredStateStore:
                 object_kind=object_kind,
                 payload=payload,
                 decision=decision,
+                contract_metadata=contract_metadata,
             )
         elif decision.selected == StorageKind.MMAP_FILE:
             handle = self._materialize_mmap_file(
@@ -323,6 +351,7 @@ class LayeredStateStore:
                 object_kind=object_kind,
                 payload=payload,
                 decision=decision,
+                contract_metadata=contract_metadata,
             )
         else:
             handle = self._materialize_inline(
@@ -330,6 +359,7 @@ class LayeredStateStore:
                 object_kind=object_kind,
                 payload=payload,
                 decision=decision,
+                contract_metadata=contract_metadata,
             )
         self._write_metadata(handle)
         return handle
@@ -341,6 +371,7 @@ class LayeredStateStore:
         object_kind: str,
         payload: bytes,
         decision: StorageDecision,
+        contract_metadata: dict[str, object] | None = None,
     ) -> MaterializedStateHandle:
         shared = SharedMemory(create=True, size=max(1, len(payload)))
         if payload:
@@ -356,6 +387,7 @@ class LayeredStateStore:
             decision=decision,
             metadata_path=self.metadata_dir / f"{ref_id}.json",
             shared_memory_name=shared.name,
+            contract_metadata=dict(contract_metadata or {}),
         )
 
     def _materialize_memfd(
@@ -365,6 +397,7 @@ class LayeredStateStore:
         object_kind: str,
         payload: bytes,
         decision: StorageDecision,
+        contract_metadata: dict[str, object] | None = None,
     ) -> MaterializedStateHandle:
         memfd_name = f"statebus_v2_{ref_id[:48]}"
         fd = _memfd_create_safe(memfd_name)
@@ -386,6 +419,7 @@ class LayeredStateStore:
             metadata_path=self.metadata_dir / f"{ref_id}.json",
             memfd_name=memfd_name,
             memfd_fd=fd,
+            contract_metadata=dict(contract_metadata or {}),
         )
 
     def _materialize_mmap_file(
@@ -395,6 +429,7 @@ class LayeredStateStore:
         object_kind: str,
         payload: bytes,
         decision: StorageDecision,
+        contract_metadata: dict[str, object] | None = None,
     ) -> MaterializedStateHandle:
         path = self.mmap_dir / f"{ref_id}.bin"
         with path.open("w+b") as buffer_file:
@@ -412,6 +447,7 @@ class LayeredStateStore:
             decision=decision,
             metadata_path=self.metadata_dir / f"{ref_id}.json",
             mmap_path=path,
+            contract_metadata=dict(contract_metadata or {}),
         )
 
     def _materialize_inline(
@@ -421,6 +457,7 @@ class LayeredStateStore:
         object_kind: str,
         payload: bytes,
         decision: StorageDecision,
+        contract_metadata: dict[str, object] | None = None,
     ) -> MaterializedStateHandle:
         return MaterializedStateHandle(
             ref_id=ref_id,
@@ -431,6 +468,7 @@ class LayeredStateStore:
             decision=decision,
             metadata_path=self.metadata_dir / f"{ref_id}.json",
             inline_payload=payload,
+            contract_metadata=dict(contract_metadata or {}),
         )
 
     def _write_metadata(self, handle: MaterializedStateHandle) -> None:

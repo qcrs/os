@@ -4,6 +4,7 @@
 
 ## 当前报告
 
+- `adaptive_mainline_semantic_state_container_validation_20260719.md`
 - `final_v2_evidence_index_20260703.md`
 - `v2_api_evidence_readout_and_claim_boundary_20260702.md`
 - `v2_experiment_summary_20260703.md`
@@ -13,6 +14,7 @@
 
 读取规则：
 
+- adaptive mainline、semantic state、formal Runtime validator 和最新容器回归，以 `adaptive_mainline_semantic_state_container_validation_20260719.md` 为准。
 - 这些报告仍可能早于 `docs/improvement/20_v2_comprehensive_truth_audit_20260706/`。
 - 当前 claim 以 truth audit、最新 local+api artifact 和代码事实为准。
 - 旧 host-mainline、v1/v3 报告已归档到 `../archive/legacy_202606_host_mainline/reports/`。

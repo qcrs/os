@@ -389,14 +389,22 @@ def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[s
         semantics.update(
             outlier_column=str(arguments["outlier_column"]),
             impute_column=str(arguments["impute_column"]),
+            outlier_column_missing_policy=(
+                "Preserve missing outlier_column cells as missing. Exclude them from quartiles, the pre-replacement "
+                "mean, and the post-replacement mean; do not impute them."
+            ),
+            impute_column_missing_policy=(
+                "Mean-impute only missing impute_column cells using that column's non-missing mean."
+            ),
             inclusive_quantile_definition=(
                 "Sort the non-missing numeric values. For probability p, use zero-based position (n-1)*p and linearly "
                 "interpolate between the floor and ceiling positions; use p=0.25 for Q1 and p=0.75 for Q3."
             ),
             formula=(
                 "Detect outlier_column values with inclusive Q1/Q3 and 1.5*IQR, replace each outlier with the pre-replacement "
-                "non-missing column mean, and mean-impute missing impute_column cells. Emit both post means rounded to two "
-                "decimals and the original row count."
+                "non-missing column mean, preserve but exclude missing outlier_column cells from its statistics, and "
+                "mean-impute missing impute_column cells. Emit both post means rounded to two decimals and the original "
+                "row count."
             ),
         )
     else:
@@ -650,31 +658,47 @@ def _rows_equal(
 def build_formal_quality_validator(
     case: FormalAdaptiveCase,
 ) -> Callable[[CapabilityQualityContext], CapabilityQualityReport]:
+    # Deliberately retain only the public execution contract.  Expected facts
+    # remain outside Runtime and are evaluated by the benchmark gate later.
+    operation = case.operation
+    arguments = dict(case.spec.arguments)
+    formal_output_fields = frozenset(case.output_schema)
+
     def validate(context: CapabilityQualityContext) -> CapabilityQualityReport:
         errors: list[str] = []
         if not context.input_artifact_hashes:
             errors.append("missing_input_artifact_hash")
         if not context.provenance_item_ids:
             errors.append("missing_provenance")
-        if len(context.input_rows) != 1 or not context.input_rows[0]:
-            errors.append("formal_input_rows_missing")
-            expected: tuple[dict[str, object], ...] = ()
-        else:
-            try:
-                expected = recompute_formal_rows(
-                    case.operation,
-                    case.spec.arguments,
-                    context.input_rows[0],
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                expected = ()
-                errors.append(f"formal_recomputation_failed:{type(exc).__name__}")
         if not context.output_rows:
             errors.append("empty_output")
-        if any(set(row) != set(case.output_schema) for row in context.output_rows):
+        required_fields = frozenset(context.required_fields)
+        if any(required_fields and set(row) != required_fields for row in context.output_rows):
             errors.append("required_fields_missing")
-        if expected and not _rows_equal(context.output_rows, expected):
-            errors.append("formal_recomputation_mismatch")
+
+        # Intermediate model-selected stages use their declared schema and the
+        # generic safety checks above.  The final formal result is independently
+        # recomputed from each authorized input artifact that can satisfy the
+        # public operation contract.  No benchmark expected value is consulted.
+        recomputation_evaluated = required_fields == formal_output_fields
+        if recomputation_evaluated:
+            candidates: list[tuple[dict[str, object], ...]] = []
+            failures: list[Exception] = []
+            for rows in context.input_rows:
+                if not rows:
+                    continue
+                try:
+                    candidates.append(recompute_formal_rows(operation, arguments, rows))
+                except (KeyError, TypeError, ValueError) as exc:
+                    failures.append(exc)
+            if not candidates:
+                if not context.input_rows or not any(context.input_rows):
+                    errors.append("formal_input_rows_missing")
+                else:
+                    failure_type = type(failures[-1]).__name__ if failures else "ValueError"
+                    errors.append(f"formal_recomputation_failed:{failure_type}")
+            elif not any(_rows_equal(context.output_rows, expected) for expected in candidates):
+                errors.append("formal_recomputation_mismatch")
         minimum = context.completion_criteria.get("min_rows")
         if isinstance(minimum, int) and len(context.output_rows) < minimum:
             errors.append("completion_min_rows_failed")
@@ -685,10 +709,14 @@ def build_formal_quality_validator(
             input_artifact_hashes=context.input_artifact_hashes,
             output_artifact_hash=context.output_artifact_hash,
             schema_passed=not any(error in {"empty_output", "required_fields_missing"} for error in errors),
-            recomputation_passed=not any(error.startswith("formal_recomputation") for error in errors),
+            recomputation_passed=(
+                recomputation_evaluated
+                and not any(error.startswith("formal_recomputation") for error in errors)
+            ),
             provenance_passed=not any(error.startswith("missing_") for error in errors),
             completion_criteria_passed="completion_min_rows_failed" not in errors,
             verified=not errors,
+            recomputation_evaluated=recomputation_evaluated,
             error_codes=tuple(errors),
         )
 

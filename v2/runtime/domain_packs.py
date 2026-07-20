@@ -412,13 +412,22 @@ def generic_adaptive_analysis_pack() -> DomainPack:
     )
 
 
-def register_generic_adaptive_analysis_capabilities(registry: CapabilityRegistry) -> DomainPack:
+def register_generic_adaptive_analysis_capabilities(
+    registry: CapabilityRegistry,
+    *,
+    analysis_validator_ids: tuple[str, ...] = ("generic_analysis",),
+) -> DomainPack:
     """Register generic execution authorities once for a domain pack.
 
     No task operation, expected answer, formula, or case-specific output shape
     is encoded here.  The task contract supplies the requested result schema;
     the model chooses an analysis recipe inside this authority closure.
     """
+    if not analysis_validator_ids or any(not item for item in analysis_validator_ids):
+        raise ValueError("analysis_validator_ids_required")
+    if len(set(analysis_validator_ids)) != len(analysis_validator_ids):
+        raise ValueError("analysis_validator_ids_must_be_unique")
+
     descriptors = (
         CapabilityDescriptor(
             capability_id="retrieve_semantic_evidence_v1",
@@ -488,7 +497,7 @@ def register_generic_adaptive_analysis_capabilities(registry: CapabilityRegistry
             side_effect_class=RiskClass.WORKSPACE_WRITE,
             max_runtime_ms=120_000,
             supports_replay=True,
-            validator_ids=("generic_analysis",),
+            validator_ids=analysis_validator_ids,
             fallback_capability_id="execute_bounded_python_v2",
             completion_criteria_contract={
                 "min_rows": {"type": "integer", "minimum": 1, "maximum": 100_000},
@@ -517,7 +526,7 @@ def register_generic_adaptive_analysis_capabilities(registry: CapabilityRegistry
             max_runtime_ms=120_000,
             supports_replay=True,
             required_input_ref_kinds=("execution_artifact",),
-            validator_ids=("generic_analysis",),
+            validator_ids=analysis_validator_ids,
             fallback_capability_id="execute_analysis_dsl_v2",
             completion_criteria_contract={
                 "min_rows": {"type": "integer", "minimum": 1, "maximum": 100_000},

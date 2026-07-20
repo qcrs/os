@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import ceil
 from pathlib import Path
 from typing import Callable
@@ -14,7 +14,7 @@ from v2.contracts import (
 from v2.memory import DeterministicEmbeddingEncoder, EmbeddingEncoder, build_embedding_encoder
 from v2.memory.embedding import cosine_similarity as _cosine_sim
 from v2.provenance import DeterministicFanInBuilder, EvidenceCandidate
-from v2.refs import CanonicalEvidencePack, HydrateManifest, HydrateManifestEntry
+from v2.refs import CanonicalEvidencePack, EvidenceItem, HydrateManifest, HydrateManifestEntry
 from v2.retrieval.pruning import (
     DynamicPruningConfig,
     DynamicPruningDecision,
@@ -303,9 +303,9 @@ class SemanticChunkRetriever:
                 text=fragment.text,
             )
             score = _cosine_sim(query_embedding, fragment_embedding)
-            scored.append((score, fragment))
+            scored.append((score, fragment, fragment_embedding))
         scored.sort(key=lambda item: (-item[0], item[1].fragment_id))
-        selected = tuple(
+        ranked_candidates = tuple(
             EvidenceCandidate(
                 item_id=f"ctx-{fragment.fragment_id}",
                 bucket="semantic_context",
@@ -315,12 +315,21 @@ class SemanticChunkRetriever:
                 rank=index + 1,
                 metadata={"score": round(score, 6)},
             )
-            for index, (score, fragment) in enumerate(scored[: self.top_k])
+            for index, (score, fragment, _embedding) in enumerate(scored)
         )
+        candidate_embeddings = tuple(
+            (f"ctx-{fragment.fragment_id}", embedding)
+            for _score, fragment, embedding in scored
+        )
+        selected = ranked_candidates[: self.top_k]
         return RetrieverOutput(
             retriever_kind=RetrieverKind.SEMANTIC_CHUNK,
-            candidates=tuple(candidate.__dict__ for candidate in selected),
+            # Publish the complete ranked candidate surface. The Runtime's
+            # cross-process semantic consumer, not this producer, owns the
+            # authoritative top-k decision and downstream hydration.
+            candidates=tuple(candidate.__dict__ for candidate in ranked_candidates),
             query_embedding=query_embedding,
+            candidate_embeddings=candidate_embeddings,
             log_entry=RetrievalLogEntry(
                 retriever_kind=RetrieverKind.SEMANTIC_CHUNK,
                 candidate_count=len(document.text_fragments),
@@ -563,6 +572,44 @@ class RetrieverFanoutPipeline:
         )
         payload["query_text"] = query_text
         return payload
+
+    @staticmethod
+    def _enabled_retrievers(
+        planner_scope_payload: dict[str, object],
+    ) -> frozenset[str]:
+        """Resolve the controller-selected document retrievers.
+
+        ``memory_*`` evidence types intentionally do not enable a document
+        fan-out path; MemoryProxy owns that plane.  An absent selector keeps
+        the historical all-three default for strict callers.
+        """
+        explicit = planner_scope_payload.get("enabled_evidence_types")
+        if isinstance(explicit, (list, tuple, set)):
+            values = {str(item).strip().lower() for item in explicit if str(item).strip()}
+        else:
+            semantic_plan = planner_scope_payload.get("semantic_task_plan", {})
+            semantic_plan = semantic_plan if isinstance(semantic_plan, dict) else {}
+            objectives = semantic_plan.get("retrieval_objectives", {})
+            objectives = objectives if isinstance(objectives, dict) else {}
+            values = set()
+            saw_explicit = False
+            for name in ("lexical_metadata", "semantic_chunk", "table_structure"):
+                objective = objectives.get(name, {})
+                objective = objective if isinstance(objective, dict) else {}
+                raw = objective.get("evidence_types")
+                if isinstance(raw, (list, tuple)) and raw:
+                    saw_explicit = True
+                    values.update(str(item).strip().lower() for item in raw if str(item).strip())
+            if not saw_explicit:
+                return frozenset({"lexical", "semantic", "table"})
+        enabled: set[str] = set()
+        if values & {"lexical", "lexical_metadata", "lexical_hint", "metadata", "citation"}:
+            enabled.add("lexical")
+        if values & {"semantic", "semantic_chunk", "semantic_context", "narrative", "citation"}:
+            enabled.add("semantic")
+        if values & {"table", "table_cell", "table_schema", "structured_evidence", "hard_fact"}:
+            enabled.add("table")
+        return frozenset(enabled)
 
     @staticmethod
     def _filter_candidates_by_planner_scope(
@@ -1066,10 +1113,7 @@ class RetrieverFanoutPipeline:
         )
         if semantic.query_embedding is None:
             raise RuntimeError("semantic retriever must emit query embedding")
-        memory_query_embedding = self.semantic_retriever.encoder.encode(
-            embedding_id=f"embedding-memory-query-{task_id}",
-            text=str(consumed_objectives["memory"]["query_text"]),
-        )
+        memory_query_embedding = semantic.query_embedding
         return RetrievalBundle(
             task_id=task_id,
             query_text=query_text,
@@ -1095,7 +1139,13 @@ class RetrieverFanoutPipeline:
         task_id: str,
         spec: CanonicalTaskSpec,
         planner_scope_payload: dict[str, object] | None = None,
+        enabled_evidence_types: tuple[str, ...] | None = None,
     ) -> RetrievalBundle:
+        if enabled_evidence_types is not None:
+            planner_scope_payload = {
+                **dict(planner_scope_payload or {}),
+                "enabled_evidence_types": list(enabled_evidence_types),
+            }
         normalized_scope = self._normalize_planner_scope(
             spec=spec,
             planner_scope_payload=planner_scope_payload,
@@ -1150,21 +1200,63 @@ class RetrieverFanoutPipeline:
             ticker = str(spec.arguments.get("ticker", "ACME"))
             quarter = str(spec.arguments.get("quarter", "2026Q1"))
             document = self.corpus.resolve(ticker=ticker, quarter=quarter)
-        lexical = self.lexical_retriever.retrieve(
-            spec=spec,
-            document=document,
-            objective=consumed_objectives["lexical_metadata"],
-        )
-        semantic = self.semantic_retriever.retrieve(
-            spec=spec,
-            document=document,
-            objective=consumed_objectives["semantic_chunk"],
-        )
-        table = self.table_retriever.retrieve(
-            spec=spec,
-            document=document,
-            objective=consumed_objectives["table_structure"],
-        )
+        enabled_retrievers = self._enabled_retrievers(normalized_scope)
+        if "lexical" in enabled_retrievers:
+            lexical = self.lexical_retriever.retrieve(
+                spec=spec,
+                document=document,
+                objective=consumed_objectives["lexical_metadata"],
+            )
+        else:
+            lexical = RetrieverOutput(
+                retriever_kind=RetrieverKind.LEXICAL_METADATA,
+                candidates=(),
+                log_entry=RetrievalLogEntry(
+                    retriever_kind=RetrieverKind.LEXICAL_METADATA,
+                    candidate_count=0,
+                    selected_count=0,
+                    selected_ids=(),
+                    diagnostics={"dispatch": "disabled_by_evidence_types"},
+                ),
+            )
+        if "semantic" in enabled_retrievers:
+            semantic = self.semantic_retriever.retrieve(
+                spec=spec,
+                document=document,
+                objective=consumed_objectives["semantic_chunk"],
+            )
+        else:
+            semantic = RetrieverOutput(
+                retriever_kind=RetrieverKind.SEMANTIC_CHUNK,
+                candidates=(),
+                query_embedding=None,
+                candidate_embeddings=(),
+                log_entry=RetrievalLogEntry(
+                    retriever_kind=RetrieverKind.SEMANTIC_CHUNK,
+                    candidate_count=0,
+                    selected_count=0,
+                    selected_ids=(),
+                    diagnostics={"dispatch": "disabled_by_evidence_types"},
+                ),
+            )
+        if "table" in enabled_retrievers:
+            table = self.table_retriever.retrieve(
+                spec=spec,
+                document=document,
+                objective=consumed_objectives["table_structure"],
+            )
+        else:
+            table = RetrieverOutput(
+                retriever_kind=RetrieverKind.TABLE_STRUCTURE,
+                candidates=(),
+                log_entry=RetrievalLogEntry(
+                    retriever_kind=RetrieverKind.TABLE_STRUCTURE,
+                    candidate_count=0,
+                    selected_count=0,
+                    selected_ids=(),
+                    diagnostics={"dispatch": "disabled_by_evidence_types"},
+                ),
+            )
 
         lexical_candidates = tuple(
             EvidenceCandidate(**candidate) for candidate in lexical.candidates
@@ -1181,6 +1273,12 @@ class RetrieverFanoutPipeline:
             table_candidates=table_candidates,
             planner_scope_payload=normalized_scope,
         )
+        producer_selected_semantic_ids = set(semantic.log_entry.selected_ids)
+        producer_selected_semantic_candidates = tuple(
+            candidate
+            for candidate in semantic_candidates
+            if candidate.item_id in producer_selected_semantic_ids
+        )
         candidate_pool = self._build_candidate_pool(
             task_id=task_id,
             query_text=query_text,
@@ -1194,9 +1292,16 @@ class RetrieverFanoutPipeline:
             pack_id=f"pack-{task_id}",
             task_id=task_id,
             hard_facts=list(table_candidates),
-            text_candidates=list(semantic_candidates),
+            # This is only the in-process reference pack. The complete
+            # semantic candidate surface is carried below in the binary state
+            # manifest, and the consumer's selected IDs replace this slice.
+            text_candidates=list(producer_selected_semantic_candidates),
             hint_candidates=list(lexical_candidates),
-            budget_meta={"retriever_count": 3, "task_family": spec.task_family},
+            budget_meta={
+                "retriever_count": len(enabled_retrievers),
+                "enabled_retrievers": sorted(enabled_retrievers),
+                "task_family": spec.task_family,
+            },
         )
         selected_candidate_ids = {
             item.item_id
@@ -1223,6 +1328,9 @@ class RetrieverFanoutPipeline:
                 row_idx=index,
                 stable_key=_stable_entry_key(candidate),
                 byte_hint=len(candidate.rendered_text.encode("utf-8")),
+                candidate_id=candidate.item_id,
+                bucket=candidate.bucket,
+                importance_score=float(candidate.metadata.get("score", 0.0)),
                 locator=candidate.locator,
             )
             for index, candidate in enumerate(
@@ -1236,6 +1344,38 @@ class RetrieverFanoutPipeline:
             canonicalizer_version="canon-v1",
             extractor_version="retriever-fanout-v1",
         )
+        semantic_embedding_by_id = dict(semantic.candidate_embeddings)
+        semantic_manifest_entries = tuple(
+            HydrateManifestEntry(
+                row_idx=index,
+                stable_key=_stable_entry_key(candidate),
+                byte_hint=len(candidate.rendered_text.encode("utf-8")),
+                candidate_id=candidate.item_id,
+                bucket=candidate.bucket,
+                importance_score=float(candidate.metadata.get("score", 0.0)),
+                locator=candidate.locator,
+            )
+            for index, candidate in enumerate(
+                (
+                    candidate
+                    for candidate in semantic_candidates
+                    if candidate.locator is not None
+                    and candidate.item_id in semantic_embedding_by_id
+                ),
+                start=1,
+            )
+        )
+        semantic_state_manifest = (
+            HydrateManifest(
+                manifest_id=f"semantic-manifest-{task_id}",
+                source_doc_hashes=(document.source_doc_hash,),
+                entries=semantic_manifest_entries,
+                canonicalizer_version="canon-v1",
+                extractor_version="retriever-fanout-v1",
+            )
+            if semantic_manifest_entries
+            else None
+        )
         selected_evidence_bytes = self._selected_evidence_bytes_for_pack(evidence_pack)
         pruning_profile = self._build_pruning_profile(
             task_id=task_id,
@@ -1246,12 +1386,19 @@ class RetrieverFanoutPipeline:
             selected_evidence_bytes=selected_evidence_bytes,
             dynamic_pruning_decision=dynamic_pruning_decision,
         )
-        if semantic.query_embedding is None:
-            raise RuntimeError("semantic retriever must emit query embedding")
-        memory_query_embedding = self.semantic_retriever.encoder.encode(
-            embedding_id=f"embedding-memory-query-{task_id}",
-            text=str(consumed_objectives["memory"]["query_text"]),
-        )
+        # MemoryProxy still needs a query vector when semantic document
+        # retrieval is disabled.  Encode that control-plane query directly;
+        # no semantic candidate matrix/state is produced in this branch.
+        memory_query_embedding = semantic.query_embedding
+        if memory_query_embedding is None:
+            memory_query_embedding = self.semantic_retriever.encoder.encode(
+                embedding_id=f"embedding-query-{task_id}",
+                text=query_text,
+            )
+        query_embedding = semantic.query_embedding or memory_query_embedding
+        semantic_candidate_ids = {
+            entry.candidate_id for entry in semantic_manifest_entries
+        }
         return RetrievalBundle(
             task_id=task_id,
             query_text=query_text,
@@ -1261,7 +1408,7 @@ class RetrieverFanoutPipeline:
             pruning_profile=pruning_profile,
             evidence_pack=evidence_pack,
             hydrate_manifest=hydrate_manifest,
-            query_embedding=semantic.query_embedding,
+            query_embedding=query_embedding,
             selected_doc_hashes=(document.source_doc_hash,),
             full_corpus_bytes=document.full_corpus_bytes,
             selected_evidence_bytes=selected_evidence_bytes,
@@ -1269,6 +1416,12 @@ class RetrieverFanoutPipeline:
             consumed_objectives=consumed_objectives,
             consumed_objective_hashes=consumed_objective_hashes,
             memory_query_embedding=memory_query_embedding,
+            semantic_state_manifest=semantic_state_manifest,
+            semantic_candidate_embeddings=tuple(
+                (candidate_id, embedding)
+                for candidate_id, embedding in semantic.candidate_embeddings
+                if candidate_id in semantic_candidate_ids
+            ),
         )
 
     def run_multi_query(
@@ -1278,6 +1431,7 @@ class RetrieverFanoutPipeline:
         spec: CanonicalTaskSpec,
         query_texts: tuple[str, ...],
         planner_scope_payload: dict[str, object] | None = None,
+        enabled_evidence_types: tuple[str, ...] | None = None,
     ) -> MultiQueryRetrievalResult:
         """Run at most three approved queries and merge evidence deterministically without changing `run()`."""
         normalized_queries = tuple(query.strip() for query in query_texts if query.strip())
@@ -1300,7 +1454,14 @@ class RetrieverFanoutPipeline:
             semantic_plan["retrieval_objectives"] = objectives
             scope["semantic_task_plan"] = semantic_plan
             scope["query_text"] = query
-            bundles.append(self.run(task_id=f"{task_id}-q{index + 1}", spec=spec, planner_scope_payload=scope))
+            bundles.append(
+                self.run(
+                    task_id=f"{task_id}-q{index + 1}",
+                    spec=spec,
+                    planner_scope_payload=scope,
+                    enabled_evidence_types=enabled_evidence_types,
+                )
+            )
         return MultiQueryRetrievalResult(
             query_hashes=tuple(sha256_digest(query.lower()) for query in normalized_queries),
             bundles=tuple(bundles),
@@ -1334,6 +1495,7 @@ class RetrieverFanoutPipeline:
             spec=spec,
             query_texts=request.queries,
             planner_scope_payload=planner_scope_payload,
+            enabled_evidence_types=tuple(request.evidence_types),
         )
         initial_report = verifier.evaluate(initial.evidence_pack, request)
         reports = [initial_report]
@@ -1409,6 +1571,7 @@ class RetrieverFanoutPipeline:
             spec=spec,
             query_texts=expansion.queries,
             planner_scope_payload=planner_scope_payload,
+            enabled_evidence_types=tuple(expansion.evidence_types),
         )
         merged_pack = self._stable_fan_in_packs(
             task_id=request.task_id,
@@ -1477,3 +1640,127 @@ class RetrieverFanoutPipeline:
             semantic_contexts=merge("semantic_contexts"), lexical_hints=merge("lexical_hints"),
             conflicts=merge("conflicts"), budget_meta={"query_count": len(packs), "fan_in": "stable"},
         )
+
+
+def apply_semantic_state_selection(
+    bundle: RetrievalBundle,
+    *,
+    selected_candidate_ids: tuple[str, ...],
+    selected_scores: tuple[float, ...],
+    consumer_pid: int,
+) -> RetrievalBundle:
+    """Make the cross-process semantic consumer's selected set authoritative."""
+    if len(selected_candidate_ids) != len(selected_scores):
+        raise ValueError("semantic_selection_id_score_arity_mismatch")
+    if len(set(selected_candidate_ids)) != len(selected_candidate_ids):
+        raise ValueError("semantic_selection_duplicate_candidate_id")
+    available_ids = {
+        candidate_id for candidate_id, _embedding in bundle.semantic_candidate_embeddings
+    }
+    if not selected_candidate_ids or not set(selected_candidate_ids) <= available_ids:
+        raise ValueError("semantic_selection_candidate_outside_manifest")
+
+    score_by_id = dict(zip(selected_candidate_ids, selected_scores, strict=True))
+    rank_by_id = {
+        candidate_id: index
+        for index, candidate_id in enumerate(selected_candidate_ids, start=1)
+    }
+    semantic_output = next(
+        (
+            output
+            for output in bundle.outputs
+            if output.retriever_kind == RetrieverKind.SEMANTIC_CHUNK
+        ),
+        None,
+    )
+    if semantic_output is None:
+        raise ValueError("semantic_selection_output_missing")
+    candidates_by_id = {
+        candidate.item_id: candidate
+        for candidate in (
+            EvidenceCandidate(**payload) for payload in semantic_output.candidates
+        )
+        if candidate.item_id in available_ids
+    }
+    if not set(selected_candidate_ids) <= set(candidates_by_id):
+        raise ValueError("semantic_selection_hydration_candidate_missing")
+    semantic_contexts = tuple(
+        EvidenceItem(
+            item_id=candidate.item_id,
+            bucket=candidate.bucket,
+            locator=candidate.locator,
+            rendered_text=candidate.rendered_text,
+            source_name=candidate.source_name,
+            rank=rank_by_id[candidate_id],
+            score=score_by_id[candidate_id],
+            metadata=dict(candidate.metadata),
+        )
+        for candidate_id in selected_candidate_ids
+        for candidate in (candidates_by_id[candidate_id],)
+    )
+    pack = CanonicalEvidencePack(
+        pack_id=bundle.evidence_pack.pack_id,
+        task_id=bundle.evidence_pack.task_id,
+        source_doc_hashes=bundle.evidence_pack.source_doc_hashes,
+        hard_facts=bundle.evidence_pack.hard_facts,
+        structured_evidence=bundle.evidence_pack.structured_evidence,
+        semantic_contexts=semantic_contexts,
+        lexical_hints=bundle.evidence_pack.lexical_hints,
+        conflicts=bundle.evidence_pack.conflicts,
+        budget_meta={
+            **bundle.evidence_pack.budget_meta,
+            "semantic_selection_source": "cross_process_dense_state",
+            "semantic_consumer_pid": consumer_pid,
+            "semantic_selected_count": len(selected_candidate_ids),
+        },
+    )
+    non_semantic_selected = {
+        candidate_id
+        for candidate_id in bundle.rerank_result.selected_candidate_ids
+        if candidate_id not in available_ids
+    }
+    selected_set = non_semantic_selected | set(selected_candidate_ids)
+    rerank_items = tuple(
+        replace(
+            item,
+            selected=item.candidate_id in selected_set,
+            fused_score=score_by_id.get(item.candidate_id, item.fused_score),
+            rationale=(
+                "selected_by_cross_process_dense_semantic_consumer"
+                if item.candidate_id in score_by_id
+                else item.rationale
+            ),
+        )
+        for item in bundle.rerank_result.items
+    )
+    rerank = replace(
+        bundle.rerank_result,
+        selected_candidate_ids=tuple(
+            item.candidate_id for item in rerank_items if item.selected
+        ),
+        items=rerank_items,
+    )
+    selected_bytes = sum(
+        len(item.rendered_text.encode("utf-8"))
+        for item in (
+            *pack.hard_facts,
+            *pack.structured_evidence,
+            *pack.semantic_contexts,
+            *pack.lexical_hints,
+            *pack.conflicts,
+        )
+    )
+    pruning = replace(
+        bundle.pruning_profile,
+        selected_evidence_bytes=selected_bytes,
+        raw_evidence_bytes_seen_by_llm=selected_bytes,
+        pruning_gain_bytes=max(bundle.full_corpus_bytes - selected_bytes, 0),
+        selected_candidate_ids=rerank.selected_candidate_ids,
+    )
+    return replace(
+        bundle,
+        evidence_pack=pack,
+        rerank_result=rerank,
+        pruning_profile=pruning,
+        selected_evidence_bytes=selected_bytes,
+    )

@@ -25,6 +25,7 @@ from v2.control import (
     RefHandle,
     ReusePolicy,
     RunStart,
+    SubprocessExecutorTransport,
     SuccessResult,
     TrapFatal,
     frame_control_message,
@@ -49,6 +50,7 @@ from v2.memory import (
     DeterministicEmbeddingEncoder,
     MemoryCommit,
     MemoryIndexStore,
+    MemoryQuery,
     MemoryRef,
     MemoryType,
 )
@@ -59,7 +61,7 @@ from v2.provenance import (
     role_hydrated_slice,
 )
 from v2.refs import ExecutionArtifactRef, SemanticStateRef
-from v2.retrieval import RetrievalBundle, RetrieverFanoutPipeline
+from v2.retrieval import RetrievalBundle, RetrieverFanoutPipeline, apply_semantic_state_selection
 from v2.retrieval.corpus import OfflineCsvTableCorpus, OfflineFinancialReportCorpus, OfflineMarkdownLongDocCorpus
 from v2.route_tool_catalog import build_route_tool_surface, stable_tool_registry_profiles
 from v2.runtime.codeact import CodeActRequest, CodeActRunner
@@ -125,7 +127,15 @@ from v2.runtime.runtime_signature import runtime_signature_payload
 from v2.runtime.semantic_plan import resolve_semantic_task_plan
 from v2.runtime.session import RuntimeTaskSession, RuntimeWorkflowStep
 from v2.runtime.driver import RuntimeDriver, RuntimeDriverInput, RuntimeDriverProfile
-from v2.state import JsonContractStore, LayeredStateStore, LayeredStoragePolicy, MaterializedStateHandle, RefRegistryQuery
+from v2.state import (
+    JsonContractStore,
+    LayeredStateStore,
+    LayeredStoragePolicy,
+    MaterializedStateHandle,
+    RefRegistryQuery,
+    publish_dense_semantic_state,
+    query_embedding_from_dense_state,
+)
 from v2.state import MemorySidecarStore, RetrievalSidecarStore
 from v2.utils import sha256_digest, stable_json_dumps
 
@@ -1979,32 +1989,118 @@ def run_smoke(
         ),
         planner_scope_payload=planner_retrieval_objective,
     )
-    role_hydrated_slices = _build_role_hydrated_slices(retrieval)
-    # The bounded semantic Planner sees request semantics and output IDs only.
-    # Evidence hydration starts at Retriever fan-out, so Planner cannot copy facts
-    # or answers from the corpus into its plan.
-    role_hydrated_slices["planner"] = _empty_role_hydrated_slice("planner")
-
     state_store = LayeredStateStore(
         root=runtime_root / "state",
         policy=LayeredStoragePolicy.for_state_pool_mode(layer_config.state_pool_mode),
     )
     semantic_state_handle: MaterializedStateHandle | None = None
     semantic_ref: SemanticStateRef | None = None
-    if layer_config.semantic_pruning_enabled and layer_config.semantic_state_transfer_enabled:
-        semantic_payload = (stable_json_dumps(retrieval.query_embedding.canonical_payload()) + "\n").encode("utf-8")
-        semantic_state_handle = state_store.publish(
-            ref_id=f"state-{task_id}",
-            object_kind="EMBEDDING_STATE",
-            payload=semantic_payload,
+    semantic_consumer_result: SuccessResult | None = None
+    semantic_consumer_pid = 0
+    semantic_producer_pid = 0
+    semantic_selection_count = 0
+    if (
+        layer_config.semantic_pruning_enabled
+        and layer_config.semantic_state_transfer_enabled
+        and retrieval.semantic_state_manifest is not None
+        and retrieval.semantic_candidate_embeddings
+    ):
+        candidate_embeddings = tuple(
+            embedding for _candidate_id, embedding in retrieval.semantic_candidate_embeddings
         )
-        if state_store.load(f"state-{task_id}") != semantic_payload:
-            raise RuntimeError("semantic state materialization round-trip failed")
-        semantic_ref = _build_semantic_state_ref(
-            task_id=task_id,
-            bundle=retrieval,
-            materialized_state=semantic_state_handle,
+        publication = publish_dense_semantic_state(
+            store=state_store,
+            state_id=f"state-{task_id}",
+            query_embedding=retrieval.query_embedding,
+            candidate_embeddings=candidate_embeddings,
+            hydrate_manifest=retrieval.semantic_state_manifest,
+            owner_session_id=f"session-{task_id}",
+            encoder_revision="retriever-fanout-v1",
         )
+        semantic_state_handle = publication.handle
+        semantic_ref = publication.ref
+        semantic_producer_pid = publication.contract.producer_pid
+        semantic_entries = retrieval.semantic_state_manifest.entries
+        semantic_budget = sum(
+            max(int(entry.byte_hint), 0) for entry in semantic_entries
+        )
+        semantic_top_k = max(1, min(len(semantic_entries), max(
+            len(retrieval.evidence_pack.semantic_contexts), 1
+        )))
+        semantic_request = ExecRequest(
+            header=ControlHeader(
+                trace_id=trace_id,
+                task_id=task_id,
+                step_id="semantic.consume",
+                attempt_id="attempt-1",
+                target_role="executor",
+                timeout_ms=20_000,
+                event_type=EventType.REQ_EXEC,
+            ),
+            state_refs=(RefHandle(ref_id=semantic_ref.state_id, ref_kind="semantic_state"),),
+            artifact_refs=(),
+            runtime_reuse_contract="semantic_state_required",
+            output_contract_version="statebus.evidence_selection.v1",
+            workspace_root=str(runtime_root),
+            input_manifest_hash=publication.contract.hydrate_manifest_hash,
+            operation="semantic_select_v1",
+            state_root=str(state_store.root),
+            hydrate_manifest_id=publication.contract.hydrate_manifest_id,
+            semantic_top_k=semantic_top_k,
+            evidence_budget_bytes=semantic_budget,
+            expected_encoder_signature=publication.contract.encoder_signature,
+            capability_grant_hash=sha256_digest({
+                "task_id": task_id,
+                "operation": "semantic_select_v1",
+                "state_id": semantic_ref.state_id,
+                "manifest_id": publication.contract.hydrate_manifest_id,
+            }),
+        )
+        semantic_consumer_result = SubprocessExecutorTransport(
+            socket_path=runtime_root / "semantic-consumer.sock",
+            timeout_s=20.0,
+        ).execute(semantic_request)
+        if not isinstance(semantic_consumer_result, SuccessResult):
+            state_store.release(semantic_ref.state_id)
+            raise RuntimeError(
+                "semantic_state_consume_failed:"
+                + getattr(semantic_consumer_result, "error_detail", "unknown")
+            )
+        if semantic_consumer_result.consumed_state_ref_id != semantic_ref.state_id:
+            state_store.release(semantic_ref.state_id)
+            raise RuntimeError("semantic_state_consumer_ref_mismatch")
+        if semantic_consumer_result.producer_pid == semantic_consumer_result.consumer_pid:
+            state_store.release(semantic_ref.state_id)
+            raise RuntimeError("semantic_state_consumer_not_cross_process")
+        semantic_consumer_pid = semantic_consumer_result.consumer_pid
+        semantic_producer_pid = semantic_consumer_result.producer_pid
+        semantic_selection_count = len(semantic_consumer_result.selected_candidate_ids)
+        retrieval = apply_semantic_state_selection(
+            retrieval,
+            selected_candidate_ids=semantic_consumer_result.selected_candidate_ids,
+            selected_scores=semantic_consumer_result.selected_scores,
+            consumer_pid=semantic_consumer_pid,
+        )
+        # MemoryProxy reads the same row-0 vector from the published state;
+        # no second semantic encoding of the task query is permitted.
+        state_query_embedding = query_embedding_from_dense_state(
+            state_root=state_store.root,
+            ref=semantic_ref,
+            embedding_id=retrieval.query_embedding.embedding_id,
+            expected_encoder_signature=publication.contract.encoder_signature,
+        )
+        retrieval = replace(
+            retrieval,
+            query_embedding=state_query_embedding,
+            memory_query_embedding=state_query_embedding,
+        )
+
+    # The bounded semantic Planner sees request semantics and output IDs only.
+    # Evidence hydration starts at Retriever fan-out, so Planner cannot copy facts
+    # or answers from the corpus into its plan.  This is intentionally rebuilt
+    # after cross-process selection so every downstream role sees the selected set.
+    role_hydrated_slices = _build_role_hydrated_slices(retrieval)
+    role_hydrated_slices["planner"] = _empty_role_hydrated_slice("planner")
 
     runtime_stage_metrics: dict[str, float] = {}
     runtime_stage_metrics["codeact_execution_stage_ms"] = 0.0
@@ -2160,7 +2256,6 @@ def run_smoke(
         }
     )
 
-    embedding_encoder = DeterministicEmbeddingEncoder(dims=retrieval.query_embedding.dims)
     memory_store = MemoryIndexStore(store_root=runtime_root / "memory_index")
     memory_query_embedding = retrieval.memory_query_embedding or retrieval.query_embedding
     memory_store.put_embedding(memory_query_embedding)
@@ -2170,6 +2265,7 @@ def run_smoke(
         target_memory_store=memory_store,
     )
     if seed_replay_memory:
+        embedding_encoder = DeterministicEmbeddingEncoder(dims=retrieval.query_embedding.dims)
         historical_embedding = embedding_encoder.encode(
             embedding_id=f"embedding-history-{task_id}",
             text=str(retrieval.consumed_objectives.get("memory", {}).get("query_text", retrieval.query_text)),
@@ -2221,12 +2317,24 @@ def run_smoke(
             extractor_version="retriever-fanout-v1",
     )
     memory_store.load_persisted_state()
-    memory_match_result = memory_store.lookup(
+    memory_query = MemoryQuery(
         query_task_id=task_id,
         query_spec_hash=compiler_result.canonical_task_spec.spec_hash,
+        query_text=str(
+            retrieval.consumed_objectives.get("memory", {}).get(
+                "query_text", retrieval.query_text
+            )
+        ),
+        tags=tuple(compiler_result.canonical_task_spec.required_tools),
         query_embedding=memory_query_embedding,
-        allow_replay=layer_config.replay_enabled,
+        limit=3,
+        allow_assist=True,
+        allow_validated_replay=layer_config.replay_enabled,
+        allow_exact_replay=layer_config.replay_enabled,
+        compatibility_signature=runtime_signature.combined_digest,
+        output_contract_version="output-v1",
     )
+    memory_match_result = memory_store.lookup_hybrid(memory_query)
     replay_input_artifact_hashes = (
         evidence_execution_input_replay_hash(retrieval.evidence_pack),
         hydrate_manifest_replay_hash(retrieval.hydrate_manifest),
@@ -2779,6 +2887,19 @@ def run_smoke(
             },
             semantic_state_handle=semantic_state_handle,
             semantic_ref=semantic_ref,
+            semantic_state_consumer_pid=semantic_consumer_pid,
+            semantic_state_producer_pid=semantic_producer_pid,
+            semantic_state_selected_count=semantic_selection_count,
+            semantic_state_selected_candidate_ids=(
+                ()
+                if semantic_consumer_result is None
+                else semantic_consumer_result.selected_candidate_ids
+            ),
+            semantic_state_selected_bytes=(
+                0
+                if semantic_consumer_result is None
+                else semantic_consumer_result.selected_evidence_bytes
+            ),
             input_manifest=input_manifest,
             artifact_manifest=artifact_manifest,
             log_capture=log_capture,

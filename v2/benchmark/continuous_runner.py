@@ -34,14 +34,13 @@ from v2.runtime.prefix_feedback import PrefixCacheFeedbackLoop
 from v2.runtime.vllm_metrics import VllmPrefixCacheCounterDelta
 
 
-SUPPORTED_CONTINUOUS_FAMILY_IDS = {
-    "csv_correlation_replay_v1",
-    "csv_table_profile_v1",
-    "cross_period_financial_v1",
-    "incident_diagnosis_v2",
-    "kv_prefix_reuse_v1",
-    "long_doc_table_v1",
-    "long_doc_metric_replay_v1",
+_RUNTIME_TASK_FAMILIES_BY_DATASET_KIND = {
+    "csv": frozenset({"continuous_csv_table_analysis"}),
+    "incident_log": frozenset({"incident_diagnosis_v2"}),
+    "markdown_long_doc": frozenset({
+        "continuous_long_doc_table_analysis",
+        "cross_period_financial_analysis",
+    }),
 }
 
 CONTINUOUS_TEXT_SEMANTIC_SELECTION_PROFILE = BenchmarkLayerProfile(
@@ -135,7 +134,51 @@ def _prepare_dir(path: Path) -> Path:
 
 
 def _supported_continuous_family_ids() -> list[str]:
-    return sorted(SUPPORTED_CONTINUOUS_FAMILY_IDS)
+    root = Path("v2/benchmark/samples/continuous_task_families")
+    supported: list[str] = []
+    for path in sorted(root.glob("*/manifest.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        datasets = payload.get("datasets", [])
+        rounds = payload.get("rounds", [])
+        kind_by_dataset = {
+            str(item.get("dataset_id", "")): str(item.get("kind", ""))
+            for item in datasets
+            if isinstance(item, dict)
+        }
+        if rounds and all(
+            isinstance(round_payload, dict)
+            and str(dict(round_payload.get("canonical_task_spec", {})).get("task_family", ""))
+            in _RUNTIME_TASK_FAMILIES_BY_DATASET_KIND.get(
+                kind_by_dataset.get(str(round_payload.get("dataset_id", "")), ""),
+                frozenset(),
+            )
+            for round_payload in rounds
+        ):
+            family_id = str(payload.get("family_id", "")).strip()
+            if family_id:
+                supported.append(family_id)
+    return supported
+
+
+def _validate_continuous_execution_contract(family: ContinuousTaskFamily) -> None:
+    dataset_kind_by_id = {dataset.dataset_id: dataset.kind for dataset in family.datasets}
+    for round_ in family.rounds:
+        dataset_kind = dataset_kind_by_id.get(round_.dataset_id, "")
+        expected_task_families = _RUNTIME_TASK_FAMILIES_BY_DATASET_KIND.get(dataset_kind)
+        if expected_task_families is None:
+            raise ValueError(
+                "continuous runtime has no registered dataset capability for "
+                f"kind={dataset_kind or 'missing'}"
+            )
+        if round_.canonical_task_spec.task_family not in expected_task_families:
+            raise ValueError(
+                "continuous task input contract does not match the registered dataset capability: "
+                f"kind={dataset_kind}, expected={sorted(expected_task_families)}, "
+                f"got={round_.canonical_task_spec.task_family}"
+            )
 
 
 def _continuous_sample(round_) -> ContinuousRoundSample:
@@ -214,6 +257,7 @@ def _case_from_smoke(
             "minimum_reuse_class": sample.minimum_reuse_class,
             "expected_metric_effects": dict(sample.expected_metric_effects),
             "layer": layer.value,
+            "state_storage_kind": smoke.state_storage_kind,
         },
         metrics={
             **dict(sorted(smoke.task_metrics.items())),
@@ -1053,6 +1097,7 @@ def run_continuous_benchmark_family(
     layer: BenchmarkLayer,
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    state_pool_mode: str = "auto",
     profile_override: BenchmarkLayerProfile | None = None,
     smoke_config_override: SmokeLayerConfig | None = None,
     report_layer_label: str | None = None,
@@ -1061,11 +1106,7 @@ def run_continuous_benchmark_family(
     persistence_profile: str = "audit_full",
     task_schedule_plan: str = "input",
 ) -> BenchmarkFamilyReport:
-    if family.family_id not in SUPPORTED_CONTINUOUS_FAMILY_IDS:
-        raise ValueError(
-            "continuous execution is only implemented for "
-            f"{', '.join(sorted(SUPPORTED_CONTINUOUS_FAMILY_IDS))}, got {family.family_id}"
-        )
+    _validate_continuous_execution_contract(family)
 
     profile = profile_override or LAYER_PROFILES[layer]
     layer_workspace_root = _prepare_dir(workspace_root)
@@ -1076,6 +1117,7 @@ def run_continuous_benchmark_family(
             **base_smoke_config.__dict__,
             "role_path_mode": role_path_mode,
             "embedding_mode": embedding_mode,
+            "state_pool_mode": state_pool_mode,
             "persistence_profile": persistence_profile,
         }
     )
@@ -1250,6 +1292,12 @@ def run_continuous_benchmark_family(
         "history_backed_replay_enabled": layer == BenchmarkLayer.L3,
         "role_path_mode": role_path_mode,
         "embedding_mode": embedding_mode,
+        "state_pool_mode_requested": state_pool_mode,
+        "observed_semantic_state_storage_kinds": sorted({
+            str(case.audit_summary.get("state_storage_kind", ""))
+            for case in cases
+            if str(case.audit_summary.get("state_storage_kind", "")) not in {"", "disabled"}
+        }),
         "layer_contract_gate_enabled": enforce_expected_metric_effects and layer in {BenchmarkLayer.L2, BenchmarkLayer.L3},
         "kv_reuse_analysis": kv_reuse_analysis,
         "prefix_feedback": {
@@ -1291,6 +1339,7 @@ def run_continuous_text_semantic_selection_family(
     suite_id: str,
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
 ) -> BenchmarkFamilyReport:
     return run_continuous_benchmark_family(
@@ -1302,6 +1351,7 @@ def run_continuous_text_semantic_selection_family(
         layer=BenchmarkLayer.L2,
         role_path_mode=role_path_mode,
         embedding_mode=embedding_mode,
+        state_pool_mode=state_pool_mode,
         profile_override=CONTINUOUS_TEXT_SEMANTIC_SELECTION_PROFILE,
         smoke_config_override=CONTINUOUS_TEXT_SEMANTIC_SELECTION_SMOKE_CONFIG,
         report_layer_label="T2",
@@ -1329,6 +1379,7 @@ def run_continuous_benchmark_suite(
     suite_id: str,
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
     task_schedule_plan: str = "input",
     claim_level: str = "first_pass",
@@ -1348,6 +1399,7 @@ def run_continuous_benchmark_suite(
             layer=layer,
             role_path_mode=role_path_mode,
             embedding_mode=embedding_mode,
+            state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
             task_schedule_plan=task_schedule_plan,
             metadata_extra={
@@ -1449,6 +1501,12 @@ def run_continuous_benchmark_suite(
             "claim_tier": family.claim_tier,
             "manifest_path": family.manifest_path,
             "continuous_execution": True,
+            "state_pool_mode_requested": state_pool_mode,
+            "observed_semantic_state_storage_kinds": sorted({
+                kind
+                for layer_report in layer_reports
+                for kind in layer_report.metadata.get("observed_semantic_state_storage_kinds", [])
+            }),
             "source_basis": dict(family.source_basis),
             "kv_prefix_probe": dict(family.kv_prefix_probe),
             **_task_schedule_metadata(schedule_plan),
@@ -1477,6 +1535,7 @@ def run_continuous_benchmark_collection(
     suite_id: str,
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    state_pool_mode: str = "auto",
     collection_scope: str = "formal_continuous_task_families",
     persistence_profile: str = "audit_full",
     task_schedule_plan: str = "input",
@@ -1484,6 +1543,13 @@ def run_continuous_benchmark_collection(
 ) -> BenchmarkContinuousCollectionReport:
     if not families:
         raise ValueError("continuous benchmark collection requires at least one family")
+    if len(families) < 2:
+        raise ValueError("continuous benchmark collection requires at least two families")
+    total_round_count = sum(family.round_count for family in families)
+    if total_round_count < 10:
+        raise ValueError(
+            "continuous benchmark collection requires at least ten total executions"
+        )
 
     family_reports: list[BenchmarkSuiteReport] = []
     for family in families:
@@ -1497,6 +1563,7 @@ def run_continuous_benchmark_collection(
                 suite_id=f"{suite_id}-{family_slug}",
                 role_path_mode=role_path_mode,
                 embedding_mode=embedding_mode,
+                state_pool_mode=state_pool_mode,
                 persistence_profile=persistence_profile,
                 task_schedule_plan=task_schedule_plan,
                 claim_level="diagnostic" if execution_scope != "full" else "first_pass",
@@ -1714,6 +1781,12 @@ def run_continuous_benchmark_collection(
             "supported_continuous_execution_families": [family.family_id for family in families],
             "role_path_mode": role_path_mode,
             "embedding_mode": embedding_mode,
+            "state_pool_mode_requested": state_pool_mode,
+            "observed_semantic_state_storage_kinds": sorted({
+                kind
+                for report in family_reports
+                for kind in report.metadata.get("observed_semantic_state_storage_kinds", [])
+            }),
             "collection_scope": collection_scope,
             "task_schedule_plan": _normalise_task_schedule_plan(task_schedule_plan),
         },

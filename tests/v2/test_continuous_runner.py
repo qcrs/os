@@ -40,7 +40,8 @@ def test_continuous_runner_rejects_unsupported_family(tmp_path: Path) -> None:
             embedding_mode="deterministic",
         )
     except ValueError as exc:
-        assert "long_doc_metric_replay_v1" in str(exc)
+        assert "no registered dataset capability" in str(exc)
+        assert "kind=grid_world" in str(exc)
     else:
         raise AssertionError("expected continuous runner to reject unsupported family")
 
@@ -445,43 +446,46 @@ def test_continuous_runner_executes_csv_replay_family(tmp_path: Path) -> None:
 
 
 def test_continuous_runner_executes_formal_collection(tmp_path: Path) -> None:
-    csv_family = load_continuous_task_family(
-        Path("v2/benchmark/samples/continuous_task_families/csv_table_profile")
+    operating_metrics_family = load_continuous_task_family(
+        Path("v2/benchmark/samples/continuous_task_families/formal_operating_metrics")
     )
-    long_doc_family = load_continuous_task_family(
-        Path("v2/benchmark/samples/continuous_task_families/long_doc_table")
+    financial_reports_family = load_continuous_task_family(
+        Path("v2/benchmark/samples/continuous_task_families/formal_financial_reports")
     )
     report = run_continuous_benchmark_collection(
-        families=(csv_family, long_doc_family),
+        families=(operating_metrics_family, financial_reports_family),
         workspace_root=tmp_path / "workspaces",
         runtime_root=tmp_path / "runtime",
         socket_path=tmp_path / "control.sock",
         suite_id="continuous-collection",
         role_path_mode="deterministic",
         embedding_mode="deterministic",
+        state_pool_mode="shared_memory",
     )
 
     assert report.metadata["continuous_execution"] is True
     assert report.metadata["collection_scope"] == "formal_continuous_task_families"
+    assert report.metadata["state_pool_mode_requested"] == "shared_memory"
+    assert report.metadata["observed_semantic_state_storage_kinds"] == ["shared_memory"]
     assert report.collection_summary["family_count"] == 2.0
-    assert report.collection_summary["continuous_round_count"] == 20.0
+    assert report.collection_summary["continuous_round_count"] == 10.0
     assert report.collection_summary["L2_semantic_state_transfer_count"] > 0.0
-    assert report.collection_summary["L3_artifact_reuse_count"] >= 14.0
-    assert report.collection_summary["L3_reuse_gain"] == 0.0
+    assert report.collection_summary["L3_artifact_reuse_count"] > 0.0
+    assert report.collection_summary["L3_reuse_gain"] == 2.0
     assert report.collection_summary["L3_history_reuse_gain"] > 0.0
     assert report.collection_summary["L3_history_step_reduction_count"] > 0.0
-    assert report.collection_summary["history_backed_reuse_count"] >= 14.0
+    assert report.collection_summary["history_backed_reuse_count"] > 0.0
     assert report.collection_summary["quality_headline_eligible_family_count"] == 2.0
-    assert report.collection_summary["replay_headline_eligible_family_count"] == 0.0
-    assert report.collection_summary["history_backed_only_family_count"] == 2.0
-    assert report.collection_summary["history_target_round_count"] == 10.0
-    assert report.collection_summary["history_observed_reuse_round_count"] == 18.0
+    assert report.collection_summary["replay_headline_eligible_family_count"] == 1.0
+    assert report.collection_summary["history_backed_only_family_count"] == 1.0
+    assert report.collection_summary["history_target_round_count"] == 4.0
+    assert report.collection_summary["history_observed_reuse_round_count"] == 4.0
     assert report.collection_summary["history_missing_target_round_count"] == 0.0
-    assert report.collection_summary["history_additional_reuse_round_count"] == 8.0
-    assert report.collection_summary["validated_replay_count"] == 0.0
+    assert report.collection_summary["history_additional_reuse_round_count"] == 0.0
+    assert report.collection_summary["validated_replay_count"] >= 2.0
     assert report.collection_summary["exact_replay_count"] == 0.0
-    assert report.collection_summary["replay_target_round_count"] == 0.0
-    assert report.collection_summary["replay_observed_round_count"] == 0.0
+    assert report.collection_summary["replay_target_round_count"] == 2.0
+    assert report.collection_summary["replay_observed_round_count"] == 2.0
     assert report.collection_summary["replay_missing_target_round_count"] == 0.0
     assert report.collection_summary["replay_unexpected_round_count"] == 0.0
     assert report.evidence_pack["schema_version"] == "statebus.continuous_collection_evidence_pack.v1"
@@ -496,35 +500,29 @@ def test_continuous_runner_executes_formal_collection(tmp_path: Path) -> None:
         ]
         >= 0.0
     )
-    assert report.evidence_pack["runtime_overhead_summary"]["write_count_totals"]["role_prompt_slice_artifact_count"] >= 80.0
+    assert report.evidence_pack["runtime_overhead_summary"]["write_count_totals"]["role_prompt_slice_artifact_count"] >= 40.0
     assert Path(report.markdown_report_path).exists()
     assert report.eligible_for_quality_headline is True
     assert report.eligible_for_replay_headline is False
     assert report.eligible_for_headline is False
-    assert report.admissibility_summary["csv_table_profile_v1"]["L3_history_artifact_reuse_count"] >= 7.0
-    assert report.admissibility_summary["csv_table_profile_v1"]["L3_history_step_reduction_count"] > 0.0
-    assert report.admissibility_summary["csv_table_profile_v1"]["history_target_round_count"] == 6.0
-    assert report.admissibility_summary["csv_table_profile_v1"]["history_observed_reuse_round_count"] == 9.0
-    assert report.admissibility_summary["csv_table_profile_v1"]["history_additional_reuse_round_count"] == 3.0
-    assert report.admissibility_summary["csv_table_profile_v1"]["replay_target_round_count"] == 0.0
-    assert report.admissibility_summary["csv_table_profile_v1"]["eligible_for_replay_headline"] is False
-    assert report.admissibility_summary["csv_table_profile_v1"]["replay_gate_reason"] == ""
-    assert report.admissibility_summary["csv_table_profile_v1"]["replay_admissibility_audit"]["audit_mode"] == "history_backed"
-    assert report.admissibility_summary["csv_table_profile_v1"]["replay_admissibility_audit"]["unexpected_history_target_rounds"] == [2, 3, 6]
-    assert report.admissibility_summary["long_doc_table_v1"]["L3_history_artifact_reuse_count"] >= 7.0
-    assert report.admissibility_summary["long_doc_table_v1"]["L3_history_step_reduction_count"] > 0.0
-    assert report.admissibility_summary["long_doc_table_v1"]["history_target_round_count"] == 4.0
-    assert report.admissibility_summary["long_doc_table_v1"]["history_observed_reuse_round_count"] == 9.0
-    assert report.admissibility_summary["long_doc_table_v1"]["history_additional_reuse_round_count"] == 5.0
-    assert report.admissibility_summary["long_doc_table_v1"]["replay_target_round_count"] == 0.0
-    assert report.admissibility_summary["long_doc_table_v1"]["eligible_for_replay_headline"] is False
-    assert report.admissibility_summary["long_doc_table_v1"]["replay_gate_reason"] == ""
-    assert report.admissibility_summary["long_doc_table_v1"]["replay_admissibility_audit"]["audit_mode"] == "history_backed"
-    assert report.admissibility_summary["long_doc_table_v1"]["replay_admissibility_audit"]["unexpected_history_target_rounds"] == [2, 3, 4, 6, 7]
+    operating_audit = report.admissibility_summary["formal_operating_metrics_v1"]
+    assert operating_audit["history_target_round_count"] == 4.0
+    assert operating_audit["history_observed_reuse_round_count"] == 4.0
+    assert operating_audit["history_missing_target_round_count"] == 0.0
+    assert operating_audit["replay_admissibility_audit"]["audit_mode"] == "history_backed"
+    financial_audit = report.admissibility_summary["formal_financial_reports_v1"]
+    assert financial_audit["replay_target_round_count"] == 2.0
+    assert financial_audit["replay_observed_round_count"] == 2.0
+    assert financial_audit["replay_missing_target_round_count"] == 0.0
+    assert financial_audit["eligible_for_replay_headline"] is True
     assert {family_report.task_family for family_report in report.family_reports} == {
-        "csv_table_profile_v1",
-        "long_doc_table_v1",
+        "formal_operating_metrics_v1",
+        "formal_financial_reports_v1",
     }
+    assert all(
+        family_report.metadata["observed_semantic_state_storage_kinds"] == ["shared_memory"]
+        for family_report in report.family_reports
+    )
 
 
 def test_continuous_runner_executes_replay_collection(tmp_path: Path) -> None:

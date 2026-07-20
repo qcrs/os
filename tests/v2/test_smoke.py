@@ -46,7 +46,7 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert result.reloaded_input_manifest_hash
     assert result.canonical_task_spec_path
     assert result.output_artifact_hash
-    assert result.telemetry_event_count == 39
+    assert result.telemetry_event_count == 40
     assert Path(result.canonical_task_spec_path).exists()
     assert Path(result.input_manifest_path).exists()
     assert Path(result.artifact_manifest_path).exists()
@@ -261,10 +261,11 @@ def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert any('"canonical_task_spec_hash":"' in line for line in runtime_fact_lines)
     assert any('"step_id":"planner.plan"' in line for line in runtime_fact_lines)
     assert any('"step_id":"summarizer.commit"' in line for line in runtime_fact_lines)
-    hydrated_role_lines = [line for line in runtime_fact_lines if '"event_type":"STATE_HYDRATED"' in line]
-    assert any('"role":"retriever"' in line and '"hydrated_role":"retriever"' in line for line in hydrated_role_lines)
-    assert any('"role":"executor"' in line and '"hydrated_role":"executor"' in line for line in hydrated_role_lines)
-    assert any('"role":"summarizer"' in line and '"hydrated_role":"summarizer"' in line for line in hydrated_role_lines)
+    assert sum('"event_type":"STATE_PUBLISHED"' in line for line in runtime_fact_lines) == 1
+    assert sum('"event_type":"STATE_RESOLVED"' in line for line in runtime_fact_lines) == 1
+    assert sum('"event_type":"STATE_CONSUMED"' in line for line in runtime_fact_lines) == 1
+    assert sum('"event_type":"STATE_RELEASED"' in line for line in runtime_fact_lines) == 1
+    assert not any('"event_type":"STATE_HYDRATED"' in line for line in runtime_fact_lines)
     stdout_payload = json.loads((Path(result.workspace_root) / "logs" / "step-execute.stdout.json").read_text(encoding="utf-8"))
     assert "stdout_preview" not in stdout_payload
     assert "stdout" in stdout_payload
@@ -533,12 +534,13 @@ def test_v2_smoke_subprocess_transport_avoids_loopback(tmp_path: Path, monkeypat
         ),
     )
 
-    assert calls["subprocess_exchange_count"] == 1
+    # One subprocess is the semantic consumer and one is the executor.
+    assert calls["subprocess_exchange_count"] == 2
     assert result.response_sequence == ("ACK_RECV", "RUN_START", "HEARTBEAT", "RES_SUCC")
     assert result.quality_floor.quality_floor_pass is True
     assert result.task_metrics["control_message_count"] == 4.0
     assert result.task_metrics["semantic_state_transfer_count"] == 1.0
-    assert result.state_storage_kind in {"memfd", "shared_memory"}
+    assert result.state_storage_kind == "shared_memory"
 
 
 def test_v2_smoke_aggregates_role_path_token_usage(tmp_path: Path, monkeypatch) -> None:

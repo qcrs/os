@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from typing import Callable
 
@@ -8,6 +9,9 @@ from v2.contracts import EvidenceCoverageReport, EvidenceCoverageStatus, Evidenc
 from v2.refs import CanonicalEvidencePack, EvidenceItem
 from v2.runtime.evidence_coverage import EvidenceCoverageVerifier, validate_evidence_request
 from v2.utils import sha256_digest
+
+if TYPE_CHECKING:
+    from v2.retrieval.models import RetrievalBundle
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,10 @@ class AdaptiveRetrievalResult:
     query_hashes: tuple[str, ...]
     coverage_reports: tuple[EvidenceCoverageReport, ...] = ()
     coverage_decisions: tuple["RetrievalCoverageDecision", ...] = ()
+    # Product Runtime keeps the typed retrieval bundles alongside the
+    # projected EvidencePack so downstream state consumers can operate on the
+    # producer-owned dense matrix without receiving Python tuples over UDS.
+    retrieval_bundles: tuple["RetrievalBundle", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,11 +100,20 @@ class AdaptiveRetrievalAdapter:
             allowed_corpus_scope_ids=allowed_corpus_scope_ids,
             previous_query_hashes=previous_query_hashes,
         )
-        packs = tuple(self._retrieve_query(query, request) for query in request.queries)
+        raw_results = tuple(self._retrieve_query(query, request) for query in request.queries)
+        bundles = tuple(
+            result for result in raw_results
+            if hasattr(result, "semantic_candidate_embeddings") and hasattr(result, "evidence_pack")
+        )
+        packs = tuple(
+            result.evidence_pack if hasattr(result, "evidence_pack") else result
+            for result in raw_results
+        )
         return AdaptiveRetrievalResult(
             request=request,
             evidence_pack=stable_fan_in_evidence_packs(task_id=request.task_id, packs=packs),
             query_hashes=tuple(sha256_digest(query.strip().lower()) for query in request.queries),
+            retrieval_bundles=bundles,
         )
 
     def run_with_single_expansion(
@@ -139,6 +156,7 @@ class AdaptiveRetrievalAdapter:
             return AdaptiveRetrievalResult(
                 request=request, evidence_pack=initial.evidence_pack, query_hashes=initial.query_hashes,
                 coverage_reports=tuple(reports), coverage_decisions=tuple(decisions),
+                retrieval_bundles=initial.retrieval_bundles,
             )
         if max_expansions == 0 or propose_expansion is None:
             decision = RetrievalCoverageDecision(
@@ -157,6 +175,7 @@ class AdaptiveRetrievalAdapter:
             return AdaptiveRetrievalResult(
                 request=request, evidence_pack=initial.evidence_pack, query_hashes=initial.query_hashes,
                 coverage_reports=tuple(reports), coverage_decisions=tuple(decisions),
+                retrieval_bundles=initial.retrieval_bundles,
             )
         expansion = propose_expansion(initial_report)
         if expansion is None:
@@ -176,6 +195,7 @@ class AdaptiveRetrievalAdapter:
             return AdaptiveRetrievalResult(
                 request=request, evidence_pack=initial.evidence_pack, query_hashes=initial.query_hashes,
                 coverage_reports=tuple(reports), coverage_decisions=tuple(decisions),
+                retrieval_bundles=initial.retrieval_bundles,
             )
         if expansion.task_id != request.task_id or expansion.step_id != request.step_id:
             raise ValueError("expansion_request_scope_mismatch")
@@ -210,6 +230,7 @@ class AdaptiveRetrievalAdapter:
             query_hashes=query_hashes,
             coverage_reports=tuple(reports),
             coverage_decisions=tuple(decisions),
+            retrieval_bundles=initial.retrieval_bundles + follow_up.retrieval_bundles,
         )
 
 

@@ -283,12 +283,16 @@ def test_code_policy_repair_budgets_are_explicit_and_bounded() -> None:
 
     assert policy.max_policy_repairs == 1
     assert policy.max_runtime_repairs == 1
+    assert policy.max_quality_repairs == 1
     assert policy.canonical_payload()["max_policy_repairs"] == 1
     assert policy.canonical_payload()["max_runtime_repairs"] == 1
+    assert policy.canonical_payload()["max_quality_repairs"] == 1
     with pytest.raises(CodePolicyError, match="invalid_policy_repair_budget"):
         LlmCodeActRunner._validate_policy_paths(replace(policy, max_policy_repairs=2))
     with pytest.raises(CodePolicyError, match="invalid_runtime_repair_budget"):
         LlmCodeActRunner._validate_policy_paths(replace(policy, max_runtime_repairs=2))
+    with pytest.raises(CodePolicyError, match="invalid_quality_repair_budget"):
+        LlmCodeActRunner._validate_policy_paths(replace(policy, max_quality_repairs=2))
 
 
 def test_code_policy_rejects_input_mutation_and_reflection() -> None:
