@@ -1,0 +1,20 @@
+{
+  "schema_version": "statebus.runtime_freeze_snapshot.v1",
+  "recorded_at": "2026-07-20 13:38:58 CST",
+  "freeze_kind": "dirty_worktree_content_hash",
+  "git_head": "a3a5ec836d13c5e9d77811edd25d58d24af227b6",
+  "git_dirty": true,
+  "dirty_entry_count": 44,
+  "runtime_freeze_sha": "e0b04923132f4a139eaa4c2b0ec71b1299d5fd75ccb492d362987a67f5f95afa",
+  "directory_hashes": {
+    "v2/control": "35f82790062975a9bb3200ef7b965606c805fb969c1bbf2674947a274b00df09",
+    "v2/memory": "4439343001073c3d59b603b965593942a3276785c6c5d3b166bc1ae46b5b958c",
+    "v2/runtime": "772f217de7e74808fda3d44966e310f9b4b388cdd74126b510696b5085b955fd",
+    "v2/state": "f87587bfad569aeec41b1c3a83fc1011e1530a5bece804fa7d5efe5e86c9e08f"
+  },
+  "hash_command": "rg --files DIR | sort | xargs sha256sum | sha256sum",
+  "per_file_hashes_path": "docs/improvement/25_contest_evidence_closure_20260720/runtime_freeze_files.sha256",
+  "per_file_hashes_sha256": "b3a13dd7c23e15c5c726cbec3c7f97259458bed260969d0f712e470122b18ebe",
+  "per_file_count": 59,
+  "claim_scope": "worktree snapshot audit; not a commit-range freeze because repository metadata is read-only"
+}

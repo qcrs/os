@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from v2.benchmark.comparator_runner import compare_fixed_answer_with_external
+from v2.benchmark.adaptive_memory import run_adaptive_memory
 from v2.benchmark.continuous_runner import (
     run_continuous_benchmark_collection,
     run_continuous_benchmark_family,
@@ -30,6 +31,7 @@ from v2.benchmark.reporting import (
     suite_report_to_dict,
 )
 from v2.benchmark.replay_negative_audit import run_replay_negative_audit
+from v2.benchmark.semantic_holdout import run_semantic_holdout
 from v2.benchmark.task_registry import formal_family_payload, load_registered_formal_samples
 from v2.runtime import runtime_preflight
 from v2.utils import stable_json_dumps
@@ -136,6 +138,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "continuous-design-audit",
             "flagship-ablation",
             "replay-negative-audit",
+            "adaptive-memory",
+            "semantic-holdout",
             "preflight",
         ),
         default="preflight",
@@ -181,6 +185,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default="deterministic",
         choices=("deterministic", "api", "local_vllm"),
         help="planner/retriever/executor/summarizer mode",
+    )
+    for role in ("planner", "retriever", "summarizer"):
+        parser.add_argument(
+            f"--{role}-mode",
+            default="",
+            choices=("", "deterministic", "api", "local_vllm"),
+            help=f"optional {role} mode override; defaults to --role-path-mode",
+        )
+    parser.add_argument(
+        "--executor-mode",
+        default="",
+        choices=("", "deterministic", "deterministic_codeact", "api", "local_vllm"),
+        help="optional Executor mode/recipe override; defaults to --role-path-mode",
     )
     parser.add_argument(
         "--embedding-mode",
@@ -252,6 +269,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("input", "cache_friendly", "cache_hostile"),
         help="continuous task order for KV prefix probes",
     )
+    parser.add_argument(
+        "--round-view",
+        default="",
+        help="named continuous-family experiment view (for example causal_core or long_horizon)",
+    )
     return parser
 
 
@@ -311,6 +333,29 @@ def _limit_continuous_family(
     )
 
 
+def _select_continuous_family_view(
+    family: ContinuousTaskFamily,
+    round_view: str,
+) -> tuple[ContinuousTaskFamily, int, bool]:
+    """Select a declared view and report whether it is a complete formal object."""
+
+    normalized = round_view.strip()
+    original_round_count = int(
+        getattr(family, "round_count", len(getattr(family, "rounds", ())))
+    )
+    if not normalized:
+        return family, original_round_count, False
+    if not family.experiment_views:
+        raise SystemExit(
+            f"family {family.family_id} does not declare experiment_views; cannot select --round-view {normalized}"
+        )
+    try:
+        selected = family.select_view(normalized)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    return selected, original_round_count, True
+
+
 def _continuous_round_count(family: ContinuousTaskFamily) -> int:
     return int(getattr(family, "round_count", len(getattr(family, "rounds", ()))))
 
@@ -326,8 +371,19 @@ def main() -> None:
     args = parser.parse_args()
     if args.replay_mode:
         args.statebus_mode = args.replay_mode
+    requested_role_modes = (
+        args.planner_mode,
+        args.retriever_mode,
+        args.executor_mode,
+        args.summarizer_mode,
+        args.role_path_mode,
+    )
+    preflight_role_mode = next(
+        (mode for mode in requested_role_modes if mode in {"api", "local_vllm"}),
+        "deterministic",
+    )
     preflight = runtime_preflight(
-        role_path_mode=args.role_path_mode,
+        role_path_mode=preflight_role_mode,
         embedding_mode=args.embedding_mode,
     )
     if args.suite == "preflight":
@@ -338,12 +394,62 @@ def main() -> None:
         print(stable_json_dumps(preflight.canonical_payload()))
         raise SystemExit(2)
 
-    if args.transport != "loopback" and not (args.suite == "formal" and args.benchmark_tier == "formal"):
-        raise SystemExit("--transport is currently only supported for --suite formal --benchmark-tier formal")
+    if args.transport != "loopback" and not (
+        (args.suite == "formal" and args.benchmark_tier == "formal")
+        or args.suite in {
+            "continuous",
+            "continuous-replay",
+            "adaptive-memory",
+            "semantic-holdout",
+        }
+    ):
+        raise SystemExit(
+            "--transport subprocess is supported for formal, continuous, adaptive-memory, and semantic-holdout suites"
+        )
     if args.case_id and args.suite in {"continuous", "continuous-replay", "continuous-design-audit"}:
         raise SystemExit("--case-id is only supported for fixed/formal suites; use --max-cases for continuous rounds")
     if args.layer and args.suite not in {"statebus", "continuous", "continuous-replay"}:
         raise SystemExit("--layer is only supported for statebus or continuous diagnostic suites")
+    if args.round_view and args.suite not in {"continuous", "continuous-design-audit"}:
+        raise SystemExit("--round-view is only supported for continuous suites")
+    if args.round_view and args.max_cases > 0:
+        raise SystemExit("--round-view selects a complete experiment and cannot be combined with --max-cases")
+    if args.suite in {"adaptive-memory", "semantic-holdout"} and (args.case_id or args.max_cases):
+        raise SystemExit(
+            f"{args.suite} is a fixed-size formal suite and does not accept --case-id or --max-cases"
+        )
+
+    if args.suite in {"adaptive-memory", "semantic-holdout"}:
+        if args.role_path_mode != "local_vllm":
+            raise SystemExit(f"{args.suite} requires --role-path-mode local_vllm")
+        if args.embedding_mode != "local":
+            raise SystemExit(f"{args.suite} requires --embedding-mode local")
+        if args.state_pool_mode != "shared_memory":
+            raise SystemExit(f"{args.suite} requires --state-pool-mode shared_memory")
+        if args.transport != "subprocess":
+            raise SystemExit(f"{args.suite} requires --transport subprocess")
+        common = {
+            "embedding_model_path": os.getenv(
+                "STATEBUS_EMBED_MODEL_PATH",
+                "/statebus/models/Qwen3-Embedding-0.6B",
+            ),
+            "embedding_device": os.getenv("STATEBUS_EMBED_DEVICE", "cuda:0"),
+        }
+        report = (
+            run_adaptive_memory(
+                output_root=args.runtime_root / "adaptive-memory",
+                **common,
+            )
+            if args.suite == "adaptive-memory"
+            else run_semantic_holdout(
+                output_root=args.runtime_root / "semantic-holdout",
+                **common,
+            )
+        )
+        print(stable_json_dumps(report))
+        if not report.get("ok"):
+            raise SystemExit(1)
+        return
 
     family_dir = _resolved_family_dir(args)
     if args.suite == "replay-negative-audit":
@@ -359,19 +465,35 @@ def main() -> None:
         return
     if args.suite == "continuous":
         if not _uses_explicit_single_family(args):
+            if args.benchmark_tier == "formal" and not args.round_view:
+                raise SystemExit(
+                    "formal continuous collection requires explicit --round-view causal_core or long_horizon"
+                )
             loaded_families = tuple(
                 load_continuous_task_family(path) for path in _default_continuous_family_roots()
             )
-            limited = tuple(
-                _limit_continuous_family(family, args.max_cases)
+            selected = tuple(
+                _select_continuous_family_view(family, args.round_view)
                 for family in loaded_families
             )
-            families = tuple(item[0] for item in limited)
-            execution_scope = (
-                "diagnostic_partial"
-                if any(_continuous_round_count(family) < original for family, original in limited)
-                else "full"
+            limited = tuple(
+                _limit_continuous_family(family, args.max_cases)
+                for family, _original, _named in selected
             )
+            families = tuple(item[0] for item in limited)
+            named_view_selected = bool(args.round_view)
+            selected_layers = (BenchmarkLayer(args.layer),) if args.layer else tuple(BenchmarkLayer)
+            stability_view = args.round_view == "long_horizon" and selected_layers == (BenchmarkLayer.L3,)
+            if args.layer and not stability_view:
+                execution_scope = "diagnostic_single_layer"
+            elif named_view_selected:
+                execution_scope = "formal_stability_view" if stability_view else "formal_causal_view"
+            else:
+                execution_scope = (
+                    "diagnostic_partial"
+                    if any(_continuous_round_count(family) < original for family, original in limited)
+                    else "full"
+                )
             report = run_continuous_benchmark_collection(
                 families=families,
                 workspace_root=args.workspace_root,
@@ -379,24 +501,47 @@ def main() -> None:
                 socket_path=args.socket_path,
                 suite_id=f"{args.suite_id}-continuous",
                 role_path_mode=args.role_path_mode,
+                planner_mode=args.planner_mode,
+                retriever_mode=args.retriever_mode,
+                executor_mode=args.executor_mode,
+                summarizer_mode=args.summarizer_mode,
                 embedding_mode=args.embedding_mode,
                 state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
                 execution_scope=execution_scope,
+                executor_transport=args.transport,
+                layers=selected_layers,
+                experiment_view=args.round_view,
             )
             payload = continuous_collection_report_to_dict(report)
             payload["execution_scope"] = execution_scope
-            payload["formal_headline_eligible"] = execution_scope == "full" and report.eligible_for_headline
+            payload["round_view"] = args.round_view
+            payload["formal_headline_eligible"] = bool(
+                report.metadata.get("formal_headline_eligible", False)
+            )
+            payload["stability_evidence_eligible"] = bool(
+                report.metadata.get("stability_evidence_eligible", False)
+            )
             print(stable_json_dumps(payload))
             return
         loaded_family = load_continuous_task_family(family_dir)
-        family, original_round_count = _limit_continuous_family(loaded_family, args.max_cases)
-        execution_scope = _diagnostic_scope(
-            selected_count=_continuous_round_count(family),
-            available_count=original_round_count,
-            layer=args.layer,
+        selected_family, original_round_count, named_view_selected = _select_continuous_family_view(
+            loaded_family,
+            args.round_view,
         )
+        family, _selected_round_count = _limit_continuous_family(selected_family, args.max_cases)
+        stability_view = args.round_view == "long_horizon" and args.layer == BenchmarkLayer.L3.value
+        if args.layer and not stability_view:
+            execution_scope = "diagnostic_single_layer"
+        elif named_view_selected:
+            execution_scope = "formal_stability_view" if stability_view else "formal_causal_view"
+        else:
+            execution_scope = _diagnostic_scope(
+                selected_count=_continuous_round_count(family),
+                available_count=original_round_count,
+                layer=args.layer,
+            )
         if args.layer:
             layer = BenchmarkLayer(args.layer)
             report = run_continuous_benchmark_family(
@@ -407,17 +552,24 @@ def main() -> None:
                 suite_id=f"{args.suite_id}-continuous",
                 layer=layer,
                 role_path_mode=args.role_path_mode,
+                planner_mode=args.planner_mode,
+                retriever_mode=args.retriever_mode,
+                executor_mode=args.executor_mode,
+                summarizer_mode=args.summarizer_mode,
                 embedding_mode=args.embedding_mode,
                 state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
+                executor_transport=args.transport,
                 enforce_expected_metric_effects=False,
                 metadata_extra={
-                    "claim_level": "diagnostic",
+                    "claim_level": "stability" if stability_view else "diagnostic",
                     "execution_scope": execution_scope,
+                    "round_view": args.round_view,
                     "selected_round_count": _continuous_round_count(family),
                     "available_round_count": original_round_count,
                     "formal_headline_eligible": False,
+                    "stability_evidence_eligible": stability_view,
                 },
             )
             payload = family_report_to_dict(report)
@@ -427,6 +579,8 @@ def main() -> None:
                     "selected_round_count": _continuous_round_count(family),
                     "available_round_count": original_round_count,
                     "formal_headline_eligible": False,
+                    "round_view": args.round_view,
+                    "stability_evidence_eligible": stability_view,
                 }
             )
             print(stable_json_dumps(payload))
@@ -438,18 +592,29 @@ def main() -> None:
             socket_path=args.socket_path,
             suite_id=f"{args.suite_id}-continuous",
             role_path_mode=args.role_path_mode,
+            planner_mode=args.planner_mode,
+            retriever_mode=args.retriever_mode,
+            executor_mode=args.executor_mode,
+            summarizer_mode=args.summarizer_mode,
             embedding_mode=args.embedding_mode,
             state_pool_mode=args.state_pool_mode,
             persistence_profile=args.persistence_profile,
             task_schedule_plan=args.task_schedule_plan,
-            claim_level="diagnostic" if execution_scope != "full" else "first_pass",
+            claim_level=(
+                "first_pass"
+                if execution_scope in {"full", "formal_causal_view"}
+                else "diagnostic"
+            ),
             execution_scope=execution_scope,
-            original_round_count=original_round_count,
+            original_round_count=(family.round_count if named_view_selected else original_round_count),
+            executor_transport=args.transport,
+            experiment_view=args.round_view,
         )
         payload = suite_report_to_dict(report)
         payload["selected_round_count"] = _continuous_round_count(family)
         payload["available_round_count"] = original_round_count
         payload["execution_scope"] = execution_scope
+        payload["round_view"] = args.round_view
         payload["formal_headline_eligible"] = bool(
             report.metadata.get("formal_headline_eligible", False)
         )
@@ -478,12 +643,17 @@ def main() -> None:
                 socket_path=args.socket_path,
                 suite_id=f"{args.suite_id}-continuous-replay",
                 role_path_mode=args.role_path_mode,
+                planner_mode=args.planner_mode,
+                retriever_mode=args.retriever_mode,
+                executor_mode=args.executor_mode,
+                summarizer_mode=args.summarizer_mode,
                 embedding_mode=args.embedding_mode,
                 state_pool_mode=args.state_pool_mode,
                 collection_scope="formal_replay_task_families",
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
                 execution_scope=execution_scope,
+                executor_transport=args.transport,
             )
             payload = continuous_collection_report_to_dict(report)
             payload["execution_scope"] = execution_scope
@@ -507,10 +677,15 @@ def main() -> None:
                 suite_id=f"{args.suite_id}-continuous-replay",
                 layer=layer,
                 role_path_mode=args.role_path_mode,
+                planner_mode=args.planner_mode,
+                retriever_mode=args.retriever_mode,
+                executor_mode=args.executor_mode,
+                summarizer_mode=args.summarizer_mode,
                 embedding_mode=args.embedding_mode,
                 state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
+                executor_transport=args.transport,
                 enforce_expected_metric_effects=False,
                 metadata_extra={
                     "claim_level": "diagnostic",
@@ -538,6 +713,10 @@ def main() -> None:
             socket_path=args.socket_path,
             suite_id=f"{args.suite_id}-continuous-replay",
             role_path_mode=args.role_path_mode,
+            planner_mode=args.planner_mode,
+            retriever_mode=args.retriever_mode,
+            executor_mode=args.executor_mode,
+            summarizer_mode=args.summarizer_mode,
             embedding_mode=args.embedding_mode,
             state_pool_mode=args.state_pool_mode,
             persistence_profile=args.persistence_profile,
@@ -545,6 +724,7 @@ def main() -> None:
             claim_level="diagnostic" if execution_scope != "full" else "first_pass",
             execution_scope=execution_scope,
             original_round_count=original_round_count,
+            executor_transport=args.transport,
         )
         payload = suite_report_to_dict(report)
         payload["selected_round_count"] = _continuous_round_count(family)
