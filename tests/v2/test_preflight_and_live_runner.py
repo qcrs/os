@@ -85,6 +85,97 @@ def test_live_runner_preflight_fails_closed_for_missing_local_embedding(
     assert any(check["name"] == "embedding_model_path" and not check["ok"] for check in payload["checks"])
 
 
+@pytest.mark.parametrize(
+    ("suite", "runner_name", "output_leaf"),
+    [
+        ("adaptive-memory", "run_adaptive_memory", "adaptive-memory"),
+        ("semantic-holdout", "run_semantic_holdout", "semantic-holdout"),
+    ],
+)
+def test_live_runner_dispatches_fixed_contest_suites_with_required_profile(
+    suite: str,
+    runner_name: str,
+    output_leaf: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+
+    def fake_runner(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "suite_id": suite}
+
+    monkeypatch.setattr(f"v2.benchmark.live_runner.{runner_name}", fake_runner)
+    monkeypatch.setenv("STATEBUS_EMBED_MODEL_PATH", "/statebus/models/test-embedding")
+    monkeypatch.setenv("STATEBUS_EMBED_DEVICE", "cuda:0")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            suite,
+            "--runtime-root",
+            str(tmp_path / "runtime"),
+            "--role-path-mode",
+            "local_vllm",
+            "--embedding-mode",
+            "local",
+            "--state-pool-mode",
+            "shared_memory",
+            "--transport",
+            "subprocess",
+        ],
+    )
+
+    live_runner_main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert captured == {
+        "output_root": tmp_path / "runtime" / output_leaf,
+        "embedding_model_path": "/statebus/models/test-embedding",
+        "embedding_device": "cuda:0",
+    }
+
+
+@pytest.mark.parametrize("suite", ["adaptive-memory", "semantic-holdout"])
+def test_live_runner_rejects_partial_selection_for_fixed_contest_suites(
+    suite: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            suite,
+            "--role-path-mode",
+            "local_vllm",
+            "--embedding-mode",
+            "local",
+            "--state-pool-mode",
+            "shared_memory",
+            "--transport",
+            "subprocess",
+            "--max-cases",
+            "1",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="fixed-size formal suite"):
+        live_runner_main()
+
+
 def test_live_runner_formal_suite_uses_formal_family_by_default(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -321,6 +412,66 @@ def test_live_runner_formal_suite_threads_subprocess_transport(
     payload = json.loads(capsys.readouterr().out)
     assert captured["executor_transport"] == "subprocess"
     assert payload["transport"] == "subprocess"
+
+
+def test_live_runner_continuous_suite_threads_contest_profile_and_subprocess_transport(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+
+    def fake_run_continuous_benchmark_suite(**kwargs):
+        captured.update(kwargs)
+        return BenchmarkSuiteReport(
+            suite_id=str(kwargs["suite_id"]),
+            task_family=str(kwargs["family"].family_id),
+            layer_reports=(),
+            metadata={
+                "formal_headline_eligible": False,
+                "executor_transport": str(kwargs["executor_transport"]),
+            },
+        )
+
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.run_continuous_benchmark_suite",
+        fake_run_continuous_benchmark_suite,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "continuous",
+            "--family",
+            "csv_table_profile_v1",
+            "--planner-mode",
+            "local_vllm",
+            "--retriever-mode",
+            "local_vllm",
+            "--executor-mode",
+            "deterministic_codeact",
+            "--summarizer-mode",
+            "local_vllm",
+            "--embedding-mode",
+            "deterministic",
+            "--transport",
+            "subprocess",
+        ],
+    )
+
+    live_runner_main()
+    payload = json.loads(capsys.readouterr().out)
+    assert captured["planner_mode"] == "local_vllm"
+    assert captured["retriever_mode"] == "local_vllm"
+    assert captured["executor_mode"] == "deterministic_codeact"
+    assert captured["summarizer_mode"] == "local_vllm"
+    assert captured["executor_transport"] == "subprocess"
+    assert payload["metadata"]["executor_transport"] == "subprocess"
 
 
 def test_live_runner_threads_statebus_mode_to_dev_compare_suite(
@@ -1194,7 +1345,31 @@ def test_live_runner_continuous_family_flag_selects_single_family_suite(
     assert payload["metadata"]["family_id"] == "csv_table_profile_v1"
 
 
-def test_live_runner_continuous_defaults_to_formal_collection(
+def test_live_runner_continuous_formal_collection_requires_named_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "v2.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-v2-live",
+            "--suite",
+            "continuous",
+            "--role-path-mode",
+            "deterministic",
+            "--embedding-mode",
+            "deterministic",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="requires explicit --round-view"):
+        live_runner_main()
+
+
+def test_live_runner_continuous_named_view_selects_formal_collection(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1209,10 +1384,25 @@ def test_live_runner_continuous_defaults_to_formal_collection(
     def fake_load_continuous_task_family(path: Path):
         family_name = path.name
         if family_name == "formal_operating_metrics":
-            return SimpleNamespace(family_id="formal_operating_metrics_v1")
-        if family_name == "formal_financial_reports":
-            return SimpleNamespace(family_id="formal_financial_reports_v1")
-        raise AssertionError(f"unexpected family path: {path}")
+            family_id = "formal_operating_metrics_v1"
+        elif family_name == "formal_financial_reports":
+            family_id = "formal_financial_reports_v1"
+        else:
+            raise AssertionError(f"unexpected family path: {path}")
+        family = SimpleNamespace(
+            family_id=family_id,
+            round_count=10,
+            rounds=tuple(range(10)),
+            experiment_views={"causal_core": (1, 2, 3, 4, 5)},
+        )
+        family.select_view = lambda view: SimpleNamespace(
+            family_id=family_id,
+            round_count=5,
+            rounds=tuple(range(5)),
+            experiment_views=family.experiment_views,
+            selected_experiment_view=view,
+        )
+        return family
 
     def fake_run_continuous_benchmark_collection(**kwargs):
         captured.update(kwargs)
@@ -1254,6 +1444,8 @@ def test_live_runner_continuous_defaults_to_formal_collection(
             "deterministic",
             "--state-pool-mode",
             "shared_memory",
+            "--round-view",
+            "causal_core",
         ],
     )
     live_runner_main()
@@ -1266,6 +1458,8 @@ def test_live_runner_continuous_defaults_to_formal_collection(
     assert payload["collection_summary"]["family_count"] == 2.0
     assert payload["collection_summary"]["continuous_round_count"] == 10.0
     assert captured["state_pool_mode"] == "shared_memory"
+    assert captured["execution_scope"] == "formal_causal_view"
+    assert captured["experiment_view"] == "causal_core"
 
 
 def test_live_runner_continuous_replay_defaults_to_replay_collection(

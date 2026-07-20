@@ -55,11 +55,37 @@ def test_collection_owns_ten_execution_minimum(tmp_path: Path) -> None:
         )
 
 
-def test_formal_collection_is_two_families_and_ten_unique_executions() -> None:
+def test_formal_collection_declares_causal_and_long_horizon_views() -> None:
     families = tuple(load_continuous_task_family(path) for path in FORMAL_FAMILY_DIRS)
-    task_ids = [round_.task_id for family in families for round_ in family.rounds]
+    causal_families = tuple(family.select_view("causal_core") for family in families)
+    long_horizon_families = tuple(
+        family.select_view("long_horizon") for family in families
+    )
+    causal_task_ids = [
+        round_.task_id
+        for family in causal_families
+        for round_ in family.rounds
+    ]
+    long_horizon_task_ids = [
+        round_.task_id
+        for family in long_horizon_families
+        for round_ in family.rounds
+    ]
 
-    assert [family.round_count for family in families] == [5, 5]
-    assert sum(family.round_count for family in families) == 10
-    assert len(task_ids) == len(set(task_ids)) == 10
-    assert all(any(round_.depends_on_rounds for round_ in family.rounds) for family in families)
+    assert [family.round_count for family in families] == [10, 10]
+    assert [family.round_count for family in causal_families] == [5, 5]
+    assert [family.round_count for family in long_horizon_families] == [10, 10]
+    assert len(causal_task_ids) == len(set(causal_task_ids)) == 10
+    assert len(long_horizon_task_ids) == len(set(long_horizon_task_ids)) == 20
+    assert all(
+        family.selected_experiment_view == "causal_core"
+        for family in causal_families
+    )
+    assert all(
+        family.selected_experiment_view == "long_horizon"
+        for family in long_horizon_families
+    )
+    assert all(
+        any(round_.depends_on_rounds for round_ in family.rounds)
+        for family in families
+    )

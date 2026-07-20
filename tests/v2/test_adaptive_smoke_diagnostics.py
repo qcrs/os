@@ -43,6 +43,7 @@ def test_isolated_role_nonzero_exit_returns_structured_failure(monkeypatch) -> N
 
 
 def test_role_max_tokens_override_is_positive_integer(monkeypatch) -> None:
+    monkeypatch.delenv("STATEBUS_ADAPTIVE_SUMMARIZER_MAX_TOKENS", raising=False)
     assert run_adaptive_agent_smoke._role_max_tokens_override("summarizer") is None
     monkeypatch.setenv("STATEBUS_ADAPTIVE_SUMMARIZER_MAX_TOKENS", "1400")
     assert run_adaptive_agent_smoke._role_max_tokens_override("summarizer") == 1400

@@ -75,3 +75,24 @@ def test_cross_period_financial_manifest_targets_strategy_reuse_not_answer_resto
     assert rounds_by_number[8]["reuse_contract"]["minimum_reuse_class"] == "validated_replay"
     assert rounds_by_number[7]["reuse_contract"]["minimum_reuse_class"] == "assist"
     assert rounds_by_number[10]["reuse_contract"]["minimum_reuse_class"] == "assist"
+
+
+def test_formal_views_are_dependency_closed_and_r9_fixture_is_not_prompted() -> None:
+    for family_name in ("formal_financial_reports", "formal_operating_metrics"):
+        manifest = _load_manifest(family_name)
+        rounds_by_number = {
+            int(round_payload["round"]): round_payload
+            for round_payload in manifest["rounds"]
+        }
+        for view_name, selected_rounds in manifest["experiment_views"].items():
+            selected_prefix: set[int] = set()
+            for round_number in selected_rounds:
+                assert set(rounds_by_number[round_number]["depends_on_rounds"]).issubset(
+                    selected_prefix
+                ), view_name
+                selected_prefix.add(round_number)
+        fixture = rounds_by_number[9]["pre_run_fixtures"][0]
+        assert fixture["kind"] == "incompatible_history_candidate"
+        request_text = rounds_by_number[9]["request_text"].lower()
+        assert "legacy" not in request_text
+        assert "candidate" not in request_text
