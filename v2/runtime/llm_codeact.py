@@ -122,6 +122,7 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
         f"Quality constraints: {stable_json_dumps(request.quality_constraints)}.\n"
         f"Authorized input schema: {input_schema_text}.\n"
         f"Retrieved semantic context: {stable_json_dumps(request.retrieval_context)}.\n"
+        f"Compatible memory inputs: {stable_json_dumps(request.memory_inputs)}.\n"
         "Follow the task goal and every operation-semantics requirement exactly, including exact source field names, "
         "the stated statistical method, rounding precision, row ordering, and output field meanings. Do not replace a "
         "named source column with a similar column. Before returning code, audit it against every explicit task constraint: "

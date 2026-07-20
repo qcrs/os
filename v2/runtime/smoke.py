@@ -12,7 +12,12 @@ import tempfile
 import time
 import uuid as _uuid
 
-from runtime.llm import LLMConfig, build_llm_client
+from runtime.llm import (
+    FOUR_ROLE_COMPARATOR_ORDER,
+    LLMConfig,
+    RoleDispatchLLMClient,
+    build_llm_client,
+)
 from v2.benchmark.models import QualityFloorResult
 from v2.control import (
     AckReceived,
@@ -32,6 +37,7 @@ from v2.control import (
 )
 from v2.contracts import (
     CanonicalTaskSpec,
+    CompatibilityVerdict,
     HydrationAccountingAudit,
     HydrationRoleAccounting,
     PlannerHandoff,
@@ -49,6 +55,7 @@ from v2.contracts import (
 from v2.memory import (
     DeterministicEmbeddingEncoder,
     MemoryCommit,
+    MemoryConsumptionRecord,
     MemoryIndexStore,
     MemoryQuery,
     MemoryRef,
@@ -332,10 +339,38 @@ class SmokeLayerConfig:
     force_first_attempt_trap: bool = True
     hermetic_runtime_root: bool = True
     role_path_mode: str = "deterministic"
+    planner_mode: str = ""
+    retriever_mode: str = ""
+    executor_mode: str = ""
+    summarizer_mode: str = ""
     embedding_mode: str = "deterministic"
     state_pool_mode: str = "auto"
     persistence_profile: str = "audit_full"
     executor_transport: str = "loopback"
+
+    def resolved_role_modes(self) -> dict[str, str]:
+        legacy_mode = str(self.role_path_mode).strip().lower() or "deterministic"
+        raw_modes = {
+            "planner": self.planner_mode,
+            "retriever": self.retriever_mode,
+            "executor": self.executor_mode,
+            "summarizer": self.summarizer_mode,
+        }
+        resolved = {
+            role: str(raw_modes[role]).strip().lower() or legacy_mode
+            for role in FOUR_ROLE_COMPARATOR_ORDER
+        }
+        allowed = {"deterministic", "api", "local_vllm"}
+        for role, mode in resolved.items():
+            if role == "executor" and mode == "deterministic_codeact":
+                continue
+            if mode not in allowed:
+                raise ValueError(f"unsupported {role} mode: {mode}")
+        return resolved
+
+    def llm_mode_for_role(self, role: str) -> str:
+        mode = self.resolved_role_modes()[role]
+        return "deterministic" if mode == "deterministic_codeact" else mode
 
 
 @dataclass(frozen=True)
@@ -930,6 +965,108 @@ def _continuous_output_reuse_metrics(
     }
 
 
+def _memory_role_input_payload(
+    match,
+    *,
+    replay: ReplayDecision,
+) -> dict[str, object]:
+    replay_class = (
+        replay.replay_class
+        if replay.candidate_id == match.memory_ref.memory_id
+        and replay.replay_class in {ReplayClass.VALIDATED_REPLAY, ReplayClass.EXACT_REPLAY}
+        else ReplayClass.ASSIST
+    )
+    return {
+        "memory_id": match.memory_ref.memory_id,
+        "replay_class": replay_class.value,
+        "score": match.score,
+        "summary": match.memory_ref.summary,
+    }
+
+
+def _continuous_memory_consumption_records(
+    *,
+    task_id: str,
+    memory_query: MemoryQuery,
+    memory_match_result,
+    replay: ReplayDecision,
+    output_artifact_hash: str,
+) -> tuple[MemoryConsumptionRecord, ...]:
+    decision_by_id = {
+        decision.memory_id: decision
+        for decision in memory_match_result.compatibility_decisions
+    }
+    records: list[MemoryConsumptionRecord] = []
+    before_surface_hash = sha256_digest(
+        {
+            "task_id": task_id,
+            "query_hash": memory_query.query_hash,
+            "canonical_task_spec_hash": memory_query.query_spec_hash,
+        }
+    )
+    for index, match in enumerate(memory_match_result.matches[:2], start=1):
+        memory_id = match.memory_ref.memory_id
+        decision = decision_by_id.get(memory_id)
+        if decision is None or not decision.policy_approved:
+            continue
+        replay_class = (
+            replay.replay_class
+            if replay.candidate_id == memory_id
+            and replay.replay_class
+            in {ReplayClass.VALIDATED_REPLAY, ReplayClass.EXACT_REPLAY}
+            else ReplayClass.ASSIST
+        )
+        input_payload = _memory_role_input_payload(match, replay=replay)
+        behavioral_effect = {
+            ReplayClass.EXACT_REPLAY: "verified_artifact_restored",
+            ReplayClass.VALIDATED_REPLAY: "recipe_reused_current_input_recomputed",
+        }.get(replay_class, "role_input_augmented")
+        after_surface_hash = sha256_digest(
+            {
+                "before_surface_hash": before_surface_hash,
+                "memory_id": memory_id,
+                "output_artifact_hash": output_artifact_hash,
+                "behavioral_effect": behavioral_effect,
+            }
+        )
+        records.append(
+            MemoryConsumptionRecord(
+                consumption_id=f"memory-consumption:{task_id}:{index}:{memory_id}",
+                query_hash=memory_query.query_hash,
+                memory_id=memory_id,
+                consumer_role=(
+                    "runtime_supervisor"
+                    if replay_class == ReplayClass.EXACT_REPLAY
+                    else "executor"
+                ),
+                consumer_step_id="step-execute",
+                input_ref_id=f"prompt-slice-{task_id}-executor",
+                replay_class=replay_class,
+                compatibility_verdict=decision.verdict,
+                input_payload_hash=sha256_digest(input_payload),
+                before_decision_surface_hash=before_surface_hash,
+                after_decision_surface_hash=after_surface_hash,
+                behavioral_effect=behavioral_effect,
+                downstream_ref_ids=("artifact-smoke",),
+                skipped_generation_step_count=(
+                    replay.skipped_step_count if replay.candidate_id == memory_id else 0
+                ),
+                skipped_llm_call_count=(
+                    3
+                    if replay.candidate_id == memory_id
+                    and replay_class == ReplayClass.EXACT_REPLAY
+                    else 0
+                ),
+                recipe_recomputed=(
+                    replay.candidate_id == memory_id
+                    and replay_class == ReplayClass.VALIDATED_REPLAY
+                ),
+                consumed_at_ns=time.time_ns(),
+            )
+        )
+    return tuple(records)
+
+
 def _zero_planner_result() -> PlannerRoleResult:
     return PlannerRoleResult(
         workflow_payload={},
@@ -1486,18 +1623,15 @@ def _full_corpus_prompt_slice(bundle: RetrievalBundle, *, role: str) -> RoleProm
     )
 
 
-def _memory_prompt_slice(memory_match_result) -> tuple[str, int, int]:
+def _memory_prompt_slice(
+    memory_match_result,
+    *,
+    replay: ReplayDecision,
+) -> tuple[str, int, int]:
     if not memory_match_result.matches:
         return "", 0, 0
     lines = [
-        stable_json_dumps(
-            {
-                "memory_id": match.memory_ref.memory_id,
-                "replay_class": match.replay_class.value,
-                "score": match.score,
-                "summary": match.memory_ref.summary,
-            }
-        )
+        stable_json_dumps(_memory_role_input_payload(match, replay=replay))
         for match in memory_match_result.matches[:2]
     ]
     payload = "\n".join(line for line in lines if line)
@@ -1603,43 +1737,38 @@ def _build_validator_reports(
     replay_decision: ReplayDecision,
     layer_config: SmokeLayerConfig,
     required_outputs: tuple[str, ...] = (),
-    quality_checks: tuple[str, ...] = (),
-    expected_facts: dict[str, object] | None = None,
 ) -> tuple[ArtifactValidatorReport, ...]:
     required_fields = tuple(required_outputs) if required_outputs else ("summary_text",)
     deterministic_pass = output_path.exists() and all(bool(output_payload.get(field_name)) for field_name in required_fields)
-    quality_checks_pass = _quality_checks_pass(
-        output_payload=output_payload,
-        quality_checks=quality_checks,
-        output_path=output_path,
-    )
-    fact_coverage_pass = _expected_fact_pass(
-        expected_facts=expected_facts,
-        output_payload=output_payload,
-    )
     deterministic = ArtifactValidatorReport(
         task_id=task_id,
         step_id=step_id,
         artifact_id=artifact_id,
         validation_scope="deterministic",
-        passed=deterministic_pass and quality_checks_pass,
-        fail_reason="" if deterministic_pass and quality_checks_pass else "missing_required_output_fields",
+        passed=deterministic_pass,
+        fail_reason="" if deterministic_pass else "missing_required_output_fields",
         consumed_by=("executor_wrapper",),
         metrics={"output_exists": 1.0 if output_path.exists() else 0.0},
-        details={"required_fields": list(required_fields), "quality_checks": list(quality_checks)},
+        details={
+            "required_fields": list(required_fields),
+            "validation_source": "public_output_contract",
+            "benchmark_gold_consumed": False,
+        },
     )
     fact_coverage = ArtifactValidatorReport(
         task_id=task_id,
         step_id=step_id,
         artifact_id=artifact_id,
         validation_scope="fact_coverage",
-        passed=fact_coverage_pass,
-        fail_reason="" if fact_coverage_pass else "fact_coverage_failed",
+        passed=deterministic_pass,
+        fail_reason="" if deterministic_pass else "required_contract_field_missing",
         consumed_by=("quality_floor_gate",),
-        metrics={"required_fact_count": float(len(expected_facts or {}))},
+        metrics={"required_contract_field_count": float(len(required_fields))},
         details={
             "replay_class": replay_decision.replay_class.value,
-            "expected_facts": {} if expected_facts is None else dict(expected_facts),
+            "required_fields": list(required_fields),
+            "validation_source": "public_output_contract",
+            "benchmark_gold_consumed": False,
         },
     )
     return (deterministic, fact_coverage)
@@ -1849,9 +1978,30 @@ def run_smoke(
     expected_facts: dict[str, object] | None = None,
     seed_replay_memory: bool = False,
     history_runtime_roots: tuple[Path, ...] = (),
+    memory_candidate_runtime_roots: tuple[Path, ...] = (),
     driver_profile_override: RuntimeDriverProfile | None = None,
 ) -> SmokeResult:
     layer_config = layer_config or SmokeLayerConfig()
+    benchmark_quality_checks = tuple(
+        str(item).strip()
+        for item in (canonical_task_spec.arguments.get("quality_checks", []) if canonical_task_spec else ())
+        if str(item).strip()
+    )
+    if canonical_task_spec is not None and "quality_checks" in canonical_task_spec.arguments:
+        canonical_task_spec = CanonicalTaskSpec(
+            task_family=canonical_task_spec.task_family,
+            intent_op=canonical_task_spec.intent_op,
+            target_entities=canonical_task_spec.target_entities,
+            time_scope=canonical_task_spec.time_scope,
+            required_outputs=canonical_task_spec.required_outputs,
+            required_tools=canonical_task_spec.required_tools,
+            arguments={
+                key: value
+                for key, value in canonical_task_spec.arguments.items()
+                if key != "quality_checks"
+            },
+            schema_version=canonical_task_spec.schema_version,
+        )
     # Route hints are an explicit experimental aid, never an implicit oracle.
     # Disabling them leaves candidate generation and validation intact while
     # requiring the model to select from the visible candidate surface.
@@ -1863,8 +2013,16 @@ def run_smoke(
     }
     if layer_config.hermetic_runtime_root and runtime_root.exists():
         shutil.rmtree(runtime_root)
+    resolved_role_modes = layer_config.resolved_role_modes()
     preflight = runtime_preflight(
-        role_path_mode=layer_config.role_path_mode,
+        role_path_mode=next(
+            (
+                layer_config.llm_mode_for_role(role)
+                for role in FOUR_ROLE_COMPARATOR_ORDER
+                if layer_config.llm_mode_for_role(role) in {"api", "local_vllm"}
+            ),
+            "deterministic",
+        ),
         embedding_mode=layer_config.embedding_mode,
     )
     if not preflight.ok:
@@ -1887,18 +2045,29 @@ def run_smoke(
     if compiler_result.canonical_task_spec is None:
         raise RuntimeError("smoke path requires compiled canonical task spec")
 
-    llm_config = LLMConfig.from_runtime().with_mode(layer_config.role_path_mode)
+    llm_config = LLMConfig.from_runtime()
+    role_clients = {
+        role: build_llm_client(llm_config.with_mode(layer_config.llm_mode_for_role(role)))
+        for role in FOUR_ROLE_COMPARATOR_ORDER
+    }
+    role_dispatch_client = RoleDispatchLLMClient(
+        clients=role_clients,
+        execution_modes=resolved_role_modes,
+    )
     try:
         role_path_runner = RolePathRunner(
-            llm_client=build_llm_client(llm_config),
+            llm_client=role_dispatch_client,
             handoff_mode=layer_config.handoff_mode,
         )
     except TypeError:
-        role_path_runner = RolePathRunner(llm_client=build_llm_client(llm_config))
+        role_path_runner = RolePathRunner(llm_client=role_dispatch_client)
         if hasattr(role_path_runner, "handoff_mode"):
             object.__setattr__(role_path_runner, "handoff_mode", layer_config.handoff_mode)
     prefix_metrics_url = _vllm_metrics_url()
-    prefix_metrics_enabled = layer_config.role_path_mode == "local_vllm"
+    prefix_metrics_enabled = "local_vllm" in {
+        layer_config.llm_mode_for_role(role)
+        for role in FOUR_ROLE_COMPARATOR_ORDER
+    }
     prefix_metrics_before = (
         _fetch_vllm_prefix_metrics_or_none(prefix_metrics_url)
         if prefix_metrics_enabled
@@ -1912,6 +2081,28 @@ def run_smoke(
         compiler_result.canonical_task_spec,
         history_runtime_roots=history_runtime_roots,
     )
+    if history_runtime_roots:
+        history_artifact_summaries = _history_artifact_summaries(
+            history_runtime_roots
+        )
+        existing_artifact_context = str(
+            planner_scope_payload.get("artifact_context", "")
+        ).strip()
+        artifact_parts = [existing_artifact_context] if existing_artifact_context else []
+        artifact_parts.extend(
+            summary
+            for summary in history_artifact_summaries
+            if summary not in existing_artifact_context
+        )
+        artifact_context = "\n".join(artifact_parts)
+        planner_scope_payload = {
+            **planner_scope_payload,
+            "artifact_context": artifact_context,
+            "artifact_bytes": len(artifact_context.encode("utf-8")),
+            "artifact_item_count": len(history_artifact_summaries),
+            "history_artifact_summaries": list(history_artifact_summaries),
+            "history_runtime_root_count": len(history_runtime_roots),
+        }
     planner_role_candidates = tuple(financial_tool_candidates(compiler_result.canonical_task_spec, None))
     planner_result = role_path_runner.plan_workflow(
         task_id=task_id,
@@ -2256,13 +2447,47 @@ def run_smoke(
         }
     )
 
+    replay_input_artifact_hashes = (
+        evidence_execution_input_replay_hash(retrieval.evidence_pack),
+        hydrate_manifest_replay_hash(retrieval.hydrate_manifest),
+        runtime_signature_manifest_bundle.manifest_bundle_hash,
+    )
+    memory_validator_digest = sha256_digest(
+        {
+            "validator": "public-output-contract-v1",
+            "required_outputs": list(
+                compiler_result.canonical_task_spec.required_outputs
+            ),
+            "output_contract_version": "output-v1",
+        }
+    )
+    memory_input_schema_digest = sha256_digest(
+        {
+            "task_family": compiler_result.canonical_task_spec.task_family,
+            "argument_shape": sorted(
+                (str(key), type(value).__name__)
+                for key, value in compiler_result.canonical_task_spec.arguments.items()
+                if key not in {"reuse_contract", "depends_on_rounds", "request_text"}
+            ),
+        }
+    )
+    memory_input_lineage_hashes = tuple(
+        sorted(retrieval.evidence_pack.source_doc_hashes)
+    )
     memory_store = MemoryIndexStore(store_root=runtime_root / "memory_index")
     memory_query_embedding = retrieval.memory_query_embedding or retrieval.query_embedding
     memory_store.put_embedding(memory_query_embedding)
     replay_candidate: ReplayCandidate | None = None
-    history_records = load_history_replay_candidates(
-        history_roots=history_runtime_roots,
-        target_memory_store=memory_store,
+    history_records = (
+        load_history_replay_candidates(
+            history_roots=(
+                *history_runtime_roots,
+                *memory_candidate_runtime_roots,
+            ),
+            target_memory_store=memory_store,
+        )
+        if layer_config.replay_enabled
+        else {}
     )
     if seed_replay_memory:
         embedding_encoder = DeterministicEmbeddingEncoder(dims=retrieval.query_embedding.dims)
@@ -2289,6 +2514,21 @@ def run_smoke(
             semantic_state_ref_id="" if semantic_ref is None else semantic_ref.state_id,
             embedding_ref_id=historical_embedding.embedding_id,
             manifest_hash=retrieval.hydrate_manifest.manifest_hash,
+            metadata={
+                "runtime_signature_hash": runtime_signature.combined_digest,
+                "output_contract_version": "output-v1",
+                "validator_digest": memory_validator_digest,
+                "input_lineage_hashes": list(memory_input_lineage_hashes),
+                "input_schema_digest": memory_input_schema_digest,
+                "execution_recipe": {
+                    "execution_kind": "deterministic_codeact",
+                    "task_family": compiler_result.canonical_task_spec.task_family,
+                    "intent_op": compiler_result.canonical_task_spec.intent_op,
+                    "output_contract_version": "output-v1",
+                },
+                "replay_ready": True,
+                "benchmark_gold_used": False,
+            },
         )
         seeded_commit = MemoryCommit(
             memory_ref=seeded_memory_ref,
@@ -2333,13 +2573,12 @@ def run_smoke(
         allow_exact_replay=layer_config.replay_enabled,
         compatibility_signature=runtime_signature.combined_digest,
         output_contract_version="output-v1",
+        canonical_task_spec=compiler_result.canonical_task_spec,
+        input_lineage_hashes=memory_input_lineage_hashes,
+        input_schema_digest=memory_input_schema_digest,
+        validator_digest=memory_validator_digest,
     )
     memory_match_result = memory_store.lookup_hybrid(memory_query)
-    replay_input_artifact_hashes = (
-        evidence_execution_input_replay_hash(retrieval.evidence_pack),
-        hydrate_manifest_replay_hash(retrieval.hydrate_manifest),
-        runtime_signature_manifest_bundle.manifest_bundle_hash,
-    )
     replay_observation_hashes = {
         "planner_handoff_replay_hash": planner_handoff_replay_hash(planner_handoff),
         "evidence_pack_replay_hash": evidence_pack_replay_hash(retrieval.evidence_pack),
@@ -2486,7 +2725,10 @@ def run_smoke(
         )
         runtime_stage_metrics["execution_log_capture_stage_ms"] = _elapsed_ms(log_stage_start_ns)
     else:
-        memory_slice_text, memory_slice_bytes, memory_slice_count = _memory_prompt_slice(memory_match_result)
+        memory_slice_text, memory_slice_bytes, memory_slice_count = _memory_prompt_slice(
+            memory_match_result,
+            replay=replay,
+        )
         retriever_prompt_slice = (
             RolePromptSlice(
                 role="retriever",
@@ -2598,11 +2840,7 @@ def run_smoke(
                 task_family=compiler_result.canonical_task_spec.task_family,
                 intent_op=compiler_result.canonical_task_spec.intent_op,
                 spec_arguments=dict(compiler_result.canonical_task_spec.arguments),
-                quality_checks=tuple(
-                    str(item).strip()
-                    for item in compiler_result.canonical_task_spec.arguments.get("quality_checks", [])
-                    if str(item).strip()
-                ),
+                quality_checks=(),
                 history_runtime_roots=tuple(str(root) for root in history_runtime_roots),
                 execution_context={
                     "reuse_contract": dict(
@@ -2768,12 +3006,6 @@ def run_smoke(
         replay_decision=replay,
         layer_config=layer_config,
         required_outputs=compiler_result.canonical_task_spec.required_outputs,
-        quality_checks=tuple(
-            str(item).strip()
-            for item in compiler_result.canonical_task_spec.arguments.get("quality_checks", [])
-            if str(item).strip()
-        ),
-        expected_facts=expected_facts,
     )
     quality_floor = _quality_floor_from_precommit(
         compiler_status=compiler_result.status.value,
@@ -2840,6 +3072,20 @@ def run_smoke(
             semantic_state_ref_id="" if semantic_ref is None else semantic_ref.state_id,
             embedding_ref_id=memory_query_embedding.embedding_id,
             manifest_hash=retrieval.hydrate_manifest.manifest_hash,
+            metadata={
+                "runtime_signature_hash": runtime_signature.combined_digest,
+                "output_contract_version": "output-v1",
+                "validator_digest": memory_validator_digest,
+                "input_lineage_hashes": list(memory_input_lineage_hashes),
+                "input_schema_digest": memory_input_schema_digest,
+                "execution_recipe": {
+                    "execution_kind": "deterministic_codeact",
+                    "task_family": compiler_result.canonical_task_spec.task_family,
+                    "intent_op": compiler_result.canonical_task_spec.intent_op,
+                    "output_contract_version": "output-v1",
+                },
+                "benchmark_gold_used": False,
+            },
         ),
         canonical_task_spec=compiler_result.canonical_task_spec,
         required_outputs=compiler_result.canonical_task_spec.required_outputs,
@@ -2949,6 +3195,110 @@ def run_smoke(
     bundle = driver_result.persisted_paths
     telemetry = driver_result.telemetry
     task_metrics = dict(driver_result.task_metrics)
+    memory_consumption_records = _continuous_memory_consumption_records(
+        task_id=task_id,
+        memory_query=memory_query,
+        memory_match_result=memory_match_result,
+        replay=replay,
+        output_artifact_hash=driver_result.output_artifact_hash,
+    )
+    memory_consumption_file = workspace.write_json(
+        layout,
+        "logs/memory_consumption.json",
+        {
+            "schema_version": "statebus.memory_consumption_audit.v1",
+            "task_id": task_id,
+            "query_hash": memory_query.query_hash,
+            "records": [
+                record.canonical_payload()
+                for record in memory_consumption_records
+            ],
+        },
+        logical_name="memory_consumption_audit",
+    )
+    compatibility_decisions = memory_match_result.compatibility_decisions
+    task_metrics.update(
+        {
+            "hybrid_memory_query_count": float(layer_config.replay_enabled),
+            "memory_candidate_count": float(
+                len(memory_match_result.candidate_pool.candidate_memory_ids)
+                if memory_match_result.candidate_pool is not None
+                else 0
+            ),
+            "memory_compatible_match_count": float(
+                sum(
+                    decision.verdict != CompatibilityVerdict.INCOMPATIBLE
+                    for decision in compatibility_decisions
+                )
+            ),
+            "memory_policy_approved_match_count": float(
+                sum(decision.policy_approved for decision in compatibility_decisions)
+            ),
+            "memory_consumed_count": float(len(memory_consumption_records)),
+            "memory_behavioral_effect_count": float(
+                sum(
+                    record.behavioral_effect != "unchanged"
+                    for record in memory_consumption_records
+                )
+            ),
+            "memory_assist_count": float(
+                sum(
+                    record.replay_class == ReplayClass.ASSIST
+                    for record in memory_consumption_records
+                )
+            ),
+            "memory_rejected_incompatible_count": float(
+                sum(
+                    decision.verdict == CompatibilityVerdict.INCOMPATIBLE
+                    and not decision.policy_approved
+                    for decision in compatibility_decisions
+                )
+            ),
+            "skipped_llm_call_count": float(
+                sum(
+                    record.skipped_llm_call_count
+                    for record in memory_consumption_records
+                )
+            ),
+        }
+    )
+    # Compatibility-only benchmark scoring happens after Runtime settlement.
+    # It can affect the returned benchmark result, but never artifact verification,
+    # memory commit, replay selection, or any role request.
+    from v2.benchmark.scoring import score_benchmark_output
+
+    benchmark_gold_score = score_benchmark_output(
+        output_payload=driver_result.output_payload,
+        output_path=driver_result.materialized_outputs.files[0].path,
+        expected_facts=expected_facts,
+        quality_checks=benchmark_quality_checks,
+    )
+    result_quality_floor = QualityFloorResult(
+        quality_floor_pass=quality_floor.quality_floor_pass and benchmark_gold_score.passed,
+        deterministic_checks_passed=(
+            quality_floor.deterministic_checks_passed
+            and benchmark_gold_score.quality_checks_passed
+        ),
+        fact_coverage_passed=(
+            quality_floor.fact_coverage_passed
+            and benchmark_gold_score.expected_facts_passed
+        ),
+        llm_judge_passed=quality_floor.llm_judge_passed,
+        quality_floor_fail_reason=(
+            quality_floor.quality_floor_fail_reason
+            or (";".join(benchmark_gold_score.failures) if not benchmark_gold_score.passed else "")
+        ),
+    )
+    task_metrics.update(
+        {
+            "runtime_quality_floor_pass": float(quality_floor.quality_floor_pass),
+            "benchmark_external_gold_score_count": float(
+                bool(expected_facts) or bool(benchmark_quality_checks)
+            ),
+            "benchmark_external_gold_pass_count": float(benchmark_gold_score.passed),
+            "benchmark_gold_runtime_decision_input_count": 0.0,
+        }
+    )
     effective_objective_hashes = {
         name: sha256_digest(objective)
         for name, objective in effective_objectives.items()
@@ -3570,7 +3920,78 @@ def run_smoke(
         ),
         logical_name="artifact_audit",
     )
+    workflow_payload = [
+        step.canonical_payload()
+        for step in _workflow_template(step_id=step_id, artifact_id="artifact-smoke")
+    ]
+    fairness_runtime_contract = {
+        "role_graph_digest": sha256_digest(workflow_payload),
+        "message_boundary_digest": sha256_digest(
+            [
+                {
+                    "step_id": step["step_id"],
+                    "role": step["role"],
+                    "depends_on": step.get("depends_on", []),
+                    "input_refs": step.get("input_refs", []),
+                    "output_refs": step.get("output_refs", []),
+                }
+                for step in workflow_payload
+            ]
+        ),
+        "model_config_digest": sha256_digest(role_dispatch_client.describe()),
+        "executor_validator_digest": sha256_digest(
+            {
+                "executor_mode": resolved_role_modes["executor"],
+                "runtime_signature": runtime_signature.combined_digest,
+                "validator_scopes": [report.validation_scope for report in validator_reports],
+                "output_contract": "output-v1",
+                "code_template_version": "code-v1",
+                "extractor_version": "retriever-fanout-v1",
+            }
+        ),
+        "capability_surface_digest": runtime_signature.tool_registry_digest,
+        "runtime_signature_digest": runtime_signature.combined_digest,
+        "runtime_root": str(runtime_root),
+        "memory_scope": str(runtime_root / "memory_index"),
+        "control_carrier": (
+            "utf8_text"
+            if (
+                layer_config.executor_transport == "subprocess"
+                and not layer_config.structured_control_enabled
+            )
+            else (
+                "protobuf"
+                if layer_config.executor_transport == "subprocess"
+                else "loopback_contract"
+            )
+        ),
+        "feature_flags": {
+            "handoff_mode": layer_config.handoff_mode,
+            "structured_control_enabled": layer_config.structured_control_enabled,
+            "semantic_pruning_enabled": layer_config.semantic_pruning_enabled,
+            "semantic_state_transfer_enabled": layer_config.semantic_state_transfer_enabled,
+            "replay_enabled": layer_config.replay_enabled,
+            "multi_attempt_enabled": layer_config.multi_attempt_enabled,
+            "force_first_attempt_trap": layer_config.force_first_attempt_trap,
+        },
+    }
     audit_summary = {
+        "fairness_runtime_contract": fairness_runtime_contract,
+        "control_transport": driver_result.control_transport_audit,
+        "role_execution_profile": {
+            **resolved_role_modes,
+            "embedding": layer_config.embedding_mode,
+            "legacy_role_path_mode": layer_config.role_path_mode,
+            "executor_transport": layer_config.executor_transport,
+        },
+        "benchmark_gold_boundary": {
+            **benchmark_gold_score.canonical_payload(),
+            "expected_fact_count": len(expected_facts or {}),
+            "quality_check_count": len(benchmark_quality_checks),
+            "runtime_quality_floor_pass": quality_floor.quality_floor_pass,
+            "runtime_artifact_verification_state": finalized_artifact.verification_state.value,
+            "runtime_memory_commit_preceded_external_score": True,
+        },
         "replay": {
             "replay_class": replay.replay_class.value,
             "decision_reason": replay.reason,
@@ -3578,6 +3999,9 @@ def run_smoke(
             "skipped_step_count": replay.skipped_step_count,
             "candidate_id_present": bool(replay.candidate_id),
             "history_runtime_root_count": len(history_runtime_roots),
+            "memory_candidate_fixture_root_count": len(
+                memory_candidate_runtime_roots
+            ),
             "history_artifact_reuse_count": int(
                 continuous_reuse_metrics.get("history_artifact_reuse_count", 0.0)
             ),
@@ -3653,6 +4077,24 @@ def run_smoke(
             "validator_report_count": len(bundle.validator_report_paths),
             "input_validator_report_count": len(bundle.input_validator_report_paths),
         },
+        "memory_consumption": {
+            "path": str(memory_consumption_file.path),
+            "query_hash": memory_query.query_hash,
+            "record_count": len(memory_consumption_records),
+            "candidate_memory_ids": list(
+                memory_match_result.candidate_pool.candidate_memory_ids
+                if memory_match_result.candidate_pool is not None
+                else ()
+            ),
+            "records": [
+                record.canonical_payload()
+                for record in memory_consumption_records
+            ],
+            "compatibility_decisions": [
+                decision.canonical_payload()
+                for decision in compatibility_decisions
+            ],
+        },
     }
 
     result = SmokeResult(
@@ -3713,7 +4155,7 @@ def run_smoke(
         memory_match_count=driver_result.reloaded_memory_match_count,
         reloaded_execution_goal=driver_result.reloaded_execution_goal,
         reloaded_fallback_dag_id=driver_result.reloaded_fallback_dag_id,
-        quality_floor=quality_floor,
+        quality_floor=result_quality_floor,
         task_metrics=task_metrics,
         session_state=session_snapshot.state,
         lineage_view=lineage_view,

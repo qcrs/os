@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import json
+import os
 from pathlib import Path
 import time
 
@@ -193,6 +194,7 @@ class RuntimeDriverResult:
     materialized_outputs: MaterializedOutputBundle
     workspace_file_count: int
     codeact_record: CodeActExecutionRecord | None = None
+    control_transport_audit: dict[str, object] = field(default_factory=dict)
 
 
 def _elapsed_ms(start_ns: int) -> float:
@@ -449,6 +451,10 @@ class RuntimeDriver:
         response_sequence: list[str] = []
         fallback_dag = None
         control_bytes = 0.0
+        transport_request_wire_bytes = 0.0
+        transport_response_wire_bytes = 0.0
+        transport_message_count = 0.0
+        control_transport_attempts: list[dict[str, object]] = []
         output_payload = dict(runtime_input.output_payload)
         output_rendered = runtime_input.output_rendered
         output_artifact_hash = runtime_input.output_artifact_hash
@@ -506,7 +512,13 @@ class RuntimeDriver:
                 ),
             )
             exchange_stage_start_ns = time.perf_counter_ns()
-            responses, current_control_bytes = self._exchange_control_messages(
+            (
+                responses,
+                current_control_bytes,
+                current_request_wire_bytes,
+                current_response_wire_bytes,
+                current_transport_audit,
+            ) = self._exchange_control_messages(
                 runtime_input=runtime_input,
                 current_attempt_id=current_attempt_id,
                 candidate_artifact=candidate_artifact,
@@ -514,6 +526,10 @@ class RuntimeDriver:
             )
             control_plane_exchange_stage_ms += _elapsed_ms(exchange_stage_start_ns)
             control_bytes += current_control_bytes
+            transport_request_wire_bytes += current_request_wire_bytes
+            transport_response_wire_bytes += current_response_wire_bytes
+            transport_message_count += 1.0 + float(len(responses))
+            control_transport_attempts.append(current_transport_audit)
             executor_stage_start_ns = time.perf_counter_ns()
             saw_ack = False
             saw_run_start = False
@@ -1301,6 +1317,36 @@ class RuntimeDriver:
                         if runtime_input.memory_match_result.candidate_pool is None
                         else float(len(runtime_input.memory_match_result.candidate_pool.candidate_memory_ids))
                     ),
+                    "memory_compatible_match_count": float(
+                        sum(
+                            decision.verdict.value != "incompatible"
+                            for decision in runtime_input.memory_match_result.compatibility_decisions
+                        )
+                    ),
+                    "memory_policy_approved_match_count": float(
+                        sum(
+                            decision.policy_approved
+                            for decision in runtime_input.memory_match_result.compatibility_decisions
+                        )
+                    ),
+                    "memory_consumed_count": float(
+                        len(runtime_input.memory_match_result.matches)
+                    ),
+                    "memory_behavioral_effect_count": float(
+                        len(runtime_input.memory_match_result.matches)
+                    ),
+                    "memory_assist_count": float(
+                        sum(
+                            match.replay_class == ReplayClass.ASSIST
+                            for match in runtime_input.memory_match_result.matches
+                        )
+                    ),
+                    "memory_rejected_incompatible_count": float(
+                        sum(
+                            decision.verdict.value == "incompatible"
+                            for decision in runtime_input.memory_match_result.compatibility_decisions
+                        )
+                    ),
                     "memory_rerank_selected_count": (
                         0.0
                         if runtime_input.memory_match_result.rerank_result is None
@@ -1397,6 +1443,26 @@ class RuntimeDriver:
                 "state_pool_mmap_mode_count": (
                     1.0 if runtime_input.state_store.backend_name == StorageKind.MMAP_FILE.value else 0.0
                 ),
+                "transport_request_wire_bytes": transport_request_wire_bytes,
+                "transport_response_wire_bytes": transport_response_wire_bytes,
+                "total_wire_bytes": transport_request_wire_bytes + transport_response_wire_bytes,
+                "message_count": transport_message_count,
+                "utf8_text_frame_count": (
+                    transport_message_count
+                    if (
+                        runtime_input.layer_profile.executor_transport == "subprocess"
+                        and not runtime_input.layer_profile.structured_control_enabled
+                    )
+                    else 0.0
+                ),
+                "protobuf_frame_count": (
+                    transport_message_count
+                    if (
+                        runtime_input.layer_profile.executor_transport == "subprocess"
+                        and runtime_input.layer_profile.structured_control_enabled
+                    )
+                    else 0.0
+                ),
             }
         )
         telemetry.close()
@@ -1436,6 +1502,41 @@ class RuntimeDriver:
             materialized_outputs=materialized_outputs,
             workspace_file_count=runtime_input.workspace_file_count,
             codeact_record=execution_step_record.codeact_record,
+            control_transport_audit={
+                "schema_version": "statebus.control_transport_audit.v1",
+                "carrier": (
+                    "utf8_text"
+                    if (
+                        runtime_input.layer_profile.executor_transport == "subprocess"
+                        and not runtime_input.layer_profile.structured_control_enabled
+                    )
+                    else (
+                        "typed_protobuf"
+                        if runtime_input.layer_profile.executor_transport == "subprocess"
+                        else "loopback_contract"
+                    )
+                ),
+                "backend": runtime_input.layer_profile.executor_transport,
+                "driver_pid": os.getpid(),
+                "worker_pids": sorted(
+                    {
+                        int(item.get("worker_pid", 0))
+                        for item in control_transport_attempts
+                        if int(item.get("worker_pid", 0)) > 0
+                    }
+                ),
+                "request_frame_count": len(control_transport_attempts),
+                "response_frame_count": int(
+                    sum(int(item.get("response_frame_count", 0)) for item in control_transport_attempts)
+                ),
+                "request_wire_bytes": int(transport_request_wire_bytes),
+                "response_wire_bytes": int(transport_response_wire_bytes),
+                "total_wire_bytes": int(
+                    transport_request_wire_bytes + transport_response_wire_bytes
+                ),
+                "topology": "driver_uds_executor_subprocess",
+                "attempts": control_transport_attempts,
+            },
         )
 
     def _emit_data_plane_events(
@@ -1753,7 +1854,7 @@ class RuntimeDriver:
         current_attempt_id: str,
         candidate_artifact: ExecutionArtifactRef,
         current_memory_commit: MemoryCommit,
-    ) -> tuple[list[object], float]:
+    ) -> tuple[list[object], float, float, float, dict[str, object]]:
         loopback_message = self._build_loopback_message(
             runtime_input=runtime_input,
             current_attempt_id=current_attempt_id,
@@ -1761,6 +1862,11 @@ class RuntimeDriver:
             current_memory_commit=current_memory_commit,
         )
         if runtime_input.layer_profile.executor_transport == "subprocess":
+            carrier = (
+                "protobuf"
+                if runtime_input.layer_profile.structured_control_enabled
+                else "utf8_text"
+            )
             memfd_refs = None
             if (
                 runtime_input.semantic_ref is not None
@@ -1774,20 +1880,101 @@ class RuntimeDriver:
                         runtime_input.semantic_state_handle.size_bytes,
                     )
                 }
-            responses = SubprocessExecutorTransport(
+            transport = SubprocessExecutorTransport(
                 socket_path=runtime_input.socket_path,
                 timeout_s=max(loopback_message.header.timeout_ms / 1000.0, 5.0),
-            ).exchange_sequence(loopback_message, memfd_refs=memfd_refs)
+            )
+            responses = transport.exchange_sequence(
+                loopback_message,
+                memfd_refs=memfd_refs,
+                carrier=carrier,
+                text_payload=(
+                    self._build_matched_text_handoff(
+                        runtime_input=runtime_input,
+                        current_attempt_id=current_attempt_id,
+                    )
+                    if carrier == "utf8_text"
+                    else ""
+                ),
+            )
+            transport_audit = (
+                {}
+                if transport.last_exchange_audit is None
+                else transport.last_exchange_audit.canonical_payload()
+            )
+            request_wire_bytes = float(transport_audit.get("request_wire_bytes", 0))
+            response_wire_bytes = float(transport_audit.get("response_wire_bytes", 0))
         else:
             responses = ControlPlaneLoopbackServer(runtime_input.socket_path).exchange_sequence_by_contract(
                 loopback_message
             )
+            request_wire_bytes = float(len(frame_control_message(loopback_message)))
+            response_wire_bytes = float(
+                sum(len(frame_control_message(response)) for response in responses)
+            )
+            transport_audit = {
+                "carrier": "loopback_contract",
+                "backend": "loopback",
+                "driver_pid": os.getpid(),
+                "worker_pid": os.getpid(),
+                "request_frame_count": 1,
+                "response_frame_count": len(responses),
+                "request_wire_bytes": int(request_wire_bytes),
+                "response_wire_bytes": int(response_wire_bytes),
+                "total_wire_bytes": int(request_wire_bytes + response_wire_bytes),
+                "topology": "in_process_loopback",
+            }
         control_bytes = (
             float(len(frame_control_message(loopback_message)))
             if runtime_input.layer_profile.structured_control_enabled
             else float(runtime_input.retrieval.full_corpus_bytes)
         )
-        return responses, control_bytes
+        return (
+            responses,
+            control_bytes,
+            request_wire_bytes,
+            response_wire_bytes,
+            transport_audit,
+        )
+
+    def _build_matched_text_handoff(
+        self,
+        *,
+        runtime_input: RuntimeDriverInput,
+        current_attempt_id: str,
+    ) -> str:
+        planner_scope = dict(runtime_input.retrieval.planner_scope_payload or {})
+        text_context = str(planner_scope.get("text_context", "")).strip()
+        table_context = str(planner_scope.get("table_context", "")).strip()
+        artifact_context = str(planner_scope.get("artifact_context", "")).strip()
+        current_evidence = "\n".join(
+            part
+            for part in (
+                text_context,
+                table_context,
+            )
+            if part
+        ) or "No current evidence text was available."
+        prior_context = artifact_context or "No verified prior context was available."
+        objective = str(
+            runtime_input.planner_retrieval_objective.get("query_text", "")
+        ).strip()
+        return "\n".join(
+            (
+                "StateBus matched pure-text executor handoff.",
+                f"Trace: {runtime_input.trace_id}",
+                f"Task: {runtime_input.task_id}",
+                f"Step: {runtime_input.step_id}",
+                f"Attempt: {current_attempt_id}",
+                f"Objective: {objective}",
+                f"Output contract: {runtime_input.output_contract_version}",
+                f"Workspace: {runtime_input.layout.root}",
+                f"Input manifest: {runtime_input.input_manifest.manifest_hash}",
+                "Runtime contract: matched pure text; semantic state and shared memory disabled.",
+                f"Current evidence:\n{current_evidence}",
+                f"Verified prior context:\n{prior_context}",
+            )
+        )
 
     def _build_loopback_message(
         self,
@@ -1822,15 +2009,26 @@ class RuntimeDriver:
         return ExecRequest(
             header=header,
             reuse_policy=ReusePolicy(
-                allow_assist=True,
+                allow_assist=runtime_input.layer_profile.replay_enabled,
                 allow_validated_replay=runtime_input.layer_profile.replay_enabled,
                 allow_exact_replay=runtime_input.layer_profile.replay_enabled,
             ),
             state_refs=()
             if runtime_input.semantic_ref is None
             else (RefHandle(ref_id=runtime_input.semantic_ref.state_id, ref_kind="semantic_state"),),
-            artifact_refs=(RefHandle(ref_id=candidate_artifact.artifact_id, ref_kind="execution_artifact"),),
-            memory_refs=(RefHandle(ref_id=current_memory_commit.memory_ref.memory_id, ref_kind="memory"),),
+            artifact_refs=(
+                (RefHandle(ref_id=candidate_artifact.artifact_id, ref_kind="execution_artifact"),)
+                if (
+                    runtime_input.layer_profile.structured_control_enabled
+                    or runtime_input.layer_profile.executor_transport != "subprocess"
+                )
+                else ()
+            ),
+            memory_refs=(
+                (RefHandle(ref_id=current_memory_commit.memory_ref.memory_id, ref_kind="memory"),)
+                if runtime_input.layer_profile.replay_enabled
+                else ()
+            ),
             runtime_reuse_contract="|".join(runtime_contract_tokens),
             output_contract_version=runtime_input.output_contract_version,
             workspace_root=str(runtime_input.layout.root),

@@ -141,7 +141,14 @@ class AdaptiveTaskEnvelope:
     domain_pack_id: str
     allowed_capability_ids: tuple[str, ...]
     allowed_output_contracts: tuple[str, ...]
-    allowed_memory_policies: tuple[str, ...] = ("none", "assist", "artifact", "strategy")
+    allowed_memory_policies: tuple[str, ...] = (
+        "none",
+        "assist",
+        "artifact",
+        "strategy",
+        "validated_replay",
+        "exact_replay",
+    )
     role_cardinality: dict[str, tuple[int, int]] = field(default_factory=dict)
     max_plan_steps: int = 6
     max_dependency_depth: int = 4

@@ -251,6 +251,74 @@ class LLMClient(Protocol):
     def describe(self) -> dict[str, object]: ...
 
 
+@dataclass(frozen=True)
+class RoleDispatchLLMClient:
+    """Dispatch role calls to independently configured LLM clients."""
+
+    clients: dict[str, LLMClient]
+    execution_modes: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        normalized = {
+            normalize_comparator_role_name(role): client
+            for role, client in self.clients.items()
+        }
+        missing = [role for role in FOUR_ROLE_COMPARATOR_ORDER if role not in normalized]
+        if missing:
+            raise ValueError(f"missing role llm clients: {','.join(missing)}")
+        object.__setattr__(self, "clients", normalized)
+        object.__setattr__(
+            self,
+            "execution_modes",
+            {
+                normalize_comparator_role_name(role): str(mode).strip().lower()
+                for role, mode in self.execution_modes.items()
+            },
+        )
+
+    async def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        purpose: str,
+        temperature: float | None = None,
+        response_schema: dict[str, Any] | None = None,
+    ) -> LLMResult:
+        role = normalize_comparator_role_name(purpose)
+        return await self.clients[role].complete(
+            messages,
+            purpose=role,
+            temperature=temperature,
+            response_schema=response_schema,
+        )
+
+    def describe_role(self, role: str) -> dict[str, object]:
+        normalized = normalize_comparator_role_name(role)
+        description = dict(self.clients[normalized].describe())
+        description["role"] = normalized
+        description["execution_mode"] = self.execution_modes.get(
+            normalized,
+            str(description.get("mode", "")),
+        )
+        role_description = dict(description.get("roles", {})).get(normalized, {})
+        if isinstance(role_description, dict):
+            description["role_config"] = dict(role_description)
+        return description
+
+    def describe(self) -> dict[str, object]:
+        return {
+            "backend": "role_dispatch",
+            "execution_modes": {
+                role: self.execution_modes.get(role, "")
+                for role in FOUR_ROLE_COMPARATOR_ORDER
+            },
+            "roles": {
+                role: self.describe_role(role)
+                for role in FOUR_ROLE_COMPARATOR_ORDER
+            },
+        }
+
+
 class OpenAICompatibleLLMClient:
     def __init__(self, config: LLMConfig) -> None:
         config.require_api_ready()

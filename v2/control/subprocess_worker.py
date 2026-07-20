@@ -42,7 +42,13 @@ from v2.control.messages import (
     RunStart,
     SuccessResult,
 )
-from v2.control.transport import decode_memfd_ref, recv_control_message, send_control_message
+from v2.control.transport import (
+    decode_memfd_ref,
+    recv_control_message,
+    recv_text_message,
+    send_control_message,
+    send_text_message,
+)
 from v2.state import (
     SemanticStateValidationError,
     select_dense_semantic_state,
@@ -75,14 +81,55 @@ def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
     return result
 
 
-def run(socket_path: str) -> int:
+def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     """Connect to supervisor, process one ExecRequest, return exit code."""
+    if carrier not in {"protobuf", "utf8_text"}:
+        raise ValueError(f"unsupported subprocess carrier: {carrier}")
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.connect(socket_path)
     except OSError as exc:
         print(f"subprocess_worker: connect failed: {exc}", file=sys.stderr)
         return 1
+
+    if carrier == "utf8_text":
+        try:
+            text_request = recv_text_message(sock)
+        except Exception as exc:
+            print(f"subprocess_worker: recv failed: {exc}", file=sys.stderr)
+            sock.close()
+            return 1
+        required_sections = (
+            "StateBus matched pure-text executor handoff.",
+            "Task:",
+            "Output contract:",
+            "Current evidence:",
+            "Verified prior context:",
+        )
+        forbidden_typed_fields = (
+            '"message_type"',
+            '"state_refs"',
+            '"memory_refs"',
+            '"artifact_refs"',
+        )
+        missing = [section for section in required_sections if section not in text_request]
+        forbidden = [field for field in forbidden_typed_fields if field in text_request]
+        if missing or forbidden:
+            detail = ",".join(
+                [*(f"missing:{item}" for item in missing), *(f"forbidden:{item}" for item in forbidden)]
+            )
+            send_text_message(sock, f"RESULT ERROR invalid_text_handoff {detail}")
+            sock.close()
+            return 1
+        for response in (
+            "ACK RECEIVED",
+            "RUN START",
+            "HEARTBEAT running",
+            "RESULT SUCCESS",
+        ):
+            send_text_message(sock, response)
+        sock.close()
+        return 0
 
     try:
         message = recv_control_message(sock)
@@ -100,6 +147,7 @@ def run(socket_path: str) -> int:
         return 1
 
     header = message.header
+    send_message = send_control_message
     runtime_reuse_contract = message.runtime_reuse_contract or ""
     semantic_optional = "no_semantic_state" in runtime_reuse_contract
     semantic_selection = message.operation == "semantic_select_v1"
@@ -128,7 +176,7 @@ def run(socket_path: str) -> int:
             errors.append("semantic_state_ref_count_invalid")
 
     if errors:
-        send_control_message(
+        send_message(
             sock,
             ErrorResult(
                 header=replace(header, event_type=EventType.RES_ERR),
@@ -151,14 +199,14 @@ def run(socket_path: str) -> int:
         )
 
     now = time.time_ns()
-    send_control_message(
+    send_message(
         sock,
         AckReceived(
             header=replace(header, event_type=EventType.ACK_RECV),
             acked_at_ns=now,
         ),
     )
-    send_control_message(
+    send_message(
         sock,
         RunStart(
             header=replace(header, event_type=EventType.RUN_START),
@@ -167,7 +215,7 @@ def run(socket_path: str) -> int:
             lease_timeout_ms=30_000,
         ),
     )
-    send_control_message(
+    send_message(
         sock,
         Heartbeat(
             header=replace(header, event_type=EventType.HEARTBEAT),
@@ -191,7 +239,7 @@ def run(socket_path: str) -> int:
                 unregister_shared_memory_tracker=True,
             )
         except (SemanticStateValidationError, ValueError, OSError) as exc:
-            send_control_message(
+            send_message(
                 sock,
                 ErrorResult(
                     header=replace(header, event_type=EventType.RES_ERR),
@@ -202,7 +250,7 @@ def run(socket_path: str) -> int:
             )
             sock.close()
             return 1
-        send_control_message(
+        send_message(
             sock,
             SuccessResult(
                 header=replace(header, event_type=EventType.RES_SUCC),
@@ -221,7 +269,7 @@ def run(socket_path: str) -> int:
             ),
         )
     else:
-        send_control_message(
+        send_message(
             sock,
             SuccessResult(
                 header=replace(header, event_type=EventType.RES_SUCC),
@@ -238,8 +286,9 @@ def run(socket_path: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="StateBus v2 Executor subprocess worker")
     parser.add_argument("--socket-path", required=True, help="UDS path to connect to")
+    parser.add_argument("--carrier", choices=("protobuf", "utf8_text"), default="protobuf")
     args = parser.parse_args()
-    sys.exit(run(args.socket_path))
+    sys.exit(run(args.socket_path, carrier=args.carrier))
 
 
 if __name__ == "__main__":

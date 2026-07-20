@@ -153,21 +153,32 @@ def _financial_source_rows(spec: CanonicalTaskSpec) -> tuple[dict[str, object], 
 
     ticker = str(spec.arguments.get("ticker", "")).upper()
     quarter = str(spec.arguments.get("quarter", "")).upper()
-    metric = str(spec.arguments.get("metric", "")).strip().lower()
     document = OfflineFinancialReportCorpus().resolve(ticker=ticker, quarter=quarter)
-    matching = [
-        row
-        for row in document.table_rows
-        if row.metric_name.strip().lower().split(":", 1)[0] == metric
-    ]
-    if len(matching) != 1:
+    rows: list[dict[str, object]] = []
+    for row in document.table_rows:
+        value = _parse_number(row.value)
+        if value is None:
+            raise ValueError(
+                f"formal_financial_metric_not_numeric:{ticker}:{quarter}:{row.metric_name}"
+            )
+        rows.append({
+            "ticker": ticker,
+            "quarter": quarter,
+            "metric": row.metric_name.strip().lower().split(":", 1)[0],
+            "value": value,
+            "source_doc_hash": row.source_doc_hash,
+            "table_id": row.table_id,
+            "sheet_name": row.sheet_name,
+            "row_idx": row.row_idx,
+            "col_idx": row.col_idx,
+            "extractor_version": row.extractor_version,
+            "rendered_text": row.rendered_text,
+        })
+    if len(rows) < 2:
         raise ValueError(
-            f"formal_financial_metric_row_count:{ticker}:{quarter}:{metric}:{len(matching)}"
+            f"formal_financial_full_table_required:{ticker}:{quarter}:{len(rows)}"
         )
-    value = _parse_number(matching[0].value)
-    if value is None:
-        raise ValueError(f"formal_financial_metric_not_numeric:{metric}")
-    return ({"ticker": ticker, "quarter": quarter, "metric": metric, "value": value},)
+    return tuple(rows)
 
 
 def _cross_period_source_rows() -> tuple[dict[str, object], ...]:
@@ -202,7 +213,128 @@ def _csv_source_rows(spec: CanonicalTaskSpec) -> tuple[dict[str, object], ...]:
     return rows
 
 
+def _markdown_section_rows(path: Path) -> tuple[dict[str, object], ...]:
+    """Return every markdown section intact with stable, source-local locators."""
+
+    text = path.read_text(encoding="utf-8")
+    heading_matches = tuple(re.finditer(r"(?m)^##\s+(.+?)\s*$", text))
+    rows: list[dict[str, object]] = []
+    for index, match in enumerate(heading_matches):
+        body_start = match.end()
+        body_end = (
+            heading_matches[index + 1].start()
+            if index + 1 < len(heading_matches)
+            else len(text)
+        )
+        body = text[body_start:body_end].strip()
+        rows.append({
+            "row_kind": "narrative_section",
+            "section": match.group(1).strip(),
+            "text": body,
+            "locator": f"{path.name}#section-{index + 1}",
+        })
+    if not rows:
+        raise ValueError(f"formal_markdown_sections_missing:{path.name}")
+    return tuple(rows)
+
+
+def _markdown_table_rows(path: Path) -> tuple[dict[str, object], ...]:
+    """Parse all ordinary markdown tables without selecting task-relevant rows."""
+
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    rows: list[dict[str, object]] = []
+    table_index = 0
+    index = 0
+    while index + 2 < len(lines):
+        header_line = lines[index].strip()
+        divider_line = lines[index + 1].strip()
+        if not header_line.startswith("|") or not divider_line.startswith("|"):
+            index += 1
+            continue
+        headers = [cell.strip() for cell in header_line.strip("|").split("|")]
+        divider = [cell.strip() for cell in divider_line.strip("|").split("|")]
+        if (
+            len(headers) < 2
+            or len(headers) != len(divider)
+            or any(not cell or set(cell) - {"-", ":"} for cell in divider)
+        ):
+            index += 1
+            continue
+        table_index += 1
+        data_index = 0
+        index += 2
+        while index < len(lines) and lines[index].strip().startswith("|"):
+            cells = [cell.strip() for cell in lines[index].strip().strip("|").split("|")]
+            if len(cells) != len(headers):
+                break
+            data_index += 1
+            row: dict[str, object] = {
+                "row_kind": "table_row",
+                "locator": f"{path.name}#table-{table_index}-row-{data_index}",
+            }
+            for header, cell in zip(headers, cells, strict=True):
+                parsed = _parse_number(cell)
+                row[header] = parsed if parsed is not None and re.fullmatch(
+                    r"[-+]?\d+(?:\.\d+)?", cell.replace(",", "")
+                ) else cell
+            rows.append(row)
+            index += 1
+    return tuple(rows)
+
+
+def _holdout_source_rows(spec: CanonicalTaskSpec) -> tuple[dict[str, object], ...]:
+    source_path = _resolve_repo_file(str(spec.arguments.get("source_path", "")))
+    source_kind = str(spec.arguments.get("source_kind", "")).strip()
+    if source_kind == "narrative_markdown":
+        rows = _markdown_section_rows(source_path)
+    elif source_kind == "csv_table":
+        with source_path.open("r", encoding="utf-8", newline="") as handle:
+            rows = tuple(dict(row) for row in csv.DictReader(handle))
+        if not rows:
+            raise ValueError(f"formal_holdout_csv_empty:{source_path.name}")
+    elif source_kind == "mixed_markdown":
+        rows = (*_markdown_section_rows(source_path), *_markdown_table_rows(source_path))
+        if not any(row.get("row_kind") == "table_row" for row in rows):
+            raise ValueError(f"formal_holdout_mixed_table_missing:{source_path.name}")
+    else:
+        raise ValueError(f"formal_holdout_source_kind_unsupported:{source_kind}")
+
+    output_schema = spec.arguments.get("output_schema", {})
+    if not isinstance(output_schema, dict):
+        raise ValueError(f"formal_holdout_output_schema_invalid:{source_path.name}")
+    normalized: list[dict[str, object]] = []
+    for raw_row in rows:
+        row = dict(raw_row)
+        for raw_field, raw_kind in output_schema.items():
+            field = str(raw_field)
+            kind = str(raw_kind)
+            if field not in row or kind not in {"integer", "number"}:
+                continue
+            parsed = _parse_number(row[field])
+            if parsed is None:
+                raise ValueError(f"formal_holdout_numeric_value_invalid:{field}")
+            if kind == "integer":
+                if not parsed.is_integer():
+                    raise ValueError(f"formal_holdout_integer_value_invalid:{field}")
+                row[field] = int(parsed)
+            else:
+                row[field] = float(parsed)
+        normalized.append(row)
+    return tuple(normalized)
+
+
 def _operation_for_spec(spec: CanonicalTaskSpec) -> str:
+    if spec.task_family in {
+        "continuous_long_doc_table_analysis",
+        "continuous_csv_table_analysis",
+    } and spec.intent_op in {
+        "extract_narrative_facts",
+        "synthesize_narrative_risk",
+        "lookup_table_record",
+        "lookup_table_with_qualifier",
+    }:
+        return spec.intent_op
     if spec.task_family == "financial_report_analysis" and spec.intent_op == "compare_metric":
         return "lookup_metric"
     if spec.task_family == "cross_period_financial_analysis" and spec.intent_op in {
@@ -234,6 +366,19 @@ def _capability_id(operation: str) -> str:
 
 
 def _output_schema(operation: str, arguments: dict[str, object]) -> tuple[dict[str, str], str]:
+    if operation in {
+        "extract_narrative_facts",
+        "synthesize_narrative_risk",
+        "lookup_table_record",
+        "lookup_table_with_qualifier",
+    }:
+        raw_schema = arguments.get("output_schema")
+        if not isinstance(raw_schema, dict) or not raw_schema:
+            raise ValueError(f"formal_output_schema_missing:{operation}")
+        schema = {str(key): str(value) for key, value in raw_schema.items()}
+        if any(value not in {"string", "number", "integer", "boolean"} for value in schema.values()):
+            raise ValueError(f"formal_output_schema_type_unsupported:{operation}")
+        return schema, "object"
     if operation == "lookup_metric":
         return {"metric_name": "string", "metric_value": "number"}, "object"
     if operation == "compute_delta":
@@ -292,6 +437,38 @@ def _output_schema(operation: str, arguments: dict[str, object]) -> tuple[dict[s
     raise ValueError(f"formal_output_schema_unsupported:{operation}")
 
 
+def _labeled_fact_semantics(arguments: dict[str, object]) -> dict[str, object]:
+    return {
+        "fact_selectors": arguments.get("fact_selectors", []),
+        "labeled_fact_algorithm": {
+            "row_selection": (
+                "For each selector, select exactly one row whose row_kind is narrative_section "
+                "and whose section equals selector.section."
+            ),
+            "sentence_selection": (
+                "Within that row's text, find the sentence that starts at the beginning of the text "
+                "or immediately after a . ! or ? terminator plus whitespace, then matches "
+                "selector.label case-insensitively, followed by was or is."
+            ),
+            "value_extraction": (
+                "Set selector.output_field to only the minimal phrase after was/is and before the "
+                "next . ! or ? sentence terminator, trimmed of surrounding whitespace. Do not split "
+                "the whole section on was/is and do not copy the complete sentence or section."
+            ),
+            "locator_output": (
+                "When selector.locator_field is present, set it to selector.section exactly. Do not "
+                "emit the row locator, source path, TextSpanLocator, section id, or section body."
+            ),
+            "python_regex_template": (
+                "label = str(selector['label']); pattern = rf'(?i)(?:^|[.!?]\\s+)\\s*"
+                "{re.escape(label)}\\s+(?:was|is)\\s+(.+?)(?=[.!?](?:\\s|$)|$)'; "
+                "match = re.search(pattern, text); use match.group(1).strip(). This pattern intentionally "
+                "uses a consuming non-capturing prefix; do not replace it with lookbehind."
+            ),
+        },
+    }
+
+
 def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[str, object]:
     semantics: dict[str, object] = {
         "operation": operation,
@@ -303,7 +480,35 @@ def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[s
         ),
         "output_contract": "Write only the requested JSON object or object array to outputs/result.json.",
     }
-    if operation == "lookup_metric":
+    if operation in {"extract_narrative_facts", "synthesize_narrative_risk"}:
+        semantics.update(
+            **_labeled_fact_semantics(arguments),
+            formula=(
+                "Apply labeled_fact_algorithm literally to every public selector and emit exactly the declared "
+                "fields. Do not infer a value from benchmark gold."
+            ),
+        )
+    elif operation == "lookup_table_record":
+        semantics.update(
+            filters=arguments.get("filters", {}),
+            value_fields=arguments.get("value_fields", []),
+            formula=(
+                "Select the unique authorized table row matching every public filter and emit only the declared "
+                "output fields, preserving strings and parsing numeric cells as numbers."
+            ),
+        )
+    elif operation == "lookup_table_with_qualifier":
+        semantics.update(
+            filters=arguments.get("filters", {}),
+            value_fields=arguments.get("value_fields", []),
+            **_labeled_fact_semantics(arguments),
+            formula=(
+                "Select the unique authorized table row matching every public filter, then extract each requested "
+                "qualifier by applying labeled_fact_algorithm literally. Merge only the declared fields into one "
+                "output object."
+            ),
+        )
+    elif operation == "lookup_metric":
         semantics.update(
             ticker=str(arguments["ticker"]).upper(),
             quarter=str(arguments["quarter"]).upper(),
@@ -349,6 +554,12 @@ def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[s
         semantics.update(
             mean_column=str(arguments["mean_column"]),
             max_column=str(arguments["max_column"]),
+            numeric_cell_encoding=(
+                "The mean and maximum columns may encode a point estimate as a leading numeric token followed by "
+                "an optional [lower-upper] range. Remove commas, keep only the text before the first [, trim it, "
+                "and parse that complete leading token as the value. Never delete punctuation from the full cell or "
+                "concatenate digits from the bracketed range into the point estimate."
+            ),
             formula=(
                 "mean_cases is the arithmetic mean of non-missing mean_column values rounded to the nearest integer. "
                 "Find the row with maximum non-missing max_column and emit its Country and Year strings."
@@ -417,7 +628,14 @@ def adapt_formal_sample(sample: MinimalBenchmarkSample) -> FormalAdaptiveCase:
         raise ValueError(f"formal_sample_missing_canonical_task_spec:{sample.task_id}")
     spec = sample.canonical_task_spec
     operation = _operation_for_spec(spec)
-    if spec.task_family == "financial_report_analysis":
+    if operation in {
+        "extract_narrative_facts",
+        "synthesize_narrative_risk",
+        "lookup_table_record",
+        "lookup_table_with_qualifier",
+    }:
+        source_rows = _holdout_source_rows(spec)
+    elif spec.task_family == "financial_report_analysis":
         source_rows = _financial_source_rows(spec)
     elif spec.task_family == "cross_period_financial_analysis":
         source_rows = _cross_period_source_rows()
@@ -437,6 +655,86 @@ def adapt_formal_sample(sample: MinimalBenchmarkSample) -> FormalAdaptiveCase:
         operation_semantics=_operation_semantics(operation, spec.arguments),
         report_capability_ids=report_capabilities,
     )
+
+
+def _extract_labeled_fact(
+    rows: tuple[dict[str, object], ...],
+    selector: dict[str, object],
+) -> tuple[str, str]:
+    section = str(selector.get("section", "")).strip()
+    label = str(selector.get("label", "")).strip()
+    candidates = [
+        row
+        for row in rows
+        if str(row.get("row_kind", "")) == "narrative_section"
+        and str(row.get("section", "")) == section
+    ]
+    if len(candidates) != 1 or not label:
+        raise ValueError(f"formal_narrative_selector_invalid:{section}:{label}")
+    text = str(candidates[0].get("text", ""))
+    match = re.search(
+        rf"(?i)(?:^|[.!?]\s+)\s*{re.escape(label)}\s+(?:was|is)\s+(.+?)(?=[.!?](?:\s|$)|$)",
+        text,
+    )
+    if match is None:
+        raise ValueError(f"formal_narrative_fact_missing:{section}:{label}")
+    return match.group(1).strip(), section
+
+
+def _recompute_public_fact_fields(
+    arguments: dict[str, object],
+    rows: tuple[dict[str, object], ...],
+) -> dict[str, object]:
+    selectors = arguments.get("fact_selectors", [])
+    if not isinstance(selectors, list) or not selectors:
+        raise ValueError("formal_fact_selectors_missing")
+    output: dict[str, object] = {}
+    for raw_selector in selectors:
+        if not isinstance(raw_selector, dict):
+            raise ValueError("formal_fact_selector_invalid")
+        field = str(raw_selector.get("output_field", "")).strip()
+        locator_field = str(raw_selector.get("locator_field", "")).strip()
+        if not field:
+            raise ValueError("formal_fact_output_field_missing")
+        value, section = _extract_labeled_fact(rows, raw_selector)
+        output[field] = value
+        if locator_field:
+            output[locator_field] = section
+    return output
+
+
+def _select_public_table_row(
+    arguments: dict[str, object],
+    rows: tuple[dict[str, object], ...],
+) -> dict[str, object]:
+    filters = arguments.get("filters", {})
+    if not isinstance(filters, dict) or not filters:
+        raise ValueError("formal_table_filters_missing")
+    selected = [
+        row
+        for row in rows
+        if str(row.get("row_kind", "table_row")) == "table_row"
+        and all(str(row.get(str(key), "")) == str(value) for key, value in filters.items())
+    ]
+    if len(selected) != 1:
+        raise ValueError(f"formal_table_match_count:{len(selected)}")
+    value_fields = arguments.get("value_fields", [])
+    if not isinstance(value_fields, list) or not value_fields:
+        raise ValueError("formal_table_value_fields_missing")
+    output_schema = arguments.get("output_schema", {})
+    if not isinstance(output_schema, dict):
+        raise ValueError("formal_table_output_schema_missing")
+    output: dict[str, object] = {}
+    for raw_field in value_fields:
+        field = str(raw_field)
+        value = selected[0][field]
+        if output_schema.get(field) in {"number", "integer"}:
+            parsed = _parse_number(value)
+            if parsed is None:
+                raise ValueError(f"formal_table_numeric_value_invalid:{field}")
+            value = int(parsed) if output_schema.get(field) == "integer" else parsed
+        output[field] = value
+    return output
 
 
 def _mean(values: list[float]) -> float:
@@ -494,6 +792,15 @@ def recompute_formal_rows(
     arguments: dict[str, object],
     rows: tuple[dict[str, object], ...],
 ) -> tuple[dict[str, object], ...]:
+    if operation in {"extract_narrative_facts", "synthesize_narrative_risk"}:
+        return (_recompute_public_fact_fields(arguments, rows),)
+    if operation == "lookup_table_record":
+        return (_select_public_table_row(arguments, rows),)
+    if operation == "lookup_table_with_qualifier":
+        return ({
+            **_select_public_table_row(arguments, rows),
+            **_recompute_public_fact_fields(arguments, rows),
+        },)
     if operation == "lookup_metric":
         ticker = str(arguments["ticker"]).upper()
         quarter = str(arguments["quarter"]).upper()

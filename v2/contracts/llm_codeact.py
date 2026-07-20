@@ -107,6 +107,7 @@ class CodeGenerationRequest:
     expected_output_shape: str = "object"
     provenance_item_ids: tuple[str, ...] = ()
     retrieval_context: tuple[dict[str, object], ...] = ()
+    memory_inputs: tuple[dict[str, object], ...] = ()
     schema_version: str = CODE_GENERATION_REQUEST_SCHEMA_VERSION
 
     def canonical_payload(self) -> dict[str, object]:
@@ -134,6 +135,7 @@ class CodeGenerationRequest:
             "expected_output_shape": self.expected_output_shape,
             "provenance_item_ids": list(self.provenance_item_ids),
             "retrieval_context": [dict(item) for item in self.retrieval_context],
+            "memory_inputs": [dict(item) for item in self.memory_inputs],
             "model_signature": self.model_signature,
             "prompt_signature": self.prompt_signature,
             "runtime_signature": self.runtime_signature,

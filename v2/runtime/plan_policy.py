@@ -26,7 +26,14 @@ _ALLOWED_COMPLETION_KEYS = {
     "max_conflicts",
 }
 _ALLOWED_FAILURE_ACTIONS = {"fail", "request_replan", "fallback_deterministic"}
-_ALLOWED_MEMORY_POLICIES = {"none", "assist", "artifact", "strategy"}
+_ALLOWED_MEMORY_POLICIES = {
+    "none",
+    "assist",
+    "artifact",
+    "strategy",
+    "validated_replay",
+    "exact_replay",
+}
 _RISK_RANK = {RiskClass.READ_ONLY: 0, RiskClass.WORKSPACE_WRITE: 1, RiskClass.BOUNDED_CODE: 2}
 _PROMPT_ESCAPE_MARKERS = (
     "ignore previous", "ignore all previous", "<system", "```", "subprocess", "os.system",

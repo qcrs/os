@@ -43,6 +43,34 @@ def _read_csv_rows(csv_path: str) -> tuple[list[dict[str, str]], tuple[str, ...]
     return rows, fieldnames, path
 
 
+def _resolve_csv_schema_aliases(
+    rows: list[dict[str, str]],
+    fieldnames: tuple[str, ...],
+    aliases: object,
+) -> tuple[list[dict[str, str]], tuple[str, ...], dict[str, str]]:
+    if not isinstance(aliases, dict) or not aliases:
+        return rows, fieldnames, {}
+    normalized_aliases = {
+        str(source).strip(): str(target).strip()
+        for source, target in aliases.items()
+        if str(source).strip() and str(target).strip()
+    }
+    unknown = sorted(set(normalized_aliases) - set(fieldnames))
+    if unknown:
+        raise ValueError(f"schema alias source columns missing: {unknown}")
+    resolved_names = tuple(normalized_aliases.get(field, field) for field in fieldnames)
+    if len(set(resolved_names)) != len(resolved_names):
+        raise ValueError("schema aliases resolve multiple columns to the same canonical name")
+    normalized_rows = [
+        {
+            normalized_aliases.get(str(key), str(key)): value
+            for key, value in row.items()
+        }
+        for row in rows
+    ]
+    return normalized_rows, resolved_names, normalized_aliases
+
+
 def _read_text_file(file_path: str) -> tuple[str, Path]:
     path = Path(file_path)
     if not path.is_absolute():
@@ -354,8 +382,20 @@ def _long_doc_metric_series(document_text: str, metric: str) -> dict[str, str]:
     return {quarter: values[metric] for quarter, values in rows.items() if metric in values}
 
 
-def _parse_cross_period_revenue_tables(document_text: str) -> dict[str, dict[str, float]]:
+def _parse_cross_period_revenue_tables(
+    document_text: str,
+    schema_aliases: object = None,
+) -> dict[str, dict[str, float]]:
     sections = _extract_long_doc_sections(document_text)
+    aliases = (
+        {
+            str(source).strip().lower(): str(target).strip().lower()
+            for source, target in schema_aliases.items()
+            if str(source).strip() and str(target).strip()
+        }
+        if isinstance(schema_aliases, dict)
+        else {}
+    )
     series_by_ticker: dict[str, dict[str, float]] = {}
     for title, body in sections.items():
         if not title.endswith("Revenue Table"):
@@ -364,6 +404,7 @@ def _parse_cross_period_revenue_tables(document_text: str) -> dict[str, dict[str
         if not ticker:
             continue
         quarter_values: dict[str, float] = {}
+        header: tuple[str, ...] = ()
         for line in body.splitlines():
             stripped = line.strip()
             if not stripped.startswith("|"):
@@ -371,10 +412,25 @@ def _parse_cross_period_revenue_tables(document_text: str) -> dict[str, dict[str
             cells = [cell.strip() for cell in stripped.strip("|").split("|")]
             if len(cells) < 2:
                 continue
-            quarter = cells[0]
-            if quarter in {"quarter", "---"} or set(quarter) == {"-"}:
+            if not header:
+                header = tuple(
+                    aliases.get(cell.lower(), cell.lower())
+                    for cell in cells
+                )
                 continue
-            value = _parse_number(cells[1])
+            if all(set(cell.replace(":", "")) <= {"-"} for cell in cells):
+                continue
+            try:
+                quarter_index = header.index("quarter")
+                value_index = header.index("revenue_musd")
+            except ValueError as exc:
+                raise ValueError(
+                    f"revenue table requires quarter and revenue_musd columns: {title}"
+                ) from exc
+            if max(quarter_index, value_index) >= len(cells):
+                continue
+            quarter = cells[quarter_index]
+            value = _parse_number(cells[value_index])
             if value is None:
                 continue
             quarter_values[quarter] = value
@@ -677,7 +733,10 @@ def _build_cross_period_output_payload(request: dict[str, Any], root: Path) -> d
             "cross_period_financial/cross_period_financial_report.md"
         )
     document_text, resolved_doc_path = _read_text_file(document_path)
-    revenue_tables = _parse_cross_period_revenue_tables(document_text)
+    revenue_tables = _parse_cross_period_revenue_tables(
+        document_text,
+        arguments.get("schema_aliases"),
+    )
     base_payload = _long_doc_reuse_base_payload(
         request=request,
         resolved_path=resolved_doc_path,
@@ -901,6 +960,12 @@ def build_candidate_output_payload(request: dict[str, Any], root: Path) -> dict[
         return payload
 
     rows, fieldnames, resolved_csv_path = _read_csv_rows(str(arguments.get("csv_path", "")))
+    source_fieldnames = fieldnames
+    rows, fieldnames, resolved_schema_aliases = _resolve_csv_schema_aliases(
+        rows,
+        fieldnames,
+        arguments.get("schema_aliases"),
+    )
     artifact_refs, strategy_refs = _produced_refs(reuse_contract)
 
     base_payload: dict[str, object] = {
@@ -922,6 +987,9 @@ def build_candidate_output_payload(request: dict[str, Any], root: Path) -> dict[
         "dataset_id": str(arguments.get("dataset_id", "")),
         "csv_path": str(arguments.get("csv_path", "")),
         "csv_source_path": str(resolved_csv_path),
+        "source_fieldnames": list(source_fieldnames),
+        "resolved_fieldnames": list(fieldnames),
+        "resolved_schema_aliases": resolved_schema_aliases,
         "produced_artifact_refs": artifact_refs,
         "produced_strategy_refs": strategy_refs,
         "consumed_artifact_refs": consumed_artifact_refs,
@@ -1107,6 +1175,8 @@ def build_candidate_output_payload(request: dict[str, Any], root: Path) -> dict[
                         "dataset_id": arguments.get("dataset_id", ""),
                         "row_count": len(rows),
                         "fieldnames": list(fieldnames),
+                        "source_fieldnames": list(source_fieldnames),
+                        "resolved_schema_aliases": resolved_schema_aliases,
                         "column_types": {
                             field: _infer_column_type([str(row.get(field, "")) for row in rows[: min(len(rows), 128)]])
                             for field in fieldnames

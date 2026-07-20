@@ -37,6 +37,7 @@ from v2.contracts import (
     CodeGenerationPolicy,
     EvidenceRequest,
     PlanStepProposal,
+    ReplayClass,
     RiskClass,
     WorkflowMode,
 )
@@ -58,6 +59,10 @@ from v2.utils import sha256_digest, stable_json_dumps
 
 _SCHEMA_VERSION = "statebus.adaptive_formal_compare.v3"
 _SYSTEM_FAILURE_CLASSES = {"sandbox_infrastructure", "runtime_bug"}
+_RETRIEVAL_EVIDENCE_TYPES_BY_CAPABILITY = {
+    "retrieve_semantic_evidence_v1": ("semantic_context",),
+    "retrieve_table_evidence_v1": ("table",),
+}
 
 
 @dataclass(frozen=True)
@@ -141,6 +146,15 @@ def _classify_failure(error: str, *, stage: str = "") -> str:
     ):
         return "model_quality"
     return "runtime_bug"
+
+
+def _evidence_types_for_retrieval_capability(capability_id: str) -> tuple[str, ...]:
+    """Translate selected retrieval authority into its admissible evidence surface."""
+
+    try:
+        return _RETRIEVAL_EVIDENCE_TYPES_BY_CAPABILITY[capability_id]
+    except KeyError as exc:
+        raise ValueError(f"formal_unknown_retrieval_capability:{capability_id}") from exc
 
 
 def _terminal_quality_reports(
@@ -743,11 +757,56 @@ def _build_formal_analysis_context(
         "analysis_context": (
             "Infer the analysis from task_goal, the required output fields, and the authorized input schema."
         ),
-        "business_formula_is_not_pre_registered": True,
+        "formula_source": "public_task_contract",
+        "capability_registry_contains_expected_answers": False,
+        "benchmark_gold_visible_to_runtime": False,
         "expected_values_are_not_provided": True,
+        "declared_output_schema": dict(case.output_schema),
+        "json_output_type_contract": (
+            "Honor declared_output_schema exactly: integer fields must be serialized from Python int values "
+            "(convert integral floats with int); number fields use finite int/float values; string fields use "
+            "str values; boolean fields use bool values. Null is invalid for every declared field."
+        ),
         "task_parameters": execution_task_parameters(case),
         "source_profile": source_profile,
     }
+
+
+def _formal_recomputation_repair_guidance(
+    operation_semantics: dict[str, object],
+) -> str:
+    if isinstance(operation_semantics.get("labeled_fact_algorithm"), dict):
+        return (
+            " The public labeled_fact_algorithm is part of the validator contract, not optional prose. "
+            "For every fact selector, derive the value with its provided regex template. For every selector "
+            "that declares locator_field, assign that output field from selector.section exactly. A source "
+            "row's locator value is provenance metadata and must never be emitted as the requested section-heading "
+            "locator. Inspect every declared output field for this distinction before returning the replacement."
+        )
+    if operation_semantics.get("operation") == "aggregate_and_extreme":
+        return (
+            " Re-implement the public numeric_cell_encoding literally for both mean_column and max_column. "
+            "After removing commas, use text.partition('[')[0].strip() (or an equivalent anchored leading-token "
+            "parser) and convert that complete token to a number. Do not use re.sub to delete non-numeric "
+            "characters from the full cell: that can retain or concatenate digits from the [lower-upper] range. "
+            "Include every row with a valid leading point estimate in the mean and maximum computations, then "
+            "apply the declared rounding and output-field semantics."
+        )
+    return (
+        " Re-implement each declared output field directly from the public operation semantics and authorized "
+        "input rows; do not substitute provenance metadata or an approximate formula."
+    )
+
+
+def _model_role_gate_passed(
+    modeled_roles: set[str],
+    *,
+    require_executor_model_role: bool,
+) -> bool:
+    required_roles = {"planner", "retriever", "summarizer"}
+    if require_executor_model_role:
+        required_roles.add("executor")
+    return required_roles <= modeled_roles
 
 
 def _run_adaptive_case(
@@ -756,6 +815,11 @@ def _run_adaptive_case(
     case_root: Path,
     embedding_model_path: str,
     embedding_device: str,
+    memory_store_root: Path | None = None,
+    memory_policy: str = "none",
+    memory_commit_replay_class: ReplayClass = ReplayClass.ASSIST,
+    memory_tags: tuple[str, ...] = (),
+    require_executor_model_role: bool = True,
 ) -> dict[str, object]:
     started_ns = time.perf_counter_ns()
     case_root.mkdir(parents=True, exist_ok=False)
@@ -780,7 +844,7 @@ def _run_adaptive_case(
             case.output_contract_version,
             "statebus.cited_report.v1",
         ),
-        allowed_memory_policies=("none",),
+        allowed_memory_policies=(memory_policy,),
         role_cardinality={
             "retriever": (1, 1),
             "executor": (1, 2),
@@ -816,7 +880,10 @@ def _run_adaptive_case(
     })
     if planner_worker.error:
         raise RuntimeError(f"formal_planner_worker_failed:{planner_worker.error}")
-    proposal = _proposal_from_payload(planner_worker.candidate)
+    proposal = replace(
+        _proposal_from_payload(planner_worker.candidate),
+        requested_memory_policy=memory_policy,
+    )
     raw_initial_proposal = proposal
     policy = PlanPolicyValidator(registry, allow_llm_python=True)
     raw_initial_outcome = policy.validate(
@@ -926,7 +993,10 @@ def _run_adaptive_case(
         })
         if repair_worker.error:
             raise RuntimeError(f"formal_planner_repair_worker_failed:{repair_worker.error}")
-        repaired_raw_proposal = _proposal_from_payload(repair_worker.candidate)
+        repaired_raw_proposal = replace(
+            _proposal_from_payload(repair_worker.candidate),
+            requested_memory_policy=memory_policy,
+        )
         raw_repaired_outcome = policy.validate(
             repaired_raw_proposal,
             envelope,
@@ -1029,7 +1099,14 @@ def _run_adaptive_case(
     )
     analysis_context = _build_formal_analysis_context(case, source_profile)
 
-    def request_transform_program(step, grant, input_ref_id, rows, validation_errors=()):
+    def request_transform_program(
+        step,
+        grant,
+        input_ref_id,
+        rows,
+        validation_errors=(),
+        memory_inputs=(),
+    ):
         worker_payload = {
             "program_id": f"program-{grant.attempt_id}",
             "step_goal": step.goal,
@@ -1054,6 +1131,7 @@ def _run_adaptive_case(
                 "limit",
             ],
             "operation_semantics": analysis_context,
+            "compatible_memory_inputs": list(memory_inputs),
         }
         if validation_errors:
             worker_payload["repair_context"] = {
@@ -1079,8 +1157,14 @@ def _run_adaptive_case(
             raise RuntimeError(f"formal_executor_dsl_worker_failed:{executor_worker.error}")
         return _program_from_payload(executor_worker.candidate)
 
-    def transform_program_factory(step, grant, input_ref_id, rows):
-        return request_transform_program(step, grant, input_ref_id, rows)
+    def transform_program_factory(step, grant, input_ref_id, rows, memory_inputs=()):
+        return request_transform_program(
+            step,
+            grant,
+            input_ref_id,
+            rows,
+            memory_inputs=memory_inputs,
+        )
 
     def transform_program_repair_factory(step, grant, input_ref_id, rows, validation_errors):
         return request_transform_program(step, grant, input_ref_id, rows, validation_errors)
@@ -1105,6 +1189,10 @@ def _run_adaptive_case(
     ) -> str:
         repair_index = 1 + sum(item["kind"] == "repair" for item in generations)
         violation_guidance = build_code_repair_guidance(violations, request.policy)
+        normalized_violations = tuple(
+            item.removeprefix("quality_error:")
+            for item in violations
+        )
         if "forbidden_path_attribute:replace" in violations:
             violation_guidance += (
                 " Path.replace performs a filesystem rename and is forbidden. Read only from the authorized input "
@@ -1126,6 +1214,26 @@ def _run_adaptive_case(
                 " The authorized source uses a leading numeric token followed by an optional bracketed range. "
                 "Parse from the start and stop before '[' or the first character outside the leading numeric token. "
                 "Use a bounded character loop or re.match; do not join every digit from the full cell."
+            )
+        output_type_fields = [
+            item.removeprefix("output_type:")
+            for item in normalized_violations
+            if item.startswith("output_type:")
+        ]
+        if output_type_fields:
+            expected_types = {
+                field: request.output_schema.get(field, "unknown")
+                for field in output_type_fields
+            }
+            violation_guidance += (
+                " Output JSON type validation is strict for these fields: "
+                f"{stable_json_dumps(expected_types)}. Convert each value immediately before constructing the "
+                "result object: use int(value) for integer, a finite int/float for number, str(value) for string, "
+                "and bool(value) for boolean. Do not leave a declared field null."
+            )
+        if "formal_recomputation_mismatch" in normalized_violations:
+            violation_guidance += _formal_recomputation_repair_guidance(
+                request.operation_semantics
             )
         missing_paths = [
             item.removeprefix("missing_required_path_literal:")
@@ -1197,14 +1305,19 @@ def _run_adaptive_case(
     )
     corpus_scope_id = "formal-registry-source"
 
+    retrieval_requests: list[dict[str, object]] = []
+
     def retrieval_request_factory(step, grant) -> EvidenceRequest:
+        allowed_evidence_types = _evidence_types_for_retrieval_capability(
+            step.capability_id
+        )
         payload = {
             "task_id": grant.task_id,
             "step_id": step.step_id,
             "step_goal": step.goal,
             "task_goal": case.sample.request_text,
             "corpus_scope_ids": [corpus_scope_id],
-            "evidence_types": ["semantic_context", "table"],
+            "evidence_types": list(allowed_evidence_types),
             # These are controller-owned constraints. The worker receives the
             # original task goal but cannot add entity/time authority.
             "target_entities": [],
@@ -1234,11 +1347,24 @@ def _run_adaptive_case(
                     raise ValueError("evidence_request_task_or_step_mismatch")
                 if not 1 <= len(request.queries) <= 3:
                     raise ValueError("query_count_outside_formal_budget")
-                if not set(request.evidence_types) <= {"semantic_context", "table"}:
-                    raise ValueError("evidence_type_outside_formal_surface")
+                if set(request.evidence_types) != set(allowed_evidence_types):
+                    raise ValueError(
+                        "evidence_type_not_bound_to_selected_capability:"
+                        f"{step.capability_id}:{','.join(request.evidence_types)}"
+                    )
                 if not set(request.corpus_scope_ids) <= {corpus_scope_id}:
                     raise ValueError("corpus_scope_outside_formal_surface")
-                return request
+                bound_request = replace(
+                    request,
+                    evidence_types=allowed_evidence_types,
+                    memory_policy=memory_policy,
+                )
+                retrieval_requests.append({
+                    "selected_capability_id": step.capability_id,
+                    "allowed_evidence_types": list(allowed_evidence_types),
+                    "request": bound_request.canonical_payload(),
+                })
+                return bound_request
             except Exception as exc:
                 last_error = f"{type(exc).__name__}:{exc}"
         raise RuntimeError(f"formal_retriever_worker_failed:{last_error}")
@@ -1265,7 +1391,7 @@ def _run_adaptive_case(
         del result, step, grant
         return ()
 
-    def claim_set_factory(step, grant, artifact, rows, evidence_pack):
+    def claim_set_factory(step, grant, artifact, rows, evidence_pack, memory_inputs=()):
         all_evidence_items = tuple(
             {
                 "id": item.item_id,
@@ -1306,6 +1432,7 @@ def _run_adaptive_case(
                         "rows": [dict(row) for row in batch],
                     }],
                     "expected_claim_count": len(batch),
+                    "compatible_memory_inputs": list(memory_inputs),
                 })
                 role_invocations.append({
                     "role": "summarizer",
@@ -1451,6 +1578,12 @@ def _run_adaptive_case(
         planner_model_id=proposal.model_id,
         planner_raw_output_hash=proposal.raw_output_hash,
         state_pool_mode="shared_memory",
+        canonical_task_spec=case.spec,
+        memory_store_root=memory_store_root,
+        memory_commit_enabled=memory_policy != "none",
+        memory_commit_replay_class=memory_commit_replay_class,
+        memory_topic=case.spec.task_family,
+        memory_tags=memory_tags,
     ))
     runtime = mainline.runtime
     context = mainline.context
@@ -1526,7 +1659,10 @@ def _run_adaptive_case(
         and all(report.get("verified") for report in terminal_quality_reports)
         and telemetry.get("fallback_used", 0.0) == 0.0
         and executor_verified
-        and {"planner", "retriever", "executor", "summarizer"} <= modeled_roles
+        and _model_role_gate_passed(
+            modeled_roles,
+            require_executor_model_role=require_executor_model_role,
+        )
     )
     summary = {
         "schema_version": "statebus.adaptive_formal_case.v1",
@@ -1557,6 +1693,7 @@ def _run_adaptive_case(
         "telemetry": telemetry,
         "role_invocations": role_invocations,
         "model_roles_observed": sorted(modeled_roles),
+        "executor_model_role_required": require_executor_model_role,
         "generation_attempts": generations,
         "usage": usage,
         "execution_records": execution_records,
@@ -1569,10 +1706,37 @@ def _run_adaptive_case(
         "claim_sets": claims,
         "claim_validation_reports": dict(context.claim_validation_reports),
         "evidence_pack_hashes": [pack.pack_hash for pack in context.evidence_packs.values()],
+        "retrieval_requests": retrieval_requests,
         "state_consumption_records": [
             record.canonical_payload()
             for record in mainline.context.state_consumption_records
         ],
+        "semantic_state_selections": {
+            state_id: {
+                "consumed_state_ref_id": selection.consumed_state_ref_id,
+                "selected_candidate_ids": list(selection.selected_candidate_ids),
+                "selected_scores": list(selection.selected_scores),
+                "selected_row_indices": list(selection.selected_row_indices),
+                "selected_evidence_bytes": selection.selected_evidence_bytes,
+                "producer_pid": selection.producer_pid,
+                "consumer_pid": selection.consumer_pid,
+                "encoder_signature": selection.encoder_signature,
+            }
+            for state_id, selection in context.semantic_state_selections.items()
+        },
+        "memory_query_results": {
+            step_id: result.canonical_payload()
+            for step_id, result in context.memory_match_results.items()
+        },
+        "memory_role_inputs_by_step": {
+            step_id: list(inputs)
+            for step_id, inputs in context.memory_role_inputs_by_step.items()
+        },
+        "memory_consumption_records": [
+            record.canonical_payload()
+            for record in context.memory_consumption_records
+        ],
+        "memory_commit_decision": mainline.memory_commit_decision.canonical_payload(),
         "expected_facts_report": expected_report,
         "provenance_expected_facts": {
             "passed": provenance_expected_facts_passed,

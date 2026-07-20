@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from v2.benchmark.models import QualityFloorResult
 from v2.utils import stable_json_dumps
@@ -33,6 +34,150 @@ class FixedAnswerScore:
     quality_floor: QualityFloorResult
     metric_name_exact: bool = False
     metric_value_exact: bool = False
+
+
+@dataclass(frozen=True)
+class BenchmarkGoldScore:
+    passed: bool
+    expected_facts_passed: bool
+    quality_checks_passed: bool
+    failures: tuple[str, ...] = ()
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "passed": self.passed,
+            "expected_facts_passed": self.expected_facts_passed,
+            "quality_checks_passed": self.quality_checks_passed,
+            "failures": list(self.failures),
+            "evaluation_boundary": "post_runtime_benchmark_scoring",
+            "runtime_decision_input": False,
+        }
+
+
+def _lookup_output_value(output_payload: dict[str, object], key: str) -> object:
+    if key in output_payload:
+        return output_payload.get(key)
+    current: object = output_payload
+    for segment in key.split("."):
+        if not isinstance(current, dict) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
+def _numeric_equal(observed: object, expected: object) -> bool:
+    if str(observed) == str(expected):
+        return True
+    try:
+        return float(str(observed)) == float(str(expected))
+    except (TypeError, ValueError):
+        return False
+
+
+def _score_expected_facts(
+    *,
+    output_payload: dict[str, object],
+    expected_facts: dict[str, object],
+) -> tuple[bool, tuple[str, ...]]:
+    failures: list[str] = []
+    for key, expected_value in expected_facts.items():
+        observed_value = _lookup_output_value(output_payload, key)
+        if observed_value is not None:
+            if not _numeric_equal(observed_value, expected_value):
+                failures.append(f"expected_fact_mismatch:{key}")
+            continue
+        if key.endswith("_min"):
+            field_name = key.removesuffix("_min")
+            observed_value = _lookup_output_value(output_payload, field_name)
+            try:
+                passed = observed_value not in {None, ""} and float(str(observed_value)) >= float(
+                    str(expected_value)
+                )
+            except (TypeError, ValueError):
+                passed = False
+            if not passed:
+                failures.append(f"expected_minimum_failed:{field_name}")
+            continue
+        if key.endswith("_max"):
+            field_name = key.removesuffix("_max")
+            observed_value = _lookup_output_value(output_payload, field_name)
+            try:
+                passed = observed_value not in {None, ""} and float(str(observed_value)) <= float(
+                    str(expected_value)
+                )
+            except (TypeError, ValueError):
+                passed = False
+            if not passed:
+                failures.append(f"expected_maximum_failed:{field_name}")
+            continue
+        failures.append(f"expected_fact_missing:{key}")
+    return not failures, tuple(failures)
+
+
+def _score_quality_checks(
+    *,
+    output_payload: dict[str, object],
+    output_path: Path,
+    quality_checks: tuple[str, ...],
+) -> tuple[bool, tuple[str, ...]]:
+    failures: list[str] = []
+    workspace_root = output_path.parents[1] if len(output_path.parents) > 1 else output_path.parent
+    for check in quality_checks:
+        parts = check.split(":")
+        kind = parts[0] if parts else ""
+        passed = False
+        if kind == "artifact_exists" and len(parts) == 2:
+            relpath = str(_lookup_output_value(output_payload, parts[1]) or "").strip()
+            passed = bool(relpath) and (workspace_root / relpath).is_file()
+        elif kind in {"field_present", "exact"} and len(parts) == 2:
+            value = _lookup_output_value(output_payload, parts[1])
+            passed = value is not None and value != ""
+        elif kind == "numeric_tolerance" and len(parts) == 3:
+            try:
+                float(str(_lookup_output_value(output_payload, parts[1])))
+                float(parts[2])
+                passed = True
+            except (TypeError, ValueError):
+                passed = False
+        elif kind == "contains" and len(parts) >= 3:
+            observed = str(_lookup_output_value(output_payload, parts[1]) or "")
+            passed = ":".join(parts[2:]).lower() in observed.lower()
+        elif kind == "field_gte" and len(parts) == 3:
+            observed = _lookup_output_value(output_payload, parts[1])
+            try:
+                passed = observed not in {None, ""} and float(str(observed)) >= float(parts[2])
+            except (TypeError, ValueError):
+                passed = False
+        if not passed:
+            failures.append(f"quality_check_failed:{check}")
+    return not failures, tuple(failures)
+
+
+def score_benchmark_output(
+    *,
+    output_payload: dict[str, object],
+    output_path: Path,
+    expected_facts: dict[str, object] | None = None,
+    quality_checks: tuple[str, ...] = (),
+) -> BenchmarkGoldScore:
+    """Evaluate benchmark-only gold after the Runtime has completed."""
+
+    facts_passed, fact_failures = _score_expected_facts(
+        output_payload=output_payload,
+        expected_facts=dict(expected_facts or {}),
+    )
+    checks_passed, check_failures = _score_quality_checks(
+        output_payload=output_payload,
+        output_path=output_path,
+        quality_checks=tuple(quality_checks),
+    )
+    failures = (*fact_failures, *check_failures)
+    return BenchmarkGoldScore(
+        passed=facts_passed and checks_passed,
+        expected_facts_passed=facts_passed,
+        quality_checks_passed=checks_passed,
+        failures=failures,
+    )
 
 
 def expected_facts_for_scoring(

@@ -7,8 +7,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import replace
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Union
 
@@ -24,8 +23,10 @@ from v2.control.messages import (
     RunStart,
     SuccessResult,
     TrapFatal,
+    decode_text_control_message,
     deframe_control_message,
     frame_control_message,
+    frame_text_control_message,
 )
 
 
@@ -70,6 +71,33 @@ def recv_control_message(sock: socket.socket) -> ControlMessage:
     payload_len = int.from_bytes(header, byteorder="big", signed=False)
     payload = _recv_exact(sock, payload_len)
     return deframe_control_message(header + payload)
+
+
+def frame_text_message(message: str) -> bytes:
+    payload = message.encode("utf-8")
+    return len(payload).to_bytes(4, byteorder="big", signed=False) + payload
+
+
+def send_text_message(sock: socket.socket, message: str) -> None:
+    sock.sendall(frame_text_message(message))
+
+
+def recv_text_message(sock: socket.socket) -> str:
+    header = _recv_exact(sock, 4)
+    payload_len = int.from_bytes(header, byteorder="big", signed=False)
+    payload = _recv_exact(sock, payload_len)
+    return payload.decode("utf-8")
+
+
+def send_text_control_message(sock: socket.socket, message: ControlMessage) -> None:
+    sock.sendall(frame_text_control_message(message))
+
+
+def recv_text_control_message(sock: socket.socket) -> ControlMessage:
+    header = _recv_exact(sock, 4)
+    payload_len = int.from_bytes(header, byteorder="big", signed=False)
+    payload = _recv_exact(sock, payload_len)
+    return decode_text_control_message(payload)
 
 
 @dataclass
@@ -314,6 +342,94 @@ def decode_memfd_ref(ref: "RefHandle") -> tuple[int, int, str] | None:
         return None
 
 
+@dataclass(frozen=True)
+class ExecutorTransportAudit:
+    carrier: str
+    backend: str
+    driver_pid: int
+    worker_pid: int
+    request_frame_count: int
+    response_frame_count: int
+    request_wire_bytes: int
+    response_wire_bytes: int
+    topology: str = "driver_uds_executor_subprocess"
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "carrier": self.carrier,
+            "backend": self.backend,
+            "driver_pid": self.driver_pid,
+            "worker_pid": self.worker_pid,
+            "request_frame_count": self.request_frame_count,
+            "response_frame_count": self.response_frame_count,
+            "request_wire_bytes": self.request_wire_bytes,
+            "response_wire_bytes": self.response_wire_bytes,
+            "total_wire_bytes": self.request_wire_bytes + self.response_wire_bytes,
+            "topology": self.topology,
+        }
+
+
+def _text_response_to_control_message(
+    payload: str,
+    *,
+    request: ExecRequest,
+) -> ControlMessage:
+    normalized = payload.strip()
+    now = time.time_ns()
+    if normalized == "ACK RECEIVED":
+        return AckReceived(
+            header=replace(request.header, event_type=EventType.ACK_RECV),
+            acked_at_ns=now,
+        )
+    if normalized == "RUN START":
+        return RunStart(
+            header=replace(request.header, event_type=EventType.RUN_START),
+            started_at_ns=now,
+            heartbeat_interval_ms=2000,
+            lease_timeout_ms=30_000,
+        )
+    if normalized == "HEARTBEAT running":
+        return Heartbeat(
+            header=replace(request.header, event_type=EventType.HEARTBEAT),
+            sent_at_ns=now,
+            worker_state="running",
+        )
+    if normalized == "RESULT SUCCESS":
+        return SuccessResult(
+            header=replace(request.header, event_type=EventType.RES_SUCC),
+            output_contract_version=request.output_contract_version,
+            completed_at_ns=now,
+        )
+    if normalized.startswith("RESULT ERROR "):
+        detail = normalized.removeprefix("RESULT ERROR ").strip()
+        code, _, message = detail.partition(" ")
+        return ErrorResult(
+            header=replace(request.header, event_type=EventType.RES_ERR),
+            error_code=code or "text_worker_error",
+            error_detail=message or code or "text worker error",
+            failed_at_ns=now,
+        )
+    raise ValueError(f"unsupported text worker response: {normalized!r}")
+
+
+def _default_text_exec_handoff(request: ExecRequest) -> str:
+    return "\n".join(
+        (
+            "StateBus matched pure-text executor handoff.",
+            f"Trace: {request.header.trace_id}",
+            f"Task: {request.header.task_id}",
+            f"Step: {request.header.step_id}",
+            f"Attempt: {request.header.attempt_id}",
+            f"Output contract: {request.output_contract_version}",
+            f"Workspace: {request.workspace_root}",
+            f"Input manifest: {request.input_manifest_hash}",
+            f"Runtime contract: {request.runtime_reuse_contract}",
+            "Current evidence:\nNo inline evidence was supplied by this transport test.",
+            "Verified prior context:\nNo prior context was supplied.",
+        )
+    )
+
+
 @dataclass
 class SubprocessExecutorTransport:
     """Launch a worker subprocess and communicate via UDS + typed Protobuf frames.
@@ -336,16 +452,25 @@ class SubprocessExecutorTransport:
     socket_path: Path
     python_executable: str = sys.executable
     timeout_s: float = 30.0
+    last_exchange_audit: ExecutorTransportAudit | None = field(
+        default=None,
+        init=False,
+    )
 
     def exchange_sequence(
         self,
         request: ExecRequest,
         *,
         memfd_refs: dict[str, tuple[int, int]] | None = None,
+        carrier: str = "protobuf",
+        text_payload: str = "",
     ) -> list[ControlMessage]:
         """Start a worker subprocess and return the full response frame sequence."""
         import os as _os
 
+        normalized_carrier = carrier.strip().lower()
+        if normalized_carrier not in {"protobuf", "utf8_text"}:
+            raise ValueError(f"unsupported subprocess carrier: {carrier}")
         pass_fds: tuple[int, ...] = ()
         exec_request = request
         if memfd_refs:
@@ -375,7 +500,14 @@ class SubprocessExecutorTransport:
             socket_path.unlink()
 
         responses: list[ControlMessage] = []
+        response_wire_bytes: list[int] = []
         server_ready = threading.Event()
+        resolved_text_payload = text_payload or _default_text_exec_handoff(exec_request)
+        request_wire_bytes = len(
+            frame_text_message(resolved_text_payload)
+            if normalized_carrier == "utf8_text"
+            else frame_control_message(exec_request)
+        )
 
         def _serve() -> None:
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -386,10 +518,26 @@ class SubprocessExecutorTransport:
                 server_ready.set()
                 conn, _ = server.accept()
                 try:
-                    send_control_message(conn, exec_request)
+                    if normalized_carrier == "utf8_text":
+                        send_text_message(conn, resolved_text_payload)
+                    else:
+                        send_control_message(conn, exec_request)
                     while True:
                         try:
-                            msg = recv_control_message(conn)
+                            if normalized_carrier == "utf8_text":
+                                text_response = recv_text_message(conn)
+                                response_wire_bytes.append(
+                                    len(frame_text_message(text_response))
+                                )
+                                msg = _text_response_to_control_message(
+                                    text_response,
+                                    request=exec_request,
+                                )
+                            else:
+                                msg = recv_control_message(conn)
+                                response_wire_bytes.append(
+                                    len(frame_control_message(msg))
+                                )
                         except (ConnectionError, ConnectionResetError, socket.timeout):
                             break
                         responses.append(msg)
@@ -416,6 +564,8 @@ class SubprocessExecutorTransport:
                 "v2.control.subprocess_worker",
                 "--socket-path",
                 str(socket_path),
+                "--carrier",
+                normalized_carrier,
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -430,22 +580,37 @@ class SubprocessExecutorTransport:
         except subprocess.TimeoutExpired:
             proc.kill()
 
-        if any(isinstance(msg, (SuccessResult, ErrorResult)) for msg in responses):
-            return responses
-        return responses + [
-            ErrorResult(
+        completed_responses = responses
+        if not any(isinstance(msg, (SuccessResult, ErrorResult)) for msg in responses):
+            completed_responses = responses + [ErrorResult(
                 header=replace(request.header, event_type=EventType.RES_ERR),
                 error_code="subprocess_timeout",
                 error_detail="worker subprocess did not return a result within timeout",
                 failed_at_ns=time.time_ns(),
-            )
-        ]
+            )]
+        self.last_exchange_audit = ExecutorTransportAudit(
+            carrier=(
+                "utf8_text"
+                if normalized_carrier == "utf8_text"
+                else "typed_protobuf"
+            ),
+            backend="uds_subprocess",
+            driver_pid=_os.getpid(),
+            worker_pid=proc.pid,
+            request_frame_count=1,
+            response_frame_count=len(completed_responses),
+            request_wire_bytes=request_wire_bytes,
+            response_wire_bytes=sum(response_wire_bytes),
+        )
+        return completed_responses
 
     def execute(
         self,
         request: ExecRequest,
         *,
         memfd_refs: dict[str, tuple[int, int]] | None = None,
+        carrier: str = "protobuf",
+        text_payload: str = "",
     ) -> Union[SuccessResult, ErrorResult]:
         """Start worker subprocess, exchange one ExecRequest/result pair.
 
@@ -456,7 +621,12 @@ class SubprocessExecutorTransport:
                 ``memfd_fd:`` handles and the FDs are inherited by the
                 subprocess via ``pass_fds``.
         """
-        for response in self.exchange_sequence(request, memfd_refs=memfd_refs):
+        for response in self.exchange_sequence(
+            request,
+            memfd_refs=memfd_refs,
+            carrier=carrier,
+            text_payload=text_payload,
+        ):
             if isinstance(response, (SuccessResult, ErrorResult)):
                 return response
         return ErrorResult(
