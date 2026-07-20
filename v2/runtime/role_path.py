@@ -1459,10 +1459,23 @@ class RolePathRunner:
         response_schema: dict[str, Any] | None,
     ) -> None:
         role_requests = self.rendered_request_audit.setdefault(role, [])
+        describe_role = getattr(self.llm_client, "describe_role", None)
+        if callable(describe_role):
+            execution_profile = dict(describe_role(role))
+        else:
+            client_description = self.llm_client.describe()
+            role_config = dict(client_description.get("roles", {})).get(role, {})
+            execution_profile = {
+                **dict(client_description),
+                "role": role,
+                "execution_mode": str(client_description.get("mode", "")),
+                "role_config": dict(role_config) if isinstance(role_config, dict) else {},
+            }
         request_payload: dict[str, Any] = {
             "role": role,
             "attempt_index": len(role_requests) + 1,
             "purpose": role,
+            "execution_profile": execution_profile,
             "messages": [{"role": "user", "content": prompt}],
             "response_schema": response_schema or {},
             "prompt_sha256": sha256_digest(prompt.encode("utf-8")),

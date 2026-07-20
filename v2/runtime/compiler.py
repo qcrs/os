@@ -130,6 +130,7 @@ class TaskCompiler:
         "beta_trend_values",
         "acme_trend_direction",
         "beta_trend_direction",
+        "consumed_artifact_refs",
     )
     allowed_required_tools: tuple[str, ...] = (
         "table_retriever",

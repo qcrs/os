@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -375,3 +377,153 @@ def deframe_control_message(frame: bytes) -> ControlMessage:
             f"control frame payload length mismatch: expected {payload_len}, got {len(payload)}"
         )
     return decode_control_message(payload)
+
+
+def encode_text_control_message(message: ControlMessage) -> bytes:
+    """Encode a control message as canonical UTF-8 JSON, without Protobuf."""
+
+    payload = asdict(message)
+    payload["message_type"] = _BODY_FIELD_BY_TYPE[type(message)]
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _text_header(payload: dict[str, Any]) -> ControlHeader:
+    return ControlHeader(
+        trace_id=str(payload["trace_id"]),
+        task_id=str(payload["task_id"]),
+        step_id=str(payload["step_id"]),
+        attempt_id=str(payload["attempt_id"]),
+        target_role=str(payload["target_role"]),
+        timeout_ms=int(payload["timeout_ms"]),
+        event_type=EventType(int(payload["event_type"])),
+        schema_version=str(payload.get("schema_version", CONTROL_PLANE_SCHEMA_VERSION)),
+    )
+
+
+def _text_refs(payload: object) -> tuple[RefHandle, ...]:
+    if not isinstance(payload, list):
+        return ()
+    return tuple(
+        RefHandle(ref_id=str(item["ref_id"]), ref_kind=str(item["ref_kind"]))
+        for item in payload
+        if isinstance(item, dict)
+    )
+
+
+def decode_text_control_message(payload: bytes) -> ControlMessage:
+    """Decode a canonical UTF-8 JSON control message into the typed model."""
+
+    decoded = json.loads(payload.decode("utf-8"))
+    if not isinstance(decoded, dict):
+        raise ValueError("text control message must be a JSON object")
+    message_type = str(decoded.get("message_type", ""))
+    header_payload = decoded.get("header")
+    if not isinstance(header_payload, dict):
+        raise ValueError("text control message header is missing")
+    header = _text_header(header_payload)
+
+    if message_type == "req_exec":
+        reuse_payload = decoded.get("reuse_policy", {})
+        reuse = dict(reuse_payload) if isinstance(reuse_payload, dict) else {}
+        return ExecRequest(
+            header=header,
+            reuse_policy=ReusePolicy(
+                allow_assist=bool(reuse.get("allow_assist", True)),
+                allow_validated_replay=bool(reuse.get("allow_validated_replay", False)),
+                allow_exact_replay=bool(reuse.get("allow_exact_replay", False)),
+            ),
+            state_refs=_text_refs(decoded.get("state_refs")),
+            artifact_refs=_text_refs(decoded.get("artifact_refs")),
+            memory_refs=_text_refs(decoded.get("memory_refs")),
+            runtime_reuse_contract=str(decoded.get("runtime_reuse_contract", "")),
+            output_contract_version=str(decoded.get("output_contract_version", "")),
+            workspace_root=str(decoded.get("workspace_root", "")),
+            input_manifest_hash=str(decoded.get("input_manifest_hash", "")),
+            operation=str(decoded.get("operation", "")),
+            state_root=str(decoded.get("state_root", "")),
+            hydrate_manifest_id=str(decoded.get("hydrate_manifest_id", "")),
+            semantic_top_k=int(decoded.get("semantic_top_k", 0)),
+            evidence_budget_bytes=int(decoded.get("evidence_budget_bytes", 0)),
+            expected_encoder_signature=str(decoded.get("expected_encoder_signature", "")),
+            capability_grant_hash=str(decoded.get("capability_grant_hash", "")),
+        )
+    if message_type == "ack_recv":
+        return AckReceived(header=header, acked_at_ns=int(decoded.get("acked_at_ns", 0)))
+    if message_type == "run_start":
+        return RunStart(
+            header=header,
+            started_at_ns=int(decoded.get("started_at_ns", 0)),
+            heartbeat_interval_ms=int(decoded.get("heartbeat_interval_ms", 0)),
+            lease_timeout_ms=int(decoded.get("lease_timeout_ms", 0)),
+        )
+    if message_type == "heartbeat":
+        return Heartbeat(
+            header=header,
+            sent_at_ns=int(decoded.get("sent_at_ns", 0)),
+            worker_state=str(decoded.get("worker_state", "")),
+        )
+    if message_type == "res_succ":
+        return SuccessResult(
+            header=header,
+            state_refs=_text_refs(decoded.get("state_refs")),
+            artifact_refs=_text_refs(decoded.get("artifact_refs")),
+            output_contract_version=str(decoded.get("output_contract_version", "")),
+            completed_at_ns=int(decoded.get("completed_at_ns", 0)),
+            consumed_state_ref_id=str(decoded.get("consumed_state_ref_id", "")),
+            selected_candidate_ids=tuple(str(item) for item in decoded.get("selected_candidate_ids", [])),
+            selected_scores=tuple(float(item) for item in decoded.get("selected_scores", [])),
+            selected_row_indices=tuple(int(item) for item in decoded.get("selected_row_indices", [])),
+            selected_evidence_bytes=int(decoded.get("selected_evidence_bytes", 0)),
+            consumer_pid=int(decoded.get("consumer_pid", 0)),
+            producer_pid=int(decoded.get("producer_pid", 0)),
+            encoder_signature=str(decoded.get("encoder_signature", "")),
+        )
+    if message_type == "res_err":
+        return ErrorResult(
+            header=header,
+            error_code=str(decoded.get("error_code", "")),
+            error_detail=str(decoded.get("error_detail", "")),
+            failed_at_ns=int(decoded.get("failed_at_ns", 0)),
+        )
+    if message_type == "cmd_cancel":
+        return CancelCommand(
+            header=header,
+            reason=str(decoded.get("reason", "")),
+            issued_at_ns=int(decoded.get("issued_at_ns", 0)),
+        )
+    if message_type == "trap_fatal":
+        return TrapFatal(
+            header=header,
+            trap_reason=str(decoded.get("trap_reason", "")),
+            error_detail=str(decoded.get("error_detail", "")),
+            trapped_at_ns=int(decoded.get("trapped_at_ns", 0)),
+        )
+    if message_type == "cmd_gc":
+        return GarbageCollectCommand(
+            header=header,
+            ref_ids=tuple(str(item) for item in decoded.get("ref_ids", [])),
+            issued_at_ns=int(decoded.get("issued_at_ns", 0)),
+        )
+    raise ValueError(f"unsupported text control message type: {message_type}")
+
+
+def frame_text_control_message(message: ControlMessage) -> bytes:
+    payload = encode_text_control_message(message)
+    return struct.pack(">I", len(payload)) + payload
+
+
+def deframe_text_control_message(frame: bytes) -> ControlMessage:
+    if len(frame) < 4:
+        raise ValueError("text control frame missing length prefix")
+    (payload_len,) = struct.unpack(">I", frame[:4])
+    payload = frame[4:]
+    if len(payload) != payload_len:
+        raise ValueError(
+            f"text control frame payload length mismatch: expected {payload_len}, got {len(payload)}"
+        )
+    return decode_text_control_message(payload)

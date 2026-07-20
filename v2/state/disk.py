@@ -8,6 +8,7 @@ import shutil
 
 from v2.contracts import (
     CanonicalTaskSpec,
+    CompatibilityVerdict,
     HydrationAccountingAudit,
     HydrationRoleAccounting,
     RefKind,
@@ -26,6 +27,7 @@ from v2.memory import (
     MemoryCommit,
     MemoryCandidatePool,
     MemoryCommitStatus,
+    MemoryCompatibilityDecision,
     MemoryMatch,
     MemoryMatchResult,
     MemoryRef,
@@ -1166,6 +1168,18 @@ class JsonContractStore:
                 for source, memory_ids in dict(payload.get("source_ranks", {})).items()
                 if isinstance(memory_ids, (list, tuple))
             },
+            compatibility_decisions=tuple(
+                MemoryCompatibilityDecision(
+                    memory_id=str(item["memory_id"]),
+                    raw_rank=int(item["raw_rank"]),
+                    verdict=CompatibilityVerdict(str(item["verdict"])),
+                    replay_class=ReplayClass(str(item["replay_class"])),
+                    policy_approved=bool(item["policy_approved"]),
+                    reasons=tuple(str(reason) for reason in item.get("reasons", ())),
+                )
+                for item in payload.get("compatibility_decisions", ())
+                if isinstance(item, dict)
+            ),
             schema_version=str(payload.get("schema_version", "")),
         )
 

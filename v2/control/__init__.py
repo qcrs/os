@@ -13,11 +13,22 @@ from v2.control.messages import (
     SuccessResult,
     TrapFatal,
     decode_control_message,
+    decode_text_control_message,
     deframe_control_message,
+    deframe_text_control_message,
     encode_control_message,
+    encode_text_control_message,
     frame_control_message,
+    frame_text_control_message,
 )
-from v2.control.transport import ControlPlaneLoopbackServer, SubprocessExecutorTransport, recv_control_message, send_control_message
+from v2.control.transport import (
+    ControlPlaneLoopbackServer,
+    SubprocessExecutorTransport,
+    recv_control_message,
+    recv_text_control_message,
+    send_control_message,
+    send_text_control_message,
+)
 
 __all__ = [
     "AckReceived",
@@ -36,9 +47,15 @@ __all__ = [
     "SuccessResult",
     "TrapFatal",
     "decode_control_message",
+    "decode_text_control_message",
     "deframe_control_message",
+    "deframe_text_control_message",
     "encode_control_message",
+    "encode_text_control_message",
     "frame_control_message",
+    "frame_text_control_message",
     "recv_control_message",
+    "recv_text_control_message",
     "send_control_message",
+    "send_text_control_message",
 ]
