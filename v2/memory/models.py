@@ -12,6 +12,7 @@ from v2.contracts import (
     MEMORY_REF_SCHEMA_VERSION,
     STRUCTURED_EMBEDDING_SCHEMA_VERSION,
     CanonicalTaskSpec,
+    CompatibilityVerdict,
     RefKind,
     RefRegistryEntry,
     RefStatus,
@@ -102,6 +103,10 @@ class MemoryQuery:
     allow_exact_replay: bool = False
     compatibility_signature: str = ""
     output_contract_version: str = ""
+    canonical_task_spec: CanonicalTaskSpec | None = None
+    input_lineage_hashes: tuple[str, ...] = ()
+    input_schema_digest: str = ""
+    validator_digest: str = ""
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -119,6 +124,14 @@ class MemoryQuery:
             "allow_exact_replay": bool(self.allow_exact_replay),
             "compatibility_signature": self.compatibility_signature,
             "output_contract_version": self.output_contract_version,
+            "canonical_task_spec": (
+                None
+                if self.canonical_task_spec is None
+                else self.canonical_task_spec.canonical_payload()
+            ),
+            "input_lineage_hashes": sorted(set(self.input_lineage_hashes)),
+            "input_schema_digest": self.input_schema_digest,
+            "validator_digest": self.validator_digest,
         }
 
     @property
@@ -192,6 +205,74 @@ class MemoryRerankResult:
 
     @property
     def rerank_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
+
+@dataclass(frozen=True)
+class MemoryCompatibilityDecision:
+    memory_id: str
+    raw_rank: int
+    verdict: CompatibilityVerdict
+    replay_class: ReplayClass
+    policy_approved: bool
+    reasons: tuple[str, ...] = ()
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "memory_id": self.memory_id,
+            "raw_rank": self.raw_rank,
+            "verdict": self.verdict.value,
+            "replay_class": self.replay_class.value,
+            "policy_approved": self.policy_approved,
+            "reasons": list(self.reasons),
+        }
+
+
+@dataclass(frozen=True)
+class MemoryConsumptionRecord:
+    consumption_id: str
+    query_hash: str
+    memory_id: str
+    consumer_role: str
+    consumer_step_id: str
+    input_ref_id: str
+    replay_class: ReplayClass
+    compatibility_verdict: CompatibilityVerdict
+    input_payload_hash: str
+    before_decision_surface_hash: str
+    after_decision_surface_hash: str
+    behavioral_effect: str
+    downstream_ref_ids: tuple[str, ...] = ()
+    skipped_generation_step_count: int = 0
+    skipped_llm_call_count: int = 0
+    recipe_recomputed: bool = False
+    consumed_at_ns: int = 0
+    schema_version: str = "statebus.memory_consumption_record.v1"
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "consumption_id": self.consumption_id,
+            "query_hash": self.query_hash,
+            "memory_id": self.memory_id,
+            "consumer_role": self.consumer_role,
+            "consumer_step_id": self.consumer_step_id,
+            "input_ref_id": self.input_ref_id,
+            "replay_class": self.replay_class.value,
+            "compatibility_verdict": self.compatibility_verdict.value,
+            "input_payload_hash": self.input_payload_hash,
+            "before_decision_surface_hash": self.before_decision_surface_hash,
+            "after_decision_surface_hash": self.after_decision_surface_hash,
+            "behavioral_effect": self.behavioral_effect,
+            "downstream_ref_ids": list(self.downstream_ref_ids),
+            "skipped_generation_step_count": self.skipped_generation_step_count,
+            "skipped_llm_call_count": self.skipped_llm_call_count,
+            "recipe_recomputed": self.recipe_recomputed,
+            "consumed_at_ns": self.consumed_at_ns,
+            "schema_version": self.schema_version,
+        }
+
+    @property
+    def record_hash(self) -> str:
         return sha256_digest(self.canonical_payload())
 
 
@@ -342,6 +423,7 @@ class MemoryMatchResult:
     candidate_pool_hash: str = ""
     rerank_result_hash: str = ""
     source_ranks: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    compatibility_decisions: tuple[MemoryCompatibilityDecision, ...] = ()
     schema_version: str = MEMORY_MATCH_RESULT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -368,6 +450,10 @@ class MemoryMatchResult:
                 str(source): list(ids)
                 for source, ids in sorted(self.source_ranks.items())
             },
+            "compatibility_decisions": [
+                decision.canonical_payload()
+                for decision in self.compatibility_decisions
+            ],
             "schema_version": self.schema_version,
         }
 
