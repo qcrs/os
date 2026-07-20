@@ -7,12 +7,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from v2.contracts import ReplayClass
+from v2.contracts import CompatibilityVerdict, ReplayClass
 from v2.memory.embedding import cosine_similarity
 from v2.memory.models import (
     MemoryCommit,
     MemoryCandidatePool,
     MemoryCommitStatus,
+    MemoryCompatibilityDecision,
     MemoryMatch,
     MemoryMatchResult,
     MemoryQuery,
@@ -298,10 +299,17 @@ class MemoryIndexStore:
         fused_ids = sorted(rrf_scores, key=lambda memory_id: (-rrf_scores[memory_id], memory_id))
         candidate_commits = [self.commits[memory_id] for memory_id in fused_ids]
         matches: list[MemoryMatch] = []
-        for commit in candidate_commits:
-            replay_class = self._gated_replay_class(commit, query)
-            if replay_class is None:
+        compatibility_decisions: list[MemoryCompatibilityDecision] = []
+        for raw_rank, commit in enumerate(candidate_commits, start=1):
+            decision = self._compatibility_decision(
+                commit,
+                query,
+                raw_rank=raw_rank,
+            )
+            compatibility_decisions.append(decision)
+            if not decision.policy_approved:
                 continue
+            replay_class = decision.replay_class
             ref = replace(commit.memory_ref, replay_class=replay_class)
             sources = "+".join(contributing_sources.get(ref.memory_id, ()))
             matches.append(
@@ -330,6 +338,10 @@ class MemoryIndexStore:
             candidate_taxonomy=candidate_taxonomy,
         )
         selected_ids = {match.memory_ref.memory_id for match in top_matches}
+        decision_by_id = {
+            decision.memory_id: decision
+            for decision in compatibility_decisions
+        }
         selected_taxonomy: dict[str, int] = {}
         for match in top_matches:
             key = match.memory_ref.memory_type.value
@@ -339,13 +351,13 @@ class MemoryIndexStore:
             selected_memory_ids=tuple(match.memory_ref.memory_id for match in top_matches),
             items=tuple(
                 MemoryRerankItem(
-                    memory_id=match.memory_ref.memory_id,
+                    memory_id=memory_id,
                     rank=index,
-                    score=match.score,
-                    replay_class=match.replay_class,
-                    selected=match.memory_ref.memory_id in selected_ids,
+                    score=round(rrf_scores[memory_id], 12),
+                    replay_class=decision_by_id[memory_id].replay_class,
+                    selected=memory_id in selected_ids,
                 )
-                for index, match in enumerate(matches, start=1)
+                for index, memory_id in enumerate(fused_ids, start=1)
             ),
             selected_taxonomy=selected_taxonomy,
         )
@@ -359,6 +371,7 @@ class MemoryIndexStore:
             candidate_pool=candidate_pool,
             rerank_result=rerank_result,
             source_ranks=source_ranks,
+            compatibility_decisions=tuple(compatibility_decisions),
         )
 
     # Compatibility alias for callers that read more naturally as a verb.
@@ -391,42 +404,139 @@ class MemoryIndexStore:
         return [commit for _score, _memory_id, commit in scored[:limit]]
 
     @staticmethod
+    def _compatibility_decision(
+        commit: MemoryCommit,
+        query: MemoryQuery,
+        *,
+        raw_rank: int,
+    ) -> MemoryCompatibilityDecision:
+        ref = commit.memory_ref
+        reasons: list[str] = []
+        hard_incompatible = False
+
+        if ref.commit_status != MemoryCommitStatus.COMMITTED:
+            hard_incompatible = True
+            reasons.append("memory_not_committed")
+        if ref.validation_status != MemoryValidationStatus.PASSED:
+            hard_incompatible = True
+            reasons.append("memory_not_runtime_verified")
+
+        stored_runtime_signature = str(ref.metadata.get("runtime_signature_hash", ""))
+        if query.compatibility_signature and stored_runtime_signature != query.compatibility_signature:
+            hard_incompatible = True
+            reasons.append("runtime_signature_mismatch")
+        stored_output_contract = str(ref.metadata.get("output_contract_version", ""))
+        if query.output_contract_version and stored_output_contract != query.output_contract_version:
+            hard_incompatible = True
+            reasons.append("output_contract_mismatch")
+        stored_validator_digest = str(ref.metadata.get("validator_digest", ""))
+        if query.validator_digest and stored_validator_digest != query.validator_digest:
+            hard_incompatible = True
+            reasons.append("validator_digest_mismatch")
+
+        exact_spec = ref.canonical_task_spec_hash == query.query_spec_hash
+        contract_compatible = exact_spec
+        same_family = exact_spec
+        if query.canonical_task_spec is not None:
+            same_family = (
+                commit.canonical_task_spec.task_family
+                == query.canonical_task_spec.task_family
+            )
+            contract_compatible = (
+                same_family
+                and commit.canonical_task_spec.intent_op == query.canonical_task_spec.intent_op
+                and commit.canonical_task_spec.required_outputs
+                == query.canonical_task_spec.required_outputs
+            )
+        if not same_family:
+            hard_incompatible = True
+            reasons.append("canonical_task_family_mismatch")
+        elif not contract_compatible:
+            reasons.append("canonical_task_contract_changed_assist_only")
+        elif not exact_spec:
+            reasons.append("canonical_task_arguments_changed")
+
+        stored_schema_digest = str(ref.metadata.get("input_schema_digest", ""))
+        schema_drift = bool(
+            query.input_schema_digest
+            and stored_schema_digest
+            and stored_schema_digest != query.input_schema_digest
+        )
+        if schema_drift:
+            reasons.append("input_schema_drift")
+
+        stored_lineage = tuple(
+            str(value) for value in ref.metadata.get("input_lineage_hashes", ())
+        )
+        exact_lineage = bool(query.input_lineage_hashes) and (
+            tuple(sorted(stored_lineage)) == tuple(sorted(query.input_lineage_hashes))
+        )
+        if query.input_lineage_hashes and not exact_lineage:
+            reasons.append("input_lineage_changed")
+
+        if hard_incompatible:
+            return MemoryCompatibilityDecision(
+                memory_id=ref.memory_id,
+                raw_rank=raw_rank,
+                verdict=CompatibilityVerdict.INCOMPATIBLE,
+                replay_class=ReplayClass.DISALLOWED,
+                policy_approved=False,
+                reasons=tuple(reasons),
+            )
+
+        replay_ready = bool(ref.metadata.get("replay_ready", False))
+        recipe = ref.metadata.get("execution_recipe")
+        replay_class = ReplayClass.ASSIST
+        if (
+            ref.replay_class == ReplayClass.EXACT_REPLAY
+            and query.allow_exact_replay
+            and exact_spec
+            and exact_lineage
+            and not schema_drift
+            and replay_ready
+            and isinstance(recipe, dict)
+        ):
+            replay_class = ReplayClass.EXACT_REPLAY
+        elif (
+            ref.replay_class in {ReplayClass.EXACT_REPLAY, ReplayClass.VALIDATED_REPLAY}
+            and query.allow_validated_replay
+            and contract_compatible
+            and not schema_drift
+            and replay_ready
+            and isinstance(recipe, dict)
+        ):
+            replay_class = ReplayClass.VALIDATED_REPLAY
+
+        policy_approved = (
+            replay_class == ReplayClass.EXACT_REPLAY and query.allow_exact_replay
+            or replay_class == ReplayClass.VALIDATED_REPLAY and query.allow_validated_replay
+            or replay_class == ReplayClass.ASSIST and query.allow_assist
+        )
+        if not policy_approved:
+            reasons.append("memory_policy_disallows_match")
+        verdict = (
+            CompatibilityVerdict.COMPATIBLE
+            if exact_spec and not schema_drift
+            else CompatibilityVerdict.DEGRADED
+        )
+        return MemoryCompatibilityDecision(
+            memory_id=ref.memory_id,
+            raw_rank=raw_rank,
+            verdict=verdict,
+            replay_class=(replay_class if policy_approved else ReplayClass.DISALLOWED),
+            policy_approved=policy_approved,
+            reasons=tuple(reasons),
+        )
+
+    @staticmethod
     def _gated_replay_class(
         commit: MemoryCommit,
         query: MemoryQuery,
     ) -> ReplayClass | None:
-        ref = commit.memory_ref
-        compatible = ref.canonical_task_spec_hash == query.query_spec_hash
-        if query.compatibility_signature:
-            compatible = compatible and str(
-                ref.metadata.get("runtime_signature_hash", "")
-            ) == query.compatibility_signature
-        if query.output_contract_version:
-            compatible = compatible and str(
-                ref.metadata.get("output_contract_version", "")
-            ) == query.output_contract_version
+        """Compatibility shim for callers that still exercise the old helper."""
 
-        replay_class = ref.replay_class
-        if ref.commit_status != MemoryCommitStatus.COMMITTED:
-            replay_class = ReplayClass.ASSIST
-        elif replay_class == ReplayClass.EXACT_REPLAY:
-            if compatible and query.allow_exact_replay:
-                replay_class = ReplayClass.EXACT_REPLAY
-            elif compatible and query.allow_validated_replay:
-                replay_class = ReplayClass.VALIDATED_REPLAY
-            else:
-                replay_class = ReplayClass.ASSIST
-        elif replay_class == ReplayClass.VALIDATED_REPLAY:
-            replay_class = (
-                ReplayClass.VALIDATED_REPLAY
-                if compatible and query.allow_validated_replay
-                else ReplayClass.ASSIST
-            )
-        else:
-            replay_class = ReplayClass.ASSIST
-        if replay_class == ReplayClass.ASSIST and not query.allow_assist:
-            return None
-        return replay_class
+        decision = MemoryIndexStore._compatibility_decision(commit, query, raw_rank=1)
+        return decision.replay_class if decision.policy_approved else None
 
     def load_persisted_state(self) -> None:
         if self.store_root is None:

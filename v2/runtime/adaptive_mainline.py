@@ -8,11 +8,14 @@ from typing import Callable
 from v2.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
+    CanonicalTaskSpec,
     PlanPolicyReport,
     PlanProposal,
+    RefStatus,
+    ReplayClass,
     WorkflowMode,
 )
-from v2.memory import MemoryIndexStore
+from v2.memory import MemoryCommit, MemoryIndexStore, MemoryRef, MemoryType
 from v2.refs import ExecutionArtifactRef
 from v2.runtime.adaptive_dispatcher import (
     AdaptiveCapabilityDispatcher,
@@ -132,6 +135,15 @@ class AdaptiveMainlineRequest:
     runtime_compatibility_signature: str = ""
     layer_name: str = "L3"
     cleanup_state: bool = True
+    canonical_task_spec: CanonicalTaskSpec | None = None
+    memory_store_root: Path | None = None
+    memory_commit_enabled: bool = True
+    memory_commit_replay_class: ReplayClass = ReplayClass.ASSIST
+    memory_topic: str = ""
+    memory_tags: tuple[str, ...] = ()
+    input_lineage_hashes: tuple[str, ...] = ()
+    input_schema_digest: str = ""
+    validator_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -144,6 +156,36 @@ class AdaptiveMainlineInfrastructure:
 
 
 @dataclass(frozen=True)
+class AdaptiveMemoryCommitDecision:
+    attempted: bool
+    committed: bool
+    reason: str
+    memory_id: str = ""
+    artifact_ref_id: str = ""
+    artifact_hash: str = ""
+    quality_report_hash: str = ""
+    input_lineage_hashes: tuple[str, ...] = ()
+    output_contract_version: str = ""
+    validator_digest: str = ""
+    benchmark_gold_used: bool = False
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "attempted": self.attempted,
+            "committed": self.committed,
+            "reason": self.reason,
+            "memory_id": self.memory_id,
+            "artifact_ref_id": self.artifact_ref_id,
+            "artifact_hash": self.artifact_hash,
+            "quality_report_hash": self.quality_report_hash,
+            "input_lineage_hashes": list(self.input_lineage_hashes),
+            "output_contract_version": self.output_contract_version,
+            "validator_digest": self.validator_digest,
+            "benchmark_gold_used": self.benchmark_gold_used,
+        }
+
+
+@dataclass(frozen=True)
 class AdaptiveMainlineResult:
     runtime: AdaptiveRuntimeResult
     planner: AdaptivePlannerAssemblyRecord
@@ -151,6 +193,7 @@ class AdaptiveMainlineResult:
     infrastructure: AdaptiveMainlineInfrastructure
     manifest_path: Path
     state_cleanup_completed: bool
+    memory_commit_decision: AdaptiveMemoryCommitDecision
 
     @property
     def completed(self) -> bool:
@@ -165,6 +208,11 @@ class AdaptiveMainlineRunner:
             raise AdaptiveMainlineError("adaptive_bounded_workflow_mode_required")
         if request.envelope.task_id != request.task_id:
             raise AdaptiveMainlineError("adaptive_mainline_task_id_mismatch")
+        if (
+            request.canonical_task_spec is not None
+            and request.canonical_task_spec.spec_hash != request.canonical_task_spec_hash
+        ):
+            raise AdaptiveMainlineError("adaptive_mainline_canonical_spec_hash_mismatch")
 
         runtime_root = Path(request.runtime_root)
         runtime_root.mkdir(parents=True, exist_ok=True)
@@ -174,7 +222,13 @@ class AdaptiveMainlineRunner:
             root=runtime_root / "state",
             policy=LayeredStoragePolicy.for_state_pool_mode(request.state_pool_mode),
         )
-        memory_store = MemoryIndexStore(store_root=runtime_root / "memory_index")
+        memory_store = MemoryIndexStore(
+            store_root=(
+                Path(request.memory_store_root)
+                if request.memory_store_root is not None
+                else runtime_root / "memory_index"
+            )
+        )
         memory_store.load_persisted_state()
         socket_path = request.socket_path or runtime_root / "control.sock"
         infrastructure = AdaptiveMainlineInfrastructure(
@@ -187,6 +241,28 @@ class AdaptiveMainlineRunner:
 
         proposal, approved_plan, planner_record = self._assemble_plan(request)
         bindings = request.bindings
+        input_lineage_hashes = tuple(dict.fromkeys((
+            *request.input_lineage_hashes,
+            *(
+                stored.artifact.blob_hash
+                for ref_id, stored in bindings.artifacts.items()
+                if ref_id in request.available_input_refs
+            ),
+        )))
+        input_schema_digest = request.input_schema_digest or sha256_digest(sorted(
+            (
+                sorted({key for row in stored.rows for key in row})
+                for ref_id, stored in bindings.artifacts.items()
+                if ref_id in request.available_input_refs
+            ),
+            key=lambda fields: tuple(fields),
+        ))
+        validator_digest = request.validator_digest or sha256_digest({
+            "registry_digest": request.registry.digest,
+            "quality_semantics": bindings.quality_semantics_by_capability,
+            "output_schema_by_capability": bindings.output_schema_by_capability,
+            "output_schema_by_step": bindings.output_schema_by_step,
+        })
         context = AdaptiveDispatchContext(
             registry=request.registry,
             validator_registry=bindings.validator_registry,
@@ -211,6 +287,10 @@ class AdaptiveMainlineRunner:
             memory_store=memory_store,
             workspace_manager=workspace_manager,
             socket_path=socket_path,
+            canonical_task_spec=request.canonical_task_spec,
+            input_lineage_hashes=input_lineage_hashes,
+            input_schema_digest=input_schema_digest,
+            validator_digest=validator_digest,
             runtime_compatibility_signature=(
                 request.runtime_compatibility_signature or request.registry.digest
             ),
@@ -244,8 +324,40 @@ class AdaptiveMainlineRunner:
         released_state_ids: set[str] = set()
         runtime_result = None
         manifest_path: Path | None = None
+        memory_commit_decision = AdaptiveMemoryCommitDecision(
+            attempted=False,
+            committed=False,
+            reason="memory_commit_not_reached",
+        )
         try:
             runtime_result = AdaptiveRuntimeEngine().run(runtime_request)
+            memory_commit_decision = self._commit_verified_memory(
+                request=request,
+                approved_plan=approved_plan,
+                runtime=runtime_result,
+                context=context,
+                memory_store=memory_store,
+            )
+            runtime_result.telemetry.emit(
+                TelemetryEvent.create(
+                    trace_id=request.trace_id,
+                    task_id=request.task_id,
+                    step_id="runtime.memory_commit",
+                    event_type="MEMORY_COMMIT_VERIFIED",
+                    role="runtime_supervisor",
+                    channel="memory",
+                    payload=memory_commit_decision.canonical_payload(),
+                    metrics={
+                        "memory_commit_gate_count": float(memory_commit_decision.attempted),
+                        "memory_commit_count": float(memory_commit_decision.committed),
+                        "memory_commit_rejected_count": float(
+                            memory_commit_decision.attempted
+                            and not memory_commit_decision.committed
+                        ),
+                        "memory_benchmark_gold_input_count": 0.0,
+                    },
+                )
+            )
             runtime_result.telemetry.emit(
                 TelemetryEvent.create(
                     trace_id=request.trace_id,
@@ -300,6 +412,7 @@ class AdaptiveMainlineRunner:
                 runtime=runtime_result,
                 context=context,
                 infrastructure=infrastructure,
+                memory_commit_decision=memory_commit_decision,
             )
         finally:
             for state_id in tuple(context.semantic_state_publications):
@@ -316,6 +429,7 @@ class AdaptiveMainlineRunner:
             infrastructure=infrastructure,
             manifest_path=manifest_path or (runtime_root / "adaptive_mainline_manifest.json"),
             state_cleanup_completed=state_cleanup_completed,
+            memory_commit_decision=memory_commit_decision,
         )
 
     @staticmethod
@@ -384,6 +498,182 @@ class AdaptiveMainlineRunner:
         return effective, outcome.approved_plan, planner_record
 
     @staticmethod
+    def _commit_verified_memory(
+        *,
+        request: AdaptiveMainlineRequest,
+        approved_plan: ApprovedPlan,
+        runtime: AdaptiveRuntimeResult,
+        context: AdaptiveDispatchContext,
+        memory_store: MemoryIndexStore,
+    ) -> AdaptiveMemoryCommitDecision:
+        if not request.memory_commit_enabled:
+            return AdaptiveMemoryCommitDecision(False, False, "memory_commit_disabled")
+        if request.canonical_task_spec is None:
+            return AdaptiveMemoryCommitDecision(False, False, "canonical_task_spec_not_supplied")
+        if not runtime.completed:
+            return AdaptiveMemoryCommitDecision(True, False, "runtime_not_completed")
+        if not context.input_lineage_hashes:
+            return AdaptiveMemoryCommitDecision(True, False, "input_lineage_missing")
+        memory_query = context.memory_queries_by_task.get(request.task_id)
+        if memory_query is None or memory_query.query_embedding is None:
+            return AdaptiveMemoryCommitDecision(True, False, "memory_query_embedding_missing")
+
+        role_by_step = {step.step_id: step.role for step in approved_plan.steps}
+        executor_artifact = None
+        for dispatch in reversed(runtime.dispatches):
+            if role_by_step.get(dispatch.step_id) != "executor":
+                continue
+            executor_artifact = next(
+                (
+                    context.artifacts[ref_id].artifact
+                    for ref_id in reversed(dispatch.output_refs)
+                    if ref_id in context.artifacts
+                ),
+                None,
+            )
+            if executor_artifact is not None:
+                break
+        if executor_artifact is None:
+            return AdaptiveMemoryCommitDecision(True, False, "terminal_executor_artifact_missing")
+        if executor_artifact.verification_state != RefStatus.VERIFIED:
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_artifact_not_verified",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+            )
+
+        artifact_path = Path(executor_artifact.root_id) / executor_artifact.relpath
+        if not artifact_path.is_file() or sha256_digest(artifact_path.read_bytes()) != executor_artifact.blob_hash:
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_artifact_hash_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+            )
+        matching_quality_reports = [
+            report
+            for report in context.quality_reports.values()
+            if getattr(report, "verified", False)
+            and getattr(report, "output_artifact_hash", "") == executor_artifact.blob_hash
+        ]
+        expected_quality_hash = str(executor_artifact.metadata.get("quality_report_hash", ""))
+        quality_report = next(
+            (
+                report
+                for report in matching_quality_reports
+                if report.report_hash == expected_quality_hash
+            ),
+            None,
+        )
+        if quality_report is None:
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_quality_report_artifact_hash_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+                quality_report_hash=expected_quality_hash,
+            )
+        recipe = context.execution_recipes_by_artifact.get(executor_artifact.artifact_id)
+        if not isinstance(recipe, dict) or not recipe:
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "execution_recipe_missing",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+                quality_report_hash=quality_report.report_hash,
+            )
+
+        executor_step = next(
+            step for step in approved_plan.steps if step.step_id == executor_artifact.step_id
+        )
+        replay_class = request.memory_commit_replay_class
+        memory_type = {
+            ReplayClass.EXACT_REPLAY: MemoryType.EXACT_REPLAY,
+            ReplayClass.VALIDATED_REPLAY: MemoryType.VALIDATED_REPLAY,
+        }.get(replay_class, MemoryType.STRATEGY)
+        memory_id = (
+            f"memory:{request.task_id}:"
+            f"{executor_artifact.blob_hash.removeprefix('sha256:')[:16]}"
+        )
+        created_at_ns = time.time_ns()
+        tags = tuple(dict.fromkeys((
+            request.canonical_task_spec.task_family,
+            request.canonical_task_spec.intent_op,
+            *request.canonical_task_spec.target_entities,
+            *request.memory_tags,
+        )))
+        recipe_hash = sha256_digest(recipe)
+        summary = (
+            f"Verified {recipe.get('execution_kind', 'analysis')} recipe for "
+            f"{request.canonical_task_spec.task_family}/"
+            f"{request.canonical_task_spec.intent_op}; artifact lineage retained."
+        )
+        memory_store.put_embedding(memory_query.query_embedding)
+        commit = MemoryCommit(
+            memory_ref=MemoryRef(
+                memory_id=memory_id,
+                memory_type=memory_type,
+                replay_class=replay_class,
+                score=1.0,
+                source_task_id=request.task_id,
+                source_agent="executor",
+                created_at_ns=created_at_ns,
+                task_theme=request.memory_topic or request.canonical_task_spec.task_family,
+                tags=tags,
+                source_role_path=("planner", "retriever", "executor"),
+                producer_run_id=request.trace_id,
+                summary=summary,
+                canonical_task_spec_hash=request.canonical_task_spec_hash,
+                artifact_ref_id=executor_artifact.artifact_id,
+                semantic_state_ref_id=next(iter(context.semantic_state_publications), ""),
+                embedding_ref_id=memory_query.query_embedding.embedding_id,
+                manifest_hash=executor_artifact.manifest_hash,
+                metadata={
+                    "runtime_signature_hash": context.runtime_compatibility_signature,
+                    "output_contract_version": executor_step.output_contract_version,
+                    "validator_digest": context.validator_digest,
+                    "quality_report_hash": quality_report.report_hash,
+                    "input_lineage_hashes": list(context.input_lineage_hashes),
+                    "input_schema_digest": context.input_schema_digest,
+                    "execution_recipe": dict(recipe),
+                    "execution_recipe_hash": recipe_hash,
+                    "replay_ready": executor_artifact.replay_ready,
+                    "artifact_root_id": executor_artifact.root_id,
+                    "artifact_relpath": executor_artifact.relpath,
+                    "artifact_blob_hash": executor_artifact.blob_hash,
+                    "benchmark_gold_used": False,
+                },
+            ),
+            canonical_task_spec=request.canonical_task_spec,
+            required_outputs=request.canonical_task_spec.required_outputs,
+            quality_floor_pass=True,
+            created_from_artifact_hash=executor_artifact.blob_hash,
+        )
+        committed = memory_store.commit_candidate(
+            commit=commit,
+            quality_floor_pass=True,
+            answer_adopted=True,
+        )
+        return AdaptiveMemoryCommitDecision(
+            attempted=True,
+            committed=True,
+            reason="runtime_quality_and_artifact_hash_verified",
+            memory_id=committed.memory_ref.memory_id,
+            artifact_ref_id=executor_artifact.artifact_id,
+            artifact_hash=executor_artifact.blob_hash,
+            quality_report_hash=quality_report.report_hash,
+            input_lineage_hashes=context.input_lineage_hashes,
+            output_contract_version=executor_step.output_contract_version,
+            validator_digest=context.validator_digest,
+            benchmark_gold_used=False,
+        )
+
+    @staticmethod
     def _persist_manifest(
         *,
         request: AdaptiveMainlineRequest,
@@ -391,6 +681,7 @@ class AdaptiveMainlineRunner:
         runtime: AdaptiveRuntimeResult,
         context: AdaptiveDispatchContext,
         infrastructure: AdaptiveMainlineInfrastructure,
+        memory_commit_decision: AdaptiveMemoryCommitDecision,
     ) -> Path:
         manifest_path = Path(request.runtime_root) / "adaptive_mainline_manifest.json"
         payload = {
@@ -414,6 +705,15 @@ class AdaptiveMainlineRunner:
                 task_id: query.query_hash
                 for task_id, query in sorted(context.memory_queries_by_task.items())
             },
+            "memory_query_results": {
+                step_id: result.canonical_payload()
+                for step_id, result in sorted(context.memory_match_results.items())
+            },
+            "memory_consumption_records": [
+                record.canonical_payload()
+                for record in context.memory_consumption_records
+            ],
+            "memory_commit_decision": memory_commit_decision.canonical_payload(),
             "artifact_ref_ids": sorted(context.artifacts),
             "evidence_ref_ids": sorted(context.evidence_packs),
             "created_at_ns": time.time_ns(),

@@ -1,25 +1,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import inspect
 import json
 from pathlib import Path
+import time
 from typing import Callable, TYPE_CHECKING
 
 from v2.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
     CapabilityGrant,
+    CanonicalTaskSpec,
     ClaimSet,
     CodeGenerationPolicy,
     CodeGenerationRequest,
+    CompatibilityVerdict,
     EvidenceCoverageStatus,
     EvidenceProjectionRequest,
     ExecutionKind,
     PlanStepProposal,
     RefStatus,
+    ReplayClass,
     RiskClass,
     TransformProgram,
+    TransformStep,
 )
+from v2.memory import MemoryConsumptionRecord
 from v2.refs import CanonicalEvidencePack, ExecutionArtifactRef
 from v2.runtime.capability_registry import CapabilityRegistry
 from v2.runtime.capability_recompute import CapabilityRecomputeError, recompute_transform_program
@@ -66,7 +73,7 @@ class StoredAdaptiveArtifact:
 RetrievalRequestFactory = Callable[[PlanStepProposal, CapabilityGrant], "EvidenceRequest"]
 RetrievalExpansionFactory = Callable[["EvidenceRequest", "EvidenceCoverageReport"], "EvidenceRequest | None"]
 RetrievalResultObserver = Callable[[AdaptiveRetrievalResult, PlanStepProposal, CapabilityGrant], tuple["StateConsumptionRecord", ...]]
-TransformProgramFactory = Callable[[PlanStepProposal, CapabilityGrant, str, tuple[dict[str, object], ...]], TransformProgram]
+TransformProgramFactory = Callable[..., TransformProgram]
 TransformProgramRepairFactory = Callable[
     [PlanStepProposal, CapabilityGrant, str, tuple[dict[str, object], ...], tuple[str, ...]],
     TransformProgram,
@@ -74,7 +81,7 @@ TransformProgramRepairFactory = Callable[
 CodeSourceFactory = Callable[[CodeGenerationRequest, str], str]
 CodeRepairFactory = Callable[[CodeGenerationRequest, str, str, tuple[str, ...]], str]
 BuiltinHandler = Callable[[AdaptiveTaskEnvelope, ApprovedPlan, PlanStepProposal, CapabilityGrant, Path], "AdaptiveStepResult"]
-ClaimSetFactory = Callable[[PlanStepProposal, CapabilityGrant, ExecutionArtifactRef, tuple[dict[str, object], ...], CanonicalEvidencePack], ClaimSet]
+ClaimSetFactory = Callable[..., ClaimSet]
 
 
 @dataclass
@@ -122,6 +129,15 @@ class AdaptiveDispatchContext:
     semantic_state_selections: dict[str, object] = field(default_factory=dict)
     memory_match_results: dict[str, object] = field(default_factory=dict)
     memory_queries_by_task: dict[str, object] = field(default_factory=dict)
+    memory_role_inputs_by_step: dict[str, tuple[dict[str, object], ...]] = field(
+        default_factory=dict
+    )
+    memory_consumption_records: list[MemoryConsumptionRecord] = field(default_factory=list)
+    execution_recipes_by_artifact: dict[str, dict[str, object]] = field(default_factory=dict)
+    canonical_task_spec: CanonicalTaskSpec | None = None
+    input_lineage_hashes: tuple[str, ...] = ()
+    input_schema_digest: str = ""
+    validator_digest: str = ""
     runtime_compatibility_signature: str = ""
     state_consumption_records: list[object] = field(default_factory=list)
 
@@ -480,6 +496,14 @@ class AdaptiveCapabilityDispatcher:
             packs=tuple(bundle.evidence_pack for bundle in selected_bundles),
         )
         query_bundle = selected_bundles[0]
+        executor_output_contract = next(
+            (
+                candidate.output_contract_version
+                for candidate in reversed(approved_plan.steps)
+                if candidate.role == "executor"
+            ),
+            approved_plan.final_output_contract_version,
+        )
         memory_query = MemoryQuery(
             query_task_id=grant.task_id,
             query_spec_hash=envelope.canonical_task_spec_hash,
@@ -494,7 +518,11 @@ class AdaptiveCapabilityDispatcher:
                 self.context.runtime_compatibility_signature
                 or self.context.registry.digest
             ),
-            output_contract_version=approved_plan.final_output_contract_version,
+            output_contract_version=executor_output_contract,
+            canonical_task_spec=self.context.canonical_task_spec,
+            input_lineage_hashes=self.context.input_lineage_hashes,
+            input_schema_digest=self.context.input_schema_digest,
+            validator_digest=self.context.validator_digest,
         )
         if grant.task_id in self.context.memory_queries_by_task:
             raise AdaptiveDispatchError("hybrid_memory_query_already_issued_for_task")
@@ -516,6 +544,18 @@ class AdaptiveCapabilityDispatcher:
             1 + len(bundle.semantic_candidate_embeddings)
             for bundle in result.retrieval_bundles
         )
+        compatibility_decisions = tuple(memory_result.compatibility_decisions)
+        compatible_count = sum(
+            decision.verdict != CompatibilityVerdict.INCOMPATIBLE
+            for decision in compatibility_decisions
+        )
+        policy_approved_count = sum(
+            decision.policy_approved for decision in compatibility_decisions
+        )
+        rejected_incompatible_count = sum(
+            decision.verdict == CompatibilityVerdict.INCOMPATIBLE
+            for decision in compatibility_decisions
+        )
         return (
             replace(
                 result,
@@ -536,8 +576,224 @@ class AdaptiveCapabilityDispatcher:
                 "memory_keyword_candidate_count": float(len(memory_result.source_ranks.get("keyword", ()))),
                 "memory_tag_candidate_count": float(len(memory_result.source_ranks.get("tags", ()))),
                 "memory_vector_candidate_count": float(len(memory_result.source_ranks.get("vector", ()))),
+                "memory_candidate_count": float(
+                    len(memory_result.candidate_pool.candidate_memory_ids)
+                    if memory_result.candidate_pool is not None
+                    else 0
+                ),
+                "memory_compatible_match_count": float(compatible_count),
+                "memory_policy_approved_match_count": float(policy_approved_count),
+                "memory_rejected_incompatible_count": float(rejected_incompatible_count),
             },
         )
+
+    def _memory_inputs_for_step(
+        self,
+        *,
+        step: PlanStepProposal,
+        grant: CapabilityGrant,
+    ) -> tuple[dict[str, object], ...]:
+        if self.context.memory_store is None:
+            return ()
+        role_inputs: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for retrieval_step_id, result in sorted(self.context.memory_match_results.items()):
+            decisions = {
+                decision.memory_id: decision
+                for decision in getattr(result, "compatibility_decisions", ())
+            }
+            for match in getattr(result, "matches", ()):
+                memory_id = match.memory_ref.memory_id
+                if memory_id in seen:
+                    continue
+                commit = self.context.memory_store.commits.get(memory_id)
+                decision = decisions.get(memory_id)
+                if commit is None or decision is None or not decision.policy_approved:
+                    continue
+                recipe = commit.memory_ref.metadata.get("execution_recipe")
+                recipe_payload = dict(recipe) if isinstance(recipe, dict) else {}
+                payload = {
+                    "ref_id": memory_id,
+                    "ref_kind": "memory",
+                    "source_task_id": commit.memory_ref.source_task_id,
+                    "source_agent": commit.memory_ref.source_agent,
+                    "summary": commit.memory_ref.summary,
+                    "tags": list(commit.memory_ref.tags),
+                    "replay_class": match.replay_class.value,
+                    "compatibility_verdict": decision.verdict.value,
+                    "compatibility_reasons": list(decision.reasons),
+                    "artifact_lineage": {
+                        "artifact_ref_id": commit.memory_ref.artifact_ref_id,
+                        "artifact_hash": commit.created_from_artifact_hash,
+                        "manifest_hash": commit.memory_ref.manifest_hash,
+                        "input_lineage_hashes": list(
+                            commit.memory_ref.metadata.get("input_lineage_hashes", ())
+                        ),
+                    },
+                    "execution_recipe": recipe_payload,
+                    "execution_recipe_hash": str(
+                        commit.memory_ref.metadata.get("execution_recipe_hash", "")
+                    ),
+                    "query_source_step_id": retrieval_step_id,
+                    "consumer_role": step.role,
+                    "consumer_step_id": step.step_id,
+                    "grant_hash": grant.grant_hash,
+                }
+                payload["input_payload_hash"] = sha256_digest(payload)
+                role_inputs.append(payload)
+                seen.add(memory_id)
+        inputs = tuple(role_inputs)
+        if inputs:
+            self.context.memory_role_inputs_by_step[step.step_id] = inputs
+        return inputs
+
+    @staticmethod
+    def _validated_recipe(
+        memory_inputs: tuple[dict[str, object], ...],
+        *,
+        execution_kind: str,
+        capability_id: str,
+        output_contract_version: str,
+    ) -> tuple[dict[str, object] | None, str]:
+        for memory_input in memory_inputs:
+            if memory_input.get("replay_class") not in {
+                ReplayClass.VALIDATED_REPLAY.value,
+                ReplayClass.EXACT_REPLAY.value,
+            }:
+                continue
+            recipe = memory_input.get("execution_recipe")
+            if not isinstance(recipe, dict):
+                continue
+            if str(recipe.get("execution_kind", "")) != execution_kind:
+                continue
+            if str(recipe.get("capability_id", "")) != capability_id:
+                continue
+            if str(recipe.get("output_contract_version", "")) != output_contract_version:
+                continue
+            return dict(recipe), str(memory_input["ref_id"])
+        return None, ""
+
+    @staticmethod
+    def _factory_accepts_memory_inputs(
+        factory: Callable[..., object],
+        *,
+        minimum_positional: int = 5,
+    ) -> bool:
+        try:
+            parameters = tuple(inspect.signature(factory).parameters.values())
+        except (TypeError, ValueError):
+            return False
+        return any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters) or sum(
+            parameter.kind
+            in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+            for parameter in parameters
+        ) >= minimum_positional
+
+    def _record_memory_consumption(
+        self,
+        *,
+        memory_inputs: tuple[dict[str, object], ...],
+        step: PlanStepProposal,
+        downstream_ref_ids: tuple[str, ...],
+        before_surface_hash: str,
+        replay_memory_id: str = "",
+    ) -> dict[str, float]:
+        if not memory_inputs:
+            return {
+                "memory_consumed_count": 0.0,
+                "memory_behavioral_effect_count": 0.0,
+                "memory_assist_count": 0.0,
+                "validated_replay_count": 0.0,
+                "exact_replay_count": 0.0,
+                "skipped_step_count": 0.0,
+                "skipped_llm_call_count": 0.0,
+            }
+        after_surface_hash = sha256_digest({
+            "before_surface_hash": before_surface_hash,
+            "memory_input_hashes": [item["input_payload_hash"] for item in memory_inputs],
+            "downstream_ref_ids": list(downstream_ref_ids),
+        })
+        consumed_ids = {
+            record.memory_id
+            for record in self.context.memory_consumption_records
+            if record.consumer_step_id == step.step_id
+        }
+        for memory_input in memory_inputs:
+            memory_id = str(memory_input["ref_id"])
+            if memory_id in consumed_ids:
+                continue
+            replay_class = ReplayClass(str(memory_input["replay_class"]))
+            recipe_recomputed = memory_id == replay_memory_id
+            behavioral_effect = (
+                "recipe_reused_current_input_recomputed"
+                if recipe_recomputed
+                else "role_input_augmented"
+            )
+            record = MemoryConsumptionRecord(
+                consumption_id=(
+                    f"memory-consumption:{step.step_id}:{memory_id}:"
+                    f"{len(self.context.memory_consumption_records) + 1}"
+                ),
+                query_hash=next(
+                    (
+                        query.query_hash
+                        for query in self.context.memory_queries_by_task.values()
+                    ),
+                    "",
+                ),
+                memory_id=memory_id,
+                consumer_role=step.role,
+                consumer_step_id=step.step_id,
+                input_ref_id=memory_id,
+                replay_class=replay_class,
+                compatibility_verdict=CompatibilityVerdict(
+                    str(memory_input["compatibility_verdict"])
+                ),
+                input_payload_hash=str(memory_input["input_payload_hash"]),
+                before_decision_surface_hash=before_surface_hash,
+                after_decision_surface_hash=after_surface_hash,
+                behavioral_effect=behavioral_effect,
+                downstream_ref_ids=downstream_ref_ids,
+                skipped_generation_step_count=int(recipe_recomputed),
+                skipped_llm_call_count=int(recipe_recomputed),
+                recipe_recomputed=recipe_recomputed,
+                consumed_at_ns=time.time_ns(),
+            )
+            self.context.memory_consumption_records.append(record)
+        task_records = [
+            record
+            for record in self.context.memory_consumption_records
+            if record.consumer_step_id == step.step_id
+        ]
+        return {
+            "memory_consumed_count": float(len(task_records)),
+            "memory_behavioral_effect_count": float(
+                sum(record.behavioral_effect != "unchanged" for record in task_records)
+            ),
+            "memory_assist_count": float(
+                sum(record.replay_class == ReplayClass.ASSIST for record in task_records)
+            ),
+            "validated_replay_count": float(
+                sum(
+                    record.replay_class == ReplayClass.VALIDATED_REPLAY
+                    and record.recipe_recomputed
+                    for record in task_records
+                )
+            ),
+            "exact_replay_count": float(
+                sum(
+                    record.replay_class == ReplayClass.EXACT_REPLAY
+                    and record.recipe_recomputed
+                    for record in task_records
+                )
+            ),
+            "skipped_step_count": float(
+                sum(record.skipped_generation_step_count for record in task_records)
+            ),
+            "skipped_llm_call_count": float(
+                sum(record.skipped_llm_call_count for record in task_records)
+            ),
+        }
 
     def _dispatch_transform_dsl(
         self,
@@ -554,9 +810,47 @@ class AdaptiveCapabilityDispatcher:
             grant=grant,
             attempt_workspace=attempt_workspace,
         )
+        memory_inputs = self._memory_inputs_for_step(step=step, grant=grant)
+        before_memory_surface_hash = sha256_digest({
+            "step": step.canonical_payload(),
+            "input_ref_id": input_ref_id,
+            "input_hashes": list(input_hashes),
+        })
         if self.context.transform_program_factory is None:
             raise AdaptiveDispatchError("transform_program_handler_not_registered")
-        program = self.context.transform_program_factory(step, grant, input_ref_id, rows)
+        replay_recipe, replay_memory_id = self._validated_recipe(
+            memory_inputs,
+            execution_kind=ExecutionKind.TRANSFORM_DSL.value,
+            capability_id=step.capability_id,
+            output_contract_version=grant.output_contract_version,
+        )
+        if replay_recipe is not None:
+            operations = tuple(
+                TransformStep(
+                    op=str(item["op"]),
+                    arguments=dict(item.get("arguments", {})),
+                )
+                for item in replay_recipe.get("operations", ())
+                if isinstance(item, dict) and item.get("op")
+            )
+            if not operations:
+                raise AdaptiveDispatchError("validated_replay_recipe_operations_missing")
+            program = TransformProgram(
+                program_id=f"validated-replay-{grant.attempt_id}",
+                input_artifact_refs=(input_ref_id,),
+                operations=operations,
+                output_contract_version=grant.output_contract_version,
+            )
+        elif self._factory_accepts_memory_inputs(self.context.transform_program_factory):
+            program = self.context.transform_program_factory(
+                step,
+                grant,
+                input_ref_id,
+                rows,
+                memory_inputs,
+            )
+        else:
+            program = self.context.transform_program_factory(step, grant, input_ref_id, rows)
         schema = self._output_schema(step.capability_id, rows, step.step_id)
         projected_inputs = {input_ref_id: [dict(row) for row in rows]}
         dsl_repair_count = 0
@@ -648,6 +942,20 @@ class AdaptiveCapabilityDispatcher:
             rows=result.rows,
             provenance_item_ids=provenance,
         )
+        self.context.execution_recipes_by_artifact[artifact.artifact_id] = {
+            "execution_kind": ExecutionKind.TRANSFORM_DSL.value,
+            "capability_id": step.capability_id,
+            "output_contract_version": grant.output_contract_version,
+            "operations": [operation.canonical_payload() for operation in program.operations],
+            "source_program_hash": program.program_hash,
+        }
+        memory_metrics = self._record_memory_consumption(
+            memory_inputs=memory_inputs,
+            step=step,
+            downstream_ref_ids=(artifact.artifact_id,),
+            before_surface_hash=before_memory_surface_hash,
+            replay_memory_id=(replay_memory_id if dsl_repair_count == 0 else ""),
+        )
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
             success=True,
@@ -664,6 +972,7 @@ class AdaptiveCapabilityDispatcher:
                 "dsl_repair_count": float(dsl_repair_count),
                 "dsl_quality_repair_count": float(dsl_quality_repair_count),
                 "dsl_quality_rejected_count": float(quality_rejection_count),
+                **memory_metrics,
             },
         )
 
@@ -679,7 +988,7 @@ class AdaptiveCapabilityDispatcher:
 
         if not envelope.allow_llm_python or envelope.risk_class != RiskClass.BOUNDED_CODE:
             raise AdaptiveDispatchError("llm_python_not_program_enabled")
-        if self.context.code_source_factory is None or self.context.code_policy_factory is None:
+        if self.context.code_policy_factory is None:
             raise AdaptiveDispatchError("llm_python_handler_not_registered")
         if not grant.input_ref_ids:
             raise AdaptiveDispatchError("llm_python_requires_verified_artifact")
@@ -715,6 +1024,18 @@ class AdaptiveCapabilityDispatcher:
         if not stored_inputs:
             raise AdaptiveDispatchError("llm_python_requires_verified_artifact")
         verified_rows = verified_inputs[-1]
+        memory_inputs = self._memory_inputs_for_step(step=step, grant=grant)
+        before_memory_surface_hash = sha256_digest({
+            "step": step.canonical_payload(),
+            "input_artifact_hashes": [stored.artifact.blob_hash for stored in stored_inputs],
+            "evidence_manifest": evidence_manifest,
+        })
+        replay_recipe, replay_memory_id = self._validated_recipe(
+            memory_inputs,
+            execution_kind=ExecutionKind.LLM_BOUNDED_PYTHON.value,
+            capability_id=step.capability_id,
+            output_contract_version=grant.output_contract_version,
+        )
         validator_id = self._business_validator_id(step.capability_id)
         policy = self.context.code_policy_factory(step)
         if not policy.enabled or not policy.require_bwrap:
@@ -759,6 +1080,10 @@ class AdaptiveCapabilityDispatcher:
                     for stored in stored_inputs
                 },
                 "evidence": evidence_manifest,
+                "memory": {
+                    str(item["ref_id"]): str(item["input_payload_hash"])
+                    for item in memory_inputs
+                },
             }),
             output_schema=schema,
             model_signature="adaptive_executor",
@@ -777,6 +1102,7 @@ class AdaptiveCapabilityDispatcher:
             expected_output_shape=str(contract.get("expected_output_shape", "object")),
             provenance_item_ids=combined_provenance,
             retrieval_context=tuple(retrieval_context),
+            memory_inputs=memory_inputs,
         )
         prompt = build_code_generation_prompt(request)
         request = replace(
@@ -786,7 +1112,14 @@ class AdaptiveCapabilityDispatcher:
                 rendered_prompt=prompt,
             ),
         )
-        source = self.context.code_source_factory(request, prompt)
+        if replay_recipe is not None:
+            source = str(replay_recipe.get("source", ""))
+            if not source.strip():
+                raise AdaptiveDispatchError("validated_replay_python_source_missing")
+        else:
+            if self.context.code_source_factory is None:
+                raise AdaptiveDispatchError("llm_python_handler_not_registered")
+            source = self.context.code_source_factory(request, prompt)
 
         def repair_source(previous_source: str, violations: tuple[str, ...]) -> str:
             if self.context.code_repair_factory is None:
@@ -820,7 +1153,7 @@ class AdaptiveCapabilityDispatcher:
                 quality_report_hashes=quality_hashes,
                 source_hashes=(outcome.record.source_hash,),
                 metrics={
-                    "llm_codeact_generation_count": 1.0,
+                    "llm_codeact_generation_count": float(replay_recipe is None),
                     "llm_codeact_repair_count": float(len(outcome.repairs)),
                     "llm_codeact_execution_count": float(outcome.record.exit_code == 0),
                     "llm_codeact_runtime_repair_count": float(sum(
@@ -845,6 +1178,20 @@ class AdaptiveCapabilityDispatcher:
             ),
             provenance_item_ids=combined_provenance,
         )
+        self.context.execution_recipes_by_artifact[artifact.artifact_id] = {
+            "execution_kind": ExecutionKind.LLM_BOUNDED_PYTHON.value,
+            "capability_id": step.capability_id,
+            "output_contract_version": grant.output_contract_version,
+            "source": source,
+            "source_hash": sha256_digest(source.encode("utf-8")),
+        }
+        memory_metrics = self._record_memory_consumption(
+            memory_inputs=memory_inputs,
+            step=step,
+            downstream_ref_ids=(artifact.artifact_id,),
+            before_surface_hash=before_memory_surface_hash,
+            replay_memory_id=(replay_memory_id if not outcome.repairs else ""),
+        )
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
             success=True,
@@ -855,7 +1202,7 @@ class AdaptiveCapabilityDispatcher:
             quality_report_hashes=quality_hashes,
             source_hashes=(outcome.record.source_hash,),
             metrics={
-                "llm_codeact_generation_count": 1.0,
+                "llm_codeact_generation_count": float(replay_recipe is None),
                 "llm_codeact_repair_count": float(len(outcome.repairs)),
                 "llm_codeact_runtime_repair_count": float(sum(
                     item.repair_kind == "runtime" for item in outcome.repairs
@@ -869,6 +1216,7 @@ class AdaptiveCapabilityDispatcher:
                 "llm_codeact_execution_count": 1.0,
                 "llm_codeact_verified_count": 1.0,
                 "llm_codeact_sandbox_fallback_count": 0.0,
+                **memory_metrics,
             },
         )
 
@@ -927,9 +1275,34 @@ class AdaptiveCapabilityDispatcher:
         ):
             raise AdaptiveDispatchError("summarizer_evidence_not_verified")
         rows = self._read_verified_artifact_rows(stored)
+        memory_inputs = self._memory_inputs_for_step(step=step, grant=grant)
+        before_memory_surface_hash = sha256_digest({
+            "step": step.canonical_payload(),
+            "artifact_hash": stored.artifact.blob_hash,
+            "evidence_pack_hash": evidence_pack.pack_hash,
+        })
         assert self.context.claim_set_factory is not None
         try:
-            claim_set = self.context.claim_set_factory(step, grant, stored.artifact, rows, evidence_pack)
+            if self._factory_accepts_memory_inputs(
+                self.context.claim_set_factory,
+                minimum_positional=6,
+            ):
+                claim_set = self.context.claim_set_factory(
+                    step,
+                    grant,
+                    stored.artifact,
+                    rows,
+                    evidence_pack,
+                    memory_inputs,
+                )
+            else:
+                claim_set = self.context.claim_set_factory(
+                    step,
+                    grant,
+                    stored.artifact,
+                    rows,
+                    evidence_pack,
+                )
         except Exception as exc:
             # A candidate-generation error is not an authorization to issue a
             # fallback report.  Surface it as a normal failed Runtime step so
@@ -1005,6 +1378,12 @@ class AdaptiveCapabilityDispatcher:
             )),
         )
         self.context.claim_sets[artifact.artifact_id] = claim_set
+        memory_metrics = self._record_memory_consumption(
+            memory_inputs=memory_inputs,
+            step=step,
+            downstream_ref_ids=(artifact.artifact_id,),
+            before_surface_hash=before_memory_surface_hash,
+        )
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
             success=True,
@@ -1012,6 +1391,7 @@ class AdaptiveCapabilityDispatcher:
             output_refs=(artifact.artifact_id,),
             output_ref_kinds=("execution_artifact",),
             validator_report_hashes=(audit_hash,),
+            metrics=memory_metrics,
         )
 
     def _typed_input(
