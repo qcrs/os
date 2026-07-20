@@ -7,7 +7,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from v2.benchmark.continuous_task_family import ContinuousTaskFamily
+from v2.benchmark.continuous_task_family import (
+    ContinuousPreRunFixture,
+    ContinuousTaskFamily,
+)
+from v2.benchmark.contest_fairness import (
+    audit_role_request_gold_visibility,
+    build_continuous_fairness_manifest,
+)
 from v2.benchmark.kv_analysis import summarize_case_kv_reuse
 from v2.benchmark.kv_prefix_schedule import KVPrefixSchedulePlan, build_kv_prefix_schedule_plan
 from v2.benchmark.metric_aggregation import finalize_case_telemetry_summary
@@ -28,10 +35,12 @@ from v2.benchmark.reporting import (
     write_json_report,
     write_markdown_report,
 )
+from v2.benchmark.scoring import score_benchmark_output
 from v2.contracts import CanonicalTaskSpec
 from v2.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
 from v2.runtime.prefix_feedback import PrefixCacheFeedbackLoop
 from v2.runtime.vllm_metrics import VllmPrefixCacheCounterDelta
+from v2.utils import sha256_digest
 
 
 _RUNTIME_TASK_FAMILIES_BY_DATASET_KIND = {
@@ -62,6 +71,21 @@ CONTINUOUS_TEXT_SEMANTIC_SELECTION_SMOKE_CONFIG = SmokeLayerConfig(
     replay_enabled=False,
     multi_attempt_enabled=False,
     force_first_attempt_trap=False,
+)
+
+_MEMORY_FUNNEL_METRICS = (
+    "hybrid_memory_query_count",
+    "memory_candidate_count",
+    "memory_compatible_match_count",
+    "memory_policy_approved_match_count",
+    "memory_consumed_count",
+    "memory_behavioral_effect_count",
+    "memory_assist_count",
+    "validated_replay_count",
+    "exact_replay_count",
+    "memory_rejected_incompatible_count",
+    "skipped_step_count",
+    "skipped_llm_call_count",
 )
 
 
@@ -124,6 +148,78 @@ class ContinuousRoundSample:
     depends_on_rounds: tuple[int, ...]
     minimum_reuse_class: str
     expected_metric_effects: dict[str, object]
+    pre_run_fixtures: tuple[ContinuousPreRunFixture, ...]
+
+
+def _dataset_source_payload(
+    family: ContinuousTaskFamily,
+    dataset_id: str,
+) -> dict[str, object]:
+    dataset = next(item for item in family.datasets if item.dataset_id == dataset_id)
+    source_path = Path(dataset.path)
+    if not source_path.is_absolute():
+        source_path = Path.cwd() / source_path
+    source_bytes = source_path.read_bytes()
+    return {
+        "dataset_id": dataset.dataset_id,
+        "kind": dataset.kind,
+        "path": dataset.path,
+        "content_sha256": sha256_digest(source_bytes),
+        "content": source_bytes.decode("utf-8", errors="replace"),
+    }
+
+
+def _lookup_nested_output(payload: dict[str, object], key: str) -> object:
+    if key in payload:
+        return payload.get(key)
+    current: object = payload
+    for segment in key.split("."):
+        if not isinstance(current, dict) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
+def _prior_round_context(
+    *,
+    sample: ContinuousRoundSample,
+    samples_by_round: dict[int, ContinuousRoundSample],
+    cases_by_round: dict[int, BenchmarkCaseReport],
+) -> dict[str, object]:
+    rounds: list[dict[str, object]] = []
+    for dependency in sample.depends_on_rounds:
+        prior_sample = samples_by_round.get(dependency)
+        prior_case = cases_by_round.get(dependency)
+        if prior_sample is None or prior_case is None:
+            rounds.append({
+                "round": dependency,
+                "verified": False,
+                "facts": {},
+                "reason": "dependency_not_completed",
+            })
+            continue
+        output_payload = json.loads(Path(prior_case.output_artifact_path).read_text(encoding="utf-8"))
+        fact_keys = tuple(
+            key.removesuffix("_min").removesuffix("_max")
+            for key in prior_sample.expected_facts
+        )
+        facts = {
+            key: _lookup_nested_output(output_payload, key)
+            for key in fact_keys
+            if _lookup_nested_output(output_payload, key) is not None
+        }
+        rounds.append({
+            "round": dependency,
+            "task_id": prior_sample.task_id,
+            "verified": prior_case.quality_floor.quality_floor_pass,
+            "facts": facts if prior_case.quality_floor.quality_floor_pass else {},
+        })
+    payload = {
+        "schema_version": "statebus.prior_round_context.v1",
+        "task_id": sample.task_id,
+        "rounds": rounds,
+    }
+    return {**payload, "prior_fact_digest": sha256_digest(payload)}
 
 
 def _prepare_dir(path: Path) -> Path:
@@ -131,6 +227,196 @@ def _prepare_dir(path: Path) -> Path:
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _json_leaf_changes(before: object, after: object, *, prefix: str = "") -> list[str]:
+    if isinstance(before, dict) and isinstance(after, dict):
+        changes: list[str] = []
+        for key in sorted(set(before) | set(after)):
+            child = f"{prefix}.{key}" if prefix else str(key)
+            if key not in before or key not in after:
+                changes.append(child)
+                continue
+            changes.extend(_json_leaf_changes(before[key], after[key], prefix=child))
+        return changes
+    if isinstance(before, list) and isinstance(after, list):
+        changes = []
+        for index in range(max(len(before), len(after))):
+            child = f"{prefix}[{index}]"
+            if index >= len(before) or index >= len(after):
+                changes.append(child)
+                continue
+            changes.extend(_json_leaf_changes(before[index], after[index], prefix=child))
+        return changes
+    return [] if before == after else [prefix]
+
+
+def _materialize_incompatible_history_fixture(
+    *,
+    fixture: ContinuousPreRunFixture,
+    task_id: str,
+    source_runtime_root: Path,
+    fixture_root: Path,
+    audit_root: Path,
+) -> tuple[Path, dict[str, object]]:
+    memory_commit_paths = sorted(
+        (source_runtime_root / "sidecars" / "memory_commits").glob("*.json")
+    )
+    replay_ledger_paths = sorted(
+        (source_runtime_root / "sidecars" / "replay_ledgers").glob("*.json")
+    )
+    if len(memory_commit_paths) != 1 or len(replay_ledger_paths) != 1:
+        raise RuntimeError(
+            "incompatible history fixture requires one verified memory commit and replay ledger: "
+            f"{source_runtime_root}"
+        )
+    source_commit = json.loads(memory_commit_paths[0].read_text(encoding="utf-8"))
+    source_ref = dict(source_commit.get("memory_ref", {}))
+    source_metadata = dict(source_ref.get("metadata", {}))
+    if (
+        source_ref.get("commit_status") != "committed"
+        or source_ref.get("validation_status") != "passed"
+        or not bool(source_metadata.get("replay_ready", False))
+        or not bool(source_commit.get("quality_floor_pass", False))
+    ):
+        raise RuntimeError(
+            f"incompatible history fixture source is not replay-ready: {source_runtime_root}"
+        )
+
+    if fixture_root.exists():
+        shutil.rmtree(fixture_root)
+    fixture_root.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_runtime_root, fixture_root)
+
+    cloned_commit_path = (
+        fixture_root
+        / "sidecars"
+        / "memory_commits"
+        / memory_commit_paths[0].name
+    )
+    cloned_ledger_path = (
+        fixture_root
+        / "sidecars"
+        / "replay_ledgers"
+        / replay_ledger_paths[0].name
+    )
+    before_commit = json.loads(cloned_commit_path.read_text(encoding="utf-8"))
+    after_commit = json.loads(cloned_commit_path.read_text(encoding="utf-8"))
+    memory_ref = dict(after_commit["memory_ref"])
+    metadata = dict(memory_ref.get("metadata", {}))
+    incompatible_signature = sha256_digest(
+        {
+            "fixture": "incompatible_history_candidate",
+            "version": fixture.runtime_signature_version,
+        }
+    )
+    metadata.update(
+        {
+            "runtime_signature_hash": incompatible_signature,
+            "output_contract_version": fixture.output_contract_version,
+            "validator_digest": fixture.validator_digest,
+        }
+    )
+    memory_ref["metadata"] = metadata
+    after_commit["memory_ref"] = memory_ref
+
+    before_ledger = json.loads(cloned_ledger_path.read_text(encoding="utf-8"))
+    after_ledger = json.loads(cloned_ledger_path.read_text(encoding="utf-8"))
+    runtime_signature = dict(after_ledger.get("runtime_signature", {}))
+    runtime_signature.update(
+        {
+            "prompt_bundle_digest": incompatible_signature,
+            "combined_digest": incompatible_signature,
+        }
+    )
+    after_ledger.update(
+        {
+            "runtime_signature_hash": incompatible_signature,
+            "runtime_signature": runtime_signature,
+            "output_contract_version": fixture.output_contract_version,
+        }
+    )
+    write_json_report(cloned_commit_path, after_commit)
+    write_json_report(cloned_ledger_path, after_ledger)
+
+    changed_paths = sorted(
+        [
+            *(f"memory_commit.{path}" for path in _json_leaf_changes(before_commit, after_commit)),
+            *(f"replay_ledger.{path}" for path in _json_leaf_changes(before_ledger, after_ledger)),
+        ]
+    )
+    allowed_suffixes = (
+        "memory_ref.metadata.runtime_signature_hash",
+        "memory_ref.metadata.output_contract_version",
+        "memory_ref.metadata.validator_digest",
+        "runtime_signature_hash",
+        "runtime_signature.prompt_bundle_digest",
+        "runtime_signature.combined_digest",
+        "output_contract_version",
+    )
+    unexpected_changes = [
+        path
+        for path in changed_paths
+        if not any(path.endswith(suffix) for suffix in allowed_suffixes)
+    ]
+    if unexpected_changes:
+        raise RuntimeError(
+            f"incompatible history fixture mutated forbidden fields: {unexpected_changes}"
+        )
+    audit = {
+        "schema_version": "statebus.incompatible_history_fixture_audit.v1",
+        "task_id": task_id,
+        "kind": fixture.kind,
+        "source_round": fixture.source_round,
+        "source_runtime_root": str(source_runtime_root),
+        "fixture_runtime_root": str(fixture_root),
+        "source_memory_id": str(source_ref.get("memory_id", "")),
+        "source_artifact_hash": str(source_commit.get("created_from_artifact_hash", "")),
+        "source_replay_ready": True,
+        "changed_paths": changed_paths,
+        "unexpected_changes": unexpected_changes,
+        "runtime_signature_version": fixture.runtime_signature_version,
+        "runtime_signature_hash": incompatible_signature,
+        "output_contract_version": fixture.output_contract_version,
+        "validator_digest": fixture.validator_digest,
+        "eligible_for_role_input": False,
+        "expected_decision": "reject_incompatible_and_recompute",
+    }
+    audit_path = audit_root / f"{task_id}-source-round-{fixture.source_round}.json"
+    write_json_report(audit_path, audit)
+    return fixture_root, {**audit, "audit_path": str(audit_path)}
+
+
+def _prepare_round_fixtures(
+    *,
+    sample: ContinuousRoundSample,
+    layer: BenchmarkLayer,
+    layer_runtime_root: Path,
+    history_runtime_root_by_round: dict[int, Path],
+) -> tuple[tuple[Path, ...], tuple[dict[str, object], ...]]:
+    if layer != BenchmarkLayer.L3 or not sample.pre_run_fixtures:
+        return (), ()
+    roots: list[Path] = []
+    audits: list[dict[str, object]] = []
+    for fixture in sample.pre_run_fixtures:
+        source_root = history_runtime_root_by_round.get(fixture.source_round)
+        if source_root is None:
+            raise RuntimeError(
+                f"pre-run fixture source round has not completed: {sample.task_id}:{fixture.source_round}"
+            )
+        root, audit = _materialize_incompatible_history_fixture(
+            fixture=fixture,
+            task_id=sample.task_id,
+            source_runtime_root=source_root,
+            fixture_root=(
+                layer_runtime_root
+                / f"benchmark-fixture-{sample.task_id}-source-round-{fixture.source_round}"
+            ),
+            audit_root=layer_runtime_root / "benchmark_audits" / "pre_run_fixtures",
+        )
+        roots.append(root)
+        audits.append(audit)
+    return tuple(roots), tuple(audits)
 
 
 def _supported_continuous_family_ids() -> list[str]:
@@ -191,7 +477,6 @@ def _continuous_sample(round_) -> ContinuousRoundSample:
         required_tools=tuple(round_.canonical_task_spec.required_tools),
         arguments={
             **dict(round_.canonical_task_spec.arguments),
-            "quality_checks": list(round_.quality_checks),
             "reuse_contract": round_.reuse_contract.canonical_payload(),
             "depends_on_rounds": list(round_.depends_on_rounds),
         },
@@ -208,6 +493,7 @@ def _continuous_sample(round_) -> ContinuousRoundSample:
         depends_on_rounds=tuple(round_.depends_on_rounds),
         minimum_reuse_class=round_.reuse_contract.minimum_reuse_class,
         expected_metric_effects=dict(round_.expected_metric_effects),
+        pre_run_fixtures=tuple(round_.pre_run_fixtures),
     )
 
 
@@ -218,16 +504,41 @@ def _case_from_smoke(
     layer: BenchmarkLayer,
     task_ms: float,
     enforce_expected_metric_effects: bool = True,
+    fairness_contract: dict[str, object] | None = None,
 ) -> BenchmarkCaseReport:
+    output_path = Path(smoke.output_artifact_path)
+    output_payload = json.loads(output_path.read_text(encoding="utf-8"))
+    external_gold_score = score_benchmark_output(
+        output_payload=output_payload,
+        output_path=output_path,
+        expected_facts=sample.expected_facts,
+        quality_checks=sample.quality_checks,
+    )
+    externally_scored_quality = QualityFloorResult(
+        quality_floor_pass=smoke.quality_floor.quality_floor_pass and external_gold_score.passed,
+        deterministic_checks_passed=(
+            smoke.quality_floor.deterministic_checks_passed
+            and external_gold_score.quality_checks_passed
+        ),
+        fact_coverage_passed=(
+            smoke.quality_floor.fact_coverage_passed
+            and external_gold_score.expected_facts_passed
+        ),
+        llm_judge_passed=smoke.quality_floor.llm_judge_passed,
+        quality_floor_fail_reason=(
+            smoke.quality_floor.quality_floor_fail_reason
+            or (";".join(external_gold_score.failures) if not external_gold_score.passed else "")
+        ),
+    )
     quality_floor = (
         _continuous_quality_floor(
-            smoke_quality_floor=smoke.quality_floor,
+            smoke_quality_floor=externally_scored_quality,
             sample=sample,
             metrics=smoke.task_metrics,
             layer=layer,
         )
         if enforce_expected_metric_effects
-        else smoke.quality_floor
+        else externally_scored_quality
     )
     return BenchmarkCaseReport(
         task_id=sample.task_id,
@@ -247,23 +558,33 @@ def _case_from_smoke(
             "hydration": smoke.hydration_audit_path,
             "hydration_debug": smoke.hydration_debug_audit_path,
             "artifact": smoke.artifact_audit_path,
+            "memory_consumption": str(
+                dict(smoke.audit_summary.get("memory_consumption", {})).get(
+                    "path", ""
+                )
+            ),
         },
         audit_summary={
             **smoke.audit_summary,
             "round_number": sample.round_number,
             "dataset_id": sample.dataset_id,
             "quality_checks": list(sample.quality_checks),
+            "external_gold_score": external_gold_score.canonical_payload(),
+            "benchmark_gold_visible_to_runtime": False,
             "depends_on_rounds": list(sample.depends_on_rounds),
             "minimum_reuse_class": sample.minimum_reuse_class,
             "expected_metric_effects": dict(sample.expected_metric_effects),
             "layer": layer.value,
             "state_storage_kind": smoke.state_storage_kind,
+            "fairness_contract": dict(fairness_contract or {}),
         },
         metrics={
             **dict(sorted(smoke.task_metrics.items())),
             "round_number": float(sample.round_number),
             "history_dependency_count": float(len(sample.depends_on_rounds)),
             "task_ms": float(task_ms),
+            "external_gold_score_count": 1.0,
+            "external_gold_pass_count": float(external_gold_score.passed),
         },
     )
 
@@ -838,6 +1159,10 @@ def _family_layer_evidence(report: BenchmarkFamilyReport) -> dict[str, object]:
             report.aggregated_metrics.get("kv_engine_local_prefill_saved_tokens_estimate", 0.0)
         ),
         "skipped_step_count": float(report.telemetry_summary.get("skipped_step_count", 0.0)),
+        "memory_funnel": {
+            metric: float(report.telemetry_summary.get(metric, 0.0))
+            for metric in _MEMORY_FUNNEL_METRICS
+        },
         "runtime_overhead": _runtime_overhead_summary(report),
         "report_path": report.report_path,
     }
@@ -883,6 +1208,10 @@ def _case_round_evidence(case: BenchmarkCaseReport) -> dict[str, object]:
             case.metrics.get("neural_prefix_cache_hit_rate_estimate", 0.0)
         ),
         "skipped_step_count": float(case.metrics.get("skipped_step_count", 0.0)),
+        "memory_funnel": {
+            metric: float(case.metrics.get(metric, 0.0))
+            for metric in _MEMORY_FUNNEL_METRICS
+        },
         "decision_reason": str(replay.get("decision_reason", "")),
         "compatibility_verdict": str(replay.get("compatibility_verdict", "")),
         "role_prompt_slice_ref_ids": dict(hydration.get("role_prompt_slice_ref_ids", {})),
@@ -901,7 +1230,7 @@ def _continuous_suite_evidence_pack(
 ) -> dict[str, object]:
     reports_by_layer = {layer_report.layer: layer_report for layer_report in report.layer_reports}
     l3_report = reports_by_layer.get(BenchmarkLayer.L3)
-    return {
+    payload: dict[str, object] = {
         "schema_version": "statebus.continuous_evidence_pack.v1",
         "family_id": family.family_id,
         "claim_tier": family.claim_tier,
@@ -918,7 +1247,19 @@ def _continuous_suite_evidence_pack(
             for layer_report in report.layer_reports
         },
         "runtime_overhead_summary": _aggregate_runtime_overhead((report,)),
-        "l0_l3_delta": {
+        "memory_funnel": {
+            metric: float(l3_report.telemetry_summary.get(metric, 0.0))
+            if l3_report is not None
+            else 0.0
+            for metric in _MEMORY_FUNNEL_METRICS
+        },
+        "l0_l3_delta": {},
+        "l1_l2_non_text_delta": {},
+        "replay_admissibility_audit": dict(replay_audit),
+        "round_evidence": [_case_round_evidence(case) for case in (l3_report.cases if l3_report else ())],
+    }
+    if {BenchmarkLayer.L0, BenchmarkLayer.L3}.issubset(reports_by_layer):
+        payload["l0_l3_delta"] = {
             metric: _metric_delta(
                 reports_by_layer=reports_by_layer,
                 from_layer=BenchmarkLayer.L0,
@@ -937,8 +1278,9 @@ def _continuous_suite_evidence_pack(
                 "answer_restoration_replay_count",
                 "skipped_step_count",
             )
-        },
-        "l1_l2_non_text_delta": {
+        }
+    if {BenchmarkLayer.L1, BenchmarkLayer.L2}.issubset(reports_by_layer):
+        payload["l1_l2_non_text_delta"] = {
             metric: _metric_delta(
                 reports_by_layer=reports_by_layer,
                 from_layer=BenchmarkLayer.L1,
@@ -951,10 +1293,8 @@ def _continuous_suite_evidence_pack(
                 "prompt_visible_total_bytes",
                 "semantic_state_transfer_count",
             )
-        },
-        "replay_admissibility_audit": dict(replay_audit),
-        "round_evidence": [_case_round_evidence(case) for case in (l3_report.cases if l3_report else ())],
-    }
+        }
+    return payload
 
 
 def _continuous_collection_evidence_pack(
@@ -1096,6 +1436,10 @@ def run_continuous_benchmark_family(
     suite_id: str,
     layer: BenchmarkLayer,
     role_path_mode: str = "deterministic",
+    planner_mode: str = "",
+    retriever_mode: str = "",
+    executor_mode: str = "",
+    summarizer_mode: str = "",
     embedding_mode: str = "deterministic",
     state_pool_mode: str = "auto",
     profile_override: BenchmarkLayerProfile | None = None,
@@ -1105,6 +1449,7 @@ def run_continuous_benchmark_family(
     metadata_extra: dict[str, object] | None = None,
     persistence_profile: str = "audit_full",
     task_schedule_plan: str = "input",
+    executor_transport: str = "loopback",
 ) -> BenchmarkFamilyReport:
     _validate_continuous_execution_contract(family)
 
@@ -1116,13 +1461,23 @@ def run_continuous_benchmark_family(
         **{
             **base_smoke_config.__dict__,
             "role_path_mode": role_path_mode,
+            "planner_mode": planner_mode,
+            "retriever_mode": retriever_mode,
+            "executor_mode": executor_mode,
+            "summarizer_mode": summarizer_mode,
             "embedding_mode": embedding_mode,
             "state_pool_mode": state_pool_mode,
             "persistence_profile": persistence_profile,
+            "executor_transport": executor_transport,
         }
     )
     history_runtime_root_by_round: dict[int, Path] = {}
     raw_cases: list[BenchmarkCaseReport] = []
+    samples_by_round = {
+        round_.round: _continuous_sample(round_)
+        for round_ in family.rounds
+    }
+    cases_by_round: dict[int, BenchmarkCaseReport] = {}
     schedule_plan = _task_schedule_plan_for_family(family, task_schedule_plan=task_schedule_plan)
     ordered_rounds = _ordered_family_rounds(family, task_schedule_plan=task_schedule_plan)
     prefix_feedback = PrefixCacheFeedbackLoop(
@@ -1148,6 +1503,12 @@ def run_continuous_benchmark_family(
             for dep in sample.depends_on_rounds
             if dep in history_runtime_root_by_round
         )
+        fixture_runtime_roots, fixture_audits = _prepare_round_fixtures(
+            sample=sample,
+            layer=layer,
+            layer_runtime_root=layer_runtime_root,
+            history_runtime_root_by_round=history_runtime_root_by_round,
+        )
         start_ns = time.perf_counter_ns()
         smoke = run_smoke(
             workspace_root=layer_workspace_root,
@@ -1159,21 +1520,74 @@ def run_continuous_benchmark_family(
             canonical_task_spec=sample.canonical_task_spec,
             task_id=sample.task_id,
             layer_config=smoke_config,
-            expected_facts=sample.expected_facts,
             history_runtime_roots=history_runtime_roots,
+            memory_candidate_runtime_roots=fixture_runtime_roots,
             seed_replay_memory=False,
         )
         task_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
         history_runtime_root_by_round[sample.round_number] = round_runtime_root
-        raw_cases.append(
-            _case_from_smoke(
-                smoke=smoke,
-                sample=sample,
-                layer=layer,
-                task_ms=task_ms,
-                enforce_expected_metric_effects=enforce_expected_metric_effects,
-            )
+        source_payload = _dataset_source_payload(family, sample.dataset_id)
+        prior_context = _prior_round_context(
+            sample=sample,
+            samples_by_round=samples_by_round,
+            cases_by_round=cases_by_round,
         )
+        output_payload = json.loads(Path(smoke.output_artifact_path).read_text(encoding="utf-8"))
+        role_relpaths = {
+            str(role): str(relpath)
+            for role, relpath in dict(
+                smoke.audit_summary.get("rendered_llm_requests", {})
+            ).get("role_relpaths", {}).items()
+        }
+        gold_visibility_audit = audit_role_request_gold_visibility(
+            task_id=sample.task_id,
+            workspace_root=Path(smoke.workspace_root),
+            role_request_relpaths=role_relpaths,
+            expected_facts=sample.expected_facts,
+            quality_checks=sample.quality_checks,
+            expected_metric_effects=sample.expected_metric_effects,
+            public_provenance_payloads=(
+                sample.request_text,
+                sample.canonical_task_spec.canonical_payload(),
+                source_payload["content"],
+                prior_context,
+                output_payload,
+            ),
+        )
+        gold_audit_path = round_runtime_root / "benchmark_audits" / "gold_visibility.json"
+        write_json_report(gold_audit_path, gold_visibility_audit)
+        fairness_contract = {
+            "task_contract_digest": sha256_digest({
+                "request_text": sample.request_text,
+                "canonical_task_spec": sample.canonical_task_spec.canonical_payload(),
+            }),
+            "source_content_digest": source_payload["content_sha256"],
+            "prior_fact_digest": prior_context["prior_fact_digest"],
+            "prior_round_context": prior_context,
+            "executor_transport": executor_transport,
+            "gold_visibility_audit": gold_visibility_audit,
+            "gold_visibility_audit_path": str(gold_audit_path),
+            "pre_run_fixture_audits": list(fixture_audits),
+        }
+        case = _case_from_smoke(
+            smoke=smoke,
+            sample=sample,
+            layer=layer,
+            task_ms=task_ms,
+            enforce_expected_metric_effects=enforce_expected_metric_effects,
+            fairness_contract=fairness_contract,
+        )
+        case = BenchmarkCaseReport(
+            **{
+                **case.__dict__,
+                "audit_paths": {
+                    **case.audit_paths,
+                    "gold_visibility": str(gold_audit_path),
+                },
+            }
+        )
+        raw_cases.append(case)
+        cases_by_round[sample.round_number] = case
         prefix_feedback.record_observation(
             float(smoke.task_metrics.get("neural_prefix_cache_hit_rate_estimate", 0.0)),
             VllmPrefixCacheCounterDelta(
@@ -1291,7 +1705,19 @@ def run_continuous_benchmark_family(
         "continuous_execution": True,
         "history_backed_replay_enabled": layer == BenchmarkLayer.L3,
         "role_path_mode": role_path_mode,
+        "role_execution_profile": {
+            "planner": planner_mode or role_path_mode,
+            "retriever": retriever_mode or role_path_mode,
+            "executor": executor_mode or role_path_mode,
+            "summarizer": summarizer_mode or role_path_mode,
+            "embedding": embedding_mode,
+        },
+        "planner_mode": planner_mode or role_path_mode,
+        "retriever_mode": retriever_mode or role_path_mode,
+        "executor_mode": executor_mode or role_path_mode,
+        "summarizer_mode": summarizer_mode or role_path_mode,
         "embedding_mode": embedding_mode,
+        "executor_transport": executor_transport,
         "state_pool_mode_requested": state_pool_mode,
         "observed_semantic_state_storage_kinds": sorted({
             str(case.audit_summary.get("state_storage_kind", ""))
@@ -1338,9 +1764,14 @@ def run_continuous_text_semantic_selection_family(
     socket_path: Path,
     suite_id: str,
     role_path_mode: str = "deterministic",
+    planner_mode: str = "",
+    retriever_mode: str = "",
+    executor_mode: str = "",
+    summarizer_mode: str = "",
     embedding_mode: str = "deterministic",
     state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
+    executor_transport: str = "loopback",
 ) -> BenchmarkFamilyReport:
     return run_continuous_benchmark_family(
         family=family,
@@ -1350,6 +1781,10 @@ def run_continuous_text_semantic_selection_family(
         suite_id=suite_id,
         layer=BenchmarkLayer.L2,
         role_path_mode=role_path_mode,
+        planner_mode=planner_mode,
+        retriever_mode=retriever_mode,
+        executor_mode=executor_mode,
+        summarizer_mode=summarizer_mode,
         embedding_mode=embedding_mode,
         state_pool_mode=state_pool_mode,
         profile_override=CONTINUOUS_TEXT_SEMANTIC_SELECTION_PROFILE,
@@ -1367,6 +1802,7 @@ def run_continuous_text_semantic_selection_family(
             "uses_semantic_state_ref": False,
         },
         persistence_profile=persistence_profile,
+        executor_transport=executor_transport,
     )
 
 
@@ -1378,6 +1814,10 @@ def run_continuous_benchmark_suite(
     socket_path: Path,
     suite_id: str,
     role_path_mode: str = "deterministic",
+    planner_mode: str = "",
+    retriever_mode: str = "",
+    executor_mode: str = "",
+    summarizer_mode: str = "",
     embedding_mode: str = "deterministic",
     state_pool_mode: str = "auto",
     persistence_profile: str = "audit_full",
@@ -1385,9 +1825,30 @@ def run_continuous_benchmark_suite(
     claim_level: str = "first_pass",
     execution_scope: str = "full",
     original_round_count: int | None = None,
+    executor_transport: str = "loopback",
+    layers: tuple[BenchmarkLayer, ...] | None = None,
+    experiment_view: str = "",
 ) -> BenchmarkSuiteReport:
-    available_round_count = original_round_count or family.round_count
-    full_family_coverage = execution_scope == "full" and family.round_count == available_round_count
+    available_round_count = original_round_count or max(
+        (len(rounds) for rounds in family.experiment_views.values()),
+        default=family.round_count,
+    )
+    selected_layers = tuple(BenchmarkLayer) if layers is None else tuple(layers)
+    if not selected_layers:
+        raise ValueError("continuous benchmark suite requires at least one layer")
+    if len(set(selected_layers)) != len(selected_layers):
+        raise ValueError("continuous benchmark suite layers must be unique")
+    causal_matrix = selected_layers == tuple(BenchmarkLayer)
+    full_family_coverage = (
+        execution_scope == "full"
+        and family.round_count == available_round_count
+    ) or (
+        execution_scope == "formal_causal_view"
+        and experiment_view == "causal_core"
+        and family.selected_experiment_view == "causal_core"
+        and family.round_count == len(family.experiment_views.get("causal_core", ()))
+    )
+    stability_only = selected_layers == (BenchmarkLayer.L3,) and execution_scope == "formal_stability_view"
     schedule_plan = _task_schedule_plan_for_family(family, task_schedule_plan=task_schedule_plan)
     layer_reports = tuple(
         run_continuous_benchmark_family(
@@ -1398,10 +1859,15 @@ def run_continuous_benchmark_suite(
             suite_id=suite_id,
             layer=layer,
             role_path_mode=role_path_mode,
+            planner_mode=planner_mode,
+            retriever_mode=retriever_mode,
+            executor_mode=executor_mode,
+            summarizer_mode=summarizer_mode,
             embedding_mode=embedding_mode,
             state_pool_mode=state_pool_mode,
             persistence_profile=persistence_profile,
             task_schedule_plan=task_schedule_plan,
+            executor_transport=executor_transport,
             metadata_extra={
                 "claim_level": claim_level,
                 "execution_scope": execution_scope,
@@ -1410,16 +1876,42 @@ def run_continuous_benchmark_suite(
                 "formal_headline_eligible": full_family_coverage,
             },
         )
-        for layer in BenchmarkLayer
+        for layer in selected_layers
     )
+    if causal_matrix:
+        fairness_manifest = build_continuous_fairness_manifest(
+            family_id=family.family_id,
+            layer_reports=layer_reports,
+        )
+    else:
+        fairness_manifest = {
+            "schema_version": "statebus.continuous_fairness_manifest.v1",
+            "family_id": family.family_id,
+            "comparison_valid": False,
+            "headline_eligible": False,
+            "scope": "stability_only_single_layer",
+            "selected_layers": [layer.value for layer in selected_layers],
+            "reason": "single-layer stability evidence is not a causal L0-L3 comparison",
+            "cases": {},
+        }
+    fairness_manifest_path = runtime_root / "fairness_manifest.json"
+    write_json_report(fairness_manifest_path, fairness_manifest)
     suite_stub = BenchmarkSuiteReport(
         suite_id=suite_id,
         task_family=family.family_id,
         layer_reports=layer_reports,
     )
-    quality_headline_eligible = full_family_coverage and _continuous_quality_headline_eligible(suite_stub)
+    quality_headline_eligible = (
+        bool(selected_layers)
+        and all(layer_report.eligible_for_headline for layer_report in layer_reports)
+        and (not causal_matrix or (full_family_coverage and bool(fairness_manifest["comparison_valid"])))
+    )
     replay_audit = _continuous_replay_audit(family=family, report=suite_stub)
-    replay_headline_eligible = full_family_coverage and bool(replay_audit["eligible_for_replay_headline"])
+    replay_headline_eligible = (
+        quality_headline_eligible
+        and (not causal_matrix or bool(fairness_manifest["comparison_valid"]))
+        and bool(replay_audit["eligible_for_replay_headline"])
+    )
     headline_scope = _continuous_headline_scope(suite_stub, replay_audit=replay_audit)
     replay_summary_counts = _replay_audit_summary_counts(replay_audit)
     report_path = runtime_root / "benchmark_reports" / f"{suite_id}.json"
@@ -1434,56 +1926,67 @@ def run_continuous_benchmark_suite(
         report=evidence_stub,
         replay_audit=replay_audit,
     )
+    reports_by_layer = {layer_report.layer: layer_report for layer_report in layer_reports}
+    l0_report = reports_by_layer.get(BenchmarkLayer.L0)
+    l1_report = reports_by_layer.get(BenchmarkLayer.L1)
+    l2_report = reports_by_layer.get(BenchmarkLayer.L2)
+    l3_report = reports_by_layer.get(BenchmarkLayer.L3)
+    l3_metrics = {} if l3_report is None else l3_report.telemetry_summary
+    l3_aggregated = {} if l3_report is None else l3_report.aggregated_metrics
     report = BenchmarkSuiteReport(
         suite_id=suite_id,
         task_family=family.family_id,
         layer_reports=layer_reports,
         waterfall_metrics={
-            "L0_case_count": float(len(layer_reports[0].cases)),
-            "L1_control_bytes": layer_reports[1].telemetry_summary.get("control_bytes", 0.0),
-            "L2_semantic_state_transfer_count": layer_reports[2].telemetry_summary.get(
+            "L0_case_count": float(len(l0_report.cases)) if l0_report else 0.0,
+            "L1_control_bytes": l1_report.telemetry_summary.get("control_bytes", 0.0) if l1_report else 0.0,
+            "L2_semantic_state_transfer_count": l2_report.telemetry_summary.get(
                 "semantic_state_transfer_count", 0.0
-            ),
-            "L3_history_runtime_root_count": layer_reports[3].telemetry_summary.get(
+            ) if l2_report else 0.0,
+            "L3_history_runtime_root_count": l3_metrics.get(
                 "history_runtime_root_count", 0.0
             ),
-            "L3_artifact_reuse_count": layer_reports[3].telemetry_summary.get("artifact_reuse_count", 0.0),
-            "L3_reuse_gain": layer_reports[3].telemetry_summary.get("reuse_gain", 0.0),
-            "L3_history_reuse_gain": layer_reports[3].telemetry_summary.get("history_reuse_gain", 0.0),
-            "L3_history_step_reduction_count": layer_reports[3].telemetry_summary.get(
+            "L3_artifact_reuse_count": l3_metrics.get("artifact_reuse_count", 0.0),
+            "L3_reuse_gain": l3_metrics.get("reuse_gain", 0.0),
+            "L3_history_reuse_gain": l3_metrics.get("history_reuse_gain", 0.0),
+            "L3_history_step_reduction_count": l3_metrics.get(
                 "history_step_reduction_count", 0.0
             ),
-            "L3_kv_corpus_prefix_hash_unique_count": layer_reports[3].aggregated_metrics.get(
+            "L3_kv_corpus_prefix_hash_unique_count": l3_aggregated.get(
                 "kv_corpus_prefix_hash_unique_count", 0.0
             ),
-            "L3_kv_corpus_prefix_hash_reuse_count": layer_reports[3].aggregated_metrics.get(
+            "L3_kv_corpus_prefix_hash_reuse_count": l3_aggregated.get(
                 "kv_corpus_prefix_hash_reuse_count", 0.0
             ),
-            "L3_kv_corpus_level_prefill_saved_tokens_estimate": layer_reports[3].aggregated_metrics.get(
+            "L3_kv_corpus_level_prefill_saved_tokens_estimate": l3_aggregated.get(
                 "kv_corpus_level_prefill_saved_tokens_estimate", 0.0
             ),
-            "L3_kv_engine_local_prefill_saved_tokens_estimate": layer_reports[3].aggregated_metrics.get(
+            "L3_kv_engine_local_prefill_saved_tokens_estimate": l3_aggregated.get(
                 "kv_engine_local_prefill_saved_tokens_estimate", 0.0
             ),
-            "L3_validated_downgraded_reuse_count": layer_reports[3].telemetry_summary.get(
+            "L3_validated_downgraded_reuse_count": l3_metrics.get(
                 "validated_downgraded_reuse_count",
-                layer_reports[3].telemetry_summary.get("validated_replay_count", 0.0),
+                l3_metrics.get("validated_replay_count", 0.0),
             ),
-            "L3_answer_restoration_replay_count": layer_reports[3].telemetry_summary.get(
+            "L3_answer_restoration_replay_count": l3_metrics.get(
                 "answer_restoration_replay_count",
                 0.0,
             ),
+            **{
+                f"L3_{metric}": float(l3_metrics.get(metric, 0.0))
+                for metric in _MEMORY_FUNNEL_METRICS
+            },
         },
         comparison_summary={
             "layer_count": float(len(layer_reports)),
             "successful_layer_count": float(sum(1 for report_ in layer_reports if not report_.missing_reason)),
             "round_count": float(family.round_count),
             "reuse_edge_count": float(sum(len(round_.depends_on_rounds) for round_ in family.rounds)),
-            "validated_downgraded_reuse_count": layer_reports[3].telemetry_summary.get(
+            "validated_downgraded_reuse_count": l3_metrics.get(
                 "validated_downgraded_reuse_count",
-                layer_reports[3].telemetry_summary.get("validated_replay_count", 0.0),
+                l3_metrics.get("validated_replay_count", 0.0),
             ),
-            "answer_restoration_replay_count": layer_reports[3].telemetry_summary.get(
+            "answer_restoration_replay_count": l3_metrics.get(
                 "answer_restoration_replay_count",
                 0.0,
             ),
@@ -1496,11 +1999,27 @@ def run_continuous_benchmark_suite(
             "execution_scope": execution_scope,
             "selected_round_count": family.round_count,
             "available_round_count": available_round_count,
-            "formal_headline_eligible": full_family_coverage,
+            "formal_headline_eligible": (
+                causal_matrix and full_family_coverage and bool(fairness_manifest["comparison_valid"])
+            ),
+            "stability_evidence_eligible": stability_only and quality_headline_eligible,
+            "selected_layers": [layer.value for layer in selected_layers],
+            "round_view": experiment_view,
             "family_id": family.family_id,
             "claim_tier": family.claim_tier,
             "manifest_path": family.manifest_path,
             "continuous_execution": True,
+            "fairness_manifest": fairness_manifest,
+            "fairness_manifest_path": str(fairness_manifest_path),
+            "fairness_comparison_valid": bool(fairness_manifest["comparison_valid"]),
+            "role_execution_profile": {
+                "planner": planner_mode or role_path_mode,
+                "retriever": retriever_mode or role_path_mode,
+                "executor": executor_mode or role_path_mode,
+                "summarizer": summarizer_mode or role_path_mode,
+                "embedding": embedding_mode,
+            },
+            "executor_transport": executor_transport,
             "state_pool_mode_requested": state_pool_mode,
             "observed_semantic_state_storage_kinds": sorted({
                 kind
@@ -1516,6 +2035,7 @@ def run_continuous_benchmark_suite(
             "headline_scope": headline_scope,
             "replay_admissibility_audit": replay_audit,
             "supported_continuous_execution_families": _supported_continuous_family_ids(),
+            "serial_execution": True,
         },
         family_case_count=family.round_count,
         report_path=str(report_path),
@@ -1534,12 +2054,19 @@ def run_continuous_benchmark_collection(
     socket_path: Path,
     suite_id: str,
     role_path_mode: str = "deterministic",
+    planner_mode: str = "",
+    retriever_mode: str = "",
+    executor_mode: str = "",
+    summarizer_mode: str = "",
     embedding_mode: str = "deterministic",
     state_pool_mode: str = "auto",
     collection_scope: str = "formal_continuous_task_families",
     persistence_profile: str = "audit_full",
     task_schedule_plan: str = "input",
     execution_scope: str = "full",
+    executor_transport: str = "loopback",
+    layers: tuple[BenchmarkLayer, ...] | None = None,
+    experiment_view: str = "",
 ) -> BenchmarkContinuousCollectionReport:
     if not families:
         raise ValueError("continuous benchmark collection requires at least one family")
@@ -1562,12 +2089,27 @@ def run_continuous_benchmark_collection(
                 socket_path=socket_path.with_name(f"{socket_path.stem}-{family_slug}{socket_path.suffix}"),
                 suite_id=f"{suite_id}-{family_slug}",
                 role_path_mode=role_path_mode,
+                planner_mode=planner_mode,
+                retriever_mode=retriever_mode,
+                executor_mode=executor_mode,
+                summarizer_mode=summarizer_mode,
                 embedding_mode=embedding_mode,
                 state_pool_mode=state_pool_mode,
                 persistence_profile=persistence_profile,
                 task_schedule_plan=task_schedule_plan,
-                claim_level="diagnostic" if execution_scope != "full" else "first_pass",
+                claim_level=(
+                    "first_pass"
+                    if execution_scope in {"full", "formal_causal_view"}
+                    else ("stability" if execution_scope == "formal_stability_view" else "diagnostic")
+                ),
                 execution_scope=execution_scope,
+                original_round_count=max(
+                    (len(rounds) for rounds in family.experiment_views.values()),
+                    default=family.round_count,
+                ),
+                executor_transport=executor_transport,
+                layers=layers,
+                experiment_view=experiment_view,
             )
         )
 
@@ -1664,6 +2206,15 @@ def run_continuous_benchmark_collection(
                 for layer_report in report.layer_reports
             )
         ),
+        **{
+            f"L3_{metric}": float(
+                sum(
+                    report.waterfall_metrics.get(f"L3_{metric}", 0.0)
+                    for report in family_reports
+                )
+            )
+            for metric in _MEMORY_FUNNEL_METRICS
+        },
         "history_target_round_count": float(
             sum(summary["history_target_round_count"] for summary in replay_summary_counts_by_family)
         ),
@@ -1689,70 +2240,52 @@ def run_continuous_benchmark_collection(
             sum(summary["replay_unexpected_round_count"] for summary in replay_summary_counts_by_family)
         ),
     }
+    def _l3_admissibility_metrics(report: BenchmarkSuiteReport) -> dict[str, object]:
+        l3_report = next(
+            (
+                layer_report
+                for layer_report in report.layer_reports
+                if layer_report.layer == BenchmarkLayer.L3
+            ),
+            None,
+        )
+        if l3_report is None:
+            return {
+                "L3_replay_class_distribution": {},
+                "L3_history_artifact_reuse_count": 0.0,
+                "L3_history_reuse_gain": 0.0,
+                "L3_history_step_reduction_count": 0.0,
+                "L3_validated_replay_count": 0.0,
+                "L3_validated_downgraded_reuse_count": 0.0,
+                "L3_exact_replay_count": 0.0,
+                "L3_answer_restoration_replay_count": 0.0,
+            }
+        metrics = l3_report.telemetry_summary
+        return {
+            "L3_replay_class_distribution": dict(l3_report.replay_class_distribution),
+            "L3_history_artifact_reuse_count": float(
+                metrics.get("history_artifact_reuse_count", 0.0)
+            ),
+            "L3_history_reuse_gain": float(metrics.get("history_reuse_gain", 0.0)),
+            "L3_history_step_reduction_count": float(
+                metrics.get("history_step_reduction_count", 0.0)
+            ),
+            "L3_validated_replay_count": float(metrics.get("validated_replay_count", 0.0)),
+            "L3_validated_downgraded_reuse_count": float(
+                metrics.get(
+                    "validated_downgraded_reuse_count",
+                    metrics.get("validated_replay_count", 0.0),
+                )
+            ),
+            "L3_exact_replay_count": float(metrics.get("exact_replay_count", 0.0)),
+            "L3_answer_restoration_replay_count": float(
+                metrics.get("answer_restoration_replay_count", 0.0)
+            ),
+        }
+
     admissibility_summary = {
         report.task_family: {
-            "L3_replay_class_distribution": dict(
-                next(
-                    layer_report.replay_class_distribution
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
-            "L3_history_artifact_reuse_count": float(
-                next(
-                    layer_report.telemetry_summary.get("history_artifact_reuse_count", 0.0)
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
-            "L3_history_reuse_gain": float(
-                next(
-                    layer_report.telemetry_summary.get("history_reuse_gain", 0.0)
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
-            "L3_history_step_reduction_count": float(
-                next(
-                    layer_report.telemetry_summary.get("history_step_reduction_count", 0.0)
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
-            "L3_validated_replay_count": float(
-                next(
-                    layer_report.telemetry_summary.get("validated_replay_count", 0.0)
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
-            "L3_validated_downgraded_reuse_count": float(
-                next(
-                    layer_report.telemetry_summary.get(
-                        "validated_downgraded_reuse_count",
-                        layer_report.telemetry_summary.get("validated_replay_count", 0.0),
-                    )
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
-            "L3_exact_replay_count": float(
-                next(
-                    layer_report.telemetry_summary.get("exact_replay_count", 0.0)
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
-            "L3_answer_restoration_replay_count": float(
-                next(
-                    layer_report.telemetry_summary.get(
-                        "answer_restoration_replay_count",
-                        0.0,
-                    )
-                    for layer_report in report.layer_reports
-                    if layer_report.layer == BenchmarkLayer.L3
-                )
-            ),
+            **_l3_admissibility_metrics(report),
             **_replay_audit_summary_counts(dict(report.metadata.get("replay_admissibility_audit", {}))),
             "eligible_for_replay_headline": bool(report.metadata.get("eligible_for_replay_headline", False)),
             "headline_scope": _continuous_headline_scope(
@@ -1773,13 +2306,39 @@ def run_continuous_benchmark_collection(
         admissibility_summary=admissibility_summary,
         metadata={
             "benchmark_tier": "formal",
-            "claim_level": "diagnostic" if execution_scope != "full" else "first_pass",
+            "claim_level": (
+                "first_pass"
+                if execution_scope in {"full", "formal_causal_view"}
+                else ("stability" if execution_scope == "formal_stability_view" else "diagnostic")
+            ),
             "execution_scope": execution_scope,
-            "formal_headline_eligible": execution_scope == "full",
+            "formal_headline_eligible": (
+                execution_scope in {"full", "formal_causal_view"}
+                and all(bool(report.metadata.get("formal_headline_eligible", False)) for report in family_reports)
+            ),
+            "stability_evidence_eligible": (
+                execution_scope == "formal_stability_view"
+                and all(bool(report.metadata.get("stability_evidence_eligible", False)) for report in family_reports)
+            ),
+            "round_view": experiment_view,
+            "selected_layers": [
+                layer.value
+                for layer in (
+                    tuple(BenchmarkLayer) if layers is None else tuple(layers)
+                )
+            ],
             "continuous_execution": True,
             "family_count": len(family_reports),
             "supported_continuous_execution_families": [family.family_id for family in families],
             "role_path_mode": role_path_mode,
+            "role_execution_profile": {
+                "planner": planner_mode or role_path_mode,
+                "retriever": retriever_mode or role_path_mode,
+                "executor": executor_mode or role_path_mode,
+                "summarizer": summarizer_mode or role_path_mode,
+                "embedding": embedding_mode,
+            },
+            "executor_transport": executor_transport,
             "embedding_mode": embedding_mode,
             "state_pool_mode_requested": state_pool_mode,
             "observed_semantic_state_storage_kinds": sorted({
@@ -1789,6 +2348,7 @@ def run_continuous_benchmark_collection(
             }),
             "collection_scope": collection_scope,
             "task_schedule_plan": _normalise_task_schedule_plan(task_schedule_plan),
+            "serial_execution": True,
         },
         report_path=str(report_path),
         markdown_report_path=str(markdown_report_path),

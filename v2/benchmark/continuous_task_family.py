@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +69,24 @@ class ContinuousTaskReuseContract:
 
 
 @dataclass(frozen=True)
+class ContinuousPreRunFixture:
+    kind: str
+    source_round: int
+    runtime_signature_version: str
+    output_contract_version: str
+    validator_digest: str
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "source_round": self.source_round,
+            "runtime_signature_version": self.runtime_signature_version,
+            "output_contract_version": self.output_contract_version,
+            "validator_digest": self.validator_digest,
+        }
+
+
+@dataclass(frozen=True)
 class ContinuousTaskRound:
     round: int
     task_id: str
@@ -80,6 +98,7 @@ class ContinuousTaskRound:
     expected_facts: dict[str, object] = field(default_factory=dict)
     quality_checks: tuple[str, ...] = ()
     expected_metric_effects: dict[str, object] = field(default_factory=dict)
+    pre_run_fixtures: tuple[ContinuousPreRunFixture, ...] = ()
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -93,6 +112,7 @@ class ContinuousTaskRound:
             "expected_facts": dict(sorted(self.expected_facts.items())),
             "quality_checks": list(self.quality_checks),
             "expected_metric_effects": dict(sorted(self.expected_metric_effects.items())),
+            "pre_run_fixtures": [fixture.canonical_payload() for fixture in self.pre_run_fixtures],
         }
 
 
@@ -105,6 +125,8 @@ class ContinuousTaskFamily:
     manifest_path: str
     datasets: tuple[ContinuousTaskDataset, ...]
     rounds: tuple[ContinuousTaskRound, ...]
+    experiment_views: dict[str, tuple[int, ...]] = field(default_factory=dict)
+    selected_experiment_view: str = ""
     quality_floor: dict[str, object] = field(default_factory=dict)
     l0_l3_expectations: dict[str, object] = field(default_factory=dict)
     kv_prefix_probe: dict[str, object] = field(default_factory=dict)
@@ -115,7 +137,12 @@ class ContinuousTaskFamily:
         payload = self.l0_l3_expectations.get("L3", {})
         if not isinstance(payload, dict):
             return ()
-        return tuple(int(item) for item in payload.get("target_nonzero_rounds", []))
+        selected_round_numbers = {round_.round for round_ in self.rounds}
+        return tuple(
+            round_number
+            for item in payload.get("target_nonzero_rounds", [])
+            if (round_number := int(item)) in selected_round_numbers
+        )
 
     def replay_target_rounds_by_class(self) -> dict[str, tuple[int, ...]]:
         exact_replay_rounds = tuple(
@@ -133,6 +160,28 @@ class ContinuousTaskFamily:
             "exact_replay": exact_replay_rounds,
         }
 
+    def rounds_for_view(self, view_name: str) -> tuple[ContinuousTaskRound, ...]:
+        normalized = view_name.strip()
+        if not normalized:
+            return self.rounds
+        round_numbers = self.experiment_views.get(normalized)
+        if round_numbers is None:
+            raise ContinuousTaskFamilyValidationError(
+                f"unknown experiment view in {self.family_id}: {normalized}"
+            )
+        rounds_by_number = {round_.round: round_ for round_ in self.rounds}
+        return tuple(rounds_by_number[round_number] for round_number in round_numbers)
+
+    def select_view(self, view_name: str) -> "ContinuousTaskFamily":
+        normalized = view_name.strip()
+        selected_rounds = self.rounds_for_view(normalized)
+        return replace(
+            self,
+            round_count=len(selected_rounds),
+            rounds=selected_rounds,
+            selected_experiment_view=normalized,
+        )
+
     def canonical_payload(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
@@ -142,6 +191,11 @@ class ContinuousTaskFamily:
             "round_count": self.round_count,
             "manifest_path": self.manifest_path,
             "datasets": [dataset.canonical_payload() for dataset in self.datasets],
+            "experiment_views": {
+                name: list(round_numbers)
+                for name, round_numbers in sorted(self.experiment_views.items())
+            },
+            "selected_experiment_view": self.selected_experiment_view,
             "quality_floor": dict(sorted(self.quality_floor.items())),
             "l0_l3_expectations": dict(sorted(self.l0_l3_expectations.items())),
             "kv_prefix_probe": dict(sorted(self.kv_prefix_probe.items())),
@@ -152,6 +206,31 @@ class ContinuousTaskFamily:
     def design_audit_payload(self) -> dict[str, object]:
         reuse_edge_count = sum(len(round_.depends_on_rounds) for round_ in self.rounds)
         replay_target_rounds = self.replay_target_rounds_by_class()
+        rounds_by_number = {round_.round: round_ for round_ in self.rounds}
+        view_audits = {
+            name: {
+                "rounds": list(round_numbers),
+                "round_count": len(round_numbers),
+                "strictly_increasing": list(round_numbers) == sorted(set(round_numbers)),
+                "available_in_current_selection": all(
+                    round_number in rounds_by_number for round_number in round_numbers
+                ),
+                "dependency_closed": all(
+                    round_number in rounds_by_number
+                    and
+                    set(rounds_by_number[round_number].depends_on_rounds).issubset(
+                        set(round_numbers[:index])
+                    )
+                    for index, round_number in enumerate(round_numbers)
+                ),
+                "task_ids": [
+                    rounds_by_number[round_number].task_id
+                    for round_number in round_numbers
+                    if round_number in rounds_by_number
+                ],
+            }
+            for name, round_numbers in sorted(self.experiment_views.items())
+        }
         return {
             "ok": True,
             "schema_version": self.schema_version,
@@ -160,6 +239,8 @@ class ContinuousTaskFamily:
             "claim_tier": self.claim_tier,
             "manifest_path": self.manifest_path,
             "round_count": self.round_count,
+            "selected_experiment_view": self.selected_experiment_view,
+            "experiment_views": view_audits,
             "dataset_count": len(self.datasets),
             "reuse_edge_count": reuse_edge_count,
             "exact_replay_target_rounds": list(replay_target_rounds["exact_replay"]),
@@ -177,6 +258,10 @@ class ContinuousTaskFamily:
                     "minimum_reuse_class": round_.reuse_contract.minimum_reuse_class,
                     "produces": list(round_.reuse_contract.produces),
                     "consumes": list(round_.reuse_contract.consumes),
+                    "pre_run_fixtures": [
+                        fixture.canonical_payload()
+                        for fixture in round_.pre_run_fixtures
+                    ],
                 }
                 for round_ in self.rounds
             ],
@@ -291,6 +376,47 @@ def load_continuous_task_family(directory: Path) -> ContinuousTaskFamily:
             isinstance(expected_metric_effects, dict),
             f"expected_metric_effects invalid in {family_id}:{task_id}",
         )
+        fixtures_payload = round_payload.get("pre_run_fixtures", [])
+        _require(
+            isinstance(fixtures_payload, list),
+            f"pre_run_fixtures must be a list in {family_id}:{task_id}",
+        )
+        pre_run_fixtures: list[ContinuousPreRunFixture] = []
+        for fixture_payload in fixtures_payload:
+            _require(
+                isinstance(fixture_payload, dict),
+                f"pre_run fixture must be an object in {family_id}:{task_id}",
+            )
+            kind = str(fixture_payload.get("kind", "")).strip()
+            _require(
+                kind == "incompatible_history_candidate",
+                f"unsupported pre_run fixture kind in {family_id}:{task_id}: {kind}",
+            )
+            source_round = int(fixture_payload.get("source_round", 0) or 0)
+            _require(
+                0 < source_round < round_number,
+                f"pre_run fixture source_round must point backward in {family_id}:{task_id}",
+            )
+            signature_version = str(
+                fixture_payload.get("runtime_signature_version", "")
+            ).strip()
+            output_contract_version = str(
+                fixture_payload.get("output_contract_version", "")
+            ).strip()
+            validator_digest = str(fixture_payload.get("validator_digest", "")).strip()
+            _require(
+                bool(signature_version and output_contract_version and validator_digest),
+                f"pre_run fixture compatibility fields are required in {family_id}:{task_id}",
+            )
+            pre_run_fixtures.append(
+                ContinuousPreRunFixture(
+                    kind=kind,
+                    source_round=source_round,
+                    runtime_signature_version=signature_version,
+                    output_contract_version=output_contract_version,
+                    validator_digest=validator_digest,
+                )
+            )
         rounds.append(
             ContinuousTaskRound(
                 round=round_number,
@@ -307,8 +433,43 @@ def load_continuous_task_family(directory: Path) -> ContinuousTaskFamily:
                 expected_facts=dict(round_payload.get("expected_facts", {})),
                 quality_checks=quality_checks,
                 expected_metric_effects=expected_metric_effects,
+                pre_run_fixtures=tuple(pre_run_fixtures),
             )
         )
+
+    experiment_views_payload = payload.get("experiment_views", {})
+    _require(
+        isinstance(experiment_views_payload, dict),
+        f"experiment_views must be an object: {family_id}",
+    )
+    rounds_by_number = {round_.round: round_ for round_ in rounds}
+    experiment_views: dict[str, tuple[int, ...]] = {}
+    for raw_name, raw_round_numbers in experiment_views_payload.items():
+        view_name = str(raw_name).strip()
+        _require(bool(view_name), f"experiment view name missing in {family_id}")
+        _require(
+            isinstance(raw_round_numbers, list) and bool(raw_round_numbers),
+            f"experiment view must contain at least one round in {family_id}:{view_name}",
+        )
+        round_numbers = tuple(int(item) for item in raw_round_numbers)
+        _require(
+            list(round_numbers) == sorted(set(round_numbers)),
+            f"experiment view rounds must be strictly increasing and unique in {family_id}:{view_name}",
+        )
+        _require(
+            all(round_number in rounds_by_number for round_number in round_numbers),
+            f"experiment view references an unknown round in {family_id}:{view_name}",
+        )
+        selected_prefix: set[int] = set()
+        for round_number in round_numbers:
+            dependencies = set(rounds_by_number[round_number].depends_on_rounds)
+            _require(
+                dependencies.issubset(selected_prefix),
+                "experiment view must include every dependency before its consumer in "
+                f"{family_id}:{view_name}:round_{round_number}",
+            )
+            selected_prefix.add(round_number)
+        experiment_views[view_name] = round_numbers
 
     l0_l3_expectations = dict(payload.get("l0_l3_expectations", {}))
     l3_payload = l0_l3_expectations.get("L3", {})
@@ -327,6 +488,7 @@ def load_continuous_task_family(directory: Path) -> ContinuousTaskFamily:
         manifest_path=str(manifest_path),
         datasets=datasets,
         rounds=tuple(rounds),
+        experiment_views=experiment_views,
         quality_floor=dict(payload.get("quality_floor", {})),
         l0_l3_expectations=l0_l3_expectations,
         kv_prefix_probe=dict(payload.get("kv_prefix_probe", {})),
