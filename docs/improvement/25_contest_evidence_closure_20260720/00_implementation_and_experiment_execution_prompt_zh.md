@@ -41,12 +41,14 @@
 
 当前 Gate 4 的历史读数是两组正式 family、`5 + 5 = 10` 轮，semantic transfer 9、artifact reuse 13、validated replay 2。Gate 6 的历史读数是 25 个任务中 CodeAct 17、DSL 8。它们是已有证据，不是新实验必须调参复现的目标比例。
 
-还缺四个正式闭环：
+还缺六项必须显式关闭的问题；后续实现和验收不得只处理其中一部分：
 
-1. 尚无同任务、同模型、同角色图、同 Executor 算法下的 L0-L3 严格单变量主矩阵。
-2. Adaptive formal 当前只做 memory query 记录，尚未形成跨任务 commit、匹配消费和行为改变。
-3. 当前 25-case 的 Retriever 全部选择 table capability，`retrieve_semantic_evidence_v1` 缺少正式自然覆盖。
-4. 部分 benchmark adapter 和报告字段会夸大“泛化”或让 controller 看起来像预先解题，必须先修正文案和数据边界。
+1. `v2/benchmark/adaptive_formal.py::_financial_source_rows` 会先按 ticker/quarter/metric 筛出唯一目标行，存在 controller 预解题风险；必须改为传递授权范围内的完整原始文档或完整表行。
+2. Adaptive formal 当前只有 memory query 记录，没有跨任务 commit、重新加载、实际输入消费和行为改变；query 不能继续被当作 memory reuse。
+3. 当前 25-case 的 Retriever 全部选择 `retrieve_table_evidence_v1`，`retrieve_semantic_evidence_v1` 缺少正式自然覆盖；必须由独立 semantic holdout 补证据，不能在 Prompt 中写 expected route。
+4. 尚无同任务、同模型、同角色图、同 Executor 算法、同 subprocess 拓扑下的 L0-L3 严格单变量主矩阵。
+5. `business_formula_is_not_pre_registered=True` 与当前公开 task contract/operation semantics 的事实不一致；必须改成“公式来自公开 task contract，capability registry 不含 expected answer”。
+6. 当前缺口是证据闭环，不是功能数量；本轮不继续增加后端、Agent/进程数量、CodeAct 比例或无新权限边界的 capability。
 
 ### 1.2 赛题要求到实验的唯一映射
 
@@ -708,6 +710,17 @@ E5 门槛：25/25 quality pass、DSL 和 Python 都有自然覆盖、所有 Pyth
 
 Runtime、Executor、validator、StatePool consumer、memory、bwrap 和 pytest 都在容器内运行。不得在宿主 conda 环境跑一次后把结果写成 container evidence。
 
+这是硬约束，不只约束最终 formal run。以下命令和脚本全部必须通过 `docker exec` 或 repo wrapper 进入 `statebus-dev-qcrs` 后执行：
+
+- focused/full `pytest`；
+- deterministic/live preflight；
+- benchmark、report generator 和 evidence audit；
+- embedding/CUDA/StateRef/MemoryRef diagnostics；
+- bwrap/CodeAct readiness 和 smoke；
+- 任何会 import `v2` Runtime 代码的 Python 检查。
+
+宿主机允许执行的只是不运行项目 Runtime 的操作，例如 `git status`、`git diff --check`、`docker ps`、`docker exec`、vLLM health check 和读取挂载结果。宿主机上的 `python`/`pytest` 结果一律不得计入测试通过数或实验结论。
+
 当前目标容器：
 
 ```text
@@ -859,6 +872,10 @@ python3 -m v2.benchmark.live_runner \
 `--round-view` 和 `--executor-mode` 是本轮应实现的新参数；continuous suite 的 `--transport subprocess` 也是本轮需要接通的现有 transport 扩展。在实现前不要把以上命令写成“当前已可执行”。
 
 ## 9. 容器内测试顺序
+
+本节代码块展示的是进入容器并激活环境后的内部命令，不得直接复制到宿主 shell 执行。所有 stage wrapper 必须采用 `docker exec -u 0 ... bash -lc`，先 source `docker/activate_statebus_container.sh`，再执行这些命令。
+
+测试默认静默运行：使用 `pytest -q`，将完整 stdout/stderr 重定向到本次 mounted run root 的 `pytest.log`/`console.log`，终端只输出 stage、PASS/FAIL、耗时和 artifact 路径。静默不等于吞掉错误；失败 traceback、退出码和失败 artifact 必须完整保留。
 
 ### 9.1 每个 Phase 后的 focused tests
 
