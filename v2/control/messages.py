@@ -58,6 +58,13 @@ class ExecRequest:
     output_contract_version: str = ""
     workspace_root: str = ""
     input_manifest_hash: str = ""
+    operation: str = ""
+    state_root: str = ""
+    hydrate_manifest_id: str = ""
+    semantic_top_k: int = 0
+    evidence_budget_bytes: int = 0
+    expected_encoder_signature: str = ""
+    capability_grant_hash: str = ""
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,14 @@ class SuccessResult:
     artifact_refs: tuple[RefHandle, ...] = ()
     output_contract_version: str = ""
     completed_at_ns: int = 0
+    consumed_state_ref_id: str = ""
+    selected_candidate_ids: tuple[str, ...] = ()
+    selected_scores: tuple[float, ...] = ()
+    selected_row_indices: tuple[int, ...] = ()
+    selected_evidence_bytes: int = 0
+    consumer_pid: int = 0
+    producer_pid: int = 0
+    encoder_signature: str = ""
 
 
 @dataclass(frozen=True)
@@ -204,6 +219,13 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.output_contract_version = message.output_contract_version
         body_pb.workspace_root = message.workspace_root
         body_pb.input_manifest_hash = message.input_manifest_hash
+        body_pb.operation = message.operation
+        body_pb.state_root = message.state_root
+        body_pb.hydrate_manifest_id = message.hydrate_manifest_id
+        body_pb.semantic_top_k = message.semantic_top_k
+        body_pb.evidence_budget_bytes = message.evidence_budget_bytes
+        body_pb.expected_encoder_signature = message.expected_encoder_signature
+        body_pb.capability_grant_hash = message.capability_grant_hash
     elif isinstance(message, AckReceived):
         body_pb.acked_at_ns = message.acked_at_ns
     elif isinstance(message, RunStart):
@@ -218,6 +240,14 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.artifact_refs.extend(_ref_to_pb(ref) for ref in message.artifact_refs)
         body_pb.output_contract_version = message.output_contract_version
         body_pb.completed_at_ns = message.completed_at_ns
+        body_pb.consumed_state_ref_id = message.consumed_state_ref_id
+        body_pb.selected_candidate_ids.extend(message.selected_candidate_ids)
+        body_pb.selected_scores.extend(message.selected_scores)
+        body_pb.selected_row_indices.extend(message.selected_row_indices)
+        body_pb.selected_evidence_bytes = message.selected_evidence_bytes
+        body_pb.consumer_pid = message.consumer_pid
+        body_pb.producer_pid = message.producer_pid
+        body_pb.encoder_signature = message.encoder_signature
     elif isinstance(message, ErrorResult):
         body_pb.error_code = message.error_code
         body_pb.error_detail = message.error_detail
@@ -262,6 +292,13 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             output_contract_version=body_pb.output_contract_version,
             workspace_root=body_pb.workspace_root,
             input_manifest_hash=body_pb.input_manifest_hash,
+            operation=body_pb.operation,
+            state_root=body_pb.state_root,
+            hydrate_manifest_id=body_pb.hydrate_manifest_id,
+            semantic_top_k=int(body_pb.semantic_top_k),
+            evidence_budget_bytes=int(body_pb.evidence_budget_bytes),
+            expected_encoder_signature=body_pb.expected_encoder_signature,
+            capability_grant_hash=body_pb.capability_grant_hash,
         )
     if body_field == "ack_recv":
         return AckReceived(header=header, acked_at_ns=int(body_pb.acked_at_ns))
@@ -285,6 +322,14 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             artifact_refs=tuple(_ref_from_pb(ref) for ref in body_pb.artifact_refs),
             output_contract_version=body_pb.output_contract_version,
             completed_at_ns=int(body_pb.completed_at_ns),
+            consumed_state_ref_id=body_pb.consumed_state_ref_id,
+            selected_candidate_ids=tuple(body_pb.selected_candidate_ids),
+            selected_scores=tuple(float(value) for value in body_pb.selected_scores),
+            selected_row_indices=tuple(int(value) for value in body_pb.selected_row_indices),
+            selected_evidence_bytes=int(body_pb.selected_evidence_bytes),
+            consumer_pid=int(body_pb.consumer_pid),
+            producer_pid=int(body_pb.producer_pid),
+            encoder_signature=body_pb.encoder_signature,
         )
     if body_field == "res_err":
         return ErrorResult(

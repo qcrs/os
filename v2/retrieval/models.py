@@ -406,6 +406,7 @@ class RetrieverOutput:
     candidates: tuple[dict[str, object], ...]
     log_entry: RetrievalLogEntry
     query_embedding: StructuredEmbedding | None = None
+    candidate_embeddings: tuple[tuple[str, StructuredEmbedding], ...] = ()
 
     def log_payload(self) -> dict[str, object]:
         selected_id_set = set(self.log_entry.selected_ids)
@@ -445,6 +446,10 @@ class RetrieverOutput:
                 "query_embedding_hash": (
                     "" if self.query_embedding is None else self.query_embedding.embedding_hash
                 ),
+                "candidate_embedding_count": len(self.candidate_embeddings),
+                "candidate_embedding_ids_hash": sha256_digest(
+                    tuple(item_id for item_id, _embedding in self.candidate_embeddings)
+                ),
             }
         )
 
@@ -467,6 +472,8 @@ class RetrievalBundle:
     consumed_objectives: dict[str, dict[str, Any]] = field(default_factory=dict)
     consumed_objective_hashes: dict[str, str] = field(default_factory=dict)
     memory_query_embedding: StructuredEmbedding | None = None
+    semantic_state_manifest: HydrateManifest | None = None
+    semantic_candidate_embeddings: tuple[tuple[str, StructuredEmbedding], ...] = ()
     schema_version: str = RETRIEVAL_LOG_SCHEMA_VERSION
 
     def log_payload(self) -> dict[str, object]:
@@ -492,6 +499,10 @@ class RetrievalBundle:
             "memory_query_embedding_hash": (
                 "" if self.memory_query_embedding is None else self.memory_query_embedding.embedding_hash
             ),
+            "semantic_state_manifest_hash": (
+                "" if self.semantic_state_manifest is None else self.semantic_state_manifest.manifest_hash
+            ),
+            "semantic_candidate_embedding_count": len(self.semantic_candidate_embeddings),
             "schema_version": self.schema_version,
             }
         )

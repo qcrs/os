@@ -18,6 +18,7 @@ from v2.retrieval.models import (
     RetrieverOutput,
 )
 from v2.retrieval.pipeline import (
+    apply_semantic_state_selection,
     BoundedRetrievalDecision,
     BoundedRetrievalResult,
     LexicalMetadataRetriever,
@@ -28,6 +29,7 @@ from v2.retrieval.pipeline import (
 from v2.retrieval.pruning import DynamicPruningConfig, compute_dynamic_pruning_threshold
 
 __all__ = [
+    "apply_semantic_state_selection",
     "CorpusTableRow",
     "CorpusTextFragment",
     "BoundedRetrievalDecision",

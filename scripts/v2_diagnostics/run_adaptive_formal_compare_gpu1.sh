@@ -61,6 +61,7 @@ printf '[adaptive-formal] result root: %s\n' "$host_result_root"
 cd "$project_root"
 docker exec -i -u 0 \
   -e CUDA_VISIBLE_DEVICES="$gpu_index" \
+  -e PYTHONDONTWRITEBYTECODE=1 \
   -e STATEBUS_EMBED_DEVICE="$embedding_device" \
   -e STATEBUS_EMBEDDING_MODE=local \
   -e STATEBUS_EMBED_MODEL_PATH="${STATEBUS_EMBED_MODEL_PATH:-/statebus/models/Qwen3-Embedding-0.6B}" \
@@ -118,7 +119,8 @@ python3 -m pytest -q \
   tests/v2/test_llm_codeact_policy.py \
   tests/v2/test_adaptive_formal_compare.py \
   tests/v2/test_adaptive_codeact_integration.py \
-  2>&1 | tee "$STATEBUS_ADAPTIVE_FORMAL_RESULT_ROOT/pytest.log"
+  > "$STATEBUS_ADAPTIVE_FORMAL_RESULT_ROOT/pytest.log" 2>&1
+printf '[adaptive-formal] focused pytest: OK\n'
 
 args=(
   --output-root "$STATEBUS_ADAPTIVE_FORMAL_RESULT_ROOT"
@@ -142,7 +144,7 @@ fi
 printf '[adaptive-formal] starting serialized formal comparison\n'
 timeout "$STATEBUS_ADAPTIVE_FORMAL_TIMEOUT_S" \
   python3 scripts/v2_diagnostics/run_adaptive_formal_compare.py "${args[@]}" \
-  2>&1 | tee "$STATEBUS_ADAPTIVE_FORMAL_RESULT_ROOT/console.log"
+  > "$STATEBUS_ADAPTIVE_FORMAL_RESULT_ROOT/console.log" 2>&1
 CONTAINER_BASH
 
 latest_summary="$(

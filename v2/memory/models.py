@@ -82,6 +82,56 @@ class StructuredEmbedding:
 
 
 @dataclass(frozen=True)
+class MemoryQuery:
+    """The single memory-plane query issued by Runtime for one task.
+
+    The query deliberately carries the three independent retrieval signals
+    (text, tags, and an optional dense vector) together.  MemoryIndexStore
+    fuses their *ranks*; callers must not combine the source score spaces.
+    """
+
+    query_task_id: str
+    query_spec_hash: str
+    query_text: str = ""
+    tags: tuple[str, ...] = ()
+    query_embedding: StructuredEmbedding | None = None
+    limit: int = 3
+    allowed_memory_types: tuple[str, ...] = ()
+    allow_assist: bool = True
+    allow_validated_replay: bool = False
+    allow_exact_replay: bool = False
+    compatibility_signature: str = ""
+    output_contract_version: str = ""
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "query_task_id": self.query_task_id,
+            "query_spec_hash": self.query_spec_hash,
+            "query_text": self.query_text.strip(),
+            "tags": sorted({str(tag).strip() for tag in self.tags if str(tag).strip()}),
+            "query_embedding_ref": (
+                "" if self.query_embedding is None else self.query_embedding.embedding_hash
+            ),
+            "limit": int(self.limit),
+            "allowed_memory_types": sorted({str(value) for value in self.allowed_memory_types}),
+            "allow_assist": bool(self.allow_assist),
+            "allow_validated_replay": bool(self.allow_validated_replay),
+            "allow_exact_replay": bool(self.allow_exact_replay),
+            "compatibility_signature": self.compatibility_signature,
+            "output_contract_version": self.output_contract_version,
+        }
+
+    @property
+    def query_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
+
+# The longer name is useful at protocol boundaries while retaining the short
+# name used by the existing MemoryProxy code.
+HybridMemoryQuery = MemoryQuery
+
+
+@dataclass(frozen=True)
 class MemoryCandidatePool:
     query_task_id: str
     query_spec_hash: str
@@ -291,6 +341,7 @@ class MemoryMatchResult:
     rerank_result: MemoryRerankResult | None = None
     candidate_pool_hash: str = ""
     rerank_result_hash: str = ""
+    source_ranks: dict[str, tuple[str, ...]] = field(default_factory=dict)
     schema_version: str = MEMORY_MATCH_RESULT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -313,6 +364,10 @@ class MemoryMatchResult:
             ),
             "candidate_pool_hash": self.candidate_pool_hash,
             "rerank_result_hash": self.rerank_result_hash,
+            "source_ranks": {
+                str(source): list(ids)
+                for source, ids in sorted(self.source_ranks.items())
+            },
             "schema_version": self.schema_version,
         }
 

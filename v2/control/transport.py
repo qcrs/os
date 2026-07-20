@@ -214,6 +214,7 @@ class ControlPlaneLoopbackServer:
         required_errors: list[str] = []
         runtime_reuse_contract = getattr(message, "runtime_reuse_contract", "")
         semantic_state_optional = "no_semantic_state" in runtime_reuse_contract
+        semantic_selection = getattr(message, "operation", "") == "semantic_select_v1"
         if not getattr(message, "workspace_root", "").strip():
             required_errors.append("workspace_root_missing")
         if not getattr(message, "input_manifest_hash", "").strip():
@@ -222,8 +223,17 @@ class ControlPlaneLoopbackServer:
             required_errors.append("output_contract_version_missing")
         if not semantic_state_optional and not tuple(getattr(message, "state_refs", ())):
             required_errors.append("state_refs_missing")
-        if not tuple(getattr(message, "artifact_refs", ())):
+        if not semantic_selection and not tuple(getattr(message, "artifact_refs", ())):
             required_errors.append("artifact_refs_missing")
+        if semantic_selection:
+            if not getattr(message, "state_root", "").strip():
+                required_errors.append("state_root_missing")
+            if not getattr(message, "hydrate_manifest_id", "").strip():
+                required_errors.append("hydrate_manifest_id_missing")
+            if int(getattr(message, "semantic_top_k", 0)) <= 0:
+                required_errors.append("semantic_top_k_missing")
+            if not getattr(message, "capability_grant_hash", "").strip():
+                required_errors.append("capability_grant_hash_missing")
         if required_errors:
             return [
                 ErrorResult(

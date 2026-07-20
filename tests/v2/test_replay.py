@@ -332,6 +332,94 @@ def test_replay_normalized_hashes_ignore_round_specific_ids() -> None:
     assert hydrate_manifest_replay_hash(hydrate_a) == hydrate_manifest_replay_hash(hydrate_b)
 
 
+def test_hydrate_manifest_replay_hash_ignores_dense_row_order_but_not_locator_content() -> None:
+    first_locator = TextSpanLocator(
+        source_doc_hash="sha256:doc-1",
+        canonical_text_id="section-1",
+        start_char=0,
+        end_char=16,
+        extractor_version="extractor-v1",
+    )
+    second_locator = TextSpanLocator(
+        source_doc_hash="sha256:doc-1",
+        canonical_text_id="section-2",
+        start_char=17,
+        end_char=32,
+        extractor_version="extractor-v1",
+    )
+    first_entry = HydrateManifestEntry(
+        row_idx=0,
+        locator=first_locator,
+        stable_key="text:doc-1:section-1",
+        byte_hint=16,
+        candidate_id="candidate-1",
+        importance_score=0.9,
+    )
+    second_entry = HydrateManifestEntry(
+        row_idx=1,
+        locator=second_locator,
+        stable_key="text:doc-1:section-2",
+        byte_hint=15,
+        candidate_id="candidate-2",
+        importance_score=0.4,
+    )
+    manifest_a = HydrateManifest(
+        manifest_id="manifest-a",
+        source_doc_hashes=("sha256:doc-1",),
+        entries=(first_entry, second_entry),
+        canonicalizer_version="canon-v1",
+        extractor_version="retriever-v1",
+    )
+    manifest_b = HydrateManifest(
+        manifest_id="manifest-b",
+        source_doc_hashes=manifest_a.source_doc_hashes,
+        entries=(
+            HydrateManifestEntry(
+                row_idx=0,
+                locator=second_locator,
+                stable_key=second_entry.stable_key,
+                byte_hint=second_entry.byte_hint,
+                candidate_id=second_entry.candidate_id,
+                importance_score=0.95,
+            ),
+            HydrateManifestEntry(
+                row_idx=1,
+                locator=first_locator,
+                stable_key=first_entry.stable_key,
+                byte_hint=first_entry.byte_hint,
+                candidate_id=first_entry.candidate_id,
+                importance_score=0.2,
+            ),
+        ),
+        canonicalizer_version=manifest_a.canonicalizer_version,
+        extractor_version=manifest_a.extractor_version,
+    )
+    changed_manifest = HydrateManifest(
+        manifest_id="manifest-c",
+        source_doc_hashes=manifest_a.source_doc_hashes,
+        entries=(
+            HydrateManifestEntry(
+                row_idx=0,
+                locator=TextSpanLocator(
+                    source_doc_hash="sha256:doc-1",
+                    canonical_text_id="section-1",
+                    start_char=0,
+                    end_char=15,
+                    extractor_version="extractor-v1",
+                ),
+                stable_key=first_entry.stable_key,
+                byte_hint=first_entry.byte_hint,
+            ),
+            second_entry,
+        ),
+        canonicalizer_version=manifest_a.canonicalizer_version,
+        extractor_version=manifest_a.extractor_version,
+    )
+
+    assert hydrate_manifest_replay_hash(manifest_a) == hydrate_manifest_replay_hash(manifest_b)
+    assert hydrate_manifest_replay_hash(manifest_a) != hydrate_manifest_replay_hash(changed_manifest)
+
+
 def test_replay_normalized_hashes_change_when_core_inputs_change() -> None:
     planner_a = PlannerHandoff(
         task_id="task-a",

@@ -161,6 +161,35 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
     )
 
 
+def code_generation_prompt_bundle_digest(
+    request: CodeGenerationRequest,
+    *,
+    rendered_prompt: str | None = None,
+) -> str:
+    """Bind CodeAct cache identity to the full prompt, contract, and tool rules."""
+    prompt = rendered_prompt if rendered_prompt is not None else build_code_generation_prompt(request)
+    return sha256_digest({
+        "schema_version": "statebus.code_generation_prompt_bundle.v1",
+        "role": "executor",
+        "rendered_prompt": prompt,
+        "output_contract_template": {
+            "output_schema": dict(sorted(request.output_schema.items())),
+            "expected_output_shape": request.expected_output_shape,
+            "output_contract_version": request.output_contract_version,
+            "validator_id": request.validator_id,
+            "completion_criteria": request.completion_criteria,
+            "quality_constraints": request.quality_constraints,
+        },
+        "tool_rules": {
+            "policy": request.policy.canonical_payload(),
+            "forbidden_calls": sorted(_FORBIDDEN_CALLS),
+            "forbidden_names": sorted(_FORBIDDEN_NAMES),
+            "forbidden_attributes": sorted(_FORBIDDEN_ATTRIBUTES),
+            "forbidden_ast_nodes": sorted(node.__name__ for node in _FORBIDDEN_AST_NODES),
+        },
+    })
+
+
 def audit_generated_source(source: str, policy: CodeGenerationPolicy) -> CodePolicyReport:
     violations: list[str] = []
     imports: set[str] = set()
@@ -274,6 +303,11 @@ def build_code_repair_guidance(
         for item in violations
         if item.startswith("runtime_error:")
     )
+    quality_errors = tuple(
+        item.removeprefix("quality_error:")
+        for item in violations
+        if item.startswith("quality_error:")
+    )
     for diagnostic in runtime_errors:
         match = _NAME_ERROR_RE.search(diagnostic)
         if match is not None:
@@ -293,6 +327,12 @@ def build_code_repair_guidance(
     if runtime_errors:
         guidance.append(
             "The replacement must correct the exact bounded runtime diagnostic and must not repeat the failing source unchanged."
+        )
+    if quality_errors:
+        guidance.append(
+            "The prior program passed sandbox and schema checks but its output failed the registered Runtime validator. "
+            "Re-derive the result from the authorized input rows and audit every operation against the supplied semantic "
+            "contract. The validator intentionally does not disclose expected values."
         )
     return " ".join(guidance)
 
@@ -417,6 +457,7 @@ class LlmCodeActOutcome:
     artifact: ExecutionArtifactRef | None = None
     output_payload: dict[str, Any] | list[dict[str, Any]] | None = None
     quality_report: "CapabilityQualityReport | None" = None
+    quality_reports: tuple["CapabilityQualityReport", ...] = ()
 
 
 @dataclass
@@ -503,6 +544,7 @@ class LlmCodeActRunner:
         repairs: list[CodeRepairRecord] = []
         policy_repair_count = 0
         runtime_repair_count = 0
+        quality_repair_count = 0
         while (
             not report.passed
             and repair_source is not None
@@ -563,40 +605,119 @@ class LlmCodeActRunner:
             attempt_workspace=execution_workspace, policy=request.policy, source=candidate.source, input_files=input_files,
         )
         runtime_error = ""
+        quality_reports = []
         while True:
-            sandbox_result = sandbox_runner.run_llm_bwrap(
-                source_path=source_path, inputs_dir=inputs_dir, outputs_dir=outputs_dir,
-                policy_version=request.policy.sandbox_policy_version,
-            )
-            if sandbox_result.actual_backend == "bwrap" and sandbox_result.completed.returncode == 0:
-                break
-            runtime_error = self._runtime_diagnostic(sandbox_result)
-            # A non-zero Python exit after AST approval is a model-authored
-            # program defect. Give the Executor one bounded repair opportunity
-            # in a fresh workspace under the same Grant and input authority.
-            if (
-                repair_source is None
-                or runtime_repair_count >= request.policy.max_runtime_repairs
-            ):
-                return self._execution_failure(
-                    request, grant, candidate, report, tuple(repairs), readiness, sandbox_result.completed.returncode,
-                    sandbox_result.fallback_reason or "bwrap_execution_failed", runtime_error=runtime_error,
+            while True:
+                sandbox_result = sandbox_runner.run_llm_bwrap(
+                    source_path=source_path, inputs_dir=inputs_dir, outputs_dir=outputs_dir,
+                    policy_version=request.policy.sandbox_policy_version,
                 )
-            repaired = extract_python_source(repair_source(
-                candidate.source,
-                (
-                    f"runtime_error:{runtime_error}",
-                    f"runtime_exit_code:{sandbox_result.completed.returncode}",
-                ),
-            ))
-            runtime_repair_count += 1
+                if sandbox_result.actual_backend == "bwrap" and sandbox_result.completed.returncode == 0:
+                    break
+                runtime_error = self._runtime_diagnostic(sandbox_result)
+                # A non-zero Python exit after AST approval is a model-authored
+                # program defect. Give the Executor one bounded repair opportunity
+                # in a fresh workspace under the same Grant and input authority.
+                if (
+                    repair_source is None
+                    or runtime_repair_count >= request.policy.max_runtime_repairs
+                ):
+                    failure = self._execution_failure(
+                        request, grant, candidate, report, tuple(repairs), readiness,
+                        sandbox_result.completed.returncode,
+                        sandbox_result.fallback_reason or "bwrap_execution_failed",
+                        runtime_error=runtime_error,
+                    )
+                    return replace(failure, quality_reports=tuple(quality_reports))
+                repaired = extract_python_source(repair_source(
+                    candidate.source,
+                    (
+                        f"runtime_error:{runtime_error}",
+                        f"runtime_exit_code:{sandbox_result.completed.returncode}",
+                    ),
+                ))
+                runtime_repair_count += 1
+                repairs.append(CodeRepairRecord(
+                    attempt_index=len(repairs) + 1,
+                    previous_source_hash=candidate.source_hash,
+                    repaired_source_hash=sha256_digest(repaired.encode("utf-8")),
+                    policy_report_hash=report.report_hash,
+                    repair_kind="runtime",
+                    diagnostic=runtime_error,
+                ))
+                candidate = GeneratedCodeCandidate(
+                    request_hash=candidate.request_hash,
+                    source=repaired,
+                    source_hash=sha256_digest(repaired.encode("utf-8")),
+                    raw_response_hash=candidate.raw_response_hash,
+                    model_id=candidate.model_id,
+                )
+                report = audit_generated_source(candidate.source, request.policy)
+                if not report.passed:
+                    failure = self._execution_failure(
+                        request, grant, candidate, report, tuple(repairs), readiness,
+                        sandbox_result.completed.returncode,
+                        "runtime_repair_policy_rejected", validator_errors=report.violations,
+                        runtime_error=runtime_error,
+                    )
+                    return replace(failure, quality_reports=tuple(quality_reports))
+                execution_workspace = attempt_workspace.parent / f"{attempt_workspace.name}-runtime-repair-{len(repairs)}"
+                source_path, inputs_dir, outputs_dir = self._materialize_attempt(
+                    attempt_workspace=execution_workspace,
+                    policy=request.policy,
+                    source=candidate.source,
+                    input_files=input_files,
+                )
+
+            payload, errors, output_hash = self._validate_output(outputs_dir, request)
+            if errors:
+                failure = self._execution_failure(
+                    request, grant, candidate, report, tuple(repairs), readiness,
+                    sandbox_result.completed.returncode,
+                    "output_validation_failed", validator_errors=errors, output_hash=output_hash,
+                )
+                return replace(failure, quality_reports=tuple(quality_reports))
+            quality_report = self._validate_capability_quality(
+                request=request,
+                payload=payload,
+                input_files=input_files,
+                output_hash=output_hash,
+            )
+            quality_reports.append(quality_report)
+            if quality_report.verified:
+                break
+            if repair_source is None or quality_repair_count >= request.policy.max_quality_repairs:
+                failure = self._execution_failure(
+                    request,
+                    grant,
+                    candidate,
+                    report,
+                    tuple(repairs),
+                    readiness,
+                    sandbox_result.completed.returncode,
+                    "capability_quality_rejected",
+                    validator_errors=quality_report.error_codes,
+                    output_hash=output_hash,
+                    quality_report_hash=quality_report.report_hash,
+                )
+                return replace(
+                    failure,
+                    quality_report=quality_report,
+                    quality_reports=tuple(quality_reports),
+                )
+
+            quality_diagnostics = tuple(
+                f"quality_error:{error}" for error in quality_report.error_codes
+            )
+            repaired = extract_python_source(repair_source(candidate.source, quality_diagnostics))
+            quality_repair_count += 1
             repairs.append(CodeRepairRecord(
                 attempt_index=len(repairs) + 1,
                 previous_source_hash=candidate.source_hash,
                 repaired_source_hash=sha256_digest(repaired.encode("utf-8")),
                 policy_report_hash=report.report_hash,
-                repair_kind="runtime",
-                diagnostic=runtime_error,
+                repair_kind="quality",
+                diagnostic=",".join(quality_report.error_codes),
             ))
             candidate = GeneratedCodeCandidate(
                 request_hash=candidate.request_hash,
@@ -607,42 +728,22 @@ class LlmCodeActRunner:
             )
             report = audit_generated_source(candidate.source, request.policy)
             if not report.passed:
-                return self._execution_failure(
-                    request, grant, candidate, report, tuple(repairs), readiness, sandbox_result.completed.returncode,
-                    "runtime_repair_policy_rejected", validator_errors=report.violations, runtime_error=runtime_error,
+                failure = self._execution_failure(
+                    request, grant, candidate, report, tuple(repairs), readiness,
+                    sandbox_result.completed.returncode,
+                    "quality_repair_policy_rejected", validator_errors=report.violations,
                 )
-            execution_workspace = attempt_workspace.parent / f"{attempt_workspace.name}-runtime-repair-{len(repairs)}"
+                return replace(
+                    failure,
+                    quality_report=quality_report,
+                    quality_reports=tuple(quality_reports),
+                )
+            execution_workspace = attempt_workspace.parent / f"{attempt_workspace.name}-quality-repair-{len(repairs)}"
             source_path, inputs_dir, outputs_dir = self._materialize_attempt(
                 attempt_workspace=execution_workspace,
                 policy=request.policy,
                 source=candidate.source,
                 input_files=input_files,
-            )
-        payload, errors, output_hash = self._validate_output(outputs_dir, request)
-        if errors:
-            return self._execution_failure(
-                request, grant, candidate, report, tuple(repairs), readiness, sandbox_result.completed.returncode,
-                "output_validation_failed", validator_errors=errors, output_hash=output_hash,
-            )
-        quality_report = self._validate_capability_quality(
-            request=request,
-            payload=payload,
-            input_files=input_files,
-            output_hash=output_hash,
-        )
-        if not quality_report.verified:
-            return self._execution_failure(
-                request,
-                grant,
-                candidate,
-                report,
-                tuple(repairs),
-                readiness,
-                sandbox_result.completed.returncode,
-                "capability_quality_rejected",
-                validator_errors=quality_report.error_codes,
-                output_hash=output_hash,
-                quality_report_hash=quality_report.report_hash,
             )
         output_path = outputs_dir / Path(request.policy.output_relpath).name
         artifact_id = f"llm-codeact-{request.task_id}-{request.step_id}-{request.attempt_id}"
@@ -680,6 +781,7 @@ class LlmCodeActRunner:
             artifact=artifact,
             output_payload=payload,
             quality_report=quality_report,
+            quality_reports=tuple(quality_reports),
         )
         self.cache.put(self.cache.key(request, candidate), outcome, task_id=request.task_id, session_id=grant.session_id)
         return outcome
@@ -775,6 +877,8 @@ class LlmCodeActRunner:
             raise CodePolicyError("invalid_policy_repair_budget")
         if not 0 <= policy.max_runtime_repairs <= 1:
             raise CodePolicyError("invalid_runtime_repair_budget")
+        if not 0 <= policy.max_quality_repairs <= 1:
+            raise CodePolicyError("invalid_quality_repair_budget")
         if policy.numeric_text_mode not in {"unrestricted", "leading_token"}:
             raise CodePolicyError("invalid_numeric_text_mode")
 

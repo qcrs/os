@@ -215,7 +215,10 @@ def load_continuous_task_family(directory: Path) -> ContinuousTaskFamily:
     claim_tier = str(payload.get("claim_tier", "")).strip()
     _require(claim_tier in _VALID_CLAIM_TIERS, f"unsupported claim_tier: {claim_tier}")
     round_count = int(payload.get("round_count", 0) or 0)
-    _require(round_count >= 10, f"continuous task family must declare at least 10 rounds: {family_id}")
+    # A family describes a related sequence, not the size of the whole
+    # benchmark collection.  Two rounds are enough to express a dependency;
+    # the collection runner owns the aggregate minimum of ten executions.
+    _require(round_count >= 2, f"continuous task family must declare at least 2 rounds: {family_id}")
 
     datasets = tuple(
         ContinuousTaskDataset(

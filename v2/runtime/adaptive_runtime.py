@@ -48,6 +48,7 @@ class AdaptiveStepResult:
     evidence_coverage_report_hashes: tuple[str, ...] = ()
     evidence_coverage_decision_records: tuple[dict[str, object], ...] = ()
     state_consumption_records: tuple[StateConsumptionRecord, ...] = ()
+    data_plane_events: tuple[dict[str, object], ...] = ()
     projection_report_hashes: tuple[str, ...] = ()
     quality_report_hashes: tuple[str, ...] = ()
     program_hashes: tuple[str, ...] = ()
@@ -628,6 +629,24 @@ class AdaptiveRuntimeEngine:
                         workflow_mode=request.envelope.workflow_mode.value,
                         state_consumption_record_hash=sha256_digest(record.canonical_payload()),
                     )
+                for event_record in result.data_plane_events:
+                    event_type = str(event_record.get("event_type", ""))
+                    if event_type not in {"STATE_PUBLISHED", "STATE_RESOLVED", "STATE_CONSUMED"}:
+                        continue
+                    telemetry.emit(TelemetryEvent.create(
+                        trace_id=request.trace_id,
+                        task_id=request.task_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        event_type=event_type,
+                        role=str(event_record.get("role", step.role)),
+                        channel="semantic_state",
+                        payload=dict(event_record.get("payload", {})),
+                        metrics={
+                            str(key): float(value)
+                            for key, value in dict(event_record.get("metrics", {})).items()
+                        },
+                    ))
                 if result.grant_hash != grant.grant_hash or (result.attempt_id and result.attempt_id != attempt_id):
                     terminal_failed.add(step.step_id)
                     supervisor.fail(step.step_id, "grant_binding_mismatch")

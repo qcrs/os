@@ -15,6 +15,7 @@ from v2.memory.models import (
     MemoryCommitStatus,
     MemoryMatch,
     MemoryMatchResult,
+    MemoryQuery,
     MemoryRerankItem,
     MemoryRerankResult,
     MemoryRef,
@@ -227,6 +228,205 @@ class MemoryIndexStore:
             candidate_pool=candidate_pool,
             rerank_result=rerank_result,
         )
+
+    def lookup_hybrid(
+        self,
+        query: MemoryQuery,
+        *,
+        rrf_k: int = 60,
+    ) -> MemoryMatchResult:
+        """Fuse keyword, tag, and vector ranks for one Runtime memory query.
+
+        Compatibility and replay policy are deliberately applied after RRF so
+        a highly ranked but incompatible replay object cannot bypass the gate.
+        """
+        if not query.query_task_id.strip() or not query.query_spec_hash.strip():
+            raise ValueError("memory_query_identity_required")
+        if query.limit <= 0:
+            raise ValueError("memory_query_limit_must_be_positive")
+        if rrf_k <= 0:
+            raise ValueError("memory_query_rrf_k_must_be_positive")
+        if not (query.query_text.strip() or query.tags or query.query_embedding is not None):
+            raise ValueError("memory_query_signal_required")
+
+        allowed_types = {
+            value.value if isinstance(value, MemoryType) else str(value)
+            for value in query.allowed_memory_types
+        }
+        source_limit = max(query.limit * 5, query.limit)
+
+        keyword_commits = (
+            self.lookup_by_keyword(query.query_text, limit=source_limit)
+            if query.query_text.strip()
+            else []
+        )
+        tag_commits = (
+            self.lookup_by_tags(set(query.tags), limit=source_limit)
+            if query.tags
+            else []
+        )
+        vector_commits = self._rank_commits_by_vector(
+            query.query_embedding,
+            limit=source_limit,
+        )
+
+        def permitted(commit: MemoryCommit) -> bool:
+            ref = commit.memory_ref
+            return (
+                ref.commit_status != MemoryCommitStatus.INVALIDATED
+                and (not allowed_types or ref.memory_type.value in allowed_types)
+            )
+
+        source_ranks = {
+            "keyword": tuple(
+                commit.memory_ref.memory_id for commit in keyword_commits if permitted(commit)
+            ),
+            "tags": tuple(
+                commit.memory_ref.memory_id for commit in tag_commits if permitted(commit)
+            ),
+            "vector": tuple(
+                commit.memory_ref.memory_id for commit in vector_commits if permitted(commit)
+            ),
+        }
+        rrf_scores: dict[str, float] = {}
+        contributing_sources: dict[str, list[str]] = {}
+        for source, memory_ids in source_ranks.items():
+            for rank, memory_id in enumerate(memory_ids, start=1):
+                rrf_scores[memory_id] = rrf_scores.get(memory_id, 0.0) + 1.0 / (rrf_k + rank)
+                contributing_sources.setdefault(memory_id, []).append(source)
+
+        fused_ids = sorted(rrf_scores, key=lambda memory_id: (-rrf_scores[memory_id], memory_id))
+        candidate_commits = [self.commits[memory_id] for memory_id in fused_ids]
+        matches: list[MemoryMatch] = []
+        for commit in candidate_commits:
+            replay_class = self._gated_replay_class(commit, query)
+            if replay_class is None:
+                continue
+            ref = replace(commit.memory_ref, replay_class=replay_class)
+            sources = "+".join(contributing_sources.get(ref.memory_id, ()))
+            matches.append(
+                MemoryMatch(
+                    memory_ref=ref,
+                    matched_on=f"hybrid_rrf:{sources}",
+                    score=round(rrf_scores[ref.memory_id], 12),
+                    replay_class=replay_class,
+                )
+            )
+
+        top_matches = tuple(matches[: query.limit])
+        candidate_taxonomy: dict[str, int] = {}
+        for commit in candidate_commits:
+            key = commit.memory_ref.memory_type.value
+            candidate_taxonomy[key] = candidate_taxonomy.get(key, 0) + 1
+        for source, memory_ids in source_ranks.items():
+            candidate_taxonomy[f"source:{source}"] = len(memory_ids)
+        candidate_pool = MemoryCandidatePool(
+            query_task_id=query.query_task_id,
+            query_spec_hash=query.query_spec_hash,
+            candidate_memory_ids=tuple(fused_ids),
+            candidate_types=tuple(
+                self.commits[memory_id].memory_ref.memory_type.value for memory_id in fused_ids
+            ),
+            candidate_taxonomy=candidate_taxonomy,
+        )
+        selected_ids = {match.memory_ref.memory_id for match in top_matches}
+        selected_taxonomy: dict[str, int] = {}
+        for match in top_matches:
+            key = match.memory_ref.memory_type.value
+            selected_taxonomy[key] = selected_taxonomy.get(key, 0) + 1
+        rerank_result = MemoryRerankResult(
+            query_task_id=query.query_task_id,
+            selected_memory_ids=tuple(match.memory_ref.memory_id for match in top_matches),
+            items=tuple(
+                MemoryRerankItem(
+                    memory_id=match.memory_ref.memory_id,
+                    rank=index,
+                    score=match.score,
+                    replay_class=match.replay_class,
+                    selected=match.memory_ref.memory_id in selected_ids,
+                )
+                for index, match in enumerate(matches, start=1)
+            ),
+            selected_taxonomy=selected_taxonomy,
+        )
+        return MemoryMatchResult(
+            query_task_id=query.query_task_id,
+            query_spec_hash=query.query_spec_hash,
+            matches=top_matches,
+            retrieval_decision=(
+                "hybrid_memory_match_found" if top_matches else "hybrid_memory_match_missing"
+            ),
+            candidate_pool=candidate_pool,
+            rerank_result=rerank_result,
+            source_ranks=source_ranks,
+        )
+
+    # Compatibility alias for callers that read more naturally as a verb.
+    hybrid_lookup = lookup_hybrid
+
+    def _rank_commits_by_vector(
+        self,
+        query_embedding: StructuredEmbedding | None,
+        *,
+        limit: int,
+    ) -> list[MemoryCommit]:
+        if query_embedding is None:
+            return []
+        faiss_scores = self._faiss_score_map(query_embedding)
+        scored: list[tuple[float, str, MemoryCommit]] = []
+        for memory_id, commit in self.commits.items():
+            ref = commit.memory_ref
+            embedding = self.embeddings.get(ref.embedding_ref_id)
+            if ref.commit_status == MemoryCommitStatus.INVALIDATED or embedding is None:
+                continue
+            if embedding.dims != query_embedding.dims or embedding.encoding != query_embedding.encoding:
+                continue
+            score = (
+                faiss_scores[ref.embedding_ref_id]
+                if ref.embedding_ref_id in faiss_scores
+                else cosine_similarity(query_embedding, embedding)
+            )
+            scored.append((float(score), memory_id, commit))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [commit for _score, _memory_id, commit in scored[:limit]]
+
+    @staticmethod
+    def _gated_replay_class(
+        commit: MemoryCommit,
+        query: MemoryQuery,
+    ) -> ReplayClass | None:
+        ref = commit.memory_ref
+        compatible = ref.canonical_task_spec_hash == query.query_spec_hash
+        if query.compatibility_signature:
+            compatible = compatible and str(
+                ref.metadata.get("runtime_signature_hash", "")
+            ) == query.compatibility_signature
+        if query.output_contract_version:
+            compatible = compatible and str(
+                ref.metadata.get("output_contract_version", "")
+            ) == query.output_contract_version
+
+        replay_class = ref.replay_class
+        if ref.commit_status != MemoryCommitStatus.COMMITTED:
+            replay_class = ReplayClass.ASSIST
+        elif replay_class == ReplayClass.EXACT_REPLAY:
+            if compatible and query.allow_exact_replay:
+                replay_class = ReplayClass.EXACT_REPLAY
+            elif compatible and query.allow_validated_replay:
+                replay_class = ReplayClass.VALIDATED_REPLAY
+            else:
+                replay_class = ReplayClass.ASSIST
+        elif replay_class == ReplayClass.VALIDATED_REPLAY:
+            replay_class = (
+                ReplayClass.VALIDATED_REPLAY
+                if compatible and query.allow_validated_replay
+                else ReplayClass.ASSIST
+            )
+        else:
+            replay_class = ReplayClass.ASSIST
+        if replay_class == ReplayClass.ASSIST and not query.allow_assist:
+            return None
+        return replay_class
 
     def load_persisted_state(self) -> None:
         if self.store_root is None:

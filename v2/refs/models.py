@@ -140,6 +140,9 @@ class HydrateManifestEntry:
     locator: SourceLocator
     stable_key: str
     byte_hint: int = 0
+    candidate_id: str = ""
+    bucket: str = "semantic_context"
+    importance_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -163,6 +166,9 @@ class HydrateManifest:
                         "row_idx": entry.row_idx,
                         "stable_key": entry.stable_key,
                         "byte_hint": entry.byte_hint,
+                        "candidate_id": entry.candidate_id,
+                        "bucket": entry.bucket,
+                        "importance_score": entry.importance_score,
                         "locator": entry.locator,
                     }
                     for entry in self.entries
@@ -231,4 +237,3 @@ class CanonicalEvidencePack:
             "score": item.score,
             "metadata": dict(sorted(item.metadata.items())),
         }
-

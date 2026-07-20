@@ -108,6 +108,99 @@ def test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_bui
     assert metrics["dsl_repair_count"] == 1.0
 
 
+def test_runtime_dispatcher_repairs_dsl_after_business_validator_rejection(tmp_path) -> None:
+    registry, envelope, approved = _setup()
+    pack = CanonicalEvidencePack(
+        pack_id="pack-quality-repair",
+        task_id="task",
+        source_doc_hashes=("doc",),
+        hard_facts=(EvidenceItem(
+            item_id="revenue-q1",
+            bucket="hard_fact",
+            locator=TableCellLocator(
+                source_doc_hash="doc", table_id="income", row_idx=1, col_idx=1,
+            ),
+            metadata={"structured_row": {"quarter": "2026Q1", "revenue_musd": 120.0}},
+        ),),
+    )
+    repair_errors: list[tuple[str, ...]] = []
+
+    def initial_program(step, grant, input_ref_id, rows) -> TransformProgram:
+        del step, rows
+        return TransformProgram(
+            program_id="empty-result",
+            input_artifact_refs=(input_ref_id,),
+            output_contract_version=grant.output_contract_version,
+            operations=(
+                TransformStep("filter_eq", {"column": "quarter", "value": "2099Q4"}),
+                TransformStep("select", {"columns": ["quarter", "revenue_musd"]}),
+            ),
+        )
+
+    def repair_program(step, grant, input_ref_id, rows, validation_errors) -> TransformProgram:
+        del step
+        assert rows == ({"quarter": "2026Q1", "revenue_musd": 120.0},)
+        repair_errors.append(validation_errors)
+        return TransformProgram(
+            program_id="quality-repaired",
+            input_artifact_refs=(input_ref_id,),
+            output_contract_version=grant.output_contract_version,
+            operations=(TransformStep(
+                "select", {"columns": ["quarter", "revenue_musd"]},
+            ),),
+        )
+
+    def report_handler(envelope, plan, step, grant, workspace) -> AdaptiveStepResult:
+        del envelope, plan, step, workspace
+        return AdaptiveStepResult(
+            grant_hash=grant.grant_hash,
+            attempt_id=grant.attempt_id,
+            success=True,
+            output_refs=("report-ref",),
+            output_ref_kinds=("execution_artifact",),
+        )
+
+    context = AdaptiveDispatchContext(
+        registry=registry,
+        retrieval_adapter=AdaptiveRetrievalAdapter(lambda query, request: pack),
+        retrieval_request_factory=lambda step, grant: EvidenceRequest(
+            request_id="quality-repair-request",
+            task_id=grant.task_id,
+            step_id=step.step_id,
+            queries=("ACME revenue",),
+            evidence_types=("table",),
+            corpus_scope_ids=("local",),
+        ),
+        allowed_corpus_scope_ids=("local",),
+        transform_program_factory=initial_program,
+        transform_program_repair_factory=repair_program,
+        output_schema_by_step={
+            "extract": {"quarter": "string", "revenue_musd": "number"},
+        },
+        builtin_handlers={"compose_cited_report_v1": report_handler},
+    )
+    result = RuntimeDriver().run_adaptive(AdaptiveRuntimeRequest(
+        trace_id="dsl-quality-repair",
+        task_id="task",
+        canonical_task_spec_hash="spec",
+        envelope=envelope,
+        approved_plan=approved,
+        registry=registry,
+        runtime_root=str(tmp_path),
+        workspace_root_id="workspace",
+        dispatcher=AdaptiveCapabilityDispatcher(context=context),
+    ))
+
+    assert result.completed
+    assert repair_errors == [("empty_output",)]
+    assert len(context.quality_reports) == 2
+    assert sum(not report.verified for report in context.quality_reports.values()) == 1
+    metrics = result.telemetry.summarize_task("task")
+    assert metrics["dsl_repair_count"] == 1.0
+    assert metrics["dsl_quality_repair_count"] == 1.0
+    assert metrics["dsl_quality_rejected_count"] == 1.0
+
+
 def test_dispatcher_rejects_missing_runtime_builtin_before_handler_side_effect(tmp_path) -> None:
     registry, envelope, approved = _setup()
     context = AdaptiveDispatchContext(registry=registry)

@@ -35,6 +35,7 @@ class CodeGenerationPolicy:
     nproc_limit: int = 65_536
     max_policy_repairs: int = 1
     max_runtime_repairs: int = 1
+    max_quality_repairs: int = 1
     numeric_text_mode: str = "unrestricted"
     policy_version: str = "statebus.llm_code_policy.v1"
     sandbox_policy_version: str = "statebus.llm_bwrap.v1"
@@ -61,6 +62,7 @@ class CodeGenerationPolicy:
             "nproc_limit": self.nproc_limit,
             "max_policy_repairs": self.max_policy_repairs,
             "max_runtime_repairs": self.max_runtime_repairs,
+            "max_quality_repairs": self.max_quality_repairs,
             "numeric_text_mode": self.numeric_text_mode,
             "policy_version": self.policy_version,
             "sandbox_policy_version": self.sandbox_policy_version,

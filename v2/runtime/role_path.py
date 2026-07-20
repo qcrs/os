@@ -2107,6 +2107,14 @@ class RolePathRunner:
             if role_slot_layout
             else {"kind": "steps_array", "required_slots": ["steps"]}
         )
+        capability_ids_by_role = {
+            role: [
+                str(item.get("id", ""))
+                for item in capability_surface
+                if str(item.get("role", "")) == role and str(item.get("id", ""))
+            ]
+            for role in unique_required_roles
+        }
         payload = {
             "task": {"goal": task_goal, "allowed_inputs": list(allowed_inputs)},
             "capability_surface": list(capability_surface),
@@ -2126,6 +2134,7 @@ class RolePathRunner:
                     "max_conflicts",
                 ],
                 "required_roles": list(unique_required_roles),
+                "capability_ids_by_role": capability_ids_by_role,
                 "role_cardinality": {
                     role: {"minimum": bounds[0], "maximum": bounds[1]}
                     for role, bounds in sorted(role_cardinality.items())
@@ -2154,7 +2163,9 @@ class RolePathRunner:
             "You are StateBus Planner. Propose a bounded DAG only; you do not dispatch, call roles, "
             "register capabilities, write code, shell commands, paths, or network addresses. Copy only "
             "capability IDs in capability_surface and keep each role/output contract consistent with that same "
-            "capability entry. Return JSON using authority.plan_response_layout and final_output_contract_version. "
+            "capability entry. For every step, capability_id must be copied from "
+            "authority.capability_ids_by_role[role]; verify each required role slot against that exact allowlist before "
+            "returning. Return JSON using authority.plan_response_layout and final_output_contract_version. "
             "Each step has step_id, role, capability_id, goal, depends_on, input_ref_ids, input_ref_kinds, "
             "output_contract_version, and completion_criteria. Do not emit on_failure: it is controller-owned "
             "recovery policy and will be attached after policy validation, with no more than budgets.max_replans "

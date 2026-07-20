@@ -47,6 +47,13 @@ message ExecRequest {
   string output_contract_version = 7;
   string workspace_root = 8;
   string input_manifest_hash = 9;
+  string operation = 10;
+  string state_root = 11;
+  string hydrate_manifest_id = 12;
+  uint32 semantic_top_k = 13;
+  uint64 evidence_budget_bytes = 14;
+  string expected_encoder_signature = 15;
+  string capability_grant_hash = 16;
 }
 
 message AckReceived {
@@ -73,6 +80,14 @@ message SuccessResult {
   repeated RefHandle artifact_refs = 3;
   string output_contract_version = 4;
   int64 completed_at_ns = 5;
+  string consumed_state_ref_id = 6;
+  repeated string selected_candidate_ids = 7;
+  repeated double selected_scores = 8;
+  repeated uint32 selected_row_indices = 9;
+  uint64 selected_evidence_bytes = 10;
+  int64 consumer_pid = 11;
+  int64 producer_pid = 12;
+  string encoder_signature = 13;
 }
 
 message ErrorResult {

@@ -12,6 +12,23 @@ from v2.state.store import (
     MaterializedStateHandle,
     StorageDecision,
 )
+from v2.state.semantic_state import (
+    DENSE_SEMANTIC_STATE_SCHEMA_VERSION,
+    DenseSemanticSelection,
+    DenseSemanticStateContract,
+    DenseSemanticStatePublication,
+    ResolvedDenseSemanticState,
+    SemanticStateValidationError,
+    encode_dense_semantic_matrix,
+    encoder_signature_for,
+    load_hydrate_manifest,
+    persist_hydrate_manifest,
+    publish_dense_semantic_state,
+    query_embedding_from_dense_state,
+    resolve_dense_semantic_state,
+    select_dense_semantic_state,
+    semantic_ref_from_sidecar,
+)
 
 __all__ = [
     "JsonContractStore",
@@ -24,4 +41,19 @@ __all__ = [
     "RefRegistryQuery",
     "RetrievalSidecarStore",
     "StorageDecision",
+    "DENSE_SEMANTIC_STATE_SCHEMA_VERSION",
+    "DenseSemanticSelection",
+    "DenseSemanticStateContract",
+    "DenseSemanticStatePublication",
+    "ResolvedDenseSemanticState",
+    "SemanticStateValidationError",
+    "encode_dense_semantic_matrix",
+    "encoder_signature_for",
+    "load_hydrate_manifest",
+    "persist_hydrate_manifest",
+    "publish_dense_semantic_state",
+    "query_embedding_from_dense_state",
+    "resolve_dense_semantic_state",
+    "select_dense_semantic_state",
+    "semantic_ref_from_sidecar",
 ]

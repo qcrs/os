@@ -85,6 +85,9 @@ def manifest_to_dict(manifest: HydrateManifest) -> dict[str, Any]:
                 "row_idx": entry.row_idx,
                 "stable_key": entry.stable_key,
                 "byte_hint": entry.byte_hint,
+                "candidate_id": entry.candidate_id,
+                "bucket": entry.bucket,
+                "importance_score": entry.importance_score,
                 "locator": locator_to_dict(entry.locator),
             }
             for entry in manifest.entries
@@ -105,6 +108,9 @@ def manifest_from_dict(payload: dict[str, Any]) -> HydrateManifest:
                 row_idx=int(entry.get("row_idx", 0)),
                 stable_key=str(entry.get("stable_key", "")),
                 byte_hint=int(entry.get("byte_hint", 0)),
+                candidate_id=str(entry.get("candidate_id", "")),
+                bucket=str(entry.get("bucket", "semantic_context")),
+                importance_score=float(entry.get("importance_score", 0.0)),
                 locator=locator_from_dict(dict(entry.get("locator", {}))),
             )
             for entry in payload.get("entries", [])

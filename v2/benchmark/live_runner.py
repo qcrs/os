@@ -50,9 +50,8 @@ def _default_continuous_family_dir() -> Path:
 def _default_continuous_family_roots() -> tuple[Path, ...]:
     base = Path(__file__).with_name("samples") / "continuous_task_families"
     return (
-        base / "csv_table_profile",
-        base / "incident_diagnosis",
-        base / "long_doc_table",
+        base / "formal_operating_metrics",
+        base / "formal_financial_reports",
     )
 
 
@@ -86,6 +85,10 @@ def _continuous_family_dir_by_id(family_id: str) -> Path:
         "cross_period_financial": base / "cross_period_financial",
         "kv_prefix_reuse_v1": base / "kv_prefix_reuse",
         "kv_prefix_reuse": base / "kv_prefix_reuse",
+        "formal_operating_metrics_v1": base / "formal_operating_metrics",
+        "formal_operating_metrics": base / "formal_operating_metrics",
+        "formal_financial_reports_v1": base / "formal_financial_reports",
+        "formal_financial_reports": base / "formal_financial_reports",
     }
     resolved = mapping.get(family_id.strip())
     if resolved is None:
@@ -377,6 +380,7 @@ def main() -> None:
                 suite_id=f"{args.suite_id}-continuous",
                 role_path_mode=args.role_path_mode,
                 embedding_mode=args.embedding_mode,
+                state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
                 execution_scope=execution_scope,
@@ -404,6 +408,7 @@ def main() -> None:
                 layer=layer,
                 role_path_mode=args.role_path_mode,
                 embedding_mode=args.embedding_mode,
+                state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
                 enforce_expected_metric_effects=False,
@@ -434,6 +439,7 @@ def main() -> None:
             suite_id=f"{args.suite_id}-continuous",
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
+            state_pool_mode=args.state_pool_mode,
             persistence_profile=args.persistence_profile,
             task_schedule_plan=args.task_schedule_plan,
             claim_level="diagnostic" if execution_scope != "full" else "first_pass",
@@ -473,6 +479,7 @@ def main() -> None:
                 suite_id=f"{args.suite_id}-continuous-replay",
                 role_path_mode=args.role_path_mode,
                 embedding_mode=args.embedding_mode,
+                state_pool_mode=args.state_pool_mode,
                 collection_scope="formal_replay_task_families",
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
@@ -501,6 +508,7 @@ def main() -> None:
                 layer=layer,
                 role_path_mode=args.role_path_mode,
                 embedding_mode=args.embedding_mode,
+                state_pool_mode=args.state_pool_mode,
                 persistence_profile=args.persistence_profile,
                 task_schedule_plan=args.task_schedule_plan,
                 enforce_expected_metric_effects=False,
@@ -531,6 +539,7 @@ def main() -> None:
             suite_id=f"{args.suite_id}-continuous-replay",
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
+            state_pool_mode=args.state_pool_mode,
             persistence_profile=args.persistence_profile,
             task_schedule_plan=args.task_schedule_plan,
             claim_level="diagnostic" if execution_scope != "full" else "first_pass",
@@ -576,6 +585,7 @@ def main() -> None:
             suite_id=f"{args.suite_id}-continuous-{family.family_id}",
             role_path_mode=args.role_path_mode,
             embedding_mode=args.embedding_mode,
+            state_pool_mode=args.state_pool_mode,
             persistence_profile=args.persistence_profile,
             task_schedule_plan=args.task_schedule_plan,
         )

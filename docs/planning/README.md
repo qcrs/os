@@ -4,6 +4,7 @@
 
 ## 当前入口
 
+- `adaptive_mainline_semantic_state_integration_plan_20260719.md`: 当前 `feat/yzm-v2-migration` 的 Adaptive 主 Runtime、真实 embedding state、hybrid memory、Docker 与静默测试实施合同和执行 Prompt。
 - `statebus_v2_clean_room_rebuild_plan_20260625.md`: v2 clean-room rebuild 主规划。
 - `statebus_v2_container_refactor_bootstrap_20260627.md`: v2 container / openEuler bootstrap 规划。
 - `continuous_task_family_design_20260630.md`: continuous task family 设计。

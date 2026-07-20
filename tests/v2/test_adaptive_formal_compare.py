@@ -13,6 +13,12 @@ from scripts.v2_diagnostics.run_adaptive_formal_compare import (
     _partition_planner_repair_errors,
     _row_scoped_evidence_items,
 )
+from v2.benchmark.adaptive_formal_mainline import (
+    _adaptive_metrics,
+    _build_formal_analysis_context,
+    _case_system_gate_checks,
+    _terminal_quality_reports,
+)
 from v2.benchmark.adaptive_formal import (
     adapt_formal_sample,
     build_formal_quality_validator,
@@ -119,6 +125,57 @@ def test_aggregation_rounding_contract_is_executor_visible_without_expected_fact
         "task_parameters": parameters,
     })
     assert all(str(value) not in visible_contract for value in case.sample.expected_facts.values())
+
+
+def test_formal_analysis_context_preserves_controller_operation_contract_without_answers() -> None:
+    case = next(case for case in _cases() if case.operation == "materialize_clean_table")
+    context = _build_formal_analysis_context(
+        case,
+        build_non_answer_source_profile(case.source_rows),
+    )
+
+    assert context["operation"] == "materialize_clean_table"
+    assert "(n-1)*p" in str(context["inclusive_quantile_definition"])
+    assert "do not impute" in str(context["outlier_column_missing_policy"]).lower()
+    assert "only missing impute_column" in str(context["impute_column_missing_policy"])
+    assert context["expected_values_are_not_provided"] is True
+    serialized = stable_json_dumps(context)
+    assert all(str(value) not in serialized for value in case.sample.expected_facts.values())
+
+
+def test_adaptive_metrics_exposes_planner_gate_counts() -> None:
+    metrics = _adaptive_metrics(
+        [
+            {
+                "runtime_completed": True,
+                "ok": True,
+                "usage": {},
+                "telemetry": {
+                    "planner_hard_rejection_count": 0,
+                    "planner_schema_repair_count": 1,
+                    "planner_final_approved_count": 1,
+                    "llm_codeact_quality_repair_count": 1,
+                    "llm_codeact_quality_rejected_count": 1,
+                    "dsl_quality_repair_count": 2,
+                    "dsl_quality_rejected_count": 2,
+                },
+                "planner_policy_repair_used": True,
+                "planner_schema_normalization_used": True,
+            }
+        ],
+        selected_case_count=1,
+        attempted_case_count=1,
+    )
+
+    assert metrics["planner_hard_rejection_count"] == 0
+    assert metrics["planner_runtime_schema_repair_count"] == 1
+    assert metrics["planner_policy_repair_count"] == 1
+    assert metrics["planner_schema_normalization_count"] == 1
+    assert metrics["planner_final_approved_count"] == 1
+    assert metrics["codeact_quality_repair_count"] == 1
+    assert metrics["codeact_quality_rejected_count"] == 1
+    assert metrics["dsl_quality_repair_count"] == 2
+    assert metrics["dsl_quality_rejected_count"] == 2
 
 
 def test_formal_numeric_parser_contract_allows_only_in_memory_string_replace() -> None:
@@ -326,27 +383,36 @@ def test_formal_schema_normalizer_does_not_clear_unknown_retriever_ref() -> None
 
 def test_formal_compare_runner_is_new_adaptive_path_not_old_suite_wrapper() -> None:
     root = Path(__file__).resolve().parents[2]
-    source = (root / "scripts/v2_diagnostics/run_adaptive_formal_compare.py").read_text(
+    source = (root / "v2/benchmark/adaptive_formal_mainline.py").read_text(
+        encoding="utf-8"
+    )
+    cli_source = (root / "scripts/v2_diagnostics/run_adaptive_formal_compare.py").read_text(
         encoding="utf-8"
     )
     wrapper = root / "scripts/v2_diagnostics/run_adaptive_formal_compare_gpu1.sh"
 
-    assert "RuntimeDriver().run_adaptive(" in source
+    assert 'RuntimeDriver().run_mode("adaptive_bounded"' in source
+    assert "AdaptiveDispatchContext(" not in source
+    assert "AdaptiveCapabilityDispatcher(" not in source
     assert "run_minimal_benchmark_family(" in source
     assert "run_v2_local_vllm_audit" not in source
     assert "run_adaptive_mode_matrix" not in source
+    assert len(cli_source.splitlines()) < 40
+    assert "AdaptiveMainlineRequest" not in cli_source
     assert wrapper.is_file()
 
 
-def test_formal_runtime_uses_generic_authority_not_case_operation_capabilities() -> None:
+def test_formal_runtime_uses_generic_authority_with_declared_operation_contract() -> None:
     root = Path(__file__).resolve().parents[2]
-    source = (root / "scripts/v2_diagnostics/run_adaptive_formal_compare.py").read_text(
+    source = (root / "v2/benchmark/adaptive_formal_mainline.py").read_text(
         encoding="utf-8"
     )
-    assert 'register_generic_adaptive_analysis_capabilities(registry)' in source
-    assert 'case.operation_semantics' not in source
+    assert 'analysis_validator_ids=("formal_analysis", "generic_analysis")' in source
+    assert 'validator_registry.register("formal_analysis", build_formal_quality_validator(case))' in source
+    assert "_build_formal_analysis_context(case, source_profile)" in source
     assert 'case.capability_id: {' not in source
     assert 'execute_bounded_python_v2' in source
+    assert source.count('"runtime_quality_scope": "formal_contract_recomputation_from_authorized_inputs"') == 2
 
 
 def test_generic_analysis_validator_does_not_use_hidden_expected_rows() -> None:
@@ -371,6 +437,41 @@ def test_generic_analysis_validator_does_not_use_hidden_expected_rows() -> None:
     assert not report.recomputation_passed
     assert report.execution_verified
     assert not report.recomputation_evaluated
+
+
+def test_generic_analysis_pack_declares_controller_selected_validator_order() -> None:
+    registry = CapabilityRegistry()
+    register_generic_adaptive_analysis_capabilities(
+        registry,
+        analysis_validator_ids=("formal_analysis", "generic_analysis"),
+    )
+
+    assert registry.get("execute_analysis_dsl_v2").validator_ids == (
+        "formal_analysis", "generic_analysis",
+    )
+    assert registry.get("execute_bounded_python_v2").validator_ids == (
+        "formal_analysis", "generic_analysis",
+    )
+
+
+def test_formal_validator_does_not_claim_recomputation_for_intermediate_schema() -> None:
+    case = next(case for case in _cases() if case.operation == "compute_delta")
+    validator = build_formal_quality_validator(case)
+    report = validator(CapabilityQualityContext(
+        capability_id=case.capability_id,
+        validator_id="formal_analysis",
+        input_rows=(case.source_rows,),
+        output_rows=({"intermediate_value": 1.0},),
+        input_artifact_hashes=("source-hash",),
+        output_artifact_hash="output-hash",
+        required_fields=("intermediate_value",),
+        completion_criteria={"min_rows": 1},
+        provenance_item_ids=("formal-source",),
+    ))
+
+    assert report.verified
+    assert not report.recomputation_evaluated
+    assert not report.recomputation_passed
     assert report.semantic_verification_status == "not_evaluated"
 
 
@@ -693,6 +794,90 @@ def test_case_gate_failure_attributes_external_quality_to_executor_model() -> No
         "claim_sets": [{"status": "ready"}],
     })
 
+    assert failure["category"] == "model_quality"
+    assert failure["stage"] == "executor"
+    assert failure["system_gate_failed"] is False
+
+
+def test_terminal_quality_gate_accepts_verified_repair_and_retains_rejected_history() -> None:
+    rejected = {
+        "output_artifact_hash": "rejected-output",
+        "verified": False,
+        "error_codes": ["formal_recomputation_mismatch"],
+    }
+    repaired = {
+        "output_artifact_hash": "accepted-output",
+        "verified": True,
+        "error_codes": [],
+    }
+    history = [rejected, repaired]
+
+    terminal = _terminal_quality_reports(
+        history,
+        output_artifact_hash="accepted-output",
+    )
+    checks = _case_system_gate_checks({
+        "ok": True,
+        "runtime_completed": True,
+        "claim_sets": [{"status": "ready"}],
+        "quality_reports": history,
+        "terminal_quality_reports": terminal,
+        "execution_output_artifact_hash": "accepted-output",
+        "telemetry": {},
+        "execution_records": [],
+        "runtime_dispatches": [],
+        "benchmark_oracle_visible_to_roles": False,
+    })
+
+    assert history == [rejected, repaired]
+    assert terminal == [repaired]
+    assert checks["passing_case_refs_verified"] is True
+
+
+def test_case_system_gate_rederives_terminal_quality_from_the_output_hash() -> None:
+    rejected = {
+        "output_artifact_hash": "accepted-output",
+        "verified": False,
+    }
+    checks = _case_system_gate_checks({
+        "ok": True,
+        "runtime_completed": True,
+        "claim_sets": [{"status": "ready"}],
+        "quality_reports": [rejected],
+        "terminal_quality_reports": [{
+            "output_artifact_hash": "forged-output",
+            "verified": True,
+        }],
+        "execution_output_artifact_hash": "accepted-output",
+        "telemetry": {},
+        "execution_records": [],
+        "runtime_dispatches": [],
+        "benchmark_oracle_visible_to_roles": False,
+    })
+
+    assert checks["passing_case_refs_verified"] is False
+
+
+def test_case_gate_failure_attributes_terminal_quality_rejection_to_executor_model() -> None:
+    rejected = {
+        "output_artifact_hash": "terminal-output",
+        "verified": False,
+        "error_codes": ["formal_recomputation_mismatch"],
+    }
+    failure = _case_gate_failure({
+        "task_id": "formal-quality-rejected",
+        "runtime_completed": True,
+        "runtime_dispatches": [],
+        "approved_steps": [],
+        "provenance_expected_facts": {"passed": True},
+        "expected_facts_report": {"passed": True},
+        "claim_sets": [{"status": "ready"}],
+        "quality_reports": [rejected],
+        "terminal_quality_reports": [rejected],
+        "execution_output_artifact_hash": "terminal-output",
+    })
+
+    assert failure["error_code"] == "terminal_capability_quality_rejected"
     assert failure["category"] == "model_quality"
     assert failure["stage"] == "executor"
     assert failure["system_gate_failed"] is False

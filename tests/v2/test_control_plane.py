@@ -49,6 +49,13 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
         output_contract_version="output-v1",
         workspace_root="/statebus/workspaces/task-1",
         input_manifest_hash="sha256:manifest",
+        operation="semantic_select_v1",
+        state_root="/statebus/work/statepool/task-1",
+        hydrate_manifest_id="manifest-1",
+        semantic_top_k=3,
+        evidence_budget_bytes=4096,
+        expected_encoder_signature="encoder-signature",
+        capability_grant_hash="grant-hash",
     )
 
     parsed = deframe_control_message(frame_control_message(message))
@@ -60,6 +67,13 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
     assert parsed.reuse_policy.allow_validated_replay is True
     assert parsed.runtime_reuse_contract == "benchmark_strict:exact_replay_allowed"
     assert parsed.workspace_root == "/statebus/workspaces/task-1"
+    assert parsed.operation == "semantic_select_v1"
+    assert parsed.state_root == "/statebus/work/statepool/task-1"
+    assert parsed.hydrate_manifest_id == "manifest-1"
+    assert parsed.semantic_top_k == 3
+    assert parsed.evidence_budget_bytes == 4096
+    assert parsed.expected_encoder_signature == "encoder-signature"
+    assert parsed.capability_grant_hash == "grant-hash"
 
 
 def test_loopback_transport_shortens_overlong_unix_socket_path(tmp_path: Path) -> None:

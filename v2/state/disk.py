@@ -1161,6 +1161,11 @@ class JsonContractStore:
             rerank_result=rerank_result,
             candidate_pool_hash=str(payload.get("candidate_pool_hash", "")),
             rerank_result_hash=str(payload.get("rerank_result_hash", "")),
+            source_ranks={
+                str(source): tuple(str(memory_id) for memory_id in memory_ids)
+                for source, memory_ids in dict(payload.get("source_ranks", {})).items()
+                if isinstance(memory_ids, (list, tuple))
+            },
             schema_version=str(payload.get("schema_version", "")),
         )
 

@@ -122,6 +122,11 @@ class RuntimeDriverInput:
     role_hydration_item_count: dict[str, int]
     semantic_state_handle: MaterializedStateHandle | None
     semantic_ref: SemanticStateRef | None
+    semantic_state_consumer_pid: int
+    semantic_state_producer_pid: int
+    semantic_state_selected_count: int
+    semantic_state_selected_candidate_ids: tuple[str, ...]
+    semantic_state_selected_bytes: int
     input_manifest: InputManifest
     artifact_manifest: ArtifactOutputManifest
     log_capture: ExecutionLogCapture
@@ -250,6 +255,36 @@ class RuntimeDriver:
         from v2.runtime.adaptive_runtime import AdaptiveRuntimeEngine
 
         return AdaptiveRuntimeEngine().run(runtime_request)
+
+    def run_adaptive_mainline(self, request):
+        """Assemble and run the product-owned bounded adaptive mainline."""
+        from v2.runtime.adaptive_mainline import AdaptiveMainlineRunner
+
+        return AdaptiveMainlineRunner().run(request)
+
+    def run_mode(
+        self,
+        mode: str,
+        *,
+        strict_input: RuntimeDriverInput | None = None,
+        adaptive_request=None,
+        shadow_request=None,
+    ):
+        """Explicit product workflow selector used by normal runtime entrypoints."""
+        normalized = str(mode).strip().lower()
+        if normalized == "strict_fixed":
+            if strict_input is None:
+                raise ValueError("strict_fixed_runtime_input_required")
+            return self.run(strict_input)
+        if normalized == "adaptive_bounded":
+            if adaptive_request is None:
+                raise ValueError("adaptive_bounded_request_required")
+            return self.run_adaptive_mainline(adaptive_request)
+        if normalized == "adaptive_shadow":
+            if strict_input is None or shadow_request is None:
+                raise ValueError("adaptive_shadow_inputs_required")
+            return self.run_adaptive_shadow(strict_input, shadow_request)
+        raise ValueError(f"unsupported_runtime_workflow_mode:{mode}")
 
     def run_adaptive_shadow(self, runtime_input: RuntimeDriverInput, shadow_request):
         """Audit an adaptive plan, then execute the existing strict path exactly once."""
@@ -1158,6 +1193,26 @@ class RuntimeDriver:
 
         if runtime_input.semantic_state_handle is not None:
             runtime_input.state_store.release(runtime_input.semantic_state_handle.ref_id)
+            telemetry.emit(
+                TelemetryEvent.create(
+                    trace_id=runtime_input.trace_id,
+                    task_id=runtime_input.task_id,
+                    step_id=runtime_input.step_id,
+                    event_type="STATE_RELEASED",
+                    role="runtime_supervisor",
+                    channel="semantic_state",
+                    payload={
+                        "ref_id": runtime_input.semantic_state_handle.ref_id,
+                        "owner": f"session-{runtime_input.task_id}",
+                    },
+                    metrics={
+                        "semantic_state_release_count": 1.0,
+                        "semantic_state_released_bytes": float(
+                            runtime_input.semantic_state_handle.size_bytes
+                        ),
+                    },
+                )
+            )
 
         persist_and_reload_stage_ms = self._last_persist_and_reload_stage_ms
         persist_and_reload_breakdown = dict(self._last_persist_and_reload_breakdown)
@@ -1477,11 +1532,16 @@ class RuntimeDriver:
                     channel="semantic_state",
                     payload={
                         "ref_id": runtime_input.semantic_ref.state_id,
-                        "manifest_id": runtime_input.retrieval.hydrate_manifest.manifest_id,
+                        "manifest_id": runtime_input.semantic_ref.manifest_id,
                         "storage_kind": runtime_input.semantic_state_handle.storage_kind.value,
                     },
                     metrics={
-                        "semantic_state_transfer_count": 1.0,
+                        # Publication is a producer-local materialization. A
+                        # transfer is counted only after the consumer proves a
+                        # cross-process resolve below.
+                        "semantic_state_transfer_count": 0.0,
+                        "semantic_state_publish_count": 1.0,
+                        "semantic_state_bytes": float(runtime_input.semantic_state_handle.size_bytes),
                         "memfd_publish_count": (
                             1.0
                             if runtime_input.semantic_state_handle.storage_kind == StorageKind.MEMFD
@@ -1500,35 +1560,87 @@ class RuntimeDriver:
                     },
                 )
             )
-            for role in ("retriever", "executor", "summarizer"):
+            if runtime_input.semantic_state_consumer_pid > 0:
                 telemetry.emit(
                     TelemetryEvent.create(
                         trace_id=runtime_input.trace_id,
                         task_id=runtime_input.task_id,
                         step_id=runtime_input.step_id,
-                        event_type="STATE_HYDRATED",
-                        role=role,
+                        event_type="STATE_RESOLVED",
+                        role="executor",
                         channel="semantic_state",
                         payload={
-                            "manifest_id": runtime_input.retrieval.hydrate_manifest.manifest_id,
-                            "evidence_pack_id": runtime_input.retrieval.evidence_pack.pack_id,
-                            "locator_count": len(runtime_input.retrieval.hydrate_manifest.entries),
-                            "hydrated_role": role,
+                            "ref_id": runtime_input.semantic_ref.state_id,
+                            "manifest_id": runtime_input.semantic_ref.manifest_id,
+                            "producer_pid": runtime_input.semantic_state_producer_pid,
+                            "consumer_pid": runtime_input.semantic_state_consumer_pid,
                         },
                         metrics={
-                            "external_evidence_bytes": float(
-                                runtime_input.role_hydration_bytes.get(f"{role}_text", 0)
-                                + runtime_input.role_hydration_bytes.get(f"{role}_table", 0)
+                            "semantic_state_resolve_count": 1.0,
+                            "semantic_state_transfer_count": float(
+                                runtime_input.semantic_state_producer_pid
+                                != runtime_input.semantic_state_consumer_pid
                             ),
-                            "prompt_visible_bytes": float(runtime_input.role_hydration_bytes.get(role, 0)),
-                            "hydrated_item_count": float(runtime_input.role_hydration_item_count.get(role, 0)),
-                            "text_bytes": float(runtime_input.role_hydration_bytes.get(f"{role}_text", 0)),
-                            "table_bytes": float(runtime_input.role_hydration_bytes.get(f"{role}_table", 0)),
-                            "artifact_bytes": float(runtime_input.role_hydration_bytes.get(f"{role}_artifact", 0)),
-                            "memory_bytes": float(runtime_input.role_hydration_bytes.get(f"{role}_memory", 0)),
+                            "semantic_state_consumer_pid": float(runtime_input.semantic_state_consumer_pid),
+                            "semantic_state_producer_pid": float(runtime_input.semantic_state_producer_pid),
                         },
                     )
                 )
+                telemetry.emit(
+                    TelemetryEvent.create(
+                        trace_id=runtime_input.trace_id,
+                        task_id=runtime_input.task_id,
+                        step_id=runtime_input.step_id,
+                        event_type="STATE_CONSUMED",
+                        role="executor",
+                        channel="semantic_state",
+                        payload={
+                            "ref_id": runtime_input.semantic_ref.state_id,
+                            "selected_candidate_count": runtime_input.semantic_state_selected_count,
+                            "selected_candidate_ids": list(
+                                runtime_input.semantic_state_selected_candidate_ids
+                            ),
+                        },
+                        metrics={
+                            "semantic_state_consume_count": 1.0,
+                            "semantic_state_selected_count": float(runtime_input.semantic_state_selected_count),
+                            "selected_candidate_count": float(runtime_input.semantic_state_selected_count),
+                            "selected_evidence_bytes": float(runtime_input.semantic_state_selected_bytes),
+                        },
+                    )
+                )
+        telemetry.emit(
+            TelemetryEvent.create(
+                trace_id=runtime_input.trace_id,
+                task_id=runtime_input.task_id,
+                step_id=runtime_input.step_id,
+                event_type="MEMORY_HYBRID_QUERIED",
+                role="runtime_supervisor",
+                channel="memory",
+                payload={
+                    "candidate_pool_hash": runtime_input.memory_match_result.candidate_pool_hash,
+                    "rerank_result_hash": runtime_input.memory_match_result.rerank_result_hash,
+                    "source_ranks": {
+                        source: list(memory_ids)
+                        for source, memory_ids in sorted(
+                            runtime_input.memory_match_result.source_ranks.items()
+                        )
+                    },
+                },
+                metrics={
+                    "hybrid_memory_query_count": 1.0,
+                    "memory_keyword_candidate_count": float(len(
+                        runtime_input.memory_match_result.source_ranks.get("keyword", ())
+                    )),
+                    "memory_tag_candidate_count": float(len(
+                        runtime_input.memory_match_result.source_ranks.get("tags", ())
+                    )),
+                    "memory_vector_candidate_count": float(len(
+                        runtime_input.memory_match_result.source_ranks.get("vector", ())
+                    )),
+                },
+            )
+        )
 
     def _run_non_executor_step(
         self,

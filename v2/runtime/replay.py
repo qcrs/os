@@ -17,7 +17,7 @@ from v2.contracts import (
 from v2.memory import MemoryCommit, MemoryIndexStore
 from v2.refs import CanonicalEvidencePack, ExecutionArtifactRef, HydrateManifest
 from v2.runtime.ledger import ReplayLedgerEntry
-from v2.utils import sha256_digest
+from v2.utils import sha256_digest, stable_json_dumps
 
 
 _BENCHMARK_ONLY_ARGUMENT_KEYS = {"quality_checks", "reuse_contract", "depends_on_rounds"}
@@ -239,18 +239,24 @@ def evidence_execution_input_replay_hash(pack: CanonicalEvidencePack) -> str:
 
 
 def hydrate_manifest_replay_hash(manifest: HydrateManifest) -> str:
+    # Dense-state row indices and importance scores describe the current
+    # query's carrier layout.  Exact replay is instead bound to the stable
+    # hydration surface: source hashes, locators, byte hints, and extractor
+    # versions.  Canonical sorting prevents a query-specific candidate order
+    # from turning an otherwise identical execution input into a cache miss.
+    entries = [
+        {
+            "stable_key": entry.stable_key,
+            "byte_hint": entry.byte_hint,
+            "locator": asdict(entry.locator),
+        }
+        for entry in manifest.entries
+    ]
+    entries.sort(key=stable_json_dumps)
     return sha256_digest(
         {
             "source_doc_hashes": list(manifest.source_doc_hashes),
-            "entries": [
-                {
-                    "row_idx": entry.row_idx,
-                    "stable_key": entry.stable_key,
-                    "byte_hint": entry.byte_hint,
-                    "locator": asdict(entry.locator),
-                }
-                for entry in manifest.entries
-            ],
+            "entries": entries,
             "canonicalizer_version": manifest.canonicalizer_version,
             "extractor_version": manifest.extractor_version,
             "schema_version": manifest.schema_version,

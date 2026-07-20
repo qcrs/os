@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 import socket
 import sys
 import time
@@ -42,6 +43,11 @@ from v2.control.messages import (
     SuccessResult,
 )
 from v2.control.transport import decode_memfd_ref, recv_control_message, send_control_message
+from v2.state import (
+    SemanticStateValidationError,
+    select_dense_semantic_state,
+    semantic_ref_from_sidecar,
+)
 
 
 def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
@@ -96,6 +102,7 @@ def run(socket_path: str) -> int:
     header = message.header
     runtime_reuse_contract = message.runtime_reuse_contract or ""
     semantic_optional = "no_semantic_state" in runtime_reuse_contract
+    semantic_selection = message.operation == "semantic_select_v1"
 
     errors: list[str] = []
     if not message.workspace_root.strip():
@@ -106,8 +113,19 @@ def run(socket_path: str) -> int:
         errors.append("output_contract_version_missing")
     if not semantic_optional and not message.state_refs:
         errors.append("state_refs_missing")
-    if not message.artifact_refs:
+    if not semantic_selection and not message.artifact_refs:
         errors.append("artifact_refs_missing")
+    if semantic_selection:
+        if not message.state_root.strip():
+            errors.append("state_root_missing")
+        if not message.hydrate_manifest_id.strip():
+            errors.append("hydrate_manifest_id_missing")
+        if message.semantic_top_k <= 0:
+            errors.append("semantic_top_k_missing")
+        if not message.capability_grant_hash.strip():
+            errors.append("capability_grant_hash_missing")
+        if len(message.state_refs) != 1:
+            errors.append("semantic_state_ref_count_invalid")
 
     if errors:
         send_control_message(
@@ -157,16 +175,62 @@ def run(socket_path: str) -> int:
             worker_state="running",
         ),
     )
-    send_control_message(
-        sock,
-        SuccessResult(
-            header=replace(header, event_type=EventType.RES_SUCC),
-            state_refs=message.state_refs,
-            artifact_refs=message.artifact_refs,
-            output_contract_version=message.output_contract_version,
-            completed_at_ns=time.time_ns(),
-        ),
-    )
+    if semantic_selection:
+        try:
+            state_ref = semantic_ref_from_sidecar(
+                Path(message.state_root),
+                message.state_refs[0].ref_id,
+            )
+            selection = select_dense_semantic_state(
+                state_root=Path(message.state_root),
+                ref=state_ref,
+                manifest_id=message.hydrate_manifest_id,
+                top_k=message.semantic_top_k,
+                evidence_budget_bytes=message.evidence_budget_bytes,
+                expected_encoder_signature=message.expected_encoder_signature,
+                unregister_shared_memory_tracker=True,
+            )
+        except (SemanticStateValidationError, ValueError, OSError) as exc:
+            send_control_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="semantic_state_consume_failed",
+                    error_detail=str(exc) or type(exc).__name__,
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
+        send_control_message(
+            sock,
+            SuccessResult(
+                header=replace(header, event_type=EventType.RES_SUCC),
+                state_refs=message.state_refs,
+                artifact_refs=message.artifact_refs,
+                output_contract_version=message.output_contract_version,
+                completed_at_ns=time.time_ns(),
+                consumed_state_ref_id=selection.state_id,
+                selected_candidate_ids=selection.selected_candidate_ids,
+                selected_scores=selection.selected_scores,
+                selected_row_indices=selection.selected_row_indices,
+                selected_evidence_bytes=selection.selected_evidence_bytes,
+                consumer_pid=selection.consumer_pid,
+                producer_pid=selection.producer_pid,
+                encoder_signature=selection.encoder_signature,
+            ),
+        )
+    else:
+        send_control_message(
+            sock,
+            SuccessResult(
+                header=replace(header, event_type=EventType.RES_SUCC),
+                state_refs=message.state_refs,
+                artifact_refs=message.artifact_refs,
+                output_contract_version=message.output_contract_version,
+                completed_at_ns=time.time_ns(),
+            ),
+        )
     sock.close()
     return 0
 
