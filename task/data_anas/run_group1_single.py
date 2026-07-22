@@ -23,7 +23,6 @@ os.environ.setdefault("LOCAL_MODEL_PATH", "/data/models/Qwen3-8B")
 os.environ.setdefault("LOCAL_MODEL_DEVICE", "cuda:0")
 os.environ.setdefault("LOCAL_MODEL_DTYPE", "bfloat16")
 os.environ.setdefault("LOCAL_TRANSFORMERS_MAX_NEW_TOKENS", "512")
-os.environ.pop("DASHSCOPE_API_KEY", None)
 os.environ.pop("http_proxy", None)
 os.environ.pop("https_proxy", None)
 os.environ.pop("HTTP_PROXY", None)
@@ -37,12 +36,13 @@ import time
 from pathlib import Path
 
 TASK_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = TASK_DIR.parent
+PROJECT_ROOT = TASK_DIR.parents[1]
 
 for p in (
+    PROJECT_ROOT,
     PROJECT_ROOT / "src",
-    PROJECT_ROOT / "langgraph" / "libs" / "langgraph",
-    PROJECT_ROOT / "langgraph" / "libs" / "checkpoint",
+    PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "langgraph",
+    PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "checkpoint",
 ):
     sys.path.insert(0, str(p))
 
@@ -54,6 +54,7 @@ from metrics import metrics            # noqa: E402
 TASKS_FILE = TASK_DIR / "group1_tasks.json"
 CSV_FILE = TASK_DIR / "csv" / "titanic.csv"
 CSV_SAMPLE_ROWS = 40                   # rows included in the query context
+TASK_TOPIC = "Titanic CSV analysis"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -111,10 +112,16 @@ def run_all_tasks(mode: str) -> dict:
             result = graph.invoke({
                 "query": query,
                 "task_group": task_group,
+                "task_topic": TASK_TOPIC,
                 "mode": mode,
             })
         except Exception as exc:
             result = {"summary": "", "analysis": "", "error": str(exc)}
+            print(
+                f"  [{mode}] Round {rd}/{total} error: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
         duration = time.perf_counter() - t0
 
         summary_text = result.get("summary", "")
@@ -127,11 +134,16 @@ def run_all_tasks(mode: str) -> dict:
             "task_id": task["id"],
             "question": task["question"],
             "expected_format": task["answer_format"],
+            "error": result.get("error", ""),
             "summary": summary_text,
             "final_answer": final_answer,
             "answer_source": "executor",
             "analysis": analysis_text[:500],
             "execution_summary": result.get("execution_summary", ""),
+            "memory_hit": result.get("memory_hit", False),
+            "reduced_research": result.get("reduced_research", False),
+            "memory_validation": result.get("memory_validation", {}),
+            "validated_memory_ids": result.get("validated_memory_ids", []),
             "extracted_answers": answers,
             "summary_extracted_answers": extract_answers(summary_text),
             "duration_s": round(duration, 2),

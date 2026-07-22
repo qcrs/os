@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TASK_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = TASK_DIR.parent
+PROJECT_ROOT = TASK_DIR.parents[1]
 RESULT_DIR = TASK_DIR / "result"
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -41,8 +41,12 @@ BASE_ENV = {
     "LOCAL_MODEL_DEVICE": _env_default("LOCAL_MODEL_DEVICE", "cuda:0"),
     "LOCAL_MODEL_DTYPE": _env_default("LOCAL_MODEL_DTYPE", "bfloat16"),
     "LOCAL_TRANSFORMERS_MAX_NEW_TOKENS": _env_default("LOCAL_TRANSFORMERS_MAX_NEW_TOKENS", "512"),
-    "DASHSCOPE_API_KEY": "",
-    "PYTHONPATH": str(PROJECT_ROOT / "src"),
+    "PYTHONPATH": ":".join([
+        str(PROJECT_ROOT),
+        str(PROJECT_ROOT / "src"),
+        str(PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "langgraph"),
+        str(PROJECT_ROOT / "third_party" / "langgraph" / "libs" / "checkpoint"),
+    ]),
 }
 
 
@@ -156,6 +160,20 @@ def compute_protocol_stats(rounds: list[dict]) -> dict:
     }
 
 
+def sanitize_for_json(value):
+    """Replace invalid surrogate characters before writing UTF-8 JSON."""
+    if isinstance(value, str):
+        return value.encode("utf-8", errors="replace").decode("utf-8")
+    if isinstance(value, list):
+        return [sanitize_for_json(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            sanitize_for_json(key): sanitize_for_json(item)
+            for key, item in value.items()
+        }
+    return value
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
@@ -187,6 +205,12 @@ def main():
         comp_a["task_id"] = task["id"]
         comp_a["question"] = task["question"]
         comp_a["duration_s"] = ra.get("duration_s", 0)
+        comp_a["error"] = ra.get("error", "")
+        comp_a["final_answer"] = ra.get("final_answer", "")
+        comp_a["memory_hit"] = ra.get("memory_hit", False)
+        comp_a["reduced_research"] = ra.get("reduced_research", False)
+        comp_a["memory_validation"] = ra.get("memory_validation", {})
+        comp_a["validated_memory_ids"] = ra.get("validated_memory_ids", [])
         comparison_a.append(comp_a)
 
         # Protocol B
@@ -196,6 +220,12 @@ def main():
         comp_b["task_id"] = task["id"]
         comp_b["question"] = task["question"]
         comp_b["duration_s"] = rb.get("duration_s", 0)
+        comp_b["error"] = rb.get("error", "")
+        comp_b["final_answer"] = rb.get("final_answer", "")
+        comp_b["memory_hit"] = rb.get("memory_hit", False)
+        comp_b["reduced_research"] = rb.get("reduced_research", False)
+        comp_b["memory_validation"] = rb.get("memory_validation", {})
+        comp_b["validated_memory_ids"] = rb.get("validated_memory_ids", [])
         comparison_b.append(comp_b)
 
     # ── Aggregate ────────────────────────────────────────────────────
@@ -218,6 +248,13 @@ def main():
             "backend": BASE_ENV["CHAT_BACKEND"],
             "base_url": BASE_ENV["CHAT_BASE_URL"],
             "model": BASE_ENV["CHAT_MODEL"],
+            "persistent_memory_enabled": _env_default("PERSISTENT_MEMORY_ENABLED", ""),
+            "long_term_memory_enabled": _env_default("LONG_TERM_MEMORY_ENABLED", ""),
+            "long_term_memory_qdrant_path": _env_default("LONG_TERM_MEMORY_QDRANT_PATH", ""),
+            "long_term_memory_collection": _env_default("LONG_TERM_MEMORY_COLLECTION", ""),
+            "long_term_memory_search_mode": _env_default("LONG_TERM_MEMORY_SEARCH_MODE", ""),
+            "reduce_research_on_memory_hit": _env_default("REDUCE_RESEARCH_ON_MEMORY_HIT", ""),
+            "dashscope_api_key_set": bool(_env_default("DASHSCOPE_API_KEY", "")),
         },
         "protocol_a": {
             "label": "Plain Text (mode=text)",
@@ -231,6 +268,9 @@ def main():
                 "context_original_chars": metrics_a.get("context_original_chars", 0),
                 "context_compressed_chars": metrics_a.get("context_compressed_chars", 0),
                 "context_saved_chars": metrics_a.get("context_saved_chars", 0),
+                "memory_reuse_hits": metrics_a.get("memory_reuse_hits", 0),
+                "research_fanout_reduced": metrics_a.get("research_fanout_reduced", 0),
+                "research_subqueries_saved": metrics_a.get("research_subqueries_saved", 0),
             },
             "accuracy": {
                 "total_correct": total_correct_a,
@@ -255,6 +295,9 @@ def main():
                 "context_original_chars": metrics_b.get("context_original_chars", 0),
                 "context_compressed_chars": metrics_b.get("context_compressed_chars", 0),
                 "context_saved_chars": metrics_b.get("context_saved_chars", 0),
+                "memory_reuse_hits": metrics_b.get("memory_reuse_hits", 0),
+                "research_fanout_reduced": metrics_b.get("research_fanout_reduced", 0),
+                "research_subqueries_saved": metrics_b.get("research_subqueries_saved", 0),
             },
             "accuracy": {
                 "total_correct": total_correct_b,
@@ -271,9 +314,14 @@ def main():
                 stats_b.get("total_duration_s", 0) - stats_a.get("total_duration_s", 0), 2
             ),
         },
+        "raw_errors": {
+            "protocol_a": [r.get("error", "") for r in result_a.get("rounds", []) if r.get("error")],
+            "protocol_b": [r.get("error", "") for r in result_b.get("rounds", []) if r.get("error")],
+        },
     }
 
     # Save to file
+    output = sanitize_for_json(output)
     OUTPUT_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nResults saved to {OUTPUT_FILE}")
 
@@ -290,6 +338,9 @@ def main():
     print(f"  Accuracy diff: {total_correct_b - total_correct_a:+d}")
     print(f"  Token diff:    {metrics_b.get('total_tokens', 0) - metrics_a.get('total_tokens', 0):+d}")
     print(f"  Input token diff: {metrics_b.get('input_tokens', 0) - metrics_a.get('input_tokens', 0):+d}")
+    print(f"  Research calls saved A/B: "
+          f"{metrics_a.get('research_subqueries_saved', 0)} / "
+          f"{metrics_b.get('research_subqueries_saved', 0)}")
     print(f"{'='*60}")
 
 
