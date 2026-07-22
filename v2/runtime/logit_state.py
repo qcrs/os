@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import json
 import math
 import struct
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
+
+from v2.contracts.logit import (
+    CandidateSurfaceV2,
+    LogitProducerReceipt,
+    LogitProducerStatus,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +88,11 @@ def _position_probs_tokens_entropy(
 
 @dataclass(frozen=True)
 class LogitStateResult:
-    """Full output of :func:`serialize_logit_state_v2`.
+    """Deprecated sequence-level diagnostic output.
+
+    This result must not be published as a formal LogitState. Formal producers
+    use :func:`extract_exact_choice_logit_state`, which binds probabilities to
+    the exact ``choice_code`` alias position and canonical candidate order.
 
     Attributes:
         payload_bytes: float32 little-endian packed normalised probabilities
@@ -138,7 +149,7 @@ def serialize_logit_state_v2(
     top_n_positions: int = 3,
     candidate_tokens: Sequence[str] | None = None,
 ) -> LogitStateResult:
-    """Extract decision-uncertainty signals from an output token logprob sequence.
+    """Extract deprecated sequence-level uncertainty diagnostics.
 
     Unlike the v1 implementation which always samples the *last* token
     (a grammar-closing token whose entropy is structurally ~0), this function
@@ -270,3 +281,408 @@ def serialize_logit_state(
     """
     result = serialize_logit_state_v2(top_logprobs, top_k=top_k)
     return result.payload_bytes, result.entropy, result.confidence_proxy
+
+
+@dataclass(frozen=True)
+class ExactChoiceLogitResult:
+    payload_bytes: bytes
+    candidate_probabilities: tuple[float, ...]
+    other_mass: float
+    selected_alias: str
+    selected_candidate_id: str
+    selected_candidate_ordinal: int
+    receipt: LogitProducerReceipt
+
+    @property
+    def available(self) -> bool:
+        return self.receipt.status is LogitProducerStatus.AVAILABLE
+
+    @property
+    def entropy(self) -> float:
+        probabilities = (*self.candidate_probabilities, self.other_mass)
+        return -sum(value * math.log(value) for value in probabilities if value > 0.0)
+
+    @property
+    def normalized_entropy(self) -> float:
+        width = len(self.candidate_probabilities) + 1
+        return self.entropy / math.log(width) if width > 1 else 0.0
+
+    @property
+    def top_margin(self) -> float:
+        ordered = sorted(self.candidate_probabilities, reverse=True)
+        return ordered[0] - ordered[1] if len(ordered) > 1 else ordered[0]
+
+
+def _field(item: object, name: str, default: object = None) -> object:
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _exact_token_bytes(item: object) -> bytes | None:
+    raw_bytes = _field(item, "bytes")
+    if isinstance(raw_bytes, (bytes, bytearray)):
+        return bytes(raw_bytes)
+    if isinstance(raw_bytes, (list, tuple)):
+        try:
+            return bytes(int(value) for value in raw_bytes)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    token = _field(item, "token")
+    if isinstance(token, str):
+        return token.encode("utf-8")
+    return None
+
+
+def _exact_token_id(item: object) -> int | None:
+    for name in ("token_id", "id"):
+        value = _field(item, name)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            token_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        return token_id if token_id >= 0 else None
+    return None
+
+
+def _unavailable_exact_result(
+    *,
+    candidate_surface: CandidateSurfaceV2,
+    request_id: str,
+    attempt_id: str,
+    reason: str,
+    selected_alias: str = "",
+    selected_candidate_id: str = "",
+    decision_token_position: int = -1,
+    sequence_length: int = 0,
+    top_k: int = 0,
+) -> ExactChoiceLogitResult:
+    return ExactChoiceLogitResult(
+        payload_bytes=b"",
+        candidate_probabilities=(),
+        other_mass=0.0,
+        selected_alias=selected_alias,
+        selected_candidate_id=selected_candidate_id,
+        selected_candidate_ordinal=-1,
+        receipt=LogitProducerReceipt(
+            request_id=request_id,
+            attempt_id=attempt_id,
+            status=LogitProducerStatus.UNAVAILABLE,
+            candidate_surface_digest=candidate_surface.candidate_surface_digest,
+            alias_mapping_digest=candidate_surface.alias_mapping_digest,
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            decision_token_position=decision_token_position,
+            sequence_length=sequence_length,
+            top_k=top_k,
+            unavailable_reason=reason,
+        ),
+    )
+
+
+def extract_exact_choice_logit_state(
+    *,
+    completion_text: str,
+    top_logprobs: Sequence[object] | None,
+    candidate_surface: CandidateSurfaceV2,
+    request_id: str = "request-unknown",
+    attempt_id: str = "attempt-unknown",
+    sum_tolerance: float = 1e-5,
+) -> ExactChoiceLogitResult:
+    """Extract candidate probabilities at the unique ``choice_code`` alias token.
+
+    The completion must be an exact one-field JSON object. Token bytes are
+    accumulated across the accepted completion to locate the alias value span;
+    a substring/prefix match is never used. Each canonical alias must occur
+    exactly once in the decision position's top-logprob alternatives.
+    """
+    sequence = tuple(top_logprobs or ())
+    sequence_length = len(sequence)
+    try:
+        parsed = json.loads(completion_text)
+    except (json.JSONDecodeError, TypeError):
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="choice_json_invalid",
+            sequence_length=sequence_length,
+        )
+    if not isinstance(parsed, dict) or set(parsed) != {"choice_code"}:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="choice_schema_mismatch",
+            sequence_length=sequence_length,
+        )
+    selected_alias = parsed.get("choice_code")
+    if not isinstance(selected_alias, str) or selected_alias not in candidate_surface.aliases:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="choice_alias_outside_surface",
+            selected_alias=str(selected_alias or ""),
+            sequence_length=sequence_length,
+        )
+    selected_candidate_id = candidate_surface.candidate_id_for_alias(selected_alias)
+    if not sequence:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="top_logprobs_missing",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+        )
+
+    completion_bytes = completion_text.encode("utf-8")
+    alias_literal = json.dumps(selected_alias, ensure_ascii=True).encode("ascii")
+    literal_offsets: list[int] = []
+    search_start = 0
+    while True:
+        offset = completion_bytes.find(alias_literal, search_start)
+        if offset < 0:
+            break
+        literal_offsets.append(offset)
+        search_start = offset + 1
+    if len(literal_offsets) != 1:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="choice_alias_span_not_unique",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            sequence_length=sequence_length,
+        )
+    alias_start = literal_offsets[0] + 1
+    alias_end = alias_start + len(selected_alias.encode("ascii"))
+
+    position_spans: list[tuple[int, int, bytes]] = []
+    cursor = 0
+    for token_payload in sequence:
+        token_bytes = _exact_token_bytes(token_payload)
+        if token_bytes is None:
+            return _unavailable_exact_result(
+                candidate_surface=candidate_surface,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                reason="chosen_token_bytes_unavailable",
+                selected_alias=selected_alias,
+                selected_candidate_id=selected_candidate_id,
+                sequence_length=sequence_length,
+            )
+        position_spans.append((cursor, cursor + len(token_bytes), token_bytes))
+        cursor += len(token_bytes)
+    if cursor != len(completion_bytes) or b"".join(span[2] for span in position_spans) != completion_bytes:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="completion_token_bytes_mismatch",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            sequence_length=sequence_length,
+        )
+
+    overlapping = [
+        index
+        for index, (start, end, _token_bytes) in enumerate(position_spans)
+        if start < alias_end and end > alias_start
+    ]
+    if len(overlapping) != 1:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="choice_alias_not_single_token",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            sequence_length=sequence_length,
+        )
+    decision_position = overlapping[0]
+    start, end, chosen_bytes = position_spans[decision_position]
+    if start != alias_start or end != alias_end or chosen_bytes != selected_alias.encode("ascii"):
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="choice_alias_not_exact_token_span",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            decision_token_position=decision_position,
+            sequence_length=sequence_length,
+        )
+
+    decision_payload = sequence[decision_position]
+    alternatives = _distribution_items(decision_payload)
+    reported_top_k = len(alternatives)
+    if reported_top_k < candidate_surface.candidate_count:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="top_k_does_not_cover_candidate_surface",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            decision_token_position=decision_position,
+            sequence_length=sequence_length,
+            top_k=reported_top_k,
+        )
+
+    probabilities_by_alias: dict[str, float] = {}
+    bindings_by_bytes = {
+        bytes.fromhex(binding.token_bytes_hex): binding
+        for binding in candidate_surface.bindings
+    }
+    bindings_by_token_id = {
+        binding.token_id: binding
+        for binding in candidate_surface.bindings
+        if binding.token_id >= 0
+    }
+    for alternative in alternatives:
+        logprob = _coerce_logprob(_field(alternative, "logprob"))
+        if logprob is None or not math.isfinite(logprob) or logprob > sum_tolerance:
+            return _unavailable_exact_result(
+                candidate_surface=candidate_surface,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                reason="top_logprob_invalid",
+                selected_alias=selected_alias,
+                selected_candidate_id=selected_candidate_id,
+                decision_token_position=decision_position,
+                sequence_length=sequence_length,
+                top_k=reported_top_k,
+            )
+        token_bytes = _exact_token_bytes(alternative)
+        if token_bytes is None:
+            return _unavailable_exact_result(
+                candidate_surface=candidate_surface,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                reason="alternative_token_bytes_unavailable",
+                selected_alias=selected_alias,
+                selected_candidate_id=selected_candidate_id,
+                decision_token_position=decision_position,
+                sequence_length=sequence_length,
+                top_k=reported_top_k,
+            )
+        token_id = _exact_token_id(alternative)
+        binding = bindings_by_token_id.get(token_id) if bindings_by_token_id else None
+        if binding is None:
+            binding = bindings_by_bytes.get(token_bytes)
+        elif token_bytes != bytes.fromhex(binding.token_bytes_hex):
+            return _unavailable_exact_result(
+                candidate_surface=candidate_surface,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                reason="alias_token_id_bytes_mismatch",
+                selected_alias=selected_alias,
+                selected_candidate_id=selected_candidate_id,
+                decision_token_position=decision_position,
+                sequence_length=sequence_length,
+                top_k=reported_top_k,
+            )
+        if binding is None:
+            continue
+        if binding.alias in probabilities_by_alias:
+            return _unavailable_exact_result(
+                candidate_surface=candidate_surface,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                reason="duplicate_alias_alternative",
+                selected_alias=selected_alias,
+                selected_candidate_id=selected_candidate_id,
+                decision_token_position=decision_position,
+                sequence_length=sequence_length,
+                top_k=reported_top_k,
+            )
+        probability = math.exp(logprob)
+        if not math.isfinite(probability) or not 0.0 <= probability <= 1.0 + sum_tolerance:
+            return _unavailable_exact_result(
+                candidate_surface=candidate_surface,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                reason="candidate_probability_invalid",
+                selected_alias=selected_alias,
+                selected_candidate_id=selected_candidate_id,
+                decision_token_position=decision_position,
+                sequence_length=sequence_length,
+                top_k=reported_top_k,
+            )
+        probabilities_by_alias[binding.alias] = probability
+
+    missing_aliases = tuple(
+        alias for alias in candidate_surface.aliases if alias not in probabilities_by_alias
+    )
+    if missing_aliases:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason=f"candidate_alias_missing:{','.join(missing_aliases)}",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            decision_token_position=decision_position,
+            sequence_length=sequence_length,
+            top_k=reported_top_k,
+        )
+    candidate_probabilities = tuple(
+        probabilities_by_alias[alias] for alias in candidate_surface.aliases
+    )
+    candidate_total = sum(candidate_probabilities)
+    if candidate_total > 1.0 + sum_tolerance:
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="candidate_probability_sum_exceeds_one",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            decision_token_position=decision_position,
+            sequence_length=sequence_length,
+            top_k=reported_top_k,
+        )
+    other_mass = min(1.0, max(0.0, 1.0 - candidate_total))
+    payload_values = (*candidate_probabilities, other_mass)
+    payload_bytes = struct.pack(f"<{len(payload_values)}f", *payload_values)
+    round_trip = struct.unpack(f"<{len(payload_values)}f", payload_bytes)
+    if not math.isclose(sum(round_trip), 1.0, abs_tol=sum_tolerance):
+        return _unavailable_exact_result(
+            candidate_surface=candidate_surface,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reason="float32_payload_sum_invalid",
+            selected_alias=selected_alias,
+            selected_candidate_id=selected_candidate_id,
+            decision_token_position=decision_position,
+            sequence_length=sequence_length,
+            top_k=reported_top_k,
+        )
+
+    selected_ordinal = candidate_surface.aliases.index(selected_alias)
+    receipt = LogitProducerReceipt(
+        request_id=request_id,
+        attempt_id=attempt_id,
+        status=LogitProducerStatus.AVAILABLE,
+        candidate_surface_digest=candidate_surface.candidate_surface_digest,
+        alias_mapping_digest=candidate_surface.alias_mapping_digest,
+        selected_alias=selected_alias,
+        selected_candidate_id=selected_candidate_id,
+        decision_token_position=decision_position,
+        sequence_length=sequence_length,
+        top_k=reported_top_k,
+    )
+    return ExactChoiceLogitResult(
+        payload_bytes=payload_bytes,
+        candidate_probabilities=candidate_probabilities,
+        other_mass=other_mass,
+        selected_alias=selected_alias,
+        selected_candidate_id=selected_candidate_id,
+        selected_candidate_ordinal=selected_ordinal,
+        receipt=receipt,
+    )

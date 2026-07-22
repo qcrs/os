@@ -164,8 +164,23 @@ def test_openai_compatible_llm_client_closes_provider_client_per_complete(monkey
     assert closed_clients == created_clients
 
 
-def test_openai_compatible_llm_client_requests_executor_logprobs_in_local_vllm_mode(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("logit_policy", "dedicated_choice_surface", "expected_requested"),
+    [
+        ("off", True, False),
+        ("telemetry_only", False, False),
+        ("telemetry_only", True, True),
+        ("gated", True, True),
+    ],
+)
+def test_openai_compatible_llm_client_requests_executor_logprobs_only_for_enabled_choice_surface(
+    monkeypatch,
+    logit_policy: str,
+    dedicated_choice_surface: bool,
+    expected_requested: bool,
+) -> None:
     created_clients: list[object] = []
+    monkeypatch.setenv("STATEBUS_LOGIT_POLICY", logit_policy)
 
     class FakeUsage:
         prompt_tokens = 12
@@ -174,6 +189,7 @@ def test_openai_compatible_llm_client_requests_executor_logprobs_in_local_vllm_m
 
     class FakeTokenLogprob:
         def __init__(self) -> None:
+            self.bytes = [65]
             self.logprob = -0.25
             self.top_logprobs = []
 
@@ -181,13 +197,14 @@ def test_openai_compatible_llm_client_requests_executor_logprobs_in_local_vllm_m
         content = [FakeTokenLogprob()]
 
     class FakeMessage:
-        content = '{"ok": true}'
+        content = '{"choice_code":"A"}'
 
     class FakeChoice:
         message = FakeMessage()
         logprobs = FakeLogprobs()
 
     class FakeResponse:
+        id = "response-1"
         choices = [FakeChoice()]
         model = "fake-openai-model"
         usage = FakeUsage()
@@ -226,16 +243,35 @@ def test_openai_compatible_llm_client_requests_executor_logprobs_in_local_vllm_m
     )
     client = OpenAICompatibleLLMClient(config)
 
-    result = asyncio.run(client.complete([ChatMessage(role="user", content="hello")], purpose="executor"))
+    response_schema = (
+        {
+            "type": "object",
+            "properties": {"choice_code": {"type": "string", "enum": ["A", "B"]}},
+            "required": ["choice_code"],
+            "additionalProperties": False,
+        }
+        if dedicated_choice_surface
+        else None
+    )
+    result = asyncio.run(
+        client.complete(
+            [ChatMessage(role="user", content="hello")],
+            purpose="executor",
+            response_schema=response_schema,
+        )
+    )
 
     request = created_clients[0].requests[0]  # type: ignore[attr-defined]
-    assert request["logprobs"] is True
-    assert request["top_logprobs"] == 20
+    assert (request.get("logprobs") is True) is expected_requested
+    assert request.get("top_logprobs") == (20 if expected_requested else None)
     assert request["extra_body"] == {
         "chat_template_kwargs": {"enable_thinking": False},
         "guided_decoding_backend": "xgrammar:disable-any-whitespace",
     }
-    assert result.top_logprobs is not None
+    assert (result.top_logprobs is not None) is expected_requested
+    assert result.logprob_receipt.requested is expected_requested
+    assert result.logprob_receipt.available is expected_requested
+    assert result.logprob_receipt.policy == logit_policy
 
 
 def test_openai_compatible_llm_caps_max_tokens_to_context_window(monkeypatch) -> None:

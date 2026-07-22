@@ -460,6 +460,9 @@ class AdaptiveMainlineRunner:
                 )
             )
             for state_id, publication in tuple(context.semantic_state_publications.items()):
+                if state_id not in state_store.materializations:
+                    released_state_ids.add(state_id)
+                    continue
                 runtime_result.telemetry.emit(
                     TelemetryEvent.create(
                         trace_id=request.trace_id,
@@ -870,6 +873,8 @@ class AdaptiveMainlineRunner:
         infrastructure: AdaptiveMainlineInfrastructure,
         memory_commit_decision: AdaptiveMemoryCommitDecision,
     ) -> Path:
+        from v2.runtime.state_consumption import summarize_state_consumption
+
         manifest_path = Path(request.runtime_root) / "adaptive_mainline_manifest.json"
         payload = {
             "schema_version": "statebus.adaptive_mainline_manifest.v1",
@@ -922,6 +927,13 @@ class AdaptiveMainlineRunner:
                 disclosed_count=sum(
                     len(inputs) for inputs in context.memory_role_inputs_by_step.values()
                 ),
+            ),
+            "state_consumption_records": [
+                record.canonical_payload()
+                for record in context.state_consumption_records
+            ],
+            "state_consumption_accounting": summarize_state_consumption(
+                context.state_consumption_records
             ),
             "code_generation_pairing_digests": dict(sorted(
                 context.code_generation_pairing_digests.items()

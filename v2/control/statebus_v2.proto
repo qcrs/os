@@ -39,6 +39,86 @@ message ReusePolicy {
   bool allow_exact_replay = 3;
 }
 
+message LogitStateRefControl {
+  string ref_id = 1;
+  string schema_version = 2;
+  string task_id = 3;
+  string session_id = 4;
+  string trace_id = 5;
+  string step_id = 6;
+  string request_id = 7;
+  string attempt_id = 8;
+  string storage_kind = 9;
+  string shared_memory_name = 10;
+  string mmap_relpath = 11;
+  string blob_hash = 12;
+  uint64 size_bytes = 13;
+  string candidate_surface_digest = 14;
+  string alias_mapping_digest = 15;
+  uint32 candidate_count = 16;
+  int64 producer_pid = 17;
+  int64 lease_expires_at_ns = 18;
+  string model_id = 19;
+  string tokenizer_id = 20;
+  string chat_template_sha256 = 21;
+  string template_kwargs_sha256 = 22;
+  string response_schema_digest = 23;
+  string calibration_version = 24;
+  string threshold_policy_version = 25;
+  string gate_budget_version = 26;
+  string policy = 27;
+  string decision_type = 28;
+  string dtype = 29;
+  string byte_order = 30;
+}
+
+message LogitStateGrantControl {
+  string schema_version = 1;
+  string ref_id = 2;
+  string task_id = 3;
+  string session_id = 4;
+  string trace_id = 5;
+  string step_id = 6;
+  string request_id = 7;
+  string attempt_id = 8;
+  string consumer_component = 9;
+  int64 consumer_pid = 10;
+  string candidate_surface_digest = 11;
+  string alias_mapping_digest = 12;
+  string calibration_version = 13;
+  string threshold_policy_version = 14;
+  string gate_budget_version = 15;
+  string model_id = 16;
+  string tokenizer_id = 17;
+  string chat_template_sha256 = 18;
+  string template_kwargs_sha256 = 19;
+  string response_schema_digest = 20;
+  int64 expires_at_ns = 21;
+  string grant_token = 22;
+}
+
+message LogitGateResult {
+  string schema_version = 1;
+  string decision_id = 2;
+  string action_token = 3;
+  string ref_id = 4;
+  string task_id = 5;
+  string request_id = 6;
+  int64 consumer_pid = 7;
+  int64 producer_pid = 8;
+  string action = 9;
+  double selected_candidate_probability = 10;
+  double entropy = 11;
+  double normalized_entropy = 12;
+  double top_margin = 13;
+  double other_mass = 14;
+  uint32 candidate_count = 15;
+  string calibration_version = 16;
+  string threshold_policy_version = 17;
+  string gate_budget_version = 18;
+  string reason = 19;
+}
+
 message Hello {
   ControlHeader header = 1;
   repeated string protocol_versions = 2;
@@ -78,6 +158,9 @@ message ExecRequest {
   string capability_grant_hash = 16;
   string capability_grant_token = 17;
   string capability_grant_session_id = 18;
+  LogitStateRefControl logit_state_ref = 19;
+  LogitStateGrantControl logit_state_grant = 20;
+  string logit_gate_policy_json = 21;
 }
 
 message AckReceived {
@@ -128,6 +211,9 @@ message SuccessResult {
   int64 producer_pid = 12;
   string encoder_signature = 13;
   NumericSummaryResult numeric_summary = 14;
+  LogitGateResult logit_gate_result = 15;
+  string logit_grant_hash = 16;
+  bool logit_action_reused = 17;
 }
 
 message ErrorResult {

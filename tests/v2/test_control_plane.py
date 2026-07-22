@@ -15,6 +15,9 @@ from v2.control import (
     EventType,
     ExecRequest,
     Hello,
+    LogitGateResult,
+    LogitStateGrantControl,
+    LogitStateRefControl,
     NumericSummaryResult,
     RefHandle,
     ReusePolicy,
@@ -131,6 +134,134 @@ def test_control_plane_frame_round_trip_preserves_typed_numeric_result() -> None
         ),
         output_contract_version="statebus.numeric_summary.v1",
         numeric_summary=summary,
+    )
+
+    parsed = deframe_control_message(frame_control_message(message))
+
+    assert parsed == message
+
+
+def test_control_plane_frame_round_trip_preserves_typed_logit_request() -> None:
+    logit_ref = LogitStateRefControl(
+        ref_id="logit-state-1",
+        schema_version="statebus.logit_state.v2",
+        task_id="task-logit",
+        session_id="session-logit",
+        trace_id="trace-logit",
+        step_id="execute",
+        request_id="request-logit",
+        attempt_id="attempt-logit",
+        storage_kind="shared_memory",
+        shared_memory_name="statebus-logit-state-1",
+        mmap_relpath="",
+        blob_hash="logit-blob-hash",
+        size_bytes=12,
+        candidate_surface_digest="candidate-surface-digest",
+        alias_mapping_digest="alias-mapping-digest",
+        candidate_count=2,
+        producer_pid=41,
+        lease_expires_at_ns=123_456_789,
+        model_id="model-logit",
+        tokenizer_id="tokenizer-logit",
+        chat_template_sha256="chat-template-digest",
+        template_kwargs_sha256="template-kwargs-digest",
+        response_schema_digest="response-schema-digest",
+        calibration_version="calibration-version",
+        threshold_policy_version="threshold-policy-version",
+        gate_budget_version="gate-budget-version",
+        policy="gated",
+        decision_type="executor_tool_recipe_choice_v1",
+        dtype="<f4",
+        byte_order="little",
+    )
+    logit_grant = LogitStateGrantControl(
+        schema_version="statebus.logit_state_grant.v1",
+        ref_id=logit_ref.ref_id,
+        task_id=logit_ref.task_id,
+        session_id=logit_ref.session_id,
+        trace_id=logit_ref.trace_id,
+        step_id=logit_ref.step_id,
+        request_id=logit_ref.request_id,
+        attempt_id=logit_ref.attempt_id,
+        consumer_component="confidence_gate",
+        consumer_pid=42,
+        candidate_surface_digest=logit_ref.candidate_surface_digest,
+        alias_mapping_digest=logit_ref.alias_mapping_digest,
+        calibration_version=logit_ref.calibration_version,
+        threshold_policy_version=logit_ref.threshold_policy_version,
+        gate_budget_version=logit_ref.gate_budget_version,
+        model_id=logit_ref.model_id,
+        tokenizer_id=logit_ref.tokenizer_id,
+        chat_template_sha256=logit_ref.chat_template_sha256,
+        template_kwargs_sha256=logit_ref.template_kwargs_sha256,
+        response_schema_digest=logit_ref.response_schema_digest,
+        expires_at_ns=123_456_000,
+        grant_token="grant-token",
+    )
+    message = ExecRequest(
+        header=ControlHeader(
+            trace_id=logit_ref.trace_id,
+            task_id=logit_ref.task_id,
+            step_id=logit_ref.step_id,
+            attempt_id=logit_ref.attempt_id,
+            target_role="confidence_gate",
+            timeout_ms=5000,
+            event_type=EventType.REQ_EXEC,
+        ),
+        state_refs=(RefHandle(ref_id=logit_ref.ref_id, ref_kind="logit_state"),),
+        runtime_reuse_contract="logit_state_required",
+        output_contract_version="statebus.gate_decision.v1",
+        workspace_root="/statebus/state/logit",
+        input_manifest_hash="logit-ref-digest",
+        operation="logit_gate_v1",
+        state_root="/statebus/state/logit",
+        logit_state_ref=logit_ref,
+        logit_state_grant=logit_grant,
+        logit_gate_policy_json='{"schema_version":"statebus.logit_gate_policy.v1"}',
+    )
+
+    parsed = deframe_control_message(frame_control_message(message))
+
+    assert parsed == message
+
+
+def test_control_plane_frame_round_trip_preserves_typed_logit_gate_result() -> None:
+    gate_result = LogitGateResult(
+        schema_version="statebus.gate_decision.v1",
+        decision_id="decision-1",
+        action_token="action-token-1",
+        ref_id="logit-state-1",
+        task_id="task-logit",
+        request_id="request-logit",
+        consumer_pid=42,
+        producer_pid=41,
+        action="verify_once",
+        selected_candidate_probability=0.61,
+        entropy=0.79,
+        normalized_entropy=0.72,
+        top_margin=0.18,
+        other_mass=0.03,
+        candidate_count=2,
+        calibration_version="calibration-version",
+        threshold_policy_version="threshold-policy-version",
+        gate_budget_version="gate-budget-version",
+        reason="selected_probability_verify_band",
+    )
+    message = SuccessResult(
+        header=ControlHeader(
+            trace_id="trace-logit",
+            task_id=gate_result.task_id,
+            step_id="execute",
+            attempt_id="attempt-logit",
+            target_role="confidence_gate",
+            timeout_ms=5000,
+            event_type=EventType.RES_SUCC,
+        ),
+        output_contract_version="statebus.gate_decision.v1",
+        consumed_state_ref_id=gate_result.ref_id,
+        logit_gate_result=gate_result,
+        logit_grant_hash="grant-hash",
+        logit_action_reused=True,
     )
 
     parsed = deframe_control_message(frame_control_message(message))

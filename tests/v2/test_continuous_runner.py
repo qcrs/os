@@ -768,8 +768,9 @@ def test_continuous_runner_executes_formal_long_horizon_l3_with_negative_fixture
     assert report.metadata["stability_evidence_eligible"] is True
     assert report.metadata["selected_layers"] == ["L3"]
     assert report.collection_summary["L3_memory_candidate_count"] > 0.0
-    assert report.collection_summary["L3_memory_consumed_count"] > 0.0
-    assert report.collection_summary["L3_memory_behavioral_effect_count"] > 0.0
+    assert report.collection_summary["L3_memory_consumed_count"] == 0.0
+    assert report.collection_summary["L3_memory_legacy_recorded_count"] > 0.0
+    assert report.collection_summary["L3_memory_behavioral_effect_count"] == 0.0
     assert report.collection_summary["L3_memory_rejected_incompatible_count"] >= 2.0
     assert all(family.evidence_pack["l0_l3_delta"] == {} for family in report.family_reports)
 

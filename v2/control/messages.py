@@ -15,6 +15,7 @@ from v2.utils import sha256_digest
 CONTROL_PROTOCOL_VERSION = "statebus.uds.protobuf.v2"
 DEFAULT_WORKER_CAPABILITY_IDS = (
     "echo_refs_v1",
+    "logit_gate_v1",
     "semantic_select_v1",
     "typed_numeric_summary_v1",
 )
@@ -71,6 +72,89 @@ class ReusePolicy:
 
 
 @dataclass(frozen=True)
+class LogitStateRefControl:
+    ref_id: str
+    schema_version: str
+    task_id: str
+    session_id: str
+    trace_id: str
+    step_id: str
+    request_id: str
+    attempt_id: str
+    storage_kind: str
+    shared_memory_name: str
+    mmap_relpath: str
+    blob_hash: str
+    size_bytes: int
+    candidate_surface_digest: str
+    alias_mapping_digest: str
+    candidate_count: int
+    producer_pid: int
+    lease_expires_at_ns: int
+    model_id: str
+    tokenizer_id: str
+    chat_template_sha256: str
+    template_kwargs_sha256: str
+    response_schema_digest: str
+    calibration_version: str
+    threshold_policy_version: str
+    gate_budget_version: str
+    policy: str
+    decision_type: str
+    dtype: str
+    byte_order: str
+
+
+@dataclass(frozen=True)
+class LogitStateGrantControl:
+    schema_version: str
+    ref_id: str
+    task_id: str
+    session_id: str
+    trace_id: str
+    step_id: str
+    request_id: str
+    attempt_id: str
+    consumer_component: str
+    consumer_pid: int
+    candidate_surface_digest: str
+    alias_mapping_digest: str
+    calibration_version: str
+    threshold_policy_version: str
+    gate_budget_version: str
+    model_id: str
+    tokenizer_id: str
+    chat_template_sha256: str
+    template_kwargs_sha256: str
+    response_schema_digest: str
+    expires_at_ns: int
+    grant_token: str
+
+
+@dataclass(frozen=True)
+class LogitGateResult:
+    schema_version: str
+    decision_id: str
+    action_token: str
+    ref_id: str
+    task_id: str
+    request_id: str
+    consumer_pid: int
+    producer_pid: int
+    action: str
+    selected_candidate_probability: float
+    entropy: float
+    normalized_entropy: float
+    top_margin: float
+    other_mass: float
+    candidate_count: int
+    calibration_version: str
+    threshold_policy_version: str
+    gate_budget_version: str
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class Hello:
     header: ControlHeader
     protocol_versions: tuple[str, ...]
@@ -112,6 +196,9 @@ class ExecRequest:
     capability_grant_hash: str = ""
     capability_grant_token: str = ""
     capability_grant_session_id: str = ""
+    logit_state_ref: LogitStateRefControl | None = None
+    logit_state_grant: LogitStateGrantControl | None = None
+    logit_gate_policy_json: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,6 +254,9 @@ class SuccessResult:
     producer_pid: int = 0
     encoder_signature: str = ""
     numeric_summary: NumericSummaryResult | None = None
+    logit_gate_result: LogitGateResult | None = None
+    logit_grant_hash: str = ""
+    logit_action_reused: bool = False
 
 
 @dataclass(frozen=True)
@@ -302,6 +392,113 @@ def _numeric_summary_from_pb(pb: Any) -> NumericSummaryResult:
     )
 
 
+def _logit_ref_to_pb(ref: LogitStateRefControl) -> Any:
+    pb = message_class("LogitStateRefControl")()
+    for name, value in asdict(ref).items():
+        setattr(pb, name, value)
+    return pb
+
+
+def _logit_ref_from_pb(pb: Any) -> LogitStateRefControl:
+    return LogitStateRefControl(
+        ref_id=pb.ref_id,
+        schema_version=pb.schema_version,
+        task_id=pb.task_id,
+        session_id=pb.session_id,
+        trace_id=pb.trace_id,
+        step_id=pb.step_id,
+        request_id=pb.request_id,
+        attempt_id=pb.attempt_id,
+        storage_kind=pb.storage_kind,
+        shared_memory_name=pb.shared_memory_name,
+        mmap_relpath=pb.mmap_relpath,
+        blob_hash=pb.blob_hash,
+        size_bytes=int(pb.size_bytes),
+        candidate_surface_digest=pb.candidate_surface_digest,
+        alias_mapping_digest=pb.alias_mapping_digest,
+        candidate_count=int(pb.candidate_count),
+        producer_pid=int(pb.producer_pid),
+        lease_expires_at_ns=int(pb.lease_expires_at_ns),
+        model_id=pb.model_id,
+        tokenizer_id=pb.tokenizer_id,
+        chat_template_sha256=pb.chat_template_sha256,
+        template_kwargs_sha256=pb.template_kwargs_sha256,
+        response_schema_digest=pb.response_schema_digest,
+        calibration_version=pb.calibration_version,
+        threshold_policy_version=pb.threshold_policy_version,
+        gate_budget_version=pb.gate_budget_version,
+        policy=pb.policy,
+        decision_type=pb.decision_type,
+        dtype=pb.dtype,
+        byte_order=pb.byte_order,
+    )
+
+
+def _logit_grant_to_pb(grant: LogitStateGrantControl) -> Any:
+    pb = message_class("LogitStateGrantControl")()
+    for name, value in asdict(grant).items():
+        setattr(pb, name, value)
+    return pb
+
+
+def _logit_grant_from_pb(pb: Any) -> LogitStateGrantControl:
+    return LogitStateGrantControl(
+        schema_version=pb.schema_version,
+        ref_id=pb.ref_id,
+        task_id=pb.task_id,
+        session_id=pb.session_id,
+        trace_id=pb.trace_id,
+        step_id=pb.step_id,
+        request_id=pb.request_id,
+        attempt_id=pb.attempt_id,
+        consumer_component=pb.consumer_component,
+        consumer_pid=int(pb.consumer_pid),
+        candidate_surface_digest=pb.candidate_surface_digest,
+        alias_mapping_digest=pb.alias_mapping_digest,
+        calibration_version=pb.calibration_version,
+        threshold_policy_version=pb.threshold_policy_version,
+        gate_budget_version=pb.gate_budget_version,
+        model_id=pb.model_id,
+        tokenizer_id=pb.tokenizer_id,
+        chat_template_sha256=pb.chat_template_sha256,
+        template_kwargs_sha256=pb.template_kwargs_sha256,
+        response_schema_digest=pb.response_schema_digest,
+        expires_at_ns=int(pb.expires_at_ns),
+        grant_token=pb.grant_token,
+    )
+
+
+def _logit_gate_to_pb(result: LogitGateResult) -> Any:
+    pb = message_class("LogitGateResult")()
+    for name, value in asdict(result).items():
+        setattr(pb, name, value)
+    return pb
+
+
+def _logit_gate_from_pb(pb: Any) -> LogitGateResult:
+    return LogitGateResult(
+        schema_version=pb.schema_version,
+        decision_id=pb.decision_id,
+        action_token=pb.action_token,
+        ref_id=pb.ref_id,
+        task_id=pb.task_id,
+        request_id=pb.request_id,
+        consumer_pid=int(pb.consumer_pid),
+        producer_pid=int(pb.producer_pid),
+        action=pb.action,
+        selected_candidate_probability=float(pb.selected_candidate_probability),
+        entropy=float(pb.entropy),
+        normalized_entropy=float(pb.normalized_entropy),
+        top_margin=float(pb.top_margin),
+        other_mass=float(pb.other_mass),
+        candidate_count=int(pb.candidate_count),
+        calibration_version=pb.calibration_version,
+        threshold_policy_version=pb.threshold_policy_version,
+        gate_budget_version=pb.gate_budget_version,
+        reason=pb.reason,
+    )
+
+
 def encode_control_message(message: ControlMessage) -> bytes:
     envelope = message_class("ControlEnvelope")()
     body_field = _BODY_FIELD_BY_TYPE[type(message)]
@@ -344,6 +541,11 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.capability_grant_hash = message.capability_grant_hash
         body_pb.capability_grant_token = message.capability_grant_token
         body_pb.capability_grant_session_id = message.capability_grant_session_id
+        if message.logit_state_ref is not None:
+            body_pb.logit_state_ref.CopyFrom(_logit_ref_to_pb(message.logit_state_ref))
+        if message.logit_state_grant is not None:
+            body_pb.logit_state_grant.CopyFrom(_logit_grant_to_pb(message.logit_state_grant))
+        body_pb.logit_gate_policy_json = message.logit_gate_policy_json
     elif isinstance(message, AckReceived):
         body_pb.acked_at_ns = message.acked_at_ns
     elif isinstance(message, RunStart):
@@ -370,6 +572,10 @@ def encode_control_message(message: ControlMessage) -> bytes:
             body_pb.numeric_summary.CopyFrom(
                 _numeric_summary_to_pb(message.numeric_summary)
             )
+        if message.logit_gate_result is not None:
+            body_pb.logit_gate_result.CopyFrom(_logit_gate_to_pb(message.logit_gate_result))
+        body_pb.logit_grant_hash = message.logit_grant_hash
+        body_pb.logit_action_reused = message.logit_action_reused
     elif isinstance(message, ErrorResult):
         body_pb.error_code = message.error_code
         body_pb.error_detail = message.error_detail
@@ -443,6 +649,17 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             capability_grant_hash=body_pb.capability_grant_hash,
             capability_grant_token=body_pb.capability_grant_token,
             capability_grant_session_id=body_pb.capability_grant_session_id,
+            logit_state_ref=(
+                _logit_ref_from_pb(body_pb.logit_state_ref)
+                if body_pb.HasField("logit_state_ref")
+                else None
+            ),
+            logit_state_grant=(
+                _logit_grant_from_pb(body_pb.logit_state_grant)
+                if body_pb.HasField("logit_state_grant")
+                else None
+            ),
+            logit_gate_policy_json=body_pb.logit_gate_policy_json,
         )
     if body_field == "ack_recv":
         return AckReceived(header=header, acked_at_ns=int(body_pb.acked_at_ns))
@@ -479,6 +696,13 @@ def decode_control_message(payload: bytes) -> ControlMessage:
                 if body_pb.HasField("numeric_summary")
                 else None
             ),
+            logit_gate_result=(
+                _logit_gate_from_pb(body_pb.logit_gate_result)
+                if body_pb.HasField("logit_gate_result")
+                else None
+            ),
+            logit_grant_hash=body_pb.logit_grant_hash,
+            logit_action_reused=bool(body_pb.logit_action_reused),
         )
     if body_field == "res_err":
         return ErrorResult(
@@ -562,6 +786,64 @@ def _text_refs(payload: object) -> tuple[RefHandle, ...]:
     )
 
 
+def _text_logit_ref(payload: object) -> LogitStateRefControl | None:
+    if not isinstance(payload, dict):
+        return None
+    values = {name: str(payload.get(name, "")) for name in (
+        "ref_id", "schema_version", "task_id", "session_id", "trace_id", "step_id",
+        "request_id", "attempt_id", "storage_kind", "shared_memory_name", "mmap_relpath",
+        "blob_hash", "candidate_surface_digest", "alias_mapping_digest", "model_id",
+        "tokenizer_id", "chat_template_sha256", "template_kwargs_sha256",
+        "response_schema_digest", "calibration_version", "threshold_policy_version",
+        "gate_budget_version", "policy", "decision_type", "dtype", "byte_order",
+    )}
+    return LogitStateRefControl(
+        **values,
+        size_bytes=int(payload.get("size_bytes", 0)),
+        candidate_count=int(payload.get("candidate_count", 0)),
+        producer_pid=int(payload.get("producer_pid", 0)),
+        lease_expires_at_ns=int(payload.get("lease_expires_at_ns", 0)),
+    )
+
+
+def _text_logit_grant(payload: object) -> LogitStateGrantControl | None:
+    if not isinstance(payload, dict):
+        return None
+    values = {name: str(payload.get(name, "")) for name in (
+        "schema_version", "ref_id", "task_id", "session_id", "trace_id", "step_id",
+        "request_id", "attempt_id", "consumer_component", "candidate_surface_digest",
+        "alias_mapping_digest", "calibration_version", "threshold_policy_version",
+        "gate_budget_version", "model_id", "tokenizer_id", "chat_template_sha256",
+        "template_kwargs_sha256", "response_schema_digest", "grant_token",
+    )}
+    return LogitStateGrantControl(
+        **values,
+        consumer_pid=int(payload.get("consumer_pid", 0)),
+        expires_at_ns=int(payload.get("expires_at_ns", 0)),
+    )
+
+
+def _text_logit_gate(payload: object) -> LogitGateResult | None:
+    if not isinstance(payload, dict):
+        return None
+    values = {name: str(payload.get(name, "")) for name in (
+        "schema_version", "decision_id", "action_token", "ref_id", "task_id", "request_id",
+        "action", "calibration_version", "threshold_policy_version", "gate_budget_version",
+        "reason",
+    )}
+    return LogitGateResult(
+        **values,
+        consumer_pid=int(payload.get("consumer_pid", 0)),
+        producer_pid=int(payload.get("producer_pid", 0)),
+        selected_candidate_probability=float(payload.get("selected_candidate_probability", 0.0)),
+        entropy=float(payload.get("entropy", 0.0)),
+        normalized_entropy=float(payload.get("normalized_entropy", 0.0)),
+        top_margin=float(payload.get("top_margin", 0.0)),
+        other_mass=float(payload.get("other_mass", 0.0)),
+        candidate_count=int(payload.get("candidate_count", 0)),
+    )
+
+
 def decode_text_control_message(payload: bytes) -> ControlMessage:
     """Decode a canonical UTF-8 JSON control message into the typed model."""
 
@@ -636,6 +918,9 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
             capability_grant_hash=str(decoded.get("capability_grant_hash", "")),
             capability_grant_token=str(decoded.get("capability_grant_token", "")),
             capability_grant_session_id=str(decoded.get("capability_grant_session_id", "")),
+            logit_state_ref=_text_logit_ref(decoded.get("logit_state_ref")),
+            logit_state_grant=_text_logit_grant(decoded.get("logit_state_grant")),
+            logit_gate_policy_json=str(decoded.get("logit_gate_policy_json", "")),
         )
     if message_type == "ack_recv":
         return AckReceived(header=header, acked_at_ns=int(decoded.get("acked_at_ns", 0)))
@@ -685,6 +970,9 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
             producer_pid=int(decoded.get("producer_pid", 0)),
             encoder_signature=str(decoded.get("encoder_signature", "")),
             numeric_summary=numeric_summary,
+            logit_gate_result=_text_logit_gate(decoded.get("logit_gate_result")),
+            logit_grant_hash=str(decoded.get("logit_grant_hash", "")),
+            logit_action_reused=bool(decoded.get("logit_action_reused", False)),
         )
     if message_type == "res_err":
         return ErrorResult(

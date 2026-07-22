@@ -5,7 +5,9 @@ import struct
 
 import pytest
 
+from v2.contracts import CandidateSurfaceV2, LogitProducerStatus
 from v2.runtime.logit_state import (
+    extract_exact_choice_logit_state,
     LogitStateResult,
     serialize_logit_state,
     serialize_logit_state_v2,
@@ -236,3 +238,124 @@ def test_logit_state_result_legacy_properties() -> None:
     assert isinstance(result, LogitStateResult)
     assert result.legacy_entropy == result.entropy
     assert result.legacy_confidence_proxy == result.confidence_proxy
+
+
+def _exact_choice_tokens(
+    *,
+    selected: str = "A",
+    alternatives: tuple[tuple[str, float], ...] = (("A", 0.7), ("B", 0.2), ("X", 0.05)),
+) -> list[dict[str, object]]:
+    prefix = '{"choice_code":"'
+    suffix = '"}'
+    return [
+        {"token": prefix, "bytes": list(prefix.encode("utf-8")), "logprob": 0.0},
+        {
+            "token": selected,
+            "bytes": list(selected.encode("ascii")),
+            "logprob": math.log(dict(alternatives)[selected]),
+            "top_logprobs": [
+                {
+                    "token": token,
+                    "bytes": list(token.encode("ascii")),
+                    "logprob": math.log(probability),
+                }
+                for token, probability in alternatives
+            ],
+        },
+        {"token": suffix, "bytes": list(suffix.encode("utf-8")), "logprob": 0.0},
+    ]
+
+
+def test_exact_choice_extractor_preserves_candidate_order_and_tail_mass() -> None:
+    surface = CandidateSurfaceV2.from_candidate_ids(("route-a::tool-a", "route-b::tool-b"))
+    result = extract_exact_choice_logit_state(
+        completion_text='{"choice_code":"A"}',
+        top_logprobs=_exact_choice_tokens(),
+        candidate_surface=surface,
+        request_id="request-1",
+        attempt_id="attempt-1",
+    )
+
+    assert result.available
+    assert result.receipt.status is LogitProducerStatus.AVAILABLE
+    assert result.receipt.decision_token_position == 1
+    assert result.selected_candidate_id == "route-a::tool-a"
+    assert result.candidate_probabilities == pytest.approx((0.7, 0.2))
+    assert result.other_mass == pytest.approx(0.1)
+    assert struct.unpack("<3f", result.payload_bytes) == pytest.approx((0.7, 0.2, 0.1))
+
+
+@pytest.mark.parametrize(
+    ("completion_text", "tokens", "reason"),
+    [
+        (
+            '{"choice_code":"A","extra":true}',
+            _exact_choice_tokens(),
+            "choice_schema_mismatch",
+        ),
+        (
+            '{"choice_code":"A"}',
+            _exact_choice_tokens(alternatives=(("A", 0.7), ("X", 0.2))),
+            "candidate_alias_missing:B",
+        ),
+    ],
+)
+def test_exact_choice_extractor_fails_closed_on_schema_or_mapping_gap(
+    completion_text: str,
+    tokens: list[dict[str, object]],
+    reason: str,
+) -> None:
+    surface = CandidateSurfaceV2.from_candidate_ids(("candidate-a", "candidate-b"))
+    result = extract_exact_choice_logit_state(
+        completion_text=completion_text,
+        top_logprobs=tokens,
+        candidate_surface=surface,
+    )
+
+    assert not result.available
+    assert result.payload_bytes == b""
+    assert result.receipt.unavailable_reason == reason
+
+
+def test_exact_choice_extractor_rejects_nonfinite_logprob() -> None:
+    surface = CandidateSurfaceV2.from_candidate_ids(("candidate-a", "candidate-b"))
+    tokens = _exact_choice_tokens()
+    alternatives = tokens[1]["top_logprobs"]
+    assert isinstance(alternatives, list)
+    alternatives[1]["logprob"] = float("nan")
+
+    result = extract_exact_choice_logit_state(
+        completion_text='{"choice_code":"A"}',
+        top_logprobs=tokens,
+        candidate_surface=surface,
+    )
+
+    assert not result.available
+    assert result.receipt.unavailable_reason == "top_logprob_invalid"
+
+
+def test_exact_choice_extractor_rejects_alias_embedded_in_larger_token() -> None:
+    surface = CandidateSurfaceV2.from_candidate_ids(("candidate-a", "candidate-b"))
+    prefix = '{"choice_code":"'
+    tokens = [
+        {"token": prefix, "bytes": list(prefix.encode("utf-8")), "logprob": 0.0},
+        {
+            "token": 'A"',
+            "bytes": list(b'A"'),
+            "logprob": math.log(0.7),
+            "top_logprobs": [
+                {"token": "A", "bytes": [65], "logprob": math.log(0.7)},
+                {"token": "B", "bytes": [66], "logprob": math.log(0.2)},
+            ],
+        },
+        {"token": "}", "bytes": [125], "logprob": 0.0},
+    ]
+
+    result = extract_exact_choice_logit_state(
+        completion_text='{"choice_code":"A"}',
+        top_logprobs=tokens,
+        candidate_surface=surface,
+    )
+
+    assert not result.available
+    assert result.receipt.unavailable_reason == "choice_alias_not_exact_token_span"

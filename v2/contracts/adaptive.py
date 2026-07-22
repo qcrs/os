@@ -485,9 +485,20 @@ class RoleExecutionReceipt:
     consumption_modes: dict[str, str] = field(default_factory=dict)
     rendered_request_hash: str = ""
     executed_recipe_hashes: tuple[str, ...] = ()
+    executed_recipe_hashes_by_memory_id: dict[str, str] = field(default_factory=dict)
+    memory_actions: dict[str, str] = field(default_factory=dict)
+    behavioral_effects: dict[str, str] = field(default_factory=dict)
+    effect_evidence_hashes: dict[str, str] = field(default_factory=dict)
     output_decision_surface_hash: str = ""
     execution_outcome: str = "accepted"
-    schema_version: str = "statebus.role_execution_receipt.v1"
+    producer_role: str = ""
+    producer_pid: int = 0
+    physical_consumer_component: str = ""
+    physical_consumer_pid: int = 0
+    logical_target_role: str = ""
+    receipt_id: str = ""
+    issued_at_ns: int = 0
+    schema_version: str = "statebus.role_execution_receipt.v2"
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -495,10 +506,27 @@ class RoleExecutionReceipt:
             "consumption_modes": dict(sorted(self.consumption_modes.items())),
             "rendered_request_hash": self.rendered_request_hash,
             "executed_recipe_hashes": list(self.executed_recipe_hashes),
+            "executed_recipe_hashes_by_memory_id": dict(
+                sorted(self.executed_recipe_hashes_by_memory_id.items())
+            ),
+            "memory_actions": dict(sorted(self.memory_actions.items())),
+            "behavioral_effects": dict(sorted(self.behavioral_effects.items())),
+            "effect_evidence_hashes": dict(sorted(self.effect_evidence_hashes.items())),
             "output_decision_surface_hash": self.output_decision_surface_hash,
             "execution_outcome": self.execution_outcome,
+            "producer_role": self.producer_role,
+            "producer_pid": self.producer_pid,
+            "physical_consumer_component": self.physical_consumer_component,
+            "physical_consumer_pid": self.physical_consumer_pid,
+            "logical_target_role": self.logical_target_role,
+            "receipt_id": self.receipt_id,
+            "issued_at_ns": self.issued_at_ns,
             "schema_version": self.schema_version,
         }
+
+    @property
+    def receipt_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
 
 
 @dataclass(frozen=True)
@@ -657,10 +685,23 @@ class StateConsumptionRecord:
     # counters. ``consumer_role`` remains the legacy downstream-role field.
     logical_owner_role: str = ""
     logical_step_id: str = ""
+    producer_role: str = ""
+    producer_pid: int = 0
     physical_consumer_component: str = ""
     physical_consumer_pid: int = 0
     physical_consumer_uid: int = 0
     downstream_role: str = ""
+    logical_target_role: str = ""
+    downstream_hydration_roles: tuple[str, ...] = ()
+    hydrate_manifest_id: str = ""
+    hydrate_manifest_hash: str = ""
+    hydration_receipt_id: str = ""
+    hydration_receipt_hash: str = ""
+    release_receipt_id: str = ""
+    release_receipt_hash: str = ""
+    released_by_component: str = ""
+    release_reason: str = ""
+    released_at_ns: int = 0
     consumed_at_ns: int = 0
     policy_version: str = "statebus.state_consumption.v1"
     schema_version: str = STATE_CONSUMPTION_RECORD_SCHEMA_VERSION
@@ -679,10 +720,23 @@ class StateConsumptionRecord:
             "downstream_ref_ids": list(self.downstream_ref_ids),
             "logical_owner_role": self.logical_owner_role,
             "logical_step_id": self.logical_step_id,
+            "producer_role": self.producer_role,
+            "producer_pid": self.producer_pid,
             "physical_consumer_component": self.physical_consumer_component,
             "physical_consumer_pid": self.physical_consumer_pid,
             "physical_consumer_uid": self.physical_consumer_uid,
             "downstream_role": self.downstream_role,
+            "logical_target_role": self.logical_target_role,
+            "downstream_hydration_roles": list(self.downstream_hydration_roles),
+            "hydrate_manifest_id": self.hydrate_manifest_id,
+            "hydrate_manifest_hash": self.hydrate_manifest_hash,
+            "hydration_receipt_id": self.hydration_receipt_id,
+            "hydration_receipt_hash": self.hydration_receipt_hash,
+            "release_receipt_id": self.release_receipt_id,
+            "release_receipt_hash": self.release_receipt_hash,
+            "released_by_component": self.released_by_component,
+            "release_reason": self.release_reason,
+            "released_at_ns": self.released_at_ns,
             "consumed_at_ns": self.consumed_at_ns,
             "policy_version": self.policy_version,
             "schema_version": self.schema_version,

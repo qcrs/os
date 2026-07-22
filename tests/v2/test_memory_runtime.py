@@ -30,6 +30,7 @@ def _consumption_record(
     skipped_llm_call_count: int = 0,
     execution_outcome: str = "accepted",
     counterfactual_evidence_hash: str = "",
+    receipt_validated: bool = True,
 ) -> MemoryConsumptionRecord:
     return MemoryConsumptionRecord(
         consumption_id=f"consumption:{memory_id}",
@@ -52,6 +53,7 @@ def _consumption_record(
         executed_recipe_hash=executed_recipe_hash,
         execution_outcome=execution_outcome,
         counterfactual_evidence_hash=counterfactual_evidence_hash,
+        receipt_validated=receipt_validated,
         consumption_mode=("validated_replay" if recipe_recomputed else "executed"),
     )
 
@@ -59,7 +61,7 @@ def _consumption_record(
 def test_summarize_memory_consumption_separates_recorded_and_receipt_backed_rows() -> None:
     records = [
         # Legacy/controller-only rows remain recorded but are not actual use.
-        _consumption_record("legacy"),
+        _consumption_record("legacy", receipt_validated=False),
         _consumption_record(
             "assist",
             rendered_request_hash="rendered-assist",
@@ -93,6 +95,7 @@ def test_summarize_memory_consumption_separates_recorded_and_receipt_backed_rows
     assert summary["disclosed_count"] == 4
     assert summary["recorded_consumption_count"] == 4
     assert summary["actual_consumed_count"] == 3
+    assert summary["legacy_unverified_count"] == 1
     assert summary["rendered_count"] == 1
     assert summary["recipe_executed_count"] == 3
     assert summary["output_accepted_count"] == 2

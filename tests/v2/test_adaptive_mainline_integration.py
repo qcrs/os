@@ -178,11 +178,9 @@ def _memory_loop_request(
             result=program,
             consumed_memory_ids=(memory_id,),
             consumption_modes={memory_id: "executed"},
-            rendered_request_hash=sha256_digest({
-                "task_id": task_id,
-                "step_id": step.step_id,
-                "memory_id": memory_id,
-            }),
+            rendered_request_hash=str(
+                memory_inputs[0]["approved_rendered_request_hash"]
+            ),
             output_decision_surface_hash=sha256_digest(program.canonical_payload()),
         )
 
@@ -534,9 +532,19 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: 
     assert event_types.count("STATE_PUBLISHED") == 1
     assert event_types.count("STATE_RESOLVED") == 1
     assert event_types.count("STATE_CONSUMED") == 1
+    assert event_types.count("STATE_HYDRATED") == 1
     assert event_types.count("STATE_RELEASED") == 1
     assert len(result.context.state_consumption_records) == 1
     assert result.context.state_consumption_records[0].consumer_role == "executor"
+    state_record = result.context.state_consumption_records[0]
+    assert state_record.producer_role == "retriever"
+    assert state_record.producer_pid > 0
+    assert state_record.physical_consumer_pid > 0
+    assert state_record.producer_pid != state_record.physical_consumer_pid
+    assert state_record.logical_target_role == "executor"
+    assert state_record.downstream_hydration_roles == ("executor",)
+    assert state_record.hydration_receipt_hash
+    assert state_record.release_receipt_hash
     product_bundle = observed_retrieval["result"].retrieval_bundles[0]
     publication = next(iter(result.context.semantic_state_publications.values()))
     selection = next(iter(result.context.semantic_state_selections.values()))
@@ -635,7 +643,8 @@ def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_va
     assert metrics["memory_compatible_match_count"] >= 1.0
     assert metrics["memory_policy_approved_match_count"] >= 1.0
     assert metrics["memory_consumed_count"] >= 1.0
-    assert metrics["memory_behavioral_effect_count"] >= 1.0
+    assert metrics["memory_action_count"] >= 1.0
+    assert metrics["memory_behavioral_effect_count"] == 0.0
     assert metrics["validated_replay_count"] == 1.0
     assert metrics["skipped_step_count"] == 1.0
     assert metrics["skipped_llm_call_count"] == 0.0
@@ -683,7 +692,8 @@ def test_adaptive_memory_assist_is_an_actual_executor_input_without_skipping_val
         for item in second.context.memory_consumption_records
         if item.consumer_step_id == "execute"
     )
-    assert record.behavioral_effect == "role_input_augmented"
+    assert record.action == "rendered_into_request"
+    assert record.behavioral_effect == "not_evaluated"
     assert record.recipe_recomputed is False
     assert record.skipped_generation_step_count == 0
     output = next(

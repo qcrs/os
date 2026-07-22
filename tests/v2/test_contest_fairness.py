@@ -123,6 +123,45 @@ def test_fairness_manifest_rejects_unexpected_extra_feature_difference() -> None
     )
 
 
+def test_fairness_manifest_rejects_logit_policy_confounded_lane() -> None:
+    reports = [_fairness_report(layer) for layer in BenchmarkLayer]
+    l3_index = next(
+        index for index, report in enumerate(reports) if report.layer == BenchmarkLayer.L3
+    )
+    l3_report = reports[l3_index]
+    l3_case = l3_report.cases[0]
+    runtime_contract = dict(l3_case.audit_summary["fairness_runtime_contract"])
+    runtime_contract["feature_flags"] = {
+        **dict(runtime_contract["feature_flags"]),
+        "logit_policy": "telemetry_only",
+    }
+    reports[l3_index] = replace(
+        l3_report,
+        cases=(
+            replace(
+                l3_case,
+                audit_summary={
+                    **l3_case.audit_summary,
+                    "fairness_runtime_contract": runtime_contract,
+                },
+            ),
+        ),
+    )
+
+    manifest = build_continuous_fairness_manifest(
+        family_id="fairness-family",
+        layer_reports=tuple(reports),
+    )
+
+    assert manifest["comparison_valid"] is False
+    assert any(
+        difference["field"] == "feature_flags"
+        and difference["layer"] == "L3"
+        and difference["observed"]["logit_policy"] == "telemetry_only"
+        for difference in manifest["unexpected_differences"]
+    )
+
+
 def test_gold_visibility_audit_scans_persisted_role_requests_with_provenance(tmp_path: Path) -> None:
     role_relpaths: dict[str, str] = {}
     for role in ("planner", "retriever", "executor", "summarizer"):

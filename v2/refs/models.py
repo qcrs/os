@@ -6,6 +6,9 @@ from typing import Any, Literal
 from v2.contracts import (
     CANONICAL_EVIDENCE_PACK_SCHEMA_VERSION,
     HYDRATE_MANIFEST_SCHEMA_VERSION,
+    LOGIT_STATE_SCHEMA_VERSION,
+    LogitPolicy,
+    LogitStateContractV2,
     RefKind,
     RefRegistryEntry,
     RefStatus,
@@ -93,6 +96,13 @@ class LogitStateRef:
     channel: str = "logit_state"
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        schema_version = str(self.metadata.get("schema_version", "logit_state.v1"))
+        if schema_version in {LOGIT_STATE_SCHEMA_VERSION, "statebus.logit_state.v2"}:
+            raise ValueError("v2 LogitState metadata requires LogitStateRefV2")
+        if str(self.metadata.get("policy", "off")) == LogitPolicy.GATED.value:
+            raise ValueError("legacy LogitStateRef cannot be used for gated policy")
+
     def registry_entry(self) -> RefRegistryEntry:
         return RefRegistryEntry(
             ref_id=self.state_id,
@@ -101,6 +111,71 @@ class LogitStateRef:
             status=RefStatus.ACTIVE,
             blob_hash=self.blob_hash,
             schema_version=self.metadata.get("schema_version", "logit_state.v1"),
+        )
+
+
+@dataclass(frozen=True)
+class LogitStateRefV2:
+    contract: LogitStateContractV2
+    storage_kind: StorageKind
+    shared_memory_name: str = ""
+    mmap_relpath: str = ""
+    status: RefStatus = RefStatus.ACTIVE
+    schema_version: str = LOGIT_STATE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != LOGIT_STATE_SCHEMA_VERSION:
+            raise ValueError(f"unsupported LogitStateRefV2 schema: {self.schema_version}")
+        if self.contract.schema_version != self.schema_version:
+            raise ValueError("LogitStateRefV2 contract schema mismatch")
+        if self.contract.storage_kind != self.storage_kind.value:
+            raise ValueError("LogitStateRefV2 storage binding mismatch")
+        if self.status is not RefStatus.ACTIVE:
+            raise ValueError("new LogitStateRefV2 must be active")
+        if self.storage_kind == StorageKind.SHARED_MEMORY:
+            if not self.shared_memory_name or self.mmap_relpath:
+                raise ValueError("shared-memory LogitStateRefV2 requires only a shared memory name")
+        elif self.storage_kind == StorageKind.MMAP_FILE:
+            path = self.mmap_relpath.strip()
+            if not path or path.startswith("/") or ".." in path.split("/") or self.shared_memory_name:
+                raise ValueError("mmap LogitStateRefV2 requires one safe root-relative path")
+        else:
+            raise ValueError("LogitStateRefV2 supports shared_memory or mmap_file only")
+
+    @property
+    def state_id(self) -> str:
+        return self.contract.state_id
+
+    @property
+    def blob_hash(self) -> str:
+        return self.contract.blob_hash
+
+    @property
+    def length(self) -> int:
+        return self.contract.size_bytes
+
+    @property
+    def ref_digest(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status.value,
+            "storage_kind": self.storage_kind.value,
+            "shared_memory_name": self.shared_memory_name,
+            "mmap_relpath": self.mmap_relpath,
+            "contract": self.contract.canonical_payload(),
+        }
+
+    def registry_entry(self) -> RefRegistryEntry:
+        return RefRegistryEntry(
+            ref_id=self.state_id,
+            ref_kind=RefKind.LOGIT_STATE,
+            storage_kind=self.storage_kind,
+            status=self.status,
+            blob_hash=self.blob_hash,
+            schema_version=self.schema_version,
         )
 
 

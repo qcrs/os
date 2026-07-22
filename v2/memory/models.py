@@ -243,6 +243,7 @@ class MemoryConsumptionRecord:
     after_decision_surface_hash: str
     behavioral_effect: str
     downstream_ref_ids: tuple[str, ...] = ()
+    projected_decision_surface_hash: str = ""
     # Hash of the output surface actually accepted by the role.  This is
     # separate from ``after_decision_surface_hash`` (the candidate decision
     # surface) so a receipt cannot be reconstructed from controller inputs.
@@ -259,7 +260,18 @@ class MemoryConsumptionRecord:
     executed_recipe_hash: str = ""
     execution_outcome: str = "accepted"
     counterfactual_evidence_hash: str = ""
-    schema_version: str = "statebus.memory_consumption_record.v2"
+    action: str = "none"
+    effect_evidence_hash: str = ""
+    receipt_id: str = ""
+    receipt_hash: str = ""
+    receipt_validated: bool = False
+    producer_role: str = ""
+    producer_pid: int = 0
+    physical_consumer_component: str = ""
+    physical_consumer_pid: int = 0
+    logical_target_role: str = ""
+    legacy_classification: str = ""
+    schema_version: str = "statebus.memory_consumption_record.v3"
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -276,6 +288,7 @@ class MemoryConsumptionRecord:
             "after_decision_surface_hash": self.after_decision_surface_hash,
             "behavioral_effect": self.behavioral_effect,
             "downstream_ref_ids": list(self.downstream_ref_ids),
+            "projected_decision_surface_hash": self.projected_decision_surface_hash,
             "output_decision_surface_hash": self.output_decision_surface_hash,
             "skipped_generation_step_count": self.skipped_generation_step_count,
             "skipped_llm_call_count": self.skipped_llm_call_count,
@@ -286,12 +299,40 @@ class MemoryConsumptionRecord:
             "executed_recipe_hash": self.executed_recipe_hash,
             "execution_outcome": self.execution_outcome,
             "counterfactual_evidence_hash": self.counterfactual_evidence_hash,
+            "action": self.action,
+            "effect_evidence_hash": self.effect_evidence_hash,
+            "receipt_id": self.receipt_id,
+            "receipt_hash": self.receipt_hash,
+            "receipt_validated": self.receipt_validated,
+            "producer_role": self.producer_role,
+            "producer_pid": self.producer_pid,
+            "physical_consumer_component": self.physical_consumer_component,
+            "physical_consumer_pid": self.physical_consumer_pid,
+            "logical_target_role": self.logical_target_role,
+            "legacy_classification": self.legacy_classification,
             "schema_version": self.schema_version,
         }
 
     @property
     def record_hash(self) -> str:
         return sha256_digest(self.canonical_payload())
+
+
+def memory_effect_evidence_hash(
+    *,
+    memory_id: str,
+    before_decision_surface_hash: str,
+    output_decision_surface_hash: str,
+    behavioral_effect: str,
+    counterfactual_evidence_hash: str,
+) -> str:
+    return sha256_digest({
+        "memory_id": memory_id,
+        "before_decision_surface_hash": before_decision_surface_hash,
+        "output_decision_surface_hash": output_decision_surface_hash,
+        "behavioral_effect": behavioral_effect,
+        "counterfactual_evidence_hash": counterfactual_evidence_hash,
+    })
 
 
 def summarize_memory_consumption(
@@ -304,17 +345,23 @@ def summarize_memory_consumption(
     """Return an auditable accounting projection without overclaiming.
 
     ``recorded_consumption_count`` is the physical row count.  The
-    ``actual_*`` fields are restricted to rows carrying a rendered request or
-    execution trace hash, which keeps old recorded artifacts distinguishable
-    from receipt-backed consumption after the F-03 fix.
+    ``actual_*`` fields require a controller-validated receipt and an approved
+    rendered-request or candidate-specific recipe binding.  A hash on its own
+    is legacy compatibility evidence, not proof of actual consumption.
     """
 
     rows = tuple(records)
     actual = tuple(
         row for row in rows
-        if bool(row.rendered_request_hash or row.executed_recipe_hash)
+        if row.receipt_validated
+        and bool(row.rendered_request_hash or row.executed_recipe_hash)
     )
     accepted = tuple(row for row in actual if row.execution_outcome == "accepted")
+    effects = tuple(
+        row for row in accepted
+        if row.effect_evidence_hash
+        and row.behavioral_effect in {"changed", "unchanged", "beneficial", "degraded"}
+    )
     recorded_role_counts: dict[str, int] = {}
     actual_role_counts: dict[str, int] = {}
     for row in rows:
@@ -331,12 +378,20 @@ def summarize_memory_consumption(
         "disclosed_count": int(disclosed_count) if disclosed_count is not None else None,
         "recorded_consumption_count": len(rows),
         "actual_consumed_count": len(actual),
+        "legacy_unverified_count": sum(not row.receipt_validated for row in rows),
         "rendered_count": sum(bool(row.rendered_request_hash) for row in actual),
         "recipe_executed_count": sum(
-            row.consumption_mode in {"executed", "recipe_executed", "validated_replay"}
+            row.consumption_mode in {
+                "executed",
+                "recipe_executed",
+                "validated_replay",
+                "exact_replay",
+            }
             for row in actual
         ),
         "output_accepted_count": len(accepted),
+        "action_count": sum(row.action != "none" for row in actual),
+        "behavioral_effect_count": len(effects),
         "failed_attempt_count": sum(row.execution_outcome in {"failed", "attempted"} for row in actual),
         "validated_replay_count": sum(
             row.replay_class.value == "validated_replay" and row.recipe_recomputed

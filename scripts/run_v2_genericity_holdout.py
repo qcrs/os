@@ -94,10 +94,10 @@ ROLE_REQUEST_POLICY = {
 }
 
 SHARED_PREFIX_ROLES = {"retriever", "executor", "summarizer"}
-SHARED_PREFIX_CONTRACT = "statebus-shared-prefix-v1"
+SHARED_PREFIX_CONTRACTS = {"statebus-shared-prefix-v1", "statebus-shared-prefix-v2"}
 SHARED_PREFIX_CONTAINS = "hydrated_evidence"
 SHARED_PREFIX_PATTERN = re.compile(
-    r"<statebus-shared-prefix-v1>\r?\n(.*?)\r?\n</statebus-shared-prefix-v1>",
+    r"<statebus-shared-prefix-(?:v1|v2)>\r?\n(.*?)\r?\n</statebus-shared-prefix-(?:v1|v2)>",
     flags=re.DOTALL,
 )
 
@@ -141,7 +141,7 @@ def _shared_prefix_metadata_error(
             "missing": sorted(expected_keys - actual_keys),
             "unexpected": sorted(actual_keys - expected_keys),
         }
-    if metadata.get("contract") != SHARED_PREFIX_CONTRACT:
+    if metadata.get("contract") not in SHARED_PREFIX_CONTRACTS:
         return {"reason": "contract", "observed": metadata.get("contract")}
     if metadata.get("contains") != SHARED_PREFIX_CONTAINS:
         return {"reason": "contains", "observed": metadata.get("contains")}

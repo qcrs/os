@@ -17,6 +17,7 @@ from runtime.llm import (
 )
 from v2.contracts import (
     AdaptiveTaskEnvelope,
+    CandidateSurfaceV2,
     CLAIM_SET_V2_SCHEMA_VERSION,
     CanonicalTaskSpec,
     Claim,
@@ -24,6 +25,9 @@ from v2.contracts import (
     ClaimSet,
     ClaimSetStatus,
     EvidenceRequest,
+    LogitPolicy,
+    LogitProducerReceipt,
+    LogitProducerStatus,
     PlanProposal,
     PlanStepProposal,
     TransformProgram,
@@ -31,12 +35,16 @@ from v2.contracts import (
 )
 from v2.route_tool_catalog import RouteToolSurfaceCandidate, build_route_tool_surface
 from v2.retrieval.models import RetrievalCandidatePool
-from v2.runtime.logit_state import serialize_logit_state_v2
+from v2.runtime.logit_state import ExactChoiceLogitResult, extract_exact_choice_logit_state
+from v2.runtime.prefix_identity import (
+    SHARED_PREFIX_LAYOUT_VERSION,
+    shared_prefix_envelope,
+)
 from v2.runtime.semantic_plan import planner_semantic_plan_response_schema
 from v2.utils import sha256_digest
 
 
-PREFIX_LAYOUT_PLAN_SCHEMA_VERSION = "statebus.prefix_layout_plan.v1"
+PREFIX_LAYOUT_PLAN_SCHEMA_VERSION = "statebus.prefix_layout_plan.v2"
 RENDERED_ROLE_REQUEST_SCHEMA_VERSION = "statebus.rendered_role_request.v1"
 PREFIX_LAYOUT_CLAIM_BOUNDARY = (
     "prompt_prefix_layout_control_plane_only_no_kv_tensor_export"
@@ -45,6 +53,14 @@ PREFIX_LAYOUT_CLAIM_BOUNDARY = (
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalized_logit_policy(value: str) -> LogitPolicy:
+    normalized = value.strip().lower()
+    try:
+        return LogitPolicy(normalized or LogitPolicy.OFF.value)
+    except ValueError:
+        return LogitPolicy.OFF
 
 
 def _run_sync(awaitable: Any) -> Any:
@@ -65,6 +81,8 @@ def _merge_llm_results(results: list[LLMResult]) -> LLMResult:
             completion_tokens=sum(result.usage.completion_tokens for result in results),
             total_tokens=sum(result.usage.total_tokens for result in results),
         ),
+        top_logprobs=last.top_logprobs,
+        logprob_receipt=last.logprob_receipt,
     )
 
 
@@ -594,6 +612,12 @@ class ExecutorRoleDecision:
     logit_peak_position: int = -1
     logit_sequence_length: int = 0
     logit_decision_entropy: float = -1.0
+    logit_policy: str = LogitPolicy.OFF.value
+    logit_state_payload: bytes = field(default=b"", repr=False)
+    logit_candidate_surface: CandidateSurfaceV2 | None = None
+    logit_producer_receipt: LogitProducerReceipt | None = None
+    logit_exact_result: ExactChoiceLogitResult | None = field(default=None, repr=False)
+    logit_unavailable_reason: str = "policy_off"
 
 
 @dataclass(frozen=True)
@@ -637,6 +661,7 @@ class PrefixLayoutPlan:
     removed_text_section_count: int = 0
     removed_evidence_block_count: int = 0
     suffix_payload_keys: tuple[str, ...] = ()
+    prefix_layout_version: str = SHARED_PREFIX_LAYOUT_VERSION
     claim_boundary: str = PREFIX_LAYOUT_CLAIM_BOUNDARY
     schema_version: str = PREFIX_LAYOUT_PLAN_SCHEMA_VERSION
 
@@ -657,6 +682,7 @@ class PrefixLayoutPlan:
             "removed_text_section_count": self.removed_text_section_count,
             "removed_evidence_block_count": self.removed_evidence_block_count,
             "suffix_payload_keys": list(self.suffix_payload_keys),
+            "prefix_layout_version": self.prefix_layout_version,
             "claim_boundary": self.claim_boundary,
             "schema_version": self.schema_version,
         }
@@ -782,11 +808,10 @@ def _prefix_aligned_prompt(
     if not normalized_prefix:
         return role_suffix_prompt
     return (
-        "<statebus-shared-prefix-v1>\n"
-        f"{normalized_prefix}\n"
-        "</statebus-shared-prefix-v1>\n\n"
-        f"[STATEBUS_ROLE_SUFFIX:{role_label}]\n"
-        f"{role_suffix_prompt}"
+        shared_prefix_envelope(normalized_prefix)
+        + f'<statebus-role-suffix-v2 role="{role_label}">\n'
+        + role_suffix_prompt
+        + "</statebus-role-suffix-v2>\n"
     )
 
 
@@ -806,11 +831,11 @@ def _role_suffix_payload_without_shared_prefix(
     suffix_payload = dict(payload)
     if str(suffix_payload.get("e", "")).strip() == normalized_prefix:
         suffix_payload.pop("e", None)
-        suffix_payload["sp"] = {
-            "contract": "statebus-shared-prefix-v1",
-            "contains": "hydrated_evidence",
-            "bytes": len(normalized_prefix.encode("utf-8")),
-        }
+    suffix_payload["sp"] = {
+        "contract": "statebus-shared-prefix-v2",
+        "contains": "hydrated_evidence",
+        "bytes": len(normalized_prefix.encode("utf-8")),
+    }
     return suffix_payload
 
 
@@ -1011,6 +1036,58 @@ def _closed_set_selection_schema(
         "required": ["candidate_key", "route", "tool_name"],
         "additionalProperties": False,
     }
+
+
+def _logit_candidate_surface(
+    visible_candidates: tuple["RoleToolCandidate", ...],
+) -> CandidateSurfaceV2 | None:
+    if not 2 <= len(visible_candidates) <= 8:
+        return None
+    candidate_ids = tuple(candidate.candidate_key() for candidate in visible_candidates)
+    candidate_digests = tuple(
+        sha256_digest(
+            {
+                "candidate_id": candidate.candidate_key(),
+                "route": candidate.route,
+                "tool_name": candidate.tool_name,
+                "supporting_doc_ids": list(candidate.supporting_doc_ids),
+                "matched_issue_ids": list(candidate.matched_issue_ids),
+            }
+        )
+        for candidate in visible_candidates
+    )
+    try:
+        return CandidateSurfaceV2.from_candidate_ids(
+            candidate_ids,
+            candidate_digests=candidate_digests,
+        )
+    except ValueError:
+        return None
+
+
+def _closed_logit_choice_schema(surface: CandidateSurfaceV2) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "choice_code": {
+                "type": "string",
+                "enum": list(surface.aliases),
+            }
+        },
+        "required": ["choice_code"],
+        "additionalProperties": False,
+    }
+
+
+def _logit_alias_payload(surface: CandidateSurfaceV2) -> list[dict[str, str]]:
+    return [
+        {
+            "choice_code": binding.alias,
+            "candidate_key": binding.candidate_id,
+            "candidate_digest": binding.candidate_digest,
+        }
+        for binding in surface.bindings
+    ]
 
 
 def _preferred_candidate_payload(
@@ -1400,6 +1477,7 @@ class RolePathRunner:
         default_factory=lambda: os.getenv("STATEBUS_PREFIX_ALIGNMENT_MODE", "independent")
     )
     lean_completion_enabled: bool = field(default_factory=lambda: _env_flag("STATEBUS_LEAN_COMPLETION"))
+    logit_policy: str = field(default_factory=lambda: os.getenv("STATEBUS_LOGIT_POLICY", "off"))
     rendered_request_audit: dict[str, list[dict[str, Any]]] = field(
         default_factory=dict,
         init=False,
@@ -1472,6 +1550,14 @@ class RolePathRunner:
             "Do not invent labels or use placeholders such as 'tool' or 'route'. "
             "Return a JSON object (starting with { and ending with }) "
             "with keys candidate_key, route, tool_name, action_contract, and reason."
+        )
+
+    @staticmethod
+    def _executor_logit_choice_instruction() -> str:
+        return (
+            "Select exactly one candidate from lc. Return exactly one JSON object with the single key "
+            "choice_code and copy its ASCII alias exactly. Do not return route, tool, candidate text, "
+            "reason, confidence, prose, or any additional field."
         )
 
     def _summarizer_instruction(self) -> str:
@@ -1928,8 +2014,21 @@ class RolePathRunner:
         strict_surface: bool = True,
         allow_assisted_correction: bool = True,
         route_hints: tuple[str, ...] = (),
+        shared_prefix_text: str = "",
     ) -> ExecutorRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="executor")
+        logit_policy = _normalized_logit_policy(self.logit_policy)
+        logit_surface = (
+            _logit_candidate_surface(visible_candidates)
+            if logit_policy is not LogitPolicy.OFF
+            else None
+        )
+        dedicated_logit_choice = logit_surface is not None
+        logit_unavailable_reason = (
+            "policy_off"
+            if logit_policy is LogitPolicy.OFF
+            else "candidate_surface_requires_2_to_8_unique_candidates"
+        )
         candidate_payload, _candidate_notes = _candidate_surface_payload(
             visible_candidates,
             include_helper_fields=not strict_surface,
@@ -1948,12 +2047,19 @@ class RolePathRunner:
             if strict_surface
             else {}
         )
-        instruction = self._executor_instruction(
-            preferred_candidate_enabled=bool(preferred_candidate)
+        instruction = (
+            self._executor_logit_choice_instruction()
+            if dedicated_logit_choice
+            else self._executor_instruction(
+                preferred_candidate_enabled=bool(preferred_candidate)
+            )
         )
+        if logit_surface is not None:
+            payload["lc"] = _logit_alias_payload(logit_surface)
         if preferred_candidate and self.handoff_mode != "text_collaboration":
             payload["pc"] = preferred_candidate
         evidence_text = _compact_text_value(prompt_slice.combined_text())
+        prefix_text = _compact_text_value(shared_prefix_text) or evidence_text
         if evidence_text:
             payload["e"] = evidence_text
         prompt = self._render_prompt(
@@ -1969,11 +2075,11 @@ class RolePathRunner:
                 ("Preferred Candidate", _preferred_candidate_text(preferred_candidate)),
                 ("Hydrated Evidence", evidence_text),
             ),
-            shared_prefix_text=evidence_text,
+            shared_prefix_text=prefix_text,
         )
         if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
             self.prefix_alignment_mode,
-            evidence_text,
+            prefix_text,
         ):
             preferred_candidate_section = (
                 f"Preferred candidate: {_preferred_candidate_text(preferred_candidate)}\n\n"
@@ -1990,14 +2096,29 @@ class RolePathRunner:
                 f"Validated action contract: {action_contract}\n"
                 f"Visible candidates: {_candidate_identity_line(visible_candidates)}\n"
                 f"Candidate notes: {_candidate_notes}\n\n"
-                f"{preferred_candidate_section}"
-                f"Evidence note:\n{prompt_slice.combined_text()}\n"
+                + (
+                    "Alias choices: "
+                    + "; ".join(
+                        f"{binding.alias}={binding.candidate_id}"
+                        for binding in logit_surface.bindings
+                    )
+                    + "\n\n"
+                    if logit_surface is not None
+                    else ""
+                )
+                + f"{preferred_candidate_section}"
+                + f"Evidence note:\n{prompt_slice.combined_text()}\n"
             )
         completions: list[JsonRoleCompletion] = []
         current_prompt = prompt
-        _selection_schema = _closed_set_selection_schema(visible_candidates)
+        _selection_schema = (
+            _closed_logit_choice_schema(logit_surface)
+            if logit_surface is not None
+            else _closed_set_selection_schema(visible_candidates)
+        )
         max_attempts = max(1, self.json_response_max_attempts)
         last_error: RoleSelectionError | None = None
+        parsed_selection = ParsedRoleSelection()
         for attempt_index in range(max_attempts):
             completion = self._complete_json_role(
                 prompt=current_prompt,
@@ -2005,27 +2126,49 @@ class RolePathRunner:
                 response_schema=_selection_schema,
             )
             completions.append(completion)
-            payload = completion.payload
-            parsed_selection = _parse_role_selection(payload)
+            completion_payload = completion.payload
             try:
-                selected_candidate, _ = self._normalize_candidate_selection(
-                    route=parsed_selection.route or route,
-                    tool_name=parsed_selection.tool_name or tool_name,
-                    candidate_key=parsed_selection.candidate_key,
-                    candidate_rank=parsed_selection.candidate_rank,
-                    visible_candidates=visible_candidates,
-                    allow_assisted_correction=allow_assisted_correction,
-                    route_hints=route_hints,
-                )
+                if logit_surface is not None:
+                    if set(completion_payload) != {"choice_code"}:
+                        raise RoleSelectionError("logit_choice_schema_mismatch")
+                    choice_code = completion_payload.get("choice_code")
+                    if not isinstance(choice_code, str) or choice_code not in logit_surface.aliases:
+                        raise RoleSelectionError("logit_choice_alias_outside_surface")
+                    selected_index = logit_surface.aliases.index(choice_code)
+                    selected_candidate = visible_candidates[selected_index]
+                    parsed_selection = ParsedRoleSelection(
+                        route=selected_candidate.route,
+                        tool_name=selected_candidate.tool_name,
+                        candidate_key=selected_candidate.candidate_key(),
+                        candidate_rank=selected_candidate.helper_rank,
+                        reason=f"closed_alias_choice:{choice_code}",
+                        action_contract=action_contract,
+                    )
+                else:
+                    parsed_selection = _parse_role_selection(completion_payload)
+                    selected_candidate, _ = self._normalize_candidate_selection(
+                        route=parsed_selection.route or route,
+                        tool_name=parsed_selection.tool_name or tool_name,
+                        candidate_key=parsed_selection.candidate_key,
+                        candidate_rank=parsed_selection.candidate_rank,
+                        visible_candidates=visible_candidates,
+                        allow_assisted_correction=allow_assisted_correction,
+                        route_hints=route_hints,
+                    )
                 break
             except RoleSelectionError as exc:
                 last_error = exc
                 if attempt_index + 1 >= max_attempts:
                     raise
-                current_prompt = _selection_retry_prompt(
-                    prompt=prompt,
-                    error=exc,
-                    visible_candidates=visible_candidates,
+                current_prompt = (
+                    f"{prompt}\n\nSelection retry instruction: return exactly one choice_code from "
+                    f"{', '.join(logit_surface.aliases)} and no other field."
+                    if logit_surface is not None
+                    else _selection_retry_prompt(
+                        prompt=prompt,
+                        error=exc,
+                        visible_candidates=visible_candidates,
+                    )
                 )
         else:
             raise last_error or RoleSelectionError("selection_retry_exhausted")
@@ -2038,33 +2181,37 @@ class RolePathRunner:
         _logit_peak_position = -1
         _logit_sequence_length = 0
         _logit_decision_entropy = -1.0
-        if result.top_logprobs:
-            try:
-                _logit_result = serialize_logit_state_v2(
-                    result.top_logprobs,
-                    candidate_tokens=tuple(
-                        dict.fromkeys(
-                            value
-                            for candidate in visible_candidates
-                            for value in (
-                                candidate.candidate_key(),
-                                candidate.route,
-                                candidate.tool_name,
-                            )
-                            if value
-                        )
-                    ),
-                )
-                _logit_entropy = _logit_result.entropy
-                _logit_confidence_proxy = _logit_result.confidence_proxy
-                _logit_state_bytes = len(_logit_result.payload_bytes)
-                _logit_varentropy = _logit_result.varentropy
-                _logit_top_gap = _logit_result.top_gap
-                _logit_peak_position = _logit_result.peak_position
-                _logit_sequence_length = _logit_result.sequence_length
-                _logit_decision_entropy = _logit_result.decision_entropy
-            except Exception:
-                pass
+        _logit_payload = b""
+        _logit_receipt: LogitProducerReceipt | None = None
+        _logit_exact_result: ExactChoiceLogitResult | None = None
+        if logit_surface is not None:
+            llm_receipt = result.logprob_receipt
+            request_id = llm_receipt.request_id or f"role-request-{sha256_digest(prompt)[:20]}"
+            attempt_id = llm_receipt.attempt_id or f"{request_id}:accepted"
+            exact_result = extract_exact_choice_logit_state(
+                completion_text=result.text,
+                top_logprobs=result.top_logprobs,
+                candidate_surface=logit_surface,
+                request_id=request_id,
+                attempt_id=attempt_id,
+            )
+            _logit_exact_result = exact_result
+            _logit_receipt = exact_result.receipt
+            logit_unavailable_reason = exact_result.receipt.unavailable_reason
+            if exact_result.available:
+                if exact_result.selected_candidate_id != selected_candidate.candidate_key():
+                    raise RoleSelectionError("logit_selected_candidate_binding_mismatch")
+                _logit_payload = exact_result.payload_bytes
+                _logit_entropy = exact_result.entropy
+                _logit_confidence_proxy = exact_result.candidate_probabilities[
+                    exact_result.selected_candidate_ordinal
+                ]
+                _logit_state_bytes = len(exact_result.payload_bytes)
+                _logit_top_gap = exact_result.top_margin
+                _logit_peak_position = exact_result.receipt.decision_token_position
+                _logit_sequence_length = exact_result.receipt.sequence_length
+                _logit_decision_entropy = exact_result.entropy
+                logit_unavailable_reason = ""
         return ExecutorRoleDecision(
             route=selected_candidate.route,
             tool_name=selected_candidate.tool_name,
@@ -2072,7 +2219,7 @@ class RolePathRunner:
                 parsed_selection.action_contract or action_contract
             ),
             reason=parsed_selection.reason,
-            raw_text=result.text,
+            raw_text="" if dedicated_logit_choice else result.text,
             model=result.model,
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
@@ -2087,6 +2234,12 @@ class RolePathRunner:
             logit_peak_position=_logit_peak_position,
             logit_sequence_length=_logit_sequence_length,
             logit_decision_entropy=_logit_decision_entropy,
+            logit_policy=logit_policy.value,
+            logit_state_payload=_logit_payload,
+            logit_candidate_surface=logit_surface,
+            logit_producer_receipt=_logit_receipt,
+            logit_exact_result=_logit_exact_result,
+            logit_unavailable_reason=logit_unavailable_reason,
         )
 
     def summarize(
@@ -2099,6 +2252,7 @@ class RolePathRunner:
         actions_text: str,
         tags: tuple[str, ...] = (),
         reusable_steps: tuple[str, ...] = ("retrieve", "execute"),
+        shared_prefix_text: str = "",
     ) -> SummarizerRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="summarizer")
         instruction = self._summarizer_instruction()
@@ -2109,6 +2263,7 @@ class RolePathRunner:
             "r": list(reusable_steps),
         }
         evidence_text = _compact_text_value(prompt_slice.combined_text())
+        prefix_text = _compact_text_value(shared_prefix_text) or evidence_text
         compact_actions_text = _compact_text_value(actions_text)
         if evidence_text:
             payload["e"] = evidence_text
@@ -2127,11 +2282,11 @@ class RolePathRunner:
                 ("Hydrated Evidence", evidence_text),
                 ("Action Handoff", compact_actions_text),
             ),
-            shared_prefix_text=evidence_text,
+            shared_prefix_text=prefix_text,
         )
         if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
             self.prefix_alignment_mode,
-            evidence_text,
+            prefix_text,
         ):
             prompt = (
                 "You are the StateBus v2 summarizer role.\n"

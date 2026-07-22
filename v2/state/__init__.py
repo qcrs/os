@@ -29,6 +29,16 @@ from v2.state.semantic_state import (
     select_dense_semantic_state,
     semantic_ref_from_sidecar,
 )
+from v2.state.logit_state import (
+    LogitStateGrant,
+    LogitStatePublication,
+    LogitStatePublishContext,
+    LogitStateStore,
+    LogitStateValidationError,
+    ResolvedLogitState,
+    logit_ref_from_sidecar,
+    resolve_logit_state,
+)
 
 __all__ = [
     "JsonContractStore",
@@ -56,4 +66,12 @@ __all__ = [
     "resolve_dense_semantic_state",
     "select_dense_semantic_state",
     "semantic_ref_from_sidecar",
+    "LogitStateGrant",
+    "LogitStatePublication",
+    "LogitStatePublishContext",
+    "LogitStateStore",
+    "LogitStateValidationError",
+    "ResolvedLogitState",
+    "logit_ref_from_sidecar",
+    "resolve_logit_state",
 ]

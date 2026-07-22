@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from v2.memory import memory_effect_evidence_hash
+
 from v2.contracts import (
     CapabilityGrant,
     Claim,
@@ -264,6 +266,7 @@ def test_memory_receipt_persists_output_surface_and_prompt_hash(tmp_path) -> Non
         consumed_memory_ids=("memory-1",),
         consumption_modes={"memory-1": "executed"},
         rendered_request_hash="prompt-hash",
+        approved_rendered_request_hash="prompt-hash",
         output_decision_surface_hash="output-hash",
     )
 
@@ -288,13 +291,18 @@ def test_memory_receipt_rejects_unapproved_id_and_missing_hash(tmp_path) -> None
             before_surface_hash="before",
             consumed_memory_ids=("memory-2",),
         )
-    with pytest.raises(AdaptiveDispatchError, match="memory_consumption_receipt_hash_missing"):
+    with pytest.raises(
+        AdaptiveDispatchError,
+        match="memory_consumption_rendered_request_hash_missing",
+    ):
         dispatcher._record_memory_consumption(
             memory_inputs=(_memory_input("memory-1"),),
             step=step,
             downstream_ref_ids=(),
             before_surface_hash="before",
             consumed_memory_ids=("memory-1",),
+            consumption_modes={"memory-1": "executed"},
+            output_decision_surface_hash="output-hash",
         )
 
 
@@ -320,6 +328,108 @@ def test_failed_recipe_is_attempted_but_never_replay_or_skip(tmp_path) -> None:
     assert record.execution_outcome == "failed"
     assert record.recipe_recomputed is False
     assert record.skipped_llm_call_count == 0
+
+
+def test_memory_h1_disclosed_candidate_is_not_actual_consumption(tmp_path) -> None:
+    registry, _envelope, approved = _setup()
+    context = AdaptiveDispatchContext(registry=registry)
+    metrics = AdaptiveCapabilityDispatcher(context=context)._record_memory_consumption(
+        memory_inputs=(_memory_input("memory-1"),),
+        step=approved.steps[1],
+        downstream_ref_ids=(),
+        before_surface_hash="before",
+    )
+
+    assert metrics["memory_disclosed_count"] == 1.0
+    assert metrics["memory_consumed_count"] == 0.0
+    assert metrics["memory_action_count"] == 0.0
+    assert context.memory_consumption_records == []
+
+
+def test_memory_receipt_rejects_wrong_rendered_hash_and_ambiguous_recipe_binding(
+    tmp_path,
+) -> None:
+    registry, _envelope, approved = _setup()
+    dispatcher = AdaptiveCapabilityDispatcher(
+        context=AdaptiveDispatchContext(registry=registry)
+    )
+    step = approved.steps[1]
+    with pytest.raises(
+        AdaptiveDispatchError,
+        match="memory_consumption_rendered_request_hash_mismatch",
+    ):
+        dispatcher._record_memory_consumption(
+            memory_inputs=(_memory_input("memory-1"),),
+            step=step,
+            downstream_ref_ids=("artifact",),
+            before_surface_hash="before",
+            consumed_memory_ids=("memory-1",),
+            consumption_modes={"memory-1": "rendered_prompt"},
+            rendered_request_hash="wrong",
+            approved_rendered_request_hash="approved",
+            output_decision_surface_hash="output",
+        )
+
+    replay_inputs = (
+        _memory_input("memory-1", replay_class=ReplayClass.VALIDATED_REPLAY),
+        _memory_input("memory-2", replay_class=ReplayClass.VALIDATED_REPLAY),
+    )
+    with pytest.raises(
+        AdaptiveDispatchError,
+        match="memory_consumption_recipe_binding_ambiguous",
+    ):
+        dispatcher._record_memory_consumption(
+            memory_inputs=replay_inputs,
+            step=step,
+            downstream_ref_ids=("artifact",),
+            before_surface_hash="before",
+            consumed_memory_ids=("memory-1", "memory-2"),
+            consumption_modes={
+                "memory-1": "recipe_executed",
+                "memory-2": "recipe_executed",
+            },
+            executed_recipe_hashes=("recipe-memory-1", "recipe-memory-2"),
+            output_decision_surface_hash="output",
+        )
+
+
+def test_memory_h2_separates_actual_action_from_paired_effect(tmp_path) -> None:
+    registry, _envelope, approved = _setup()
+    context = AdaptiveDispatchContext(registry=registry)
+    dispatcher = AdaptiveCapabilityDispatcher(context=context)
+    counterfactual_hash = sha256_digest({"pair": "H0-H2", "order": "ABBA"})
+    effect_hash = memory_effect_evidence_hash(
+        memory_id="memory-1",
+        before_decision_surface_hash="before",
+        output_decision_surface_hash="output",
+        behavioral_effect="changed",
+        counterfactual_evidence_hash=counterfactual_hash,
+    )
+
+    metrics = dispatcher._record_memory_consumption(
+        memory_inputs=(_memory_input("memory-1"),),
+        step=approved.steps[1],
+        downstream_ref_ids=("artifact",),
+        before_surface_hash="before",
+        consumed_memory_ids=("memory-1",),
+        consumption_modes={"memory-1": "rendered_prompt"},
+        rendered_request_hash="approved",
+        approved_rendered_request_hash="approved",
+        output_decision_surface_hash="output",
+        memory_actions={"memory-1": "rendered_into_request"},
+        behavioral_effects={"memory-1": "changed"},
+        effect_evidence_hashes={"memory-1": effect_hash},
+        counterfactual_evidence_hash=counterfactual_hash,
+    )
+
+    assert metrics["memory_consumed_count"] == 1.0
+    assert metrics["memory_action_count"] == 1.0
+    assert metrics["memory_behavioral_effect_count"] == 1.0
+    record = context.memory_consumption_records[0]
+    assert record.receipt_validated is True
+    assert record.action == "rendered_into_request"
+    assert record.behavioral_effect == "changed"
+    assert record.effect_evidence_hash == effect_hash
 
 
 def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_artifact(tmp_path) -> None:

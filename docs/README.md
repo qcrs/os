@@ -1,6 +1,6 @@
 # StateBus Docs
 
-更新时间：2026-07-08
+更新时间：2026-07-22
 
 这个目录现在按 `v2` clean-room 实现和 contest evidence 来组织。旧的 host-mainline / v1 过程文档已经归档；日常判断不要再从 6 月的 analysis/progress/review 文档进入。
 
@@ -12,28 +12,31 @@
 2. `start_here.md`
    - 当前 v2 开发、测试和 local+api 复跑入口。
 
-3. `reference/题目.md`
+3. `architecture/v2_adaptive_task_flow_zh.md`
+   - 当前 adaptive 主链路的中文实现说明：任务结构、DAG、四个 Agent、typed Ref、embedding 跨进程选择、Executor 输入和真实字段流。
+
+4. `reference/题目.md`
    - 赛题原始要求。所有 claim 最终都要能回到这里。
 
-4. `improvement/20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
+5. `improvement/20_v2_comprehensive_truth_audit_20260706/00_executive_summary.md`
    - 当前 v2 truth audit 总入口。
 
-5. `improvement/20_v2_comprehensive_truth_audit_20260706/code_truth_vs_experiment_issue_matrix_zh.md`
+6. `improvement/20_v2_comprehensive_truth_audit_20260706/code_truth_vs_experiment_issue_matrix_zh.md`
    - 代码事实、实验事实、问题严重级别和修复状态的主矩阵。
 
-6. `improvement/20_v2_comprehensive_truth_audit_20260706/05_merged_issue_ledger.md`
+7. `improvement/20_v2_comprehensive_truth_audit_20260706/05_merged_issue_ledger.md`
    - 当前问题账本。后续修复和复跑结果应该回填这里。
 
-7. `contracts/`
+8. `contracts/`
    - v2 合同文档：role contract、persistence profile、external fairness gate、bounded CodeAct demo。
 
-8. `planning/statebus_v2_clean_room_rebuild_plan_20260625.md`
+9. `planning/statebus_v2_clean_room_rebuild_plan_20260625.md`
    - v2 clean-room 主规划历史。
 
-9. `planning/statebus_v2_container_refactor_bootstrap_20260627.md`
-   - v2 container / openEuler bootstrap 历史规划。
+10. `planning/statebus_v2_container_refactor_bootstrap_20260627.md`
+    - v2 container / openEuler bootstrap 历史规划。
 
-10. `reports/v2_*`
+11. `reports/v2_*`
     - v2 历史报告。读取时必须用 truth audit 校准，不能单独当最新结论。
 
 ## 当前证据口径

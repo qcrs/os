@@ -27,6 +27,48 @@ FOUR_ROLE_ROLE_ALIASES = {
 }
 
 
+def _resolved_logit_policy() -> str:
+    policy = os.getenv("STATEBUS_LOGIT_POLICY", "off").strip().lower()
+    return policy if policy in {"off", "telemetry_only", "gated"} else "off"
+
+
+def _is_dedicated_logit_choice_schema(response_schema: dict[str, Any] | None) -> bool:
+    if not isinstance(response_schema, dict):
+        return False
+    properties = response_schema.get("properties")
+    required = response_schema.get("required")
+    if not isinstance(properties, dict) or set(properties) != {"choice_code"}:
+        return False
+    choice_schema = properties.get("choice_code")
+    return (
+        isinstance(choice_schema, dict)
+        and choice_schema.get("type") == "string"
+        and isinstance(choice_schema.get("enum"), list)
+        and bool(choice_schema["enum"])
+        and required == ["choice_code"]
+        and response_schema.get("additionalProperties") is False
+    )
+
+
+def _logprob_item_has_bytes(item: object) -> bool:
+    raw_bytes = item.get("bytes") if isinstance(item, dict) else getattr(item, "bytes", None)
+    if not isinstance(raw_bytes, (bytes, bytearray, list, tuple)):
+        return False
+    alternatives = (
+        item.get("top_logprobs") if isinstance(item, dict)
+        else getattr(item, "top_logprobs", None)
+    )
+    if not alternatives:
+        return True
+    return all(
+        isinstance(
+            alternative.get("bytes") if isinstance(alternative, dict) else getattr(alternative, "bytes", None),
+            (bytes, bytearray, list, tuple),
+        )
+        for alternative in alternatives
+    )
+
+
 def normalize_comparator_role_name(role: str) -> str:
     normalized = str(role).strip().lower()
     if normalized not in FOUR_ROLE_ROLE_ALIASES:
@@ -48,11 +90,25 @@ class LLMUsage:
 
 
 @dataclass(frozen=True)
+class LLMLogprobReceipt:
+    requested: bool = False
+    available: bool = False
+    policy: str = "off"
+    request_id: str = ""
+    attempt_id: str = ""
+    requested_top_k: int = 0
+    returned_position_count: int = 0
+    token_bytes_available: bool = False
+    unavailable_reason: str = "policy_off"
+
+
+@dataclass(frozen=True)
 class LLMResult:
     text: str
     model: str
     usage: LLMUsage = field(default_factory=LLMUsage)
     top_logprobs: list | None = None
+    logprob_receipt: LLMLogprobReceipt = field(default_factory=LLMLogprobReceipt)
 
 
 @dataclass(frozen=True)
@@ -388,8 +444,15 @@ class OpenAICompatibleLLMClient:
                 "xgrammar:disable-any-whitespace",
             )
             request = {**request, "extra_body": existing_extra_body}
-        # local_vllm executor probes request token-level output distributions.
-        if self.config.mode == "local_vllm" and purpose == "executor":
+        logit_policy = _resolved_logit_policy()
+        dedicated_choice_surface = _is_dedicated_logit_choice_schema(response_schema)
+        request_logprobs = (
+            self.config.mode == "local_vllm"
+            and purpose == "executor"
+            and logit_policy in {"telemetry_only", "gated"}
+            and dedicated_choice_surface
+        )
+        if request_logprobs:
             request = {
                 **request,
                 "logprobs": True,
@@ -404,6 +467,40 @@ class OpenAICompatibleLLMClient:
         content = _coerce_content_to_text(choice.message.content)
         usage = getattr(response, "usage", None)
         raw_logprobs = getattr(getattr(choice, "logprobs", None), "content", None)
+        response_id = str(getattr(response, "id", "") or "")
+        request_id = response_id or f"local-{id(response):x}"
+        attempt_id = f"{request_id}:accepted"
+        if request_logprobs:
+            available = isinstance(raw_logprobs, list) and bool(raw_logprobs)
+            token_bytes_available = bool(available) and all(
+                _logprob_item_has_bytes(item) for item in raw_logprobs
+            )
+            logprob_receipt = LLMLogprobReceipt(
+                requested=True,
+                available=available,
+                policy=logit_policy,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                requested_top_k=20,
+                returned_position_count=len(raw_logprobs or ()),
+                token_bytes_available=token_bytes_available,
+                unavailable_reason="" if available else "top_logprobs_missing",
+            )
+        else:
+            if logit_policy == "off":
+                unavailable_reason = "policy_off"
+            elif self.config.mode != "local_vllm":
+                unavailable_reason = "local_vllm_required"
+            elif purpose != "executor":
+                unavailable_reason = "executor_choice_only"
+            else:
+                unavailable_reason = "dedicated_choice_surface_required"
+            logprob_receipt = LLMLogprobReceipt(
+                policy=logit_policy,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                unavailable_reason=unavailable_reason,
+            )
         return LLMResult(
             text=content.strip(),
             model=getattr(response, "model", None) or role_config.model,
@@ -412,7 +509,8 @@ class OpenAICompatibleLLMClient:
                 completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
                 total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
             ),
-            top_logprobs=raw_logprobs,
+            top_logprobs=raw_logprobs if request_logprobs else None,
+            logprob_receipt=logprob_receipt,
         )
 
     async def _create_completion_with_retry(
@@ -728,12 +826,27 @@ class DeterministicLLMClient:
                 or str(payload.get("action_contract", "")).strip()
                 or "execute_validated_tool"
             )
-            result_payload = {
-                "route": route,
-                "tool_name": tool_name,
-                "action_contract": action_contract,
-                "reason": "executor selected visible validated tool from bounded candidate view",
-            }
+            if _is_dedicated_logit_choice_schema(response_schema):
+                aliases = list(response_schema["properties"]["choice_code"]["enum"])
+                selected_index = next(
+                    (
+                        index
+                        for index, candidate in enumerate(tool_candidates)
+                        if str(candidate.get("route", "")).strip() == route
+                        and str(candidate.get("tool_name", "")).strip() == tool_name
+                    ),
+                    -1,
+                )
+                if selected_index < 0 or selected_index >= len(aliases):
+                    raise ValueError("deterministic executor choice is outside alias surface")
+                result_payload = {"choice_code": aliases[selected_index]}
+            else:
+                result_payload = {
+                    "route": route,
+                    "tool_name": tool_name,
+                    "action_contract": action_contract,
+                    "reason": "executor selected visible validated tool from bounded candidate view",
+                }
             return LLMResult(
                 text=json.dumps(result_payload, ensure_ascii=False, sort_keys=True),
                 model=self.config.role_config("executor").model,

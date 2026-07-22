@@ -25,9 +25,18 @@ def finalize_case_telemetry_summary(
         queries = float(result.get(query_key, 0.0))
         result[rate_key] = hits / queries if queries else 0.0
 
-    observed_hit_key = "vllm_prefix_observed_hit_delta"
-    observed_query_key = "vllm_prefix_observed_query_delta"
-    observed_rate_key = "vllm_prefix_observed_hit_rate"
+    observed_hit_key = "vllm_prefix_observed_hit_token_delta"
+    observed_query_key = "vllm_prefix_observed_query_token_delta"
+    observed_rate_key = "vllm_prefix_observed_token_hit_rate"
+    legacy_observed_hit_key = "vllm_prefix_observed_hit_delta"
+    legacy_observed_query_key = "vllm_prefix_observed_query_delta"
+    legacy_observed_rate_key = "vllm_prefix_observed_hit_rate"
+    if observed_hit_key not in result and legacy_observed_hit_key in result:
+        result[observed_hit_key] = result[legacy_observed_hit_key]
+    if observed_query_key not in result and legacy_observed_query_key in result:
+        result[observed_query_key] = result[legacy_observed_query_key]
+    if observed_rate_key not in result and legacy_observed_rate_key in result:
+        result[observed_rate_key] = result[legacy_observed_rate_key]
     if (
         observed_hit_key in result
         or observed_query_key in result

@@ -79,6 +79,8 @@ _MEMORY_FUNNEL_METRICS = (
     "memory_compatible_match_count",
     "memory_policy_approved_match_count",
     "memory_consumed_count",
+    "memory_legacy_recorded_count",
+    "memory_action_count",
     "memory_behavioral_effect_count",
     "memory_assist_count",
     "validated_replay_count",
@@ -1493,9 +1495,34 @@ def run_continuous_benchmark_family(
     )
     adaptive_prefix_reorder_count = 0
     pending_rounds = list(ordered_rounds)
+    completed_task_ids: set[str] = set()
+    task_id_by_round = {round_.round: round_.task_id for round_ in family.rounds}
+    dependency_ids_by_task = (
+        {
+            round_.task_id: tuple(
+                task_id_by_round[dependency_round]
+                for dependency_round in round_.depends_on_rounds
+            )
+            for round_ in family.rounds
+        }
+        if schedule_plan is None
+        else dict(schedule_plan.dependency_ids_by_task)
+    )
 
     while pending_rounds:
-        round_ = pending_rounds.pop(0)
+        ready_index = next(
+            (
+                index
+                for index, candidate in enumerate(pending_rounds)
+                if set(dependency_ids_by_task.get(candidate.task_id, ())).issubset(
+                    completed_task_ids
+                )
+            ),
+            None,
+        )
+        if ready_index is None:
+            raise RuntimeError("continuous prefix schedule has no dependency-ready task")
+        round_ = pending_rounds.pop(ready_index)
         sample = _continuous_sample(round_)
         round_runtime_root = layer_runtime_root / sample.task_id
         history_runtime_roots: tuple[Path, ...] = tuple(
@@ -1588,6 +1615,7 @@ def run_continuous_benchmark_family(
         )
         raw_cases.append(case)
         cases_by_round[sample.round_number] = case
+        completed_task_ids.add(sample.task_id)
         prefix_feedback.record_observation(
             float(smoke.task_metrics.get("neural_prefix_cache_hit_rate_estimate", 0.0)),
             VllmPrefixCacheCounterDelta(
@@ -1596,11 +1624,13 @@ def run_continuous_benchmark_family(
                 ),
                 valid=bool(smoke.task_metrics.get("vllm_prefix_counter_delta_valid", 0.0)),
                 queries=float(
-                    smoke.task_metrics.get("vllm_prefix_observed_query_delta", 0.0)
+                    smoke.task_metrics.get("vllm_prefix_observed_query_token_delta", 0.0)
                 ),
-                hits=float(smoke.task_metrics.get("vllm_prefix_observed_hit_delta", 0.0)),
+                hits=float(
+                    smoke.task_metrics.get("vllm_prefix_observed_hit_token_delta", 0.0)
+                ),
                 observed_hit_rate=(
-                    float(smoke.task_metrics.get("vllm_prefix_observed_hit_rate", 0.0))
+                    float(smoke.task_metrics.get("vllm_prefix_observed_token_hit_rate", 0.0))
                     if smoke.task_metrics.get("vllm_prefix_counter_delta_valid", 0.0)
                     else None
                 ),
@@ -1609,6 +1639,10 @@ def run_continuous_benchmark_family(
                     if smoke.task_metrics.get("vllm_prefix_counter_delta_valid", 0.0)
                     else "task_counter_delta_unavailable"
                 ),
+                exclusive_interval=bool(
+                    smoke.task_metrics.get("vllm_prefix_counter_delta_valid", 0.0)
+                ),
+                request_count=1,
             ),
         )
         if adaptive_prefix_feedback_enabled and prefix_feedback.should_reorder() and pending_rounds:

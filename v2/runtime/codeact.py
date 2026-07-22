@@ -743,6 +743,11 @@ class CodeActRunner:
             "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+            # Native math runtimes otherwise size thread pools from the host CPU
+            # count and can exhaust the CodeAct subprocess address-space limit.
+            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
             "STATEBUS_WORKSPACE_ROOT": ".",
             "STATEBUS_INPUT_ROOT": "./inputs",
             "STATEBUS_OUTPUT_ROOT": "./outputs",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 import hashlib
 import json
+import os
 from pathlib import Path
 import time
 import traceback
@@ -149,17 +150,138 @@ def _load_freeze_file_hashes(path: Path) -> dict[str, str]:
     entries: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         digest, separator, relative_path = line.partition("  ")
-        if not separator or len(digest) != 64 or not relative_path:
+        if (
+            not separator
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            or not relative_path
+            or relative_path in entries
+        ):
             raise ValueError(f"runtime_freeze_file_ledger_invalid:{line}")
         entries[relative_path] = digest
     return entries
 
 
-def runtime_freeze_audit() -> dict[str, object]:
-    snapshot = json.loads(_FREEZE_PATH.read_text(encoding="utf-8"))
-    project_root = Path(__file__).resolve().parents[2]
+def _freeze_hashes_from_ledger(
+    entries: dict[str, str],
+) -> tuple[dict[str, str], str]:
+    directory_hashes: dict[str, str] = {}
+    for relative_dir in _FREEZE_DIRS:
+        digest = hashlib.sha256()
+        directory_entries = [
+            (path, file_digest)
+            for path, file_digest in sorted(entries.items())
+            if path.startswith(f"{relative_dir}/")
+        ]
+        if not directory_entries:
+            raise ValueError(f"runtime_freeze_directory_ledger_empty:{relative_dir}")
+        for path, file_digest in directory_entries:
+            digest.update(f"{file_digest}  {path}\n".encode("utf-8"))
+        directory_hashes[relative_dir] = digest.hexdigest()
+    unknown_paths = sorted(
+        path
+        for path in entries
+        if not any(path.startswith(f"{relative_dir}/") for relative_dir in _FREEZE_DIRS)
+    )
+    if unknown_paths:
+        raise ValueError(f"runtime_freeze_file_ledger_scope_invalid:{unknown_paths}")
+    combined = hashlib.sha256()
+    for relative_dir in _FREEZE_DIRS:
+        combined.update(
+            f"{relative_dir} {directory_hashes[relative_dir]}\n".encode("utf-8")
+        )
+    return directory_hashes, combined.hexdigest()
+
+
+def historical_runtime_freeze_audit(
+    snapshot_path: Path = _FREEZE_PATH,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, object]:
+    """Audit a stored freeze ledger without comparing it to the active tree."""
+
+    root = (project_root or Path(__file__).resolve().parents[2]).resolve()
+    resolved_snapshot = (
+        snapshot_path if snapshot_path.is_absolute() else root / snapshot_path
+    ).resolve()
+    if root not in resolved_snapshot.parents or not resolved_snapshot.is_file():
+        raise ValueError("runtime_freeze_snapshot_missing")
+    snapshot = json.loads(resolved_snapshot.read_text(encoding="utf-8"))
+    ledger_path = (root / str(snapshot.get("per_file_hashes_path", ""))).resolve()
+    if root not in ledger_path.parents or not ledger_path.is_file():
+        raise ValueError("runtime_freeze_file_ledger_missing")
+    entries = _load_freeze_file_hashes(ledger_path)
+    ledger_directory_hashes, ledger_freeze_sha = _freeze_hashes_from_ledger(entries)
+    observed_ledger_hash = hashlib.sha256(ledger_path.read_bytes()).hexdigest()
+    expected_directory_hashes = dict(snapshot.get("directory_hashes", {}))
+    checks = {
+        "snapshot_schema": snapshot.get("schema_version")
+        == "statebus.runtime_freeze_snapshot.v1",
+        "ledger_sha256": snapshot.get("per_file_hashes_sha256")
+        == observed_ledger_hash,
+        "per_file_count": snapshot.get("per_file_count") == len(entries),
+        "directory_hashes": expected_directory_hashes == ledger_directory_hashes,
+        "combined_freeze_sha256": snapshot.get("runtime_freeze_sha")
+        == ledger_freeze_sha,
+        "git_head_shape": bool(
+            isinstance(snapshot.get("git_head"), str)
+            and len(str(snapshot["git_head"])) == 40
+            and all(
+                character in "0123456789abcdef"
+                for character in str(snapshot["git_head"])
+            )
+        ),
+    }
+    return {
+        "schema_version": "statebus.historical_runtime_freeze_audit.v1",
+        "audit_scope": "stored_snapshot_and_ledger_self_consistency",
+        "snapshot_path": str(resolved_snapshot),
+        "freeze_kind": snapshot.get("freeze_kind"),
+        "git_head": snapshot.get("git_head"),
+        "git_dirty": snapshot.get("git_dirty"),
+        "runtime_freeze_sha": snapshot.get("runtime_freeze_sha"),
+        "ledger_runtime_freeze_sha": ledger_freeze_sha,
+        "expected_directory_hashes": expected_directory_hashes,
+        "ledger_directory_hashes": ledger_directory_hashes,
+        "per_file_hashes_path": str(ledger_path),
+        "expected_per_file_count": snapshot.get("per_file_count"),
+        "observed_per_file_count": len(entries),
+        "expected_per_file_ledger_hash": snapshot.get("per_file_hashes_sha256"),
+        "observed_per_file_ledger_hash": observed_ledger_hash,
+        "checks": checks,
+        "ok": all(checks.values()),
+        "claim_scope": snapshot.get("claim_scope"),
+        "current_tree_compared": False,
+    }
+
+
+def runtime_freeze_audit(
+    snapshot_path: Path | None = None,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, object]:
+    """Compare the active runtime to an explicitly selected freeze snapshot."""
+
+    configured_path = snapshot_path or (
+        Path(configured)
+        if (configured := os.getenv("STATEBUS_RUNTIME_FREEZE_SNAPSHOT", "").strip())
+        else None
+    )
+    if configured_path is None:
+        raise ValueError("runtime_freeze_snapshot_required")
+    root = (project_root or Path(__file__).resolve().parents[2]).resolve()
+    configured_path = (
+        configured_path
+        if configured_path.is_absolute()
+        else root / configured_path
+    ).resolve()
+    historical_audit = historical_runtime_freeze_audit(
+        configured_path,
+        project_root=root,
+    )
+    snapshot = json.loads(configured_path.read_text(encoding="utf-8"))
     observed = {
-        relative_dir: _directory_content_hash(project_root, relative_dir)
+        relative_dir: _directory_content_hash(root, relative_dir)
         for relative_dir in _FREEZE_DIRS
     }
     combined = hashlib.sha256()
@@ -167,11 +289,9 @@ def runtime_freeze_audit() -> dict[str, object]:
         combined.update(f"{relative_dir} {observed[relative_dir]}\n".encode("utf-8"))
     observed_freeze_sha = combined.hexdigest()
     expected = dict(snapshot.get("directory_hashes", {}))
-    ledger_path = (project_root / str(snapshot.get("per_file_hashes_path", ""))).resolve()
-    if project_root.resolve() not in ledger_path.parents or not ledger_path.is_file():
-        raise ValueError("runtime_freeze_file_ledger_missing")
+    ledger_path = Path(str(historical_audit["per_file_hashes_path"]))
     expected_files = _load_freeze_file_hashes(ledger_path)
-    observed_files = _current_freeze_file_hashes(project_root)
+    observed_files = _current_freeze_file_hashes(root)
     changed_files = sorted(
         path
         for path in expected_files.keys() & observed_files.keys()
@@ -188,7 +308,8 @@ def runtime_freeze_audit() -> dict[str, object]:
         and not removed_files
     )
     return {
-        "schema_version": "statebus.runtime_freeze_audit.v1",
+        "schema_version": "statebus.runtime_freeze_audit.v2",
+        "snapshot_path": str(configured_path.resolve()),
         "freeze_kind": snapshot.get("freeze_kind"),
         "git_head": snapshot.get("git_head"),
         "expected_runtime_freeze_sha": snapshot.get("runtime_freeze_sha"),
@@ -209,11 +330,14 @@ def runtime_freeze_audit() -> dict[str, object]:
         "added_files": added_files,
         "removed_files": removed_files,
         "ok": (
-            snapshot.get("runtime_freeze_sha") == observed_freeze_sha
+            historical_audit["ok"] is True
+            and snapshot.get("runtime_freeze_sha") == observed_freeze_sha
             and all(expected.get(item) == observed.get(item) for item in _FREEZE_DIRS)
             and per_file_ok
         ),
         "claim_scope": snapshot.get("claim_scope"),
+        "historical_artifact_audit": historical_audit,
+        "current_tree_compared": True,
     }
 
 
@@ -362,7 +486,15 @@ def run_semantic_holdout(
             "summary_path": str(adaptive_root / str(case.get("task_id")) / "summary.json"),
         })
     semantic_rows = [row for row in case_rows if row["semantic_selected"]]
-    freeze_audit = runtime_freeze_audit()
+    try:
+        freeze_audit = runtime_freeze_audit()
+    except ValueError as exc:
+        freeze_audit = {
+            "schema_version": "statebus.runtime_freeze_audit.v2",
+            "ok": False,
+            "reason": str(exc),
+            "current_tree_compared": False,
+        }
     gates = {
         "case_count_complete": len(case_summaries) == 4 and not failures,
         "quality_4_of_4": len(case_rows) == 4 and all(row["ok"] for row in case_rows),

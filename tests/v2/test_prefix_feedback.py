@@ -17,7 +17,11 @@ def test_vllm_gauge_is_not_misclassified_as_task_local_counter() -> None:
         'vllm:gpu_prefix_cache_hit_rate{model_name="qwen"} 0.6\n'
     )
 
-    delta = compute_vllm_prefix_cache_counter_delta(before, after)
+    delta = compute_vllm_prefix_cache_counter_delta(
+        before,
+        after,
+        exclusive_interval=True,
+    )
 
     assert before.observation_kind == "service_lifetime_gauge_only"
     assert delta.available is False
@@ -50,6 +54,7 @@ def test_record_live_skips_network_failure(monkeypatch) -> None:
                 "vllm:gpu_prefix_cache_hits_total",
             ),
         ),
+        exclusive_interval=True,
     )
 
     assert snapshot.sample_count == 0
@@ -77,6 +82,7 @@ def test_record_live_skips_response_without_prefix_metrics(monkeypatch) -> None:
                 "vllm:gpu_prefix_cache_hits_total",
             ),
         ),
+        exclusive_interval=True,
     )
 
     assert snapshot.sample_count == 0
@@ -110,6 +116,7 @@ def test_record_live_uses_task_local_counter_delta(monkeypatch) -> None:
                 "vllm:gpu_prefix_cache_hits_total",
             ),
         ),
+        exclusive_interval=True,
     )
 
     assert snapshot.sample_count == 1
@@ -146,6 +153,7 @@ def test_record_live_skips_counter_reset(monkeypatch) -> None:
                 "vllm:gpu_prefix_cache_hits_total",
             ),
         ),
+        exclusive_interval=True,
     )
 
     assert snapshot.sample_count == 0

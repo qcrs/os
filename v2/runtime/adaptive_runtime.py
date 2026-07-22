@@ -645,6 +645,8 @@ class AdaptiveRuntimeEngine:
                         "STATE_PUBLISHED",
                         "STATE_RESOLVED",
                         "STATE_CONSUMED",
+                        "STATE_HYDRATED",
+                        "STATE_RELEASED",
                     }:
                         channel = "semantic_state"
                     elif event_type in {

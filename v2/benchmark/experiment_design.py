@@ -6,7 +6,7 @@ import math
 import random
 from statistics import median
 import time
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,101 @@ class LaneObservation:
             "quality_passed": self.quality_passed,
             "component_ms": dict(self.component_ms),
         }
+
+
+def lane_configuration_differences(
+    left: Mapping[str, object],
+    right: Mapping[str, object],
+    *,
+    ignored_fields: Sequence[str] = ("lane_id", "matrix_id", "description"),
+) -> tuple[str, ...]:
+    """Return the exact configuration fields changed between two lanes."""
+
+    ignored = frozenset(ignored_fields)
+    fields = (set(left) | set(right)) - ignored
+    return tuple(
+        field
+        for field in sorted(fields)
+        if left.get(field) != right.get(field)
+    )
+
+
+def audit_preregistered_lane_matrix(
+    lanes: Sequence[Mapping[str, object]],
+    *,
+    matrix_id: str,
+    expected_lane_order: Sequence[str],
+    expected_adjacent_changes: Sequence[Sequence[str]],
+    invariant_fields: Sequence[str] = (),
+) -> dict[str, object]:
+    """Fail closed when a preregistered lane matrix contains hidden changes."""
+
+    lane_payloads = tuple(dict(lane) for lane in lanes)
+    observed_order = tuple(str(lane.get("lane_id", "")) for lane in lane_payloads)
+    expected_order = tuple(str(lane_id) for lane_id in expected_lane_order)
+    expected_changes = tuple(
+        tuple(sorted(str(field) for field in fields))
+        for fields in expected_adjacent_changes
+    )
+    errors: list[dict[str, object]] = []
+
+    if observed_order != expected_order:
+        errors.append({
+            "kind": "lane_order_mismatch",
+            "expected": list(expected_order),
+            "observed": list(observed_order),
+        })
+    if len(expected_changes) != max(0, len(lane_payloads) - 1):
+        errors.append({
+            "kind": "adjacent_change_contract_length_mismatch",
+            "expected_transition_count": max(0, len(lane_payloads) - 1),
+            "observed_contract_count": len(expected_changes),
+        })
+
+    observed_changes: list[dict[str, object]] = []
+    for index, (left, right) in enumerate(zip(lane_payloads, lane_payloads[1:])):
+        changed = lane_configuration_differences(left, right)
+        expected = expected_changes[index] if index < len(expected_changes) else ()
+        transition = {
+            "from_lane": str(left.get("lane_id", "")),
+            "to_lane": str(right.get("lane_id", "")),
+            "expected_changed_fields": list(expected),
+            "observed_changed_fields": list(changed),
+            "ok": changed == expected,
+        }
+        observed_changes.append(transition)
+        if changed != expected:
+            errors.append({"kind": "adjacent_treatment_mismatch", **transition})
+
+    invariant_values: dict[str, object] = {}
+    for field in invariant_fields:
+        values = [lane.get(field) for lane in lane_payloads]
+        invariant_values[field] = values[0] if values else None
+        if not values or any(value != values[0] for value in values[1:]):
+            errors.append({
+                "kind": "invariant_field_changed",
+                "field": field,
+                "observed": values,
+            })
+
+    matrix_values = [str(lane.get("matrix_id", "")) for lane in lane_payloads]
+    if not lane_payloads or any(value != matrix_id for value in matrix_values):
+        errors.append({
+            "kind": "matrix_identity_mismatch",
+            "expected": matrix_id,
+            "observed": matrix_values,
+        })
+
+    return {
+        "schema_version": "statebus.preregistered_lane_matrix_audit.v1",
+        "matrix_id": matrix_id,
+        "ok": not errors,
+        "lane_count": len(lane_payloads),
+        "lane_order": list(observed_order),
+        "adjacent_transitions": observed_changes,
+        "invariant_values": invariant_values,
+        "errors": errors,
+    }
 
 
 def balanced_lane_schedule(

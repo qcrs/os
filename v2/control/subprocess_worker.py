@@ -273,9 +273,10 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     runtime_reuse_contract = message.runtime_reuse_contract or ""
     semantic_optional = "no_semantic_state" in runtime_reuse_contract
     semantic_selection = message.operation == "semantic_select_v1"
+    logit_gate = message.operation == "logit_gate_v1"
     typed_numeric_summary = message.operation == "typed_numeric_summary_v1"
     negotiated_capability = message.operation.strip() or "echo_refs_v1"
-    grant_required = semantic_selection or typed_numeric_summary
+    grant_required = semantic_selection or logit_gate or typed_numeric_summary
 
     grant_authenticator = None
     if grant_required:
@@ -333,7 +334,7 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         errors.append("output_contract_version_missing")
     if not semantic_optional and not message.state_refs:
         errors.append("state_refs_missing")
-    if not semantic_selection and not typed_numeric_summary and not message.artifact_refs:
+    if not semantic_selection and not logit_gate and not typed_numeric_summary and not message.artifact_refs:
         errors.append("artifact_refs_missing")
     if semantic_selection:
         if not message.state_root.strip():
@@ -347,6 +348,25 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         if len(message.state_refs) != 1:
             errors.append("semantic_state_ref_count_invalid")
 
+        if not message.capability_grant_token.strip():
+            errors.append("capability_grant_token_missing")
+    if logit_gate:
+        if message.output_contract_version != "statebus.gate_decision.v1":
+            errors.append("logit_gate_output_contract_invalid")
+        if not message.state_root.strip():
+            errors.append("state_root_missing")
+        if len(message.state_refs) != 1:
+            errors.append("logit_state_ref_count_invalid")
+        elif message.state_refs[0].ref_kind != "logit_state":
+            errors.append("logit_state_ref_kind_invalid")
+        if message.logit_state_ref is None:
+            errors.append("logit_control_ref_missing")
+        if message.logit_state_grant is None:
+            errors.append("logit_control_grant_missing")
+        if message.artifact_refs or message.memory_refs:
+            errors.append("logit_gate_scope_violation")
+        if not message.capability_grant_hash.strip():
+            errors.append("capability_grant_hash_missing")
         if not message.capability_grant_token.strip():
             errors.append("capability_grant_token_missing")
     if typed_numeric_summary:
@@ -444,7 +464,77 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
             worker_state="running",
         ),
     )
-    if semantic_selection:
+    if logit_gate:
+        try:
+            import json
+
+            from v2.runtime.confidence_gate import (
+                FrozenGatePolicy,
+                decide_from_resolved_logit_state,
+                gate_decision_to_control,
+                logit_grant_from_control,
+                persist_gate_action_decision,
+                validate_logit_control_ref,
+            )
+            from v2.state.logit_state import (
+                LogitStateValidationError,
+                logit_ref_from_sidecar,
+                resolve_logit_state,
+            )
+
+            state_ref = logit_ref_from_sidecar(
+                Path(message.state_root),
+                message.state_refs[0].ref_id,
+            )
+            validate_logit_control_ref(state_ref, message.logit_state_ref)
+            grant = logit_grant_from_control(message.logit_state_grant)
+            policy_payload = (
+                json.loads(message.logit_gate_policy_json)
+                if message.logit_gate_policy_json
+                else None
+            )
+            if policy_payload is not None and not isinstance(policy_payload, dict):
+                raise ValueError("logit_gate_policy_object_required")
+            policy = FrozenGatePolicy.from_payload(policy_payload) if policy_payload else None
+            resolved = resolve_logit_state(
+                state_root=Path(message.state_root),
+                ref=state_ref,
+                grant=grant,
+                unregister_shared_memory_tracker=True,
+            )
+            decision = decide_from_resolved_logit_state(resolved, policy=policy)
+            decision, reused = persist_gate_action_decision(
+                Path(message.state_root),
+                decision,
+            )
+        except (LogitStateValidationError, ValueError, OSError) as exc:
+            send_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="logit_state_consume_failed",
+                    error_detail=str(exc) or type(exc).__name__,
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
+        send_message(
+            sock,
+            SuccessResult(
+                header=replace(header, event_type=EventType.RES_SUCC),
+                state_refs=message.state_refs,
+                output_contract_version=message.output_contract_version,
+                completed_at_ns=time.time_ns(),
+                consumed_state_ref_id=state_ref.state_id,
+                consumer_pid=decision.consumer_pid,
+                producer_pid=decision.producer_pid,
+                logit_gate_result=gate_decision_to_control(decision),
+                logit_grant_hash=grant.grant_hash,
+                logit_action_reused=reused,
+            ),
+        )
+    elif semantic_selection:
         try:
             state_ref = semantic_ref_from_sidecar(
                 Path(message.state_root),

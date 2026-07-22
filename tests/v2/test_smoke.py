@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 import platform
 from pathlib import Path
 
 import pytest
 
 from runtime.llm import LLMResult, LLMUsage, parse_tagged_json, tagged_json_block
-from v2.contracts import CanonicalTaskSpec
+from v2.contracts import CandidateSurfaceV2, CanonicalTaskSpec, LogitPolicy
+from v2.runtime.logit_state import extract_exact_choice_logit_state
 from v2.runtime.smoke import SmokeLayerConfig, run_smoke
 from v2.runtime.role_path import (
     ExecutorRoleDecision,
@@ -18,6 +20,144 @@ from v2.runtime.role_path import (
 )
 from v2.runtime.smoke import _driver_profile_from_layer_config
 from v2.state import JsonContractStore
+
+
+class _ExactLogitStubRolePathRunner(RolePathRunner):
+    def __init__(self, llm_client=None, handoff_mode="structured_collaboration"):
+        del llm_client
+        self.handoff_mode = handoff_mode
+        self.rendered_request_audit = {}
+
+    def plan_workflow(self, **kwargs):
+        del kwargs
+        return PlannerRoleResult(
+            workflow_payload={"steps": []},
+            retrieval_objective={"query_text": "stub logit retrieval objective"},
+            raw_text='{"steps":[]}',
+            model="stub-logit-model",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
+
+    def choose_retrieval_candidate(self, **kwargs):
+        candidate = kwargs["visible_candidates"][0]
+        return RetrieverRoleDecision(
+            route=candidate.route,
+            tool_name=candidate.tool_name,
+            supporting_doc_ids=candidate.supporting_doc_ids,
+            reason="stub-logit-retriever",
+            candidate_rank=candidate.helper_rank,
+            raw_text='{"ok":true}',
+            model="stub-logit-model",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
+
+    def validate_execution_choice(self, **kwargs):
+        visible_candidates = tuple(kwargs["visible_candidates"])
+        surface = CandidateSurfaceV2.from_candidate_ids(
+            tuple(candidate.candidate_key() for candidate in visible_candidates)
+        )
+        selected_probability = 0.6
+        other_mass = 0.1
+        competing_probability = (1.0 - selected_probability - other_mass) / (
+            surface.candidate_count - 1
+        )
+        alternatives = [
+            {
+                "token": alias,
+                "bytes": list(alias.encode("ascii")),
+                "logprob": math.log(
+                    selected_probability if index == 0 else competing_probability
+                ),
+            }
+            for index, alias in enumerate(surface.aliases)
+        ]
+        alternatives.append(
+            {"token": "X", "bytes": [88], "logprob": math.log(other_mass)}
+        )
+        prefix = '{"choice_code":"'
+        suffix = '"}'
+        extraction = extract_exact_choice_logit_state(
+            completion_text='{"choice_code":"A"}',
+            top_logprobs=[
+                {"token": prefix, "bytes": list(prefix.encode("utf-8")), "logprob": 0.0},
+                {
+                    "token": "A",
+                    "bytes": [65],
+                    "logprob": math.log(selected_probability),
+                    "top_logprobs": alternatives,
+                },
+                {"token": suffix, "bytes": list(suffix.encode("utf-8")), "logprob": 0.0},
+            ],
+            candidate_surface=surface,
+            request_id="stub-logit-request",
+            attempt_id="stub-logit-attempt",
+        )
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "choice_code": {"type": "string", "enum": list(surface.aliases)},
+            },
+            "required": ["choice_code"],
+            "additionalProperties": False,
+        }
+        self.rendered_request_audit["executor"] = [
+            {
+                "role": "executor",
+                "attempt_index": 1,
+                "purpose": "executor",
+                "execution_profile": {"mode": "offline_stub"},
+                "messages": [{"role": "user", "content": "offline exact logit stub"}],
+                "response_schema": response_schema,
+                "prompt_sha256": "a" * 64,
+                "prompt_bytes": 24,
+                "request_sha256": "b" * 64,
+            }
+        ]
+        selected = visible_candidates[0]
+        return ExecutorRoleDecision(
+            route=selected.route,
+            tool_name=selected.tool_name,
+            action_contract=kwargs["action_contract"],
+            reason="closed_alias_choice:A",
+            raw_text="",
+            model="stub-logit-model",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+            logit_policy=LogitPolicy.TELEMETRY_ONLY.value,
+            logit_state_payload=extraction.payload_bytes,
+            logit_state_bytes=len(extraction.payload_bytes),
+            logit_candidate_surface=surface,
+            logit_producer_receipt=extraction.receipt,
+            logit_exact_result=extraction,
+            logit_unavailable_reason="",
+        )
+
+    def summarize(self, **kwargs):
+        del kwargs
+        return SummarizerRoleDecision(
+            summary_text="stub exact logit summary",
+            reusable_steps=("retrieve", "execute"),
+            confidence=0.9,
+            tags=("stub", "logit"),
+            raw_text='{"summary":"stub exact logit summary"}',
+            model="stub-logit-model",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
+
+
+def _set_stub_logit_runtime_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STATEBUS_LOGIT_MODEL_ID", "stub-logit-model")
+    monkeypatch.setenv("STATEBUS_LOGIT_MODEL_REVISION", "stub-model-revision")
+    monkeypatch.setenv("STATEBUS_LOGIT_TOKENIZER_ID", "stub-tokenizer")
+    monkeypatch.setenv("STATEBUS_LOGIT_TOKENIZER_REVISION", "stub-tokenizer-revision")
+    monkeypatch.setenv("STATEBUS_LOGIT_CHAT_TEMPLATE_SHA256", "c" * 64)
 
 
 def test_v2_smoke_runs_vertical_slice(tmp_path: Path) -> None:
@@ -554,6 +694,116 @@ def test_v2_smoke_subprocess_transport_avoids_loopback(tmp_path: Path, monkeypat
     assert result.task_metrics["control_message_count"] == 4.0
     assert result.task_metrics["semantic_state_transfer_count"] == 1.0
     assert result.state_storage_kind == "shared_memory"
+
+
+def test_v2_smoke_runs_exact_logit_state_lifecycle_without_live_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_stub_logit_runtime_identity(monkeypatch)
+    monkeypatch.setattr(
+        "v2.runtime.smoke.RolePathRunner",
+        _ExactLogitStubRolePathRunner,
+    )
+
+    result = run_smoke(
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        layer_config=SmokeLayerConfig(
+            layer_name="L3-logit-state",
+            structured_control_enabled=True,
+            semantic_pruning_enabled=True,
+            replay_enabled=False,
+            multi_attempt_enabled=False,
+            force_first_attempt_trap=False,
+            state_pool_mode="mmap",
+        ),
+    )
+
+    assert result.quality_floor.quality_floor_pass is True
+    assert result.task_metrics["logit_state_extraction_available_count"] == 1.0
+    assert result.task_metrics["logit_state_publish_count"] == 1.0
+    assert result.task_metrics["logit_state_resolve_count"] == 1.0
+    assert result.task_metrics["logit_state_consume_count"] == 1.0
+    assert result.task_metrics["logit_gate_action_count"] == 1.0
+    assert result.task_metrics["logit_gate_effect_count"] == 1.0
+    assert result.task_metrics["logit_state_release_count"] == 1.0
+    assert result.task_metrics["logit_state_reject_count"] == 0.0
+    lifecycle = json.loads(
+        (Path(result.workspace_root) / "logs" / "logit_state_lifecycle.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert lifecycle["gate_decision"]["producer_pid"] != lifecycle["gate_decision"]["consumer_pid"]
+    assert lifecycle["release_reason"] == "consumed"
+    assert lifecycle["effect_receipt"]["outcome"] == "accepted_baseline_selection"
+    assert [event["event_type"] for event in lifecycle["events"]] == [
+        "LOGIT_STATE_EXTRACTION_AVAILABLE",
+        "LOGIT_STATE_PUBLISHED",
+        "LOGIT_STATE_RESOLVED",
+        "LOGIT_STATE_CONSUMED",
+        "LOGIT_GATE_ACTION_DECIDED",
+        "LOGIT_GATE_EFFECT_RECORDED",
+        "LOGIT_STATE_RELEASED",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("setting_name", "setting_value"),
+    (
+        ("STATEBUS_LOGIT_LEASE_MS", "not-an-integer"),
+        ("STATEBUS_LOGIT_GATE_TIMEOUT_S", "nan"),
+    ),
+)
+def test_v2_smoke_invalid_logit_runtime_setting_rejects_only_logit_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    setting_name: str,
+    setting_value: str,
+) -> None:
+    _set_stub_logit_runtime_identity(monkeypatch)
+    monkeypatch.setenv(setting_name, setting_value)
+    monkeypatch.setattr(
+        "v2.runtime.smoke.RolePathRunner",
+        _ExactLogitStubRolePathRunner,
+    )
+
+    result = run_smoke(
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+        layer_config=SmokeLayerConfig(
+            layer_name="L3-logit-invalid-setting",
+            structured_control_enabled=True,
+            semantic_pruning_enabled=True,
+            replay_enabled=False,
+            multi_attempt_enabled=False,
+            force_first_attempt_trap=False,
+            state_pool_mode="mmap",
+        ),
+    )
+
+    assert result.quality_floor.quality_floor_pass is True
+    assert result.task_metrics["logit_state_extraction_available_count"] == 1.0
+    assert result.task_metrics["logit_state_publish_count"] == 0.0
+    assert result.task_metrics["logit_state_reject_count"] == 1.0
+    lifecycle = json.loads(
+        (Path(result.workspace_root) / "logs" / "logit_state_lifecycle.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert lifecycle["reject_reason"] == f"logit_runtime_setting_invalid:{setting_name}"
+    assert lifecycle["events"] == [
+        {
+            "event_type": "LOGIT_STATE_REJECTED",
+            "metrics": {"logit_state_reject_count": 1.0},
+            "payload": {
+                "reason": f"logit_runtime_setting_invalid:{setting_name}",
+                "state_id": "",
+            },
+        }
+    ]
 
 
 def test_v2_smoke_aggregates_role_path_token_usage(tmp_path: Path, monkeypatch) -> None:

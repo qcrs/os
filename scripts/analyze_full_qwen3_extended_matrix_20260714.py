@@ -512,7 +512,7 @@ def genericity_audit(run_root: Path) -> dict[str, Any]:
         sp_contracts.append(sp)
     all_sp_contracts_valid = bool(sp_contracts) and all(
         isinstance(item, dict)
-        and item.get("contract") == "statebus-shared-prefix-v1"
+        and item.get("contract") in {"statebus-shared-prefix-v1", "statebus-shared-prefix-v2"}
         and item.get("contains") == "hydrated_evidence"
         and number(item.get("bytes")) > 0
         for item in sp_contracts

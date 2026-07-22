@@ -425,12 +425,14 @@ def test_formal_memory_accounting_aggregate_rechecks_raw_receipt_rows() -> None:
                     "consumer_role": "summarizer",
                     "rendered_request_hash": "",
                     "executed_recipe_hash": "",
+                    "receipt_validated": False,
                 },
                 {
                     "memory_id": "assist",
                     "consumer_role": "executor",
                     "rendered_request_hash": "rendered-assist",
                     "executed_recipe_hash": "",
+                    "receipt_validated": True,
                 },
             ],
             "memory_consumption_accounting": {
@@ -439,9 +441,12 @@ def test_formal_memory_accounting_aggregate_rechecks_raw_receipt_rows() -> None:
                 "disclosed_count": 1,
                 "recorded_consumption_count": 2,
                 "actual_consumed_count": 1,
+                "legacy_unverified_count": 1,
                 "rendered_count": 1,
                 "recipe_executed_count": 1,
                 "output_accepted_count": 1,
+                "action_count": 1,
+                "behavioral_effect_count": 0,
                 "failed_attempt_count": 0,
                 "validated_replay_count": 0,
                 "exact_replay_count": 0,
@@ -457,6 +462,7 @@ def test_formal_memory_accounting_aggregate_rechecks_raw_receipt_rows() -> None:
                 "consumer_role": "executor",
                 "rendered_request_hash": "",
                 "executed_recipe_hash": "recipe-replay",
+                "receipt_validated": True,
             }],
             "memory_consumption_accounting": {
                 "candidate_count": 2,
@@ -464,9 +470,12 @@ def test_formal_memory_accounting_aggregate_rechecks_raw_receipt_rows() -> None:
                 "disclosed_count": 1,
                 "recorded_consumption_count": 1,
                 "actual_consumed_count": 1,
+                "legacy_unverified_count": 0,
                 "rendered_count": 0,
                 "recipe_executed_count": 1,
                 "output_accepted_count": 1,
+                "action_count": 1,
+                "behavioral_effect_count": 0,
                 "failed_attempt_count": 0,
                 "validated_replay_count": 1,
                 "exact_replay_count": 0,
@@ -489,6 +498,7 @@ def test_formal_memory_accounting_aggregate_rechecks_raw_receipt_rows() -> None:
     assert aggregate["candidate_count"] == 6
     assert aggregate["recorded_consumption_count"] == 3
     assert aggregate["actual_consumed_count"] == 2
+    assert aggregate["legacy_unverified_count"] == 1
     assert aggregate["recorded_role_counts"] == {"executor": 2, "summarizer": 1}
     assert aggregate["actual_role_counts"] == {"executor": 2}
     assert metrics["memory_recorded_consumption_count"] == 3

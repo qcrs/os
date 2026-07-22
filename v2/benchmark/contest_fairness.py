@@ -26,6 +26,7 @@ EXPECTED_LAYER_FEATURE_FLAGS: dict[BenchmarkLayer, dict[str, object]] = {
         "replay_enabled": False,
         "multi_attempt_enabled": False,
         "force_first_attempt_trap": False,
+        "logit_policy": "off",
     },
     BenchmarkLayer.L1: {
         "handoff_mode": "structured_collaboration",
@@ -35,6 +36,7 @@ EXPECTED_LAYER_FEATURE_FLAGS: dict[BenchmarkLayer, dict[str, object]] = {
         "replay_enabled": False,
         "multi_attempt_enabled": False,
         "force_first_attempt_trap": False,
+        "logit_policy": "off",
     },
     BenchmarkLayer.L2: {
         "handoff_mode": "structured_collaboration",
@@ -44,6 +46,7 @@ EXPECTED_LAYER_FEATURE_FLAGS: dict[BenchmarkLayer, dict[str, object]] = {
         "replay_enabled": False,
         "multi_attempt_enabled": False,
         "force_first_attempt_trap": False,
+        "logit_policy": "off",
     },
     BenchmarkLayer.L3: {
         "handoff_mode": "structured_collaboration",
@@ -53,6 +56,7 @@ EXPECTED_LAYER_FEATURE_FLAGS: dict[BenchmarkLayer, dict[str, object]] = {
         "replay_enabled": True,
         "multi_attempt_enabled": False,
         "force_first_attempt_trap": False,
+        "logit_policy": "off",
     },
 }
 

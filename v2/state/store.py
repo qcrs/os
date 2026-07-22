@@ -29,7 +29,7 @@ class LayeredStoragePolicy:
         default_factory=lambda: {
             "EMBEDDING_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
             "DENSE_SEMANTIC_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
-            "LOGIT_STATE": (StorageKind.MEMFD, StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
+            "LOGIT_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
             "FEATURE_BUNDLE": (StorageKind.INLINE, StorageKind.MMAP_FILE),
             "MEMORY_MATCH_RESULT": (StorageKind.CAS_SIDECAR, StorageKind.MMAP_FILE),
             "MEMORY_COMMIT": (StorageKind.CAS_SIDECAR, StorageKind.MMAP_FILE),
@@ -52,7 +52,7 @@ class LayeredStoragePolicy:
                     # anonymous memfd transfer remains available for the
                     # legacy embedding/logit paths.
                     "DENSE_SEMANTIC_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
-                    "LOGIT_STATE": (StorageKind.MEMFD, StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
+                    "LOGIT_STATE": (StorageKind.SHARED_MEMORY, StorageKind.MMAP_FILE),
                 }
             )
         elif normalized == "shared_memory":

@@ -42,7 +42,7 @@ def test_corpus_and_evidence_prefix_hashes_have_different_granularity() -> None:
     assert evidence_a != evidence_b
 
 
-def test_engine_local_prefix_registry_updates_lease_metadata_on_hit() -> None:
+def test_engine_local_prefix_registry_updates_lease_metadata_when_candidate_seen() -> None:
     registry = EngineLocalPrefixRegistry(
         engine_id="local-vllm",
         model_id="qwen3-8b",
@@ -67,17 +67,19 @@ def test_engine_local_prefix_registry_updates_lease_metadata_on_hit() -> None:
         metadata={"probe": "hit"},
     )
 
-    assert first.cache_hit is False
-    assert second.cache_hit is True
-    assert second.handle.cache_hit_count == 1
+    assert first.candidate_handle_seen is False
+    assert second.candidate_handle_seen is True
+    assert second.handle.candidate_handle_seen_count == 1
     assert second.handle.prefix_token_count == 32
     assert second.handle.expires_at_ns == 500
-    assert second.handle.last_observed_query_ns == 200
-    assert second.handle.last_observed_hit_ns == 200
+    assert second.handle.last_candidate_handle_seen_ns == 200
     assert second.handle.estimated_resident_until_ns == 450
     assert second.handle.eviction_risk == "low"
     assert second.handle.schedule_priority == 0.9
     assert second.handle.metadata == {"source": "first", "probe": "hit"}
+    assert "cache_hit" not in second.canonical_payload()
+    assert "cache_hit_count" not in second.handle.canonical_payload()
+    assert second.cache_hit is True  # deprecated read-only compatibility alias
 
 
 def test_prefix_layout_compiler_deduplicates_shared_evidence_from_suffix() -> None:
@@ -95,7 +97,8 @@ def test_prefix_layout_compiler_deduplicates_shared_evidence_from_suffix() -> No
     )
 
     assert compiled.prompt.count(shared_prefix) == 1
-    assert "<statebus-shared-prefix-v1>" in compiled.prompt
+    assert "<statebus-shared-prefix-v2>" in compiled.prompt
+    assert '<statebus-role-suffix-v2 role="retriever">' in compiled.prompt
     assert compiled.layout_plan.shared_prefix_enabled is True
     assert compiled.layout_plan.removed_payload_evidence is True
     assert compiled.layout_plan.removed_text_section_count == 1
@@ -135,3 +138,4 @@ def test_kv_prefix_reuse_family_builds_cache_friendly_and_hostile_schedule_plans
     assert friendly.affinity_switch_count == 1
     assert hostile.affinity_switch_count == 9
     assert friendly.claim_boundary.endswith("no_kv_tensor_export")
+    assert friendly.dependency_proof_digest

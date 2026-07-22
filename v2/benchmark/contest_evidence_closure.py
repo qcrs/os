@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -9,14 +10,18 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import time
-from typing import Iterable
+from typing import Iterable, Mapping
+import xml.etree.ElementTree as ET
 
 from runtime.llm import LLMConfig
+from v2.benchmark.runtime_modes import audit_contest_treatment_matrices
 from v2.runtime.capability_registry import CapabilityRegistry
 from v2.runtime.domain_packs import register_generic_adaptive_analysis_capabilities
+from v2.runtime.preflight import contest_environment_preflight
 from v2.runtime.runtime_signature import capture_runtime_signature, runtime_signature_payload
 from v2.utils import sha256_digest, stable_json_dumps
 
@@ -31,6 +36,82 @@ _STAGE_IDS = {
     "full": "E6",
 }
 _LIVE_STAGES = {"causal", "stress", "adaptive-memory", "semantic-holdout", "adaptive"}
+_A0_RUNTIME_DIRS = ("v2/runtime", "v2/control", "v2/state", "v2/memory")
+_A0_CONFIG_FILES = (
+    "deploy/activate_statebus_contest_rebuild.sh",
+    "deploy/statebus_contest_rebuild.env.example",
+    "deploy/statebus_llm.contest_rebuild.yaml",
+    "docker/activate_statebus_container.sh",
+    "docker/compose.yaml",
+)
+_A0_ACTION_GATES = (
+    "STATEBUS_CONTEST_ALLOW_METRICS_CHECK",
+    "STATEBUS_CONTEST_ALLOW_TOP_LOGPROBS_PROBE",
+    "STATEBUS_CONTEST_ALLOW_FILING_DOWNLOAD",
+    "STATEBUS_CONTEST_ALLOW_FORMAL_EXPERIMENTS",
+    "STATEBUS_CONTEST_ALLOW_COLD_CACHE",
+    "STATEBUS_CONTEST_ALLOW_SERVICE_RESTART",
+    "STATEBUS_CONTEST_ALLOW_OPENEULER_VALIDATION",
+)
+_A0_RUNTIME_ENV_KEYS = (
+    "STATEBUS_CONTEST_PROFILE",
+    "STATEBUS_CONTEST_PROFILE_VERSION",
+    "STATEBUS_CONTEST_PROFILE_PHASE",
+    "STATEBUS_LLM_CONFIG_FILE",
+    "STATEBUS_LOCAL_VLLM_BASE_URL",
+    "STATEBUS_LOCAL_VLLM_MODEL",
+    "STATEBUS_VLLM_MODEL_PATH",
+    "STATEBUS_VLLM_TOKENIZER_PATH",
+    "STATEBUS_VLLM_EXPECTED_VERSION",
+    "STATEBUS_VLLM_CUDA_VISIBLE_DEVICES",
+    "STATEBUS_PREFIX_POLICY",
+    "STATEBUS_PREFIX_LAYOUT_VERSION",
+    "STATEBUS_PREFIX_REQUIRE_EXCLUSIVE_METRICS",
+    "STATEBUS_PREFIX_FEEDBACK_ADAPTIVE",
+    "STATEBUS_PREFIX_ALIGNMENT_MODE",
+    "STATEBUS_LOGIT_POLICY",
+    "STATEBUS_LOGIT_DECISION_TYPE",
+    "STATEBUS_LOGIT_MAX_ACTIONS",
+    "STATEBUS_LATENT_MODE",
+    "STATEBUS_LATENT_HANDOFF_MODE",
+    "STATEBUS_LATENT_PROMPT_EMBEDS_ENABLED",
+    "STATEBUS_FORMAL_REQUEST_MODE",
+    "STATEBUS_FORMAL_REQUEST_CONCURRENCY",
+    *_A0_ACTION_GATES,
+)
+
+
+@dataclass(frozen=True)
+class PriorPytestEvidence:
+    junit_path: Path
+    source_git_commit: str
+    test_user: str
+    nonselection_reason: str
+
+
+def _parse_prior_pytest_evidence(value: str) -> PriorPytestEvidence:
+    commit, separator, remainder = value.partition("::")
+    test_user, user_separator, remainder = remainder.partition("::")
+    reason, reason_separator, path = remainder.partition("::")
+    if (
+        not separator
+        or not user_separator
+        or not reason_separator
+        or len(commit) != 40
+        or any(character not in "0123456789abcdef" for character in commit)
+        or not test_user
+        or not reason
+        or not path
+    ):
+        raise argparse.ArgumentTypeError(
+            "prior pytest evidence must be COMMIT::USER::REASON::JUNIT_PATH"
+        )
+    return PriorPytestEvidence(
+        junit_path=Path(path),
+        source_git_commit=commit,
+        test_user=test_user,
+        nonselection_reason=reason,
+    )
 _AUDIT_DIRS = (
     "case_reports",
     "role_requests",
@@ -68,14 +149,235 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(stable_json_dumps(payload) + "\n", encoding="utf-8")
 
 
-def _git_value(*args: str) -> str:
+def _git_value(*args: str, project_root: Path | None = None) -> str:
     result = subprocess.run(
         ["git", *args],
         check=False,
         capture_output=True,
         text=True,
+        cwd=project_root,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git_output(project_root: Path, *args: str) -> bytes:
+    result = subprocess.run(
+        ["git", *args],
+        check=False,
+        capture_output=True,
+        cwd=project_root,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git_identity_command_failed:{' '.join(args)}")
+    return result.stdout
+
+
+def _sha256_file_manifest(
+    paths: Iterable[Path],
+    *,
+    relative_to: Path,
+) -> list[dict[str, object]]:
+    manifest: list[dict[str, object]] = []
+    for path in sorted(paths):
+        manifest.append({
+            "path": path.relative_to(relative_to).as_posix(),
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
+    return manifest
+
+
+def _source_tree_payload(project_root: Path) -> dict[str, object]:
+    files: list[Path] = []
+    directory_hashes: dict[str, str] = {}
+    for relative_dir in _A0_RUNTIME_DIRS:
+        directory = project_root / relative_dir
+        directory_files = sorted(
+            path
+            for path in directory.rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+            and not any(
+                part.startswith(".")
+                for part in path.relative_to(directory).parts
+            )
+        )
+        files.extend(directory_files)
+        digest = hashlib.sha256()
+        for entry in _sha256_file_manifest(
+            directory_files,
+            relative_to=project_root,
+        ):
+            digest.update(
+                f"{entry['sha256']}  {entry['path']}\n".encode("utf-8")
+            )
+        directory_hashes[relative_dir] = digest.hexdigest()
+    file_manifest = _sha256_file_manifest(files, relative_to=project_root)
+    combined_digest = hashlib.sha256()
+    for relative_dir in _A0_RUNTIME_DIRS:
+        combined_digest.update(
+            f"{relative_dir} {directory_hashes[relative_dir]}\n".encode("utf-8")
+        )
+    return {
+        "schema_version": "statebus.contest_runtime_tree_identity.v1",
+        "directories": list(_A0_RUNTIME_DIRS),
+        "directory_hashes": directory_hashes,
+        "combined_sha256": combined_digest.hexdigest(),
+        "file_count": len(file_manifest),
+        "files": file_manifest,
+    }
+
+
+def _config_identity_payload(project_root: Path) -> dict[str, object]:
+    paths = [project_root / relative_path for relative_path in _A0_CONFIG_FILES]
+    existing = [path for path in paths if path.is_file()]
+    missing = [
+        path.relative_to(project_root).as_posix()
+        for path in paths
+        if not path.is_file()
+    ]
+    files = _sha256_file_manifest(existing, relative_to=project_root)
+    return {
+        "schema_version": "statebus.contest_config_identity.v1",
+        "required_paths": list(_A0_CONFIG_FILES),
+        "files": files,
+        "missing_paths": missing,
+        "complete": not missing,
+        "combined_digest": sha256_digest(files),
+    }
+
+
+def _identity_files(
+    root: Path,
+    *,
+    required: tuple[str, ...],
+    optional: tuple[str, ...] = (),
+) -> dict[str, object]:
+    paths = [root / name for name in (*required, *optional)]
+    existing = [path for path in paths if path.is_file()]
+    missing = [name for name in required if not (root / name).is_file()]
+    files = _sha256_file_manifest(existing, relative_to=root) if root.is_dir() else []
+    return {
+        "root": str(root),
+        "required_files": list(required),
+        "optional_files": list(optional),
+        "files": files,
+        "missing_required_files": missing,
+        "complete": root.is_dir() and not missing,
+        "manifest_digest": sha256_digest(files),
+    }
+
+
+def _model_tokenizer_identity(environ: Mapping[str, str]) -> dict[str, object]:
+    model_root = Path(environ.get("STATEBUS_VLLM_MODEL_PATH", ""))
+    tokenizer_root = Path(
+        environ.get("STATEBUS_VLLM_TOKENIZER_PATH", "")
+        or environ.get("STATEBUS_VLLM_MODEL_PATH", "")
+    )
+    model = _identity_files(
+        model_root,
+        required=("config.json", "model.safetensors.index.json"),
+        optional=("generation_config.json",),
+    )
+    tokenizer = _identity_files(
+        tokenizer_root,
+        required=("tokenizer.json", "tokenizer_config.json"),
+        optional=("special_tokens_map.json", "chat_template.jinja"),
+    )
+    payload = {
+        "schema_version": "statebus.contest_model_tokenizer_identity.v1",
+        "model": model,
+        "tokenizer": tokenizer,
+        "complete": bool(model["complete"] and tokenizer["complete"]),
+        "scope_note": (
+            "Hashes cover model/tokenizer identity manifests and chat-template-bearing "
+            "configuration; the selected git/config identity records the serving contract."
+        ),
+    }
+    payload["combined_digest"] = sha256_digest(payload)
+    return payload
+
+
+def capture_contest_source_identity(
+    project_root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    root = project_root.resolve()
+    values = dict(os.environ if environ is None else environ)
+    status_bytes = _git_output(root, "status", "--porcelain=v1", "-z")
+    tracked_diff = _git_output(root, "diff", "--binary", "HEAD", "--")
+    untracked_output = _git_output(
+        root,
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+    )
+    untracked_paths = sorted(
+        path
+        for path in untracked_output.decode(
+            "utf-8", errors="surrogateescape"
+        ).split("\0")
+        if path
+    )
+    untracked_files: list[dict[str, object]] = []
+    for relative_path in untracked_paths:
+        path = (root / relative_path).resolve()
+        if root not in path.parents or not path.is_file():
+            raise ValueError(f"contest_source_untracked_path_invalid:{relative_path}")
+        untracked_files.append({
+            "path": relative_path,
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
+    dirty_descriptor = {
+        "status_porcelain_sha256": hashlib.sha256(status_bytes).hexdigest(),
+        "tracked_binary_diff_sha256": hashlib.sha256(tracked_diff).hexdigest(),
+        "tracked_binary_diff_size_bytes": len(tracked_diff),
+        "untracked_files": untracked_files,
+    }
+    source_tree = _source_tree_payload(root)
+    config_identity = _config_identity_payload(root)
+    model_tokenizer_identity = _model_tokenizer_identity(values)
+    identity = {
+        "schema_version": "statebus.contest_source_identity.v1",
+        "recorded_at": _now(),
+        "project_root": str(root),
+        "git_commit": _git_value("rev-parse", "HEAD", project_root=root),
+        "git_tree": _git_value("rev-parse", "HEAD^{tree}", project_root=root),
+        "git_branch": _git_value(
+            "rev-parse", "--abbrev-ref", "HEAD", project_root=root
+        ),
+        "git_commit_timestamp": _git_value(
+            "show", "-s", "--format=%cI", "HEAD", project_root=root
+        ),
+        "git_clean": not status_bytes,
+        "dirty_entry_count": len(
+            [entry for entry in status_bytes.split(b"\0") if entry]
+        ),
+        "dirty_diff_digest": sha256_digest(dirty_descriptor),
+        "dirty_descriptor": dirty_descriptor,
+        "runtime_tree": source_tree,
+        "config_identity": config_identity,
+        "model_tokenizer_identity": model_tokenizer_identity,
+    }
+    digest_payload = {
+        key: value
+        for key, value in identity.items()
+        if key not in {"recorded_at", "canonical_identity_digest"}
+    }
+    identity["canonical_identity_digest"] = sha256_digest(digest_payload)
+    identity["complete"] = bool(
+        identity["git_commit"]
+        and identity["git_tree"]
+        and identity["git_branch"]
+        and source_tree["file_count"]
+        and config_identity["complete"]
+        and model_tokenizer_identity["complete"]
+    )
+    return identity
 
 
 def _model_profiles(run_root: Path) -> dict[str, object]:
@@ -205,6 +507,203 @@ def _environment_payload(run_root: Path) -> dict[str, object]:
         ),
         "model_profiles": _model_profiles(run_root),
         "recorded_at": _now(),
+    }
+
+
+def capture_contest_runtime_config(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    values = dict(os.environ if environ is None else environ)
+    llm_config = LLMConfig.from_runtime(
+        values.get("STATEBUS_LLM_CONFIG_FILE") or None
+    )
+    roles: dict[str, object] = {}
+    for role, role_config in sorted(llm_config.roles.items()):
+        extra_body = dict(role_config.extra_body)
+        chat_template_kwargs = extra_body.get("chat_template_kwargs", {})
+        chat_template_kwargs = (
+            dict(chat_template_kwargs)
+            if isinstance(chat_template_kwargs, dict)
+            else {}
+        )
+        roles[role] = {
+            "provider": role_config.provider,
+            "model": role_config.model,
+            "json_output": role_config.json_output,
+            "temperature": role_config.temperature,
+            "max_tokens": role_config.max_tokens,
+            "max_context_tokens": role_config.max_context_tokens,
+            "reasoning_effort": role_config.reasoning_effort,
+            "enable_thinking": chat_template_kwargs.get("enable_thinking"),
+            "extra_body_digest": sha256_digest(extra_body),
+            "request_kwargs_digest": sha256_digest(role_config.request_kwargs),
+        }
+    treatment_matrices = audit_contest_treatment_matrices()
+    runtime_values = {
+        name: values.get(name, "")
+        for name in _A0_RUNTIME_ENV_KEYS
+    }
+    llm_config_path = Path(llm_config.source)
+    configured_llm_path = Path(values.get("STATEBUS_LLM_CONFIG_FILE", ""))
+    llm_config_frozen = bool(
+        llm_config_path.is_file()
+        and configured_llm_path.is_file()
+        and llm_config_path.resolve() == configured_llm_path.resolve()
+    )
+    role_contract_ok = set(roles) == {
+        "planner",
+        "retriever",
+        "executor",
+        "summarizer",
+    } and all(
+        isinstance(role, dict)
+        and role.get("json_output") is True
+        and isinstance(role.get("temperature"), (int, float))
+        and not isinstance(role.get("temperature"), bool)
+        and role.get("temperature") == 0.0
+        and role.get("reasoning_effort") is None
+        and role.get("enable_thinking") is False
+        for role in roles.values()
+    )
+    latent_off = (
+        runtime_values["STATEBUS_LATENT_MODE"].strip().lower() == "off"
+        and runtime_values["STATEBUS_LATENT_HANDOFF_MODE"].strip().lower()
+        == "off"
+        and runtime_values["STATEBUS_LATENT_PROMPT_EMBEDS_ENABLED"].strip().lower()
+        in {"0", "false", "off", "no"}
+    )
+    baseline_treatments_off = (
+        runtime_values["STATEBUS_PREFIX_POLICY"].strip().lower() == "off"
+        and runtime_values["STATEBUS_LOGIT_POLICY"].strip().lower() == "off"
+    )
+    serialized = (
+        runtime_values["STATEBUS_FORMAL_REQUEST_MODE"].strip().lower()
+        == "serialized"
+        and runtime_values["STATEBUS_FORMAL_REQUEST_CONCURRENCY"].strip() == "1"
+    )
+    action_gates_off = all(
+        runtime_values[name].strip().lower() in {"0", "false", "off", "no"}
+        for name in _A0_ACTION_GATES
+    )
+    checks = {
+        "llm_config_file_frozen": llm_config_frozen,
+        "formal_four_role_non_thinking_contract": role_contract_ok,
+        "latent_off": latent_off,
+        "baseline_prefix_and_logit_off": baseline_treatments_off,
+        "serialized_concurrency_one": serialized,
+        "external_action_gates_off": action_gates_off,
+        "treatment_matrices_auditable": treatment_matrices["ok"] is True,
+    }
+    payload = {
+        "schema_version": "statebus.contest_runtime_config.v1",
+        "recorded_at": _now(),
+        "llm_config_source": llm_config.source,
+        "llm_config_sha256": (
+            hashlib.sha256(llm_config_path.read_bytes()).hexdigest()
+            if llm_config_path.is_file()
+            else ""
+        ),
+        "roles": roles,
+        "runtime_values": runtime_values,
+        "treatment_matrices": treatment_matrices,
+        "checks": checks,
+        "ok": all(checks.values()),
+    }
+    payload["config_digest"] = sha256_digest({
+        key: value
+        for key, value in payload.items()
+        if key not in {"recorded_at", "config_digest"}
+    })
+    return payload
+
+
+def capture_contest_a0_environment(
+    run_root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    values = dict(os.environ if environ is None else environ)
+    preflight = contest_environment_preflight(values)
+    payload = _environment_payload(run_root)
+    payload.update({
+        "schema_version": "statebus.contest_a0_environment.v1",
+        "capture_context": "host_client_with_docker_test_executor",
+        "offline_preflight": preflight.canonical_payload(),
+        "test_executor": {
+            "container_name": values.get(
+                "STATEBUS_CONTEST_CONTAINER_NAME", "statebus-dev-qcrs"
+            ),
+            "container_id": values.get("STATEBUS_CONTEST_CONTAINER_ID", ""),
+            "image_id": values.get("STATEBUS_CONTEST_IMAGE_ID", ""),
+            "image_digest": values.get("STATEBUS_CONTEST_IMAGE_DIGEST", ""),
+            "container_project_root": values.get(
+                "STATEBUS_CONTEST_CONTAINER_PROJECT_ROOT", ""
+            ),
+            "test_user": values.get("STATEBUS_CONTEST_TEST_USER", ""),
+            "uid": values.get("STATEBUS_CONTEST_TEST_UID", ""),
+            "gid": values.get("STATEBUS_CONTEST_TEST_GID", ""),
+        },
+        "external_actions_performed": False,
+    })
+    test_executor = dict(payload["test_executor"])
+    payload["test_executor_identity_complete"] = bool(
+        test_executor["container_name"]
+        and test_executor["container_id"]
+        and test_executor["image_id"]
+        and test_executor["container_project_root"]
+        and test_executor["test_user"]
+        and test_executor["uid"]
+        and test_executor["gid"]
+    )
+    payload["ok"] = bool(
+        preflight.ok and payload["test_executor_identity_complete"]
+    )
+    return payload
+
+
+def _pytest_junit_payload(
+    junit_path: Path,
+    *,
+    command: str,
+    source_git_commit: str,
+) -> dict[str, object]:
+    if not junit_path.is_file():
+        raise FileNotFoundError(f"pytest_junit_missing:{junit_path}")
+    if "pytest" not in command.split() or "-q" not in command.split():
+        raise ValueError("a0_test_command_must_use_pytest_q")
+    root = ET.parse(junit_path).getroot()
+    suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+    if not suites:
+        raise ValueError("pytest_junit_has_no_testsuite")
+
+    def total(attribute: str) -> int:
+        return sum(int(suite.attrib.get(attribute, "0")) for suite in suites)
+
+    test_count = total("tests")
+    failures = total("failures")
+    errors = total("errors")
+    skipped = total("skipped")
+    elapsed_seconds = sum(
+        float(suite.attrib.get("time", "0") or 0.0)
+        for suite in suites
+    )
+    passed = test_count > 0 and failures == 0 and errors == 0
+    return {
+        "schema_version": "statebus.contest_a0_tests.v1",
+        "recorded_at": _now(),
+        "command": command,
+        "quiet_mode": True,
+        "source_git_commit": source_git_commit,
+        "tests": test_count,
+        "passed_tests": test_count - failures - errors - skipped,
+        "failures": failures,
+        "errors": errors,
+        "skipped": skipped,
+        "elapsed_seconds": elapsed_seconds,
+        "junit_sha256": hashlib.sha256(junit_path.read_bytes()).hexdigest(),
+        "status": "passed" if passed else "failed",
+        "ok": passed,
     }
 
 
@@ -811,6 +1310,144 @@ def _write_checksums(run_root: Path) -> None:
     checksum_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def verify_artifact_checksums(run_root: Path) -> dict[str, object]:
+    checksum_path = run_root / "checksums.sha256"
+    if not checksum_path.is_file():
+        return {
+            "schema_version": "statebus.artifact_checksum_verification.v1",
+            "ok": False,
+            "reason": "checksums_file_missing",
+        }
+    expected: dict[str, str] = {}
+    errors: list[dict[str, str]] = []
+    for line in checksum_path.read_text(encoding="utf-8").splitlines():
+        digest, separator, relative_path = line.partition("  ")
+        if (
+            not separator
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            or not relative_path
+            or relative_path in expected
+        ):
+            errors.append({"kind": "invalid_checksum_line", "line": line})
+            continue
+        path = (run_root / relative_path).resolve()
+        if run_root.resolve() not in path.parents:
+            errors.append({"kind": "unsafe_checksum_path", "path": relative_path})
+            continue
+        expected[relative_path] = digest
+    actual_paths = {
+        path.relative_to(run_root).as_posix(): path
+        for path in run_root.rglob("*")
+        if path.is_file() and path != checksum_path
+    }
+    for relative_path in sorted(set(expected) | set(actual_paths)):
+        if relative_path not in expected:
+            errors.append({"kind": "unlisted_file", "path": relative_path})
+        elif relative_path not in actual_paths:
+            errors.append({"kind": "missing_file", "path": relative_path})
+        else:
+            observed = hashlib.sha256(
+                actual_paths[relative_path].read_bytes()
+            ).hexdigest()
+            if observed != expected[relative_path]:
+                errors.append({
+                    "kind": "checksum_mismatch",
+                    "path": relative_path,
+                })
+    return {
+        "schema_version": "statebus.artifact_checksum_verification.v1",
+        "ok": not errors,
+        "file_count": len(expected),
+        "errors": errors,
+    }
+
+
+def write_a0_acceptance_bundle(
+    *,
+    run_root: Path,
+    pytest_junit: Path,
+    tested_git_commit: str,
+    test_command: str,
+    project_root: Path,
+    environ: Mapping[str, str] | None = None,
+    prior_pytest_evidence: Iterable[PriorPytestEvidence] = (),
+) -> dict[str, object]:
+    if run_root.exists():
+        raise FileExistsError(f"contest A0 run root already exists: {run_root}")
+    values = dict(os.environ if environ is None else environ)
+    source_identity = capture_contest_source_identity(
+        project_root,
+        environ=values,
+    )
+    runtime_config = capture_contest_runtime_config(environ=values)
+    environment = capture_contest_a0_environment(run_root, environ=values)
+    tests = _pytest_junit_payload(
+        pytest_junit,
+        command=test_command,
+        source_git_commit=tested_git_commit,
+    )
+    prior_test_runs: list[dict[str, object]] = []
+    for prior in prior_pytest_evidence:
+        prior_payload = _pytest_junit_payload(
+            prior.junit_path,
+            command=test_command,
+            source_git_commit=prior.source_git_commit,
+        )
+        prior_test_runs.append({
+            **prior_payload,
+            "junit_path": str(prior.junit_path.resolve()),
+            "test_user": prior.test_user,
+            "nonselection_reason": prior.nonselection_reason,
+            "selected_for_acceptance": False,
+            "preserved": True,
+        })
+    tests["prior_test_runs"] = prior_test_runs
+    tests["test_executor"] = environment["test_executor"]
+    checks = {
+        "selected_commit_was_tested": bool(tested_git_commit)
+        and tested_git_commit == source_identity["git_commit"],
+        "source_identity_complete": source_identity["complete"] is True,
+        "source_worktree_clean": source_identity["git_clean"] is True,
+        "contest_branch_selected": source_identity["git_branch"]
+        == "feat/statebus-v2-contest-rebuild",
+        "runtime_config_guardrails": runtime_config["ok"] is True,
+        "offline_environment_preflight": environment["ok"] is True,
+        "clean_full_pytest_suite": tests["ok"] is True,
+    }
+    acceptance = {
+        "schema_version": "statebus.contest_acceptance_stage.v1",
+        "stage": "A0",
+        "version": "contest-rebuild-a0-v1",
+        "recorded_at": _now(),
+        "status": "passed" if all(checks.values()) else "failed",
+        "checks": checks,
+        "ok": all(checks.values()),
+        "external_actions_performed": False,
+        "claim_scope": (
+            "Clean source/config identity and offline guardrails only; no Prefix, "
+            "LogitState, memory, semantic, latency, quality, or compatibility benefit claim."
+        ),
+    }
+
+    run_root.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(pytest_junit, run_root / "pytest-junit.xml")
+    tests["junit_artifact"] = "pytest-junit.xml"
+    _write_json(run_root / "environment.json", environment)
+    _write_json(run_root / "runtime_config.json", runtime_config)
+    _write_json(run_root / "source_identity.json", source_identity)
+    _write_json(run_root / "tests.json", tests)
+    _write_json(run_root / "acceptance.json", acceptance)
+    _write_checksums(run_root)
+    checksum_verification = verify_artifact_checksums(run_root)
+    return {
+        **acceptance,
+        "run_root": str(run_root),
+        "checksums": checksum_verification,
+        "ok": acceptance["ok"] is True and checksum_verification["ok"] is True,
+    }
+
+
 def _preflight_command(run_root: Path) -> list[str]:
     return [
         sys.executable,
@@ -979,9 +1616,38 @@ def run_stage(stage: str, run_root: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run one serialized contest evidence-closure stage.")
-    parser.add_argument("--stage", choices=tuple(_STAGE_IDS), required=True)
+    parser.add_argument("--stage", choices=(*tuple(_STAGE_IDS), "A0"), required=True)
     parser.add_argument("--run-root", type=Path, required=True)
+    parser.add_argument("--pytest-junit", type=Path)
+    parser.add_argument("--tested-git-commit", default="")
+    parser.add_argument("--test-command", default="python3 -m pytest -q")
+    parser.add_argument("--project-root", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--prior-pytest-evidence",
+        type=_parse_prior_pytest_evidence,
+        action="append",
+        default=[],
+    )
     args = parser.parse_args()
+    if args.stage == "A0":
+        if args.pytest_junit is None:
+            parser.error("--pytest-junit is required for A0")
+        result = write_a0_acceptance_bundle(
+            run_root=args.run_root,
+            pytest_junit=args.pytest_junit,
+            tested_git_commit=args.tested_git_commit,
+            test_command=args.test_command,
+            project_root=args.project_root,
+            prior_pytest_evidence=args.prior_pytest_evidence,
+        )
+        print(stable_json_dumps({
+            "stage": "A0",
+            "status": result["status"],
+            "ok": result["ok"],
+            "run_root": result["run_root"],
+            "checksums_ok": result["checksums"]["ok"],
+        }))
+        raise SystemExit(0 if result["ok"] else 1)
     raise SystemExit(run_stage(args.stage, args.run_root))
 
 

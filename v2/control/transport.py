@@ -588,6 +588,7 @@ class SubprocessExecutorTransport:
         if (
             normalized_carrier == "protobuf"
             and request.operation in {
+                "logit_gate_v1",
                 "semantic_select_v1",
                 "typed_numeric_summary_v1",
             }
@@ -703,6 +704,7 @@ class SubprocessExecutorTransport:
         resolved_text_payload = text_payload or _default_text_exec_handoff(exec_request)
 
         def _serve() -> None:
+            nonlocal exec_request
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             conn: socket.socket | None = None
             try:
@@ -761,6 +763,38 @@ class SubprocessExecutorTransport:
                             ))
                             return
                         negotiation_state["accepted"] = True
+                        if exec_request.operation == "logit_gate_v1":
+                            from v2.runtime.confidence_gate import (
+                                logit_control_grant_from_domain,
+                                logit_control_ref_from_domain,
+                            )
+                            from v2.state.logit_state import (
+                                LogitStateGrant,
+                                logit_ref_from_sidecar,
+                            )
+
+                            worker_pid = int(negotiation_state.get("worker_pid", 0))
+                            if worker_pid <= 0:
+                                raise ValueError("logit_gate_worker_pid_missing")
+                            domain_ref = logit_ref_from_sidecar(
+                                Path(exec_request.state_root),
+                                exec_request.state_refs[0].ref_id,
+                            )
+                            typed_ref = logit_control_ref_from_domain(domain_ref)
+                            if (
+                                exec_request.logit_state_ref is not None
+                                and exec_request.logit_state_ref != typed_ref
+                            ):
+                                raise ValueError("logit_gate_control_ref_mismatch")
+                            grant = LogitStateGrant.issue(
+                                domain_ref,
+                                consumer_pid=worker_pid,
+                            )
+                            exec_request = replace(
+                                exec_request,
+                                logit_state_ref=typed_ref,
+                                logit_state_grant=logit_control_grant_from_domain(grant),
+                            )
                         exec_size = len(frame_control_message(exec_request))
                         send_control_message(conn, exec_request)
                         request_wire_frames.append(exec_size)

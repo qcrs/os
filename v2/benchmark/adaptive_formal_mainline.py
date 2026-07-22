@@ -73,9 +73,12 @@ _RETRIEVAL_EVIDENCE_TYPES_BY_CAPABILITY = {
 _MEMORY_ACCOUNTING_COUNT_FIELDS = (
     "recorded_consumption_count",
     "actual_consumed_count",
+    "legacy_unverified_count",
     "rendered_count",
     "recipe_executed_count",
     "output_accepted_count",
+    "action_count",
+    "behavioral_effect_count",
     "failed_attempt_count",
     "validated_replay_count",
     "exact_replay_count",
@@ -1958,7 +1961,11 @@ def _aggregate_memory_consumption_accounting(
         ]
         raw_recorded_count += len(raw_records)
         raw_case_actual_count = sum(
-            bool(record.get("rendered_request_hash") or record.get("executed_recipe_hash"))
+            record.get("receipt_validated") is True
+            and bool(
+                record.get("rendered_request_hash")
+                or record.get("executed_recipe_hash")
+            )
             for record in raw_records
         )
         raw_actual_count += raw_case_actual_count

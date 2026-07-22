@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -36,10 +37,14 @@ from v2.control import (
     frame_control_message,
 )
 from v2.contracts import (
+    CanonicalPrefixEntry,
     CanonicalTaskSpec,
     CompatibilityVerdict,
     HydrationAccountingAudit,
     HydrationRoleAccounting,
+    GateAction,
+    GateDecision,
+    LogitPolicy,
     PlannerHandoff,
     RefKind,
     RefStatus,
@@ -56,6 +61,7 @@ from v2.memory import (
     DeterministicEmbeddingEncoder,
     MemoryCommit,
     MemoryConsumptionRecord,
+    summarize_memory_consumption,
     MemoryIndexStore,
     MemoryQuery,
     MemoryRef,
@@ -80,6 +86,7 @@ from v2.runtime import (
     ArtifactValidatorReport,
     ExecutionStepRecord,
     FallbackPlanner,
+    FrozenGatePolicy,
     CommitGateDecision,
     InputManifest,
     InputManifestItem,
@@ -98,6 +105,8 @@ from v2.runtime import (
     RuntimeSessionManager,
     RuntimeSupervisor,
     ExecutorRoleDecision,
+    LogitActionApplication,
+    LogitLifecycleResult,
     PlannerRoleResult,
     RetrieverRoleDecision,
     RolePathRunner,
@@ -110,13 +119,15 @@ from v2.runtime import (
     TelemetryEvent,
     WorkspaceManager,
     best_visible_candidate,
-    build_neural_prefix_identity,
+    build_prefix_lineage_identity,
+    build_canonical_shared_evidence_prefix,
     constrain_visible_candidates,
     build_extended_output_manifest,
     capture_runtime_signature,
     capture_runtime_signature_manifest_bundle,
     build_task_lineage_view,
     compute_vllm_prefix_cache_counter_delta,
+    compile_exact_token_prefix_identity,
     capture_execution_logs,
     evidence_pack_replay_hash,
     evidence_execution_input_replay_hash,
@@ -126,8 +137,11 @@ from v2.runtime import (
     SignatureManifestEntry,
     count_exact_replay_candidates,
     estimate_engine_local_prefix_reuse,
+    empty_logit_lifecycle_metrics,
     fetch_vllm_prefix_cache_metrics,
     select_history_replay_candidate,
+    rejected_logit_lifecycle,
+    run_logit_state_lifecycle,
 )
 from v2.runtime.preflight import runtime_preflight
 from v2.runtime.runtime_signature import runtime_signature_payload
@@ -139,6 +153,8 @@ from v2.state import (
     LayeredStateStore,
     LayeredStoragePolicy,
     MaterializedStateHandle,
+    LogitStatePublishContext,
+    LogitStateStore,
     RefRegistryQuery,
     publish_dense_semantic_state,
     query_embedding_from_dense_state,
@@ -509,6 +525,380 @@ def _fetch_vllm_prefix_metrics_or_none(metrics_url: str):
         return fetch_vllm_prefix_cache_metrics(metrics_url, timeout_s=2.0)
     except Exception:
         return None
+
+
+@lru_cache(maxsize=2)
+def _load_prefix_tokenizer(tokenizer_path: str):
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=True)
+
+
+def _runtime_exact_prefix_identity_payload(
+    *,
+    role_path_runner: RolePathRunner,
+    shared_prefix_text: str,
+) -> dict[str, object]:
+    policy = os.getenv("STATEBUS_PREFIX_POLICY", "off").strip().lower()
+    if policy not in {"observe", "on"}:
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "prefix_policy_off",
+        }
+    if str(getattr(role_path_runner, "prefix_alignment_mode", "independent")).strip().lower() != "shared_evidence_prefix":
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "shared_prefix_layout_disabled",
+        }
+    if not shared_prefix_text:
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "canonical_shared_prefix_ineligible",
+        }
+    audit_reader = getattr(role_path_runner, "rendered_request_audit_payload", None)
+    if not callable(audit_reader):
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "rendered_request_audit_unavailable",
+        }
+    prompts: dict[str, str] = {}
+    for role in ("executor", "summarizer"):
+        requests = list(audit_reader(role, include_content=True).get("requests", []))
+        if len(requests) != 1:
+            return {
+                "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+                "eligible": False,
+                "ineligible_reason": f"{role}_request_count_not_one",
+            }
+        messages = list(requests[0].get("messages", []))
+        if len(messages) != 1 or str(messages[0].get("role", "")) != "user":
+            return {
+                "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+                "eligible": False,
+                "ineligible_reason": f"{role}_message_shape_mismatch",
+            }
+        prompts[role] = str(messages[0].get("content", ""))
+    tokenizer_path = (
+        os.getenv("STATEBUS_VLLM_TOKENIZER_PATH", "").strip()
+        or os.getenv("STATEBUS_VLLM_MODEL_PATH", "").strip()
+    )
+    if not tokenizer_path or not Path(tokenizer_path).exists():
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "request_tokenizer_path_unavailable",
+        }
+    try:
+        tokenizer = _load_prefix_tokenizer(tokenizer_path)
+    except Exception as exc:
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": f"request_tokenizer_load_failed:{type(exc).__name__}",
+        }
+    identity = compile_exact_token_prefix_identity(
+        tokenizer,
+        prompts,
+        shared_prefix_text=shared_prefix_text,
+        block_size=max(int(os.getenv("STATEBUS_PREFIX_BLOCK_SIZE", "16") or "16"), 1),
+        min_full_blocks=max(int(os.getenv("STATEBUS_PREFIX_MIN_FULL_BLOCKS", "1") or "1"), 1),
+        chat_template_kwargs={"enable_thinking": False},
+    )
+    return identity.canonical_payload()
+
+
+@dataclass(frozen=True)
+class _LogitRuntimeIdentity:
+    prompt_sha256: str
+    model_id: str
+    model_revision: str
+    tokenizer_id: str
+    tokenizer_revision: str
+    chat_template_sha256: str
+    template_kwargs_sha256: str
+    response_schema_digest: str
+
+
+@dataclass(frozen=True)
+class _LogitRuntimeLimits:
+    lease_ttl_ms: int
+    gate_timeout_s: float
+
+
+def _logit_runtime_limits() -> tuple[_LogitRuntimeLimits | None, str]:
+    lease_value = os.getenv("STATEBUS_LOGIT_LEASE_MS", "30000").strip() or "30000"
+    timeout_value = os.getenv("STATEBUS_LOGIT_GATE_TIMEOUT_S", "10").strip() or "10"
+    try:
+        lease_ttl_ms = int(lease_value)
+    except ValueError:
+        return None, "logit_runtime_setting_invalid:STATEBUS_LOGIT_LEASE_MS"
+    if lease_ttl_ms <= 0:
+        return None, "logit_runtime_setting_invalid:STATEBUS_LOGIT_LEASE_MS"
+    try:
+        gate_timeout_s = float(timeout_value)
+    except ValueError:
+        return None, "logit_runtime_setting_invalid:STATEBUS_LOGIT_GATE_TIMEOUT_S"
+    if not math.isfinite(gate_timeout_s) or gate_timeout_s <= 0.0:
+        return None, "logit_runtime_setting_invalid:STATEBUS_LOGIT_GATE_TIMEOUT_S"
+    return (
+        _LogitRuntimeLimits(
+            lease_ttl_ms=lease_ttl_ms,
+            gate_timeout_s=max(gate_timeout_s, 0.1),
+        ),
+        "",
+    )
+
+
+def _logit_runtime_identity(
+    *,
+    role_path_runner: RolePathRunner,
+    executor_decision: ExecutorRoleDecision,
+) -> tuple[_LogitRuntimeIdentity | None, str]:
+    audit_reader = getattr(role_path_runner, "rendered_request_audit_payload", None)
+    if not callable(audit_reader):
+        return None, "logit_rendered_request_audit_unavailable"
+    requests = list(audit_reader("executor", include_content=True).get("requests", []))
+    if not requests:
+        return None, "logit_executor_request_identity_missing"
+    request = requests[-1]
+    response_schema = request.get("response_schema")
+    surface = executor_decision.logit_candidate_surface
+    if not isinstance(response_schema, dict) or surface is None:
+        return None, "logit_response_schema_identity_missing"
+    expected_schema = {
+        "type": "object",
+        "properties": {
+            "choice_code": {"type": "string", "enum": list(surface.aliases)},
+        },
+        "required": ["choice_code"],
+        "additionalProperties": False,
+    }
+    if response_schema != expected_schema:
+        return None, "logit_response_schema_not_dedicated_choice_surface"
+    model_id = str(executor_decision.model).strip()
+    expected_model_id = os.getenv("STATEBUS_LOGIT_MODEL_ID", "").strip()
+    if expected_model_id and expected_model_id != model_id:
+        return None, "logit_model_identity_mismatch"
+    model_revision = os.getenv("STATEBUS_LOGIT_MODEL_REVISION", "").strip()
+    tokenizer_id = (
+        os.getenv("STATEBUS_LOGIT_TOKENIZER_ID", "").strip()
+        or os.getenv("STATEBUS_VLLM_TOKENIZER_PATH", "").strip()
+    )
+    tokenizer_revision = os.getenv("STATEBUS_LOGIT_TOKENIZER_REVISION", "").strip()
+    chat_template_sha256 = os.getenv("STATEBUS_LOGIT_CHAT_TEMPLATE_SHA256", "").strip()
+    prompt_sha256 = str(request.get("prompt_sha256", "")).strip()
+    required = {
+        "prompt_sha256": prompt_sha256,
+        "model_id": model_id,
+        "model_revision": model_revision,
+        "tokenizer_id": tokenizer_id,
+        "tokenizer_revision": tokenizer_revision,
+        "chat_template_sha256": chat_template_sha256,
+    }
+    missing = tuple(name for name, value in required.items() if not value)
+    if missing:
+        return None, f"logit_runtime_identity_missing:{','.join(missing)}"
+    if not all(
+        len(value) == 64 and all(character in "0123456789abcdef" for character in value.lower())
+        for value in (prompt_sha256, chat_template_sha256)
+    ):
+        return None, "logit_runtime_identity_digest_invalid"
+    return (
+        _LogitRuntimeIdentity(
+            prompt_sha256=prompt_sha256,
+            model_id=model_id,
+            model_revision=model_revision,
+            tokenizer_id=tokenizer_id,
+            tokenizer_revision=tokenizer_revision,
+            chat_template_sha256=chat_template_sha256,
+            template_kwargs_sha256=sha256_digest({"enable_thinking": False}),
+            response_schema_digest=sha256_digest(response_schema),
+        ),
+        "",
+    )
+
+
+def _load_frozen_logit_policy() -> tuple[FrozenGatePolicy | None, str]:
+    path_value = os.getenv("STATEBUS_LOGIT_GATE_POLICY_ARTIFACT", "").strip()
+    expected_hash = os.getenv("STATEBUS_LOGIT_GATE_POLICY_HASH", "").strip()
+    if not path_value or not expected_hash:
+        return None, "frozen_calibration_or_policy_missing"
+    try:
+        return FrozenGatePolicy.load(Path(path_value), expected_file_hash=expected_hash), ""
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return None, str(exc).strip() or type(exc).__name__
+
+
+def _logit_policy_versions(
+    policy_mode: LogitPolicy,
+    frozen_policy: FrozenGatePolicy | None,
+) -> tuple[str, str, str]:
+    if frozen_policy is not None:
+        return (
+            frozen_policy.calibration_version,
+            frozen_policy.threshold_policy_version,
+            frozen_policy.gate_budget_version,
+        )
+    scope = "telemetry_only" if policy_mode is LogitPolicy.TELEMETRY_ONLY else "unavailable"
+    return (
+        sha256_digest({"logit_calibration": scope, "kind": "identity_v1"}),
+        sha256_digest({"logit_threshold_policy": scope, "applied": False}),
+        sha256_digest({"logit_gate_budget": "max_actions_1"}),
+    )
+
+
+def _executor_decision_surface_hash(
+    decision: ExecutorRoleDecision,
+) -> str:
+    return sha256_digest({
+        "candidate_surface_digest": (
+            decision.logit_candidate_surface.candidate_surface_digest
+            if decision.logit_candidate_surface is not None
+            else ""
+        ),
+        "route": decision.route,
+        "tool_name": decision.tool_name,
+        "action_contract": decision.action_contract,
+    })
+
+
+def _apply_logit_gate_action(
+    *,
+    gate_decision: GateDecision,
+    baseline_decision: ExecutorRoleDecision,
+    role_path_runner: RolePathRunner,
+    role_candidates: tuple[object, ...],
+    executor_prompt_slice: RolePromptSlice,
+    route_hints: tuple[str, ...],
+    shared_prefix_text: str,
+) -> tuple[ExecutorRoleDecision, LogitActionApplication]:
+    before_hash = _executor_decision_surface_hash(baseline_decision)
+    if gate_decision.action is GateAction.FAIL_CLOSED:
+        return baseline_decision, LogitActionApplication(
+            after_decision_surface_hash=before_hash,
+            selection_changed=False,
+            error_recovered=False,
+            extra_llm_calls=0,
+            extra_tool_calls=0,
+            extra_tokens=0,
+            extra_latency_ms=0.0,
+            extra_evidence_bytes=0,
+            outcome="fail_closed_baseline_preserved",
+            fallback_reason=gate_decision.reason,
+            downstream_ref_ids=("artifact-smoke",),
+        )
+    if gate_decision.action is GateAction.VERIFY_ONCE:
+        selected_key = f"{baseline_decision.route}::{baseline_decision.tool_name}"
+        visible_keys = {
+            str(getattr(candidate, "candidate_key")())
+            for candidate in role_candidates
+            if callable(getattr(candidate, "candidate_key", None))
+        }
+        if selected_key not in visible_keys:
+            raise ValueError("logit_verify_once_selection_outside_surface")
+        return baseline_decision, LogitActionApplication(
+            after_decision_surface_hash=before_hash,
+            selection_changed=False,
+            error_recovered=False,
+            extra_llm_calls=0,
+            extra_tool_calls=0,
+            extra_tokens=0,
+            extra_latency_ms=0.0,
+            extra_evidence_bytes=0,
+            outcome="verified_baseline_selection",
+            downstream_ref_ids=("artifact-smoke",),
+        )
+    if gate_decision.action is GateAction.SELECTION_RETRY_ONCE:
+        retry_runner = replace(
+            role_path_runner,
+            json_response_max_attempts=1,
+            logit_policy=LogitPolicy.OFF.value,
+        )
+        retry_decision = retry_runner.validate_execution_choice(
+            route=baseline_decision.route,
+            tool_name=baseline_decision.tool_name,
+            visible_candidates=role_candidates,
+            action_contract=baseline_decision.action_contract,
+            prompt_slice=executor_prompt_slice,
+            strict_surface=True,
+            allow_assisted_correction=False,
+            route_hints=route_hints,
+            shared_prefix_text=shared_prefix_text,
+        )
+        retry_usage = retry_decision
+        retry_decision = replace(
+            retry_decision,
+            prompt_tokens=baseline_decision.prompt_tokens + retry_usage.prompt_tokens,
+            completion_tokens=(
+                baseline_decision.completion_tokens + retry_usage.completion_tokens
+            ),
+            total_tokens=baseline_decision.total_tokens + retry_usage.total_tokens,
+            prompt_bytes=baseline_decision.prompt_bytes + retry_usage.prompt_bytes,
+            latency_ms=baseline_decision.latency_ms + retry_usage.latency_ms,
+            logit_entropy=baseline_decision.logit_entropy,
+            logit_confidence_proxy=baseline_decision.logit_confidence_proxy,
+            logit_state_bytes=baseline_decision.logit_state_bytes,
+            logit_varentropy=baseline_decision.logit_varentropy,
+            logit_top_gap=baseline_decision.logit_top_gap,
+            logit_peak_position=baseline_decision.logit_peak_position,
+            logit_sequence_length=baseline_decision.logit_sequence_length,
+            logit_decision_entropy=baseline_decision.logit_decision_entropy,
+            logit_policy=baseline_decision.logit_policy,
+            logit_state_payload=baseline_decision.logit_state_payload,
+            logit_candidate_surface=baseline_decision.logit_candidate_surface,
+            logit_producer_receipt=baseline_decision.logit_producer_receipt,
+            logit_exact_result=baseline_decision.logit_exact_result,
+            logit_unavailable_reason=baseline_decision.logit_unavailable_reason,
+        )
+        changed = (
+            retry_decision.route,
+            retry_decision.tool_name,
+        ) != (
+            baseline_decision.route,
+            baseline_decision.tool_name,
+        )
+        return retry_decision, LogitActionApplication(
+            after_decision_surface_hash=_executor_decision_surface_hash(retry_decision),
+            selection_changed=changed,
+            error_recovered=changed,
+            extra_llm_calls=1,
+            extra_tool_calls=0,
+            extra_tokens=retry_usage.total_tokens,
+            extra_latency_ms=retry_usage.latency_ms,
+            extra_evidence_bytes=0,
+            outcome="selection_retry_completed",
+            downstream_ref_ids=("artifact-smoke",),
+        )
+    if gate_decision.action is GateAction.EXPAND_ONCE:
+        return baseline_decision, LogitActionApplication(
+            after_decision_surface_hash=before_hash,
+            selection_changed=False,
+            error_recovered=False,
+            extra_llm_calls=0,
+            extra_tool_calls=0,
+            extra_tokens=0,
+            extra_latency_ms=0.0,
+            extra_evidence_bytes=0,
+            outcome="unsupported_action_baseline_preserved",
+            fallback_reason="expand_once_not_enabled_for_smoke_executor_choice",
+            downstream_ref_ids=("artifact-smoke",),
+        )
+    return baseline_decision, LogitActionApplication(
+        after_decision_surface_hash=before_hash,
+        selection_changed=False,
+        error_recovered=False,
+        extra_llm_calls=0,
+        extra_tool_calls=0,
+        extra_tokens=0,
+        extra_latency_ms=0.0,
+        extra_evidence_bytes=0,
+        outcome="accepted_baseline_selection",
+        downstream_ref_ids=("artifact-smoke",),
+    )
 
 
 def _empty_role_hydrated_slice(role: str) -> RoleHydratedSlice:
@@ -1046,7 +1436,7 @@ def _continuous_memory_consumption_records(
                 input_payload_hash=sha256_digest(input_payload),
                 before_decision_surface_hash=before_surface_hash,
                 after_decision_surface_hash=after_surface_hash,
-                behavioral_effect=behavioral_effect,
+                behavioral_effect="not_evaluated",
                 downstream_ref_ids=("artifact-smoke",),
                 skipped_generation_step_count=(
                     replay.skipped_step_count if replay.candidate_id == memory_id else 0
@@ -1072,6 +1462,10 @@ def _continuous_memory_consumption_records(
                     match.memory_ref.metadata.get("execution_recipe_hash", "")
                 ),
                 execution_outcome="accepted",
+                action=behavioral_effect,
+                legacy_classification=(
+                    "legacy_smoke_explicit_replay_unverified_role_receipt"
+                ),
             )
         )
     return tuple(records)
@@ -1216,7 +1610,7 @@ def _build_semantic_state_ref(
     bundle: RetrievalBundle,
     materialized_state: MaterializedStateHandle,
 ) -> SemanticStateRef:
-    prefix_identity = build_neural_prefix_identity(
+    prefix_identity = build_prefix_lineage_identity(
         source_doc_hashes=bundle.selected_doc_hashes,
         evidence_pack_hash=bundle.evidence_pack.pack_hash,
         hydrate_manifest_hash=bundle.hydrate_manifest.manifest_hash,
@@ -1236,7 +1630,7 @@ def _build_semantic_state_ref(
             "shared_memory_name": materialized_state.shared_memory_name,
             "corpus_prefix_hash": prefix_identity.corpus_prefix_hash,
             "evidence_prefix_hash": prefix_identity.evidence_prefix_hash,
-            "neural_prefix_identity": prefix_identity.canonical_payload(),
+            "prefix_lineage_identity": prefix_identity.canonical_payload(),
             "neural_reuse_scope": "task_session",
             "neural_reuse_mode": "shared_prefix_role_suffix",
             "neural_reuse_claim_boundary": "engine_local_prefix_reuse_estimate_only_no_kv_tensor_export",
@@ -1334,17 +1728,67 @@ def _stable_keys_from_bucket_items(items: tuple[object, ...]) -> tuple[str, ...]
     keys: list[str] = []
     for item in items:
         locator = getattr(item, "locator", None)
-        if locator is None:
-            continue
-        if hasattr(locator, "canonical_text_id"):
-            keys.append(
-                f"text:{locator.source_doc_hash}:{locator.canonical_text_id}:{locator.start_char}:{locator.end_char}"
-            )
-        elif hasattr(locator, "table_id"):
-            keys.append(
-                f"table:{locator.source_doc_hash}:{locator.table_id}:{locator.sheet_name}:{locator.row_idx}:{locator.col_idx}"
-            )
+        stable_key = _stable_key_from_locator(locator)
+        if stable_key:
+            keys.append(stable_key)
     return tuple(dict.fromkeys(keys))
+
+
+def _stable_key_from_locator(locator: object | None) -> str:
+    if locator is None:
+        return ""
+    if hasattr(locator, "canonical_text_id"):
+        return (
+            f"text:{locator.source_doc_hash}:{locator.canonical_text_id}:"
+            f"{locator.start_char}:{locator.end_char}"
+        )
+    if hasattr(locator, "table_id"):
+        return (
+            f"table:{locator.source_doc_hash}:{locator.table_id}:{locator.sheet_name}:"
+            f"{locator.row_idx}:{locator.col_idx}"
+        )
+    if hasattr(locator, "fragment_id"):
+        return (
+            f"fragment:{locator.source_doc_hash}:{locator.fragment_id}:"
+            f"{getattr(locator, 'page_no', None)}"
+        )
+    return ""
+
+
+def _canonical_prefix_entry(item: object) -> CanonicalPrefixEntry | None:
+    locator = getattr(item, "locator", None)
+    stable_key = _stable_key_from_locator(locator)
+    rendered_text = str(getattr(item, "rendered_text", "")).strip()
+    if not stable_key or locator is None or not rendered_text:
+        return None
+    locator_payload = asdict(locator)
+    return CanonicalPrefixEntry(
+        stable_key=stable_key,
+        source_doc_hash=str(locator_payload.get("source_doc_hash", "")),
+        locator_kind=str(locator_payload.get("locator_type", type(locator).__name__)),
+        locator_fields=locator_payload,
+        evidence_kind=str(getattr(item, "bucket", "evidence")),
+        rendered_text=rendered_text,
+    )
+
+
+def _build_runtime_shared_prefix(bundle: RetrievalBundle):
+    executor_entries = tuple(
+        entry
+        for item in bundle.evidence_pack.hard_facts
+        if (entry := _canonical_prefix_entry(item)) is not None
+    )
+    summarizer_entries = tuple(
+        entry
+        for item in (*bundle.evidence_pack.hard_facts, *bundle.evidence_pack.semantic_contexts)
+        if (entry := _canonical_prefix_entry(item)) is not None
+    )
+    return build_canonical_shared_evidence_prefix(
+        {
+            "executor": executor_entries,
+            "summarizer": summarizer_entries,
+        }
+    )
 
 
 def _build_role_hydrated_slices(bundle: RetrievalBundle) -> dict[str, RoleHydratedSlice]:
@@ -2302,6 +2746,10 @@ def run_smoke(
     # after cross-process selection so every downstream role sees the selected set.
     role_hydrated_slices = _build_role_hydrated_slices(retrieval)
     role_hydrated_slices["planner"] = _empty_role_hydrated_slice("planner")
+    canonical_shared_prefix = _build_runtime_shared_prefix(retrieval)
+    runtime_shared_prefix_text = (
+        canonical_shared_prefix.rendered_text if canonical_shared_prefix.eligible else ""
+    )
 
     runtime_stage_metrics: dict[str, float] = {}
     runtime_stage_metrics["codeact_execution_stage_ms"] = 0.0
@@ -2658,6 +3106,11 @@ def run_smoke(
     retriever_prompt_slice = RolePromptSlice(role="retriever")
     executor_prompt_slice = RolePromptSlice(role="executor")
     summarizer_prompt_slice = RolePromptSlice(role="summarizer")
+    logit_lifecycle_result = LogitLifecycleResult(
+        metrics=empty_logit_lifecycle_metrics(),
+        events=(),
+    )
+    logit_policy_load_reason = ""
 
     if replay_restore_enabled:
         role_hydrated_slices["retriever"] = _empty_role_hydrated_slice("retriever")
@@ -2819,7 +3272,104 @@ def run_smoke(
             route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route)
             if route_hints_enabled
             else (),
+            shared_prefix_text=runtime_shared_prefix_text,
         )
+        try:
+            logit_policy_mode = LogitPolicy(executor_decision.logit_policy)
+        except ValueError:
+            logit_policy_mode = LogitPolicy.OFF
+        if logit_policy_mode is not LogitPolicy.OFF:
+            runtime_identity, identity_error = _logit_runtime_identity(
+                role_path_runner=role_path_runner,
+                executor_decision=executor_decision,
+            )
+            runtime_limits, runtime_limits_error = _logit_runtime_limits()
+            extraction = executor_decision.logit_exact_result
+            if logit_policy_mode is LogitPolicy.GATED:
+                frozen_logit_policy, logit_policy_load_reason = _load_frozen_logit_policy()
+            else:
+                frozen_logit_policy = None
+            if runtime_identity is None:
+                logit_lifecycle_result = rejected_logit_lifecycle(
+                    identity_error,
+                    extraction_available=bool(extraction and extraction.available),
+                )
+            elif extraction is None or executor_decision.logit_candidate_surface is None:
+                logit_lifecycle_result = rejected_logit_lifecycle(
+                    executor_decision.logit_unavailable_reason or "exact_producer_unavailable",
+                )
+            elif runtime_limits is None:
+                logit_lifecycle_result = rejected_logit_lifecycle(
+                    runtime_limits_error,
+                    extraction_available=extraction.available,
+                )
+            else:
+                calibration_version, threshold_policy_version, gate_budget_version = (
+                    _logit_policy_versions(logit_policy_mode, frozen_logit_policy)
+                )
+                publish_context = LogitStatePublishContext(
+                    task_id=task_id,
+                    session_id=f"session-{task_id}",
+                    trace_id=trace_id,
+                    step_id=step_id,
+                    request_id=extraction.receipt.request_id,
+                    attempt_id=extraction.receipt.attempt_id,
+                    prompt_sha256=runtime_identity.prompt_sha256,
+                    source_evidence_digest=retrieval.evidence_pack.pack_hash,
+                    hydration_digest=retrieval.hydrate_manifest.manifest_hash,
+                    model_id=runtime_identity.model_id,
+                    model_revision=runtime_identity.model_revision,
+                    tokenizer_id=runtime_identity.tokenizer_id,
+                    tokenizer_revision=runtime_identity.tokenizer_revision,
+                    chat_template_sha256=runtime_identity.chat_template_sha256,
+                    template_kwargs_sha256=runtime_identity.template_kwargs_sha256,
+                    response_schema_digest=runtime_identity.response_schema_digest,
+                    owner_session_id=f"session-{task_id}",
+                    calibration_version=calibration_version,
+                    threshold_policy_version=threshold_policy_version,
+                    gate_budget_version=gate_budget_version,
+                    policy=logit_policy_mode,
+                    lease_ttl_ms=runtime_limits.lease_ttl_ms,
+                )
+                baseline_executor_decision = executor_decision
+                route_hints = (
+                    (compiler_result.canonical_task_spec.intent_op, top_candidate.route)
+                    if route_hints_enabled
+                    else ()
+                )
+
+                def _apply_smoke_logit_action(
+                    gate_decision: GateDecision,
+                ) -> LogitActionApplication:
+                    nonlocal executor_decision
+                    updated, application = _apply_logit_gate_action(
+                        gate_decision=gate_decision,
+                        baseline_decision=baseline_executor_decision,
+                        role_path_runner=role_path_runner,
+                        role_candidates=role_candidates,
+                        executor_prompt_slice=executor_prompt_slice,
+                        route_hints=route_hints,
+                        shared_prefix_text=runtime_shared_prefix_text,
+                    )
+                    executor_decision = updated
+                    return application
+
+                logit_lifecycle_result = run_logit_state_lifecycle(
+                    store=LogitStateStore(
+                        state_store.root,
+                        layered_store=state_store,
+                    ),
+                    extraction=extraction,
+                    candidate_surface=executor_decision.logit_candidate_surface,
+                    context=publish_context,
+                    before_decision_surface_hash=_executor_decision_surface_hash(
+                        baseline_executor_decision
+                    ),
+                    apply_action=_apply_smoke_logit_action,
+                    effect_root=state_store.root / "logit_effects",
+                    policy=frozen_logit_policy,
+                    gate_timeout_s=runtime_limits.gate_timeout_s,
+                )
         actions_text = (
             f"route={executor_decision.route}\n"
             f"tool={executor_decision.tool_name}\n"
@@ -2934,6 +3484,7 @@ def run_smoke(
             prompt_slice=summarizer_prompt_slice,
             actions_text=actions_text,
             tags=tuple(compiler_result.canonical_task_spec.required_tools),
+            shared_prefix_text=runtime_shared_prefix_text,
         )
         summary_suffix = summarizer_decision.summary_text or summary_hint
         output_payload = dict(candidate_output_payload)
@@ -3204,13 +3755,69 @@ def run_smoke(
 
     bundle = driver_result.persisted_paths
     telemetry = driver_result.telemetry
+    for lifecycle_event in logit_lifecycle_result.events:
+        telemetry.emit(
+            TelemetryEvent.create(
+                trace_id=trace_id,
+                task_id=task_id,
+                step_id=step_id,
+                attempt_id=attempt_id,
+                event_type=str(lifecycle_event.get("event_type", "")),
+                role="executor",
+                channel="logit_state",
+                payload=dict(lifecycle_event.get("payload", {})),
+                metrics=dict(lifecycle_event.get("metrics", {})),
+            )
+        )
+    if logit_lifecycle_result.events:
+        telemetry.close()
     task_metrics = dict(driver_result.task_metrics)
+    task_metrics.update(logit_lifecycle_result.metrics)
+    task_metrics["logit_policy_load_failed"] = float(bool(logit_policy_load_reason))
+    logit_lifecycle_file = workspace.write_json(
+        layout,
+        "logs/logit_state_lifecycle.json",
+        {
+            "schema_version": "statebus.logit_state_lifecycle_audit.v1",
+            "task_id": task_id,
+            "policy_load_reason": logit_policy_load_reason,
+            "metrics": logit_lifecycle_result.metrics,
+            "events": list(logit_lifecycle_result.events),
+            "gate_decision": (
+                logit_lifecycle_result.gate_decision.canonical_payload()
+                if logit_lifecycle_result.gate_decision is not None
+                else None
+            ),
+            "effect_receipt": (
+                logit_lifecycle_result.effect_receipt.canonical_payload()
+                if logit_lifecycle_result.effect_receipt is not None
+                else None
+            ),
+            "effect_receipt_path": logit_lifecycle_result.effect_receipt_path,
+            "reject_reason": logit_lifecycle_result.reject_reason,
+            "release_reason": logit_lifecycle_result.release_reason,
+        },
+        logical_name="logit_state_lifecycle_audit",
+    )
     memory_consumption_records = _continuous_memory_consumption_records(
         task_id=task_id,
         memory_query=memory_query,
         memory_match_result=memory_match_result,
         replay=replay,
         output_artifact_hash=driver_result.output_artifact_hash,
+    )
+    memory_consumption_accounting = summarize_memory_consumption(
+        memory_consumption_records,
+        candidate_count=(
+            len(memory_match_result.candidate_pool.candidate_memory_ids)
+            if memory_match_result.candidate_pool is not None
+            else 0
+        ),
+        approved_count=sum(
+            decision.policy_approved
+            for decision in memory_match_result.compatibility_decisions
+        ),
+        disclosed_count=0,
     )
     memory_consumption_file = workspace.write_json(
         layout,
@@ -3223,6 +3830,7 @@ def run_smoke(
                 record.canonical_payload()
                 for record in memory_consumption_records
             ],
+            "accounting": memory_consumption_accounting,
         },
         logical_name="memory_consumption_audit",
     )
@@ -3244,12 +3852,13 @@ def run_smoke(
             "memory_policy_approved_match_count": float(
                 sum(decision.policy_approved for decision in compatibility_decisions)
             ),
-            "memory_consumed_count": float(len(memory_consumption_records)),
+            "memory_consumed_count": float(
+                memory_consumption_accounting["actual_consumed_count"]
+            ),
+            "memory_legacy_recorded_count": float(len(memory_consumption_records)),
+            "memory_action_count": 0.0,
             "memory_behavioral_effect_count": float(
-                sum(
-                    record.behavioral_effect != "unchanged"
-                    for record in memory_consumption_records
-                )
+                memory_consumption_accounting["behavioral_effect_count"]
             ),
             "memory_assist_count": float(
                 sum(
@@ -3265,11 +3874,12 @@ def run_smoke(
                 )
             ),
             "skipped_llm_call_count": float(
-                sum(
-                    record.skipped_llm_call_count
-                    for record in memory_consumption_records
-                )
+                memory_consumption_accounting["skipped_llm_call_count"]
             ),
+            "legacy_skipped_llm_call_count": float(sum(
+                record.skipped_llm_call_count
+                for record in memory_consumption_records
+            )),
         }
     )
     # Compatibility-only benchmark scoring happens after Runtime settlement.
@@ -3549,20 +4159,11 @@ def run_smoke(
     task_metrics["evidence_pruning_estimated_kv_tokens_saved"] = float(
         retrieval.pruning_profile.estimated_kv_tokens_saved
     )
-    task_metrics["logit_state_transfer_count"] = float(
-        1 if executor_decision.logit_state_bytes > 0 else 0
+    task_metrics["logit_deprecated_diagnostic_entropy"] = float(
+        executor_decision.logit_entropy
     )
-    task_metrics["logit_state_mean_entropy"] = float(executor_decision.logit_entropy)
-    task_metrics["logit_confidence_gate_trigger_count"] = float(
-        1 if executor_decision.logit_state_bytes > 0 and executor_decision.logit_confidence_proxy < 0.3 else 0
-    )
-    # Extended logit-state signals (v2 peak-entropy implementation).
-    # logit_varentropy: variance of per-position entropy across the output sequence.
-    #   High value → specific decision point exists; low value → grammar-constrained uniform output.
-    # logit_top_gap: p1 − p2 at the peak-entropy position.
-    #   Near-zero → genuine token ambiguity; large → confident selection.
-    # logit_peak_position: index in the output token sequence of the peak-entropy position.
-    #   Useful for offline analysis of where the model hesitates.
+    # These fields remain extraction diagnostics. Lifecycle truth comes from
+    # the publish/resolve/consume/effect/release counters above.
     task_metrics["logit_varentropy"] = float(executor_decision.logit_varentropy)
     task_metrics["logit_top_gap"] = float(executor_decision.logit_top_gap)
     task_metrics["logit_peak_position"] = float(executor_decision.logit_peak_position)
@@ -3576,7 +4177,7 @@ def run_smoke(
     )
     task_metrics["logit_sequence_length"] = float(executor_decision.logit_sequence_length)
     task_metrics["logit_decision_entropy"] = float(executor_decision.logit_decision_entropy)
-    neural_prefix_identity = build_neural_prefix_identity(
+    neural_prefix_identity = build_prefix_lineage_identity(
         source_doc_hashes=retrieval.selected_doc_hashes,
         evidence_pack_hash=retrieval.evidence_pack.pack_hash,
         hydrate_manifest_hash=retrieval.hydrate_manifest.manifest_hash,
@@ -3585,8 +4186,20 @@ def run_smoke(
         prefix_hash=neural_prefix_identity.evidence_prefix_hash,
         corpus_prefix_hash=neural_prefix_identity.corpus_prefix_hash,
         evidence_prefix_hash=neural_prefix_identity.evidence_prefix_hash,
-        shared_prefix_bytes=retrieval.selected_evidence_bytes,
-        consumer_roles=_neural_prefix_consumer_roles(role_hydrated_slices),
+        shared_prefix_bytes=(
+            len(runtime_shared_prefix_text.encode("utf-8"))
+            if canonical_shared_prefix.eligible
+            else 0
+        ),
+        consumer_roles=(
+            canonical_shared_prefix.participant_roles
+            if canonical_shared_prefix.eligible
+            else ()
+        ),
+    )
+    exact_prefix_identity_payload = _runtime_exact_prefix_identity_payload(
+        role_path_runner=role_path_runner,
+        shared_prefix_text=runtime_shared_prefix_text,
     )
     task_metrics.update(neural_prefix_estimate.metrics())
     if prefix_metrics_before is not None and prefix_metrics_after is not None:
@@ -3609,9 +4222,9 @@ def run_smoke(
             "vllm_prefix_metrics_sample_enabled": float(prefix_metrics_enabled),
             "vllm_prefix_counter_delta_available": float(prefix_counter_delta.available),
             "vllm_prefix_counter_delta_valid": float(prefix_counter_delta.valid),
-            "vllm_prefix_observed_query_delta": float(prefix_counter_delta.queries),
-            "vllm_prefix_observed_hit_delta": float(prefix_counter_delta.hits),
-            "vllm_prefix_observed_hit_rate": float(
+            "vllm_prefix_observed_query_token_delta": float(prefix_counter_delta.queries),
+            "vllm_prefix_observed_hit_token_delta": float(prefix_counter_delta.hits),
+            "vllm_prefix_observed_token_hit_rate": float(
                 prefix_counter_delta.observed_hit_rate or 0.0
             ),
             "vllm_prefix_service_lifetime_hit_rate_before": float(
@@ -3696,7 +4309,7 @@ def run_smoke(
     prefix_cache_observation_path.write_text(
         stable_json_dumps(
             {
-                "schema_version": "statebus.task_prefix_cache_observation.v1",
+                "schema_version": "statebus.task_prefix_cache_observation.v2",
                 "claim_boundary": (
                     "engine_local_prefix_reuse_observation_only_no_hidden_state_or_kv_tensor_transfer"
                 ),
@@ -3712,6 +4325,9 @@ def run_smoke(
                 ),
                 "counter_delta": prefix_counter_delta.canonical_payload(),
                 "control_plane_estimate": neural_prefix_estimate.canonical_payload(),
+                "prefix_lineage_identity": neural_prefix_identity.canonical_payload(),
+                "canonical_shared_prefix": canonical_shared_prefix.canonical_payload(),
+                "exact_token_prefix_identity": exact_prefix_identity_payload,
             }
         )
         + "\n",
@@ -3983,6 +4599,7 @@ def run_smoke(
             "replay_enabled": layer_config.replay_enabled,
             "multi_attempt_enabled": layer_config.multi_attempt_enabled,
             "force_first_attempt_trap": layer_config.force_first_attempt_trap,
+            "logit_policy": executor_decision.logit_policy,
         },
     }
     audit_summary = {
@@ -4078,8 +4695,31 @@ def run_smoke(
             "drop_count": sum(1 for hint in retrieval.pruning_profile.pruning_hints if not hint.keep_in_budget),
             "estimated_kv_tokens_saved": retrieval.pruning_profile.estimated_kv_tokens_saved,
         },
-        "neural_prefix_identity": neural_prefix_identity.canonical_payload(),
+        "prefix_lineage_identity": neural_prefix_identity.canonical_payload(),
+        "canonical_shared_prefix": canonical_shared_prefix.canonical_payload(),
+        "exact_token_prefix_identity": exact_prefix_identity_payload,
         "neural_prefix_reuse": neural_prefix_estimate.canonical_payload(),
+        "logit_state_lifecycle": {
+            "path": str(logit_lifecycle_file.path),
+            "metrics": logit_lifecycle_result.metrics,
+            "state_id": logit_lifecycle_result.state_id,
+            "producer_pid": logit_lifecycle_result.producer_pid,
+            "consumer_pid": logit_lifecycle_result.consumer_pid,
+            "reject_reason": logit_lifecycle_result.reject_reason,
+            "release_reason": logit_lifecycle_result.release_reason,
+            "policy_load_reason": logit_policy_load_reason,
+            "effect_receipt_path": logit_lifecycle_result.effect_receipt_path,
+            "gate_decision": (
+                logit_lifecycle_result.gate_decision.canonical_payload()
+                if logit_lifecycle_result.gate_decision is not None
+                else None
+            ),
+            "effect_receipt": (
+                logit_lifecycle_result.effect_receipt.canonical_payload()
+                if logit_lifecycle_result.effect_receipt is not None
+                else None
+            ),
+        },
         "artifact": {
             "replay_ready": finalized_artifact.replay_ready,
             "verification_state": finalized_artifact.verification_state.value,
@@ -4104,6 +4744,7 @@ def run_smoke(
                 decision.canonical_payload()
                 for decision in compatibility_decisions
             ],
+            "accounting": memory_consumption_accounting,
         },
     }
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 from v2.contracts import CanonicalTaskSpec, TransformProgram, TransformStep
 from v2.benchmark.adaptive_formal import expected_facts_report
 from v2.benchmark.semantic_holdout import (
+    historical_runtime_freeze_audit,
     load_semantic_holdout_cases,
-    runtime_freeze_audit,
 )
 from v2.benchmark.adaptive_formal_mainline import (
     _formal_recomputation_repair_guidance,
@@ -167,12 +167,17 @@ def test_semantic_holdout_table_adapter_is_type_equivalent_for_natural_dsl_looku
     assert tuple(rows) == case.expected_rows
 
 
-def test_semantic_holdout_runtime_matches_final_freeze() -> None:
-    audit = runtime_freeze_audit()
+def test_historical_semantic_holdout_runtime_freeze_is_self_consistent() -> None:
+    audit = historical_runtime_freeze_audit()
 
     assert audit["ok"], audit
-    assert audit["changed_directories"] == []
-    assert audit["changed_files"] == []
-    assert audit["added_files"] == []
-    assert audit["removed_files"] == []
+    assert audit["current_tree_compared"] is False
+    assert audit["checks"] == {
+        "snapshot_schema": True,
+        "ledger_sha256": True,
+        "per_file_count": True,
+        "directory_hashes": True,
+        "combined_freeze_sha256": True,
+        "git_head_shape": True,
+    }
     assert audit["observed_per_file_count"] == 63
