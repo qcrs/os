@@ -16,6 +16,18 @@ from v2.contracts import (
     LatentProofKind,
     NeuralCompatibilitySignature,
 )
+from v2.integrations.vllm_latent.alignment import (
+    RIDGE_REALIGN_V1,
+    SOFT_TOKEN_TOPK_V1,
+    LatentAlignmentConfiguration,
+    LatentAlignmentConfigurationError,
+    apply_ridge_realign,
+    collect_alignment_diagnostics,
+    invalid_alignment_configuration,
+    load_ridge_matrix,
+    resolve_alignment_configuration,
+    summarize_alignment_diagnostics,
+)
 from v2.integrations.vllm_latent.registry import (
     LatentRegistryConfig,
     LatentRegistryError,
@@ -43,6 +55,16 @@ class LatentWorkerExtension:
         registry = self._statebus_registry()
         signature = self._statebus_signature()
         errors = list(signature.initial_support_matrix_errors())
+        alignment = self._statebus_alignment_configuration(
+            model_revision=signature.model_revision_or_manifest_digest,
+            hidden_size=signature.hidden_size,
+        )
+        if not alignment.ready:
+            errors.append(
+                f"alignment_configuration:{alignment.error_code or 'invalid'}"
+            )
+        elif alignment.method != signature.alignment_method:
+            errors.append("alignment_signature_mismatch")
         runner = getattr(self, "model_runner", None)
         if runner is None:
             errors.append("model_runner_missing")
@@ -51,6 +73,15 @@ class LatentWorkerExtension:
                 self._statebus_install_wrapper()
             except Exception as exc:
                 errors.append(f"worker_hook_install_failed:{type(exc).__name__}")
+            if alignment.ready and alignment.method == RIDGE_REALIGN_V1:
+                device = getattr(runner, "device", None)
+                if device is None:
+                    device = getattr(getattr(runner, "model", None), "device", "cpu")
+                try:
+                    self._statebus_ridge_matrix(alignment, device)
+                except (LatentAlignmentConfigurationError, RuntimeError) as exc:
+                    error_code = getattr(exc, "code", type(exc).__name__)
+                    errors.append(f"alignment_artifact_load:{error_code}")
         if getattr(self, "_statebus_capture_active", None) is not None:
             errors.append("capture_active")
         if not getattr(self, "_statebus_wrapper_installed", False):
@@ -105,6 +136,17 @@ class LatentWorkerExtension:
         expected_digest = str(capture_spec.get("expected_compatibility_digest", ""))
         if expected_digest and expected_digest != signature.compatibility_digest:
             raise LatentWorkerError("latent_model_incompatible")
+        alignment = self._statebus_alignment_configuration(
+            model_revision=signature.model_revision_or_manifest_digest,
+            hidden_size=signature.hidden_size,
+        )
+        if not alignment.ready or alignment.method != signature.alignment_method:
+            raise LatentWorkerError(
+                "latent_alignment_incompatible",
+                alignment.error_code or "signature_mismatch",
+            )
+        if str(capture_spec.get("alignment_method", "")) != signature.alignment_method:
+            raise LatentWorkerError("latent_alignment_incompatible", "request_method")
         anchor_payload = capture_spec.get("anchor", {})
         if not isinstance(anchor_payload, dict):
             raise LatentWorkerError("latent_anchor_mismatch")
@@ -146,6 +188,8 @@ class LatentWorkerExtension:
             "captured_step_count": 0,
             "recurrence_injection_count": 0,
             "original_return_hidden_states": original_return_hidden_states,
+            "alignment_configuration": alignment,
+            "alignment_diagnostics": [],
         }
         return {
             "capture_id": self._statebus_capture_active["capture_id"],
@@ -180,7 +224,7 @@ class LatentWorkerExtension:
                 captured_step_count=captured,
                 recurrence_injection_count=injected,
             )
-            return {
+            result = {
                 "ref": ref.canonical_payload(),
                 "ref_id": ref.ref_id,
                 "status": ref.status.value,
@@ -194,6 +238,12 @@ class LatentWorkerExtension:
                 "compatibility_digest": ref.compatibility_digest,
                 "internal_scheduler_sample_count": captured,
             }
+            diagnostics = summarize_alignment_diagnostics(
+                active["alignment_diagnostics"]
+            )
+            if diagnostics:
+                result["alignment_diagnostics"] = diagnostics
+            return result
         except LatentRegistryError as exc:
             raise LatentWorkerError(exc.error_code, exc.detail) from exc
         finally:
@@ -473,10 +523,16 @@ class LatentWorkerExtension:
                 hidden = _extract_hidden_states(output)
                 if hidden is None:
                     raise LatentWorkerError("latent_capture_incomplete", "hidden_missing")
-                aligned = extension._statebus_align_hidden(hidden, model_input)
+                aligned, diagnostics = extension._statebus_align_hidden(
+                    hidden,
+                    model_input,
+                    active["alignment_configuration"],
+                )
                 active["aligned"].append(
                     aligned.detach().to(device="cpu", dtype=_torch_module().bfloat16)
                 )
+                if diagnostics:
+                    active["alignment_diagnostics"].append(diagnostics)
                 active["pending"] = aligned.detach()
                 active["captured_step_count"] += 1
             return output
@@ -512,17 +568,126 @@ class LatentWorkerExtension:
         finally:
             self._statebus_clear_consume()
 
-    def _statebus_align_hidden(self, hidden: Any, model_input: Any) -> Any:
+    def _statebus_align_hidden(
+        self,
+        hidden: Any,
+        model_input: Any,
+        alignment: LatentAlignmentConfiguration,
+    ) -> tuple[Any, dict[str, float]]:
+        del model_input
         torch = _torch_module()
         runner = self.model_runner
         if hidden.ndim == 1:
             hidden = hidden.unsqueeze(0)
         hidden = hidden[-1:].to(device=getattr(runner, "device", hidden.device))
+        try:
+            if alignment.method == SOFT_TOKEN_TOPK_V1:
+                aligned = self._statebus_align_soft_token_hidden(hidden, alignment)
+            elif alignment.method == RIDGE_REALIGN_V1:
+                aligned = self._statebus_align_ridge_hidden(hidden, alignment)
+            else:
+                raise LatentWorkerError("latent_alignment_incompatible", "method")
+        except LatentAlignmentConfigurationError as exc:
+            raise LatentWorkerError("latent_alignment_incompatible", exc.code) from exc
+        diagnostics = self._statebus_collect_alignment_diagnostics(
+            hidden,
+            aligned,
+            alignment,
+        )
+        return aligned, diagnostics
+
+    def _statebus_align_soft_token_hidden(
+        self,
+        hidden: Any,
+        alignment: LatentAlignmentConfiguration,
+    ) -> Any:
+        torch = _torch_module()
+        model = self.model_runner.model
+        embedding = getattr(model, "get_input_embeddings", None)
+        if embedding is None:
+            raise LatentWorkerError("latent_alignment_incompatible", "model_hooks_missing")
+        logits = self._statebus_alignment_logits(hidden)
+        top_k = max(1, min(alignment.top_k, int(logits.shape[-1])))
+        values, indices = torch.topk(logits, k=top_k, dim=-1)
+        weights = torch.softmax(values / alignment.temperature, dim=-1)
+        token_embeds = embedding(indices.reshape(-1)).reshape(
+            indices.shape[0], indices.shape[1], -1
+        )
+        aligned = (weights.unsqueeze(-1) * token_embeds).sum(dim=1)
+        target_norm = self._statebus_embedding_norm(token_embeds)
+        current_norm = aligned.float().norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        aligned = aligned * (target_norm / current_norm)
+        return aligned.to(dtype=torch.bfloat16)
+
+    def _statebus_align_ridge_hidden(
+        self,
+        hidden: Any,
+        alignment: LatentAlignmentConfiguration,
+    ) -> Any:
+        artifact = alignment.ridge_artifact
+        if artifact is None:
+            raise LatentWorkerError("latent_alignment_incompatible", "artifact_missing")
+        torch = _torch_module()
+        try:
+            matrix = self._statebus_ridge_matrix(alignment, hidden.device)
+            return apply_ridge_realign(
+                hidden,
+                matrix=matrix,
+                target_norm=artifact.target_norm,
+                torch=torch,
+            )
+        except LatentAlignmentConfigurationError as exc:
+            raise LatentWorkerError("latent_alignment_incompatible", exc.code) from exc
+
+    def _statebus_ridge_matrix(
+        self,
+        alignment: LatentAlignmentConfiguration,
+        device: Any,
+    ) -> Any:
+        artifact = alignment.ridge_artifact
+        if artifact is None:
+            raise LatentAlignmentConfigurationError("artifact_missing")
+        key = (artifact.matrix_sha256, artifact.metadata_sha256, str(device))
+        cache = getattr(self, "_statebus_ridge_matrix_cache", {})
+        matrix = cache.get(key)
+        if matrix is None:
+            matrix = load_ridge_matrix(artifact, torch=_torch_module(), device=device)
+            cache = {**cache, key: matrix}
+            self._statebus_ridge_matrix_cache = cache
+        return matrix
+
+    def _statebus_collect_alignment_diagnostics(
+        self,
+        hidden: Any,
+        aligned: Any,
+        alignment: LatentAlignmentConfiguration,
+    ) -> dict[str, float]:
+        if not alignment.diagnostics_enabled:
+            return {}
+        torch = _torch_module()
+        try:
+            return collect_alignment_diagnostics(
+                torch=torch,
+                hidden=hidden,
+                aligned=aligned,
+                source_logits=self._statebus_alignment_logits(hidden),
+                aligned_logits=self._statebus_alignment_logits(aligned),
+                top_k=alignment.top_k or 32,
+            )
+        except Exception as exc:  # Diagnostics must not invalidate a capture.
+            error_code = getattr(exc, "code", type(exc).__name__)
+            logger.warning(
+                "latent alignment diagnostics omitted: error_code=%s",
+                error_code,
+            )
+            return {}
+
+    def _statebus_alignment_logits(self, hidden: Any) -> Any:
+        runner = self.model_runner
         model = runner.model
         compute_logits = getattr(model, "compute_logits", None)
-        embedding = getattr(model, "get_input_embeddings", None)
-        if compute_logits is None or embedding is None:
-            raise LatentWorkerError("latent_alignment_incompatible", "model_hooks_missing")
+        if compute_logits is None:
+            raise LatentAlignmentConfigurationError("model_hooks_missing")
         # The captured hidden is already reduced to one row. Reusing the
         # request SamplingMetadata would apply prompt-relative pruning indices
         # to that row and can trigger an out-of-bounds CUDA index-select.
@@ -539,21 +704,7 @@ class LatentWorkerExtension:
             # ParallelLMHead may expose padded logits rows that have no
             # corresponding input-embedding IDs (notably Qwen3 on V0).
             logits = logits[..., :vocab_size]
-        top_k = int(os.environ.get("STATEBUS_LATENT_ALIGNMENT_TOP_K", "32"))
-        top_k = max(1, min(top_k, int(logits.shape[-1])))
-        temperature = float(os.environ.get("STATEBUS_LATENT_ALIGNMENT_TEMPERATURE", "1.0"))
-        if temperature <= 0:
-            raise LatentWorkerError("latent_alignment_incompatible", "temperature")
-        values, indices = torch.topk(logits, k=top_k, dim=-1)
-        weights = torch.softmax(values / temperature, dim=-1)
-        token_embeds = embedding(indices.reshape(-1)).reshape(
-            indices.shape[0], indices.shape[1], -1
-        )
-        aligned = (weights.unsqueeze(-1) * token_embeds).sum(dim=1)
-        target_norm = self._statebus_embedding_norm(token_embeds)
-        current_norm = aligned.float().norm(dim=-1, keepdim=True).clamp_min(1e-6)
-        aligned = aligned * (target_norm / current_norm)
-        return aligned.to(dtype=torch.bfloat16)
+        return logits
 
     def _statebus_embedding_norm(self, sample_embeds: Any) -> Any:
         cached = getattr(self, "_statebus_embedding_mean_norm", None)
@@ -573,6 +724,34 @@ class LatentWorkerExtension:
         value = sampled.float().norm(dim=-1).mean().reshape(1, 1)
         self._statebus_embedding_mean_norm = value.detach().cpu()
         return value.to(device=sample_embeds.device, dtype=sample_embeds.dtype)
+
+    def _statebus_alignment_configuration(
+        self,
+        *,
+        model_revision: str,
+        hidden_size: int,
+    ) -> LatentAlignmentConfiguration:
+        key = (str(model_revision), int(hidden_size))
+        cached_key = getattr(self, "_statebus_alignment_configuration_key", None)
+        cached = getattr(self, "_statebus_alignment_configuration_cache", None)
+        if cached_key == key and cached is not None:
+            return cached
+        try:
+            configuration = resolve_alignment_configuration(
+                model_revision=str(model_revision),
+                hidden_size=int(hidden_size),
+            )
+        except LatentAlignmentConfigurationError as exc:
+            configuration = invalid_alignment_configuration(
+                method=str(
+                    os.environ.get("STATEBUS_LATENT_ALIGNMENT", SOFT_TOKEN_TOPK_V1)
+                ).strip(),
+                diagnostics_enabled=False,
+                error_code=exc.code,
+            )
+        self._statebus_alignment_configuration_key = key
+        self._statebus_alignment_configuration_cache = configuration
+        return configuration
 
     def _statebus_signature(self) -> NeuralCompatibilitySignature:
         override = getattr(self, "_statebus_signature_override", None)
@@ -614,13 +793,10 @@ class LatentWorkerExtension:
                 "concat": "left_latent_right",
             }),
         )
-        alignment_digest = sha256_digest({
-            "method": "soft_token_topk_v1",
-            "top_k": int(os.environ.get("STATEBUS_LATENT_ALIGNMENT_TOP_K", "32")),
-            "temperature": float(os.environ.get("STATEBUS_LATENT_ALIGNMENT_TEMPERATURE", "1.0")),
-            "normalization": "fixed_stride_1024_input_embedding_mean_norm",
-            "model_revision": revision,
-        })
+        alignment = self._statebus_alignment_configuration(
+            model_revision=revision,
+            hidden_size=hidden_size,
+        )
         try:
             vllm_version = importlib.metadata.version("vllm")
         except importlib.metadata.PackageNotFoundError:
@@ -653,8 +829,8 @@ class LatentWorkerExtension:
                 getattr(getattr(config, "parallel_config", None), "pipeline_parallel_size", 1)
             ),
             worker_extension_version=WORKER_EXTENSION_VERSION,
-            alignment_method="soft_token_topk_v1",
-            alignment_config_digest=alignment_digest,
+            alignment_method=alignment.method,
+            alignment_config_digest=alignment.config_digest,
             position_contract_digest=position_digest,
         )
 

@@ -5,16 +5,25 @@ import os
 from typing import Any
 
 
-SUPPORTED_VLLM_VERSION = "0.7.3"
+SUPPORTED_VLLM_VERSIONS = frozenset({"0.7.3", "0.9.2"})
+
+
+def require_supported_vllm_version(version: object) -> str:
+    normalized = str(version)
+    if normalized not in SUPPORTED_VLLM_VERSIONS:
+        supported = ", ".join(sorted(SUPPORTED_VLLM_VERSIONS))
+        raise RuntimeError(
+            "StateBus prefix counter exporter supports only "
+            f"vLLM versions {supported}; found {normalized}"
+        )
+    return normalized
 
 
 def cache_metric_totals(metric_data: Any) -> tuple[int, int]:
     """Recover exact cumulative block queries/hits from vLLM V0 state."""
     completed_blocks = int(getattr(metric_data, "num_completed_blocks", 0))
     block_size = int(getattr(metric_data, "block_size", 1000))
-    incomplete_queries = int(
-        getattr(metric_data, "num_incompleted_block_queries", 0)
-    )
+    incomplete_queries = int(getattr(metric_data, "num_incompleted_block_queries", 0))
     incomplete_hits = int(getattr(metric_data, "num_incompleted_block_hit", 0))
     completed_hit_rate = float(
         getattr(metric_data, "completed_block_cache_hit_rate", 0.0)
@@ -50,11 +59,7 @@ def install() -> bool:
 
     if os.getenv("VLLM_USE_V1", "0").strip().lower() not in {"0", "false"}:
         return False
-    if str(vllm.__version__) != SUPPORTED_VLLM_VERSION:
-        raise RuntimeError(
-            "StateBus prefix counter exporter supports only "
-            f"vLLM {SUPPORTED_VLLM_VERSION}; found {vllm.__version__}"
-        )
+    require_supported_vllm_version(vllm.__version__)
 
     from vllm.engine.llm_engine import LLMEngine
     from vllm.engine import metrics as metrics_module
@@ -131,9 +136,7 @@ def install() -> bool:
         original_log_prometheus(self, stats)
         for device_name in ("gpu", "cpu"):
             for metric_name in ("queries", "hits"):
-                raw_name = (
-                    f"{device_name}_prefix_cache_{metric_name}_total_raw"
-                )
+                raw_name = f"{device_name}_prefix_cache_{metric_name}_total_raw"
                 current = getattr(stats, raw_name, None)
                 if current is None:
                     continue

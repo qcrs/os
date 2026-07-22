@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from v2.integrations.vllm_latent.alignment import sanitize_alignment_diagnostics
 from v2.utils import sha256_digest
 
 
@@ -33,6 +34,7 @@ class LatentProducerTelemetry:
     d2h_ms: float = 0.0
     registry_commit_ms: float = 0.0
     internal_scheduler_sample_count: int = 0
+    alignment_diagnostics: Mapping[str, float | int] = field(default_factory=dict)
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     def canonical_payload(self) -> dict[str, object]:
@@ -62,6 +64,9 @@ class LatentProducerTelemetry:
             "d2h_ms": self.d2h_ms,
             "registry_commit_ms": self.registry_commit_ms,
             "internal_scheduler_sample_count": self.internal_scheduler_sample_count,
+            "alignment_diagnostics": sanitize_alignment_diagnostics(
+                self.alignment_diagnostics
+            ),
             "extra": dict(sorted(self.extra.items())),
         }
 

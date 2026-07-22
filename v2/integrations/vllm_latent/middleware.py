@@ -16,6 +16,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from v2.contracts import LatentAnchor
+from v2.integrations.vllm_latent.alignment import sanitize_alignment_diagnostics
 from v2.integrations.vllm_latent.api_models import (
     LatentCompleteRequestModel,
     LatentProduceRequestModel,
@@ -367,8 +368,6 @@ class LatentHandoffMiddleware:
             expected_compatibility_digest=request.expected_compatibility_digest,
         )
         signature = _signature_payload(health)
-        if request.alignment_method != "soft_token_topk_v1":
-            raise LatentApiError("latent_alignment_incompatible")
         if request.alignment_method != str(signature.get("alignment_method", "")):
             raise LatentApiError("latent_alignment_incompatible")
         if request.producer_role != "retriever" or request.consumer_role != "summarizer":
@@ -482,6 +481,7 @@ class LatentHandoffMiddleware:
             alignment_config_digest=str(
                 signature.get("alignment_config_digest", "")
             ),
+            alignment_diagnostics=response.get("alignment_diagnostics", {}),
             raw_hidden_shape=shape,
             aligned_tensor_shape=shape,
             aligned_tensor_dtype=str(response["dtype"]),
@@ -1073,6 +1073,9 @@ def _sanitize_produce_result(value: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "internal_scheduler_sample_count": int(
             field("internal_scheduler_sample_count", 0)
+        ),
+        "alignment_diagnostics": sanitize_alignment_diagnostics(
+            field("alignment_diagnostics", {})
         ),
         "producer_pid": int(field("producer_pid", 0)),
         "engine_id": str(field("engine_id", "vllm-v0")),

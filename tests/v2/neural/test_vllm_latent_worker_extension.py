@@ -17,6 +17,11 @@ from v2.integrations.vllm_latent.worker_extension import (
     LatentWorkerExtension,
     _clear_temporary_sampled_embeds,
 )
+from v2.integrations.vllm_latent.alignment import (
+    RIDGE_REALIGN_V1,
+    resolve_alignment_configuration,
+    write_ridge_realign_artifact,
+)
 
 
 @dataclass(frozen=True)
@@ -112,7 +117,7 @@ def _capture_spec(signature: NeuralCompatibilitySignature, *, steps: int = 3) ->
         "consumer_role": "summarizer",
         "latent_steps": steps,
         "ttl_s": 60,
-        "alignment_method": "soft_token_topk_v1",
+        "alignment_method": signature.alignment_method,
         "expected_compatibility_digest": signature.compatibility_digest,
         "anchor": {
             "evidence_pack_hash": "evidence-hash",
@@ -203,6 +208,92 @@ def test_worker_clips_padded_logits_before_embedding_lookup(neural_signature) ->
     finished = host.statebus_latent_finish(str(started["capture_id"]))
     assert finished["status"] == "committed"
     assert finished["shape"] == [2, 8]
+
+
+def test_worker_captures_ridge_realign_with_aggregate_diagnostics(
+    neural_signature, tmp_path, monkeypatch
+) -> None:
+    matrix_path = tmp_path / "ridge.npy"
+    metadata_path = tmp_path / "ridge.json"
+    artifact = write_ridge_realign_artifact(
+        matrix=torch.eye(8),
+        matrix_path=matrix_path,
+        metadata_path=metadata_path,
+        model_revision_or_manifest_digest=neural_signature.model_revision_or_manifest_digest,
+        input_embedding_digest="sha256:input",
+        output_embedding_digest="sha256:output",
+        target_norm=1.0,
+        regularization=0.01,
+        training_row_count=16,
+        linear_system_relative_residual=1e-7,
+        embedding_fit_relative_rmse=0.25,
+        identity_relative_rmse=0.5,
+        embedding_fit_mean_cosine=0.95,
+    )
+    monkeypatch.setenv("STATEBUS_LATENT_ALIGNMENT", RIDGE_REALIGN_V1)
+    monkeypatch.setenv("STATEBUS_LATENT_ALIGNMENT_ARTIFACT", str(matrix_path))
+    monkeypatch.setenv("STATEBUS_LATENT_ALIGNMENT_METADATA", str(metadata_path))
+    monkeypatch.setenv("STATEBUS_LATENT_ALIGNMENT_DIAGNOSTICS", "true")
+    configuration = resolve_alignment_configuration(
+        model_revision=neural_signature.model_revision_or_manifest_digest,
+        hidden_size=8,
+    )
+    signature = replace(
+        _small_signature(neural_signature),
+        alignment_method=RIDGE_REALIGN_V1,
+        alignment_config_digest=configuration.config_digest,
+    )
+    host = _Host(signature)
+    started = host.statebus_latent_begin(_capture_spec(signature, steps=2))
+
+    host.model_runner.execute_model(_input("producer-1"))
+    host.model_runner.execute_model(_input("producer-1"))
+    finished = host.statebus_latent_finish(str(started["capture_id"]))
+
+    diagnostics = finished["alignment_diagnostics"]
+    assert finished["status"] == "committed"
+    assert diagnostics["observation_count"] == 2
+    assert "direct_lm_head_topk_overlap_mean" in diagnostics
+    assert diagnostics["direct_lm_head_topk_kl_min"] >= 0.0
+    assert not {"prompt", "token_ids", "hidden_states", "matrix"}.intersection(
+        diagnostics
+    )
+    assert artifact.matrix_sha256
+
+
+def test_worker_rejects_capture_method_that_differs_from_signature(neural_signature) -> None:
+    signature = _small_signature(neural_signature)
+    host = _Host(signature)
+    spec = _capture_spec(signature, steps=2)
+    spec["alignment_method"] = "ridge_realign_v1"
+
+    with pytest.raises(LatentWorkerError, match="latent_alignment_incompatible"):
+        host.statebus_latent_begin(spec)
+
+
+def test_worker_health_rejects_missing_ridge_artifact_before_capture(
+    neural_signature, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("STATEBUS_LATENT_ALIGNMENT", RIDGE_REALIGN_V1)
+    monkeypatch.setenv(
+        "STATEBUS_LATENT_ALIGNMENT_ARTIFACT", str(tmp_path / "missing.npy")
+    )
+    monkeypatch.setenv(
+        "STATEBUS_LATENT_ALIGNMENT_METADATA", str(tmp_path / "missing.json")
+    )
+    signature = replace(
+        _small_signature(neural_signature),
+        alignment_method=RIDGE_REALIGN_V1,
+        alignment_config_digest="sha256:ridge-missing",
+    )
+    host = _Host(signature)
+
+    health = host.statebus_latent_capabilities()
+
+    assert health["status"] == "not_ready"
+    assert "alignment_configuration:artifact_missing" in health["errors"]
+    with pytest.raises(LatentWorkerError, match="latent_alignment_incompatible"):
+        host.statebus_latent_begin(_capture_spec(signature, steps=2))
 
 
 def test_temporary_recurrence_clears_sampled_embeds_but_retains_hidden() -> None:

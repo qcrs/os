@@ -93,6 +93,13 @@ def test_neural_signature_is_exact_and_support_matrix_is_fail_closed(
     unsupported = replace(neural_signature, tensor_parallel_size=2)
     assert unsupported.initial_support_matrix_errors() == ("tensor_parallel_size",)
 
+    ridge = replace(
+        neural_signature,
+        alignment_method="ridge_realign_v1",
+        alignment_config_digest="sha256:ridge-alignment",
+    )
+    assert ridge.initial_support_matrix_errors() == ()
+
 
 @pytest.mark.parametrize(
     ("field_name", "error_name"),

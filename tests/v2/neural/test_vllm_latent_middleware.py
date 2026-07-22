@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -262,11 +263,19 @@ def test_latent_launch_selects_direct_v0_engine_for_collective_rpc() -> None:
 
     assert "--disable-frontend-multiprocessing" in script
     assert "--enable-prefix-caching" in script
+    assert "--enable-prompt-embeds" in script
+    assert "--max-logprobs" in script
+    assert "--enable-request-id-headers" in script
     assert "--worker-extension-cls" in script
     assert "--middleware" in script
+    assert "STATEBUS_VLLM_EXPORT_PREFIX_COUNTERS" in script
+    assert "scripts/vllm_exporter" in script
+    assert "VLLM_NO_USAGE_STATS" in script
     assert "STATEBUS_LATENT_MODEL_REVISION_DIGEST" in script
     assert "STATEBUS_LATENT_TOKENIZER_REVISION" in script
     assert "STATEBUS_LATENT_CHAT_TEMPLATE_DIGEST" in script
+    assert "ridge_realign_v1" in script
+    assert "STATEBUS_LATENT_ALIGNMENT_DIAGNOSTICS" in script
 
 
 @pytest.mark.asyncio
@@ -394,6 +403,30 @@ async def test_produce_is_opaque_and_binds_request(neural_signature, token_file)
     assert wrapped.latent_produce_success_count == 1
     assert wrapped.latent_consume_success_count == 0
     assert wrapped.latent_success_count == 0
+
+
+@pytest.mark.asyncio
+async def test_produce_accepts_ridge_only_when_it_matches_active_signature(
+    neural_signature, token_file
+):
+    ridge_signature = replace(
+        neural_signature,
+        alignment_method="ridge_realign_v1",
+        alignment_config_digest="sha256:ridge-alignment",
+    )
+    engine = _FakeEngine(ridge_signature)
+    wrapped = LatentHandoffMiddleware(_App(engine), token_file=token_file)
+    matching = _produce_payload(ridge_signature)
+    matching["alignment_method"] = "ridge_realign_v1"
+    async with await _client(wrapped, token_file) as client:
+        accepted = await client.post("/statebus/latent/produce", json=matching)
+        mismatched = await client.post(
+            "/statebus/latent/produce", json=_produce_payload(ridge_signature)
+        )
+
+    assert accepted.status_code == 200
+    assert mismatched.status_code == 400
+    assert mismatched.json()["error_code"] == "latent_alignment_incompatible"
 
 
 @pytest.mark.asyncio

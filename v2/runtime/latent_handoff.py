@@ -15,6 +15,7 @@ from v2.contracts import (
     LatentProofKind,
     NeuralCompatibilitySignature,
 )
+from v2.integrations.vllm_latent.alignment import sanitize_alignment_diagnostics
 from v2.refs import LatentStateRef
 from v2.runtime.role_model_backend import (
     LatentBackendError,
@@ -70,6 +71,7 @@ _LATENT_TELEMETRY_AUDIT_FIELDS = frozenset({
     "aligned_tensor_dtype",
     "aligned_tensor_shape",
     "alignment_config_digest",
+    "alignment_diagnostics",
     "alignment_method",
     "anchor_digest",
     "combined_prompt_embed_bytes",
@@ -114,19 +116,25 @@ _LATENT_TELEMETRY_AUDIT_FIELDS = frozenset({
 def latent_telemetry_audit_view(values: Mapping[str, Any]) -> dict[str, Any]:
     """Keep mechanism/performance facts without persisting prompts or secrets."""
 
-    return {
-        str(key): value
-        for key, value in sorted(values.items())
-        if key in _LATENT_TELEMETRY_AUDIT_FIELDS
-        and (
+    projected: dict[str, Any] = {}
+    for key, value in sorted(values.items()):
+        if key not in _LATENT_TELEMETRY_AUDIT_FIELDS:
+            continue
+        if key == "alignment_diagnostics":
+            diagnostics = sanitize_alignment_diagnostics(value)
+            if diagnostics:
+                projected[key] = diagnostics
+            continue
+        if (
             value is None
             or isinstance(value, (str, int, float, bool))
             or (
                 isinstance(value, (tuple, list))
                 and all(isinstance(item, (str, int, float, bool)) for item in value)
             )
-        )
-    }
+        ):
+            projected[key] = value
+    return projected
 
 
 @dataclass

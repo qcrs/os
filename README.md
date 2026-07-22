@@ -33,6 +33,7 @@ source deploy/activate_statebus_host.sh
 详细说明见：
 
 - `docs/setup/host_environment.md`
+- `docs/setup/contest_rebuild_environment.md`
 - `docs/start_here.md`
 
 ## 2. API 配置

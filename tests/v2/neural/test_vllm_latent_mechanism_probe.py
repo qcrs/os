@@ -45,6 +45,7 @@ class _FakeClient:
                 "dtype": "torch.bfloat16",
                 "tensor_parallel_size": 1,
                 "pipeline_parallel_size": 1,
+                "alignment_method": "soft_token_topk_v1",
             },
             "registry_entries": 0,
             "registry_bytes": 0,

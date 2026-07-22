@@ -18,6 +18,10 @@ LATENT_STATE_REF_SCHEMA_VERSION = "statebus.latent_state_ref.v1"
 LATENT_HANDOFF_DECISION_SCHEMA_VERSION = "statebus.latent_handoff_decision.v1"
 LATENT_FORWARD_PROOF_SCHEMA_VERSION = "statebus.latent_forward_proof.v1"
 LATENT_LIFECYCLE_EVENT_SCHEMA_VERSION = "statebus.latent_lifecycle_event.v1"
+SUPPORTED_LATENT_ALIGNMENT_METHODS = frozenset({
+    "soft_token_topk_v1",
+    "ridge_realign_v1",
+})
 BENCHMARK_QUALITY_FLOOR_SCHEMA_VERSION = "statebus.benchmark_quality_floor.v1"
 STRUCTURED_EMBEDDING_SCHEMA_VERSION = "statebus.structured_embedding.v1"
 MEMORY_REF_SCHEMA_VERSION = "statebus.memory_ref.v2"

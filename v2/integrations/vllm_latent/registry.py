@@ -15,6 +15,7 @@ from v2.contracts import (
     LatentProofKind,
     NeuralCompatibilitySignature,
 )
+from v2.contracts.constants import SUPPORTED_LATENT_ALIGNMENT_METHODS
 from v2.refs import LatentStateRef
 
 
@@ -117,7 +118,10 @@ class LatentTensorRegistry:
             raise LatentRegistryError("latent_request_invalid", "latent_step_count")
         if not 1 <= metadata.compatibility_signature.hidden_size <= self.config.max_hidden_size:
             raise LatentRegistryError("latent_model_incompatible", "hidden_size")
-        if metadata.compatibility_signature.alignment_method != "soft_token_topk_v1":
+        if (
+            metadata.compatibility_signature.alignment_method
+            not in SUPPORTED_LATENT_ALIGNMENT_METHODS
+        ):
             raise LatentRegistryError("latent_alignment_incompatible")
         now = self.clock_ns()
         ttl = self.config.default_ttl_s if ttl_s is None else int(ttl_s)

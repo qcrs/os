@@ -4,7 +4,10 @@ from dataclasses import dataclass
 
 import pytest
 
-from scripts.vllm_v0_prefix_counter_exporter import cache_metric_totals
+from scripts.vllm_v0_prefix_counter_exporter import (
+    cache_metric_totals,
+    require_supported_vllm_version,
+)
 
 
 @dataclass
@@ -38,3 +41,12 @@ def test_cache_metric_totals_rejects_impossible_state() -> None:
     with pytest.raises(ValueError, match="invalid vLLM prefix cache metric state"):
         cache_metric_totals(metric_data)
 
+
+@pytest.mark.parametrize("version", ["0.7.3", "0.9.2"])
+def test_exporter_accepts_audited_vllm_versions(version: str) -> None:
+    assert require_supported_vllm_version(version) == version
+
+
+def test_exporter_fails_closed_for_unknown_vllm_version() -> None:
+    with pytest.raises(RuntimeError, match="0.7.3, 0.9.2"):
+        require_supported_vllm_version("0.10.0")

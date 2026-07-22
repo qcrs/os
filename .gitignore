@@ -20,3 +20,4 @@ runs/
 work/
 deploy/statebus_llm.env.local
 deploy/statebus_llm.yaml.local
+deploy/statebus_contest_rebuild.env.local

@@ -23,6 +23,10 @@ from v2.integrations.vllm_latent.client import (  # noqa: E402
     VllmLatentClient,
     VllmLatentClientError,
 )
+from v2.integrations.vllm_latent.alignment import (  # noqa: E402
+    SUPPORTED_LATENT_ALIGNMENT_METHODS,
+    sanitize_alignment_diagnostics,
+)
 from v2.integrations.vllm_latent.middleware import LATENT_MARKER  # noqa: E402
 from v2.utils import sha256_digest, stable_json_dumps  # noqa: E402
 
@@ -126,6 +130,10 @@ def run_probe(args: argparse.Namespace, *, client: Any | None = None) -> dict[st
             payload["health_error"] = "latent_plugin_not_ready"
             return _write_result(payload, output_root, run_id)
         signature = health.get("compatibility_signature", {})
+        alignment_method = str(signature.get("alignment_method", ""))
+        if alignment_method not in SUPPORTED_LATENT_ALIGNMENT_METHODS:
+            payload["health_error"] = "latent_alignment_incompatible"
+            return _write_result(payload, output_root, run_id)
         hidden_size = int(health.get("hidden_size", signature.get("hidden_size", 0)))
         if hidden_size <= 0:
             payload["health_error"] = "hidden_size_missing"
@@ -136,6 +144,7 @@ def run_probe(args: argparse.Namespace, *, client: Any | None = None) -> dict[st
                 client=client,
                 model=str(health.get("model", args.model)),
                 compatibility_digest=str(health["compatibility_digest"]),
+                alignment_method=alignment_method,
                 hidden_size=hidden_size,
                 latent_steps=int(latent_steps),
                 ttl_s=int(args.ttl_s),
@@ -164,6 +173,7 @@ def _run_step(
     client: Any,
     model: str,
     compatibility_digest: str,
+    alignment_method: str,
     hidden_size: int,
     latent_steps: int,
     ttl_s: int,
@@ -199,6 +209,7 @@ def _run_step(
     )
     record: dict[str, Any] = {
         "latent_steps": latent_steps,
+        "alignment_method": alignment_method,
         "request_id": request_id,
         "task_id": task_id,
         "source_step_id": "retrieve",
@@ -223,7 +234,7 @@ def _run_step(
                 "consumer_role": "summarizer",
                 "messages": list(messages),
                 "latent_steps": latent_steps,
-                "alignment_method": "soft_token_topk_v1",
+                "alignment_method": alignment_method,
                 "anchor": anchor,
                 "ttl_s": ttl_s,
                 "expected_compatibility_digest": compatibility_digest,
@@ -355,6 +366,8 @@ def _validate_health(
         "prompt_embeds_enabled": bool(health.get("prompt_embeds_enabled")),
         "max_num_seqs_one": int(health.get("max_num_seqs", 0)) == 1,
         "compatibility_digest": bool(health.get("compatibility_digest")),
+        "alignment_method": str(signature.get("alignment_method", ""))
+        in SUPPORTED_LATENT_ALIGNMENT_METHODS,
         "no_errors": not health.get("errors"),
     }
     return {"ok": all(checks.values()), "checks": checks}
@@ -567,10 +580,16 @@ def _sanitize_producer(body: Mapping[str, Any]) -> dict[str, Any]:
         "producer_pid",
         "engine_id",
         "compatibility_digest",
+        "alignment_diagnostics",
         "telemetry",
         "telemetry_hash",
     )
-    return {key: body.get(key) for key in allowed if key in body}
+    result = {key: body.get(key) for key in allowed if key in body}
+    if "alignment_diagnostics" in result:
+        result["alignment_diagnostics"] = sanitize_alignment_diagnostics(
+            result["alignment_diagnostics"]
+        )
+    return result
 
 
 def _sanitize_consumer(body: Mapping[str, Any]) -> dict[str, Any]:

@@ -59,7 +59,14 @@ from v2.runtime.role_path import (
     SummarizerRoleDecision,
     financial_tool_candidates,
 )
-from v2.runtime.preflight import PreflightCheck, RuntimePreflightReport, runtime_preflight
+from v2.runtime.preflight import (
+    ContestEnvironmentPreflightReport,
+    DeferredEnvironmentCheck,
+    PreflightCheck,
+    RuntimePreflightReport,
+    contest_environment_preflight,
+    runtime_preflight,
+)
 from v2.runtime.replay import (
     count_exact_replay_candidates,
     evidence_pack_replay_hash,
@@ -123,10 +130,12 @@ __all__ = [
     "CompiledRolePrompt",
     "constrain_visible_candidates",
     "CommitGateDecision",
+    "ContestEnvironmentPreflightReport",
     "CapabilityGrantAuthenticationError",
     "CapabilityGrantAuthenticator",
     "ExecutionLogCapture",
     "ExecutionStepRecord",
+    "DeferredEnvironmentCheck",
     "FallbackAction",
     "FallbackDag",
     "FallbackPlanner",
@@ -191,6 +200,7 @@ __all__ = [
     "capture_execution_logs",
     "count_exact_replay_candidates",
     "compute_vllm_prefix_cache_counter_delta",
+    "contest_environment_preflight",
     "evidence_pack_replay_hash",
     "evidence_execution_input_replay_hash",
     "estimate_engine_local_prefix_reuse",

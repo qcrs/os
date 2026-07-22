@@ -9,6 +9,7 @@ from v2.contracts.constants import (
     LATENT_HANDOFF_DECISION_SCHEMA_VERSION,
     LATENT_LIFECYCLE_EVENT_SCHEMA_VERSION,
     NEURAL_COMPATIBILITY_SIGNATURE_SCHEMA_VERSION,
+    SUPPORTED_LATENT_ALIGNMENT_METHODS,
 )
 from v2.utils import sha256_digest
 
@@ -131,7 +132,9 @@ class NeuralCompatibilitySignature:
             "pipeline_parallel_size": self.pipeline_parallel_size == 1,
             "dtype": self.dtype.lower().replace("torch.", "")
             in {"bf16", "bfloat16"},
-            "alignment_method": self.alignment_method == "soft_token_topk_v1",
+            "alignment_method": (
+                self.alignment_method in SUPPORTED_LATENT_ALIGNMENT_METHODS
+            ),
             "model_revision_or_manifest_digest": (
                 self.model_revision_or_manifest_digest.strip().lower()
                 not in unknown_identities
