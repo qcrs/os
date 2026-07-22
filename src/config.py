@@ -36,6 +36,12 @@ VLLM_ENFORCE_EAGER = os.getenv("VLLM_ENFORCE_EAGER", "0").lower() in {"1", "true
 
 ENABLE_CONTEXT_PACKETS = os.getenv("ENABLE_CONTEXT_PACKETS", "1").lower() in {"1", "true", "yes"}
 ENABLE_EMBEDDING_TRANSFER = os.getenv("ENABLE_EMBEDDING_TRANSFER", "1").lower() in {"1", "true", "yes"}
+REDUCE_RESEARCH_ON_MEMORY_HIT = os.getenv("REDUCE_RESEARCH_ON_MEMORY_HIT", "1").lower() in {
+    "1", "true", "yes", "on"
+}
+PLANNER_MEMORY_CONFIDENCE_THRESHOLD = float(
+    os.getenv("PLANNER_MEMORY_CONFIDENCE_THRESHOLD", "0.5") or "0.5"
+)
 
 # Backward-compatible names used by older scripts/docs.
 DEEPSEEK_API_KEY = CHAT_API_KEY
@@ -43,6 +49,7 @@ DEEPSEEK_BASE_URL = CHAT_BASE_URL
 DEEPSEEK_MODEL = CHAT_MODEL
 
 # DashScope text embedding configuration
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "auto").lower()
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 DASHSCOPE_BASE_HTTP_API_URL = os.getenv(
     "DASHSCOPE_BASE_HTTP_API_URL", "https://dashscope.aliyuncs.com/api/v1"
@@ -60,6 +67,36 @@ PERSISTENT_MEMORY_PATH = os.getenv(
     "PERSISTENT_MEMORY_PATH",
     os.path.join(PROJECT_ROOT, ".memory", "shared_memory.jsonl"),
 )
+
+# Qdrant-backed reusable memory configuration. This is separate from the
+# LangGraph runtime Store, which is still used for current-run state and docs.
+LONG_TERM_MEMORY_ENABLED = os.getenv("LONG_TERM_MEMORY_ENABLED", "1").lower() in {
+    "1", "true", "yes", "on"
+}
+LONG_TERM_MEMORY_QDRANT_PATH = os.getenv(
+    "LONG_TERM_MEMORY_QDRANT_PATH",
+    os.path.join(PROJECT_ROOT, ".memory", "memory_module", "data", "qdrant"),
+)
+LONG_TERM_MEMORY_COLLECTION = os.getenv(
+    "LONG_TERM_MEMORY_COLLECTION",
+    f"shared_memories_{EMBEDDING_DIMS}",
+)
+LONG_TERM_MEMORY_ADD_LOG_PATH = os.getenv(
+    "LONG_TERM_MEMORY_ADD_LOG_PATH",
+    os.path.join(PROJECT_ROOT, ".memory", "memory_module", "logs", "memory_add.jsonl"),
+)
+LONG_TERM_MEMORY_SEARCH_MODE = os.getenv("LONG_TERM_MEMORY_SEARCH_MODE", "hybrid")
+LONG_TERM_MEMORY_TOP_K = int(os.getenv("LONG_TERM_MEMORY_TOP_K", "2"))
+LONG_TERM_MEMORY_BM25_MODEL_PATH = os.getenv("LONG_TERM_MEMORY_BM25_MODEL_PATH", "")
+LONG_TERM_MEMORY_DENSE_SCORE_THRESHOLD = float(
+    os.getenv("LONG_TERM_MEMORY_DENSE_SCORE_THRESHOLD", "0") or "0"
+)
+LONG_TERM_MEMORY_FILTER_HYBRID_BY_DENSE = os.getenv(
+    "LONG_TERM_MEMORY_FILTER_HYBRID_BY_DENSE", "0"
+).lower() in {"1", "true", "yes", "on"}
+LONG_TERM_TASK_STATE_ENABLED = os.getenv(
+    "LONG_TERM_TASK_STATE_ENABLED", "1"
+).lower() in {"1", "true", "yes", "on"}
 
 # Store namespaces
 NS_PLANS = ("plans",)

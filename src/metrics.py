@@ -253,6 +253,8 @@ class Metrics:
             "total_task_time": total_task_time,
             "total_node_time": total_node_time,
             "memory_reuse_hits": self.counters.get("memory_reuse_hits", 0),
+            "research_fanout_reduced": self.counters.get("research_fanout_reduced", 0),
+            "research_subqueries_saved": self.counters.get("research_subqueries_saved", 0),
             "llm_calls": len(self.token_log),
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,

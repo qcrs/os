@@ -110,6 +110,7 @@ def executor(state: dict, store: BaseStore) -> dict:
     evidence = state.get("evidence", [])
     selected_context_packets = state.get("selected_context_packets", [])
     task_group = state.get("task_group", "default")
+    task_topic = state.get("task_topic") or task_group
 
     code = _build_codeact_program(
         evidence=evidence,
@@ -138,11 +139,12 @@ def executor(state: dict, store: BaseStore) -> dict:
         "execution_summary": execution_summary,
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
+        "task_topic": task_topic,
     },
         memory_type="execution",
         source_agent="executor",
         task_group=task_group,
-        task_topic=query,
+        task_topic=task_topic,
         summary=execution_summary,
         tags=["execution", "executor", "codeact", task_group],
     )

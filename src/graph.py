@@ -40,11 +40,20 @@ class ResearchState(TypedDict, total=False):
     query: str
     source_context: str
     task_group: str
+    task_topic: str
+    analyst_instructions: str
     mode: str  # "text" | "structured" | "cache"
 
     # Planner output
     plan: str
     sub_queries: list[str]
+    memory_hit: bool
+    reduced_research: bool
+    reused_memories: list[dict]
+    reused_memory_ids: list[str]
+    memory_validation: dict
+    validated_memories: list[dict]
+    validated_memory_ids: list[str]
 
     # Researcher output (accumulates via operator.add)
     documents: Annotated[list[str], operator.add]
@@ -60,6 +69,7 @@ class ResearchState(TypedDict, total=False):
     analysis_digest: str
     candidate_answers: dict[str, str]
     evidence: list[dict]
+    task_state: dict
     selected_context_packets: list[dict]
 
     # Executor output
@@ -103,12 +113,18 @@ def fan_out_research(state: ResearchState) -> list[Send]:
     each Send packet carries a typed dict, not free-form text.
     """
     sub_queries = state.get("sub_queries", [state.get("query", "")])
+    query = state.get("query", "")
+    source_context = state.get("source_context", "")
     task_group = state.get("task_group", "default")
+    task_topic = state.get("task_topic", task_group)
     mode = state.get("mode", "text")
     return [
         Send("researcher", {
             "sub_query": sq,
+            "query": query,
+            "source_context": source_context,
             "task_group": task_group,
+            "task_topic": task_topic,
             "mode": mode,
         })
         for sq in sub_queries

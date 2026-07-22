@@ -7,8 +7,8 @@ import time
 
 from langgraph.store.base import BaseStore
 
-from config import NS_ANALYSIS, NS_EXECUTIONS, NS_PLANS, NS_SUMMARIES
-from memory import store_put
+from config import NS_EXECUTIONS, NS_PLANS
+from memory import qdrant_add_from_payload, store_put
 from metrics import metrics
 from protocol import hash_text
 from vllm_cache_runtime import get_vllm_cache_runtime, parse_json_object
@@ -140,6 +140,7 @@ def analyst_cache(state: dict, store: BaseStore) -> dict:
     t0 = time.perf_counter()
     query = state.get("query", "")
     task_group = state.get("task_group", "cache_handoff")
+    task_topic = state.get("task_topic") or task_group
     runtime = get_vllm_cache_runtime()
     instruction = """
 [AnalystAgent]
@@ -170,16 +171,26 @@ Return ONLY valid JSON:
     evidence = [_normalize_evidence(item) for item in evidence]
     analysis_digest = analysis[:520]
 
-    store_put(store, NS_ANALYSIS, f"cache_analysis_{task_group}_{hash_text(query)}", {
-        "text": analysis,
-        "digest": analysis_digest,
-        "candidate_answers": candidate_answers,
-        "evidence": evidence,
-        "query": query,
-        "cache_handle": _compact_cache(cache_handle),
-        "raw_output": text,
-    }, memory_type="analysis", source_agent="analyst_cache", task_group=task_group,
-       task_topic=query, summary=analysis_digest, tags=["analysis", "cache", task_group])
+    analysis_memory_id = f"cache_analysis_{task_group}_{hash_text(query)}"
+    qdrant_add_from_payload(
+        key=analysis_memory_id,
+        value={
+            "text": analysis,
+            "digest": analysis_digest,
+            "candidate_answers": candidate_answers,
+            "evidence": evidence,
+            "query": query,
+            "task_topic": task_topic,
+            "cache_handle": _compact_cache(cache_handle),
+            "raw_output": text,
+        },
+        memory_type="analysis",
+        source_agent="analyst_cache",
+        task_group=task_group,
+        task_topic=task_topic,
+        summary=analysis_digest,
+        tags=["analysis", "cache", task_group],
+    )
 
     metrics.record_timing("node_analyst_cache", time.perf_counter() - t0)
     return {
@@ -250,6 +261,7 @@ def summarizer_cache(state: dict, store: BaseStore) -> dict:
     t0 = time.perf_counter()
     query = state.get("query", "")
     task_group = state.get("task_group", "cache_handoff")
+    task_topic = state.get("task_topic") or task_group
     runtime = get_vllm_cache_runtime()
     instruction = """
 [SummarizerAgent]
@@ -286,16 +298,26 @@ Return ONLY valid JSON:
         final_answer = _fallback_final_answer(query, state.get("candidate_answers", {}), combined_text)
     extracted_answers = dict(ANSWER_RE.findall(final_answer))
 
-    store_put(store, NS_SUMMARIES, f"cache_summary_{task_group}_{hash_text(query)}", {
-        "text": summary,
-        "key_findings": key_findings,
-        "query": query,
-        "final_answer": final_answer,
-        "extracted_answers": extracted_answers,
-        "cache_handle": _compact_cache(cache_handle),
-        "raw_output": text,
-    }, memory_type="summary", source_agent="summarizer_cache", task_group=task_group,
-       task_topic=query, summary=summary, tags=["summary", "cache", task_group])
+    summary_memory_id = f"cache_summary_{task_group}_{hash_text(query)}"
+    qdrant_add_from_payload(
+        key=summary_memory_id,
+        value={
+            "text": summary,
+            "key_findings": key_findings,
+            "query": query,
+            "task_topic": task_topic,
+            "final_answer": final_answer,
+            "extracted_answers": extracted_answers,
+            "cache_handle": _compact_cache(cache_handle),
+            "raw_output": text,
+        },
+        memory_type="summary",
+        source_agent="summarizer_cache",
+        task_group=task_group,
+        task_topic=task_topic,
+        summary=summary,
+        tags=["summary", "cache", task_group],
+    )
 
     metrics.record_timing("node_summarizer_cache", time.perf_counter() - t0)
     return {

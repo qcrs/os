@@ -29,15 +29,33 @@ def researcher(state: dict, store: BaseStore) -> dict:
     mode = _get_mode(state)
 
     sub_query = state.get("sub_query", state.get("query", ""))
+    query = state.get("query", "")
+    source_context = state.get("source_context", "")
     task_group = state.get("task_group", "default")
+    task_topic = state.get("task_topic") or task_group
     model = get_model(temperature=0.3)
 
-    messages = [
-        SystemMessage(content="""You are a research source-material generator. Given a sub-query,
+    if source_context:
+        messages = [
+            SystemMessage(content="""You are a source-material extractor. Given a sub-query
+and source context, extract only the source facts needed by downstream analysis.
+Use the provided source context only; do not invent facts. Preserve exact row
+labels, column years, numbers, units/scales, and any text snippets needed for
+calculation. If arithmetic is implied, include the formula and operands but keep
+the response concise."""),
+            HumanMessage(content=(
+                f"Original question:\n{query}\n\n"
+                f"Sub-query:\n{sub_query}\n\n"
+                f"Source context:\n{source_context}"
+            )),
+        ]
+    else:
+        messages = [
+            SystemMessage(content="""You are a research source-material generator. Given a sub-query,
 produce comprehensive, factual source material with key findings.
 Return your response as plain text (3-5 paragraphs)."""),
-        HumanMessage(content=f"Sub-query: {sub_query}"),
-    ]
+            HumanMessage(content=f"Sub-query: {sub_query}"),
+        ]
 
     response = model.invoke(messages)
     # Record LLM token usage
@@ -62,12 +80,14 @@ Return your response as plain text (3-5 paragraphs)."""),
     store_put(store, NS_DOCS, doc_key, {
         "text": doc_text,
         "sub_query": sub_query,
+        "query": query,
         "task_group": task_group,
+        "has_source_context": bool(source_context),
     },
         memory_type="document",
         source_agent="researcher",
         task_group=task_group,
-        task_topic=sub_query,
+        task_topic=task_topic,
         summary=summarize_text(doc_text, 240),
         tags=["document", "researcher", task_group, *sub_query.split()[:6]],
     )
@@ -83,7 +103,7 @@ Return your response as plain text (3-5 paragraphs)."""),
     related = store_search(store, NS_DOCS, sub_query, limit=3)
     related_docs = [r.value.get("text", "") for r in related if r.key != doc_key]
     if related_docs:
-        metrics.increment("memory_reuse_hits")
+        metrics.increment("document_memory_reuse_hits")
 
     duration = time.perf_counter() - t0
     metrics.record_timing("node_researcher", duration)

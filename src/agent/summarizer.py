@@ -6,8 +6,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.store.base import BaseStore
 
-from config import NS_SUMMARIES
-from memory import store_put
+from config import NS_SUMMARIES, PERSISTENT_MEMORY_ENABLED
+from memory import qdrant_add_from_payload, store_put
 from metrics import metrics
 from models import get_model
 from protocol import ActionType, hash_text, make_message
@@ -37,6 +37,7 @@ def summarizer(state: dict, store: BaseStore) -> dict:
     final_answer = state.get("final_answer", "")
     extracted_answers = state.get("extracted_answers", {})
     task_group = state.get("task_group", "default")
+    task_topic = state.get("task_topic") or task_group
 
     model = get_model(temperature=0.5)
     parser = JsonOutputParser()
@@ -94,7 +95,7 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
     recommendations = parsed.get("recommendations", [])
     summary_memory_id = f"summary_{task_group}_{hash_text(query or summary)}"
 
-    store_put(store, NS_SUMMARIES, summary_memory_id, {
+    summary_memory_payload = {
         "text": summary,
         "key_findings": key_findings,
         "recommendations": recommendations,
@@ -103,14 +104,31 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
         "execution_result": execution_result,
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
-    },
+        "task_topic": task_topic,
+    }
+    qdrant_add_from_payload(
+        key=summary_memory_id,
+        value=summary_memory_payload,
         memory_type="summary",
         source_agent="summarizer",
         task_group=task_group,
-        task_topic=query,
+        task_topic=task_topic,
         summary=summary,
         tags=["summary", "summarizer", task_group],
     )
+    if PERSISTENT_MEMORY_ENABLED:
+        store_put(
+            store,
+            NS_SUMMARIES,
+            summary_memory_id,
+            summary_memory_payload,
+            memory_type="summary",
+            source_agent="summarizer",
+            task_group=task_group,
+            task_topic=task_topic,
+            summary=summary,
+            tags=["summary", "summarizer", task_group],
+        )
 
     duration = time.perf_counter() - t0
     metrics.record_timing("node_summarizer", duration)

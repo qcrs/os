@@ -1,5 +1,6 @@
 """Analyst agent for ranking context and producing evidence-based analysis."""
 
+import json
 import re
 import time
 
@@ -12,8 +13,10 @@ from config import (
     ENABLE_EMBEDDING_TRANSFER,
     NS_ANALYSIS,
     NS_DOCS,
+    LONG_TERM_TASK_STATE_ENABLED,
+    PERSISTENT_MEMORY_ENABLED,
 )
-from memory import store_get, store_put, store_search
+from memory import qdrant_add_from_payload, store_get, store_put
 from metrics import metrics
 from models import get_model
 from protocol import (
@@ -28,6 +31,16 @@ from protocol import (
 )
 
 from .shared import _get_mode
+
+
+DEFAULT_TASK_STATE = {
+    "entities": {},
+    "interfaces": {},
+    "decisions": [],
+    "constraints": [],
+    "invariants": [],
+    "next_requirements": [],
+}
 
 
 # ─── Analyst Agent ───
@@ -48,20 +61,16 @@ def analyst(state: dict, store: BaseStore) -> dict:
     document_payloads = state.get("document_payloads", [])
     context_packets = state.get("context_packets", [])
     embedding_payloads = state.get("embedding_payloads", [])
+    analyst_instructions = str(state.get("analyst_instructions", "") or "").strip()
+    validated_memories = state.get("validated_memories", []) or []
+    planner_memory_context = _format_validated_memories(validated_memories)
     task_group = state.get("task_group", "default")
+    task_topic = state.get("task_topic") or task_group
+    query_text = f"{task_topic}\n{query}\n{plan}"
 
     use_embeddings = mode == "structured" and ENABLE_EMBEDDING_TRANSFER and bool(embedding_payloads)
     if use_embeddings:
         metrics.increment("embedding_received", len(embedding_payloads))
-    # Search for prior analyses (memory reuse)
-    prior_analyses = store_search(store, NS_ANALYSIS, plan, limit=2)
-    prior_context = ""
-    if prior_analyses:
-        prior_context = "\n\n".join(
-            f"[Prior analysis {r.key}]: {summarize_text(r.value.get('text', ''), 360)}"
-            for r in prior_analyses
-        )
-        metrics.increment("memory_reuse_hits")
 
     selected_packets = []
     verified_packets = []
@@ -73,7 +82,6 @@ def analyst(state: dict, store: BaseStore) -> dict:
         "failed": 0,
         "missing_docs": [],
     }
-    query_text = f"{query}\n{plan}"
     query_embedding = None
     if use_embeddings:
         try:
@@ -141,9 +149,31 @@ def analyst(state: dict, store: BaseStore) -> dict:
         "\nIf the original query specifies an Expected answer format, populate "
         "candidate_answers as a JSON object whose keys are exactly those @field "
         "names and whose values are scalar strings. Do not wrap these values in "
-        "@field[...] tags."
+        "@field[...] tags. Each value must be the final answer for that field, "
+        "not an intermediate source value or unevaluated expression."
         if required_answer_fields else
         "\nNo machine-graded @field[value] answer format is required for this query."
+    )
+    task_state_instruction = (
+        "\nIf prior task_state is provided, use it as consistency context: preserve stable "
+        "entities, interfaces, decisions, constraints, and invariants unless the current "
+        "task explicitly changes them. Store only stable reusable state, not transient "
+        "reasoning, in task_state."
+        if LONG_TERM_TASK_STATE_ENABLED else
+        ""
+    )
+    task_state_schema = (
+        """,
+  "task_state": {
+    "entities": {},
+    "interfaces": {},
+    "decisions": [],
+    "constraints": [],
+    "invariants": [],
+    "next_requirements": []
+  }"""
+        if LONG_TERM_TASK_STATE_ENABLED else
+        ""
     )
 
     messages = [
@@ -151,7 +181,14 @@ def analyst(state: dict, store: BaseStore) -> dict:
 and selected context, produce a structured analysis. Use only evidence marked reliable
 or rehydrated from Store. Cite `doc_key#span_id` for each claim. If coverage is
 insufficient, explicitly state the limitation instead of guessing.
-The evidence list contains extractive source spans in `[doc_key#span_id] text` format.{answer_instruction}
+Planner-validated reusable memories are hints for reusable methods, known stable
+decisions, or prior answer patterns. They are not evidence; current selected
+context overrides memory for source values and citations.
+The evidence list contains extractive source spans in `[doc_key#span_id] text` format.{task_state_instruction}{answer_instruction}
+{f'''
+Task-specific analyst instructions:
+{analyst_instructions}
+''' if analyst_instructions else ''}
 
 Return ONLY valid JSON:
 {{
@@ -160,11 +197,11 @@ Return ONLY valid JSON:
   "evidence": [
     {{"claim": "Key claim 1", "support": "Supporting evidence", "doc_key": "doc id", "span_id": "ev1"}},
     {{"claim": "Key claim 2", "support": "Supporting evidence", "doc_key": "doc id", "span_id": "ev2"}}
-  ],
+  ]{task_state_schema},
   "confidence": 0.85
 }}"""),
         HumanMessage(content=f"Original query: {query}\nRequired answer fields: {required_answer_fields}\nExpected answer format: {answer_format or 'N/A'}\nPlan: {plan}\n\n{context_label}:\n{docs_text}"
-                     + (f"\n\nPrior analyses:\n{prior_context}" if prior_context else "")),
+                     + (f"\n\nPlanner-validated reusable memories:\n{planner_memory_context}" if planner_memory_context else "")),
     ]
 
     response = model.invoke(messages)
@@ -178,6 +215,7 @@ Return ONLY valid JSON:
             "analysis": f"Analysis based on: {plan}",
             "candidate_answers": {},
             "evidence": [{"claim": "Key finding", "support": "From selected context"}],
+            "task_state": dict(DEFAULT_TASK_STATE),
             "confidence": 0.7,
         }
 
@@ -187,6 +225,11 @@ Return ONLY valid JSON:
         required_answer_fields,
     )
     evidence = parsed.get("evidence", [])
+    task_state = (
+        _clean_task_state(parsed.get("task_state", {}))
+        if LONG_TERM_TASK_STATE_ENABLED else
+        {}
+    )
     analysis_digest = summarize_text(analysis, 520)
     analysis_memory_id = f"analysis_{task_group}_{hash_text(query or plan)}"
     selected_doc_keys = [
@@ -194,7 +237,7 @@ Return ONLY valid JSON:
         for item in (verified_packets if verified_packets else selected_documents)
     ]
 
-    store_put(store, NS_ANALYSIS, analysis_memory_id, {
+    analysis_memory_payload = {
         "text": analysis,
         "digest": analysis_digest,
         "candidate_answers": candidate_answers,
@@ -202,14 +245,53 @@ Return ONLY valid JSON:
         "plan": plan,
         "selected_doc_keys": selected_doc_keys,
         "context_verification": verification_summary,
-    },
+        "query": query,
+        "task_topic": task_topic,
+    }
+    qdrant_add_from_payload(
+        key=analysis_memory_id,
+        value=analysis_memory_payload,
         memory_type="analysis",
         source_agent="analyst",
         task_group=task_group,
-        task_topic=query,
+        task_topic=task_topic,
         summary=analysis_digest,
         tags=["analysis", "analyst", task_group],
     )
+    if PERSISTENT_MEMORY_ENABLED:
+        store_put(
+            store,
+            NS_ANALYSIS,
+            analysis_memory_id,
+            analysis_memory_payload,
+            memory_type="analysis",
+            source_agent="analyst",
+            task_group=task_group,
+            task_topic=task_topic,
+            summary=analysis_digest,
+            tags=["analysis", "analyst", task_group],
+        )
+    if LONG_TERM_TASK_STATE_ENABLED:
+        task_state_text = json.dumps(task_state, ensure_ascii=False, sort_keys=True)
+        task_state_memory_payload = {
+            "text": task_state_text,
+            "task_state": task_state,
+            "query": query,
+            "task_topic": task_topic,
+            "plan": plan,
+            "analysis_digest": analysis_digest,
+            "selected_doc_keys": selected_doc_keys,
+        }
+        qdrant_add_from_payload(
+            key=f"task_state_{task_group}_{hash_text(query or plan)}",
+            value=task_state_memory_payload,
+            memory_type="task_state",
+            source_agent="analyst",
+            task_group=task_group,
+            task_topic=task_topic,
+            summary=summarize_text(task_state_text, 900),
+            tags=["task_state", "analyst", task_group],
+        )
 
     duration = time.perf_counter() - t0
     metrics.record_timing("node_analyst", duration)
@@ -220,6 +302,8 @@ Return ONLY valid JSON:
         "candidate_answers": candidate_answers,
         "evidence": evidence,
     }
+    if LONG_TERM_TASK_STATE_ENABLED:
+        result["task_state"] = task_state
     if mode == "structured":
         msg = make_message(
             source="analyst", target="executor",
@@ -256,6 +340,22 @@ Return ONLY valid JSON:
         result["context_verification"] = verification_summary
 
     return result
+
+
+def _format_validated_memories(memories: list[dict], limit: int = 2) -> str:
+    """Format planner-approved memories as compact downstream hints."""
+    lines = []
+    for item in memories[:limit]:
+        memory_id = str(item.get("id", ""))
+        memory_type = str(item.get("memory_type", "memory"))
+        source_task_id = str(item.get("source_task_id", ""))
+        score = item.get("score", 0.0)
+        content = summarize_text(item.get("content", ""), 320)
+        lines.append(
+            f"[{memory_type} id={memory_id}; source_task={source_task_id}; "
+            f"retrieval_score={score}] {content}"
+        )
+    return "\n".join(lines)
 
 def _verify_and_rehydrate_packets(
     packets: list[dict],
@@ -361,6 +461,28 @@ def _required_answer_fields(answer_format: str) -> list[str]:
         seen.add(field)
         fields.append(field)
     return fields
+
+
+def _clean_task_state(value: object) -> dict:
+    """Normalize model-provided reusable task state to the expected schema."""
+    if not isinstance(value, dict):
+        value = {}
+    return {
+        "entities": value.get("entities") if isinstance(value.get("entities"), dict) else {},
+        "interfaces": value.get("interfaces") if isinstance(value.get("interfaces"), dict) else {},
+        "decisions": _string_list(value.get("decisions")),
+        "constraints": _string_list(value.get("constraints")),
+        "invariants": _string_list(value.get("invariants")),
+        "next_requirements": _string_list(value.get("next_requirements")),
+    }
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
 
 
 def _clean_candidate_answers(value: object, required_fields: list[str]) -> dict[str, str]:
