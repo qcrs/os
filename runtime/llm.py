@@ -383,6 +383,10 @@ class OpenAICompatibleLLMClient:
             chat_template_kwargs = dict(existing_extra_body.get("chat_template_kwargs") or {})
             chat_template_kwargs.setdefault("enable_thinking", False)
             existing_extra_body["chat_template_kwargs"] = chat_template_kwargs
+            existing_extra_body.setdefault(
+                "guided_decoding_backend",
+                "xgrammar:disable-any-whitespace",
+            )
             request = {**request, "extra_body": existing_extra_body}
         # local_vllm executor probes request token-level output distributions.
         if self.config.mode == "local_vllm" and purpose == "executor":

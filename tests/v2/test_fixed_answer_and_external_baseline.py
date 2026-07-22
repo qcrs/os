@@ -1352,6 +1352,54 @@ def test_fixed_answer_external_comparator_records_serialized_repeat_metadata(
     assert "serialized_latency_observation_favorable" in report.metadata
 
 
+def test_comparator_balanced_timing_evidence_is_exactly_scoped_and_fail_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from v2.benchmark.comparator_runner import _load_balanced_timing_evidence
+
+    evidence_path = tmp_path / "balanced-summary.json"
+    statistics = {
+        "schema_version": "statebus.balanced_lane_experiment.v1",
+        "lane_a": "statebus",
+        "lane_b": "external",
+        "repeat_count": 3,
+        "observation_count": 12,
+        "order_design": "alternating_abba_baab",
+        "serialized_execution": True,
+        "schedule_valid": True,
+        "quality_gate_passed": True,
+        "paired_block_delta_a_minus_b_ms": {
+            "bootstrap_median_ci_95": [-20.0, -2.0],
+        },
+        "latency_superiority_claim_allowed": True,
+    }
+    evidence_path.write_text(
+        json.dumps({"statistics": statistics}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        "STATEBUS_COMPARATOR_BALANCED_TIMING_SUMMARY",
+        str(evidence_path),
+    )
+
+    accepted = _load_balanced_timing_evidence()
+
+    assert accepted["repeat_count"] == 3
+    assert accepted["delta_ci_95"] == [-20.0, -2.0]
+
+    evidence_path.write_text(
+        json.dumps({
+            "statistics": {
+                **statistics,
+                "lane_b": "utf8_text",
+            }
+        }),
+        encoding="utf-8",
+    )
+    assert _load_balanced_timing_evidence() == {}
+
+
 def test_role_path_normalizes_invalid_api_route_to_best_visible_candidate() -> None:
     class StubLLMClient:
         async def complete(self, messages, *, purpose, temperature=None, **kwargs):

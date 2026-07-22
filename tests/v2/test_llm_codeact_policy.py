@@ -13,10 +13,66 @@ from v2.runtime.llm_codeact import (
     CodePolicyError,
     LlmCodeActRunner,
     audit_generated_source,
+    audit_generated_source_for_request,
     build_code_repair_guidance,
     build_code_generation_prompt,
     extract_python_source,
 )
+
+
+def test_parameterized_recipe_source_uses_authorized_bindings_without_literals() -> None:
+    parameter_path = "inputs/statebus_parameters.json"
+    policy = CodeGenerationPolicy(
+        capability_id="compare_periods_python_v1",
+        enabled=True,
+        allowed_input_relpaths=("inputs/task.json", parameter_path),
+    )
+    request = CodeGenerationRequest(
+        task_id="task",
+        step_id="compare",
+        attempt_id="attempt",
+        approved_plan_hash="plan",
+        capability_grant_hash="grant-hash",
+        capability_id="compare_periods_python_v1",
+        input_ref_ids=("verified-input",),
+        input_manifest_digest="input-hash",
+        output_schema={"metric_name": "string", "metric_value": "number"},
+        model_signature="model",
+        prompt_signature="prompt",
+        runtime_signature="runtime",
+        policy=policy,
+        recipe_parameter_schema={
+            "metric": "string",
+            "quarter": "string",
+            "ticker": "string",
+        },
+        recipe_parameter_bindings={
+            "metric": "revenue",
+            "quarter": "2026Q1",
+            "ticker": "ACME",
+        },
+        recipe_parameter_relpath=parameter_path,
+    )
+    source = (
+        "import json\nfrom pathlib import Path\n"
+        "rows = json.loads(Path('inputs/task.json').read_text(encoding='utf-8'))\n"
+        "statebus_params = json.loads(Path('inputs/statebus_parameters.json').read_text(encoding='utf-8'))\n"
+        "row = next(item for item in rows if item['metric'] == statebus_params['metric'] "
+        "and item['quarter'] == statebus_params['quarter'] and item['ticker'] == statebus_params['ticker'])\n"
+        "result = {'metric_name': statebus_params['metric'], 'metric_value': row['value']}\n"
+        "Path('outputs/result.json').write_text(json.dumps(result), encoding='utf-8')\n"
+    )
+
+    accepted = audit_generated_source_for_request(source, request)
+    literal_source = source.replace("statebus_params['quarter']", "'2026Q1'", 1)
+    rejected = audit_generated_source_for_request(literal_source, request)
+
+    assert accepted.passed, accepted.violations
+    assert not rejected.passed
+    assert "parameter_value_embedded_as_literal:quarter" in rejected.violations
+    prompt = build_code_generation_prompt(request)
+    assert "statebus_params" in prompt
+    assert "Never embed a current parameter value as a Python literal" in prompt
 
 
 def test_code_extraction_and_ast_policy_reject_network_and_parent_paths() -> None:

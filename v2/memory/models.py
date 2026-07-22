@@ -243,11 +243,23 @@ class MemoryConsumptionRecord:
     after_decision_surface_hash: str
     behavioral_effect: str
     downstream_ref_ids: tuple[str, ...] = ()
+    # Hash of the output surface actually accepted by the role.  This is
+    # separate from ``after_decision_surface_hash`` (the candidate decision
+    # surface) so a receipt cannot be reconstructed from controller inputs.
+    output_decision_surface_hash: str = ""
     skipped_generation_step_count: int = 0
     skipped_llm_call_count: int = 0
     recipe_recomputed: bool = False
     consumed_at_ns: int = 0
-    schema_version: str = "statebus.memory_consumption_record.v1"
+    # These fields bind the record to the actual role boundary rather than to
+    # a controller-prepared candidate list.  They remain optional so existing
+    # v1 artifacts can still be read.
+    consumption_mode: str = "executed"
+    rendered_request_hash: str = ""
+    executed_recipe_hash: str = ""
+    execution_outcome: str = "accepted"
+    counterfactual_evidence_hash: str = ""
+    schema_version: str = "statebus.memory_consumption_record.v2"
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -264,16 +276,90 @@ class MemoryConsumptionRecord:
             "after_decision_surface_hash": self.after_decision_surface_hash,
             "behavioral_effect": self.behavioral_effect,
             "downstream_ref_ids": list(self.downstream_ref_ids),
+            "output_decision_surface_hash": self.output_decision_surface_hash,
             "skipped_generation_step_count": self.skipped_generation_step_count,
             "skipped_llm_call_count": self.skipped_llm_call_count,
             "recipe_recomputed": self.recipe_recomputed,
             "consumed_at_ns": self.consumed_at_ns,
+            "consumption_mode": self.consumption_mode,
+            "rendered_request_hash": self.rendered_request_hash,
+            "executed_recipe_hash": self.executed_recipe_hash,
+            "execution_outcome": self.execution_outcome,
+            "counterfactual_evidence_hash": self.counterfactual_evidence_hash,
             "schema_version": self.schema_version,
         }
 
     @property
     def record_hash(self) -> str:
         return sha256_digest(self.canonical_payload())
+
+
+def summarize_memory_consumption(
+    records: tuple[MemoryConsumptionRecord, ...] | list[MemoryConsumptionRecord],
+    *,
+    candidate_count: int | None = None,
+    approved_count: int | None = None,
+    disclosed_count: int | None = None,
+) -> dict[str, object]:
+    """Return an auditable accounting projection without overclaiming.
+
+    ``recorded_consumption_count`` is the physical row count.  The
+    ``actual_*`` fields are restricted to rows carrying a rendered request or
+    execution trace hash, which keeps old recorded artifacts distinguishable
+    from receipt-backed consumption after the F-03 fix.
+    """
+
+    rows = tuple(records)
+    actual = tuple(
+        row for row in rows
+        if bool(row.rendered_request_hash or row.executed_recipe_hash)
+    )
+    accepted = tuple(row for row in actual if row.execution_outcome == "accepted")
+    recorded_role_counts: dict[str, int] = {}
+    actual_role_counts: dict[str, int] = {}
+    for row in rows:
+        recorded_role_counts[row.consumer_role] = (
+            recorded_role_counts.get(row.consumer_role, 0) + 1
+        )
+    for row in actual:
+        actual_role_counts[row.consumer_role] = (
+            actual_role_counts.get(row.consumer_role, 0) + 1
+        )
+    return {
+        "candidate_count": int(candidate_count) if candidate_count is not None else None,
+        "approved_count": int(approved_count) if approved_count is not None else None,
+        "disclosed_count": int(disclosed_count) if disclosed_count is not None else None,
+        "recorded_consumption_count": len(rows),
+        "actual_consumed_count": len(actual),
+        "rendered_count": sum(bool(row.rendered_request_hash) for row in actual),
+        "recipe_executed_count": sum(
+            row.consumption_mode in {"executed", "recipe_executed", "validated_replay"}
+            for row in actual
+        ),
+        "output_accepted_count": len(accepted),
+        "failed_attempt_count": sum(row.execution_outcome in {"failed", "attempted"} for row in actual),
+        "validated_replay_count": sum(
+            row.replay_class.value == "validated_replay" and row.recipe_recomputed
+            for row in accepted
+        ),
+        "exact_replay_count": sum(
+            row.replay_class.value == "exact_replay" and row.recipe_recomputed
+            for row in accepted
+        ),
+        "skipped_generation_step_count": sum(
+            row.skipped_generation_step_count for row in accepted
+        ),
+        "skipped_llm_call_count": sum(
+            row.skipped_llm_call_count
+            for row in accepted
+            if row.counterfactual_evidence_hash
+        ),
+        # ``role_counts`` remains as a legacy alias for consumers that expect
+        # the pre-remediation recorded-row split.
+        "role_counts": dict(sorted(recorded_role_counts.items())),
+        "recorded_role_counts": dict(sorted(recorded_role_counts.items())),
+        "actual_role_counts": dict(sorted(actual_role_counts.items())),
+    }
 
 
 @dataclass(frozen=True)

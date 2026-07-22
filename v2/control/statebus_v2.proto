@@ -13,6 +13,8 @@ enum EventType {
   CMD_CANCEL = 7;
   TRAP_FATAL = 8;
   CMD_GC = 9;
+  HELLO = 10;
+  HELLO_ACK = 11;
 }
 
 message ControlHeader {
@@ -37,6 +39,26 @@ message ReusePolicy {
   bool allow_exact_replay = 3;
 }
 
+message Hello {
+  ControlHeader header = 1;
+  repeated string protocol_versions = 2;
+  repeated string schema_versions = 3;
+  string controller_registry_digest = 4;
+  repeated string required_capability_ids = 5;
+  int64 controller_pid = 6;
+}
+
+message HelloAck {
+  ControlHeader header = 1;
+  bool accepted = 2;
+  string accepted_protocol_version = 3;
+  string accepted_schema_version = 4;
+  string worker_registry_digest = 5;
+  repeated string supported_capability_ids = 6;
+  string error_detail = 7;
+  int64 worker_pid = 8;
+}
+
 message ExecRequest {
   ControlHeader header = 1;
   ReusePolicy reuse_policy = 2;
@@ -54,6 +76,8 @@ message ExecRequest {
   uint64 evidence_budget_bytes = 14;
   string expected_encoder_signature = 15;
   string capability_grant_hash = 16;
+  string capability_grant_token = 17;
+  string capability_grant_session_id = 18;
 }
 
 message AckReceived {
@@ -74,6 +98,21 @@ message Heartbeat {
   string worker_state = 3;
 }
 
+message NumericSummaryResult {
+  string input_ref_id = 1;
+  string input_payload_hash = 2;
+  uint64 row_count = 3;
+  double total = 4;
+  double mean = 5;
+  double minimum = 6;
+  double maximum = 7;
+  string schema_digest = 8;
+  string output_artifact_hash = 9;
+  string validator_receipt_hash = 10;
+  int64 worker_pid = 11;
+  uint64 worker_compute_ns = 12;
+}
+
 message SuccessResult {
   ControlHeader header = 1;
   repeated RefHandle state_refs = 2;
@@ -88,6 +127,7 @@ message SuccessResult {
   int64 consumer_pid = 11;
   int64 producer_pid = 12;
   string encoder_signature = 13;
+  NumericSummaryResult numeric_summary = 14;
 }
 
 message ErrorResult {
@@ -127,5 +167,7 @@ message ControlEnvelope {
     CancelCommand cmd_cancel = 7;
     TrapFatal trap_fatal = 8;
     GarbageCollectCommand cmd_gc = 9;
+    Hello hello = 10;
+    HelloAck hello_ack = 11;
   }
 }

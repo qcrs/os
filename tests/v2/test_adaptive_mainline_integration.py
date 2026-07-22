@@ -11,6 +11,7 @@ from v2.contracts import (
     CanonicalTaskSpec,
     PlanProposal,
     PlanStepProposal,
+    RoleExecutionReceipt,
     RefStatus,
     ReplayClass,
     RiskClass,
@@ -28,6 +29,7 @@ from v2.runtime.adaptive_mainline import (
 from v2.runtime.adaptive_runtime import AdaptiveStepResult
 from v2.runtime.capability_registry import CapabilityRegistry
 from v2.runtime.driver import RuntimeDriver
+from v2.runtime.plan_policy import PlannerOutcomeClass
 from v2.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
 from v2.retrieval import RetrieverFanoutPipeline
 from v2.utils import sha256_digest, stable_json_dumps
@@ -163,11 +165,25 @@ def _memory_loop_request(
         program_calls.append(task_id)
         if observed_memory_inputs is not None:
             observed_memory_inputs.append(tuple(memory_inputs))
-        return TransformProgram(
+        program = TransformProgram(
             program_id=f"program:{task_id}",
             input_artifact_refs=(input_ref_id,),
             operations=(TransformStep("select", {"columns": ["value"]}),),
             output_contract_version=grant.output_contract_version,
+        )
+        if not memory_inputs:
+            return program
+        memory_id = str(memory_inputs[0]["ref_id"])
+        return RoleExecutionReceipt(
+            result=program,
+            consumed_memory_ids=(memory_id,),
+            consumption_modes={memory_id: "executed"},
+            rendered_request_hash=sha256_digest({
+                "task_id": task_id,
+                "step_id": step.step_id,
+                "memory_id": memory_id,
+            }),
+            output_decision_surface_hash=sha256_digest(program.canonical_payload()),
         )
 
     return AdaptiveMainlineRequest(
@@ -290,6 +306,9 @@ def test_product_adaptive_mainline_owns_runtime_infrastructure_and_role_records(
 
     assert result.completed
     assert result.planner.approved_plan_hash == result.runtime.approved_plan_hash
+    assert result.planner.outcome_class == PlannerOutcomeClass.RAW_DIRECTLY_EXECUTABLE
+    assert result.planner.raw_proposal_approved is True
+    assert result.planner.fallback_used is False
     assert [step.role for step in result.runtime.session.workflow_steps] == [
         "retriever",
         "executor",
@@ -304,7 +323,35 @@ def test_product_adaptive_mainline_owns_runtime_infrastructure_and_role_records(
     metrics = result.runtime.telemetry.summarize_task("adaptive-mainline-task")
     assert metrics["planner_step_completed"] == 1.0
     assert metrics["planner_final_approved_count"] == 1.0
+    assert metrics["planner_raw_directly_executable_count"] == 1.0
+    assert metrics["planner_controller_normalized_count"] == 0.0
+    assert metrics["planner_model_repaired_count"] == 0.0
+    assert metrics["planner_rejected_or_fallback_count"] == 0.0
     assert metrics["adaptive_step_completed"] == 3.0
+
+
+def test_product_adaptive_mainline_records_controller_normalized_planner_outcome(
+    tmp_path: Path,
+) -> None:
+    request = _mainline_request(tmp_path)
+
+    def normalize(proposal: PlanProposal) -> tuple[PlanProposal, tuple[str, ...]]:
+        normalized_steps = tuple(
+            replace(step, goal=step.goal.strip()) for step in proposal.steps
+        )
+        return replace(proposal, steps=normalized_steps), (
+            "steps.summarize.depends_on.controller_bound_wiring",
+        )
+
+    _proposal, _approved, record = AdaptiveMainlineRunner._assemble_plan(
+        replace(request, normalize_plan=normalize)
+    )
+
+    assert record.outcome_class == PlannerOutcomeClass.CONTROLLER_NORMALIZED
+    assert record.raw_proposal_approved is True
+    assert record.schema_repair_fields == (
+        "steps.summarize.depends_on.controller_bound_wiring",
+    )
 
 
 def test_runtime_mode_selector_requires_the_matching_product_request() -> None:
@@ -569,7 +616,7 @@ def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_va
     assert consumption.memory_id == first.memory_commit_decision.memory_id
     assert consumption.recipe_recomputed is True
     assert consumption.skipped_generation_step_count == 1
-    assert consumption.skipped_llm_call_count == 1
+    assert consumption.skipped_llm_call_count == 0
     output = next(
         stored
         for stored in second.context.artifacts.values()
@@ -591,7 +638,7 @@ def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_va
     assert metrics["memory_behavioral_effect_count"] >= 1.0
     assert metrics["validated_replay_count"] == 1.0
     assert metrics["skipped_step_count"] == 1.0
-    assert metrics["skipped_llm_call_count"] == 1.0
+    assert metrics["skipped_llm_call_count"] == 0.0
 
 
 def test_adaptive_memory_assist_is_an_actual_executor_input_without_skipping_validation(

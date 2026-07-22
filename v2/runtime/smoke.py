@@ -1004,18 +1004,18 @@ def _continuous_memory_consumption_records(
             "canonical_task_spec_hash": memory_query.query_spec_hash,
         }
     )
+    # A candidate list is not a consumption receipt.  This legacy smoke lane
+    # has no role callback that can identify an assist payload actually used by
+    # the worker, so only the explicitly replayed candidate is auditable here.
+    replayable = {ReplayClass.VALIDATED_REPLAY, ReplayClass.EXACT_REPLAY}
     for index, match in enumerate(memory_match_result.matches[:2], start=1):
         memory_id = match.memory_ref.memory_id
+        if replay.candidate_id != memory_id or replay.replay_class not in replayable:
+            continue
         decision = decision_by_id.get(memory_id)
         if decision is None or not decision.policy_approved:
             continue
-        replay_class = (
-            replay.replay_class
-            if replay.candidate_id == memory_id
-            and replay.replay_class
-            in {ReplayClass.VALIDATED_REPLAY, ReplayClass.EXACT_REPLAY}
-            else ReplayClass.ASSIST
-        )
+        replay_class = replay.replay_class
         input_payload = _memory_role_input_payload(match, replay=replay)
         behavioral_effect = {
             ReplayClass.EXACT_REPLAY: "verified_artifact_restored",
@@ -1062,6 +1062,16 @@ def _continuous_memory_consumption_records(
                     and replay_class == ReplayClass.VALIDATED_REPLAY
                 ),
                 consumed_at_ns=time.time_ns(),
+                consumption_mode=(
+                    "validated_replay"
+                    if replay_class == ReplayClass.VALIDATED_REPLAY
+                    else "exact_replay"
+                ),
+                rendered_request_hash=sha256_digest(input_payload),
+                executed_recipe_hash=str(
+                    match.memory_ref.metadata.get("execution_recipe_hash", "")
+                ),
+                execution_outcome="accepted",
             )
         )
     return tuple(records)

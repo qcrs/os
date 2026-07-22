@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import Callable
 
 from v2.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
     ExecutionKind,
+    HandoffIntent,
     PlanPolicyIssue,
     PlanPolicyReport,
     PlanPolicyStatus,
@@ -34,6 +36,7 @@ _ALLOWED_MEMORY_POLICIES = {
     "validated_replay",
     "exact_replay",
 }
+_ALLOWED_HANDOFF_INTENTS = {intent.value for intent in HandoffIntent}
 _RISK_RANK = {RiskClass.READ_ONLY: 0, RiskClass.WORKSPACE_WRITE: 1, RiskClass.BOUNDED_CODE: 2}
 _PROMPT_ESCAPE_MARKERS = (
     "ignore previous", "ignore all previous", "<system", "```", "subprocess", "os.system",
@@ -47,6 +50,32 @@ class PlanPolicyOutcome:
     approved_plan: ApprovedPlan | None
     repair_used: bool = False
     fallback_used: bool = False
+
+
+class PlannerOutcomeClass(StrEnum):
+    RAW_DIRECTLY_EXECUTABLE = "raw_directly_executable"
+    CONTROLLER_NORMALIZED = "controller_normalized"
+    MODEL_REPAIRED = "model_repaired"
+    HARD_REJECTED_OR_FALLBACK = "hard_rejected_or_fallback"
+
+
+def classify_planner_outcome(
+    *,
+    raw_directly_executable: bool,
+    final_approved: bool,
+    normalized_fields: tuple[str, ...] = (),
+    model_repair_used: bool = False,
+    fallback_used: bool = False,
+) -> PlannerOutcomeClass:
+    """Return one final, mutually exclusive Planner outcome class."""
+
+    if not final_approved or fallback_used:
+        return PlannerOutcomeClass.HARD_REJECTED_OR_FALLBACK
+    if model_repair_used:
+        return PlannerOutcomeClass.MODEL_REPAIRED
+    if normalized_fields or not raw_directly_executable:
+        return PlannerOutcomeClass.CONTROLLER_NORMALIZED
+    return PlannerOutcomeClass.RAW_DIRECTLY_EXECUTABLE
 
 
 class PlanPolicyValidator:
@@ -212,7 +241,7 @@ class PlanPolicyValidator:
                 step.step_id.strip(), step.role.strip().lower(), step.capability_id.strip(), step.goal.strip(),
                 tuple(step.depends_on), tuple(step.input_ref_ids), tuple(step.input_ref_kinds),
                 step.output_contract_version.strip(), dict(sorted(step.completion_criteria.items())), step.on_failure,
-                tuple(step.required_input_fields),
+                tuple(step.required_input_fields), step.handoff_intent.value,
             )
             for step in original.steps
         )
@@ -221,7 +250,7 @@ class PlanPolicyValidator:
                 step.step_id.strip(), step.role.strip().lower(), step.capability_id.strip(), step.goal.strip(),
                 tuple(step.depends_on), tuple(step.input_ref_ids), tuple(step.input_ref_kinds),
                 step.output_contract_version.strip(), dict(sorted(step.completion_criteria.items())), step.on_failure,
-                tuple(step.required_input_fields),
+                tuple(step.required_input_fields), step.handoff_intent.value,
             )
             for step in repaired.steps
         )
@@ -284,8 +313,18 @@ class PlanPolicyValidator:
             issues.append(self._issue("risk_class_exceeded", step, "capability_id", step.capability_id))
         if step.output_contract_version != descriptor.output_contract_version:
             issues.append(self._issue("capability_output_contract_mismatch", step, "output_contract_version", step.output_contract_version))
-        if step.output_contract_version not in envelope.allowed_output_contracts and step.output_contract_version != descriptor.output_contract_version:
+        if step.output_contract_version not in envelope.allowed_output_contracts:
             issues.append(self._issue("step_output_contract_not_allowed", step, "output_contract_version", step.output_contract_version))
+        if (
+            step.handoff_intent.value not in _ALLOWED_HANDOFF_INTENTS
+            or step.handoff_intent.value not in envelope.allowed_handoff_intents
+        ):
+            issues.append(self._issue(
+                "handoff_intent_not_allowed",
+                step,
+                "handoff_intent",
+                step.handoff_intent.value,
+            ))
         for dependency in step.depends_on:
             if dependency not in step_by_id:
                 issues.append(self._issue("unknown_dependency", step, "depends_on", dependency))
@@ -553,6 +592,7 @@ class PlanPolicyValidator:
                 if step.role.strip().lower() == "executor"
                 else ()
             ),
+            handoff_intent=step.handoff_intent,
         )
         if normalized.canonical_payload() != step.canonical_payload():
             normalized_fields.append(f"steps.{step.step_id}")

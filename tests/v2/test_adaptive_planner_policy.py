@@ -10,7 +10,11 @@ from v2.runtime.domain_packs import (
     register_generic_adaptive_analysis_capabilities,
     register_long_doc_analysis_capabilities,
 )
-from v2.runtime.plan_policy import PlanPolicyValidator
+from v2.runtime.plan_policy import (
+    PlannerOutcomeClass,
+    PlanPolicyValidator,
+    classify_planner_outcome,
+)
 
 
 def _registry_and_envelope() -> tuple[CapabilityRegistry, AdaptiveTaskEnvelope]:
@@ -40,6 +44,154 @@ def test_plan_policy_approves_registered_dag() -> None:
     outcome = PlanPolicyValidator(registry).validate(_legal_proposal(), envelope)
     assert outcome.approved_plan is not None
     assert outcome.approved_plan.approved_plan_hash
+
+
+def test_planner_outcome_classification_is_mutually_exclusive_with_fixed_precedence() -> None:
+    cases = (
+        (
+            {"raw_directly_executable": True, "final_approved": True},
+            PlannerOutcomeClass.RAW_DIRECTLY_EXECUTABLE,
+        ),
+        (
+            {
+                "raw_directly_executable": True,
+                "final_approved": True,
+                "normalized_fields": ("steps.report.depends_on",),
+            },
+            PlannerOutcomeClass.CONTROLLER_NORMALIZED,
+        ),
+        (
+            {
+                "raw_directly_executable": False,
+                "final_approved": True,
+                "normalized_fields": ("steps.report.depends_on",),
+                "model_repair_used": True,
+            },
+            PlannerOutcomeClass.MODEL_REPAIRED,
+        ),
+        (
+            {
+                "raw_directly_executable": False,
+                "final_approved": True,
+                "normalized_fields": ("steps.report.depends_on",),
+                "model_repair_used": True,
+                "fallback_used": True,
+            },
+            PlannerOutcomeClass.HARD_REJECTED_OR_FALLBACK,
+        ),
+        (
+            {"raw_directly_executable": False, "final_approved": False},
+            PlannerOutcomeClass.HARD_REJECTED_OR_FALLBACK,
+        ),
+    )
+
+    observed = [classify_planner_outcome(**inputs) for inputs, _expected in cases]
+
+    assert observed == [expected for _inputs, expected in cases]
+    assert all(isinstance(value, PlannerOutcomeClass) for value in observed)
+
+
+def test_plan_policy_rejects_descriptor_output_excluded_by_task_envelope() -> None:
+    registry, envelope = _registry_and_envelope()
+    proposal = _legal_proposal()
+    excluded_contract = proposal.steps[1].output_contract_version
+    envelope = replace(
+        envelope,
+        allowed_output_contracts=tuple(
+            contract
+            for contract in envelope.allowed_output_contracts
+            if contract != excluded_contract
+        ),
+    )
+
+    outcome = PlanPolicyValidator(registry).validate(proposal, envelope)
+
+    assert outcome.approved_plan is None
+    assert "step_output_contract_not_allowed" in {
+        issue.error_code for issue in outcome.report.issues
+    }
+
+
+def test_plan_policy_output_contract_truth_table() -> None:
+    registry, envelope = _registry_and_envelope()
+    proposal = _legal_proposal()
+    descriptor_contract = proposal.steps[1].output_contract_version
+    allowed_other_contract = proposal.steps[0].output_contract_version
+    disallowed_contract = "statebus.not_allowed.v1"
+
+    cases = (
+        (descriptor_contract, True, set()),
+        (descriptor_contract, False, {"step_output_contract_not_allowed"}),
+        (allowed_other_contract, True, {"capability_output_contract_mismatch"}),
+        (disallowed_contract, False, {
+            "capability_output_contract_mismatch",
+            "step_output_contract_not_allowed",
+        }),
+    )
+    for output_contract, envelope_allows, expected_errors in cases:
+        case_envelope = replace(
+            envelope,
+            allowed_output_contracts=(
+                tuple(envelope.allowed_output_contracts)
+                if envelope_allows
+                else tuple(
+                    contract
+                    for contract in envelope.allowed_output_contracts
+                    if contract != descriptor_contract
+                )
+            ),
+        )
+        case_proposal = replace(
+            proposal,
+            steps=(
+                proposal.steps[0],
+                replace(proposal.steps[1], output_contract_version=output_contract),
+                proposal.steps[2],
+            ),
+        )
+        outcome = PlanPolicyValidator(registry).validate(case_proposal, case_envelope)
+        actual_errors = {issue.error_code for issue in outcome.report.issues}
+        assert expected_errors <= actual_errors
+        if expected_errors:
+            assert outcome.approved_plan is None
+        else:
+            assert outcome.approved_plan is not None
+
+
+def test_plan_policy_rechecks_envelope_on_repair_and_fallback() -> None:
+    registry, envelope = _registry_and_envelope()
+    legal = _legal_proposal()
+    excluded_contract = legal.steps[1].output_contract_version
+    restricted = replace(
+        envelope,
+        allowed_output_contracts=tuple(
+            contract
+            for contract in envelope.allowed_output_contracts
+            if contract != excluded_contract
+        ),
+    )
+    malformed = replace(legal, schema_version="statebus.plan_proposal.invalid")
+
+    repaired = PlanPolicyValidator(registry).validate_with_single_repair(
+        malformed,
+        restricted,
+        repair=lambda _report: legal,
+    )
+    assert repaired.approved_plan is None
+    assert "step_output_contract_not_allowed" in {
+        issue.error_code for issue in repaired.report.issues
+    }
+
+    fallback = PlanPolicyValidator(registry).validate_with_single_repair(
+        malformed,
+        restricted,
+        repair=lambda _report: legal,
+        fallback_proposal=legal,
+    )
+    assert fallback.approved_plan is None
+    assert "step_output_contract_not_allowed" in {
+        issue.error_code for issue in fallback.report.issues
+    }
 
 
 def test_plan_policy_clears_non_executor_field_hints_without_rejection() -> None:

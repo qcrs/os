@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+import secrets
 import time
 from typing import Callable, TYPE_CHECKING
 
@@ -53,6 +54,15 @@ class AdaptiveStepResult:
     quality_report_hashes: tuple[str, ...] = ()
     program_hashes: tuple[str, ...] = ()
     source_hashes: tuple[str, ...] = ()
+    # A role may return a precise memory receipt.  The Runtime carries it
+    # through unchanged; the Dispatcher validates it against the approved
+    # and disclosed input set before recording consumption.
+    consumed_memory_ids: tuple[str, ...] = ()
+    memory_consumption_modes: dict[str, str] = field(default_factory=dict)
+    rendered_request_hash: str = ""
+    executed_recipe_hashes: tuple[str, ...] = ()
+    output_decision_surface_hash: str = ""
+    memory_execution_outcome: str = "accepted"
     metrics: dict[str, float] = field(default_factory=dict)
 
 
@@ -631,7 +641,23 @@ class AdaptiveRuntimeEngine:
                     )
                 for event_record in result.data_plane_events:
                     event_type = str(event_record.get("event_type", ""))
-                    if event_type not in {"STATE_PUBLISHED", "STATE_RESOLVED", "STATE_CONSUMED"}:
+                    if event_type in {
+                        "STATE_PUBLISHED",
+                        "STATE_RESOLVED",
+                        "STATE_CONSUMED",
+                    }:
+                        channel = "semantic_state"
+                    elif event_type in {
+                        "LATENT_HANDOFF_DECIDED",
+                        "LATENT_STATE_COMMITTED",
+                        "LATENT_STATE_CONSUMED",
+                        "LATENT_OUTPUT_VALIDATED",
+                        "LATENT_HANDOFF_FALLBACK",
+                        "LATENT_STATE_RELEASED",
+                        "LATENT_STATE_RELEASE_FAILED",
+                    }:
+                        channel = "latent_state"
+                    else:
                         continue
                     telemetry.emit(TelemetryEvent.create(
                         trace_id=request.trace_id,
@@ -640,7 +666,7 @@ class AdaptiveRuntimeEngine:
                         attempt_id=attempt_id,
                         event_type=event_type,
                         role=str(event_record.get("role", step.role)),
-                        channel="semantic_state",
+                        channel=channel,
                         payload=dict(event_record.get("payload", {})),
                         metrics={
                             str(key): float(value)
@@ -818,6 +844,8 @@ class AdaptiveRuntimeEngine:
             workspace_root_id=request.workspace_root_id, max_runtime_ms=descriptor.max_runtime_ms,
             expires_at_ns=time.time_ns() + (descriptor.max_runtime_ms if request.grant_ttl_ms is None else request.grant_ttl_ms) * 1_000_000,
             approved_plan_hash=plan.approved_plan_hash,
+            grant_nonce=secrets.token_urlsafe(18),
+            issued_at_ns=time.time_ns(),
         )
 
     @staticmethod

@@ -5,11 +5,12 @@ with the main process over a Unix Domain Socket using typed Protobuf frames.
 
 Protocol (worker-side):
   1. Connect to the UDS path supplied via --socket-path.
-  2. Receive one ExecRequest frame from the main process.
-  3. Validate required fields; send ErrorResult on failure.
-  4. Read any memfd state refs (``memfd_fd:{fd}:{length}:{state_id}``).
-  5. On success: send AckReceived → RunStart → Heartbeat → SuccessResult.
-  6. Close connection and exit.
+  2. Receive HELLO and return HELLO_ACK after version/capability checks.
+  3. Receive one ExecRequest only after successful negotiation.
+  4. Validate required fields; send ErrorResult on failure.
+  5. Read any memfd state refs (``memfd_fd:{fd}:{length}:{state_id}``).
+  6. On success: send AckReceived → RunStart → Heartbeat → SuccessResult.
+  7. Close connection and exit.
 
 memfd refs
 ----------
@@ -25,22 +26,30 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import binascii
 import os
 from pathlib import Path
+import resource
 import socket
 import sys
 import time
 from dataclasses import replace
 
+from v2.contracts import CONTROL_PLANE_SCHEMA_VERSION
 from v2.control.messages import (
     AckReceived,
+    CONTROL_PROTOCOL_VERSION,
+    DEFAULT_WORKER_CAPABILITY_IDS,
     ErrorResult,
     EventType,
     ExecRequest,
+    Hello,
+    HelloAck,
     Heartbeat,
     RefHandle,
     RunStart,
     SuccessResult,
+    worker_capability_registry_digest,
 )
 from v2.control.transport import (
     decode_memfd_ref,
@@ -49,11 +58,35 @@ from v2.control.transport import (
     send_control_message,
     send_text_message,
 )
+from v2.control.worker_operations import (
+    TYPED_NUMERIC_OUTPUT_CONTRACT_VERSION,
+    TypedNumericOperationError,
+    compute_typed_numeric_summary,
+)
 from v2.state import (
     SemanticStateValidationError,
     select_dense_semantic_state,
     semantic_ref_from_sidecar,
 )
+
+
+def _apply_worker_limits() -> None:
+    """Apply defense-in-depth limits inside the worker process."""
+
+    os.umask(0o077)
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl(38, 1, 0, 0, 0)  # Linux PR_SET_NO_NEW_PRIVS
+    except (AttributeError, OSError, TypeError):
+        pass
+    try:
+        cpu_limit = max(2, int(os.environ.get("STATEBUS_WORKER_CPU_LIMIT_S", "60")))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
+        resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
+    except (AttributeError, OSError, ValueError):
+        pass
 
 
 def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
@@ -81,8 +114,68 @@ def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
     return result
 
 
+def _negotiate_hello(message: Hello) -> HelloAck:
+    errors: list[str] = []
+    protocol_version = (
+        CONTROL_PROTOCOL_VERSION
+        if CONTROL_PROTOCOL_VERSION in message.protocol_versions
+        else ""
+    )
+    schema_version = (
+        CONTROL_PLANE_SCHEMA_VERSION
+        if CONTROL_PLANE_SCHEMA_VERSION in message.schema_versions
+        else ""
+    )
+    registry_digest = worker_capability_registry_digest(
+        DEFAULT_WORKER_CAPABILITY_IDS
+    )
+    if message.header.event_type != EventType.HELLO:
+        errors.append("hello_event_type_invalid")
+    if not protocol_version:
+        errors.append("protocol_version_mismatch")
+    if not schema_version:
+        errors.append("schema_version_mismatch")
+    if message.controller_registry_digest != registry_digest:
+        errors.append("capability_registry_digest_mismatch")
+    missing = sorted(
+        set(message.required_capability_ids)
+        - set(DEFAULT_WORKER_CAPABILITY_IDS)
+    )
+    if missing:
+        errors.append(f"missing_required_capability:{'|'.join(missing)}")
+    return HelloAck(
+        header=replace(message.header, event_type=EventType.HELLO_ACK),
+        accepted=not errors,
+        accepted_protocol_version=protocol_version,
+        accepted_schema_version=schema_version,
+        worker_registry_digest=registry_digest,
+        supported_capability_ids=DEFAULT_WORKER_CAPABILITY_IDS,
+        error_detail=",".join(errors),
+        worker_pid=os.getpid(),
+    )
+
+
+def _send_pre_execution_error(
+    sock: socket.socket,
+    *,
+    header,
+    error_code: str,
+    error_detail: str,
+) -> None:
+    send_control_message(
+        sock,
+        ErrorResult(
+            header=replace(header, event_type=EventType.RES_ERR),
+            error_code=error_code,
+            error_detail=error_detail,
+            failed_at_ns=time.time_ns(),
+        ),
+    )
+
+
 def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     """Connect to supervisor, process one ExecRequest, return exit code."""
+    _apply_worker_limits()
     if carrier not in {"protobuf", "utf8_text"}:
         raise ValueError(f"unsupported subprocess carrier: {carrier}")
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -132,16 +225,45 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         return 0
 
     try:
-        message = recv_control_message(sock)
+        first_message = recv_control_message(sock)
     except Exception as exc:
         print(f"subprocess_worker: recv failed: {exc}", file=sys.stderr)
         sock.close()
         return 1
 
-    if not isinstance(message, ExecRequest):
+    if not isinstance(first_message, Hello):
+        if isinstance(first_message, ExecRequest):
+            _send_pre_execution_error(
+                sock,
+                header=first_message.header,
+                error_code="hello_required_before_exec",
+                error_detail="typed Protobuf ExecRequest received before HELLO",
+            )
         print(
-            f"subprocess_worker: expected ExecRequest, got {type(message).__name__}",
+            f"subprocess_worker: expected Hello, got {type(first_message).__name__}",
             file=sys.stderr,
+        )
+        sock.close()
+        return 1
+
+    hello_ack = _negotiate_hello(first_message)
+    send_control_message(sock, hello_ack)
+    if not hello_ack.accepted:
+        sock.close()
+        return 1
+
+    try:
+        message = recv_control_message(sock)
+    except Exception as exc:
+        print(f"subprocess_worker: exec recv failed: {exc}", file=sys.stderr)
+        sock.close()
+        return 1
+    if not isinstance(message, ExecRequest):
+        _send_pre_execution_error(
+            sock,
+            header=first_message.header,
+            error_code="exec_request_required_after_hello",
+            error_detail=type(message).__name__,
         )
         sock.close()
         return 1
@@ -151,8 +273,58 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     runtime_reuse_contract = message.runtime_reuse_contract or ""
     semantic_optional = "no_semantic_state" in runtime_reuse_contract
     semantic_selection = message.operation == "semantic_select_v1"
+    typed_numeric_summary = message.operation == "typed_numeric_summary_v1"
+    negotiated_capability = message.operation.strip() or "echo_refs_v1"
+    grant_required = semantic_selection or typed_numeric_summary
+
+    grant_authenticator = None
+    if grant_required:
+        secret_hex = os.environ.get("STATEBUS_CAPABILITY_GRANT_SECRET_HEX", "")
+        if not secret_hex:
+            # A semantic selector is a cross-process capability consumer.  It
+            # must never accept a random non-empty hash as authorization.
+            send_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="capability_grant_auth_required",
+                    error_detail="capability_grant_secret_missing",
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
+        try:
+            from v2.runtime.capability_grants import CapabilityGrantAuthenticator
+
+            grant_authenticator = CapabilityGrantAuthenticator(
+                secret=binascii.unhexlify(secret_hex),
+                nonce_registry_dir=Path(os.environ["STATEBUS_CAPABILITY_GRANT_NONCE_DIR"])
+                if os.environ.get("STATEBUS_CAPABILITY_GRANT_NONCE_DIR")
+                else None,
+            )
+        except (ValueError, binascii.Error):
+            send_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="capability_grant_auth_required",
+                    error_detail="capability_grant_secret_invalid",
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
 
     errors: list[str] = []
+    if header.event_type != EventType.REQ_EXEC:
+        errors.append("exec_event_type_invalid")
+    if header.schema_version != hello_ack.accepted_schema_version:
+        errors.append("exec_schema_version_not_negotiated")
+    if negotiated_capability not in first_message.required_capability_ids:
+        errors.append("exec_capability_not_negotiated")
+    if negotiated_capability not in hello_ack.supported_capability_ids:
+        errors.append("exec_capability_unsupported")
     if not message.workspace_root.strip():
         errors.append("workspace_root_missing")
     if not message.input_manifest_hash.strip():
@@ -161,7 +333,7 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         errors.append("output_contract_version_missing")
     if not semantic_optional and not message.state_refs:
         errors.append("state_refs_missing")
-    if not semantic_selection and not message.artifact_refs:
+    if not semantic_selection and not typed_numeric_summary and not message.artifact_refs:
         errors.append("artifact_refs_missing")
     if semantic_selection:
         if not message.state_root.strip():
@@ -175,6 +347,22 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         if len(message.state_refs) != 1:
             errors.append("semantic_state_ref_count_invalid")
 
+        if not message.capability_grant_token.strip():
+            errors.append("capability_grant_token_missing")
+    if typed_numeric_summary:
+        if message.output_contract_version != TYPED_NUMERIC_OUTPUT_CONTRACT_VERSION:
+            errors.append("typed_numeric_output_contract_invalid")
+        if len(message.state_refs) != 1:
+            errors.append("typed_numeric_input_ref_count_invalid")
+        elif decode_memfd_ref(message.state_refs[0]) is None:
+            errors.append("typed_numeric_input_fd_required")
+        if message.artifact_refs or message.memory_refs:
+            errors.append("typed_numeric_scope_violation")
+        if not message.capability_grant_hash.strip():
+            errors.append("capability_grant_hash_missing")
+        if not message.capability_grant_token.strip():
+            errors.append("capability_grant_token_missing")
+
     if errors:
         send_message(
             sock,
@@ -187,6 +375,39 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         )
         sock.close()
         return 1
+
+    if grant_required and grant_authenticator is not None:
+        bound_ref_ids = tuple(
+            ref.ref_id.split(":", 3)[-1]
+            if ref.ref_id.startswith("memfd_fd:")
+            else ref.ref_id
+            for ref in (*message.state_refs, *message.artifact_refs, *message.memory_refs)
+        )
+        try:
+            grant_authenticator.verify(
+                message.capability_grant_token,
+                expected_grant_hash=message.capability_grant_hash,
+                expected_task_id=header.task_id,
+                expected_session_id=message.capability_grant_session_id,
+                expected_step_id=header.step_id,
+                expected_attempt_id=header.attempt_id,
+                expected_ref_ids=bound_ref_ids,
+                expected_output_contract=message.output_contract_version,
+                consume=True,
+            )
+        except Exception as exc:
+            error_code = getattr(exc, "code", "capability_grant_verification_failed")
+            send_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code=str(error_code),
+                    error_detail=str(error_code),
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
 
     # Read any memfd state refs passed by the main process.
     memfd_payloads = _read_memfd_refs(message.state_refs)
@@ -266,6 +487,44 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
                 consumer_pid=selection.consumer_pid,
                 producer_pid=selection.producer_pid,
                 encoder_signature=selection.encoder_signature,
+            ),
+        )
+    elif typed_numeric_summary:
+        input_ref_id = next(iter(memfd_payloads), "")
+        try:
+            compute_started_ns = time.perf_counter_ns()
+            numeric_summary = compute_typed_numeric_summary(
+                memfd_payloads[input_ref_id],
+                input_ref_id=input_ref_id,
+                worker_pid=os.getpid(),
+            )
+            numeric_summary = replace(
+                numeric_summary,
+                worker_compute_ns=time.perf_counter_ns() - compute_started_ns,
+            )
+        except (KeyError, TypedNumericOperationError) as exc:
+            error_detail = str(exc) or "typed_numeric_input_unreadable"
+            send_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="typed_numeric_compute_failed",
+                    error_detail=error_detail,
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
+        send_message(
+            sock,
+            SuccessResult(
+                header=replace(header, event_type=EventType.RES_SUCC),
+                state_refs=message.state_refs,
+                output_contract_version=message.output_contract_version,
+                completed_at_ns=time.time_ns(),
+                consumed_state_ref_id=input_ref_id,
+                consumer_pid=os.getpid(),
+                numeric_summary=numeric_summary,
             ),
         )
     else:

@@ -1,0 +1,21 @@
+{
+  "schema_version": "statebus.runtime_freeze_snapshot.v1",
+  "recorded_at": "2026-07-21 05:45:47 CST",
+  "freeze_kind": "dirty_worktree_content_hash",
+  "git_head": "bda17745ecb8a160221efe3b58ca678644dac81a",
+  "git_dirty": true,
+  "dirty_entry_count": 76,
+  "runtime_freeze_sha": "fb58c5e05dd28bdb52e733f20463f35ac4c0143cdacbf3ad153eee0a83697fad",
+  "directory_hashes": {
+    "v2/control": "975d6e4b57627c738cd6949d39de910aaf3e44b29ece0526bd52fa233dba3ffb",
+    "v2/memory": "c1bd938945bcaf6f785c0895d431819672d3f0247508357e66717af31f04ba9a",
+    "v2/runtime": "a5db81cd08e633ae75f319cfd0a0ebde79f3a53459cd09333fc64b824b74c3eb",
+    "v2/state": "f87587bfad569aeec41b1c3a83fc1011e1530a5bece804fa7d5efe5e86c9e08f"
+  },
+  "hash_command": "rg --files DIR | sort | xargs sha256sum | sha256sum",
+  "per_file_hashes_path": "docs/improvement/27_statebus_v2_remediation_and_native_latent_execution_20260721/pre_restart_runtime_freeze_files.sha256",
+  "per_file_hashes_sha256": "04fda80c687232c5bc7e94c9416fa9b0176e3862291606b9e6b1f930c7578135",
+  "per_file_count": 63,
+  "parent_snapshot": "docs/improvement/27_statebus_v2_remediation_and_native_latent_execution_20260721/track_r_runtime_freeze_snapshot.json",
+  "claim_scope": "Track R F-01 through F-12 plus authorized Track L Phase 1-3 runtime additions; pre-vLLM-restart dirty-worktree snapshot, not a clean commit-range freeze"
+}

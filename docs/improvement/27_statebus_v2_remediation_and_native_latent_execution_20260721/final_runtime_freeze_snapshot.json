@@ -1,0 +1,22 @@
+{
+  "schema_version": "statebus.runtime_freeze_snapshot.v1",
+  "recorded_at": "2026-07-22 03:05:58 CST",
+  "freeze_kind": "dirty_worktree_content_hash",
+  "git_head": "bda17745ecb8a160221efe3b58ca678644dac81a",
+  "git_dirty": true,
+  "dirty_entry_count": 90,
+  "runtime_freeze_sha": "01b919a7280bcc5f0931b6bf136386ab984d7977337529bd529e2f68686e4866",
+  "directory_hashes": {
+    "v2/control": "975d6e4b57627c738cd6949d39de910aaf3e44b29ece0526bd52fa233dba3ffb",
+    "v2/memory": "c1bd938945bcaf6f785c0895d431819672d3f0247508357e66717af31f04ba9a",
+    "v2/runtime": "c13a0901d944f1e3ea14ad01760152e033e3940c98dcc7731fc8812b825f0f9e",
+    "v2/state": "f87587bfad569aeec41b1c3a83fc1011e1530a5bece804fa7d5efe5e86c9e08f"
+  },
+  "hash_command": "content-addressed per-file SHA256 ledger with sorted project-relative paths",
+  "per_file_hashes_path": "docs/improvement/27_statebus_v2_remediation_and_native_latent_execution_20260721/final_runtime_freeze_files.sha256",
+  "per_file_hashes_sha256": "26d9b0578ca5c21af04da8de0d9236e63f6a81543668da1da71cb50731092813",
+  "per_file_count": 63,
+  "parent_snapshot": "docs/improvement/27_statebus_v2_remediation_and_native_latent_execution_20260721/pre_restart_runtime_freeze_snapshot.json",
+  "previous_runtime_freeze_sha": "0a1297789630e4b2a965008930597f1f0ce5f88b3fd906e42f212ab75bc584a9",
+  "claim_scope": "Track R F-01 through F-12 plus authorized Track L Phase 1-5 runtime integration and the 2026-07-22 latent chat-contract health audit fields; post-experiment dirty-worktree snapshot, not a clean commit-range freeze"
+}

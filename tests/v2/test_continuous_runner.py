@@ -801,6 +801,7 @@ def test_continuous_runner_executes_formal_long_horizon_l3_with_negative_fixture
         )
         assert fixture_decision["verdict"] == "incompatible"
         assert fixture_decision["policy_approved"] is False
+
         assert fixture_memory_id not in {
             record["memory_id"]
             for record in memory_audit["records"]
@@ -812,6 +813,12 @@ def test_continuous_runner_executes_formal_long_horizon_l3_with_negative_fixture
                 encoding="utf-8"
             )
             assert fixture_memory_id not in rendered_request
+
+    financial_report = reports_by_family["formal_financial_reports_v1"]
+    assist_round = financial_report.layer_reports[0].cases[5]
+    assert assist_round.metrics["history_strategy_reuse_count"] >= 1.0
+    assert assist_round.metrics["memory_consumed_count"] == 0.0
+    assert assist_round.metrics["memory_compatible_match_count"] >= 1.0
 
     financial = reports_by_family["formal_financial_reports_v1"].layer_reports[0]
     operating = reports_by_family["formal_operating_metrics_v1"].layer_reports[0]

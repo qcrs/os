@@ -890,8 +890,11 @@ def test_v2_smoke_memory_slice_is_visible_to_retriever_and_executor(tmp_path: Pa
     assert result.replay_class == "disallowed"
     assert result.task_metrics["memory_candidate_count"] == 1.0
     assert result.task_metrics["memory_compatible_match_count"] == 1.0
-    assert result.task_metrics["memory_consumed_count"] == 1.0
-    assert result.task_metrics["memory_assist_count"] == 1.0
+    # This legacy smoke path exposes the candidate in role slices but has no
+    # role receipt proving behavioral consumption. F-03 therefore keeps the
+    # assist visible while refusing to count it as consumed.
+    assert result.task_metrics["memory_consumed_count"] == 0.0
+    assert result.task_metrics["memory_assist_count"] == 0.0
     assert result.task_metrics["skipped_step_count"] == 0.0
     assert result.task_metrics["retriever_memory_bytes"] > 0.0
     assert result.task_metrics["executor_memory_bytes"] > 0.0

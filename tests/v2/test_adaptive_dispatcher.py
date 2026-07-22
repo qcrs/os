@@ -5,7 +5,18 @@ import time
 
 import pytest
 
-from v2.contracts import CapabilityGrant, Claim, ClaimSet, EvidenceCoverageStatus, EvidenceRequest, RefStatus, TransformProgram, TransformStep
+from v2.contracts import (
+    CapabilityGrant,
+    Claim,
+    ClaimSet,
+    CompatibilityVerdict,
+    EvidenceCoverageStatus,
+    EvidenceRequest,
+    RefStatus,
+    ReplayClass,
+    TransformProgram,
+    TransformStep,
+)
 from v2.refs import CanonicalEvidencePack, EvidenceItem, ExecutionArtifactRef, TableCellLocator
 from v2.runtime.adaptive_dispatcher import AdaptiveCapabilityDispatcher, AdaptiveDispatchContext, AdaptiveDispatchError, StoredAdaptiveArtifact
 from v2.runtime.adaptive_runtime import AdaptiveRuntimeRequest, AdaptiveStepResult
@@ -227,6 +238,88 @@ def test_dispatcher_rejects_missing_runtime_builtin_before_handler_side_effect(t
     )
     assert not outcome.success
     assert outcome.error_code == "runtime_builtin_handler_not_registered"
+
+
+def _memory_input(memory_id: str, *, replay_class: ReplayClass = ReplayClass.ASSIST) -> dict[str, object]:
+    return {
+        "ref_id": memory_id,
+        "replay_class": replay_class.value,
+        "compatibility_verdict": CompatibilityVerdict.COMPATIBLE.value,
+        "input_payload_hash": f"payload-{memory_id}",
+        "execution_recipe_hash": f"recipe-{memory_id}",
+    }
+
+
+def test_memory_receipt_persists_output_surface_and_prompt_hash(tmp_path) -> None:
+    registry, envelope, approved = _setup()
+    step = approved.steps[1]
+    context = AdaptiveDispatchContext(registry=registry)
+    dispatcher = AdaptiveCapabilityDispatcher(context=context)
+
+    metrics = dispatcher._record_memory_consumption(
+        memory_inputs=(_memory_input("memory-1"),),
+        step=step,
+        downstream_ref_ids=("artifact-1",),
+        before_surface_hash="before",
+        consumed_memory_ids=("memory-1",),
+        consumption_modes={"memory-1": "executed"},
+        rendered_request_hash="prompt-hash",
+        output_decision_surface_hash="output-hash",
+    )
+
+    assert metrics["memory_consumed_count"] == 1.0
+    record = context.memory_consumption_records[0]
+    assert record.rendered_request_hash == "prompt-hash"
+    assert record.output_decision_surface_hash == "output-hash"
+    assert record.after_decision_surface_hash != "before"
+
+
+def test_memory_receipt_rejects_unapproved_id_and_missing_hash(tmp_path) -> None:
+    registry, envelope, approved = _setup()
+    step = approved.steps[1]
+    context = AdaptiveDispatchContext(registry=registry)
+    dispatcher = AdaptiveCapabilityDispatcher(context=context)
+
+    with pytest.raises(AdaptiveDispatchError, match="unapproved_memory_consumption_receipt"):
+        dispatcher._record_memory_consumption(
+            memory_inputs=(_memory_input("memory-1"),),
+            step=step,
+            downstream_ref_ids=(),
+            before_surface_hash="before",
+            consumed_memory_ids=("memory-2",),
+        )
+    with pytest.raises(AdaptiveDispatchError, match="memory_consumption_receipt_hash_missing"):
+        dispatcher._record_memory_consumption(
+            memory_inputs=(_memory_input("memory-1"),),
+            step=step,
+            downstream_ref_ids=(),
+            before_surface_hash="before",
+            consumed_memory_ids=("memory-1",),
+        )
+
+
+def test_failed_recipe_is_attempted_but_never_replay_or_skip(tmp_path) -> None:
+    registry, envelope, approved = _setup()
+    step = approved.steps[1]
+    context = AdaptiveDispatchContext(registry=registry)
+    dispatcher = AdaptiveCapabilityDispatcher(context=context)
+
+    dispatcher._record_memory_consumption(
+        memory_inputs=(_memory_input("memory-1", replay_class=ReplayClass.VALIDATED_REPLAY),),
+        step=step,
+        downstream_ref_ids=(),
+        before_surface_hash="before",
+        replay_memory_id="memory-1",
+        consumed_memory_ids=("memory-1",),
+        consumption_modes={"memory-1": "recipe_executed"},
+        executed_recipe_hashes=("recipe-memory-1",),
+        execution_outcome="failed",
+        execution_kind="llm_bounded_python",
+    )
+    record = context.memory_consumption_records[0]
+    assert record.execution_outcome == "failed"
+    assert record.recipe_recomputed is False
+    assert record.skipped_llm_call_count == 0
 
 
 def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_artifact(tmp_path) -> None:

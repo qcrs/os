@@ -8,14 +8,19 @@ from pathlib import Path
 
 import pytest
 
+from v2.contracts import CONTROL_PLANE_SCHEMA_VERSION
 from v2.control import (
+    CONTROL_PROTOCOL_VERSION,
     ControlHeader,
     EventType,
     ExecRequest,
+    Hello,
+    NumericSummaryResult,
     RefHandle,
     ReusePolicy,
     deframe_control_message,
     frame_control_message,
+    worker_capability_registry_digest,
 )
 from v2.control.transport import (
     ControlPlaneLoopbackServer,
@@ -74,6 +79,63 @@ def test_control_plane_frame_round_trip_preserves_typed_refs() -> None:
     assert parsed.evidence_budget_bytes == 4096
     assert parsed.expected_encoder_signature == "encoder-signature"
     assert parsed.capability_grant_hash == "grant-hash"
+
+
+def test_control_plane_frame_round_trip_preserves_hello_negotiation() -> None:
+    message = Hello(
+        header=ControlHeader(
+            trace_id="trace-hello",
+            task_id="task-hello",
+            step_id="control-handshake",
+            attempt_id="attempt-1",
+            target_role="executor_worker",
+            timeout_ms=5000,
+            event_type=EventType.HELLO,
+        ),
+        protocol_versions=(CONTROL_PROTOCOL_VERSION,),
+        schema_versions=(CONTROL_PLANE_SCHEMA_VERSION,),
+        controller_registry_digest=worker_capability_registry_digest(),
+        required_capability_ids=("echo_refs_v1",),
+        controller_pid=os.getpid(),
+    )
+
+    parsed = deframe_control_message(frame_control_message(message))
+
+    assert parsed == message
+
+
+def test_control_plane_frame_round_trip_preserves_typed_numeric_result() -> None:
+    summary = NumericSummaryResult(
+        input_ref_id="numeric-1",
+        input_payload_hash="input-hash",
+        row_count=2,
+        total=4.0,
+        mean=2.0,
+        minimum=1.0,
+        maximum=3.0,
+        schema_digest="schema-hash",
+        output_artifact_hash="output-hash",
+        validator_receipt_hash="receipt-hash",
+        worker_pid=42,
+        worker_compute_ns=100,
+    )
+    message = SuccessResult(
+        header=ControlHeader(
+            trace_id="trace-numeric",
+            task_id="task-numeric",
+            step_id="numeric-summary",
+            attempt_id="attempt-1",
+            target_role="executor",
+            timeout_ms=5000,
+            event_type=EventType.RES_SUCC,
+        ),
+        output_contract_version="statebus.numeric_summary.v1",
+        numeric_summary=summary,
+    )
+
+    parsed = deframe_control_message(frame_control_message(message))
+
+    assert parsed == message
 
 
 def test_loopback_transport_shortens_overlong_unix_socket_path(tmp_path: Path) -> None:

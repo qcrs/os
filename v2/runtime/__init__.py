@@ -1,4 +1,10 @@
 from v2.runtime.commit_gate import CommitGateDecision, RuntimeCommitGate
+from v2.runtime.capability_grants import (
+    CapabilityGrantAuthenticationError,
+    CapabilityGrantAuthenticator,
+    peer_credentials,
+    require_peer_uid,
+)
 from v2.runtime.execution import (
     ExecutionLogCapture,
     ExecutionStepRecord,
@@ -117,6 +123,8 @@ __all__ = [
     "CompiledRolePrompt",
     "constrain_visible_candidates",
     "CommitGateDecision",
+    "CapabilityGrantAuthenticationError",
+    "CapabilityGrantAuthenticator",
     "ExecutionLogCapture",
     "ExecutionStepRecord",
     "FallbackAction",
@@ -196,6 +204,8 @@ __all__ = [
     "kv_cache_model_profile_from_hf_config",
     "load_kv_cache_model_profile",
     "planner_handoff_replay_hash",
+    "peer_credentials",
+    "require_peer_uid",
     "parse_vllm_prefix_cache_metrics",
     "runtime_signature_json",
     "runtime_signature_payload",

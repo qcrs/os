@@ -4426,9 +4426,10 @@ def test_headline_gates_split_memory_replay_from_generic_state_transfer_flag() -
 def test_active_docs_reference_memory_dual_mode_fairness_v3_and_drop_old_formal_wording() -> None:
     readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     tasks_readme_text = (REPO_ROOT / "tasks" / "README.md").read_text(encoding="utf-8")
-    master_text = (REPO_ROOT / "docs" / "reports" / "MASTER_PRESENTATION_GUIDE.md").read_text(encoding="utf-8")
+    legacy_reports = REPO_ROOT / "docs" / "archive" / "legacy_202606_host_mainline" / "reports"
+    master_text = (legacy_reports / "MASTER_PRESENTATION_GUIDE.md").read_text(encoding="utf-8")
     task_design_text = (
-        REPO_ROOT / "docs" / "reports" / "task_design_and_mode_comparison.md"
+        legacy_reports / "task_design_and_mode_comparison.md"
     ).read_text(encoding="utf-8")
 
     for text in (readme_text, tasks_readme_text, master_text, task_design_text):

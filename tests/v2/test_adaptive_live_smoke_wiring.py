@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 
 from scripts.v2_diagnostics import run_adaptive_agent_smoke, run_adaptive_mode_matrix, run_llm_codeact_smoke
+from v2.runtime.capability_registry import CapabilityRegistry
+from v2.runtime.domain_packs import register_long_doc_analysis_capabilities
 
 
 def _model_attempt() -> dict[str, object]:
@@ -64,6 +66,22 @@ def test_adaptive_live_smoke_enters_runtime_through_dispatcher() -> None:
 
     assert "dispatcher=AdaptiveCapabilityDispatcher(context=dispatch_context)" in source
     assert "execute_step=" not in source
+
+
+def test_adaptive_live_smoke_authorizes_registered_intermediate_output_contracts() -> None:
+    registry = CapabilityRegistry()
+    register_long_doc_analysis_capabilities(registry)
+
+    assert run_adaptive_agent_smoke._capability_output_contracts(
+        registry,
+        run_adaptive_agent_smoke._SMOKE_CAPABILITY_IDS,
+    ) == (
+        "statebus.cited_report.v1",
+        "statebus.evidence_pack.v2",
+        "statebus.metric_series.v1",
+    )
+    source = inspect.getsource(run_adaptive_agent_smoke.main)
+    assert "allowed_output_contracts=_capability_output_contracts(" in source
 
 
 def test_codeact_live_smoke_uses_runtime_projection_upstream_artifact() -> None:

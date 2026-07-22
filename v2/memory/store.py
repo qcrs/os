@@ -24,6 +24,10 @@ from v2.memory.models import (
     MemoryValidationStatus,
     StructuredEmbedding,
 )
+from v2.parameterized_recipe import (
+    audit_parameterized_recipe_source,
+    bound_recipe_parameters,
+)
 
 
 @dataclass
@@ -486,6 +490,35 @@ class MemoryIndexStore:
 
         replay_ready = bool(ref.metadata.get("replay_ready", False))
         recipe = ref.metadata.get("execution_recipe")
+        parameter_errors: tuple[str, ...] = ()
+        if (
+            not exact_spec
+            and contract_compatible
+            and isinstance(recipe, dict)
+            and query.canonical_task_spec is not None
+        ):
+            _, parameter_errors = bound_recipe_parameters(
+                recipe=recipe,
+                source_spec=commit.canonical_task_spec,
+                current_spec=query.canonical_task_spec,
+            )
+            if not parameter_errors and str(recipe.get("execution_kind", "")) == "llm_bounded_python":
+                source = str(recipe.get("recipe_template", recipe.get("source", "")))
+                parameter_schema = recipe.get("parameter_schema", {})
+                source_bindings = recipe.get("source_parameter_bindings", {})
+                if not isinstance(parameter_schema, dict) or not isinstance(source_bindings, dict):
+                    parameter_errors = ("parameterized_recipe_contract_invalid",)
+                else:
+                    parameter_errors = audit_parameterized_recipe_source(
+                        source,
+                        parameter_schema=parameter_schema,
+                        parameter_bindings=source_bindings,
+                        parameter_relpath=str(recipe.get("parameter_relpath", "")),
+                    )
+            reasons.extend(
+                f"parameterized_recipe_ineligible:{error}"
+                for error in parameter_errors
+            )
         replay_class = ReplayClass.ASSIST
         if (
             ref.replay_class == ReplayClass.EXACT_REPLAY
@@ -495,6 +528,7 @@ class MemoryIndexStore:
             and not schema_drift
             and replay_ready
             and isinstance(recipe, dict)
+            and not parameter_errors
         ):
             replay_class = ReplayClass.EXACT_REPLAY
         elif (
@@ -504,6 +538,7 @@ class MemoryIndexStore:
             and not schema_drift
             and replay_ready
             and isinstance(recipe, dict)
+            and not parameter_errors
         ):
             replay_class = ReplayClass.VALIDATED_REPLAY
 

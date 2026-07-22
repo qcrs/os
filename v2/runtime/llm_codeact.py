@@ -31,6 +31,11 @@ from v2.runtime.capability_validators import (
     default_capability_validator_registry,
 )
 from v2.runtime.codeact_sandbox import CodeActSandboxReadiness, CodeActSandboxResult, CodeActSandboxRunner
+from v2.parameterized_recipe import (
+    RECIPE_PARAMETER_RELPATH,
+    audit_parameterized_recipe_source,
+    validate_recipe_parameter_bindings,
+)
 from v2.runtime.workspace import ArtifactLifecycleManager
 from v2.utils import sha256_digest, stable_json_dumps
 
@@ -94,7 +99,11 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
         if request.authorized_input_schemas
         else stable_json_dumps(request.authorized_input_schema)
     )
-    input_paths = tuple(request.policy.allowed_input_relpaths)
+    input_paths = tuple(
+        path
+        for path in request.policy.allowed_input_relpaths
+        if path != request.recipe_parameter_relpath
+    )
     primary_path = input_paths[-1] if input_paths else "inputs/task.json"
     input_instructions = (
         f"The JSON files at {', '.join(input_paths)} are exactly top-level arrays of authorized row objects. "
@@ -104,6 +113,16 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
         if len(input_paths) > 1
         else f"The JSON at {primary_path} is exactly a top-level array of authorized row objects. "
     )
+    parameter_instructions = ""
+    if request.recipe_parameter_schema:
+        parameter_instructions = (
+            f"The JSON at {request.recipe_parameter_relpath} is a controller-validated object of reusable task "
+            f"parameters with schema {stable_json_dumps(request.recipe_parameter_schema)} and current bindings "
+            f"{stable_json_dumps(request.recipe_parameter_bindings)}. Load it exactly once into a top-level variable "
+            "named `statebus_params` using json.loads(Path(...).read_text(encoding='utf-8')). Use "
+            "`statebus_params[\"name\"]` for task-dependent filters and identifier outputs. Never embed a current "
+            "parameter value as a Python literal or construct Python source from a parameter value.\n"
+        )
     return (
         "You generate one complete pure-Python data transformation file for a sandbox.\n"
         "Return only a Python file or a JSON object with exactly one `code` field.\n"
@@ -123,6 +142,7 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
         f"Authorized input schema: {input_schema_text}.\n"
         f"Retrieved semantic context: {stable_json_dumps(request.retrieval_context)}.\n"
         f"Compatible memory inputs: {stable_json_dumps(request.memory_inputs)}.\n"
+        f"{parameter_instructions}"
         "Follow the task goal and every operation-semantics requirement exactly, including exact source field names, "
         "the stated statistical method, rounding precision, row ordering, and output field meanings. Do not replace a "
         "named source column with a similar column. Before returning code, audit it against every explicit task constraint: "
@@ -136,8 +156,8 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
         "In particular, using a module namespace such as re, statistics, or collections requires its explicit allowed import.\n"
         f"{input_instructions}Their keys match the authorized schema(s). They are not objects containing task_parameters or source_profile, and they are not "
         "a CSV file. The original dataset path, dataset ID, and CSV path are metadata only and must never be opened. "
-        "Use task parameters and the natural-language task goal from this prompt to choose literal filters, while "
-        "reading all data values only from that JSON row array.\n"
+        "Use the controller parameter file for task-dependent filters; use the natural-language task goal only for "
+        "operation selection. Read all business data values only from the authorized JSON row arrays.\n"
         "String replacement is allowed only for in-memory text parsing such as removing thousands separators. "
         "Path.replace and every filesystem rename/replace operation remain forbidden.\n"
         "When a numeric cell contains a leading/base value followed by a bracketed range such as "
@@ -289,6 +309,23 @@ def audit_generated_source(source: str, policy: CodeGenerationPolicy) -> CodePol
     )
 
 
+def audit_generated_source_for_request(
+    source: str,
+    request: CodeGenerationRequest,
+) -> CodePolicyReport:
+    report = audit_generated_source(source, request.policy)
+    parameter_violations = audit_parameterized_recipe_source(
+        source,
+        parameter_schema=request.recipe_parameter_schema,
+        parameter_bindings=request.recipe_parameter_bindings,
+        parameter_relpath=request.recipe_parameter_relpath,
+    )
+    if not parameter_violations:
+        return report
+    violations = tuple(sorted(set((*report.violations, *parameter_violations))))
+    return replace(report, passed=False, violations=violations)
+
+
 def build_code_repair_guidance(
     violations: tuple[str, ...],
     policy: CodeGenerationPolicy,
@@ -334,6 +371,20 @@ def build_code_repair_guidance(
             "The prior program passed sandbox and schema checks but its output failed the registered Runtime validator. "
             "Re-derive the result from the authorized input rows and audit every operation against the supplied semantic "
             "contract. The validator intentionally does not disclose expected values."
+        )
+    if any(
+        item.startswith((
+            "parameter_",
+            "undeclared_parameter_access:",
+            "allowed_parameter_bindings_",
+            "source_parameter_bindings_",
+        ))
+        for item in violations
+    ):
+        guidance.append(
+            "Load the exact authorized parameter JSON path once into the top-level variable `statebus_params`, "
+            "read declared values only with `statebus_params[\"name\"]`, and replace every current task-parameter "
+            "literal with that lookup. Do not build or modify Python source from parameter values."
         )
     return " ".join(guidance)
 
@@ -459,6 +510,7 @@ class LlmCodeActOutcome:
     output_payload: dict[str, Any] | list[dict[str, Any]] | None = None
     quality_report: "CapabilityQualityReport | None" = None
     quality_reports: tuple["CapabilityQualityReport", ...] = ()
+    executed_source: str = ""
 
 
 @dataclass
@@ -541,7 +593,7 @@ class LlmCodeActRunner:
             source_hash=sha256_digest(source.encode("utf-8")), raw_response_hash=sha256_digest(raw_response.encode("utf-8")),
             model_id=model_id,
         )
-        report = audit_generated_source(candidate.source, request.policy)
+        report = audit_generated_source_for_request(candidate.source, request)
         repairs: list[CodeRepairRecord] = []
         policy_repair_count = 0
         runtime_repair_count = 0
@@ -563,7 +615,7 @@ class LlmCodeActRunner:
                 source_hash=sha256_digest(repaired.encode("utf-8")), raw_response_hash=candidate.raw_response_hash,
                 model_id=model_id,
             )
-            report = audit_generated_source(candidate.source, request.policy)
+            report = audit_generated_source_for_request(candidate.source, request)
         if not report.passed:
             repairs.append(CodeRepairRecord(
                 attempt_index=len(repairs) + 1,
@@ -653,7 +705,7 @@ class LlmCodeActRunner:
                     raw_response_hash=candidate.raw_response_hash,
                     model_id=candidate.model_id,
                 )
-                report = audit_generated_source(candidate.source, request.policy)
+                report = audit_generated_source_for_request(candidate.source, request)
                 if not report.passed:
                     failure = self._execution_failure(
                         request, grant, candidate, report, tuple(repairs), readiness,
@@ -727,7 +779,7 @@ class LlmCodeActRunner:
                 raw_response_hash=candidate.raw_response_hash,
                 model_id=candidate.model_id,
             )
-            report = audit_generated_source(candidate.source, request.policy)
+            report = audit_generated_source_for_request(candidate.source, request)
             if not report.passed:
                 failure = self._execution_failure(
                     request, grant, candidate, report, tuple(repairs), readiness,
@@ -783,6 +835,7 @@ class LlmCodeActRunner:
             output_payload=payload,
             quality_report=quality_report,
             quality_reports=tuple(quality_reports),
+            executed_source=candidate.source,
         )
         self.cache.put(self.cache.key(request, candidate), outcome, task_id=request.task_id, session_id=grant.session_id)
         return outcome
@@ -811,6 +864,23 @@ class LlmCodeActRunner:
             raise CodePolicyError("capability_grant_expired")
         if request.input_ref_ids != grant.input_ref_ids:
             raise CodePolicyError("grant_input_refs_mismatch")
+        if request.recipe_parameter_schema:
+            if (
+                request.recipe_parameter_relpath != RECIPE_PARAMETER_RELPATH
+                or request.recipe_parameter_relpath not in request.policy.allowed_input_relpaths
+            ):
+                raise CodePolicyError("recipe_parameter_path_not_authorized")
+            parameter_errors = validate_recipe_parameter_bindings(
+                schema=request.recipe_parameter_schema,
+                bindings=request.recipe_parameter_bindings,
+                allowed_parameter_bindings=tuple(request.recipe_parameter_schema),
+            )
+            if parameter_errors:
+                raise CodePolicyError(
+                    "recipe_parameter_bindings_invalid:" + ",".join(parameter_errors)
+                )
+        elif request.recipe_parameter_bindings or request.recipe_parameter_relpath:
+            raise CodePolicyError("recipe_parameter_contract_incomplete")
         if not any(self.validator_registry.contains(validator_id) for validator_id in descriptor.validator_ids):
             raise CodePolicyError("capability_quality_validator_unregistered")
         self._validate_policy_paths(request.policy)

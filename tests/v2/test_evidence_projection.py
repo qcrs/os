@@ -75,6 +75,9 @@ def test_projection_materializes_rows_from_evidence_and_preserves_locator_lineag
     assert report.consumed_evidence_item_ids == ("revenue-q1",)
     assert report.row_lineage[0]["evidence_item_id"] == "revenue-q1"
     assert report.row_lineage[0]["locator"]["table_id"] == "income"
+    assert report.row_lineage[0]["field_lineage"]["revenue_musd"]["evidence_item_id"] == "revenue-q1"
+    assert report.row_lineage[0]["field_lineage"]["revenue_musd"]["artifact_field_path"] == "rows[0].revenue_musd"
+    assert artifact.metadata["row_lineage"][0]["field_lineage"]["quarter"]["artifact_field_path"] == "rows[0].quarter"
     assert json.loads((tmp_path / artifact.relpath).read_text(encoding="utf-8")) == list(rows)
 
 

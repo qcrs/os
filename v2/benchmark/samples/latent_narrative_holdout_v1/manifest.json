@@ -1,0 +1,233 @@
+{
+  "schema_version": "statebus.latent_narrative_holdout.v1",
+  "family_id": "latent_narrative_holdout_v1",
+  "frozen_at_utc": "2026-07-21T00:00:00Z",
+  "schedule_seed": 20260721,
+  "schedule_policy": "three fixed randomized orders paired with their reverse",
+  "claim_boundary": "offline long-narrative quality and native engine-local aligned latent feasibility only",
+  "fixed_parameters": {
+    "model_family": "Qwen3-32B",
+    "vllm_version": "0.9.2",
+    "engine_generation": "V0",
+    "temperature": 0.0,
+    "seed": 7,
+    "summarizer_max_tokens": 768,
+    "retriever_text_max_tokens": 128,
+    "latent_steps": 8,
+    "memory_enabled": false,
+    "codeact_enabled": false,
+    "prefix_alignment_mode": "independent"
+  },
+  "quality_thresholds": {
+    "required_fact_count": 24,
+    "c0_min_passed_facts": 22,
+    "t0_min_passed_facts": 20,
+    "l1_min_passed_facts": 22,
+    "l1_max_fact_deficit_vs_c0": 1,
+    "l1_min_fact_gain_vs_a0": 3,
+    "l1_required_mechanism_cases": 6,
+    "n1_required_pre_forward_rejections": 6
+  },
+  "source_documents": [
+    {
+      "item_id": "orion-ops-2026",
+      "path": "v2/benchmark/samples/continuous_task_families/kv_prefix_reuse/orion_factory_ops_report_2026.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "nova-ops-2026",
+      "path": "v2/benchmark/samples/continuous_task_families/kv_prefix_reuse/nova_retail_ops_report_2026.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "acme-ops-2026",
+      "path": "v2/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+      "bucket": "lexical_hint"
+    },
+    {
+      "item_id": "meridian-network-review",
+      "path": "v2/benchmark/samples/semantic_holdout/meridian_network_review.md",
+      "bucket": "lexical_hint"
+    },
+    {
+      "item_id": "delta-hub-review",
+      "path": "v2/benchmark/samples/semantic_holdout/delta_hub_review.md",
+      "bucket": "lexical_hint"
+    },
+    {
+      "item_id": "cross-period-financial-report",
+      "path": "v2/benchmark/samples/continuous_task_families/cross_period_financial/cross_period_financial_report.md",
+      "bucket": "lexical_hint"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "latent-time-orion-q3",
+      "category": "cross_paragraph_time_qualification",
+      "task": "For Orion Factory Systems, explain the Q3 2026 on-time-delivery deterioration and identify the specifically timed operating response. Preserve quarter and month qualifiers and cite the source items.",
+      "lane_order": ["C0", "T0", "A0", "L1", "N1"],
+      "required_facts": [
+        {
+          "fact_id": "orion_q3_delivery_value",
+          "term_groups": [["q3"], ["90.8"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_supplier_september_miss",
+          "term_groups": [["encoder"], ["september"], ["supplier", "suppliers"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_consolidated_line_training_delay",
+          "term_groups": [["training"], ["consolidated", "consolidation"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_october_night_shift",
+          "term_groups": [["october"], ["night shift"]],
+          "source_item_ids": ["orion-ops-2026"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-time-nova-q3",
+      "category": "cross_paragraph_time_qualification",
+      "task": "For Nova Retail Logistics, trace the Q2-to-Q3 2026 gross-margin change, explain the Q3 causes, and identify the response explicitly scheduled for the first month of Q4. Preserve time qualifiers and cite the source items.",
+      "lane_order": ["N1", "L1", "A0", "T0", "C0"],
+      "required_facts": [
+        {
+          "fact_id": "nova_q2_margin",
+          "term_groups": [["q2"], ["37.4"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_q3_margin",
+          "term_groups": [["q3"], ["36.2"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_q3_margin_costs",
+          "term_groups": [["cross dock", "cross-dock"], ["temporary labor"], ["carrier premium", "carrier premiums"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_first_month_q4_contingency",
+          "term_groups": [["first month"], ["q4"], ["contingency carrier", "contingency carriers"]],
+          "source_item_ids": ["nova-ops-2026"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-risk-orion",
+      "category": "conflict_or_risk_judgment",
+      "task": "Assess Orion Factory Systems' operational risk hierarchy and explain why management still describes the outlook as manageable. Include the combined-risk qualification and cite the source items.",
+      "lane_order": ["T0", "C0", "L1", "N1", "A0"],
+      "required_facts": [
+        {
+          "fact_id": "orion_primary_encoder_concentration_risk",
+          "term_groups": [["supplier concentration"], ["high resolution encoder", "high-resolution encoder"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_deployment_window_backlog",
+          "term_groups": [["deployment window", "deployment windows"], ["enterprise"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_emergency_freight_margin_risk",
+          "term_groups": [["emergency freight"], ["margin"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_combined_risk_customer_confidence",
+          "term_groups": [["supplier miss", "supplier misses"], ["deployment delay", "deployment delays"], ["customer confidence"]],
+          "source_item_ids": ["orion-ops-2026"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-risk-nova",
+      "category": "conflict_or_risk_judgment",
+      "task": "Assess Nova Retail Logistics' operational risk hierarchy and state the condition under which management considers the same-day program manageable. Preserve the control-point exception and cite the source items.",
+      "lane_order": ["A0", "N1", "L1", "C0", "T0"],
+      "required_facts": [
+        {
+          "fact_id": "nova_primary_weekend_carrier_risk",
+          "term_groups": [["weekend carrier reliability"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_route_density_overflow_exit_risk",
+          "term_groups": [["route density", "route-density"], ["overflow"], ["exit", "exits"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_temporary_labor_peak_risk",
+          "term_groups": [["temporary labor"], ["seasonal peak", "seasonal peaks"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_cap_promises_control_point",
+          "term_groups": [["cap same day", "cap same-day"], ["carrier network"], ["unstable"]],
+          "source_item_ids": ["nova-ops-2026"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-condition-orion",
+      "category": "condition_and_exception_combination",
+      "task": "Explain Orion Factory Systems' operating-expense definition and the operating exceptions that distinguish software-attached retrofit work from constrained field services. Cite the source items and preserve exclusions and comparison conditions.",
+      "lane_order": ["L1", "A0", "N1", "T0", "C0"],
+      "required_facts": [
+        {
+          "fact_id": "orion_opex_recurring_scope",
+          "term_groups": [["recurring"], ["sales"], ["support"], ["engineering"], ["general administrative"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_opex_restructuring_exclusion",
+          "term_groups": [["exclude", "excludes", "excluding"], ["one time restructuring", "one-time restructuring"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_retrofit_subscription_attach_condition",
+          "term_groups": [["subscription attach"], ["retrofit"], ["new assembly line", "new assembly-line"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_field_service_window_constraint",
+          "term_groups": [["field service", "field services"], ["capacity constrained"], ["shorter maintenance window", "shorter maintenance windows"]],
+          "source_item_ids": ["orion-ops-2026"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-condition-nova",
+      "category": "condition_and_exception_combination",
+      "task": "Explain when Nova Retail Logistics' same-day expansion improves economics, when that benefit reverses, and why management treats the margin issue as operationally addressable. Preserve the carrier-network control exception and cite the source items.",
+      "lane_order": ["C0", "T0", "N1", "A0", "L1"],
+      "required_facts": [
+        {
+          "fact_id": "nova_dense_route_profit_condition",
+          "term_groups": [["same day", "same-day"], ["profitable", "profitability"], ["dense route", "dense routes", "route density"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_weekend_spot_capacity_exception",
+          "term_groups": [["margin"], ["weekend"], ["spot market", "spot-market"], ["carrier capacity"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_limited_weekend_lane_concentration",
+          "term_groups": [["limited"], ["weekend lane", "weekend lanes"], ["operationally addressable"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_network_instability_cap_control",
+          "term_groups": [["cap same day", "cap same-day"], ["carrier network"], ["unstable"]],
+          "source_item_ids": ["nova-ops-2026"]
+        }
+      ]
+    }
+  ]
+}

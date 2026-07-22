@@ -97,6 +97,13 @@ class TelemetryEmitter:
         "STATE_RESOLVED",
         "STATE_CONSUMED",
         "STATE_RELEASED",
+        "LATENT_HANDOFF_DECIDED",
+        "LATENT_STATE_COMMITTED",
+        "LATENT_STATE_CONSUMED",
+        "LATENT_OUTPUT_VALIDATED",
+        "LATENT_HANDOFF_FALLBACK",
+        "LATENT_STATE_RELEASED",
+        "LATENT_STATE_RELEASE_FAILED",
         "ARTIFACT_MATERIALIZED",
         "ARTIFACT_PUBLISHED",
         "ARTIFACT_RESTORED",
@@ -166,6 +173,17 @@ class TelemetryEmitter:
         for event in latest_snapshot_by_task.values():
             for key, value in event.metrics.items():
                 totals[key] = totals.get(key, 0.0) + float(value)
+        # Process identity is a set/attribute, never a sum.  Keep only its
+        # cardinality in the numeric summary; the actual PID members remain in
+        # the event payloads and state-consumption records.
+        consumer_pids = {
+            int(event.payload["physical_consumer_pid"])
+            for event in events
+            if str(event.payload.get("physical_consumer_pid", "")).isdigit()
+            and int(event.payload.get("physical_consumer_pid", 0)) > 0
+        }
+        if consumer_pids:
+            totals["semantic_state_consumer_pid_count"] = float(len(consumer_pids))
         return totals
 
     def task_io_metrics(self, task_id: str) -> dict[str, float]:
@@ -247,6 +265,13 @@ class TelemetryEmitter:
             "STATE_RESOLVED",
             "STATE_CONSUMED",
             "STATE_RELEASED",
+            "LATENT_HANDOFF_DECIDED",
+            "LATENT_STATE_COMMITTED",
+            "LATENT_STATE_CONSUMED",
+            "LATENT_OUTPUT_VALIDATED",
+            "LATENT_HANDOFF_FALLBACK",
+            "LATENT_STATE_RELEASED",
+            "LATENT_STATE_RELEASE_FAILED",
             "EVIDENCE_PACK_BUILT",
             "ARTIFACT_PUBLISHED",
             "ARTIFACT_RESTORED",

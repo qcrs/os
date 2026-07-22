@@ -372,7 +372,7 @@
       ],
       "expected_metric_effects": {
         "L3_history_strategy_reuse_count_min": 1,
-        "L3_memory_consumed_count_min": 1
+        "L3_memory_consumed_count_max": 0
       }
     },
     {

@@ -25,6 +25,7 @@ def _put_memory(
     replay_class: ReplayClass = ReplayClass.ASSIST,
     runtime_signature: str = "",
     output_contract_version: str = "output-v1",
+    parameterized: bool = False,
 ) -> None:
     embedding = encoder.encode(embedding_id=f"embedding-{memory_id}", text=text)
     store.put_embedding(embedding)
@@ -35,6 +36,21 @@ def _put_memory(
         required_tools=("finance",),
         arguments={"memory_id": memory_id},
     )
+    execution_recipe: dict[str, object] = {}
+    if replay_class != ReplayClass.ASSIST:
+        execution_recipe = {
+            "execution_kind": "transform_dsl",
+            "capability_id": "execute",
+            "output_contract_version": output_contract_version,
+            "operations": [{"op": "select", "arguments": {"columns": ["value"]}}],
+        }
+        if parameterized:
+            execution_recipe.update({
+                "parameter_schema": {"memory_id": "string"},
+                "allowed_parameter_bindings": ["memory_id"],
+                "source_parameter_bindings": {"memory_id": memory_id},
+                "parameter_relpath": "inputs/statebus_parameters.json",
+            })
     commit = MemoryCommit(
         memory_ref=MemoryRef(
             memory_id=memory_id,
@@ -55,16 +71,7 @@ def _put_memory(
                 "output_contract_version": output_contract_version,
                 "input_lineage_hashes": [f"sha256:input-{memory_id}"],
                 "replay_ready": replay_class != ReplayClass.ASSIST,
-                "execution_recipe": (
-                    {
-                        "execution_kind": "transform_dsl",
-                        "capability_id": "execute",
-                        "output_contract_version": output_contract_version,
-                        "operations": [{"op": "select", "arguments": {"columns": ["value"]}}],
-                    }
-                    if replay_class != ReplayClass.ASSIST
-                    else {}
-                ),
+                "execution_recipe": execution_recipe,
             },
         ),
         canonical_task_spec=spec,
@@ -245,3 +252,97 @@ def test_hybrid_memory_output_contract_mismatch_is_never_downgraded_to_assist(
     assert result.matches == ()
     assert result.compatibility_decisions[0].replay_class == ReplayClass.DISALLOWED
     assert "output_contract_mismatch" in result.compatibility_decisions[0].reasons
+
+
+def test_validated_replay_requires_parameter_schema_for_changed_task_arguments(
+    tmp_path: Path,
+) -> None:
+    encoder = DeterministicEmbeddingEncoder(dims=16)
+    store = MemoryIndexStore(store_root=tmp_path / "memory")
+    _put_memory(
+        store,
+        encoder,
+        memory_id="old-task",
+        text="reusable metric recipe",
+        tags=("finance",),
+        spec_hash="sha256:old-spec",
+        replay_class=ReplayClass.VALIDATED_REPLAY,
+        runtime_signature="runtime-current",
+        parameterized=False,
+    )
+    current_spec = CanonicalTaskSpec(
+        task_family="financial_report_analysis",
+        intent_op="compare_metric",
+        required_outputs=("summary_text",),
+        required_tools=("finance",),
+        arguments={"memory_id": "new-task"},
+    )
+
+    result = store.lookup_hybrid(MemoryQuery(
+        query_task_id="task-current",
+        query_spec_hash=current_spec.spec_hash,
+        query_text="reusable metric recipe",
+        tags=("finance",),
+        query_embedding=encoder.encode(
+            embedding_id="query-embedding",
+            text="reusable metric recipe",
+        ),
+        allow_assist=True,
+        allow_validated_replay=True,
+        compatibility_signature="runtime-current",
+        output_contract_version="output-v1",
+        canonical_task_spec=current_spec,
+    ))
+
+    assert result.matches[0].replay_class == ReplayClass.ASSIST
+    assert any(
+        reason == "parameterized_recipe_ineligible:parameter_schema_missing"
+        for reason in result.compatibility_decisions[0].reasons
+    )
+
+
+def test_parameterized_recipe_is_eligible_for_changed_validated_bindings(
+    tmp_path: Path,
+) -> None:
+    encoder = DeterministicEmbeddingEncoder(dims=16)
+    store = MemoryIndexStore(store_root=tmp_path / "memory")
+    _put_memory(
+        store,
+        encoder,
+        memory_id="old-task",
+        text="parameterized metric recipe",
+        tags=("finance",),
+        spec_hash="sha256:old-spec",
+        replay_class=ReplayClass.VALIDATED_REPLAY,
+        runtime_signature="runtime-current",
+        parameterized=True,
+    )
+    current_spec = CanonicalTaskSpec(
+        task_family="financial_report_analysis",
+        intent_op="compare_metric",
+        required_outputs=("summary_text",),
+        required_tools=("finance",),
+        arguments={"memory_id": "new-task"},
+    )
+
+    result = store.lookup_hybrid(MemoryQuery(
+        query_task_id="task-current",
+        query_spec_hash=current_spec.spec_hash,
+        query_text="parameterized metric recipe",
+        tags=("finance",),
+        query_embedding=encoder.encode(
+            embedding_id="query-embedding",
+            text="parameterized metric recipe",
+        ),
+        allow_assist=True,
+        allow_validated_replay=True,
+        compatibility_signature="runtime-current",
+        output_contract_version="output-v1",
+        canonical_task_spec=current_spec,
+    ))
+
+    assert result.matches[0].replay_class == ReplayClass.VALIDATED_REPLAY
+    assert not any(
+        reason.startswith("parameterized_recipe_ineligible:")
+        for reason in result.compatibility_decisions[0].reasons
+    )

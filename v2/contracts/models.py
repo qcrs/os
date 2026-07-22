@@ -60,6 +60,7 @@ class RefKind(StrEnum):
     HYDRATE_MANIFEST = "hydrate_manifest"
     CANONICAL_EVIDENCE_PACK = "canonical_evidence_pack"
     LOGIT_STATE = "logit_state"
+    LATENT_STATE = "latent_state"
 
 
 class StorageKind(StrEnum):
@@ -69,6 +70,7 @@ class StorageKind(StrEnum):
     CAS_SIDECAR = "cas_sidecar"
     WORKSPACE_ROOT = "workspace_root"
     INLINE = "inline"
+    ENGINE_LOCAL = "engine_local"
 
 
 class RefStatus(StrEnum):

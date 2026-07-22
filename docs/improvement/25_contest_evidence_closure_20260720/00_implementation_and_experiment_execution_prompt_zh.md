@@ -87,6 +87,19 @@
 
 “使用全部实现”不等于让每个 capability 在每个 case 都出现。比如没有风险冲突的任务不应为了覆盖率强制选择 `compose_risk_memo_v1`；正式报告应同时给出 capability advertised count、selected count 和 verified count，未选择就是未选择。
 
+### 1.5 KV/hidden 研究明确不属于本轮闭环
+
+KV cache、hidden-state 和 latent-state handoff 的问题定义、开源实现审计、合同草案及独立实验方案见 [`kv_hidden_state_transfer_design_20260720.md`](../../planning/kv_hidden_state_transfer_design_20260720.md)。该文档是 Runtime 冻结后的研究支线，不是 E1-E6 的待办清单。其推荐方案是接入同一个 Adaptive Runtime 的 Retriever -> Summarizer 可选 latent handoff mode，而不是另建一套旁路系统；Planner 只提出逐边 handoff 意图，Runtime 在 retrieval 后做最终激活和确定性回退。prefix 与 latent 使用独立开关，但这一接入仍必须等本轮冻结后开始。
+
+在本轮完成定义全部满足并冻结 Git SHA、镜像 digest 和正式 artifact 之前：
+
+- 不新增 `KVCacheRef` 或 `LatentStateRef` 到当前 Runtime；
+- 不安装 LMCache、修改 vLLM connector、重启或替换 `127.0.0.1:53334` 服务；
+- 不把 APC registry/metric、prefix hash 或 embedding `StateRef` 写成真实 KV/hidden transfer；
+- 不把 KV/hidden 混入 L0-L3、10+10、adaptive memory、semantic holdout 或 CodeAct 的结论。
+
+本轮正式非文本状态仍只有 Qwen embedding `StateRef`。后续若启动研究支线，必须使用独立容器、模型、端口、runtime root 和 artifact，并且只在 consumer engine/worker 真实消费 tensor 后声称实现。
+
 ## 2. 为什么采用当前架构
 
 ### 2.1 Runtime 的作用

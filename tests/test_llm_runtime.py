@@ -231,6 +231,10 @@ def test_openai_compatible_llm_client_requests_executor_logprobs_in_local_vllm_m
     request = created_clients[0].requests[0]  # type: ignore[attr-defined]
     assert request["logprobs"] is True
     assert request["top_logprobs"] == 20
+    assert request["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False},
+        "guided_decoding_backend": "xgrammar:disable-any-whitespace",
+    }
     assert result.top_logprobs is not None
 
 

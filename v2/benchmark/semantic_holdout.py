@@ -26,7 +26,7 @@ _MANIFEST_PATH = _SAMPLE_ROOT / "manifest.json"
 _GOLD_PATH = _SAMPLE_ROOT / "gold.json"
 _FREEZE_PATH = (
     Path(__file__).resolve().parents[2]
-    / "docs/improvement/25_contest_evidence_closure_20260720/runtime_freeze_snapshot.json"
+    / "docs/improvement/27_statebus_v2_remediation_and_native_latent_execution_20260721/final_runtime_freeze_snapshot.json"
 )
 _FREEZE_DIRS = ("v2/runtime", "v2/control", "v2/state", "v2/memory")
 

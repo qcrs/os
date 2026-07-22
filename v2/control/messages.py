@@ -9,6 +9,25 @@ from typing import Any
 
 from v2.contracts import CONTROL_PLANE_SCHEMA_VERSION
 from v2.control.schema import message_class
+from v2.utils import sha256_digest
+
+
+CONTROL_PROTOCOL_VERSION = "statebus.uds.protobuf.v2"
+DEFAULT_WORKER_CAPABILITY_IDS = (
+    "echo_refs_v1",
+    "semantic_select_v1",
+    "typed_numeric_summary_v1",
+)
+
+
+def worker_capability_registry_digest(
+    capability_ids: tuple[str, ...] = DEFAULT_WORKER_CAPABILITY_IDS,
+) -> str:
+    return sha256_digest({
+        "protocol_version": CONTROL_PROTOCOL_VERSION,
+        "schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+        "capability_ids": sorted(set(capability_ids)),
+    })
 
 
 class EventType(IntEnum):
@@ -22,6 +41,8 @@ class EventType(IntEnum):
     CMD_CANCEL = 7
     TRAP_FATAL = 8
     CMD_GC = 9
+    HELLO = 10
+    HELLO_ACK = 11
 
 
 @dataclass(frozen=True)
@@ -50,6 +71,28 @@ class ReusePolicy:
 
 
 @dataclass(frozen=True)
+class Hello:
+    header: ControlHeader
+    protocol_versions: tuple[str, ...]
+    schema_versions: tuple[str, ...]
+    controller_registry_digest: str
+    required_capability_ids: tuple[str, ...] = ()
+    controller_pid: int = 0
+
+
+@dataclass(frozen=True)
+class HelloAck:
+    header: ControlHeader
+    accepted: bool
+    accepted_protocol_version: str
+    accepted_schema_version: str
+    worker_registry_digest: str
+    supported_capability_ids: tuple[str, ...] = ()
+    error_detail: str = ""
+    worker_pid: int = 0
+
+
+@dataclass(frozen=True)
 class ExecRequest:
     header: ControlHeader
     reuse_policy: ReusePolicy = field(default_factory=ReusePolicy)
@@ -67,6 +110,8 @@ class ExecRequest:
     evidence_budget_bytes: int = 0
     expected_encoder_signature: str = ""
     capability_grant_hash: str = ""
+    capability_grant_token: str = ""
+    capability_grant_session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -91,6 +136,22 @@ class Heartbeat:
 
 
 @dataclass(frozen=True)
+class NumericSummaryResult:
+    input_ref_id: str
+    input_payload_hash: str
+    row_count: int
+    total: float
+    mean: float
+    minimum: float
+    maximum: float
+    schema_digest: str
+    output_artifact_hash: str
+    validator_receipt_hash: str
+    worker_pid: int
+    worker_compute_ns: int
+
+
+@dataclass(frozen=True)
 class SuccessResult:
     header: ControlHeader
     state_refs: tuple[RefHandle, ...] = ()
@@ -105,6 +166,7 @@ class SuccessResult:
     consumer_pid: int = 0
     producer_pid: int = 0
     encoder_signature: str = ""
+    numeric_summary: NumericSummaryResult | None = None
 
 
 @dataclass(frozen=True)
@@ -138,7 +200,9 @@ class GarbageCollectCommand:
 
 
 ControlMessage = (
-    ExecRequest
+    Hello
+    | HelloAck
+    | ExecRequest
     | AckReceived
     | RunStart
     | Heartbeat
@@ -151,6 +215,8 @@ ControlMessage = (
 
 
 _BODY_FIELD_BY_TYPE: dict[type, str] = {
+    Hello: "hello",
+    HelloAck: "hello_ack",
     ExecRequest: "req_exec",
     AckReceived: "ack_recv",
     RunStart: "run_start",
@@ -202,13 +268,61 @@ def _ref_from_pb(pb: Any) -> RefHandle:
     return RefHandle(ref_id=pb.ref_id, ref_kind=pb.ref_kind)
 
 
+def _numeric_summary_to_pb(summary: NumericSummaryResult) -> Any:
+    pb = message_class("NumericSummaryResult")()
+    pb.input_ref_id = summary.input_ref_id
+    pb.input_payload_hash = summary.input_payload_hash
+    pb.row_count = summary.row_count
+    pb.total = summary.total
+    pb.mean = summary.mean
+    pb.minimum = summary.minimum
+    pb.maximum = summary.maximum
+    pb.schema_digest = summary.schema_digest
+    pb.output_artifact_hash = summary.output_artifact_hash
+    pb.validator_receipt_hash = summary.validator_receipt_hash
+    pb.worker_pid = summary.worker_pid
+    pb.worker_compute_ns = summary.worker_compute_ns
+    return pb
+
+
+def _numeric_summary_from_pb(pb: Any) -> NumericSummaryResult:
+    return NumericSummaryResult(
+        input_ref_id=pb.input_ref_id,
+        input_payload_hash=pb.input_payload_hash,
+        row_count=int(pb.row_count),
+        total=float(pb.total),
+        mean=float(pb.mean),
+        minimum=float(pb.minimum),
+        maximum=float(pb.maximum),
+        schema_digest=pb.schema_digest,
+        output_artifact_hash=pb.output_artifact_hash,
+        validator_receipt_hash=pb.validator_receipt_hash,
+        worker_pid=int(pb.worker_pid),
+        worker_compute_ns=int(pb.worker_compute_ns),
+    )
+
+
 def encode_control_message(message: ControlMessage) -> bytes:
     envelope = message_class("ControlEnvelope")()
     body_field = _BODY_FIELD_BY_TYPE[type(message)]
     body_pb = getattr(envelope, body_field)
     body_pb.header.CopyFrom(_header_to_pb(message.header))
 
-    if isinstance(message, ExecRequest):
+    if isinstance(message, Hello):
+        body_pb.protocol_versions.extend(message.protocol_versions)
+        body_pb.schema_versions.extend(message.schema_versions)
+        body_pb.controller_registry_digest = message.controller_registry_digest
+        body_pb.required_capability_ids.extend(message.required_capability_ids)
+        body_pb.controller_pid = message.controller_pid
+    elif isinstance(message, HelloAck):
+        body_pb.accepted = message.accepted
+        body_pb.accepted_protocol_version = message.accepted_protocol_version
+        body_pb.accepted_schema_version = message.accepted_schema_version
+        body_pb.worker_registry_digest = message.worker_registry_digest
+        body_pb.supported_capability_ids.extend(message.supported_capability_ids)
+        body_pb.error_detail = message.error_detail
+        body_pb.worker_pid = message.worker_pid
+    elif isinstance(message, ExecRequest):
         reuse_pb = message_class("ReusePolicy")()
         reuse_pb.allow_assist = message.reuse_policy.allow_assist
         reuse_pb.allow_validated_replay = message.reuse_policy.allow_validated_replay
@@ -228,6 +342,8 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.evidence_budget_bytes = message.evidence_budget_bytes
         body_pb.expected_encoder_signature = message.expected_encoder_signature
         body_pb.capability_grant_hash = message.capability_grant_hash
+        body_pb.capability_grant_token = message.capability_grant_token
+        body_pb.capability_grant_session_id = message.capability_grant_session_id
     elif isinstance(message, AckReceived):
         body_pb.acked_at_ns = message.acked_at_ns
     elif isinstance(message, RunStart):
@@ -250,6 +366,10 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.consumer_pid = message.consumer_pid
         body_pb.producer_pid = message.producer_pid
         body_pb.encoder_signature = message.encoder_signature
+        if message.numeric_summary is not None:
+            body_pb.numeric_summary.CopyFrom(
+                _numeric_summary_to_pb(message.numeric_summary)
+            )
     elif isinstance(message, ErrorResult):
         body_pb.error_code = message.error_code
         body_pb.error_detail = message.error_detail
@@ -278,6 +398,26 @@ def decode_control_message(payload: bytes) -> ControlMessage:
     body_pb = getattr(envelope, body_field)
     header = _header_from_pb(body_pb.header)
 
+    if body_field == "hello":
+        return Hello(
+            header=header,
+            protocol_versions=tuple(body_pb.protocol_versions),
+            schema_versions=tuple(body_pb.schema_versions),
+            controller_registry_digest=body_pb.controller_registry_digest,
+            required_capability_ids=tuple(body_pb.required_capability_ids),
+            controller_pid=int(body_pb.controller_pid),
+        )
+    if body_field == "hello_ack":
+        return HelloAck(
+            header=header,
+            accepted=bool(body_pb.accepted),
+            accepted_protocol_version=body_pb.accepted_protocol_version,
+            accepted_schema_version=body_pb.accepted_schema_version,
+            worker_registry_digest=body_pb.worker_registry_digest,
+            supported_capability_ids=tuple(body_pb.supported_capability_ids),
+            error_detail=body_pb.error_detail,
+            worker_pid=int(body_pb.worker_pid),
+        )
     if body_field == "req_exec":
         reuse = body_pb.reuse_policy
         return ExecRequest(
@@ -301,6 +441,8 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             evidence_budget_bytes=int(body_pb.evidence_budget_bytes),
             expected_encoder_signature=body_pb.expected_encoder_signature,
             capability_grant_hash=body_pb.capability_grant_hash,
+            capability_grant_token=body_pb.capability_grant_token,
+            capability_grant_session_id=body_pb.capability_grant_session_id,
         )
     if body_field == "ack_recv":
         return AckReceived(header=header, acked_at_ns=int(body_pb.acked_at_ns))
@@ -332,6 +474,11 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             consumer_pid=int(body_pb.consumer_pid),
             producer_pid=int(body_pb.producer_pid),
             encoder_signature=body_pb.encoder_signature,
+            numeric_summary=(
+                _numeric_summary_from_pb(body_pb.numeric_summary)
+                if body_pb.HasField("numeric_summary")
+                else None
+            ),
         )
     if body_field == "res_err":
         return ErrorResult(
@@ -427,6 +574,42 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
         raise ValueError("text control message header is missing")
     header = _text_header(header_payload)
 
+    if message_type == "hello":
+        return Hello(
+            header=header,
+            protocol_versions=tuple(
+                str(item) for item in decoded.get("protocol_versions", [])
+            ),
+            schema_versions=tuple(
+                str(item) for item in decoded.get("schema_versions", [])
+            ),
+            controller_registry_digest=str(
+                decoded.get("controller_registry_digest", "")
+            ),
+            required_capability_ids=tuple(
+                str(item) for item in decoded.get("required_capability_ids", [])
+            ),
+            controller_pid=int(decoded.get("controller_pid", 0)),
+        )
+    if message_type == "hello_ack":
+        return HelloAck(
+            header=header,
+            accepted=bool(decoded.get("accepted", False)),
+            accepted_protocol_version=str(
+                decoded.get("accepted_protocol_version", "")
+            ),
+            accepted_schema_version=str(
+                decoded.get("accepted_schema_version", "")
+            ),
+            worker_registry_digest=str(
+                decoded.get("worker_registry_digest", "")
+            ),
+            supported_capability_ids=tuple(
+                str(item) for item in decoded.get("supported_capability_ids", [])
+            ),
+            error_detail=str(decoded.get("error_detail", "")),
+            worker_pid=int(decoded.get("worker_pid", 0)),
+        )
     if message_type == "req_exec":
         reuse_payload = decoded.get("reuse_policy", {})
         reuse = dict(reuse_payload) if isinstance(reuse_payload, dict) else {}
@@ -451,6 +634,8 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
             evidence_budget_bytes=int(decoded.get("evidence_budget_bytes", 0)),
             expected_encoder_signature=str(decoded.get("expected_encoder_signature", "")),
             capability_grant_hash=str(decoded.get("capability_grant_hash", "")),
+            capability_grant_token=str(decoded.get("capability_grant_token", "")),
+            capability_grant_session_id=str(decoded.get("capability_grant_session_id", "")),
         )
     if message_type == "ack_recv":
         return AckReceived(header=header, acked_at_ns=int(decoded.get("acked_at_ns", 0)))
@@ -468,6 +653,23 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
             worker_state=str(decoded.get("worker_state", "")),
         )
     if message_type == "res_succ":
+        numeric_payload = decoded.get("numeric_summary")
+        numeric_summary = None
+        if isinstance(numeric_payload, dict):
+            numeric_summary = NumericSummaryResult(
+                input_ref_id=str(numeric_payload.get("input_ref_id", "")),
+                input_payload_hash=str(numeric_payload.get("input_payload_hash", "")),
+                row_count=int(numeric_payload.get("row_count", 0)),
+                total=float(numeric_payload.get("total", 0.0)),
+                mean=float(numeric_payload.get("mean", 0.0)),
+                minimum=float(numeric_payload.get("minimum", 0.0)),
+                maximum=float(numeric_payload.get("maximum", 0.0)),
+                schema_digest=str(numeric_payload.get("schema_digest", "")),
+                output_artifact_hash=str(numeric_payload.get("output_artifact_hash", "")),
+                validator_receipt_hash=str(numeric_payload.get("validator_receipt_hash", "")),
+                worker_pid=int(numeric_payload.get("worker_pid", 0)),
+                worker_compute_ns=int(numeric_payload.get("worker_compute_ns", 0)),
+            )
         return SuccessResult(
             header=header,
             state_refs=_text_refs(decoded.get("state_refs")),
@@ -482,6 +684,7 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
             consumer_pid=int(decoded.get("consumer_pid", 0)),
             producer_pid=int(decoded.get("producer_pid", 0)),
             encoder_signature=str(decoded.get("encoder_signature", "")),
+            numeric_summary=numeric_summary,
         )
     if message_type == "res_err":
         return ErrorResult(

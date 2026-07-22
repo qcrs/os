@@ -113,6 +113,15 @@ class EvidenceProjectionAdapter:
                         "row_index": len(rows) - 1,
                         "evidence_item_id": item.item_id,
                         "locator": self._locator_payload(item.locator),
+                        "source_locator": repr(item.locator),
+                        "field_lineage": {
+                            field: {
+                                "evidence_item_id": item.item_id,
+                                "source_locator": repr(item.locator),
+                                "normalized_value_hash": sha256_digest(typed[field]),
+                            }
+                            for field in request.requested_fields
+                        },
                         "source_doc_hash": getattr(item.locator, "source_doc_hash", ""),
                     }
                 )
@@ -135,7 +144,17 @@ class EvidenceProjectionAdapter:
         )
         rows = [row for row, _ in projected_rows]
         row_lineage = [
-            {**lineage, "row_index": row_index}
+            {
+                **lineage,
+                "row_index": row_index,
+                "field_lineage": {
+                    field: {
+                        **dict(field_lineage),
+                        "artifact_field_path": f"rows[{row_index}].{field}",
+                    }
+                    for field, field_lineage in dict(lineage.get("field_lineage", {})).items()
+                },
+            }
             for row_index, (_, lineage) in enumerate(projected_rows)
         ]
         payload = stable_json_dumps(rows).encode("utf-8")
@@ -150,6 +169,7 @@ class EvidenceProjectionAdapter:
             output_path=output_path,
             payload=payload,
             consumed=tuple(consumed),
+            row_lineage=tuple(row_lineage),
         )
         report = EvidenceProjectionReport(
             request_hash=request.request_hash,
@@ -228,6 +248,7 @@ class EvidenceProjectionAdapter:
         output_path: Path,
         payload: bytes,
         consumed: tuple[str, ...],
+        row_lineage: tuple[dict[str, object], ...],
     ) -> ExecutionArtifactRef:
         lifecycle = ArtifactLifecycleManager()
         candidate = lifecycle.register_candidate(
@@ -249,6 +270,7 @@ class EvidenceProjectionAdapter:
                     "session_id": grant.session_id,
                     "attempt_id": grant.attempt_id,
                     "evidence_item_ids": list(consumed),
+                    "row_lineage": [dict(row) for row in row_lineage],
                 },
             )
         )

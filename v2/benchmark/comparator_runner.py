@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -73,6 +74,59 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _load_balanced_timing_evidence() -> dict[str, object]:
+    evidence_path = os.getenv(
+        "STATEBUS_COMPARATOR_BALANCED_TIMING_SUMMARY",
+        "",
+    ).strip()
+    if not evidence_path:
+        return {}
+    path = Path(evidence_path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    statistics = payload.get("statistics", payload)
+    if not isinstance(statistics, dict):
+        return {}
+    try:
+        repeat_count = int(statistics.get("repeat_count", 0))
+    except (TypeError, ValueError):
+        return {}
+    if (
+        statistics.get("schema_version") != "statebus.balanced_lane_experiment.v1"
+        or statistics.get("lane_a") != "statebus"
+        or statistics.get("lane_b") != "external"
+        or statistics.get("order_design") != "alternating_abba_baab"
+        or statistics.get("serialized_execution") is not True
+        or statistics.get("schedule_valid") is not True
+        or statistics.get("quality_gate_passed") is not True
+        or repeat_count < 3
+    ):
+        return {}
+    delta = statistics.get("paired_block_delta_a_minus_b_ms")
+    interval = delta.get("bootstrap_median_ci_95") if isinstance(delta, dict) else None
+    if not isinstance(interval, list) or len(interval) != 2:
+        return {}
+    try:
+        normalized_interval = [float(interval[0]), float(interval[1])]
+        observation_count = int(statistics.get("observation_count", 0))
+    except (TypeError, ValueError):
+        return {}
+    if (
+        normalized_interval[1] >= 0.0
+        or statistics.get("latency_superiority_claim_allowed") is not True
+    ):
+        return {}
+    return {
+        "path": str(path),
+        "repeat_count": repeat_count,
+        "observation_count": observation_count,
+        "delta_ci_95": normalized_interval,
+        "order_design": str(statistics["order_design"]),
+    }
 def _build_debug_metrics(
     *,
     statebus_report: BenchmarkFamilyReport,
@@ -688,8 +742,11 @@ def run_fixed_answer_external_comparator_suite(
         and bool(mode_reports)
         and all(report.debug_metrics.get("task_ms_delta", 0.0) < 0.0 for report in mode_reports)
     )
+    balanced_timing_evidence = _load_balanced_timing_evidence()
     serialized_latency_superiority_claim_allowed = (
-        serialized_latency_observation_favorable and serialized_repeat_count >= 3
+        serialized_latency_observation_favorable
+        and serialized_repeat_count >= 3
+        and bool(balanced_timing_evidence)
     )
     formal_compare_scope_metadata = _formal_compare_scope_metadata(
         samples=samples,
@@ -747,6 +804,7 @@ def run_fixed_answer_external_comparator_suite(
             "serialized_repeat_index": serialized_repeat_index,
             "serialized_latency_superiority_claim_allowed": serialized_latency_superiority_claim_allowed,
             "serialized_latency_observation_favorable": serialized_latency_observation_favorable,
+            "balanced_timing_evidence": balanced_timing_evidence,
             "strict_equal_quality_comparison_valid": strict_equal_quality_comparison_valid,
             "quality_superiority_comparison_valid": quality_superiority_comparison_valid,
             "formal_quality_superiority_claim_allowed": formal_quality_superiority_claim_allowed,

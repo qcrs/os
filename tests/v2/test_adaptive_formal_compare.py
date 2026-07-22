@@ -15,6 +15,7 @@ from scripts.v2_diagnostics.run_adaptive_formal_compare import (
 )
 from v2.benchmark.adaptive_formal_mainline import (
     _adaptive_metrics,
+    _aggregate_memory_consumption_accounting,
     _build_formal_analysis_context,
     _case_system_gate_checks,
     _evidence_types_for_retrieval_capability,
@@ -23,6 +24,7 @@ from v2.benchmark.adaptive_formal_mainline import (
     _terminal_quality_reports,
 )
 from v2.benchmark.adaptive_memory import (
+    _counterfactual_evidence_from_case,
     _negative_fixture_gate,
     load_adaptive_memory_cases,
 )
@@ -119,6 +121,49 @@ def test_adaptive_memory_negative_requires_visible_but_unconsumed_fixture() -> N
     })
 
     assert all(gates.values()), gates
+
+
+def test_no_memory_call_ledger_is_required_for_verified_llm_skip() -> None:
+    evidence_by_step = _counterfactual_evidence_from_case({
+        "task_id": "paired-task",
+        "ok": True,
+        "memory_consumption_accounting": {"actual_consumed_count": 0},
+        "claim_validation_reports": {"claims": {"ok": True}},
+        "code_generation_call_ledger_by_step": {
+            "execute": {
+                "pairing_digest": "pairing-digest",
+                "generation_call_count": 1,
+                "repair_call_count": 1,
+                "quality_verified": True,
+            }
+        },
+    })
+
+    evidence = evidence_by_step["execute"]
+    assert evidence.verified_avoided_call_count(
+        task_id="paired-task",
+        step_id="execute",
+        pairing_digest="pairing-digest",
+    ) == 2
+    assert evidence.verified_avoided_call_count(
+        task_id="paired-task",
+        step_id="execute",
+        pairing_digest="different-digest",
+    ) == 0
+    assert _counterfactual_evidence_from_case({
+        "task_id": "not-cold",
+        "ok": True,
+        "memory_consumption_accounting": {"actual_consumed_count": 1},
+        "claim_validation_reports": {"claims": {"ok": True}},
+        "code_generation_call_ledger_by_step": {
+            "execute": {
+                "pairing_digest": "pairing-digest",
+                "generation_call_count": 1,
+                "repair_call_count": 0,
+                "quality_verified": True,
+            }
+        },
+    }) == {}
 
 
 def test_validated_replay_may_skip_executor_model_role_only_when_explicit() -> None:
@@ -315,6 +360,7 @@ def test_adaptive_metrics_exposes_planner_gate_counts() -> None:
                 },
                 "planner_policy_repair_used": True,
                 "planner_schema_normalization_used": True,
+                "planner_outcome_class": "model_repaired",
             }
         ],
         selected_case_count=1,
@@ -326,10 +372,153 @@ def test_adaptive_metrics_exposes_planner_gate_counts() -> None:
     assert metrics["planner_policy_repair_count"] == 1
     assert metrics["planner_schema_normalization_count"] == 1
     assert metrics["planner_final_approved_count"] == 1
+    assert metrics["planner_raw_directly_executable_count"] == 0
+    assert metrics["planner_controller_normalized_count"] == 0
+    assert metrics["planner_model_repaired_count"] == 1
+    assert metrics["planner_hard_rejected_or_fallback_count"] == 0
+    assert metrics["planner_outcome_classified_count"] == 1
+    assert metrics["planner_outcome_partition_valid"] == 1
     assert metrics["codeact_quality_repair_count"] == 1
     assert metrics["codeact_quality_rejected_count"] == 1
     assert metrics["dsl_quality_repair_count"] == 2
     assert metrics["dsl_quality_rejected_count"] == 2
+
+
+def test_adaptive_metrics_planner_outcome_partition_sums_to_case_count() -> None:
+    outcome_classes = (
+        "raw_directly_executable",
+        "controller_normalized",
+        "model_repaired",
+        "hard_rejected_or_fallback",
+    )
+    cases = [
+        {
+            "runtime_completed": outcome != "hard_rejected_or_fallback",
+            "ok": outcome != "hard_rejected_or_fallback",
+            "usage": {},
+            "telemetry": {},
+            "planner_outcome_class": outcome,
+        }
+        for outcome in outcome_classes
+    ]
+
+    metrics = _adaptive_metrics(
+        cases,
+        selected_case_count=len(cases),
+        attempted_case_count=len(cases),
+    )
+
+    assert metrics["planner_raw_directly_executable_count"] == 1
+    assert metrics["planner_controller_normalized_count"] == 1
+    assert metrics["planner_model_repaired_count"] == 1
+    assert metrics["planner_hard_rejected_or_fallback_count"] == 1
+    assert metrics["planner_outcome_classified_count"] == len(cases)
+    assert metrics["planner_outcome_partition_valid"] == 1
+
+
+def test_formal_memory_accounting_aggregate_rechecks_raw_receipt_rows() -> None:
+    cases = [
+        {
+            "memory_consumption_records": [
+                {
+                    "memory_id": "legacy",
+                    "consumer_role": "summarizer",
+                    "rendered_request_hash": "",
+                    "executed_recipe_hash": "",
+                },
+                {
+                    "memory_id": "assist",
+                    "consumer_role": "executor",
+                    "rendered_request_hash": "rendered-assist",
+                    "executed_recipe_hash": "",
+                },
+            ],
+            "memory_consumption_accounting": {
+                "candidate_count": 4,
+                "approved_count": 2,
+                "disclosed_count": 1,
+                "recorded_consumption_count": 2,
+                "actual_consumed_count": 1,
+                "rendered_count": 1,
+                "recipe_executed_count": 1,
+                "output_accepted_count": 1,
+                "failed_attempt_count": 0,
+                "validated_replay_count": 0,
+                "exact_replay_count": 0,
+                "skipped_generation_step_count": 0,
+                "skipped_llm_call_count": 0,
+                "recorded_role_counts": {"executor": 1, "summarizer": 1},
+                "actual_role_counts": {"executor": 1},
+            },
+        },
+        {
+            "memory_consumption_records": [{
+                "memory_id": "replay",
+                "consumer_role": "executor",
+                "rendered_request_hash": "",
+                "executed_recipe_hash": "recipe-replay",
+            }],
+            "memory_consumption_accounting": {
+                "candidate_count": 2,
+                "approved_count": 1,
+                "disclosed_count": 1,
+                "recorded_consumption_count": 1,
+                "actual_consumed_count": 1,
+                "rendered_count": 0,
+                "recipe_executed_count": 1,
+                "output_accepted_count": 1,
+                "failed_attempt_count": 0,
+                "validated_replay_count": 1,
+                "exact_replay_count": 0,
+                "skipped_generation_step_count": 1,
+                "skipped_llm_call_count": 0,
+                "recorded_role_counts": {"executor": 1},
+                "actual_role_counts": {"executor": 1},
+            },
+        },
+    ]
+
+    aggregate = _aggregate_memory_consumption_accounting(cases)
+    metrics = _adaptive_metrics(
+        cases,
+        selected_case_count=2,
+        attempted_case_count=2,
+    )
+
+    assert aggregate["projection_consistent"] is True
+    assert aggregate["candidate_count"] == 6
+    assert aggregate["recorded_consumption_count"] == 3
+    assert aggregate["actual_consumed_count"] == 2
+    assert aggregate["recorded_role_counts"] == {"executor": 2, "summarizer": 1}
+    assert aggregate["actual_role_counts"] == {"executor": 2}
+    assert metrics["memory_recorded_consumption_count"] == 3
+    assert metrics["memory_actual_consumed_count"] == 2
+    assert metrics["memory_validated_replay_count"] == 1
+    assert metrics["memory_skipped_llm_call_count"] == 0
+
+
+def test_formal_gate_rejects_inconsistent_memory_accounting_projection() -> None:
+    gates = _evaluate_formal_gates(
+        lane="adaptive",
+        selected_case_count=1,
+        full_registry=False,
+        strict_ok=True,
+        adaptive_cases=[{"system_gate_passed": True}],
+        adaptive_metrics={
+            "attempted_case_count": 1.0,
+            "quality_pass_count": 1.0,
+            "verified_execution_count": 1.0,
+            "fallback_count": 0.0,
+            "model_fallback_count": 0.0,
+            "codeact_sandbox_fallback_count": 0.0,
+        },
+        failures=[],
+        quality_threshold=0.80,
+        memory_accounting_consistent=False,
+    )
+
+    assert gates["memory_accounting_projection_consistent"] is False
+    assert gates["system_safety_gate"] is False
 
 
 def test_formal_numeric_parser_contract_allows_only_in_memory_string_replace() -> None:

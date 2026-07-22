@@ -167,7 +167,7 @@ def test_semantic_holdout_table_adapter_is_type_equivalent_for_natural_dsl_looku
     assert tuple(rows) == case.expected_rows
 
 
-def test_semantic_holdout_addition_does_not_change_frozen_runtime_directories() -> None:
+def test_semantic_holdout_runtime_matches_final_freeze() -> None:
     audit = runtime_freeze_audit()
 
     assert audit["ok"], audit
@@ -175,4 +175,4 @@ def test_semantic_holdout_addition_does_not_change_frozen_runtime_directories() 
     assert audit["changed_files"] == []
     assert audit["added_files"] == []
     assert audit["removed_files"] == []
-    assert audit["observed_per_file_count"] == 59
+    assert audit["observed_per_file_count"] == 63

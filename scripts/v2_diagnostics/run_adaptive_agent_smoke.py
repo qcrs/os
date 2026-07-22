@@ -14,6 +14,7 @@ from runtime.llm import LLMConfig, build_llm_client
 from v2.contracts import (
     AdaptiveTaskEnvelope,
     Claim,
+    ClaimFieldSupport,
     ClaimSet,
     ClaimSetStatus,
     EvidenceCoverageStatus,
@@ -66,6 +67,20 @@ _SMOKE_TASK_GOAL = (
 # constraints here.
 _SMOKE_TARGET_ENTITIES: tuple[str, ...] = ()
 _SMOKE_TIME_SCOPE = ""
+
+
+def _capability_output_contracts(
+    registry: CapabilityRegistry,
+    capability_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                registry.get(capability_id).output_contract_version
+                for capability_id in capability_ids
+            }
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -359,6 +374,31 @@ def _claim_set_from_payload(payload: dict[str, object]) -> ClaimSet:
         if not isinstance(raw, dict):
             continue
         numeric_fields = raw.get("numeric_fields", {})
+        factual_fields_raw = raw.get("factual_fields", {})
+        factual_fields = (
+            {
+                str(key): value
+                for key, value in factual_fields_raw.items()
+                if value is None or isinstance(value, (str, int, float, bool))
+            }
+            if isinstance(factual_fields_raw, dict)
+            else {}
+        )
+        field_support_raw = raw.get("field_support", [])
+        field_support = tuple(
+            ClaimFieldSupport(
+                field_path=str(item.get("field_path", "")),
+                normalized_value_hash=str(item.get("normalized_value_hash", "")),
+                support_kind=str(item.get("support_kind", "")),
+                evidence_item_ids=_string_tuple(item.get("evidence_item_ids")),
+                artifact_ref_id=str(item.get("artifact_ref_id", "")),
+                artifact_field_path=str(item.get("artifact_field_path", "")),
+                source_locators=_string_tuple(item.get("source_locators")),
+                schema_version=str(item.get("schema_version", "statebus.claim_set.v2")),
+            )
+            for item in field_support_raw
+            if isinstance(item, dict)
+        ) if isinstance(field_support_raw, list) else ()
         claims.append(Claim(
             claim_id=str(raw.get("claim_id", "")),
             claim_text=str(raw.get("claim_text", "")),
@@ -369,6 +409,8 @@ def _claim_set_from_payload(payload: dict[str, object]) -> ClaimSet:
             numeric_fields={str(key): float(value) for key, value in numeric_fields.items()} if isinstance(numeric_fields, dict) else {},
             uncertainty_note=str(raw.get("uncertainty_note", "")),
             status=str(raw.get("status", "ready")),
+            factual_fields=factual_fields,
+            field_support=field_support,
         ))
     return ClaimSet(
         claim_set_id=str(payload.get("claim_set_id", "")),
@@ -577,6 +619,9 @@ def _run_role_worker(role: str) -> None:
                         if payload.get("expected_claim_count") is not None
                         else None
                     ),
+                    claim_set_schema_version=str(
+                        payload.get("claim_set_schema_version", "statebus.claim_set.v1")
+                    ),
                 ).canonical_payload()
         else:
             raise ValueError(f"unsupported_role_worker:{role}")
@@ -708,7 +753,8 @@ def main() -> None:
     envelope = AdaptiveTaskEnvelope(
         task_id=task_id, canonical_task_spec_hash="live-longdoc-smoke-v1", workflow_mode=WorkflowMode.ADAPTIVE_BOUNDED,
         domain_pack_id=pack.pack_id, allowed_capability_ids=phase_one_capability_ids,
-        allowed_output_contracts=(pack.final_output_contract,), risk_class=RiskClass.WORKSPACE_WRITE,
+        allowed_output_contracts=_capability_output_contracts(registry, phase_one_capability_ids),
+        risk_class=RiskClass.WORKSPACE_WRITE,
         max_plan_steps=4, max_total_attempts=5,
     )
     print(stable_json_dumps({"stage": "planner_request"}), flush=True)

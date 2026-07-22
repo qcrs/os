@@ -11,6 +11,7 @@ from v2.contracts.constants import (
     CAPABILITY_GRANT_SCHEMA_VERSION,
     CAPABILITY_QUALITY_REPORT_SCHEMA_VERSION,
     CLAIM_SET_SCHEMA_VERSION,
+    CLAIM_SET_V2_SCHEMA_VERSION,
     EVIDENCE_COVERAGE_REPORT_SCHEMA_VERSION,
     EVIDENCE_PROJECTION_REPORT_SCHEMA_VERSION,
     EVIDENCE_PROJECTION_REQUEST_SCHEMA_VERSION,
@@ -21,6 +22,7 @@ from v2.contracts.constants import (
     TRANSFORM_PROGRAM_SCHEMA_VERSION,
     ADAPTIVE_EXECUTION_AUDIT_SCHEMA_VERSION,
 )
+from v2.contracts.neural import HandoffIntent
 from v2.utils import sha256_digest
 
 
@@ -141,6 +143,11 @@ class AdaptiveTaskEnvelope:
     domain_pack_id: str
     allowed_capability_ids: tuple[str, ...]
     allowed_output_contracts: tuple[str, ...]
+    allowed_handoff_intents: tuple[str, ...] = (
+        HandoffIntent.AUTO.value,
+        HandoffIntent.TEXT.value,
+        HandoffIntent.EXACT_ARTIFACT_PREFERRED.value,
+    )
     allowed_memory_policies: tuple[str, ...] = (
         "none",
         "assist",
@@ -172,6 +179,7 @@ class AdaptiveTaskEnvelope:
             "domain_pack_id": self.domain_pack_id,
             "allowed_capability_ids": list(self.allowed_capability_ids),
             "allowed_output_contracts": list(self.allowed_output_contracts),
+            "allowed_handoff_intents": list(self.allowed_handoff_intents),
             "allowed_memory_policies": list(self.allowed_memory_policies),
             "role_cardinality": {
                 role: {"minimum": bounds[0], "maximum": bounds[1]}
@@ -213,6 +221,11 @@ class PlanStepProposal:
     # authority; this tuple lets policy verify that a downstream Executor does
     # not assume columns its upstream Executor never promised to retain.
     required_input_fields: tuple[str, ...] = ()
+    handoff_intent: HandoffIntent = HandoffIntent.AUTO
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.handoff_intent, HandoffIntent):
+            object.__setattr__(self, "handoff_intent", HandoffIntent(self.handoff_intent))
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -227,6 +240,7 @@ class PlanStepProposal:
             "completion_criteria": dict(sorted(self.completion_criteria.items())),
             "on_failure": self.on_failure,
             "required_input_fields": list(self.required_input_fields),
+            "handoff_intent": self.handoff_intent.value,
         }
 
 
@@ -456,6 +470,123 @@ class TransformProgram:
 
 
 @dataclass(frozen=True)
+class RoleExecutionReceipt:
+    """Controller-checkable evidence of what a role actually used.
+
+    A role may return this wrapper around its normal result.  Prepared inputs
+    are deliberately not treated as consumption: only IDs named here (or the
+    strict validated-replay path) can create a memory consumption record.
+    ``result`` is intentionally opaque and is consumed by the role-specific
+    dispatcher.
+    """
+
+    result: Any
+    consumed_memory_ids: tuple[str, ...] = ()
+    consumption_modes: dict[str, str] = field(default_factory=dict)
+    rendered_request_hash: str = ""
+    executed_recipe_hashes: tuple[str, ...] = ()
+    output_decision_surface_hash: str = ""
+    execution_outcome: str = "accepted"
+    schema_version: str = "statebus.role_execution_receipt.v1"
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "consumed_memory_ids": list(self.consumed_memory_ids),
+            "consumption_modes": dict(sorted(self.consumption_modes.items())),
+            "rendered_request_hash": self.rendered_request_hash,
+            "executed_recipe_hashes": list(self.executed_recipe_hashes),
+            "output_decision_surface_hash": self.output_decision_surface_hash,
+            "execution_outcome": self.execution_outcome,
+            "schema_version": self.schema_version,
+        }
+
+
+@dataclass(frozen=True)
+class MemoryCounterfactualCallEvidence:
+    pair_id: str
+    task_id: str
+    step_id: str
+    pairing_digest: str
+    no_memory_generation_call_count: int
+    no_memory_repair_call_count: int
+    no_memory_quality_verified: bool
+    no_memory_citation_coverage_passed: bool
+    serialized_execution: bool = True
+    lane_order: str = "no_memory_then_memory"
+    schema_version: str = "statebus.memory_counterfactual_call_evidence.v1"
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "pair_id": self.pair_id,
+            "task_id": self.task_id,
+            "step_id": self.step_id,
+            "pairing_digest": self.pairing_digest,
+            "no_memory_generation_call_count": self.no_memory_generation_call_count,
+            "no_memory_repair_call_count": self.no_memory_repair_call_count,
+            "no_memory_quality_verified": self.no_memory_quality_verified,
+            "no_memory_citation_coverage_passed": self.no_memory_citation_coverage_passed,
+            "serialized_execution": self.serialized_execution,
+            "lane_order": self.lane_order,
+            "schema_version": self.schema_version,
+        }
+
+    @property
+    def evidence_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
+    def verified_avoided_call_count(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        pairing_digest: str,
+    ) -> int:
+        if (
+            self.task_id != task_id
+            or self.step_id != step_id
+            or self.pairing_digest != pairing_digest
+            or not self.serialized_execution
+            or not self.no_memory_quality_verified
+            or not self.no_memory_citation_coverage_passed
+        ):
+            return 0
+        return max(
+            0,
+            int(self.no_memory_generation_call_count)
+            + int(self.no_memory_repair_call_count),
+        )
+
+
+JSONScalar = str | int | float | bool | None
+
+
+@dataclass(frozen=True)
+class ClaimFieldSupport:
+    """Machine-readable lineage for one factual field in a claim."""
+
+    field_path: str
+    normalized_value_hash: str
+    support_kind: str
+    evidence_item_ids: tuple[str, ...] = ()
+    artifact_ref_id: str = ""
+    artifact_field_path: str = ""
+    source_locators: tuple[str, ...] = ()
+    schema_version: str = CLAIM_SET_V2_SCHEMA_VERSION
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "field_path": self.field_path,
+            "normalized_value_hash": self.normalized_value_hash,
+            "support_kind": self.support_kind,
+            "evidence_item_ids": list(self.evidence_item_ids),
+            "artifact_ref_id": self.artifact_ref_id,
+            "artifact_field_path": self.artifact_field_path,
+            "source_locators": list(self.source_locators),
+            "schema_version": self.schema_version,
+        }
+
+
+@dataclass(frozen=True)
 class Claim:
     claim_id: str
     claim_text: str
@@ -466,9 +597,11 @@ class Claim:
     numeric_fields: dict[str, float] = field(default_factory=dict)
     uncertainty_note: str = ""
     status: str = "ready"
+    factual_fields: dict[str, JSONScalar] = field(default_factory=dict)
+    field_support: tuple[ClaimFieldSupport, ...] = ()
 
     def canonical_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "claim_id": self.claim_id,
             "claim_text": self.claim_text,
             "claim_type": self.claim_type,
@@ -479,6 +612,11 @@ class Claim:
             "uncertainty_note": self.uncertainty_note,
             "status": self.status,
         }
+        if self.factual_fields:
+            payload["factual_fields"] = dict(sorted(self.factual_fields.items()))
+        if self.field_support:
+            payload["field_support"] = [item.canonical_payload() for item in self.field_support]
+        return payload
 
 
 @dataclass(frozen=True)
@@ -515,6 +653,14 @@ class StateConsumptionRecord:
     selected_ids: tuple[str, ...]
     behavioral_effect: str
     downstream_ref_ids: tuple[str, ...] = ()
+    # Identity attributes are deliberately separate from additive telemetry
+    # counters. ``consumer_role`` remains the legacy downstream-role field.
+    logical_owner_role: str = ""
+    logical_step_id: str = ""
+    physical_consumer_component: str = ""
+    physical_consumer_pid: int = 0
+    physical_consumer_uid: int = 0
+    downstream_role: str = ""
     consumed_at_ns: int = 0
     policy_version: str = "statebus.state_consumption.v1"
     schema_version: str = STATE_CONSUMPTION_RECORD_SCHEMA_VERSION
@@ -531,6 +677,12 @@ class StateConsumptionRecord:
             "selected_ids": list(self.selected_ids),
             "behavioral_effect": self.behavioral_effect,
             "downstream_ref_ids": list(self.downstream_ref_ids),
+            "logical_owner_role": self.logical_owner_role,
+            "logical_step_id": self.logical_step_id,
+            "physical_consumer_component": self.physical_consumer_component,
+            "physical_consumer_pid": self.physical_consumer_pid,
+            "physical_consumer_uid": self.physical_consumer_uid,
+            "downstream_role": self.downstream_role,
             "consumed_at_ns": self.consumed_at_ns,
             "policy_version": self.policy_version,
             "schema_version": self.schema_version,
@@ -552,6 +704,11 @@ class CapabilityGrant:
     max_runtime_ms: int
     expires_at_ns: int
     approved_plan_hash: str
+    # Per-attempt nonce and issuance timestamp make a grant token single-use
+    # and auditable across process boundaries.  They are part of the hashed
+    # binding, never a secret.
+    grant_nonce: str = ""
+    issued_at_ns: int = 0
     schema_version: str = CAPABILITY_GRANT_SCHEMA_VERSION
 
     def canonical_payload(self) -> dict[str, object]:
@@ -569,6 +726,8 @@ class CapabilityGrant:
             "max_runtime_ms": self.max_runtime_ms,
             "expires_at_ns": self.expires_at_ns,
             "approved_plan_hash": self.approved_plan_hash,
+            "grant_nonce": self.grant_nonce,
+            "issued_at_ns": self.issued_at_ns,
             "schema_version": self.schema_version,
         }
 

@@ -9,13 +9,26 @@ from v2.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
     CanonicalTaskSpec,
+    MemoryCounterfactualCallEvidence,
+    NeuralCompatibilitySignature,
     PlanPolicyReport,
     PlanProposal,
     RefStatus,
     ReplayClass,
     WorkflowMode,
 )
-from v2.memory import MemoryCommit, MemoryIndexStore, MemoryRef, MemoryType
+from v2.memory import (
+    MemoryCommit,
+    MemoryIndexStore,
+    MemoryRef,
+    MemoryType,
+    summarize_memory_consumption,
+)
+from v2.parameterized_recipe import (
+    RECIPE_PARAMETER_RELPATH,
+    audit_parameterized_recipe_source,
+    recipe_parameter_contract,
+)
 from v2.refs import ExecutionArtifactRef
 from v2.runtime.adaptive_dispatcher import (
     AdaptiveCapabilityDispatcher,
@@ -24,6 +37,9 @@ from v2.runtime.adaptive_dispatcher import (
     ClaimSetFactory,
     CodeRepairFactory,
     CodeSourceFactory,
+    LatentClaimSetParser,
+    LatentCompleteRequestFactory,
+    LatentProducerMessageFactory,
     RetrievalExpansionFactory,
     RetrievalRequestFactory,
     RetrievalResultObserver,
@@ -37,12 +53,19 @@ from v2.runtime.adaptive_runtime import (
     AdaptiveRuntimeResult,
 )
 from v2.runtime.capability_registry import CapabilityRegistry
+from v2.runtime.capability_grants import CapabilityGrantAuthenticator
 from v2.runtime.capability_validators import (
     CapabilityValidatorRegistry,
     default_capability_validator_registry,
 )
-from v2.runtime.plan_policy import PlanPolicyValidator
+from v2.runtime.plan_policy import (
+    PlannerOutcomeClass,
+    PlanPolicyValidator,
+    classify_planner_outcome,
+)
 from v2.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
+from v2.runtime.latent_handoff import LatentHandoffController
+from v2.runtime.role_model_backend import RoleModelBackend
 from v2.runtime.telemetry import TelemetryEvent
 from v2.runtime.workspace import WorkspaceLayout, WorkspaceManager
 from v2.state import LayeredStateStore, LayeredStoragePolicy
@@ -81,7 +104,17 @@ class AdaptiveMainlineBindings:
     output_schema_by_capability: dict[str, dict[str, str]] = field(default_factory=dict)
     output_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
     claim_set_factory: ClaimSetFactory | None = None
+    latent_handoff_controller: LatentHandoffController | None = None
+    latent_role_backend: RoleModelBackend | None = None
+    latent_producer_signature: NeuralCompatibilitySignature | None = None
+    latent_consumer_signature: NeuralCompatibilitySignature | None = None
+    latent_producer_message_factory: LatentProducerMessageFactory | None = None
+    latent_complete_request_factory: LatentCompleteRequestFactory | None = None
+    latent_claim_set_parser: LatentClaimSetParser | None = None
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
+    memory_counterfactual_evidence_by_step: dict[
+        str, MemoryCounterfactualCallEvidence
+    ] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -95,6 +128,9 @@ class AdaptivePlannerAssemblyRecord:
     schema_repair_fields: tuple[str, ...]
     policy_repair_used: bool
     hard_rejection: bool
+    outcome_class: PlannerOutcomeClass
+    raw_proposal_approved: bool
+    fallback_used: bool
     rejection_category: str = ""
 
     def canonical_payload(self) -> dict[str, object]:
@@ -108,6 +144,9 @@ class AdaptivePlannerAssemblyRecord:
             "schema_repair_fields": list(self.schema_repair_fields),
             "policy_repair_used": self.policy_repair_used,
             "hard_rejection": self.hard_rejection,
+            "outcome_class": self.outcome_class.value,
+            "raw_proposal_approved": self.raw_proposal_approved,
+            "fallback_used": self.fallback_used,
             "rejection_category": self.rejection_category,
         }
 
@@ -282,6 +321,13 @@ class AdaptiveMainlineRunner:
             output_schema_by_capability=bindings.output_schema_by_capability,
             output_schema_by_step=bindings.output_schema_by_step,
             claim_set_factory=bindings.claim_set_factory,
+            latent_handoff_controller=bindings.latent_handoff_controller,
+            latent_role_backend=bindings.latent_role_backend,
+            latent_producer_signature=bindings.latent_producer_signature,
+            latent_consumer_signature=bindings.latent_consumer_signature,
+            latent_producer_message_factory=bindings.latent_producer_message_factory,
+            latent_complete_request_factory=bindings.latent_complete_request_factory,
+            latent_claim_set_parser=bindings.latent_claim_set_parser,
             builtin_handlers=bindings.builtin_handlers,
             state_store=state_store,
             memory_store=memory_store,
@@ -294,7 +340,12 @@ class AdaptiveMainlineRunner:
             runtime_compatibility_signature=(
                 request.runtime_compatibility_signature or request.registry.digest
             ),
+            capability_grant_authenticator=CapabilityGrantAuthenticator.generate(),
+            memory_counterfactual_evidence_by_step=dict(
+                bindings.memory_counterfactual_evidence_by_step
+            ),
         )
+        dispatcher = AdaptiveCapabilityDispatcher(context=context)
         runtime_request = AdaptiveRuntimeRequest(
             trace_id=request.trace_id,
             task_id=request.task_id,
@@ -309,14 +360,11 @@ class AdaptiveMainlineRunner:
             proposal_hash=proposal.proposal_hash,
             planner_model_id=request.planner_model_id or proposal.model_id,
             planner_raw_output_hash=request.planner_raw_output_hash or proposal.raw_output_hash,
-            proposal_valid=not planner_record.policy_repair_used,
-            policy_rejected=planner_record.policy_repair_used,
+            proposal_valid=planner_record.raw_proposal_approved,
+            policy_rejected=not planner_record.raw_proposal_approved,
             repair_used=planner_record.policy_repair_used,
-            fallback_used=(
-                request.fallback_proposal is not None
-                and approved_plan.source_proposal_id == request.fallback_proposal.proposal_id
-            ),
-            dispatcher=AdaptiveCapabilityDispatcher(context=context),
+            fallback_used=planner_record.fallback_used,
+            dispatcher=dispatcher,
             layer_name=request.layer_name,
         )
 
@@ -329,8 +377,21 @@ class AdaptiveMainlineRunner:
             committed=False,
             reason="memory_commit_not_reached",
         )
+        latent_cleanup_completed = False
         try:
             runtime_result = AdaptiveRuntimeEngine().run(runtime_request)
+            cleanup_reason = (
+                "runtime_completed" if runtime_result.completed else "runtime_incomplete"
+            )
+            latent_cleanup_events = dispatcher.release_active_latent_refs(
+                reason=cleanup_reason
+            )
+            self._emit_latent_cleanup_events(
+                request=request,
+                runtime=runtime_result,
+                events=latent_cleanup_events,
+            )
+            latent_cleanup_completed = True
             memory_commit_decision = self._commit_verified_memory(
                 request=request,
                 approved_plan=approved_plan,
@@ -379,6 +440,22 @@ class AdaptiveMainlineRunner:
                         "planner_schema_repair_count": float(planner_record.schema_repair_used),
                         "planner_policy_repair_count": float(planner_record.policy_repair_used),
                         "planner_final_approved_count": 1.0,
+                        "planner_raw_directly_executable_count": float(
+                            planner_record.outcome_class
+                            == PlannerOutcomeClass.RAW_DIRECTLY_EXECUTABLE
+                        ),
+                        "planner_controller_normalized_count": float(
+                            planner_record.outcome_class
+                            == PlannerOutcomeClass.CONTROLLER_NORMALIZED
+                        ),
+                        "planner_model_repaired_count": float(
+                            planner_record.outcome_class
+                            == PlannerOutcomeClass.MODEL_REPAIRED
+                        ),
+                        "planner_rejected_or_fallback_count": float(
+                            planner_record.outcome_class
+                            == PlannerOutcomeClass.HARD_REJECTED_OR_FALLBACK
+                        ),
                     },
                 )
             )
@@ -394,6 +471,26 @@ class AdaptiveMainlineRunner:
                         payload={
                             "ref_id": state_id,
                             "owner": request.envelope.task_id,
+                            "logical_owner_role": "retriever",
+                            "logical_step_id": "retrieve",
+                            "physical_consumer_component": "runtime_semantic_selector",
+                            "physical_consumer_pid": next(
+                                (
+                                    record.physical_consumer_pid
+                                    for record in context.state_consumption_records
+                                    if getattr(record, "state_ref_id", "") == state_id
+                                ),
+                                0,
+                            ),
+                            "physical_consumer_uid": next(
+                                (
+                                    record.physical_consumer_uid
+                                    for record in context.state_consumption_records
+                                    if getattr(record, "state_ref_id", "") == state_id
+                                ),
+                                0,
+                            ),
+                            "downstream_role": "executor",
                         },
                         metrics={
                             "semantic_state_release_count": 1.0,
@@ -415,6 +512,17 @@ class AdaptiveMainlineRunner:
                 memory_commit_decision=memory_commit_decision,
             )
         finally:
+            if not latent_cleanup_completed:
+                latent_cleanup_events = dispatcher.release_active_latent_refs(
+                    reason="runtime_exception"
+                )
+                if runtime_result is not None:
+                    self._emit_latent_cleanup_events(
+                        request=request,
+                        runtime=runtime_result,
+                        events=latent_cleanup_events,
+                    )
+                    runtime_result.telemetry.close()
             for state_id in tuple(context.semantic_state_publications):
                 if state_id not in released_state_ids and state_id in state_store.materializations:
                     state_store.release(state_id)
@@ -431,6 +539,30 @@ class AdaptiveMainlineRunner:
             state_cleanup_completed=state_cleanup_completed,
             memory_commit_decision=memory_commit_decision,
         )
+
+    @staticmethod
+    def _emit_latent_cleanup_events(
+        *,
+        request: AdaptiveMainlineRequest,
+        runtime: AdaptiveRuntimeResult,
+        events: tuple[dict[str, object], ...],
+    ) -> None:
+        for event_record in events:
+            runtime.telemetry.emit(TelemetryEvent.create(
+                trace_id=request.trace_id,
+                task_id=request.task_id,
+                step_id="runtime.latent_cleanup",
+                event_type=str(event_record.get("event_type", "")),
+                role=str(event_record.get("role", "runtime_supervisor")),
+                channel=str(event_record.get("channel", "latent_state")),
+                payload=dict(event_record.get("payload", {})),
+                metrics={
+                    str(key): float(value)
+                    for key, value in dict(
+                        event_record.get("metrics", {})
+                    ).items()
+                },
+            ))
 
     @staticmethod
     def _assemble_plan(
@@ -458,6 +590,7 @@ class AdaptiveMainlineRunner:
             available_input_refs=request.available_input_refs,
         )
         policy_repair_used = False
+        fallback_used = False
         if outcome.approved_plan is None and request.repair_plan is not None:
             repaired = request.repair_plan(effective, outcome.report, normalization_fields)
             if repaired is not None:
@@ -479,6 +612,7 @@ class AdaptiveMainlineRunner:
                 request.envelope,
                 available_input_refs=request.available_input_refs,
             )
+            fallback_used = outcome.approved_plan is not None
         if outcome.approved_plan is None:
             category = _planner_rejection_category(outcome.report)
             raise AdaptiveMainlineError(f"planner_hard_rejection:{category}")
@@ -494,6 +628,15 @@ class AdaptiveMainlineRunner:
             schema_repair_fields=tuple(normalization_fields),
             policy_repair_used=policy_repair_used,
             hard_rejection=False,
+            outcome_class=classify_planner_outcome(
+                raw_directly_executable=raw_outcome.approved_plan is not None,
+                final_approved=True,
+                normalized_fields=tuple(normalization_fields),
+                model_repair_used=policy_repair_used,
+                fallback_used=fallback_used,
+            ),
+            raw_proposal_approved=raw_outcome.approved_plan is not None,
+            fallback_used=fallback_used,
         )
         return effective, outcome.approved_plan, planner_record
 
@@ -588,6 +731,33 @@ class AdaptiveMainlineRunner:
                 quality_report_hash=quality_report.report_hash,
             )
 
+        parameter_schema, parameter_bindings = recipe_parameter_contract(
+            request.canonical_task_spec
+        )
+        if str(recipe.get("execution_kind", "")) == "llm_bounded_python" and parameter_schema:
+            parameterization_valid = bool(
+                recipe.get("parameter_schema") == parameter_schema
+                and recipe.get("source_parameter_bindings") == parameter_bindings
+                and tuple(recipe.get("allowed_parameter_bindings", ()))
+                == tuple(sorted(parameter_schema))
+                and recipe.get("parameter_relpath") == RECIPE_PARAMETER_RELPATH
+            )
+            parameter_violations = audit_parameterized_recipe_source(
+                str(recipe.get("recipe_template", recipe.get("source", ""))),
+                parameter_schema=parameter_schema,
+                parameter_bindings=parameter_bindings,
+                parameter_relpath=RECIPE_PARAMETER_RELPATH,
+            )
+            if not parameterization_valid or parameter_violations:
+                return AdaptiveMemoryCommitDecision(
+                    True,
+                    False,
+                    "execution_recipe_parameterization_invalid",
+                    artifact_ref_id=executor_artifact.artifact_id,
+                    artifact_hash=executor_artifact.blob_hash,
+                    quality_report_hash=quality_report.report_hash,
+                )
+
         executor_step = next(
             step for step in approved_plan.steps if step.step_id == executor_artifact.step_id
         )
@@ -607,6 +777,23 @@ class AdaptiveMainlineRunner:
             *request.canonical_task_spec.target_entities,
             *request.memory_tags,
         )))
+        recipe = {
+            **recipe,
+            "input_contract": {
+                "schema_digest": context.input_schema_digest,
+                "lineage_required": True,
+            },
+            "output_contract": {
+                "version": executor_step.output_contract_version,
+            },
+            "validator_digest": context.validator_digest,
+            "source_lineage_constraints": {
+                "task_family": request.canonical_task_spec.task_family,
+                "intent_op": request.canonical_task_spec.intent_op,
+            },
+            "runtime_compatibility_signature": context.runtime_compatibility_signature,
+            "recipe_contract_version": "statebus.parameterized_execution_recipe.v1",
+        }
         recipe_hash = sha256_digest(recipe)
         summary = (
             f"Verified {recipe.get('execution_kind', 'analysis')} recipe for "
@@ -713,7 +900,64 @@ class AdaptiveMainlineRunner:
                 record.canonical_payload()
                 for record in context.memory_consumption_records
             ],
+            "memory_consumption_accounting": summarize_memory_consumption(
+                context.memory_consumption_records,
+                candidate_count=(
+                    sum(
+                        len(result.candidate_pool.candidate_memory_ids)
+                        for result in context.memory_match_results.values()
+                        if result.candidate_pool is not None
+                    )
+                    if context.memory_match_results
+                    else None
+                ),
+                approved_count=(
+                    sum(
+                        decision.policy_approved
+                        for result in context.memory_match_results.values()
+                        for decision in result.compatibility_decisions
+                    )
+                    if context.memory_match_results else None
+                ),
+                disclosed_count=sum(
+                    len(inputs) for inputs in context.memory_role_inputs_by_step.values()
+                ),
+            ),
+            "code_generation_pairing_digests": dict(sorted(
+                context.code_generation_pairing_digests.items()
+            )),
+            "code_generation_call_ledger_by_step": {
+                step_id: dict(ledger)
+                for step_id, ledger in sorted(
+                    context.code_generation_call_ledger_by_step.items()
+                )
+            },
+            "memory_counterfactual_evidence": {
+                step_id: evidence.canonical_payload()
+                for step_id, evidence in sorted(
+                    context.memory_counterfactual_evidence_by_step.items()
+                )
+            },
             "memory_commit_decision": memory_commit_decision.canonical_payload(),
+            "latent_handoffs": {
+                step_id: state.canonical_payload()
+                for step_id, state in sorted(
+                    context.latent_handoffs_by_consumer_step.items()
+                )
+            },
+            "latent_events": [
+                {
+                    "event_type": str(event.get("event_type", "")),
+                    "role": str(event.get("role", "")),
+                    "channel": str(event.get("channel", "latent_state")),
+                    "payload": dict(event.get("payload", {})),
+                    "metrics": {
+                        str(key): float(value)
+                        for key, value in dict(event.get("metrics", {})).items()
+                    },
+                }
+                for event in context.latent_event_records
+            ],
             "artifact_ref_ids": sorted(context.artifacts),
             "evidence_ref_ids": sorted(context.evidence_packs),
             "created_at_ns": time.time_ns(),

@@ -1,0 +1,258 @@
+{
+  "schema_version": "statebus.latent_narrative_holdout.v6",
+  "family_id": "latent_narrative_holdout_v6",
+  "frozen_at_utc": "2026-07-21T18:25:43Z",
+  "schedule_seed": 20260725,
+  "schedule_policy": "three fixed randomized orders paired with their reverse",
+  "claim_boundary": "post-remediation diagnostic on the already observed v5 cases; offline narrative analysis, cross-document synthesis, and document-grounded operating-plan selection; not Runtime Controller replan and not a fresh quality holdout; restores the design-preregistered 40-step lower bound with symmetric non-thinking chat templates",
+  "scoring_contract": "statebus.required_fact_phrase.v2",
+  "fixed_parameters": {
+    "model_family": "Qwen3-32B",
+    "vllm_version": "0.9.2",
+    "engine_generation": "V0",
+    "temperature": 0.0,
+    "seed": 7,
+    "summarizer_max_tokens": 768,
+    "retriever_text_max_tokens": 192,
+    "latent_steps": 40,
+    "chat_template_thinking": false,
+    "consumer_prompt_mode": "structured_messages",
+    "memory_enabled": false,
+    "codeact_enabled": false,
+    "prefix_alignment_mode": "independent"
+  },
+  "quality_thresholds": {
+    "required_fact_count": 24,
+    "c0_min_passed_facts": 22,
+    "t0_min_passed_facts": 20,
+    "l1_min_passed_facts": 22,
+    "l1_max_fact_deficit_vs_c0": 1,
+    "l1_min_fact_gain_vs_a0": 3,
+    "l1_required_mechanism_cases": 6,
+    "n1_required_pre_forward_rejections": 6
+  },
+  "source_documents": [
+    {
+      "item_id": "orion-ops-2026",
+      "path": "v2/benchmark/samples/continuous_task_families/kv_prefix_reuse/orion_factory_ops_report_2026.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "nova-ops-2026",
+      "path": "v2/benchmark/samples/continuous_task_families/kv_prefix_reuse/nova_retail_ops_report_2026.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "meridian-network-review",
+      "path": "v2/benchmark/samples/semantic_holdout/meridian_network_review.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "meridian-response-authorization",
+      "path": "v2/benchmark/samples/latent_narrative_holdout_v2/meridian_response_authorization.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "delta-hub-review",
+      "path": "v2/benchmark/samples/semantic_holdout/delta_hub_review.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "delta-rail-release-memo",
+      "path": "v2/benchmark/samples/latent_narrative_holdout_v2/delta_rail_release_memo.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "atlas-continuity-playbook",
+      "path": "v2/benchmark/samples/latent_narrative_holdout_v2/atlas_component_continuity_playbook.md",
+      "bucket": "semantic_context"
+    },
+    {
+      "item_id": "cobalt-network-playbook",
+      "path": "v2/benchmark/samples/latent_narrative_holdout_v2/cobalt_same_day_control_playbook.md",
+      "bucket": "semantic_context"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "latent-long-orion-delivery",
+      "category": "long_document_causal_analysis",
+      "task_mode": "long_document_causal_analysis",
+      "task": "For Orion Factory Systems, analyze the non-table causal chain behind the Q3 delivery deterioration. Identify the supplier timing, line-transition factor, immediate timed containment, and condition expected to provide longer-term relief. Cite the source items.",
+      "source_item_ids": ["orion-ops-2026"],
+      "lane_order": ["C0", "T0", "A0", "L1", "N1"],
+      "required_facts": [
+        {
+          "fact_id": "orion_encoder_supplier_september_miss",
+          "term_groups": [["high resolution encoder", "high-resolution encoder", "encoder"], ["supplier", "suppliers"], ["september"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_consolidated_line_training_factor",
+          "term_groups": [["consolidated", "consolidation"], ["training"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_october_night_shift_containment",
+          "term_groups": [["temporary night shift", "night shift"], ["october"]],
+          "source_item_ids": ["orion-ops-2026"]
+        },
+        {
+          "fact_id": "orion_q4_second_source_relief_condition",
+          "term_groups": [["second encoder supplier", "second source", "second-source"], ["reliability testing", "qualification"], ["q4"]],
+          "source_item_ids": ["orion-ops-2026"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-long-nova-pressure",
+      "category": "long_document_causal_analysis",
+      "task_mode": "long_document_causal_analysis",
+      "task": "For Nova Retail Logistics, return four claims in this exact order: the three-part Q3 cost chain; why limited weekend-lane concentration is operationally addressable; the carrier-miss timing; and the Risk Register's explicit cap-before-instability control. Do not replace a requested dimension with another management action. Cite the source items.",
+      "source_item_ids": ["nova-ops-2026"],
+      "lane_order": ["N1", "L1", "A0", "T0", "C0"],
+      "required_facts": [
+        {
+          "fact_id": "nova_q3_cost_chain",
+          "term_groups": [["cross dock", "cross-dock"], ["temporary labor"], ["carrier premium", "carrier premiums"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_limited_weekend_lane_concentration",
+          "term_groups": [["limited"], ["weekend lane", "weekend lanes"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_august_september_carrier_misses",
+          "term_groups": [["two carrier", "carrier partners"], ["august"], ["september"], ["coverage commitment", "coverage commitments"]],
+          "source_item_ids": ["nova-ops-2026"]
+        },
+        {
+          "fact_id": "nova_unstable_network_acceptance_control",
+          "term_groups": [["cap same day", "cap same-day"], ["carrier network"], ["unstable", "instability"]],
+          "source_item_ids": ["nova-ops-2026"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-synthesis-meridian-response",
+      "category": "cross_document_evidence_synthesis",
+      "task_mode": "cross_document_evidence_synthesis",
+      "task": "Synthesize the signed Meridian network review with the response authorization. Use one claim for the demand-to-utilization chain and affected product, one for the binding constraint versus adequate resources, one for temporary scope plus the permanent exclusion, and one combined risk condition with its deadline before the next replenishment wave. Cite every source needed by each conclusion.",
+      "source_item_ids": ["meridian-network-review", "meridian-response-authorization"],
+      "lane_order": ["T0", "C0", "L1", "N1", "A0"],
+      "required_facts": [
+        {
+          "fact_id": "meridian_demand_utilization_chain",
+          "term_groups": [["hospital"], ["restocking", "replenishment"], ["temperature controlled", "temperature-controlled"], ["night shift", "night-shift"]],
+          "source_item_ids": ["meridian-network-review"]
+        },
+        {
+          "fact_id": "meridian_binding_dock_not_transport",
+          "term_groups": [["cold storage", "cold-storage"], ["dock", "doors"], ["trailer"], ["line haul", "line-haul"], ["adequate"]],
+          "source_item_ids": ["meridian-network-review"]
+        },
+        {
+          "fact_id": "meridian_temporary_two_wave_scope",
+          "term_groups": [["temporary"], ["rotating weekend dock", "weekend dock team"], ["two replenishment waves"], ["permanent", "permanent positions"]],
+          "source_item_ids": ["meridian-response-authorization"]
+        },
+        {
+          "fact_id": "meridian_risk_to_authorized_timing",
+          "term_groups": [["delayed regional deliveries", "delayed delivery"], ["weekend dock coverage", "weekend dock team", "weekend rotation"], ["before the next replenishment wave", "before next replenishment wave"]],
+          "source_item_ids": ["meridian-network-review", "meridian-response-authorization"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-synthesis-delta-release",
+      "category": "cross_document_evidence_synthesis",
+      "task_mode": "cross_document_evidence_synthesis",
+      "task": "Reconcile the Delta Hub review and release memo using four claims in this exact order: the binding capacity-capped qualifier; why sufficient truck capacity cannot authorize the extra release, citing both documents; the manifest deadline plus operator-acknowledgment gate and subsequent release day; and the missed-acknowledgment held status plus next rail window. Cite every required source.",
+      "source_item_ids": ["delta-hub-review", "delta-rail-release-memo"],
+      "lane_order": ["A0", "N1", "L1", "C0", "T0"],
+      "required_facts": [
+        {
+          "fact_id": "delta_capacity_capped_pending_rail",
+          "term_groups": [["capacity capped", "capacity-capped"], ["rail slot", "rail-slot"], ["approval", "allocation"]],
+          "source_item_ids": ["delta-hub-review"]
+        },
+        {
+          "fact_id": "delta_trucks_do_not_override_rail",
+          "term_groups": [["truck"], ["sufficient", "adequate"], ["does not override", "do not override", "not override", "cannot be released", "cannot authorize", "does not authorize"], ["rail"]],
+          "source_item_ids": ["delta-hub-review", "delta-rail-release-memo"]
+        },
+        {
+          "fact_id": "delta_tuesday_ack_wednesday_release",
+          "term_groups": [["tuesday"], ["16:00", "4 pm", "4 p.m."], ["acknowledgment", "acknowledgement", "acknowledges", "acknowledged"], ["wednesday"]],
+          "source_item_ids": ["delta-rail-release-memo"]
+        },
+        {
+          "fact_id": "delta_missed_deadline_thursday_fallback",
+          "term_groups": [["missed", "misses"], ["deadline", "16:00", "4 pm", "4 p.m.", "acknowledgment", "acknowledgement"], ["capacity capped", "capacity-capped", "remained held", "remain held"], ["next thursday", "thursday rail", "rail window on thursday"]],
+          "source_item_ids": ["delta-rail-release-memo"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-plan-atlas-continuity",
+      "category": "conditional_plan_switch",
+      "task_mode": "conditional_plan_switch",
+      "task": "Using the current signed observations and branch rules in the Atlas continuity review, determine the operating-plan branch that applies now. For the trigger use the observed buffer and qualification state rather than only thresholds; state the 24-hour actions, the first operating day of a positive transition, and the fail-closed fallback. Cite the source item.",
+      "source_item_ids": ["atlas-continuity-playbook"],
+      "lane_order": ["L1", "A0", "N1", "T0", "C0"],
+      "required_facts": [
+        {
+          "fact_id": "atlas_complete_current_trigger",
+          "term_groups": [["two confirmed", "two shipment slots", "at least two"], ["five production days", "five days", "below seven", "below 7"], ["alternate"], ["unqualified", "qualification is still incomplete", "not yet qualified"]],
+          "source_item_ids": ["atlas-continuity-playbook"]
+        },
+        {
+          "fact_id": "atlas_copper_immediate_actions",
+          "term_groups": [["within 24 hours", "24 hours"], ["freeze low priority", "freeze low-priority"], ["reserve emergency freight"]],
+          "source_item_ids": ["atlas-continuity-playbook"]
+        },
+        {
+          "fact_id": "atlas_positive_silver_transition",
+          "term_groups": [["passes reliability", "passes reliability qualification", "friday test passes"], ["friday"], ["plan silver"], ["monday"]],
+          "source_item_ids": ["atlas-continuity-playbook"]
+        },
+        {
+          "fact_id": "atlas_failed_test_fallback",
+          "term_groups": [["fails", "failed"], ["friday"], ["continue plan copper", "remain in plan copper"], ["cap new customer commitments", "cap new commitments"]],
+          "source_item_ids": ["atlas-continuity-playbook"]
+        }
+      ]
+    },
+    {
+      "case_id": "latent-plan-cobalt-network",
+      "category": "conditional_plan_switch",
+      "task_mode": "conditional_plan_switch",
+      "task": "Using the current Harbor East observations and the Cobalt branch rules, select the operating-plan branch that applies now. State the observed trigger values, the timed control actions, and the fail-closed branch condition. Cite the source item.",
+      "source_item_ids": ["cobalt-network-playbook"],
+      "lane_order": ["C0", "T0", "N1", "A0", "L1"],
+      "required_facts": [
+        {
+          "fact_id": "cobalt_current_trigger_values",
+          "term_groups": [["78"], ["74"], ["128"], ["route density"]],
+          "source_item_ids": ["cobalt-network-playbook"]
+        },
+        {
+          "fact_id": "cobalt_bridge_selected_branch",
+          "term_groups": [["plan bridge"], ["carrier acceptance", "primary weekend carrier"], ["below 85"], ["at least 70", "74"], ["at or above 120", "128"]],
+          "source_item_ids": ["cobalt-network-playbook"]
+        },
+        {
+          "fact_id": "cobalt_bridge_timed_actions",
+          "term_groups": [["cap same day", "cap same-day"], ["current volume"], ["14:00", "2 pm", "2 p.m."], ["contingency carrier", "contingency carriers"]],
+          "source_item_ids": ["cobalt-network-playbook"]
+        },
+        {
+          "fact_id": "cobalt_hold_fallback_condition",
+          "term_groups": [["plan hold"], ["below 70"], ["below 120"], ["or route density", "either guardrail"]],
+          "source_item_ids": ["cobalt-network-playbook"]
+        }
+      ]
+    }
+  ]
+}

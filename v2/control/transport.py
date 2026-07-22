@@ -11,13 +11,18 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Union
 
+from v2.contracts import CONTROL_PLANE_SCHEMA_VERSION
 from v2.control.messages import (
     AckReceived,
     CancelCommand,
+    CONTROL_PROTOCOL_VERSION,
     ControlMessage,
+    DEFAULT_WORKER_CAPABILITY_IDS,
     ErrorResult,
     EventType,
     ExecRequest,
+    Hello,
+    HelloAck,
     Heartbeat,
     RefHandle,
     RunStart,
@@ -27,6 +32,7 @@ from v2.control.messages import (
     deframe_control_message,
     frame_control_message,
     frame_text_control_message,
+    worker_capability_registry_digest,
 )
 
 
@@ -154,6 +160,10 @@ class ControlPlaneLoopbackServer:
                         send_control_message(conn, response)
                 finally:
                     conn.close()
+            except (OSError, TimeoutError):
+                # The parent adds a deterministic timeout result when no
+                # worker connected; avoid leaking an unhandled thread error.
+                return
             finally:
                 server.close()
                 if socket_path.exists():
@@ -353,6 +363,23 @@ class ExecutorTransportAudit:
     request_wire_bytes: int
     response_wire_bytes: int
     topology: str = "driver_uds_executor_subprocess"
+    negotiation_performed: bool = False
+    negotiation_accepted: bool = False
+    negotiated_protocol_version: str = ""
+    negotiated_schema_version: str = ""
+    controller_registry_digest: str = ""
+    worker_registry_digest: str = ""
+    required_capability_ids: tuple[str, ...] = ()
+    supported_capability_ids: tuple[str, ...] = ()
+    negotiation_error: str = ""
+    negotiation_request_frame_count: int = 0
+    negotiation_response_frame_count: int = 0
+    negotiation_request_wire_bytes: int = 0
+    negotiation_response_wire_bytes: int = 0
+    execution_request_frame_count: int = 0
+    execution_response_frame_count: int = 0
+    execution_request_wire_bytes: int = 0
+    execution_response_wire_bytes: int = 0
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -366,7 +393,84 @@ class ExecutorTransportAudit:
             "response_wire_bytes": self.response_wire_bytes,
             "total_wire_bytes": self.request_wire_bytes + self.response_wire_bytes,
             "topology": self.topology,
+            "negotiation_performed": self.negotiation_performed,
+            "negotiation_accepted": self.negotiation_accepted,
+            "negotiated_protocol_version": self.negotiated_protocol_version,
+            "negotiated_schema_version": self.negotiated_schema_version,
+            "controller_registry_digest": self.controller_registry_digest,
+            "worker_registry_digest": self.worker_registry_digest,
+            "required_capability_ids": list(self.required_capability_ids),
+            "supported_capability_ids": list(self.supported_capability_ids),
+            "negotiation_error": self.negotiation_error,
+            "negotiation_request_frame_count": self.negotiation_request_frame_count,
+            "negotiation_response_frame_count": self.negotiation_response_frame_count,
+            "negotiation_request_wire_bytes": self.negotiation_request_wire_bytes,
+            "negotiation_response_wire_bytes": self.negotiation_response_wire_bytes,
+            "execution_request_frame_count": self.execution_request_frame_count,
+            "execution_response_frame_count": self.execution_response_frame_count,
+            "execution_request_wire_bytes": self.execution_request_wire_bytes,
+            "execution_response_wire_bytes": self.execution_response_wire_bytes,
         }
+
+
+def _wire_capability_for_request(request: ExecRequest) -> str:
+    return request.operation.strip() or "echo_refs_v1"
+
+
+def _validate_hello_ack(
+    ack: HelloAck,
+    *,
+    offered_protocol_versions: tuple[str, ...],
+    offered_schema_versions: tuple[str, ...],
+    expected_registry_digest: str,
+    required_capability_ids: tuple[str, ...],
+) -> tuple[str, str]:
+    if not ack.accepted:
+        detail = ack.error_detail or "worker_rejected_negotiation"
+        first_error = detail.split(",", 1)[0]
+        return first_error.split(":", 1)[0], detail
+    if ack.accepted_protocol_version not in offered_protocol_versions:
+        return "protocol_version_mismatch", ack.accepted_protocol_version
+    if ack.accepted_schema_version not in offered_schema_versions:
+        return "schema_version_mismatch", ack.accepted_schema_version
+    if ack.worker_registry_digest != expected_registry_digest:
+        return "capability_registry_digest_mismatch", ack.worker_registry_digest
+    missing = sorted(set(required_capability_ids) - set(ack.supported_capability_ids))
+    if missing:
+        return "missing_required_capability", ",".join(missing)
+    return "", ""
+
+
+def _validate_numeric_worker_response(
+    result: SuccessResult,
+    *,
+    request: ExecRequest,
+    memfd_refs: dict[str, tuple[int, int]] | None,
+    negotiated_worker_pid: int,
+) -> str:
+    from v2.control.worker_operations import validate_typed_numeric_summary
+
+    if result.numeric_summary is None:
+        return "numeric_summary_result_missing"
+    if len(request.state_refs) != 1 or not memfd_refs:
+        return "numeric_summary_controller_input_missing"
+    input_ref_id = request.state_refs[0].ref_id
+    entry = memfd_refs.get(input_ref_id)
+    if entry is None:
+        return "numeric_summary_controller_fd_missing"
+    fd, length = entry
+    try:
+        payload = os.pread(fd, length, 0)
+    except OSError:
+        return "numeric_summary_controller_fd_read_failed"
+    if len(payload) != length:
+        return "numeric_summary_controller_fd_short_read"
+    return validate_typed_numeric_summary(
+        result.numeric_summary,
+        payload=payload,
+        expected_input_ref_id=input_ref_id,
+        expected_worker_pid=negotiated_worker_pid,
+    )
 
 
 def _text_response_to_control_message(
@@ -435,10 +539,12 @@ class SubprocessExecutorTransport:
     """Launch a worker subprocess and communicate via UDS + typed Protobuf frames.
 
     The main process listens on ``socket_path``; the subprocess connects,
-    receives one ``ExecRequest``, executes it, and returns a result frame.
+    negotiates the typed protocol, receives one ``ExecRequest``, executes it,
+    and returns result frames. The matched UTF-8 carrier skips negotiation.
 
-    Protocol: main sends ExecRequest → worker sends AckReceived + RunStart +
-    Heartbeat + SuccessResult (or ErrorResult) → connection closes.
+    Typed protocol: main sends Hello -> worker sends HelloAck -> main sends
+    ExecRequest -> worker sends AckReceived + RunStart + Heartbeat +
+    SuccessResult (or ErrorResult) -> connection closes.
 
     memfd support
     -------------
@@ -452,6 +558,11 @@ class SubprocessExecutorTransport:
     socket_path: Path
     python_executable: str = sys.executable
     timeout_s: float = 30.0
+    capability_grant_secret: bytes = field(default=b"", repr=False)
+    offered_protocol_versions: tuple[str, ...] = (CONTROL_PROTOCOL_VERSION,)
+    offered_schema_versions: tuple[str, ...] = (CONTROL_PLANE_SCHEMA_VERSION,)
+    controller_registry_digest: str = ""
+    required_capability_ids: tuple[str, ...] = ()
     last_exchange_audit: ExecutorTransportAudit | None = field(
         default=None,
         init=False,
@@ -473,10 +584,61 @@ class SubprocessExecutorTransport:
             raise ValueError(f"unsupported subprocess carrier: {carrier}")
         pass_fds: tuple[int, ...] = ()
         exec_request = request
+        grant_secret = self.capability_grant_secret
+        if (
+            normalized_carrier == "protobuf"
+            and request.operation in {
+                "semantic_select_v1",
+                "typed_numeric_summary_v1",
+            }
+            and not request.capability_grant_token
+        ):
+            # Compatibility for trusted Controller call sites that predate the
+            # authenticated token field.  The Controller transport issues a
+            # one-shot wire grant; the worker still rejects an unsigned random
+            # non-empty hash.
+            import secrets as _secrets
+
+            from v2.contracts import CapabilityGrant
+            from v2.runtime.capability_grants import CapabilityGrantAuthenticator
+
+            issued_at_ns = time.time_ns()
+            wire_grant = CapabilityGrant(
+                grant_id=f"wire-{request.header.task_id}-{request.header.attempt_id}",
+                task_id=request.header.task_id,
+                session_id=request.header.trace_id,
+                step_id=request.header.step_id,
+                attempt_id=request.header.attempt_id,
+                capability_id=request.operation,
+                capability_version="wire-v1",
+                input_ref_ids=tuple(
+                    ref.ref_id
+                    for ref in (*request.state_refs, *request.artifact_refs, *request.memory_refs)
+                ),
+                output_contract_version=request.output_contract_version,
+                workspace_root_id=request.workspace_root,
+                max_runtime_ms=request.header.timeout_ms,
+                expires_at_ns=issued_at_ns + max(request.header.timeout_ms, 1_000) * 1_000_000,
+                approved_plan_hash="wire-controller-issued",
+                grant_nonce=_secrets.token_urlsafe(18),
+                issued_at_ns=issued_at_ns,
+            )
+            grant_secret = grant_secret or _secrets.token_bytes(32)
+            authenticator = CapabilityGrantAuthenticator(secret=grant_secret)
+            exec_request = replace(
+                request,
+                capability_grant_hash=wire_grant.grant_hash,
+                capability_grant_token=authenticator.issue(
+                    wire_grant,
+                    bound_ref_ids=wire_grant.input_ref_ids,
+                    bound_output_contract=request.output_contract_version,
+                ),
+                capability_grant_session_id=wire_grant.session_id,
+            )
         if memfd_refs:
             new_state_refs = []
             fds_to_pass: list[int] = []
-            for ref in request.state_refs:
+            for ref in exec_request.state_refs:
                 entry = memfd_refs.get(ref.ref_id)
                 if entry is not None:
                     fd, length = entry
@@ -486,13 +648,34 @@ class SubprocessExecutorTransport:
                     fds_to_pass.append(fd)
                 else:
                     new_state_refs.append(ref)
-            existing_ids = {ref.ref_id for ref in request.state_refs}
+            existing_ids = {ref.ref_id for ref in exec_request.state_refs}
             for state_id, (fd, length) in memfd_refs.items():
                 if state_id not in existing_ids:
                     new_state_refs.append(encode_memfd_ref(fd=fd, length=length, state_id=state_id))
                     fds_to_pass.append(fd)
-            exec_request = replace(request, state_refs=tuple(new_state_refs))
+            exec_request = replace(exec_request, state_refs=tuple(new_state_refs))
             pass_fds = tuple(sorted(set(fds_to_pass)))
+
+        registry_digest = (
+            self.controller_registry_digest
+            or worker_capability_registry_digest(DEFAULT_WORKER_CAPABILITY_IDS)
+        )
+        required_capability_ids = tuple(dict.fromkeys((
+            *self.required_capability_ids,
+            _wire_capability_for_request(exec_request),
+        )))
+        hello = Hello(
+            header=replace(
+                exec_request.header,
+                event_type=EventType.HELLO,
+                target_role="executor_worker",
+            ),
+            protocol_versions=self.offered_protocol_versions,
+            schema_versions=self.offered_schema_versions,
+            controller_registry_digest=registry_digest,
+            required_capability_ids=required_capability_ids,
+            controller_pid=_os.getpid(),
+        )
 
         socket_path = effective_unix_socket_path(self.socket_path)
         socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -500,17 +683,28 @@ class SubprocessExecutorTransport:
             socket_path.unlink()
 
         responses: list[ControlMessage] = []
-        response_wire_bytes: list[int] = []
+        request_wire_frames: list[int] = []
+        response_wire_frames: list[int] = []
+        negotiation_request_wire_frames: list[int] = []
+        negotiation_response_wire_frames: list[int] = []
+        execution_request_wire_frames: list[int] = []
+        execution_response_wire_frames: list[int] = []
+        negotiation_state: dict[str, object] = {
+            "performed": False,
+            "accepted": False,
+            "protocol_version": "",
+            "schema_version": "",
+            "worker_registry_digest": "",
+            "supported_capability_ids": (),
+            "worker_pid": 0,
+            "error": "",
+        }
         server_ready = threading.Event()
         resolved_text_payload = text_payload or _default_text_exec_handoff(exec_request)
-        request_wire_bytes = len(
-            frame_text_message(resolved_text_payload)
-            if normalized_carrier == "utf8_text"
-            else frame_control_message(exec_request)
-        )
 
         def _serve() -> None:
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            conn: socket.socket | None = None
             try:
                 server.bind(str(socket_path))
                 server.listen(1)
@@ -518,35 +712,133 @@ class SubprocessExecutorTransport:
                 server_ready.set()
                 conn, _ = server.accept()
                 try:
+                    if exec_request.capability_grant_token:
+                        from v2.runtime.capability_grants import require_peer_uid
+
+                        require_peer_uid(conn, _os.getuid())
                     if normalized_carrier == "utf8_text":
+                        request_size = len(frame_text_message(resolved_text_payload))
                         send_text_message(conn, resolved_text_payload)
+                        request_wire_frames.append(request_size)
+                        execution_request_wire_frames.append(request_size)
                     else:
+                        negotiation_state["performed"] = True
+                        hello_size = len(frame_control_message(hello))
+                        send_control_message(conn, hello)
+                        request_wire_frames.append(hello_size)
+                        negotiation_request_wire_frames.append(hello_size)
+                        hello_response = recv_control_message(conn)
+                        hello_response_size = len(frame_control_message(hello_response))
+                        response_wire_frames.append(hello_response_size)
+                        negotiation_response_wire_frames.append(hello_response_size)
+                        if not isinstance(hello_response, HelloAck):
+                            error_code = "hello_ack_required"
+                            error_detail = type(hello_response).__name__
+                        else:
+                            negotiation_state.update({
+                                "accepted": hello_response.accepted,
+                                "protocol_version": hello_response.accepted_protocol_version,
+                                "schema_version": hello_response.accepted_schema_version,
+                                "worker_registry_digest": hello_response.worker_registry_digest,
+                                "supported_capability_ids": hello_response.supported_capability_ids,
+                                "worker_pid": hello_response.worker_pid,
+                            })
+                            error_code, error_detail = _validate_hello_ack(
+                                hello_response,
+                                offered_protocol_versions=self.offered_protocol_versions,
+                                offered_schema_versions=self.offered_schema_versions,
+                                expected_registry_digest=registry_digest,
+                                required_capability_ids=required_capability_ids,
+                            )
+                        if error_code:
+                            negotiation_state["accepted"] = False
+                            negotiation_state["error"] = error_detail or error_code
+                            responses.append(ErrorResult(
+                                header=replace(exec_request.header, event_type=EventType.RES_ERR),
+                                error_code=error_code,
+                                error_detail=error_detail or error_code,
+                                failed_at_ns=time.time_ns(),
+                            ))
+                            return
+                        negotiation_state["accepted"] = True
+                        exec_size = len(frame_control_message(exec_request))
                         send_control_message(conn, exec_request)
+                        request_wire_frames.append(exec_size)
+                        execution_request_wire_frames.append(exec_size)
                     while True:
                         try:
                             if normalized_carrier == "utf8_text":
                                 text_response = recv_text_message(conn)
-                                response_wire_bytes.append(
-                                    len(frame_text_message(text_response))
-                                )
+                                response_size = len(frame_text_message(text_response))
                                 msg = _text_response_to_control_message(
                                     text_response,
                                     request=exec_request,
                                 )
                             else:
                                 msg = recv_control_message(conn)
-                                response_wire_bytes.append(
-                                    len(frame_control_message(msg))
-                                )
+                                response_size = len(frame_control_message(msg))
                         except (ConnectionError, ConnectionResetError, socket.timeout):
                             break
+                        response_wire_frames.append(response_size)
+                        execution_response_wire_frames.append(response_size)
+                        if (
+                            isinstance(msg, SuccessResult)
+                            and exec_request.operation == "typed_numeric_summary_v1"
+                        ):
+                            validation_error = _validate_numeric_worker_response(
+                                msg,
+                                request=request,
+                                memfd_refs=memfd_refs,
+                                negotiated_worker_pid=int(
+                                    negotiation_state.get("worker_pid", 0)
+                                ),
+                            )
+                            if validation_error:
+                                msg = ErrorResult(
+                                    header=replace(
+                                        exec_request.header,
+                                        event_type=EventType.RES_ERR,
+                                    ),
+                                    error_code="worker_result_validation_failed",
+                                    error_detail=validation_error,
+                                    failed_at_ns=time.time_ns(),
+                                )
                         responses.append(msg)
                         if isinstance(msg, (SuccessResult, ErrorResult)):
                             break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Do not turn an authentication or framing failure into a
+                    # parent-side timeout.  Return a typed, fail-closed error
+                    # while the connection is still available.
+                    error_code = str(getattr(exc, "code", "transport_server_error"))
+                    error_detail = str(exc) or error_code
+                    error = ErrorResult(
+                        header=replace(exec_request.header, event_type=EventType.RES_ERR),
+                        error_code=error_code,
+                        error_detail=error_detail,
+                        failed_at_ns=time.time_ns(),
+                    )
+                    try:
+                        if normalized_carrier == "utf8_text":
+                            send_text_message(
+                                conn,
+                                f"RESULT ERROR {error_code} {error_detail}",
+                            )
+                        else:
+                            send_control_message(conn, error)
+                            response_size = len(frame_control_message(error))
+                            response_wire_frames.append(response_size)
+                            execution_response_wire_frames.append(response_size)
+                        responses.append(error)
+                    except (ConnectionError, OSError):
+                        pass
                 finally:
-                    conn.close()
+                    if conn is not None:
+                        conn.close()
+            except (OSError, TimeoutError):
+                # The parent adds a deterministic timeout result when no
+                # worker connected; avoid leaking an unhandled thread error.
+                return
             finally:
                 server.close()
                 if socket_path.exists():
@@ -557,6 +849,33 @@ class SubprocessExecutorTransport:
         server_ready.wait(timeout=2.0)
 
         worker_root = Path(__file__).resolve().parent.parent.parent
+        # Only carry the process settings needed to import/run the worker.
+        # Capability material is added below for this one-shot process only.
+        worker_env = {
+            key: value
+            for key, value in _os.environ.items()
+            if key in {
+                "PATH",
+                "PYTHONPATH",
+                "PYTHONHOME",
+                "LANG",
+                "LC_ALL",
+                "LD_LIBRARY_PATH",
+                "TMPDIR",
+                "OPENBLAS_NUM_THREADS",
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+            }
+        }
+        if exec_request.capability_grant_token:
+            if not grant_secret:
+                raise ValueError("capability_grant_secret_required")
+            # The secret is inherited only by the one-shot worker.  It never
+            # appears in argv, a wire frame, an artifact, or a log line.
+            worker_env["STATEBUS_CAPABILITY_GRANT_SECRET_HEX"] = grant_secret.hex()
+            nonce_dir = socket_path.parent / ".statebus_grant_nonces"
+            nonce_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            worker_env["STATEBUS_CAPABILITY_GRANT_NONCE_DIR"] = str(nonce_dir)
         proc = subprocess.Popen(
             [
                 self.python_executable,
@@ -569,10 +888,11 @@ class SubprocessExecutorTransport:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=_os.environ,
+            env=worker_env,
             cwd=str(worker_root),
             close_fds=True,
             pass_fds=pass_fds,
+            start_new_session=True,
         )
         t.join(timeout=self.timeout_s)
         try:
@@ -580,12 +900,23 @@ class SubprocessExecutorTransport:
         except subprocess.TimeoutExpired:
             proc.kill()
 
+        worker_stderr = ""
+        if proc.stderr is not None:
+            try:
+                worker_stderr = proc.stderr.read().decode("utf-8", errors="replace").strip()
+            except OSError:
+                worker_stderr = ""
+
         completed_responses = responses
         if not any(isinstance(msg, (SuccessResult, ErrorResult)) for msg in responses):
             completed_responses = responses + [ErrorResult(
                 header=replace(request.header, event_type=EventType.RES_ERR),
                 error_code="subprocess_timeout",
-                error_detail="worker subprocess did not return a result within timeout",
+                error_detail=(
+                    "worker subprocess did not return a result within timeout"
+                    f";returncode={proc.returncode}"
+                    + (f";stderr={worker_stderr[-500:]}" if worker_stderr else "")
+                ),
                 failed_at_ns=time.time_ns(),
             )]
         self.last_exchange_audit = ExecutorTransportAudit(
@@ -597,10 +928,34 @@ class SubprocessExecutorTransport:
             backend="uds_subprocess",
             driver_pid=_os.getpid(),
             worker_pid=proc.pid,
-            request_frame_count=1,
-            response_frame_count=len(completed_responses),
-            request_wire_bytes=request_wire_bytes,
-            response_wire_bytes=sum(response_wire_bytes),
+            request_frame_count=len(request_wire_frames),
+            response_frame_count=len(response_wire_frames),
+            request_wire_bytes=sum(request_wire_frames),
+            response_wire_bytes=sum(response_wire_frames),
+            negotiation_performed=bool(negotiation_state["performed"]),
+            negotiation_accepted=bool(negotiation_state["accepted"]),
+            negotiated_protocol_version=str(negotiation_state["protocol_version"]),
+            negotiated_schema_version=str(negotiation_state["schema_version"]),
+            controller_registry_digest=(
+                registry_digest if normalized_carrier == "protobuf" else ""
+            ),
+            worker_registry_digest=str(negotiation_state["worker_registry_digest"]),
+            required_capability_ids=(
+                required_capability_ids if normalized_carrier == "protobuf" else ()
+            ),
+            supported_capability_ids=tuple(
+                str(value)
+                for value in negotiation_state["supported_capability_ids"]
+            ),
+            negotiation_error=str(negotiation_state["error"]),
+            negotiation_request_frame_count=len(negotiation_request_wire_frames),
+            negotiation_response_frame_count=len(negotiation_response_wire_frames),
+            negotiation_request_wire_bytes=sum(negotiation_request_wire_frames),
+            negotiation_response_wire_bytes=sum(negotiation_response_wire_frames),
+            execution_request_frame_count=len(execution_request_wire_frames),
+            execution_response_frame_count=len(execution_response_wire_frames),
+            execution_request_wire_bytes=sum(execution_request_wire_frames),
+            execution_response_wire_bytes=sum(execution_response_wire_frames),
         )
         return completed_responses
 

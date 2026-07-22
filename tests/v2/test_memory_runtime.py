@@ -3,18 +3,137 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from v2.contracts import CanonicalTaskSpec, ReplayClass
+from v2.contracts import CanonicalTaskSpec, CompatibilityVerdict, ReplayClass
 
 from v2.memory import (
     DeterministicEmbeddingEncoder,
     MemoryCommit,
     MemoryCommitStatus,
+    MemoryConsumptionRecord,
     MemoryIndexStore,
     MemoryMatch,
     MemoryType,
     MemoryRef,
     MemoryValidationStatus,
+    summarize_memory_consumption,
 )
+
+
+def _consumption_record(
+    memory_id: str,
+    *,
+    role: str = "executor",
+    replay_class: ReplayClass = ReplayClass.ASSIST,
+    rendered_request_hash: str = "",
+    executed_recipe_hash: str = "",
+    recipe_recomputed: bool = False,
+    skipped_llm_call_count: int = 0,
+    execution_outcome: str = "accepted",
+    counterfactual_evidence_hash: str = "",
+) -> MemoryConsumptionRecord:
+    return MemoryConsumptionRecord(
+        consumption_id=f"consumption:{memory_id}",
+        query_hash="query-hash",
+        memory_id=memory_id,
+        consumer_role=role,
+        consumer_step_id=f"step:{role}",
+        input_ref_id=memory_id,
+        replay_class=replay_class,
+        compatibility_verdict=CompatibilityVerdict.COMPATIBLE,
+        input_payload_hash=f"input:{memory_id}",
+        before_decision_surface_hash="before-hash",
+        after_decision_surface_hash="after-hash",
+        output_decision_surface_hash=f"output:{memory_id}",
+        behavioral_effect="role_input_augmented",
+        recipe_recomputed=recipe_recomputed,
+        skipped_generation_step_count=int(recipe_recomputed),
+        skipped_llm_call_count=skipped_llm_call_count,
+        rendered_request_hash=rendered_request_hash,
+        executed_recipe_hash=executed_recipe_hash,
+        execution_outcome=execution_outcome,
+        counterfactual_evidence_hash=counterfactual_evidence_hash,
+        consumption_mode=("validated_replay" if recipe_recomputed else "executed"),
+    )
+
+
+def test_summarize_memory_consumption_separates_recorded_and_receipt_backed_rows() -> None:
+    records = [
+        # Legacy/controller-only rows remain recorded but are not actual use.
+        _consumption_record("legacy"),
+        _consumption_record(
+            "assist",
+            rendered_request_hash="rendered-assist",
+        ),
+        _consumption_record(
+            "validated",
+            replay_class=ReplayClass.VALIDATED_REPLAY,
+            executed_recipe_hash="recipe-validated",
+            recipe_recomputed=True,
+        ),
+        _consumption_record(
+            "exact-failed",
+            role="runtime_supervisor",
+            replay_class=ReplayClass.EXACT_REPLAY,
+            executed_recipe_hash="recipe-exact",
+            recipe_recomputed=True,
+            skipped_llm_call_count=2,
+            execution_outcome="failed",
+        ),
+    ]
+
+    summary = summarize_memory_consumption(
+        records,
+        candidate_count=7,
+        approved_count=3,
+        disclosed_count=4,
+    )
+
+    assert summary["candidate_count"] == 7
+    assert summary["approved_count"] == 3
+    assert summary["disclosed_count"] == 4
+    assert summary["recorded_consumption_count"] == 4
+    assert summary["actual_consumed_count"] == 3
+    assert summary["rendered_count"] == 1
+    assert summary["recipe_executed_count"] == 3
+    assert summary["output_accepted_count"] == 2
+    assert summary["failed_attempt_count"] == 1
+    assert summary["validated_replay_count"] == 1
+    assert summary["exact_replay_count"] == 0
+    assert summary["skipped_generation_step_count"] == 1
+    assert summary["skipped_llm_call_count"] == 0
+    assert summary["role_counts"] == {"executor": 3, "runtime_supervisor": 1}
+    assert summary["recorded_role_counts"] == {
+        "executor": 3,
+        "runtime_supervisor": 1,
+    }
+    assert summary["actual_role_counts"] == {
+        "executor": 2,
+        "runtime_supervisor": 1,
+    }
+
+
+def test_llm_skip_projection_requires_counterfactual_call_evidence() -> None:
+    without_evidence = _consumption_record(
+        "replay-without-pair",
+        replay_class=ReplayClass.VALIDATED_REPLAY,
+        executed_recipe_hash="recipe-without-pair",
+        recipe_recomputed=True,
+        skipped_llm_call_count=1,
+    )
+    with_evidence = _consumption_record(
+        "replay-with-pair",
+        replay_class=ReplayClass.VALIDATED_REPLAY,
+        executed_recipe_hash="recipe-with-pair",
+        recipe_recomputed=True,
+        skipped_llm_call_count=1,
+        counterfactual_evidence_hash="counterfactual-evidence-hash",
+    )
+
+    summary = summarize_memory_consumption([without_evidence, with_evidence])
+
+    assert summary["actual_consumed_count"] == 2
+    assert summary["validated_replay_count"] == 2
+    assert summary["skipped_llm_call_count"] == 1
 
 
 def test_memory_index_store_commit_lookup_and_invalidate() -> None:

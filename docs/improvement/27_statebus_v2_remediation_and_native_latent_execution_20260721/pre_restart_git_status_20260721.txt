@@ -1,0 +1,80 @@
+Captured after the final mode-off container gate.
+branch: feat/yzm-v2-migration
+head: bda17745ecb8a160221efe3b58ca678644dac81a
+git status --short:
+ M docs/improvement/25_contest_evidence_closure_20260720/00_implementation_and_experiment_execution_prompt_zh.md
+ M protocol/statebus_pb2.py
+ M scripts/v2_diagnostics/run_adaptive_agent_smoke.py
+ M tests/v2/test_adaptive_claims.py
+ M tests/v2/test_adaptive_dispatcher.py
+ M tests/v2/test_adaptive_formal_compare.py
+ M tests/v2/test_adaptive_mainline_integration.py
+ M tests/v2/test_adaptive_planner_policy.py
+ M tests/v2/test_adaptive_structured_markdown_retrieval.py
+ M tests/v2/test_continuous_runner.py
+ M tests/v2/test_control_plane.py
+ M tests/v2/test_evidence_projection.py
+ M tests/v2/test_fixed_answer_and_external_baseline.py
+ M tests/v2/test_hybrid_memory_query.py
+ M tests/v2/test_llm_codeact_policy.py
+ M tests/v2/test_memory_runtime.py
+ M tests/v2/test_smoke.py
+ M tests/v2/test_subprocess_executor.py
+ M v2/benchmark/adaptive_formal_mainline.py
+ M v2/benchmark/adaptive_memory.py
+ M v2/benchmark/comparator_runner.py
+ M v2/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json
+ M v2/benchmark/semantic_holdout.py
+ M v2/contracts/__init__.py
+ M v2/contracts/adaptive.py
+ M v2/contracts/constants.py
+ M v2/contracts/llm_codeact.py
+ M v2/contracts/models.py
+ M v2/control/__init__.py
+ M v2/control/messages.py
+ M v2/control/schema.py
+ M v2/control/statebus_v2.proto
+ M v2/control/subprocess_worker.py
+ M v2/control/transport.py
+ M v2/memory/__init__.py
+ M v2/memory/models.py
+ M v2/memory/store.py
+ M v2/refs/__init__.py
+ M v2/refs/models.py
+ M v2/runtime/__init__.py
+ M v2/runtime/adaptive_dispatcher.py
+ M v2/runtime/adaptive_mainline.py
+ M v2/runtime/adaptive_runtime.py
+ M v2/runtime/claims.py
+ M v2/runtime/evidence_projection.py
+ M v2/runtime/llm_codeact.py
+ M v2/runtime/plan_policy.py
+ M v2/runtime/role_path.py
+ M v2/runtime/smoke.py
+ M v2/runtime/state_consumption.py
+ M v2/runtime/telemetry.py
+?? docs/2511.20639v3.pdf
+?? docs/improvement/26_statebus_v2_review_remediation_20260720/
+?? docs/improvement/27_statebus_v2_remediation_and_native_latent_execution_20260721/
+?? docs/planning/kv_hidden_state_transfer_design_20260720.md
+?? docs/planning/vllm_native_latent_handoff_implementation_20260720.md
+?? docs/reports/statebus_v2_comprehensive_review_20260720.md
+?? docs/reports/statebus_v2_end_to_end_task_walkthrough_20260720.md
+?? docs/reports/statebus_v2_memory_accounting_remediation_20260721.md
+?? docs/reports/statebus_v2_remediation_and_native_latent_validation_20260721.md
+?? docs/reports/statebus_v2_system_task_experiment_report_20260720.md
+?? scripts/check_vllm_latent_readiness.sh
+?? scripts/smoke_vllm_latent_from_container.sh
+?? scripts/start_vllm_qwen3_32b_latent.sh
+?? tests/v2/neural/
+?? tests/v2/test_capability_grant_auth.py
+?? tests/v2/test_experiment_design.py
+?? v2/benchmark/control_transport_experiment.py
+?? v2/benchmark/experiment_design.py
+?? v2/contracts/neural.py
+?? v2/control/worker_operations.py
+?? v2/integrations/
+?? v2/parameterized_recipe.py
+?? v2/runtime/capability_grants.py
+?? v2/runtime/latent_handoff.py
+?? v2/runtime/role_model_backend.py

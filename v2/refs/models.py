@@ -11,6 +11,8 @@ from v2.contracts import (
     RefStatus,
     StorageKind,
 )
+from v2.contracts.constants import LATENT_STATE_REF_SCHEMA_VERSION
+from v2.contracts.neural import LatentLifecycleState
 from v2.utils import sha256_digest
 
 
@@ -99,6 +101,116 @@ class LogitStateRef:
             status=RefStatus.ACTIVE,
             blob_hash=self.blob_hash,
             schema_version=self.metadata.get("schema_version", "logit_state.v1"),
+        )
+
+
+@dataclass(frozen=True)
+class LatentStateRef:
+    ref_id: str
+    status: LatentLifecycleState
+    backend_handle: str
+    producer_role: str
+    consumer_role: str
+    source_task_id: str
+    source_step_id: str
+    source_evidence_pack_hash: str
+    anchor_item_ids: tuple[str, ...]
+    anchor_locator_digest: str
+    model_id: str
+    model_revision: str
+    tokenizer_revision: str
+    chat_template_digest: str
+    hidden_size: int
+    source_layer_index: int
+    latent_step_count: int
+    alignment_method: str
+    alignment_config_digest: str
+    position_contract_digest: str
+    dtype: str
+    shape: tuple[int, ...]
+    tensor_bytes: int
+    tensor_digest: str
+    producer_pid: int
+    engine_id: str
+    created_at_ns: int
+    expires_at_ns: int
+    compatibility_digest: str
+    storage_kind: StorageKind = StorageKind.ENGINE_LOCAL
+    schema_version: str = LATENT_STATE_REF_SCHEMA_VERSION
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.storage_kind != StorageKind.ENGINE_LOCAL:
+            raise ValueError("latent_state_requires_engine_local_storage")
+        if len(self.shape) != 2:
+            raise ValueError("latent_state_shape_must_be_rank_two")
+        if self.shape != (self.latent_step_count, self.hidden_size):
+            raise ValueError("latent_state_shape_contract_mismatch")
+        if self.tensor_bytes != self.latent_step_count * self.hidden_size * 2:
+            raise ValueError("latent_state_tensor_byte_count_mismatch")
+        if not self.tensor_digest:
+            raise ValueError("latent_state_tensor_digest_required")
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return {
+            "ref_id": self.ref_id,
+            "ref_kind": RefKind.LATENT_STATE.value,
+            "status": self.status.value,
+            "storage_kind": self.storage_kind.value,
+            "backend_handle": self.backend_handle,
+            "producer_role": self.producer_role,
+            "consumer_role": self.consumer_role,
+            "source_task_id": self.source_task_id,
+            "source_step_id": self.source_step_id,
+            "source_evidence_pack_hash": self.source_evidence_pack_hash,
+            "anchor_item_ids": list(self.anchor_item_ids),
+            "anchor_locator_digest": self.anchor_locator_digest,
+            "model_id": self.model_id,
+            "model_revision": self.model_revision,
+            "tokenizer_revision": self.tokenizer_revision,
+            "chat_template_digest": self.chat_template_digest,
+            "hidden_size": self.hidden_size,
+            "source_layer_index": self.source_layer_index,
+            "latent_step_count": self.latent_step_count,
+            "alignment_method": self.alignment_method,
+            "alignment_config_digest": self.alignment_config_digest,
+            "position_contract_digest": self.position_contract_digest,
+            "dtype": self.dtype,
+            "shape": list(self.shape),
+            "tensor_bytes": self.tensor_bytes,
+            "tensor_digest": self.tensor_digest,
+            "producer_pid": self.producer_pid,
+            "engine_id": self.engine_id,
+            "created_at_ns": self.created_at_ns,
+            "expires_at_ns": self.expires_at_ns,
+            "compatibility_digest": self.compatibility_digest,
+            "schema_version": self.schema_version,
+            "metadata": dict(sorted(self.metadata.items())),
+        }
+
+    @property
+    def ref_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
+    def registry_entry(self) -> RefRegistryEntry:
+        invalid_states = {
+            LatentLifecycleState.REJECTED,
+            LatentLifecycleState.INVALIDATED,
+            LatentLifecycleState.EXPIRED,
+            LatentLifecycleState.RELEASED,
+        }
+        return RefRegistryEntry(
+            ref_id=self.ref_id,
+            ref_kind=RefKind.LATENT_STATE,
+            storage_kind=StorageKind.ENGINE_LOCAL,
+            status=(
+                RefStatus.INVALIDATED
+                if self.status in invalid_states
+                else RefStatus.ACTIVE
+            ),
+            blob_hash=self.tensor_digest,
+            manifest_hash=self.ref_hash,
+            schema_version=self.schema_version,
         )
 
 

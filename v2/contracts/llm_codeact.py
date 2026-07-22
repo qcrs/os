@@ -108,6 +108,9 @@ class CodeGenerationRequest:
     provenance_item_ids: tuple[str, ...] = ()
     retrieval_context: tuple[dict[str, object], ...] = ()
     memory_inputs: tuple[dict[str, object], ...] = ()
+    recipe_parameter_schema: dict[str, str] = field(default_factory=dict)
+    recipe_parameter_bindings: dict[str, object] = field(default_factory=dict)
+    recipe_parameter_relpath: str = ""
     schema_version: str = CODE_GENERATION_REQUEST_SCHEMA_VERSION
 
     def canonical_payload(self) -> dict[str, object]:
@@ -136,6 +139,9 @@ class CodeGenerationRequest:
             "provenance_item_ids": list(self.provenance_item_ids),
             "retrieval_context": [dict(item) for item in self.retrieval_context],
             "memory_inputs": [dict(item) for item in self.memory_inputs],
+            "recipe_parameter_schema": dict(sorted(self.recipe_parameter_schema.items())),
+            "recipe_parameter_bindings": dict(sorted(self.recipe_parameter_bindings.items())),
+            "recipe_parameter_relpath": self.recipe_parameter_relpath,
             "model_signature": self.model_signature,
             "prompt_signature": self.prompt_signature,
             "runtime_signature": self.runtime_signature,

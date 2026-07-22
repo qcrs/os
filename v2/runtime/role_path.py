@@ -17,8 +17,10 @@ from runtime.llm import (
 )
 from v2.contracts import (
     AdaptiveTaskEnvelope,
+    CLAIM_SET_V2_SCHEMA_VERSION,
     CanonicalTaskSpec,
     Claim,
+    ClaimFieldSupport,
     ClaimSet,
     ClaimSetStatus,
     EvidenceRequest,
@@ -96,6 +98,7 @@ def _adaptive_plan_response_schema(
     capability_surface: tuple[dict[str, object], ...],
     allowed_outputs: tuple[str, ...],
     allowed_memory_policies: tuple[str, ...],
+    allowed_handoff_intents: tuple[str, ...],
     max_steps: int,
     role_slot_layout: bool = False,
 ) -> dict[str, Any]:
@@ -141,6 +144,7 @@ def _adaptive_plan_response_schema(
             "input_ref_kinds": _string_array_schema(ref_kinds, max_items=max_steps),
             "required_input_fields": _string_array_schema(max_items=64),
             "output_contract_version": _string_schema(output_contracts),
+            "handoff_intent": _string_schema(allowed_handoff_intents),
             "completion_criteria": completion_criteria,
         },
         "required": [
@@ -320,6 +324,8 @@ def _claim_set_response_schema(
     verified_artifact_refs: tuple[str, ...],
     evidence_items: tuple[dict[str, str], ...],
     numeric_field_names: tuple[str, ...],
+    factual_field_names: tuple[str, ...] = (),
+    claim_set_schema_version: str = "statebus.claim_set.v1",
 ) -> dict[str, Any]:
     evidence_ids = tuple(item.get("id", "") for item in evidence_items)
     locators = tuple(item.get("locator", "") for item in evidence_items)
@@ -341,6 +347,40 @@ def _claim_set_response_schema(
                     for field in numeric_field_names
                 },
             },
+            "factual_fields": {
+                "type": "object",
+                # vLLM 0.9.2's xgrammar backend rejects union-valued `type`.
+                # The controller-owned catalog and ClaimSetValidator enforce
+                # the scalar field names/types after parsing.
+                "additionalProperties": True,
+            },
+            "field_support": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "field_path": {"type": "string"},
+                        "normalized_value_hash": {"type": "string"},
+                        "support_kind": {"type": "string"},
+                        "evidence_item_ids": {"type": "array", "items": {"type": "string"}},
+                        "artifact_ref_id": {"type": "string"},
+                        "artifact_field_path": {"type": "string"},
+                        "source_locators": {"type": "array", "items": {"type": "string"}},
+                        "schema_version": {"type": "string"},
+                    },
+                    "required": [
+                        "field_path",
+                        "normalized_value_hash",
+                        "support_kind",
+                        "evidence_item_ids",
+                        "artifact_ref_id",
+                        "artifact_field_path",
+                        "source_locators",
+                        "schema_version",
+                    ],
+                },
+            },
             "uncertainty_note": {"type": "string"},
             "status": _string_schema(("ready", "missing_citation")),
         },
@@ -356,12 +396,15 @@ def _claim_set_response_schema(
             "status",
         ],
     }
+    if claim_set_schema_version == CLAIM_SET_V2_SCHEMA_VERSION:
+        claim_schema["required"].extend(("factual_fields", "field_support"))
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
             "claims": {"type": "array", "items": claim_schema},
             "status": _string_schema(("ready",)),
+            "schema_version": {"type": "string"},
         },
         "required": ["claims", "status"],
     }
@@ -397,6 +440,54 @@ def _claim_citation_repair_response_schema(
         "properties": {"repairs": {"type": "array", "items": repair_schema}},
         "required": ["repairs"],
     }
+
+
+def _field_value_tokens(value: object) -> tuple[str, ...]:
+    if value is None or isinstance(value, bool):
+        return ()
+    tokens = {str(value).strip().lower()}
+    if isinstance(value, (int, float)) and float(value).is_integer():
+        tokens.add(str(int(value)))
+    return tuple(token for token in tokens if token)
+
+
+def _build_field_support_catalog(
+    *,
+    artifact_ref_id: str,
+    rows: tuple[dict[str, object], ...],
+    evidence_items: tuple[dict[str, str], ...],
+) -> tuple[dict[str, object], ...]:
+    """Build a narrow field-to-source catalog before asking the model to cite."""
+    catalog: list[dict[str, object]] = []
+    for row_index, row in enumerate(rows):
+        for field_path, value in sorted(row.items()):
+            field_tokens = set(_field_value_tokens(value))
+            field_tokens.update(part for part in str(field_path).lower().split("_") if part)
+            scored: list[tuple[int, dict[str, str]]] = []
+            for item in evidence_items:
+                text = str(item.get("text", "")).lower()
+                explicit_fields = item.get("field_paths", ())
+                explicit_match = field_path in explicit_fields if isinstance(explicit_fields, (list, tuple, set)) else False
+                score = (100 if explicit_match else 0) + sum(token in text for token in field_tokens)
+                if score > 0:
+                    scored.append((score, item))
+            if scored:
+                best_score = max(score for score, _ in scored)
+                selected = [item for score, item in scored if score == best_score]
+            else:
+                selected = []
+            catalog.append({
+                "field_path": field_path,
+                "value": value,
+                "normalized_value_hash": sha256_digest(value),
+                "required": True,
+                "artifact_ref_id": artifact_ref_id,
+                "artifact_field_path": f"rows[{row_index}].{field_path}",
+                "evidence_item_ids": [str(item.get("id", "")) for item in selected],
+                "source_locators": [str(item.get("locator", "")) for item in selected],
+                "support_kind": "source_and_verified_artifact",
+            })
+    return tuple(catalog)
 
 
 @dataclass(frozen=True)
@@ -2157,6 +2248,7 @@ class RolePathRunner:
                 # Planner sees only its bounded capability closure; it cannot
                 # turn this flag on or change sandbox/validator readiness.
                 "allow_llm_python": envelope.allow_llm_python,
+                "allowed_handoff_intents": list(envelope.allowed_handoff_intents),
                 "risk_class_allows_bounded_code": envelope.risk_class.value == "bounded_code",
                 "authorized_python_capability_ids": [
                     str(item.get("id", ""))
@@ -2208,6 +2300,8 @@ class RolePathRunner:
             "Include exactly the role counts declared by authority.role_cardinality. Use only an "
             "authority.allowed_memory_policies value for requested_memory_policy. Represent no dependencies or refs "
             "with an empty JSON array []; never put none, null, n/a, or other sentinel strings in an array."
+            " A step may propose handoff_intent only from authority.allowed_handoff_intents. It is an intent, not"
+            " permission to select an endpoint, tensor shape, storage handle, compatibility digest, or fallback."
         )
         if role_slot_layout:
             instruction += (
@@ -2241,6 +2335,7 @@ class RolePathRunner:
                 capability_surface=capability_surface,
                 allowed_outputs=envelope.allowed_output_contracts,
                 allowed_memory_policies=envelope.allowed_memory_policies,
+                allowed_handoff_intents=envelope.allowed_handoff_intents,
                 max_steps=envelope.max_plan_steps,
                 role_slot_layout=role_slot_layout,
             ),
@@ -2293,6 +2388,7 @@ class RolePathRunner:
                     completion_criteria=(item.get("completion_criteria", {}) if isinstance(item.get("completion_criteria", {}), dict) else {}),
                     on_failure=on_failure,
                     required_input_fields=_coerce_optional_string_tuple(item.get("required_input_fields", [])),
+                    handoff_intent=str(item.get("handoff_intent", "auto")),
                 )
             )
         result = completion.result
@@ -2481,6 +2577,7 @@ class RolePathRunner:
         task_goal: str = "",
         artifact_summaries: tuple[dict[str, object], ...] = (),
         expected_claim_count: int | None = None,
+        claim_set_schema_version: str = "statebus.claim_set.v1",
     ) -> ClaimSet:
         if expected_claim_count is not None and expected_claim_count < 1:
             raise ValueError("adaptive_expected_claim_count_invalid")
@@ -2492,6 +2589,23 @@ class RolePathRunner:
             for key, value in row.items()
             if isinstance(value, (int, float)) and not isinstance(value, bool)
         }))
+        factual_field_names = tuple(sorted({
+            str(key)
+            for item in artifact_summaries
+            for row in item.get("rows", [])
+            if isinstance(row, dict)
+            for key in row
+        }))
+        field_support_catalog = _build_field_support_catalog(
+            artifact_ref_id=(verified_artifact_refs[0] if verified_artifact_refs else ""),
+            rows=tuple(
+                dict(row)
+                for item in artifact_summaries
+                for row in item.get("rows", [])
+                if isinstance(row, dict)
+            ),
+            evidence_items=evidence_items,
+        )
         payload = {
             "task_goal": task_goal,
             "reference_catalog": {
@@ -2503,6 +2617,7 @@ class RolePathRunner:
                     }
                     for item in evidence_items
                 ],
+                "field_support_catalog": list(field_support_catalog),
                 "artifacts": [
                     {
                         "artifact_ref_id": str(item.get("artifact_ref_id", "")),
@@ -2519,6 +2634,7 @@ class RolePathRunner:
                     for item in artifact_summaries
                 ],
             },
+            "claim_set_schema_version": claim_set_schema_version,
         }
         if expected_claim_count is not None:
             payload["claim_contract"] = {
@@ -2527,7 +2643,7 @@ class RolePathRunner:
                 "one_claim_per_verified_row": True,
             }
         instruction = (
-            "You are StateBus Summarizer. Return a ClaimSet JSON only. Use reference_catalog as three typed columns: "
+            "You are StateBus Summarizer. Return a ClaimSet JSON only. Use reference_catalog as typed columns: "
             "supporting_evidence_item_ids may contain only evidence.evidence_id values; citation_locators may contain "
             "only evidence.citation_locator values; supporting_artifact_ref_ids may contain only "
             "artifacts.artifact_ref_id values. Never put an artifact ID in an evidence-ID field, never put an artifact "
@@ -2541,7 +2657,9 @@ class RolePathRunner:
             "missing_citation. Create one compact claim per verified output row; do not split a row across claims or "
             "repeat a claim. Keep claim_text to one short sentence and put the exact numeric values in numeric_fields. "
             "Use only the source locators needed for the claim and never repeat a locator within a claim. Use top-level "
-            "status ready because this request contains verified support."
+            "status ready because this request contains verified support. For every non-empty factual_fields entry, "
+            "copy the verified value exactly and return one matching field_support entry from field_support_catalog; "
+            "never create a source locator or artifact field path outside that catalog."
         )
         if expected_claim_count is not None:
             instruction += (
@@ -2563,6 +2681,8 @@ class RolePathRunner:
                 verified_artifact_refs=verified_artifact_refs,
                 evidence_items=evidence_items,
                 numeric_field_names=numeric_field_names,
+                factual_field_names=factual_field_names,
+                claim_set_schema_version=claim_set_schema_version,
             ),
         )
         response = completion.payload
@@ -2587,6 +2707,27 @@ class RolePathRunner:
             if isinstance(numeric_raw, dict) and not set(map(str, numeric_raw)) <= set(numeric_field_names):
                 raise ValueError("adaptive_claim_numeric_field_outside_contract")
             numeric = {str(key): float(value) for key, value in numeric_raw.items()} if isinstance(numeric_raw, dict) else {}
+            factual_raw = item.get("factual_fields", {})
+            factual = {
+                str(key): value
+                for key, value in factual_raw.items()
+                if value is None or isinstance(value, (str, int, float, bool))
+            } if isinstance(factual_raw, dict) else {}
+            support_raw = item.get("field_support", [])
+            field_support = tuple(
+                ClaimFieldSupport(
+                    field_path=str(support.get("field_path", "")),
+                    normalized_value_hash=str(support.get("normalized_value_hash", "")),
+                    support_kind=str(support.get("support_kind", "")),
+                    evidence_item_ids=_coerce_string_tuple(support.get("evidence_item_ids", [])),
+                    artifact_ref_id=str(support.get("artifact_ref_id", "")),
+                    artifact_field_path=str(support.get("artifact_field_path", "")),
+                    source_locators=_coerce_string_tuple(support.get("source_locators", [])),
+                    schema_version=str(support.get("schema_version", claim_set_schema_version)),
+                )
+                for support in support_raw
+                if isinstance(support, dict)
+            ) if isinstance(support_raw, list) else ()
             claims.append(
                 Claim(
                     claim_id=str(item.get("claim_id", "")),
@@ -2598,6 +2739,8 @@ class RolePathRunner:
                     numeric_fields=numeric,
                     uncertainty_note=str(item.get("uncertainty_note", "")),
                     status=claim_status,
+                    factual_fields=factual,
+                    field_support=field_support,
                 )
             )
         status_value = str(response.get("status", ClaimSetStatus.READY.value))
@@ -2605,7 +2748,13 @@ class RolePathRunner:
             status = ClaimSetStatus(status_value)
         except ValueError:
             status = ClaimSetStatus.MISSING_CITATION
-        return ClaimSet(claim_set_id=claim_set_id, task_id=task_id, claims=tuple(claims), status=status)
+        return ClaimSet(
+            claim_set_id=claim_set_id,
+            task_id=task_id,
+            claims=tuple(claims),
+            status=status,
+            schema_version=claim_set_schema_version,
+        )
 
     def repair_claim_citations(
         self,
