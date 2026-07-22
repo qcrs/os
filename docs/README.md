@@ -63,6 +63,7 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 
 | 文档 | 当前用途 |
 |---|---|
+| [`current_codeact_design.md`](current_codeact_design.md) | 当前分支 CodeAct 的完整设计说明，包含 executor 接入、runtime/helper、代码生成协议和 Group1 测试结果分析 |
 | [`how_to_run.md`](how_to_run.md) | 运行方式、依赖安装、后端选择、环境变量、入口脚本说明 |
 | [`langgraph_features_in_demo.md`](langgraph_features_in_demo.md) | SynapseX 中用到的 LangGraph / LangChain 能力说明 |
 | [`openos/communication/structured_communication_protocol.md`](openos/communication/structured_communication_protocol.md) | 结构化通信协议、Context Packet 和 embedding 通道说明 |

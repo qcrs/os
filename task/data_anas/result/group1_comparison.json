@@ -1,10 +1,10 @@
 {
   "experiment": {
     "name": "group1_protocol_comparison",
-    "generated_at_utc": "2026-06-25T18:17:55.603496+00:00",
+    "generated_at_utc": "2026-06-29T13:13:03.479075+00:00",
     "tasks": "group1_tasks.json (10 rounds, titanic.csv)",
     "container": "SynapseX-wang",
-    "backend": "openai",
+    "backend": "transformers",
     "base_url": "http://127.0.0.1:8000/v1",
     "model": "/data/models/Qwen3-8B"
   },
@@ -15,24 +15,24 @@
     },
     "stats": {
       "total_rounds": 10,
-      "total_duration_s": 678.01,
-      "avg_duration_s": 67.8,
-      "min_duration_s": 58.57,
-      "max_duration_s": 91.19
+      "total_duration_s": 850.09,
+      "avg_duration_s": 85.01,
+      "min_duration_s": 72.55,
+      "max_duration_s": 99.98
     },
     "metrics": {
-      "llm_calls": 60,
-      "input_tokens": 72249,
-      "output_tokens": 19212,
-      "total_tokens": 91461,
+      "llm_calls": 70,
+      "input_tokens": 123895,
+      "output_tokens": 20638,
+      "total_tokens": 144533,
       "context_original_chars": 0,
       "context_compressed_chars": 0,
       "context_saved_chars": 0
     },
     "accuracy": {
-      "total_correct": 0,
+      "total_correct": 9,
       "total_fields": 10,
-      "overall_accuracy": 0.0
+      "overall_accuracy": 0.9
     },
     "per_round": [
       {
@@ -40,153 +40,153 @@
           {
             "field": "std_dev_fare",
             "gold": "49.67",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "49.67",
+            "normalized": "49.67",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 1,
         "task_id": 129,
         "question": "Calculate the mean and standard deviation of the fare paid by the passengers.",
-        "duration_s": 69.93
+        "duration_s": 99.98
       },
       {
         "details": [
           {
             "field": "fare_skewness",
             "gold": "4.79",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "4.79",
+            "normalized": "4.79",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 2,
         "task_id": 174,
         "question": "Determine the skewness of the fares paid by the passengers on the Titanic.",
-        "duration_s": 58.57
+        "duration_s": 73.39
       },
       {
         "details": [
           {
             "field": "correlation_pclass_fare",
             "gold": "-0.55",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "-0.55",
+            "normalized": "-0.55",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 3,
         "task_id": 517,
         "question": "Find the correlation coefficient between the passenger class and the fare.",
-        "duration_s": 63.19
+        "duration_s": 83.79
       },
       {
         "details": [
           {
             "field": "skewness_fare",
             "gold": "4.79",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "4.79",
+            "normalized": "4.79",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 4,
         "task_id": 516,
         "question": "Check if the fare distribution is skewed.",
-        "duration_s": 91.19
+        "duration_s": 76.61
       },
       {
         "details": [
           {
             "field": "is_normal",
             "gold": "False",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "False",
+            "normalized": "False",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 5,
         "task_id": 130,
         "question": "Check if the age of the passengers follows a normal distribution.",
-        "duration_s": 64.87
+        "duration_s": 88.04
       },
       {
         "details": [
           {
             "field": "normality_test_result",
             "gold": "False",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "False",
+            "normalized": "False",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 6,
         "task_id": 304,
         "question": "Check if the fare variable follows a normal distribution.",
-        "duration_s": 68.8
+        "duration_s": 72.55
       },
       {
         "details": [
           {
             "field": "outlier_count",
             "gold": "20",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "20",
+            "normalized": "20",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 7,
         "task_id": 132,
         "question": "Identify and count the number of outliers in the fare paid by passengers using the Z-score method.",
-        "duration_s": 63.24
+        "duration_s": 97.66
       },
       {
         "details": [
           {
             "field": "outliers_count",
             "gold": "2",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "2",
+            "normalized": "2",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 8,
         "task_id": 175,
         "question": "Identify if there are any outliers in the age of the passengers on the Titanic using the Z-score method. Use a threshold of 3 for outlier detection.",
-        "duration_s": 66.22
+        "duration_s": 97.09
       },
       {
         "details": [
           {
             "field": "correlation_coefficient",
             "gold": "-0.123",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "-0.046",
+            "normalized": "-0.046",
+            "match": false
           }
         ],
         "correct": 0,
@@ -195,25 +195,25 @@
         "round": 9,
         "task_id": 179,
         "question": "Calculate the Pearson correlation coefficient between the age and fare variables for passengers who survived and were in first class.",
-        "duration_s": 58.74
+        "duration_s": 85.65
       },
       {
         "details": [
           {
             "field": "correlation_coefficient",
             "gold": "0.02",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "0.02",
+            "normalized": "0.02",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 10,
         "task_id": 520,
         "question": "Create a new feature called 'FamilySize' by combining the 'SibSp' and 'Parch' columns, which represents the total number of family members a passenger had aboard the Titanic. Then, find the correlation coefficient between 'FamilySize' and 'Survived'.",
-        "duration_s": 73.26
+        "duration_s": 75.33
       }
     ]
   },
@@ -226,24 +226,24 @@
     },
     "stats": {
       "total_rounds": 10,
-      "total_duration_s": 646.94,
-      "avg_duration_s": 64.69,
-      "min_duration_s": 51.69,
-      "max_duration_s": 75.3
+      "total_duration_s": 827.62,
+      "avg_duration_s": 82.76,
+      "min_duration_s": 63.43,
+      "max_duration_s": 108.1
     },
     "metrics": {
-      "llm_calls": 60,
-      "input_tokens": 58411,
-      "output_tokens": 18471,
-      "total_tokens": 76882,
-      "context_original_chars": 92624,
-      "context_compressed_chars": 39690,
-      "context_saved_chars": 52934
+      "llm_calls": 70,
+      "input_tokens": 108173,
+      "output_tokens": 19505,
+      "total_tokens": 127678,
+      "context_original_chars": 105130,
+      "context_compressed_chars": 41436,
+      "context_saved_chars": 63694
     },
     "accuracy": {
-      "total_correct": 0,
+      "total_correct": 10,
       "total_fields": 10,
-      "overall_accuracy": 0.0
+      "overall_accuracy": 1.0
     },
     "per_round": [
       {
@@ -251,187 +251,187 @@
           {
             "field": "std_dev_fare",
             "gold": "49.67",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "49.67",
+            "normalized": "49.67",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 1,
         "task_id": 129,
         "question": "Calculate the mean and standard deviation of the fare paid by the passengers.",
-        "duration_s": 62.35
+        "duration_s": 80.08
       },
       {
         "details": [
           {
             "field": "fare_skewness",
             "gold": "4.79",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "4.79",
+            "normalized": "4.79",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 2,
         "task_id": 174,
         "question": "Determine the skewness of the fares paid by the passengers on the Titanic.",
-        "duration_s": 64.26
+        "duration_s": 66.88
       },
       {
         "details": [
           {
             "field": "correlation_pclass_fare",
             "gold": "-0.55",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "-0.55",
+            "normalized": "-0.55",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 3,
         "task_id": 517,
         "question": "Find the correlation coefficient between the passenger class and the fare.",
-        "duration_s": 51.69
+        "duration_s": 63.43
       },
       {
         "details": [
           {
             "field": "skewness_fare",
             "gold": "4.79",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "4.79",
+            "normalized": "4.79",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 4,
         "task_id": 516,
         "question": "Check if the fare distribution is skewed.",
-        "duration_s": 59.43
+        "duration_s": 68.44
       },
       {
         "details": [
           {
             "field": "is_normal",
             "gold": "False",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "False",
+            "normalized": "False",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 5,
         "task_id": 130,
         "question": "Check if the age of the passengers follows a normal distribution.",
-        "duration_s": 70.09
+        "duration_s": 72.92
       },
       {
         "details": [
           {
             "field": "normality_test_result",
             "gold": "False",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "False",
+            "normalized": "False",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 6,
         "task_id": 304,
         "question": "Check if the fare variable follows a normal distribution.",
-        "duration_s": 75.3
+        "duration_s": 82.66
       },
       {
         "details": [
           {
             "field": "outlier_count",
             "gold": "20",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "20",
+            "normalized": "20",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 7,
         "task_id": 132,
         "question": "Identify and count the number of outliers in the fare paid by passengers using the Z-score method.",
-        "duration_s": 70.58
+        "duration_s": 97.82
       },
       {
         "details": [
           {
             "field": "outliers_count",
             "gold": "2",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "2",
+            "normalized": "2",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 8,
         "task_id": 175,
         "question": "Identify if there are any outliers in the age of the passengers on the Titanic using the Z-score method. Use a threshold of 3 for outlier detection.",
-        "duration_s": 70.53
+        "duration_s": 102.35
       },
       {
         "details": [
           {
             "field": "correlation_coefficient",
             "gold": "-0.123",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "-0.123",
+            "normalized": "-0.123",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 9,
         "task_id": 179,
         "question": "Calculate the Pearson correlation coefficient between the age and fare variables for passengers who survived and were in first class.",
-        "duration_s": 56.15
+        "duration_s": 84.94
       },
       {
         "details": [
           {
             "field": "correlation_coefficient",
             "gold": "0.02",
-            "extracted": "",
-            "match": false,
-            "reason": "not_found"
+            "extracted": "0.02",
+            "normalized": "0.02",
+            "match": true
           }
         ],
-        "correct": 0,
+        "correct": 1,
         "total": 1,
-        "accuracy": 0.0,
+        "accuracy": 1.0,
         "round": 10,
         "task_id": 520,
         "question": "Create a new feature called 'FamilySize' by combining the 'SibSp' and 'Parch' columns, which represents the total number of family members a passenger had aboard the Titanic. Then, find the correlation coefficient between 'FamilySize' and 'Survived'.",
-        "duration_s": 66.56
+        "duration_s": 108.1
       }
     ]
   },
   "comparison": {
-    "accuracy_diff": 0,
-    "token_diff": -14579,
-    "input_token_diff": -13838,
-    "duration_diff_s": -31.07
+    "accuracy_diff": 1,
+    "token_diff": -16855,
+    "input_token_diff": -15722,
+    "duration_diff_s": -22.47
   }
 }

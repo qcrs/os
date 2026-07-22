@@ -1,0 +1,529 @@
+{
+  "experiment": {
+    "name": "group3_protocol_comparison",
+    "generated_at_utc": "2026-06-30T05:15:10.103530+00:00",
+    "tasks": "group3_tasks.json (11 rounds)",
+    "container": "SynapseX-wang",
+    "backend": "transformers",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "model": "/data/models/Qwen3-8B"
+  },
+  "protocol_a": {
+    "label": "Plain Text (mode=text)",
+    "config": {
+      "mode": "text"
+    },
+    "stats": {
+      "total_rounds": 11,
+      "total_duration_s": 1214.13,
+      "avg_duration_s": 110.38,
+      "min_duration_s": 90.61,
+      "max_duration_s": 138.55
+    },
+    "metrics": {
+      "llm_calls": 77,
+      "input_tokens": 125866,
+      "output_tokens": 22008,
+      "total_tokens": 147874,
+      "context_original_chars": 0,
+      "context_compressed_chars": 0,
+      "context_saved_chars": 0
+    },
+    "accuracy": {
+      "total_correct": 13,
+      "total_fields": 15,
+      "overall_accuracy": 0.8667
+    },
+    "per_round": [
+      {
+        "details": [
+          {
+            "field": "mean_income",
+            "gold": "45.22",
+            "extracted": "45.22",
+            "normalized": "45.22",
+            "match": true
+          },
+          {
+            "field": "std_dev_income",
+            "gold": "35.24",
+            "extracted": "35.20",
+            "normalized": "35.20",
+            "match": false
+          }
+        ],
+        "correct": 1,
+        "total": 2,
+        "accuracy": 0.5,
+        "round": 1,
+        "task_id": 737,
+        "question": "Calculate the mean and standard deviation of the \"Income\" column in the Credit.csv file.",
+        "duration_s": 104.32
+      },
+      {
+        "details": [
+          {
+            "field": "is_normal",
+            "gold": "Not Normal",
+            "extracted": "Not Normal",
+            "normalized": "Not Normal",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 2,
+        "task_id": 738,
+        "question": "Check if the distribution of the \"Age\" column in the Credit.csv file adheres to a normal distribution.",
+        "duration_s": 115.73
+      },
+      {
+        "details": [
+          {
+            "field": "correlation_coefficient",
+            "gold": "0.86",
+            "extracted": "0.86",
+            "normalized": "0.86",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 3,
+        "task_id": 739,
+        "question": "Determine the correlation coefficient between the \"Limit\" and \"Balance\" columns in the Credit.csv file.",
+        "duration_s": 99.64
+      },
+      {
+        "details": [
+          {
+            "field": "outliers",
+            "gold": "1",
+            "extracted": "1",
+            "normalized": "1",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 4,
+        "task_id": 740,
+        "question": "Identify any outliers in the \"Balance\" column of the Credit.csv file using the Z-score method.",
+        "duration_s": 103.14
+      },
+      {
+        "details": [
+          {
+            "field": "addedfeature",
+            "gold": "ratio",
+            "extracted": "ratio",
+            "normalized": "ratio",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 5,
+        "task_id": 741,
+        "question": "Create a new feature in the Credit.csv file by calculating the ratio of \"Balance\" to \"Limit\" for each individual.",
+        "duration_s": 108.49
+      },
+      {
+        "details": [
+          {
+            "field": "average_reviews",
+            "gold": "1013.53",
+            "extracted": "1013.53",
+            "normalized": "1013.53",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 6,
+        "task_id": 506,
+        "question": "1. What is the average number of reviews per hotel in the dataset?",
+        "duration_s": 90.61
+      },
+      {
+        "details": [
+          {
+            "field": "total_hotels",
+            "gold": "46",
+            "extracted": "46",
+            "normalized": "46",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 7,
+        "task_id": 507,
+        "question": "2. Are there any hotels in the dataset that have a star rating of 5? If yes, how many hotels have a star rating of 5?",
+        "duration_s": 96.13
+      },
+      {
+        "details": [
+          {
+            "field": "correlation_coefficient",
+            "gold": "0.176",
+            "extracted": "0.176",
+            "normalized": "0.176",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 8,
+        "task_id": 508,
+        "question": "3. Is there a correlation between the number of reviews a hotel has received and its bubble score? If yes, what is the correlation coefficient?",
+        "duration_s": 116.42
+      },
+      {
+        "details": [
+          {
+            "field": "above4_correlation",
+            "gold": "-0.28",
+            "extracted": "-0.28",
+            "normalized": "-0.28",
+            "match": true
+          },
+          {
+            "field": "below3_correlation",
+            "gold": "0.15",
+            "extracted": "0.15",
+            "normalized": "0.15",
+            "match": true
+          },
+          {
+            "field": "between3and4_correlation",
+            "gold": "0.04",
+            "extracted": "0.04",
+            "normalized": "0.04",
+            "match": true
+          }
+        ],
+        "correct": 3,
+        "total": 3,
+        "accuracy": 1.0,
+        "round": 9,
+        "task_id": 513,
+        "question": "2. Among the hotels with a star rating, what is the correlation between the number of reviews a hotel has received and its bubble score? Do hotels with higher star ratings tend to have higher bubble scores and more reviews?",
+        "duration_s": 138.55
+      },
+      {
+        "details": [
+          {
+            "field": "brand_with_highest_average_star_rating",
+            "gold": "Preferred Hotels & Resorts",
+            "extracted": "Preferred Hotels & Resorts",
+            "normalized": "Preferred Hotels & Resorts",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 10,
+        "task_id": 510,
+        "question": "2. Which hotel brand has the highest average star rating among hotels with at least 100 reviews?",
+        "duration_s": 129.61
+      },
+      {
+        "details": [
+          {
+            "field": "lower_city_count",
+            "gold": "4",
+            "extracted": "6",
+            "normalized": "6",
+            "match": false
+          },
+          {
+            "field": "higher_city_count",
+            "gold": "0",
+            "extracted": "0",
+            "normalized": "0",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 2,
+        "accuracy": 0.5,
+        "round": 11,
+        "task_id": 514,
+        "question": "3. What is the average review count for hotels in each city? Are there any cities where the average review count is significantly higher or lower compared to the overall average review count of all hotels?",
+        "duration_s": 111.49
+      }
+    ]
+  },
+  "protocol_b": {
+    "label": "Structured Compressed Text Only (mode=structured, context_packets only)",
+    "config": {
+      "mode": "structured",
+      "ENABLE_CONTEXT_PACKETS": true,
+      "ENABLE_EMBEDDING_TRANSFER": false
+    },
+    "stats": {
+      "total_rounds": 11,
+      "total_duration_s": 1443.36,
+      "avg_duration_s": 131.21,
+      "min_duration_s": 90.53,
+      "max_duration_s": 208.06
+    },
+    "metrics": {
+      "llm_calls": 79,
+      "input_tokens": 115145,
+      "output_tokens": 23086,
+      "total_tokens": 138231,
+      "context_original_chars": 121654,
+      "context_compressed_chars": 45654,
+      "context_saved_chars": 76000
+    },
+    "accuracy": {
+      "total_correct": 12,
+      "total_fields": 15,
+      "overall_accuracy": 0.8
+    },
+    "per_round": [
+      {
+        "details": [
+          {
+            "field": "mean_income",
+            "gold": "45.22",
+            "extracted": "45.22",
+            "normalized": "45.22",
+            "match": true
+          },
+          {
+            "field": "std_dev_income",
+            "gold": "35.24",
+            "extracted": "35.2",
+            "normalized": "35.20",
+            "match": false
+          }
+        ],
+        "correct": 1,
+        "total": 2,
+        "accuracy": 0.5,
+        "round": 1,
+        "task_id": 737,
+        "question": "Calculate the mean and standard deviation of the \"Income\" column in the Credit.csv file.",
+        "duration_s": 111.75
+      },
+      {
+        "details": [
+          {
+            "field": "is_normal",
+            "gold": "Not Normal",
+            "extracted": "Not Normal",
+            "normalized": "Not Normal",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 2,
+        "task_id": 738,
+        "question": "Check if the distribution of the \"Age\" column in the Credit.csv file adheres to a normal distribution.",
+        "duration_s": 108.11
+      },
+      {
+        "details": [
+          {
+            "field": "correlation_coefficient",
+            "gold": "0.86",
+            "extracted": "0.86",
+            "normalized": "0.86",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 3,
+        "task_id": 739,
+        "question": "Determine the correlation coefficient between the \"Limit\" and \"Balance\" columns in the Credit.csv file.",
+        "duration_s": 90.53
+      },
+      {
+        "details": [
+          {
+            "field": "outliers",
+            "gold": "1",
+            "extracted": "1",
+            "normalized": "1",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 4,
+        "task_id": 740,
+        "question": "Identify any outliers in the \"Balance\" column of the Credit.csv file using the Z-score method.",
+        "duration_s": 111.53
+      },
+      {
+        "details": [
+          {
+            "field": "addedfeature",
+            "gold": "ratio",
+            "extracted": "ratio",
+            "normalized": "ratio",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 5,
+        "task_id": 741,
+        "question": "Create a new feature in the Credit.csv file by calculating the ratio of \"Balance\" to \"Limit\" for each individual.",
+        "duration_s": 114.62
+      },
+      {
+        "details": [
+          {
+            "field": "average_reviews",
+            "gold": "1013.53",
+            "extracted": "1013.53",
+            "normalized": "1013.53",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 6,
+        "task_id": 506,
+        "question": "1. What is the average number of reviews per hotel in the dataset?",
+        "duration_s": 131.11
+      },
+      {
+        "details": [
+          {
+            "field": "total_hotels",
+            "gold": "46",
+            "extracted": "46",
+            "normalized": "46",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 7,
+        "task_id": 507,
+        "question": "2. Are there any hotels in the dataset that have a star rating of 5? If yes, how many hotels have a star rating of 5?",
+        "duration_s": 143.92
+      },
+      {
+        "details": [
+          {
+            "field": "correlation_coefficient",
+            "gold": "0.176",
+            "extracted": "0.176",
+            "normalized": "0.176",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 1,
+        "accuracy": 1.0,
+        "round": 8,
+        "task_id": 508,
+        "question": "3. Is there a correlation between the number of reviews a hotel has received and its bubble score? If yes, what is the correlation coefficient?",
+        "duration_s": 153.06
+      },
+      {
+        "details": [
+          {
+            "field": "above4_correlation",
+            "gold": "-0.28",
+            "extracted": "-0.28",
+            "normalized": "-0.28",
+            "match": true
+          },
+          {
+            "field": "below3_correlation",
+            "gold": "0.15",
+            "extracted": "0.15",
+            "normalized": "0.15",
+            "match": true
+          },
+          {
+            "field": "between3and4_correlation",
+            "gold": "0.04",
+            "extracted": "0.04",
+            "normalized": "0.04",
+            "match": true
+          }
+        ],
+        "correct": 3,
+        "total": 3,
+        "accuracy": 1.0,
+        "round": 9,
+        "task_id": 513,
+        "question": "2. Among the hotels with a star rating, what is the correlation between the number of reviews a hotel has received and its bubble score? Do hotels with higher star ratings tend to have higher bubble scores and more reviews?",
+        "duration_s": 208.06
+      },
+      {
+        "details": [
+          {
+            "field": "brand_with_highest_average_star_rating",
+            "gold": "Preferred Hotels & Resorts",
+            "extracted": "",
+            "match": false,
+            "reason": "not_found"
+          }
+        ],
+        "correct": 0,
+        "total": 1,
+        "accuracy": 0.0,
+        "round": 10,
+        "task_id": 510,
+        "question": "2. Which hotel brand has the highest average star rating among hotels with at least 100 reviews?",
+        "duration_s": 164.76
+      },
+      {
+        "details": [
+          {
+            "field": "lower_city_count",
+            "gold": "4",
+            "extracted": "7",
+            "normalized": "7",
+            "match": false
+          },
+          {
+            "field": "higher_city_count",
+            "gold": "0",
+            "extracted": "0",
+            "normalized": "0",
+            "match": true
+          }
+        ],
+        "correct": 1,
+        "total": 2,
+        "accuracy": 0.5,
+        "round": 11,
+        "task_id": 514,
+        "question": "3. What is the average review count for hotels in each city? Are there any cities where the average review count is significantly higher or lower compared to the overall average review count of all hotels?",
+        "duration_s": 105.91
+      }
+    ]
+  },
+  "comparison": {
+    "accuracy_diff": -1,
+    "token_diff": -9643,
+    "input_token_diff": -10721,
+    "duration_diff_s": 229.23
+  }
+}

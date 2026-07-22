@@ -66,6 +66,8 @@ class DashScopeEmbeddings(Embeddings):
         batch_size: int = EMBEDDING_BATCH_SIZE,
         api_key: str = DASHSCOPE_API_KEY,
     ):
+        if dashscope is None:
+            raise ImportError("dashscope is not installed.")
         if not api_key:
             raise ValueError("DASHSCOPE_API_KEY must be set to use DashScope embeddings.")
         if dashscope is None:

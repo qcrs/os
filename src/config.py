@@ -42,6 +42,7 @@ REDUCE_RESEARCH_ON_MEMORY_HIT = os.getenv("REDUCE_RESEARCH_ON_MEMORY_HIT", "1").
 PLANNER_MEMORY_CONFIDENCE_THRESHOLD = float(
     os.getenv("PLANNER_MEMORY_CONFIDENCE_THRESHOLD", "0.5") or "0.5"
 )
+ENABLE_CODEACT_EXECUTOR = os.getenv("ENABLE_CODEACT_EXECUTOR", "0").lower() in {"1", "true", "yes"}
 
 # Backward-compatible names used by older scripts/docs.
 DEEPSEEK_API_KEY = CHAT_API_KEY

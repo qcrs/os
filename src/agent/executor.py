@@ -10,11 +10,12 @@ from contextlib import redirect_stdout
 
 from langgraph.store.base import BaseStore
 
-from config import NS_EXECUTIONS
+from config import ENABLE_CODEACT_EXECUTOR, NS_EXECUTIONS
 from memory import store_put
 from metrics import metrics
 from protocol import ActionType, hash_text, make_message, summarize_text
 
+from .codeact import codeact
 from .shared import _get_mode
 
 
@@ -102,6 +103,104 @@ def executor(state: dict, store: BaseStore) -> dict:
     t0 = time.perf_counter()
     mode = _get_mode(state)
 
+    if ENABLE_CODEACT_EXECUTOR:
+        result = _run_executor_with_codeact(state, store)
+    else:
+        result = _run_executor_legacy(state, store)
+
+    duration = time.perf_counter() - t0
+    metrics.record_timing("node_executor", duration)
+
+    execution_result = result["execution_result"]
+    execution_summary = result["execution_summary"]
+    final_answer = result["final_answer"]
+    extracted_answers = result["extracted_answers"]
+    query = state.get("query", "")
+    task_group = state.get("task_group", "default")
+    analysis_digest = state.get("analysis_digest", "")
+    analysis = state.get("analysis", "")
+    evidence = state.get("evidence", [])
+    selected_context_packets = state.get("selected_context_packets", [])
+
+    if mode == "structured":
+        msg = make_message(
+            source="executor", target="summarizer",
+            action=ActionType.EXECUTE,
+            params={
+                "analysis_chars": len(analysis),
+                "evidence_count": len(evidence),
+                "selected_context_count": len(selected_context_packets),
+            },
+            result={
+                "execution_ok": execution_result["ok"],
+                "execution_summary": execution_summary,
+                "final_answer": final_answer,
+                "answer_field_count": len(extracted_answers),
+                "metric_count": len(execution_result.get("metrics", {})),
+            },
+            task_group=task_group,
+        )
+        metrics.record_message(
+            source="executor", target="summarizer", action="execute",
+            param_chars=len(analysis_digest) + len(str(len(evidence))),
+            result_chars=len(execution_summary) + len(final_answer),
+            has_embedding=False,
+        )
+        result["messages"] = [msg.to_dict()]
+
+    return result
+
+
+def _run_executor_with_codeact(state: dict, store: BaseStore) -> dict:
+    query = state.get("query", "")
+    plan = state.get("plan", "")
+    analysis_digest = state.get("analysis_digest", "")
+    task_group = state.get("task_group", "default")
+    task_topic = state.get("task_topic") or task_group
+
+    codeact_result = codeact(state, store=store)
+    execution_code = codeact_result["execution_code"]
+    execution_result = codeact_result["execution_result"]
+    execution_summary = codeact_result["execution_summary"]
+    final_answer = codeact_result["final_answer"]
+    extracted_answers = codeact_result["extracted_answers"]
+    execution_trace = codeact_result.get("execution_trace", [])
+    tool_results = codeact_result.get("tool_results", [])
+
+    execution_memory_id = f"execution_{task_group}_{hash_text(query or plan or analysis_digest)}"
+    store_put(store, NS_EXECUTIONS, execution_memory_id, {
+        "query": query,
+        "plan": plan,
+        "analysis_digest": analysis_digest,
+        "code": execution_code,
+        "execution_result": execution_result,
+        "execution_summary": execution_summary,
+        "final_answer": final_answer,
+        "extracted_answers": extracted_answers,
+        "artifact_refs": state.get("artifact_refs", []),
+        "execution_trace": execution_trace,
+        "tool_results": tool_results,
+    },
+        memory_type="execution",
+        source_agent="executor",
+        task_group=task_group,
+        task_topic=task_topic,
+        summary=execution_summary,
+        tags=["execution", "executor", "codeact", task_group],
+    )
+
+    return {
+        "execution_code": execution_code,
+        "execution_result": execution_result,
+        "execution_summary": execution_summary,
+        "final_answer": final_answer,
+        "extracted_answers": extracted_answers,
+        "execution_trace": execution_trace,
+        "tool_results": tool_results,
+    }
+
+
+def _run_executor_legacy(state: dict, store: BaseStore) -> dict:
     query = state.get("query", "")
     plan = state.get("plan", "")
     analysis = state.get("analysis", "")
@@ -149,43 +248,13 @@ def executor(state: dict, store: BaseStore) -> dict:
         tags=["execution", "executor", "codeact", task_group],
     )
 
-    duration = time.perf_counter() - t0
-    metrics.record_timing("node_executor", duration)
-
-    result = {
+    return {
         "execution_code": code,
         "execution_result": execution_result,
         "execution_summary": execution_summary,
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
     }
-    if mode == "structured":
-        msg = make_message(
-            source="executor", target="summarizer",
-            action=ActionType.EXECUTE,
-            params={
-                "analysis_chars": len(analysis),
-                "evidence_count": len(evidence),
-                "selected_context_count": len(selected_context_packets),
-            },
-            result={
-                "execution_ok": execution_result["ok"],
-                "execution_summary": execution_summary,
-                "final_answer": final_answer,
-                "answer_field_count": len(extracted_answers),
-                "metric_count": len(execution_result.get("metrics", {})),
-            },
-            task_group=task_group,
-        )
-        metrics.record_message(
-            source="executor", target="summarizer", action="execute",
-            param_chars=len(analysis_digest) + len(str(len(evidence))),
-            result_chars=len(execution_summary) + len(final_answer),
-            has_embedding=False,
-        )
-        result["messages"] = [msg.to_dict()]
-
-    return result
 
 
 def _extract_answer_format(query: str) -> str:

@@ -15,7 +15,11 @@ from typing import Annotated, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from agent import analyst, executor, planner, researcher, summarizer
+from agent.analyst import analyst
+from agent.executor import executor
+from agent.planner import planner
+from agent.researcher import researcher
+from agent.summarizer import summarizer
 from agent.cache_agents import (
     analyst_cache,
     context_prefill,
@@ -43,6 +47,7 @@ class ResearchState(TypedDict, total=False):
     task_topic: str
     analyst_instructions: str
     mode: str  # "text" | "structured" | "cache"
+    artifact_refs: list[dict]
 
     # Planner output
     plan: str
@@ -78,6 +83,8 @@ class ResearchState(TypedDict, total=False):
     execution_summary: str
     final_answer: str
     extracted_answers: dict[str, str]
+    execution_trace: list[dict]
+    tool_results: list[dict]
 
     # Summarizer output
     summary: str
