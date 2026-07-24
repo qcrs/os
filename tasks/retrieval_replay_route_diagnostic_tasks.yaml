@@ -1,0 +1,75 @@
+tasks:
+  - task_id: diag-replay-route-weak-anchor-001
+    task_group: replay_route_diag
+    task_order: 1
+    task_theme: executor_low_confidence
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Build a weak-route replay anchor that should remain in collect-more-evidence territory.
+    query: investigate a vague release issue
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-lowconf-context, exec-lowconf-weak-db]
+    evidence_text: This replay route diagnostic builds a weak-route replay anchor.
+    tags: [triage]
+    reuse_tags: [triage]
+    expected_reuse_mode: none
+    summary_hint: >
+      This replay route diagnostic should keep the weak route in
+      collect-more-evidence territory and should not become exact replay eligible.
+
+  - task_id: diag-replay-route-weak-exact-001
+    task_group: replay_route_diag
+    task_order: 2
+    task_theme: executor_low_confidence
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: exact_replay
+    goal: Verify that weak-route replay memory still refuses exact replay even when query and theme stay aligned.
+    query: investigate a vague release issue
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-lowconf-context, exec-lowconf-weak-db]
+    evidence_text: This replay route diagnostic checks that weak-route replay memory does not become exact replay eligible.
+    tags: [triage]
+    reuse_tags: [triage]
+    expected_reuse_mode: none
+    summary_hint: >
+      This replay route diagnostic should refuse exact replay because the
+      archived route remains low-confidence and collect-more-evidence only.
+
+  - task_id: diag-replay-route-clear-anchor-001
+    task_group: replay_route_diag
+    task_order: 3
+    task_theme: executor_clear_worker
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Build a clear-route replay anchor that should remain exact-replay eligible.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-clear-worker-anchor, exec-clear-worker-followup]
+    evidence_text: This replay route diagnostic builds a clear-route replay anchor.
+    tags: [latency, release-17, orders, worker]
+    reuse_tags: [latency, release-17, orders, worker]
+    expected_reuse_mode: none
+    summary_hint: >
+      This replay route diagnostic should keep the clear worker route replay eligible.
+
+  - task_id: diag-replay-route-clear-exact-001
+    task_group: replay_route_diag
+    task_order: 4
+    task_theme: executor_clear_worker
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: exact_replay
+    goal: Verify that clear-route replay memory still enables exact replay when query and theme stay aligned.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-clear-worker-anchor, exec-clear-worker-followup]
+    evidence_text: This replay route diagnostic checks that a clear replay route still triggers exact replay.
+    tags: [latency, release-17, orders, worker]
+    reuse_tags: [latency, release-17, orders, worker]
+    expected_reuse_mode: skip_retrieve_execute
+    summary_hint: >
+      This replay route diagnostic should allow exact replay because the
+      archived worker route remains clear and replay eligible.

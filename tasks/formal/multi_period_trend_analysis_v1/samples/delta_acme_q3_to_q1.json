@@ -1,0 +1,24 @@
+{
+  "task_id": "formal-trend-003",
+  "task_family": "multi_period_trend_analysis_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["delta", "acme", "multi-period"],
+  "expected_facts": {
+    "delta_value": "22"
+  },
+  "request_text": "Compute ACME revenue delta from 2025Q3 to 2026Q1.",
+  "canonical_task_spec": {
+    "task_family": "cross_period_financial_analysis",
+    "intent_op": "compute_delta",
+    "required_outputs": ["delta_value", "delta_pct", "summary_text"],
+    "required_tools": ["table_retriever"],
+    "arguments": {
+      "ticker": "ACME",
+      "metric": "revenue",
+      "period_from": "2025Q3",
+      "period_to": "2026Q1",
+      "dataset_id": "cross_period_financial",
+      "quality_checks": ["exact:delta_value"]
+    }
+  }
+}

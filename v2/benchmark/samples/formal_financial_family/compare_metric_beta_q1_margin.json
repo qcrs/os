@@ -1,0 +1,38 @@
+{
+  "task_id": "benchmark-sample-8",
+  "task_family": "financial_report_analysis",
+  "expected_artifact_type": "json",
+  "scenario_tags": [
+    "gross-margin",
+    "beta",
+    "q1-2026"
+  ],
+  "expected_facts": {
+    "metric_name": "gross_margin",
+    "metric_value": "31",
+    "revenue_value": "31",
+    "selected_doc_hashes": [
+      "sha256:doc-beta-2026q1"
+    ]
+  },
+  "request_text": "What was BETA's gross margin for 2026Q1? Produce a summary.",
+  "canonical_task_spec": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "compare_metric",
+    "required_outputs": [
+      "summary_text"
+    ],
+    "required_tools": [
+      "table_retriever",
+      "semantic_retriever"
+    ],
+    "arguments": {
+      "ticker": "BETA",
+      "quarter": "2026Q1",
+      "metric": "gross_margin"
+    }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the gross_margin value for BETA 2026Q1: 31."
+}

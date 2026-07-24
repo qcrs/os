@@ -1,0 +1,30 @@
+{
+  "schema_version": "statebus.semantic_holdout_gold.v1",
+  "facts": {
+    "semantic-holdout-s1": {
+      "operating_region": "North Coast corridor",
+      "region_locator": "Market signal",
+      "binding_constraint": "limited cold-storage dock availability",
+      "constraint_locator": "Fulfillment constraint"
+    },
+    "semantic-holdout-s2": {
+      "demand_cause": "an accelerated hospital restocking cycle",
+      "operational_effect": "night-shift utilization above the planned ceiling",
+      "conditional_risk": "delayed regional deliveries if weekend dock coverage remains unchanged",
+      "stated_mitigation": "add a rotating weekend dock team before the next replenishment wave"
+    },
+    "semantic-holdout-s3": {
+      "facility": "Harbor East",
+      "period": "2026Q2",
+      "backlog_units": 1840,
+      "sla_hours": 36
+    },
+    "semantic-holdout-s4": {
+      "region": "Delta Hub",
+      "period": "2026Q2",
+      "throughput_units": 760,
+      "shipment_qualifier": "capacity-capped pending rail-slot approval",
+      "qualifier_locator": "Operating constraint"
+    }
+  }
+}

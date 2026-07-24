@@ -1,0 +1,23 @@
+{
+  "task_id": "formal-join-002",
+  "task_family": "cross_table_join_analysis_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["cross-table", "gap", "2025q4"],
+  "expected_facts": {
+    "gap_value": "30"
+  },
+  "request_text": "Join ACME and BETA revenue tables and compute the 2025Q4 revenue gap.",
+  "canonical_task_spec": {
+    "task_family": "cross_period_financial_analysis",
+    "intent_op": "compare_metric",
+    "required_outputs": ["acme_revenue_value", "beta_revenue_value", "gap_value", "summary_text"],
+    "required_tools": ["table_retriever"],
+    "arguments": {
+      "tickers": ["ACME", "BETA"],
+      "quarter": "2025Q4",
+      "metric": "revenue",
+      "dataset_id": "cross_period_financial",
+      "quality_checks": ["exact:gap_value"]
+    }
+  }
+}

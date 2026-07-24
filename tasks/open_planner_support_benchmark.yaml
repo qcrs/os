@@ -1,0 +1,117 @@
+task_set:
+  name: open_planner_support_pack
+  pack_type: open_planner_support
+  description: Archived historical support surface for the earlier open-planner-only regression pack.
+  reading_contract: Read this pack only as archived historical support material for the earlier open-planner surface. It must not be mixed into the current v3 communication, state_transfer, memory, or planner-control claims.
+  claim_lanes: []
+
+tasks:
+  - task_id: open-planner-checkout-001
+    task_group: open_planner_support_lane
+    task_order: 1
+    task_theme: contest_release_checkout_regression
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    allowed_modes: [text, protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use planner-generated steps to diagnose the checkout canary regression and recommend the first action.
+    query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+    corpus_doc_ids: [rr-checkout-incident, rr-checkout-metrics, rr-checkout-logs, rr-checkout-worker-false]
+    evidence_text: This support task verifies Planner LLM plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+    tags: [release, checkout, latency, database, open-planner]
+    reuse_tags: [release, checkout, database]
+    expected_reuse_mode: none
+    expected_route: db_pool_saturation
+    expected_tool_name: tool.db_pool_triage
+    expected_top_doc_id: rr-checkout-incident
+    summary_hint: Return root cause, strongest competing explanation ruled out, first action, and validation check.
+
+  - task_id: open-planner-auth-001
+    task_group: open_planner_support_lane
+    task_order: 2
+    task_theme: contest_release_auth_rotation
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    allowed_modes: [text, protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use planner-generated steps to diagnose auth callback failures after metadata rotation.
+    query: auth metadata rotation canary shows issuer mismatch stale jwks and repeated callback verification failures
+    corpus_doc_ids: [rr-auth-incident, rr-auth-metrics, rr-auth-logs, rr-auth-rate-limit-false]
+    evidence_text: This support task verifies Planner LLM plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+    tags: [release, auth, session, jwks, open-planner]
+    reuse_tags: [release, auth, session]
+    expected_reuse_mode: none
+    expected_route: auth_session_drift
+    expected_tool_name: tool.auth_session_repair
+    expected_top_doc_id: rr-auth-incident
+    summary_hint: Return root cause, strongest competing explanation ruled out, first action, and validation check.
+
+  - task_id: open-planner-cache-001
+    task_group: open_planner_support_lane
+    task_order: 3
+    task_theme: contest_release_inventory_rollout
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    allowed_modes: [text, protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use planner-generated steps to diagnose stale inventory after the rollout.
+    query: inventory rollout region shows stale inventory after batch sync with dropped aggregate invalidation rate
+    corpus_doc_ids: [rr-cache-incident, rr-cache-metrics, rr-cache-logs, rr-cache-replica-false]
+    evidence_text: This support task verifies Planner LLM plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+    tags: [release, inventory, cache, invalidation, open-planner]
+    reuse_tags: [release, inventory, cache]
+    expected_reuse_mode: none
+    expected_route: cache_invalidation
+    expected_tool_name: tool.cache_invalidation_playbook
+    expected_top_doc_id: rr-cache-incident
+    summary_hint: Return root cause, strongest competing explanation ruled out, first action, and validation check.
+
+  - task_id: open-planner-billing-001
+    task_group: open_planner_support_lane
+    task_order: 4
+    task_theme: contest_release_billing_queue
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    allowed_modes: [text, protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use planner-generated steps to diagnose the billing worker backlog and recommend the first action.
+    query: billing webhook release shows worker queue backlog and tls reload stall while database symptoms are being cited
+    corpus_doc_ids: [rr-billing-incident, rr-billing-metrics, rr-billing-logs, rr-billing-db-false]
+    evidence_text: This support task verifies Planner LLM plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+    tags: [release, billing, worker, queue, open-planner]
+    reuse_tags: [release, billing, worker]
+    expected_reuse_mode: none
+    expected_route: worker_queue_starvation
+    expected_tool_name: tool.worker_queue_triage
+    expected_top_doc_id: rr-billing-incident
+    summary_hint: Return root cause, strongest competing explanation ruled out, first action, and validation check.
+
+  - task_id: open-planner-deploy-001
+    task_group: open_planner_support_lane
+    task_order: 5
+    task_theme: contest_release_deployment_config_drift
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    allowed_modes: [text, protocol]
+    corpus_path: contest_release_regression_corpus.yaml
+    goal: Use planner-generated steps to diagnose deployment config drift and recommend the first action.
+    query: deployment drift canary shard shows pool cap mismatch sql wait growth and rollout config divergence
+    corpus_doc_ids: [rr-deploy-incident, rr-deploy-metrics, rr-deploy-logs, rr-deploy-worker-false]
+    evidence_text: This support task verifies Planner LLM plan compilation; ignore memory reuse and keep the runtime path otherwise unchanged.
+    tags: [release, deployment, config, database, open-planner]
+    reuse_tags: [release, deployment, config]
+    expected_reuse_mode: none
+    expected_route: db_pool_saturation
+    expected_tool_name: tool.db_pool_triage
+    expected_top_doc_id: rr-deploy-incident
+    summary_hint: Return root cause, strongest competing explanation ruled out, first action, and validation check.

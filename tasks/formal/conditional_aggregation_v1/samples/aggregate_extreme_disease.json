@@ -1,0 +1,26 @@
+{
+  "task_id": "formal-agg-002",
+  "task_family": "conditional_aggregation_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["aggregation", "extreme", "disease"],
+  "expected_facts": {
+    "mean_cases": "2081990",
+    "max_deaths_country": "Nigeria",
+    "max_deaths_year": "2010"
+  },
+  "request_text": "Calculate mean cases rounded to the nearest integer and identify the country/year with the highest deaths in estimated_numbers.csv.",
+  "canonical_task_spec": {
+    "task_family": "continuous_csv_table_analysis",
+    "intent_op": "aggregate_and_extreme",
+    "required_outputs": ["stats_artifact_ref", "mean_cases", "max_deaths_country", "max_deaths_year"],
+    "required_tools": ["table_retriever", "codeact_executor"],
+    "arguments": {
+      "dataset_id": "disease_estimates",
+      "csv_path": "task/csv/estimated_numbers.csv",
+      "mean_column": "No. of cases",
+      "mean_rounding": "nearest_integer",
+      "max_column": "No. of deaths",
+      "quality_checks": ["exact:mean_cases", "exact:max_deaths_country", "exact:max_deaths_year"]
+    }
+  }
+}

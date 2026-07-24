@@ -1,0 +1,14 @@
+numpy
+protobuf
+pydantic
+orjson
+msgpack
+openai
+faiss-cpu
+transformers==4.51.3
+sentence-transformers==5.5.1
+networkx
+pyyaml
+rich
+pytest
+pytest-asyncio

@@ -1,0 +1,431 @@
+task_set:
+  name: formal_controlled_pack
+  pack_type: formal_controlled
+  description: Frozen 24-task host-mainline headline pack with two controlled replay chains plus dedicated communication, typed-handoff state_transfer, and replay-scoped memory lanes.
+  reading_contract: Read this pack as the unique frozen headline object only; it keeps the controlled replay chains and dedicated claim lanes, and excludes route diagnostics plus planner pre-pass validation.
+  claim_lanes: [communication, state_transfer, memory]
+
+tasks:
+  - task_id: sample-cache-001
+    task_group: cache_chain
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Diagnose the first stale inventory report from corpus-backed local evidence.
+    query: inventory stale counts batch sync aggregate invalidation
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; treat any prior memory as a hypothesis.
+    tags: [cache, inventory, invalidation, anchor]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      Fresh evidence should identify delayed aggregate invalidation after batch sync
+      and recommend forcing the post-sync invalidation hook.
+
+  - task_id: sample-cache-002
+    task_group: cache_chain
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Use the current task evidence and prior memory to speed up a follow-up stale inventory triage.
+    query: follow-up inventory stale counts shared aggregate invalidation hook
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; validate any recalled playbook against fresh evidence.
+    tags: [cache, inventory, invalidation, followup]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      This follow-up should validate the earlier invalidation playbook against fresh
+      corpus evidence before recommending the same fix.
+
+  - task_id: sample-cache-003
+    task_group: cache_chain
+    task_order: 3
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Distinguish a misleading stale inventory alert from the known invalidation playbook.
+    query: stale inventory after failover replica lag looks like invalidation issue
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; reject reused memory if fresh evidence points elsewhere.
+    tags: [cache, inventory, sync-window, failover]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      Fresh evidence should reject the invalidation shortcut and instead isolate the
+      stale-read path on the reporting replica.
+
+  - task_id: sample-cache-004
+    task_group: cache_chain
+    task_order: 4
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Verify the invalidation path again on a control replay without skipping fresh retrieval.
+    query: replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; replay should still fetch fresh evidence.
+    tags: [cache, inventory, invalidation, replay]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      The control replay should validate the same invalidation playbook against fresh
+      corpus evidence and keep the reuse path conservative.
+
+  - task_id: sample-cache-005
+    task_group: cache_chain
+    task_order: 5
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Run a validated replay that still performs fresh retrieval before pruning execute.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; validated replay must still confirm the route from fresh retrieval.
+    tags: [cache, inventory, invalidation, validated-replay]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      This validated replay should confirm the same invalidation route from fresh
+      evidence, then safely prune execute by reusing the prior tool artifact.
+
+  - task_id: sample-cache-006
+    task_group: cache_chain
+    task_order: 6
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Run an exact replay that skips retrieve and execute from runtime-matched replay evidence.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the stored replay evidence plus current task inputs only; exact replay may skip retrieve and execute when the validated replay route matches exactly.
+    tags: [cache, inventory, invalidation, exact-replay]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: skip_retrieve_execute
+    runtime_reuse_contract: exact_replay
+    summary_hint: >
+      This exact replay should reuse the prior validated replay end to end and still
+      summarize a fresh memory commit for the current task.
+
+  - task_id: sample-latency-001
+    task_group: latency_chain
+    task_order: 1
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Diagnose the first orders latency regression from corpus-backed local evidence.
+    query: release-17 orders latency db pool saturation slow query
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; do not assume a replayed fix.
+    tags: [latency, database, release-17, anchor]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      Fresh evidence should point to DB pool saturation and the slow orders query,
+      then recommend rollback plus index creation.
+
+  - task_id: sample-latency-002
+    task_group: latency_chain
+    task_order: 2
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Triage a follow-up orders latency burst with fresh retrieval plus memory assist.
+    query: service-c orders latency connection pool contention slow query
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; memory may suggest a playbook but cannot skip retrieval.
+    tags: [latency, database, service-c, followup]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      This follow-up should validate the earlier database playbook against fresh
+      evidence before recommending the same mitigation steps.
+
+  - task_id: sample-latency-003
+    task_group: latency_chain
+    task_order: 3
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Separate a misleading release-window latency alert from the known DB playbook.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; reject recalled DB fixes if the fresh route differs.
+    tags: [latency, release-17, orders, worker]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: none
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      Fresh evidence should reject the database shortcut and instead escalate the
+      worker queue starvation path.
+
+  - task_id: sample-latency-004
+    task_group: latency_chain
+    task_order: 4
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Re-verify the known orders-query latency path with fresh retrieval in a control replay.
+    query: replay orders latency db wait profile release-era saturation
+    corpus_doc_ids: [latency-db-anchor, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; replay should still fetch and validate current evidence.
+    tags: [latency, database, replay, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      The control replay should reuse the prior database playbook only after fresh
+      corpus evidence re-confirms the same route.
+
+  - task_id: sample-latency-005
+    task_group: latency_chain
+    task_order: 5
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Run a validated replay that confirms the DB route before pruning execute.
+    query: validated replay orders latency db wait profile release-era saturation
+    corpus_doc_ids: [latency-db-anchor, latency-db-replay]
+    evidence_text: Use the referenced corpus docs only; validated replay must still confirm the database route via fresh retrieval.
+    tags: [latency, database, validated-replay, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      This validated replay should re-confirm the same database route from fresh
+      evidence, then reuse the prior execute artifact to prune the playbook step.
+
+  - task_id: sample-latency-006
+    task_group: latency_chain
+    task_order: 6
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    goal: Run an exact replay that skips retrieve and execute from runtime-matched validated replay evidence.
+    query: validated replay orders latency db wait profile release-era saturation
+    corpus_doc_ids: [latency-db-anchor, latency-db-replay]
+    evidence_text: Use the stored replay evidence plus current task inputs only; exact replay may skip retrieve and execute when the validated replay route matches exactly.
+    tags: [latency, database, exact-replay, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: skip_retrieve_execute
+    runtime_reuse_contract: exact_replay
+    summary_hint: >
+      This exact replay should reuse the prior validated replay end to end while
+      still emitting a current-task summary and memory commit.
+
+  - task_id: transfer-cache-001
+    task_group: transfer_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: state_transfer
+    transfer_strategy: mode_split_text_brief_vs_state_ref
+    goal: Compare text brief handoff against structured StateRef handoff on the same cache triage task.
+    query: inventory stale counts batch sync aggregate invalidation
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup]
+    evidence_text: Use the referenced corpus docs only; compare transfer strategy, not memory reuse.
+    tags: [cache, inventory, invalidation, transfer]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for direct state-transfer comparison only; preserve the same
+      diagnosis while varying the inter-agent handoff format.
+
+  - task_id: transfer-latency-001
+    task_group: transfer_lane
+    task_order: 2
+    task_theme: repo_local_latency_triage
+    benchmark_lane: state_transfer
+    transfer_strategy: mode_split_text_brief_vs_state_ref
+    goal: Compare text brief handoff against structured StateRef handoff on the same latency triage task.
+    query: release-17 orders latency db pool saturation slow query
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup]
+    evidence_text: Use the referenced corpus docs only; compare transfer strategy, not memory reuse.
+    tags: [latency, database, orders, transfer]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for direct state-transfer comparison only; preserve the same
+      database-saturation diagnosis while varying the inter-agent handoff format.
+
+  - task_id: transfer-session-001
+    task_group: transfer_lane
+    task_order: 3
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: state_transfer
+    transfer_strategy: mode_split_text_brief_vs_state_ref
+    goal: Compare text brief handoff against structured StateRef handoff on the same auth session triage task.
+    query: sso callback issuer mismatch stale jwks session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup]
+    evidence_text: Use the referenced corpus docs only; compare transfer strategy, not memory reuse.
+    tags: [auth, session, jwks, transfer]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for direct state-transfer comparison only; preserve the same
+      stale-JWKS diagnosis while varying the inter-agent handoff format.
+
+  - task_id: communication-cache-001
+    task_group: communication_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a cold cache triage task without memory reuse.
+    query: inventory stale counts batch sync aggregate invalidation
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and keeps memory disabled.
+    tags: [cache, inventory, invalidation, communication, cold-start]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is for communication-lane baseline only; keep the diagnosis fixed
+      and do not introduce replay or memory assist.
+
+  - task_id: communication-cache-002
+    task_group: communication_lane
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a reject-control cache task without memory reuse.
+    query: stale inventory after failover replica lag looks like invalidation issue
+    corpus_doc_ids: [cache-invalid-anchor, cache-replica-false]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and fresh retrieval under a misleading incident.
+    tags: [cache, inventory, failover, communication, reject-control]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This communication-lane reject control should still reject the invalidation
+      shortcut and isolate the stale-read replica path.
+
+  - task_id: memory-cache-001
+    task_group: memory_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    goal: Establish the memory-lane cold baseline on the validated replay route with memory fully disabled.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; this lane compares memory policies, so this first task must keep memory disabled.
+    tags: [cache, inventory, invalidation, memory, cold-start]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    runtime_reuse_contract: reuse_disabled
+    summary_hint: >
+      This task is the memory-off baseline for the memory lane; confirm the same
+      invalidation route without any assist or replay.
+
+  - task_id: memory-cache-002
+    task_group: memory_lane
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    goal: Measure assist-only memory reuse on the same validated cache route without step skipping.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; this lane keeps retrieval fresh and only allows memory assist.
+    tags: [cache, inventory, invalidation, memory, assist-only]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: assist
+    runtime_reuse_contract: assist_allowed
+    summary_hint: >
+      This memory-lane assist task should reuse only summary memory after fresh
+      retrieval on the same route and keep execute fully live.
+
+  - task_id: memory-cache-003
+    task_group: memory_lane
+    task_order: 3
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: memory
+    transfer_strategy: state_ref
+    goal: Measure replay-enabled memory reuse on the same cache route with execute pruning.
+    query: validated replay stale inventory aggregate invalidation after sync burst
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-replay]
+    evidence_text: Use the referenced corpus docs only; this lane allows replay-enabled reuse after fresh route confirmation.
+    tags: [cache, inventory, invalidation, memory, replay-enabled]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: skip_execute
+    runtime_reuse_contract: validated_replay
+    summary_hint: >
+      This memory-lane replay-enabled task should confirm the same invalidation
+      route, then prune execute while preserving summary and commit behavior.
+
+  - task_id: communication-latency-001
+    task_group: communication_lane
+    task_order: 3
+    task_theme: repo_local_latency_triage
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a cold latency triage task.
+    query: release-17 orders latency db pool saturation slow query checkpoint
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead.
+    tags: [latency, orders, database, communication, cold-start]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane baseline for latency domain; keep the diagnosis fixed.
+
+  - task_id: communication-latency-002
+    task_group: communication_lane
+    task_order: 4
+    task_theme: repo_local_latency_triage
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure protocol overhead on a latency triage variant that should reject stale memory.
+    query: release-17 latency worker queue stall not database
+    corpus_doc_ids: [latency-db-anchor, latency-worker-false]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and keeps memory disabled.
+    tags: [latency, orders, worker, communication, reject-control]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane reject-control for latency domain; keep the diagnosis fixed.
+
+  - task_id: communication-session-001
+    task_group: communication_lane
+    task_order: 5
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure text versus protocol communication overhead on a cold auth session triage task.
+    query: sso callback issuer mismatch stale jwks session cookies
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead.
+    tags: [auth, session, communication, cold-start]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane baseline for session domain; keep the diagnosis fixed.
+
+  - task_id: communication-session-002
+    task_group: communication_lane
+    task_order: 6
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: communication
+    transfer_strategy: state_ref
+    goal: Measure protocol overhead on an auth session triage variant that should reject stale memory.
+    query: auth login failures backoff window looks like session issue
+    corpus_doc_ids: [session-auth-anchor, session-rate-limit-false]
+    evidence_text: Use the referenced corpus docs only; this lane isolates communication overhead and keeps memory disabled.
+    tags: [auth, session, rate-limit, communication, reject-control]
+    runtime_reuse_contract: reuse_disabled
+    expected_reuse_mode: none
+    summary_hint: >
+      Communication-lane reject-control for session domain; keep the diagnosis fixed.

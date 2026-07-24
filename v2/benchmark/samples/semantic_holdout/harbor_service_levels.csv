@@ -1,0 +1,7 @@
+facility,period,backlog_units,sla_hours,status
+Harbor West,2026Q1,1260,24,watch
+Harbor East,2026Q1,1510,30,watch
+Harbor East,2026Q2,1840,36,elevated
+Harbor North,2026Q2,920,18,normal
+Harbor West,2026Q2,1335,24,watch
+Harbor East,2026Q3,1420,28,recovering

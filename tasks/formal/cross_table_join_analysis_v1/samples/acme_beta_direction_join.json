@@ -1,0 +1,30 @@
+{
+  "task_id": "formal-join-004",
+  "task_family": "cross_table_join_analysis_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["cross-table", "trend", "joined"],
+  "expected_facts": {
+    "acme_trend_direction": "increasing",
+    "beta_trend_direction": "increasing"
+  },
+  "request_text": "Join the two company tables and evaluate both revenue series across 2025Q3, 2025Q4, and 2026Q1. Emit one row per ticker and quarter and repeat each ticker's canonical direction label: increasing when every adjacent value rises, decreasing when every adjacent value falls, flat when all values are equal, otherwise mixed.",
+  "canonical_task_spec": {
+    "task_family": "cross_period_financial_analysis",
+    "intent_op": "compute_trend",
+    "required_outputs": [
+      "acme_trend_values",
+      "beta_trend_values",
+      "acme_trend_direction",
+      "beta_trend_direction",
+      "summary_text"
+    ],
+    "required_tools": ["table_retriever"],
+    "arguments": {
+      "tickers": ["ACME", "BETA"],
+      "metric": "revenue",
+      "quarters": ["2025Q3", "2025Q4", "2026Q1"],
+      "dataset_id": "cross_period_financial",
+      "quality_checks": ["exact:acme_trend_direction", "exact:beta_trend_direction"]
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "task_id": "benchmark-sample-5",
+  "task_family": "financial_report_analysis",
+  "expected_artifact_type": "json",
+  "scenario_tags": [
+    "new-ticker",
+    "revenue",
+    "beta"
+  ],
+  "expected_facts": {
+    "metric_name": "revenue",
+    "metric_value": "87",
+    "revenue_value": "87",
+    "selected_doc_hashes": [
+      "sha256:doc-beta-2026q1"
+    ]
+  },
+  "request_text": "Retrieve the revenue figure for BETA in 2026Q1 and produce a summary.",
+  "canonical_task_spec": {
+    "task_family": "financial_report_analysis",
+    "intent_op": "compare_metric",
+    "required_outputs": [
+      "summary_text"
+    ],
+    "required_tools": [
+      "table_retriever",
+      "semantic_retriever"
+    ],
+    "arguments": {
+      "ticker": "BETA",
+      "quarter": "2026Q1",
+      "metric": "revenue"
+    }
+  },
+  "expected_route": "compare_metric",
+  "expected_tool_name": "table_retriever",
+  "summary_hint": "Report the revenue value for BETA 2026Q1: 87."
+}

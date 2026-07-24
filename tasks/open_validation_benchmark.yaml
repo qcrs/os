@@ -1,0 +1,302 @@
+task_set:
+  name: open_validation_pack
+  pack_type: open_validation
+  description: Support-only host-mainline pack for retrieval, executor, replay, and planner pre-pass boundary checks after controlled-pack changes.
+  reading_contract: Read this pack as open validation and diagnostic support evidence only; use it for retain/revert, planner pre-pass validation, and misfire explanation, not formal contest headline claims.
+  claim_lanes: []
+
+tasks:
+  - task_id: diag-retrieval-no-tags-001
+    task_group: cache_chain
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins even when the current task provides no tags.
+    query: reporting replica lag after failover caused stale reads
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup]
+    evidence_text: This retrieval diagnostic removes current task tags and keeps only the query plus misleading doc preferences.
+    tags: []
+    reuse_tags: []
+    expected_reuse_mode: none
+    expected_route: cache_replica_stale_read
+    expected_tool_name: tool.replica_stale_read_triage
+    expected_top_doc_id: cache-replica-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the replica-lag route even
+      without current task tags, because the query evidence is strong enough to
+      beat the hinted invalidation docs.
+
+  - task_id: diag-retrieval-invalidation-control-001
+    task_group: cache_chain
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the retrieval refresh has not collapsed into always preferring the replica route.
+    query: inventory aggregate invalidation lag after sync burst
+    corpus_doc_ids: [cache-replica-false, cache-invalid-anchor]
+    evidence_text: This retrieval diagnostic is the negative control; invalidation query evidence should still keep the invalidation route on top.
+    tags: [cache, inventory, replica]
+    reuse_tags: [cache, inventory, replica]
+    expected_reuse_mode: none
+    expected_route: cache_invalidation
+    expected_tool_name: tool.cache_invalidation_playbook
+    expected_top_doc_id: cache-invalid-anchor
+    summary_hint: >
+      This retrieval diagnostic should keep the invalidation route on top,
+      proving that the retrieval refresh has not collapsed into a generic
+      replica-lag bias.
+
+  - task_id: diag-retrieval-latency-no-tags-001
+    task_group: latency_chain
+    task_order: 3
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins for latency triage even when the current task provides no tags.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup]
+    evidence_text: This retrieval diagnostic removes current task tags and keeps only the query plus misleading database doc preferences.
+    tags: []
+    reuse_tags: []
+    expected_reuse_mode: none
+    expected_route: worker_queue_starvation
+    expected_tool_name: tool.worker_queue_triage
+    expected_top_doc_id: latency-worker-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the worker-queue route
+      without current task tags, because the query evidence points outside the
+      hinted database docs.
+
+  - task_id: diag-retrieval-latency-db-control-001
+    task_group: latency_chain
+    task_order: 4
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the retrieval refresh has not collapsed into always preferring the latency worker route.
+    query: release-17 orders latency db pool saturation slow query
+    corpus_doc_ids: [latency-worker-false, latency-db-anchor]
+    evidence_text: This retrieval diagnostic is the negative control; database query evidence should still keep the DB route on top.
+    tags: [latency, worker, tls]
+    reuse_tags: [latency, worker, tls]
+    expected_reuse_mode: none
+    expected_route: db_pool_saturation
+    expected_tool_name: tool.db_pool_triage
+    expected_top_doc_id: latency-db-anchor
+    summary_hint: >
+      This retrieval diagnostic should keep the database route on top,
+      proving that the retrieval refresh has not collapsed into a generic
+      worker-queue bias.
+
+  - task_id: exec-low-confidence-001
+    task_group: executor_diag
+    task_order: 5
+    task_theme: executor_low_confidence
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that weak single-route evidence abstains instead of dropping directly into a playbook.
+    query: investigate a vague release issue
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-lowconf-context, exec-lowconf-weak-db]
+    evidence_text: This is a diagnostic executor task; confirm low-confidence abstain under real retrieval.
+    tags: [triage]
+    reuse_tags: [triage]
+    expected_reuse_mode: none
+    expected_route_source: low_confidence_abstain
+    expected_tool_name: tool.collect_more_evidence
+    summary_hint: >
+      This executor diagnostic should abstain to collect-more-evidence because the
+      retrieved route support is still too weak for a direct playbook.
+
+  - task_id: exec-metadata-only-001
+    task_group: executor_diag
+    task_order: 6
+    task_theme: executor_metadata_only
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that metadata-only route hints still abstain when no lexical support exists.
+    query: investigate an unclear incident
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-metadata-only-anchor, exec-metadata-only-followup]
+    evidence_text: This is a diagnostic executor task; confirm metadata-only abstain under real retrieval.
+    tags: [triage]
+    reuse_tags: [triage]
+    expected_reuse_mode: none
+    expected_route_source: metadata_only_abstain
+    expected_tool_name: tool.collect_more_evidence
+    summary_hint: >
+      This executor diagnostic should keep the database hint as unverified and
+      abstain to collect-more-evidence.
+
+  - task_id: exec-ambiguous-001
+    task_group: executor_diag
+    task_order: 7
+    task_theme: executor_ambiguous
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that close cross-route candidates abstain when database and worker evidence stay in tension.
+    query: release-17 orders latency db wait profile plus worker queue stall
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-ambiguous-context, exec-ambiguous-mixed-signals]
+    evidence_text: This is a diagnostic executor task; confirm ambiguous-candidate abstain under real retrieval.
+    tags: [latency, database, worker, release-17]
+    reuse_tags: [latency, database, worker, release-17]
+    expected_reuse_mode: none
+    expected_route_source: ambiguous_candidates_abstain
+    expected_tool_name: tool.collect_more_evidence
+    summary_hint: >
+      This executor diagnostic should abstain because the worker and database
+      routes remain too close to justify a direct playbook.
+
+  - task_id: exec-clear-worker-001
+    task_group: executor_diag
+    task_order: 8
+    task_theme: executor_clear_worker
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that a clearly supported worker route still keeps the direct playbook path.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-clear-worker-anchor, exec-clear-worker-followup]
+    evidence_text: This is a diagnostic executor task; confirm the clear worker route is still preserved.
+    tags: [latency, release-17, orders, worker]
+    reuse_tags: [latency, release-17, orders, worker]
+    expected_reuse_mode: none
+    expected_route_source: hint_consensus
+    expected_tool_name: tool.worker_queue_triage
+    summary_hint: >
+      This executor diagnostic should keep the worker queue playbook because the
+      route evidence is clear and aligned.
+
+  - task_id: diag-replay-route-weak-anchor-001
+    task_group: replay_route_diag
+    task_order: 9
+    task_theme: executor_low_confidence
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Build a weak-route replay anchor that should remain in collect-more-evidence territory.
+    query: investigate a vague release issue
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-lowconf-context, exec-lowconf-weak-db]
+    evidence_text: This replay route diagnostic builds a weak-route replay anchor.
+    tags: [triage]
+    reuse_tags: [triage]
+    expected_reuse_mode: none
+    summary_hint: >
+      This replay route diagnostic should keep the weak route in
+      collect-more-evidence territory and should not become exact replay eligible.
+
+  - task_id: diag-replay-route-weak-exact-001
+    task_group: replay_route_diag
+    task_order: 10
+    task_theme: executor_low_confidence
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: exact_replay
+    goal: Verify that weak-route replay memory still refuses exact replay even when query and theme stay aligned.
+    query: investigate a vague release issue
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-lowconf-context, exec-lowconf-weak-db]
+    evidence_text: This replay route diagnostic checks that weak-route replay memory does not become exact replay eligible.
+    tags: [triage]
+    reuse_tags: [triage]
+    expected_reuse_mode: none
+    summary_hint: >
+      This replay route diagnostic should refuse exact replay because the
+      archived route remains low-confidence and collect-more-evidence only.
+
+  - task_id: diag-replay-route-clear-anchor-001
+    task_group: replay_route_diag
+    task_order: 11
+    task_theme: executor_clear_worker
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Build a clear-route replay anchor that should remain exact-replay eligible.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-clear-worker-anchor, exec-clear-worker-followup]
+    evidence_text: This replay route diagnostic builds a clear-route replay anchor.
+    tags: [latency, release-17, orders, worker]
+    reuse_tags: [latency, release-17, orders, worker]
+    expected_reuse_mode: none
+    summary_hint: >
+      This replay route diagnostic should keep the clear worker route replay eligible.
+
+  - task_id: diag-replay-route-clear-exact-001
+    task_group: replay_route_diag
+    task_order: 12
+    task_theme: executor_clear_worker
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: exact_replay
+    goal: Verify that clear-route replay memory still enables exact replay when query and theme stay aligned.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_path: executor_diagnostic_corpus.yaml
+    corpus_doc_ids: [exec-clear-worker-anchor, exec-clear-worker-followup]
+    evidence_text: This replay route diagnostic checks that a clear replay route still triggers exact replay.
+    tags: [latency, release-17, orders, worker]
+    reuse_tags: [latency, release-17, orders, worker]
+    expected_reuse_mode: skip_retrieve_execute
+    summary_hint: >
+      This replay route diagnostic should allow exact replay because the
+      archived worker route remains clear and replay eligible.
+
+  - task_id: open-plan-cache-001
+    task_group: open_plan_lane
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Use planner pre-pass compilation to diagnose stale inventory counts after batch sync and recommend the first action.
+    query: inventory counts stay stale after a batch sync and mismatch across views
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup, cache-replica-false]
+    evidence_text: This open-validation task checks planner pre-pass compilation only; it is not a headline planner benchmark.
+    tags: [cache, open-plan]
+    expected_reuse_mode: none
+    summary_hint: Return root cause, ruled-out explanation, and first action.
+
+  - task_id: open-plan-latency-001
+    task_group: open_plan_lane
+    task_order: 2
+    task_theme: repo_local_latency_triage
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Use planner pre-pass compilation to diagnose a release-17 orders latency spike and recommend the first action.
+    query: release-17 orders latency spike with connection waits and a slow checkout path
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup, latency-worker-false]
+    evidence_text: This open-validation task checks planner pre-pass compilation only; it is not a headline planner benchmark.
+    tags: [latency, open-plan]
+    expected_reuse_mode: none
+    summary_hint: Return root cause, ruled-out explanation, and first action.
+
+  - task_id: open-plan-session-001
+    task_group: open_plan_lane
+    task_order: 3
+    task_theme: repo_local_auth_session_drift
+    plan_source: llm
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Use planner pre-pass compilation to diagnose SSO callback failures with stale JWKS and cookie drift, then recommend the first action.
+    query: sso callback failures after auth changes with repeated logouts and cookie drift
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup, session-rate-limit-false]
+    evidence_text: This open-validation task checks planner pre-pass compilation only; it is not a headline planner benchmark.
+    tags: [auth, open-plan]
+    expected_reuse_mode: none
+    summary_hint: Return root cause, ruled-out explanation, and first action.

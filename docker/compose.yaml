@@ -1,0 +1,61 @@
+name: statebus-qcrs
+
+services:
+  statebus-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: ${STATEBUS_DOCKER_TARGET:-core}
+      args:
+        USER_NAME: ${STATEBUS_USER_NAME:-qcrs}
+        USER_UID: ${STATEBUS_UID:-1000}
+        USER_GID: ${STATEBUS_GID:-1000}
+        STATEBUS_PIP_INDEX_URL: ${STATEBUS_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        STATEBUS_TORCH_SPEC: ${STATEBUS_TORCH_SPEC:-torch==2.5.1}
+        STATEBUS_TORCH_INDEX_URL: ${STATEBUS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    image: statebus-dev-openeuler:24.03-lts-sp3-${STATEBUS_DOCKER_TARGET:-core}
+    container_name: statebus-dev-qcrs
+    init: true
+    stdin_open: true
+    tty: true
+    network_mode: host
+    runtime: ${STATEBUS_DOCKER_RUNTIME:-nvidia}
+    shm_size: 1g
+    working_dir: /workspace/statebus/project
+    volumes:
+      - ..:/workspace/statebus/project
+      - ${HOME}/statebus/models:/statebus/models
+      - ${HOME}/statebus/caches:/statebus/caches
+      - ${HOME}/statebus/logs:/statebus/logs
+      - ${HOME}/statebus/runs:/statebus/runs
+      - ${HOME}/statebus/work:/statebus/work
+      - ${HOME}/statebus/work/container-home/.local:/root/.local
+      - ${HOME}/statebus/work/container-home/.local:/home/${STATEBUS_USER_NAME:-qcrs}/.local
+    environment:
+      HOME: /root
+      STATEBUS_HOME: /statebus
+      STATEBUS_MODELS_DIR: /statebus/models
+      STATEBUS_CACHES_DIR: /statebus/caches
+      STATEBUS_LOGS_DIR: /statebus/logs
+      STATEBUS_RUNS_DIR: /statebus/runs
+      STATEBUS_WORK_DIR: /statebus/work
+      STATEBUS_WORKSPACES_DIR: /statebus/work/workspaces
+      STATEBUS_WORKDIR: /statebus/work
+      STATEBUS_STATEPOOL_DIR: /statebus/work/statepool
+      STATEBUS_PIP_INDEX_URL: ${STATEBUS_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+      STATEBUS_TORCH_SPEC: ${STATEBUS_TORCH_SPEC:-torch==2.5.1}
+      STATEBUS_TORCH_INDEX_URL: ${STATEBUS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+      CODEX_HOME: /statebus/work/codex-home
+      NPM_CACHE: /statebus/caches/npm
+      NPM_CONFIG_PREFIX: /root/.local
+      PIP_CACHE_DIR: /statebus/caches/pip
+      PIP_INDEX_URL: ${STATEBUS_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+      HF_HOME: /statebus/caches/hf
+      HUGGINGFACE_HUB_CACHE: /statebus/caches/hf/hub
+      TRANSFORMERS_CACHE: /statebus/caches/hf/transformers
+      SENTENCE_TRANSFORMERS_HOME: /statebus/caches/hf/sentence_transformers
+      STATEBUS_LLM_CONFIG_FILE: /workspace/statebus/project/deploy/statebus_llm.yaml.local
+      STATEBUS_LLM_ENV_FILE: /workspace/statebus/project/deploy/statebus_llm.env.local
+      STATEBUS_EMBED_DEVICE: auto
+      NVIDIA_VISIBLE_DEVICES: ${STATEBUS_NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${STATEBUS_NVIDIA_DRIVER_CAPABILITIES:-compute,utility}

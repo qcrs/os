@@ -1,0 +1,1986 @@
+task_set:
+  name: contest_dual_mode_controlled_v3_pack
+  pack_type: contest_dual_mode_controlled_v3
+  description: V3 formal dual-mode controlled pack with matched strict pure-text and
+    minimal typed-state protocol rows on the same 20 contest-release cases.
+  reading_contract: Read this pack only as the formal v3 dual-mode controlled pack.
+    Each pair keeps the same family, query, evidence universe, summary contract, and
+    plan source fixed; mode and handoff object differ together, so this is a controlled
+    composite comparison rather than a single-variable external pure-text baseline.
+  claim_lanes:
+  - communication
+  - state_transfer
+  single_variable: false
+  variable_axes:
+  - mode
+  - handoff_object
+  public_surface: formal_headline
+  plan_source_default: yaml
+  evidence_tier: formal_headline
+  benchmark_version: v3
+  formal_structure_clean_retrieval: true
+corpus_metadata:
+  formal_structure_clean: true
+families:
+- family_id: auth_rotation
+  task_theme: contest_release_auth_rotation
+  task_group: auth_rotation_chain
+  goal: Use the cited release artifacts to triage the auth regression and recommend
+    the first action.
+  route_competition:
+  - auth_rate_limit
+  - auth_session_drift
+  tool_competition:
+  - tool.auth_jwks_refresh
+  - tool.auth_rate_limit_triage
+  - tool.auth_session_repair
+  - tool.collect_more_evidence
+  reuse_tags:
+  - release
+  - auth
+  - session
+  docs:
+    ambiguous:
+      doc_id: rr-auth-ambiguous
+      title: Ambiguity note keeps rate-limit triage admissible until drift is confirmed
+      tags:
+      - release
+      - auth
+      - ambiguous
+      - rate-limit
+      - session
+      eval_route_label: auth_session_drift
+      eval_tool_label: tool.auth_session_repair
+      text: A later note records a mild throttle rise on one edge slice. It says the
+        session-drift route stays primary, but rate-limit triage remains admissible
+        until the callback drift evidence is carried forward.
+    incident:
+      doc_id: rr-auth-incident
+      title: Callback failures rose after auth metadata rotation
+      tags:
+      - release
+      - auth
+      - incident
+      - callback
+      - session
+      eval_route_label: auth_session_drift
+      eval_tool_label: tool.auth_session_repair
+      text: After the metadata rotation, callback failures and forced sign-outs rose
+        on the auth canary. The incident note says the failures cluster in one slice
+        of traffic, with callback verification failures, stale jwks cache hits, issuer
+        mismatch symptoms, and session drift appearing together, but does not fully
+        close whether the main issue is session drift or a throttling control.
+    logs:
+      doc_id: rr-auth-logs
+      title: Logs show issuer mismatch while callback retries stay local
+      tags:
+      - release
+      - auth
+      - logs
+      - session
+      - jwks
+      eval_route_label: auth_session_drift
+      eval_tool_label: tool.auth_session_repair
+      text: The logs show issuer mismatch lines and stale metadata refresh lag on
+        the callback path. They do not show a service-wide throttle spiral.
+    metrics:
+      doc_id: rr-auth-metrics
+      title: Metrics show callback verification drift without broad throttle pressure
+      tags:
+      - release
+      - auth
+      - metrics
+      - session
+      - jwks
+      eval_route_label: auth_session_drift
+      eval_tool_label: tool.auth_session_repair
+      text: The dashboard shows callback verification failures and stale metadata
+        cache hits climbing together. Broad throttle counters stay near baseline during
+        the same window.
+    rate-limit-false:
+      doc_id: rr-auth-rate-limit-false
+      title: Earlier login failures were caused by an aggressive throttle window
+      tags:
+      - release
+      - auth
+      - distractor
+      - rate-limit
+      - queue
+      eval_route_label: auth_rate_limit
+      eval_tool_label: tool.auth_rate_limit_triage
+      text: A previous auth incident came from a bad throttle window and aggressive
+        backoff. That case did not show stale metadata drift or issuer mismatch on
+        the callback path, stale jwks refresh loss, or session drift on callback verification.
+    reuse:
+      doc_id: rr-auth-reuse
+      title: Follow-up note requires inherited rejection of pure throttle regression
+      tags:
+      - release
+      - auth
+      - reusable
+      - scope
+      - validation
+      eval_route_label: auth_session_drift
+      eval_tool_label: tool.auth_jwks_refresh
+      text: The reusable follow-up says the scoped JWKS refresh is safe only if the
+        prior case already rejected a pure throttle regression. Without that carried-forward
+        rejection, the safe action is to gather more evidence.
+    rotation:
+      doc_id: rr-auth-rotation
+      title: Rotation runbook distinguishes stale-session repair from rate-limit triage
+      tags:
+      - release
+      - auth
+      - runbook
+      - structural-anchor
+      - jwks
+      eval_route_label: auth_session_drift
+      eval_tool_label: tool.auth_jwks_refresh
+      text: The post-rotation runbook says to refresh JWKS and clear stale session
+        cookies when callback verification drifts after metadata rotation. It says
+        to use rate-limit triage only when throttle counters drive the loss.
+    scope:
+      doc_id: rr-auth-scope
+      title: Scope note limits failures to tenants with cached pre-rotation sessions
+      tags:
+      - release
+      - auth
+      - scope
+      - session
+      - canary
+      eval_route_label: auth_session_drift
+      eval_tool_label: tool.auth_session_repair
+      text: The scope note limits failures to tenants carrying pre-rotation sessions
+        into the canary. The same scope note says the affected slice lines up with
+        stale pre-rotation sessions rather than a broad throttle spiral, so any first
+        action should stay inside that tenant slice until the throttle hypothesis
+        is rejected.
+  cases:
+    clean:
+      case_id: rr-auth-clean
+      goal: Use the cited release artifacts to triage the auth regression and recommend
+        the first action.
+      query: auth canary callback failures rose after metadata rotation, and operators
+        need the safest first validation action
+      summary_hint: 'Return four concise points only: most likely cause, strongest
+        competing explanation ruled out, first action, and first validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: simple
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: auth_session_drift
+      primary_expected_route: auth_session_drift
+      primary_expected_tool: tool.auth_session_repair
+      acceptable_routes:
+      - auth_session_drift
+      - auth_rate_limit
+      acceptable_tools:
+      - tool.auth_session_repair
+      - tool.auth_jwks_refresh
+      - tool.auth_rate_limit_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - auth
+      - session
+      - clean
+      reuse_tags:
+      - release
+      - auth
+      - session
+      corpus_doc_roles:
+      - incident
+      - metrics
+      - logs
+      - rate-limit-false
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    distractor:
+      case_id: rr-auth-distractor
+      goal: Re-evaluate the auth regression under a strong competing throttle hypothesis
+        and recommend the next action.
+      query: auth callback failures continue, while some responders argue the real
+        issue is an aggressive throttle window
+      summary_hint: 'Return four concise points only: surviving cause, competing explanation
+        ruled out, next action, and the validation window to watch.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: distractor
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: auth_session_drift
+      primary_expected_route: auth_session_drift
+      primary_expected_tool: tool.auth_session_repair
+      acceptable_routes:
+      - auth_session_drift
+      - auth_rate_limit
+      acceptable_tools:
+      - tool.auth_session_repair
+      - tool.auth_jwks_refresh
+      - tool.auth_rate_limit_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - auth
+      - session
+      - distractor
+      reuse_tags:
+      - release
+      - auth
+      - session
+      corpus_doc_roles:
+      - incident
+      - rate-limit-false
+      - logs
+      - metrics
+      - rotation
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    ambiguous:
+      case_id: rr-auth-ambiguous
+      goal: Resolve the auth regression under mixed drift-versus-throttle signals
+        and recommend the safest next action.
+      query: auth callback failures persist, but the latest review also reports a
+        mild throttle rise
+      summary_hint: 'Return four concise points only: best-supported cause, competing
+        explanation still considered, safest next action, and the deciding validation
+        check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: ambiguous
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: auth_session_drift
+      primary_expected_route: auth_session_drift
+      primary_expected_tool: tool.auth_session_repair
+      acceptable_routes:
+      - auth_session_drift
+      - auth_rate_limit
+      acceptable_tools:
+      - tool.auth_session_repair
+      - tool.auth_jwks_refresh
+      - tool.auth_rate_limit_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: mixed evidence keeps at least two route families admissible
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - auth
+      - session
+      - ambiguous
+      reuse_tags:
+      - release
+      - auth
+      - session
+      corpus_doc_roles:
+      - metrics
+      - logs
+      - rate-limit-false
+      - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    replay_reusable:
+      case_id: rr-auth-replay_reusable
+      goal: Run the reusable auth follow-up and recommend the safest scoped validation
+        action.
+      query: auth failures remain limited to one tenant slice, and responders want
+        the narrowest safe follow-up action
+      summary_hint: 'Return four concise points only: reused cause pattern, competing
+        explanation ruled out, safest scoped action, and post-action validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: reusable
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: auth_session_drift
+      primary_expected_route: auth_session_drift
+      primary_expected_tool: tool.auth_session_repair
+      acceptable_routes:
+      - auth_session_drift
+      - auth_rate_limit
+      acceptable_tools:
+      - tool.auth_session_repair
+      - tool.auth_jwks_refresh
+      - tool.auth_rate_limit_triage
+      - tool.collect_more_evidence
+      disallowed_families: []
+      required_prior_case_ids:
+      - rr-auth-clean
+      required_prior_rejections:
+      - auth_rate_limit
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: prior throttle-route rejection is missing or current evidence
+        reopens both routes
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - auth
+      - session
+      - replay-reusable
+      reuse_tags:
+      - release
+      - auth
+      - session
+      corpus_doc_roles:
+      - rotation
+      - scope
+      - reuse
+      - rate-limit-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - auth_session_drift
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
+- family_id: billing_queue_backlog
+  task_theme: contest_release_billing_queue_backlog
+  task_group: billing_queue_chain
+  goal: Use the cited release artifacts to triage the billing backlog and recommend
+    the first action.
+  route_competition:
+  - db_pool_saturation
+  - worker_queue_starvation
+  tool_competition:
+  - tool.collect_more_evidence
+  - tool.db_pool_triage
+  - tool.retry_storm_relief
+  - tool.worker_queue_triage
+  reuse_tags:
+  - release
+  - billing
+  - queue
+  docs:
+    ambiguous:
+      doc_id: rr-billing-ambiguous
+      title: Ambiguity note keeps database triage admissible until retry cause is
+        carried forward
+      tags:
+      - release
+      - billing
+      - ambiguous
+      - database
+      - worker
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.worker_queue_triage
+      text: A later review notes a modest wait-time rise on one shard. It says the
+        worker path stays primary, but database triage remains admissible until the
+        retry-driven explanation is explicitly preserved.
+    db-false:
+      doc_id: rr-billing-db-false
+      title: Earlier invoice delay was caused by a database pool collapse
+      tags:
+      - release
+      - billing
+      - distractor
+      - database
+      - queue
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: A previous invoice delay case came from a pool collapse and wait-time
+        growth in the billing database path. That case did not show retry storms or
+        worker backlog as the dominant signal.
+    incident:
+      doc_id: rr-billing-incident
+      title: Invoice backlog rose on the canary after a worker reload
+      tags:
+      - release
+      - billing
+      - incident
+      - queue
+      - worker
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.worker_queue_triage
+      text: After a billing canary reload, invoice completion delay rose quickly and
+        requests waited longer in the processing path. The incident note records retry
+        storm behavior, invoice queue backlog growth, and worker queue starvation
+        on one slice, but does not yet fully close whether the main route is worker
+        backlog or a database contention relapse.
+    logs:
+      doc_id: rr-billing-logs
+      title: Logs record repeated retry rescheduling on the worker slice
+      tags:
+      - release
+      - billing
+      - logs
+      - queue
+      - worker
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.worker_queue_triage
+      text: Worker logs record repeated retry rescheduling and backlog warnings on
+        the canary slice. They do not show the same dominant wait pattern seen in
+        the old database-collapse incident.
+    metrics:
+      doc_id: rr-billing-metrics
+      title: Metrics show retry growth and queue expansion without broad pool collapse
+      tags:
+      - release
+      - billing
+      - metrics
+      - queue
+      - worker
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.worker_queue_triage
+      text: The metrics snapshot shows queue depth growth and retry expansion through
+        the reload window. Database wait stays close to baseline.
+    reuse:
+      doc_id: rr-billing-reuse
+      title: Follow-up note requires inherited rejection of the database-collapse
+        route
+      tags:
+      - release
+      - billing
+      - reusable
+      - scope
+      - validation
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.retry_storm_relief
+      text: The reusable follow-up says draining retries is safe only if the prior
+        case already rejected the database-collapse route. Without that inherited
+        rejection, the safe control is to collect more evidence first.
+    runbook:
+      doc_id: rr-billing-runbook
+      title: Runbook says to drain retries before widening rollback
+      tags:
+      - release
+      - billing
+      - runbook
+      - structural-anchor
+      - worker
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.retry_storm_relief
+      text: The billing runbook says to pause the retry trigger, drain the affected
+        slice, and rebalance workers before widening rollback. It distinguishes this
+        route from pool-collapse incidents.
+    scope:
+      doc_id: rr-billing-scope
+      title: Scope note keeps the backlog limited to the canary worker slice
+      tags:
+      - release
+      - billing
+      - scope
+      - queue
+      - worker
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.worker_queue_triage
+      text: The scope note keeps the backlog limited to one canary worker slice. Any
+        first action should stay there until the database-collapse explanation is
+        rejected. The same note says the blast radius never widened into a broad database
+        collapse, which keeps the worker queue starvation branch live instead of a
+        broad database collapse.
+  cases:
+    clean:
+      case_id: rr-billing-clean
+      goal: Use the cited release artifacts to triage the billing backlog and recommend
+        the first action.
+      query: billing canary invoice processing slowed after reload, and operators
+        need the safest first validation action
+      summary_hint: 'Return four concise points only: most likely cause, strongest
+        competing explanation ruled out, first action, and first validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: simple
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: worker_queue_starvation
+      primary_expected_route: worker_queue_starvation
+      primary_expected_tool: tool.worker_queue_triage
+      acceptable_routes:
+      - worker_queue_starvation
+      - db_pool_saturation
+      acceptable_tools:
+      - tool.worker_queue_triage
+      - tool.retry_storm_relief
+      - tool.db_pool_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - billing
+      - queue
+      - clean
+      reuse_tags:
+      - release
+      - billing
+      - queue
+      corpus_doc_roles:
+      - incident
+      - metrics
+      - logs
+      - db-false
+      - runbook
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    distractor:
+      case_id: rr-billing-distractor
+      goal: Re-evaluate the billing backlog under a strong competing database hypothesis
+        and recommend the next action.
+      query: invoice processing is still delayed, while some responders argue the
+        real issue is database contention
+      summary_hint: 'Return four concise points only: surviving cause, competing explanation
+        ruled out, next action, and the validation window to watch.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: distractor
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: worker_queue_starvation
+      primary_expected_route: worker_queue_starvation
+      primary_expected_tool: tool.worker_queue_triage
+      acceptable_routes:
+      - worker_queue_starvation
+      - db_pool_saturation
+      acceptable_tools:
+      - tool.worker_queue_triage
+      - tool.retry_storm_relief
+      - tool.db_pool_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - billing
+      - queue
+      - distractor
+      reuse_tags:
+      - release
+      - billing
+      - queue
+      corpus_doc_roles:
+      - incident
+      - db-false
+      - logs
+      - metrics
+      - runbook
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    ambiguous:
+      case_id: rr-billing-ambiguous
+      goal: Resolve the billing backlog under mixed worker-versus-db signals and recommend
+        the safest next action.
+      query: invoice processing remains delayed, but the latest review also reports
+        a modest wait-time rise
+      summary_hint: 'Return four concise points only: best-supported cause, competing
+        explanation still considered, safest next action, and the deciding validation
+        check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: ambiguous
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: worker_queue_starvation
+      primary_expected_route: worker_queue_starvation
+      primary_expected_tool: tool.worker_queue_triage
+      acceptable_routes:
+      - worker_queue_starvation
+      - db_pool_saturation
+      acceptable_tools:
+      - tool.worker_queue_triage
+      - tool.retry_storm_relief
+      - tool.db_pool_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: mixed evidence keeps at least two route families admissible
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - billing
+      - queue
+      - ambiguous
+      reuse_tags:
+      - release
+      - billing
+      - queue
+      corpus_doc_roles:
+      - metrics
+      - logs
+      - db-false
+      - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    replay_reusable:
+      case_id: rr-billing-replay_reusable
+      goal: Run the reusable billing follow-up and recommend the safest scoped validation
+        action.
+      query: billing delay remains limited to one canary worker slice, and responders
+        want the narrowest safe follow-up action
+      summary_hint: 'Return four concise points only: reused cause pattern, competing
+        explanation ruled out, safest scoped action, and post-action validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: reusable
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: worker_queue_starvation
+      primary_expected_route: worker_queue_starvation
+      primary_expected_tool: tool.worker_queue_triage
+      acceptable_routes:
+      - worker_queue_starvation
+      - db_pool_saturation
+      acceptable_tools:
+      - tool.worker_queue_triage
+      - tool.retry_storm_relief
+      - tool.db_pool_triage
+      - tool.collect_more_evidence
+      disallowed_families: []
+      required_prior_case_ids:
+      - rr-billing-clean
+      required_prior_rejections:
+      - db_pool_saturation
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: prior database-route rejection is missing or current evidence
+        reopens both routes
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - billing
+      - queue
+      - replay-reusable
+      reuse_tags:
+      - release
+      - billing
+      - queue
+      corpus_doc_roles:
+      - runbook
+      - scope
+      - reuse
+      - db-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - worker_queue_starvation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
+- family_id: checkout_regression
+  task_theme: contest_release_checkout_regression
+  task_group: checkout_release_chain
+  goal: Use the cited release artifacts to triage the checkout regression and recommend
+    the first action.
+  route_competition:
+  - db_pool_saturation
+  - worker_queue_starvation
+  tool_competition:
+  - tool.collect_more_evidence
+  - tool.db_pool_triage
+  - tool.db_query_hotfix
+  - tool.worker_queue_triage
+  reuse_tags:
+  - release
+  - checkout
+  - latency
+  docs:
+    ambiguous:
+      doc_id: rr-checkout-ambiguous
+      title: Ambiguity note keeps a worker route admissible until one signal clears
+      tags:
+      - release
+      - checkout
+      - ambiguous
+      - worker
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: A later review notes mild worker jitter on a subset of pods, but it does
+        not overturn the confirmation-path wait profile. The note says to keep a worker
+        route admissible until the contention source is fully isolated.
+    config:
+      doc_id: rr-checkout-config
+      title: Rollout diff reduced connection headroom and changed confirmation filtering
+      tags:
+      - release
+      - checkout
+      - config
+      - structural-anchor
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The rollout diff lowered pool caps and added a new confirmation filter.
+        The runbook says to revert both together if wait-time growth appears without
+        matching worker backlog evidence.
+    incident:
+      doc_id: rr-checkout-incident
+      title: Checkout canary latency rose after release 17.4
+      tags:
+      - release
+      - checkout
+      - latency
+      - incident
+      - canary
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: Release 17.4 reached the checkout canary and order confirmation latency
+        rose quickly on one shard. The incident note says requests stack up during
+        the confirmation path after the rollout, with sql wait growth, connection
+        pool headroom loss, and database pool contention around the changed filter
+        path, while the blast radius is still limited to the canary tenants.
+    logs:
+      doc_id: rr-checkout-logs
+      title: Log excerpt records wait-time spikes around the confirmation path
+      tags:
+      - release
+      - checkout
+      - latency
+      - logs
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The checkout logs record repeated wait-time spikes around the confirmation
+        path and repeated warnings that request threads are blocked before commit.
+        The traces do not show a matching reload-storm pattern on workers.
+    metrics:
+      doc_id: rr-checkout-metrics
+      title: Metrics show confirmation-path contention while queue depth stays near
+        baseline
+      tags:
+      - release
+      - checkout
+      - latency
+      - metrics
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The metrics snapshot shows sql wait growth, lower pool headroom, and a
+        longer confirmation-path tail. Worker queue depth and retry volume remain
+        close to baseline through the same window.
+    reuse:
+      doc_id: rr-checkout-reuse
+      title: Follow-up note requires carrying forward the rejected worker hypothesis
+      tags:
+      - release
+      - checkout
+      - reusable
+      - scope
+      - validation
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_query_hotfix
+      text: The reusable follow-up note says the scoped action is safe only if the
+        prior case already ruled out the reload-driven worker backlog. If that rejection
+        is not inherited, the safe control remains to collect more evidence before
+        changing the confirmation-path rollout.
+    scope:
+      doc_id: rr-checkout-scope
+      title: Scope note limits the regression to the release canary shard
+      tags:
+      - release
+      - checkout
+      - scope
+      - canary
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The scope update shows only the canary shard and tenants on the changed
+        confirmation path are affected. The same scope update says the regression
+        stays tied to the changed confirmation path, connection pool pressure, and
+        db pool saturation rather than a fleet-wide worker backlog, so any first action
+        should stay scoped to that shard until the competing worker hypothesis is
+        explicitly ruled out.
+    worker-false:
+      doc_id: rr-checkout-worker-false
+      title: Similar symptoms previously came from reload-driven worker backlog
+      tags:
+      - release
+      - checkout
+      - distractor
+      - worker
+      - queue
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.worker_queue_triage
+      text: A prior checkout incident looked similar at the surface but the decisive
+        evidence there was retry growth and worker backlog after a reload event. That
+        case did not show the same confirmation-path wait pattern, sql wait growth,
+        or connection pool pressure.
+  cases:
+    clean:
+      case_id: rr-checkout-clean
+      goal: Use the cited release artifacts to triage the checkout regression and
+        recommend the first action.
+      query: checkout canary order confirmations slowed after the rollout, and operators
+        need the safest first validation action
+      summary_hint: 'Return four concise points only: most likely cause, strongest
+        competing explanation ruled out, first action, and first validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: simple
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.db_query_hotfix
+      - tool.worker_queue_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - checkout
+      - latency
+      - clean
+      reuse_tags:
+      - release
+      - checkout
+      - latency
+      corpus_doc_roles:
+      - incident
+      - metrics
+      - logs
+      - worker-false
+      - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    distractor:
+      case_id: rr-checkout-distractor
+      goal: Re-evaluate the checkout regression under a strong competing queue hypothesis
+        and recommend the next action.
+      query: checkout confirmations are still delayed, while some responders argue
+        the slowdown is really a reload-driven worker backlog
+      summary_hint: 'Return four concise points only: surviving cause, competing explanation
+        ruled out, next action, and the validation window to watch.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: distractor
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.db_query_hotfix
+      - tool.worker_queue_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - checkout
+      - latency
+      - distractor
+      reuse_tags:
+      - release
+      - checkout
+      - latency
+      corpus_doc_roles:
+      - incident
+      - worker-false
+      - logs
+      - metrics
+      - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    ambiguous:
+      case_id: rr-checkout-ambiguous
+      goal: Resolve the checkout regression under mixed queue-versus-db signals and
+        recommend the safest next action.
+      query: checkout canary still shows confirmation-path delays, but the latest
+        review also reports some worker jitter
+      summary_hint: 'Return four concise points only: best-supported cause, competing
+        explanation still considered, safest next action, and the deciding validation
+        check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: ambiguous
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.db_query_hotfix
+      - tool.worker_queue_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: mixed evidence keeps at least two route families admissible
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - checkout
+      - latency
+      - ambiguous
+      reuse_tags:
+      - release
+      - checkout
+      - latency
+      corpus_doc_roles:
+      - metrics
+      - logs
+      - worker-false
+      - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    replay_reusable:
+      case_id: rr-checkout-replay_reusable
+      goal: Run the reusable checkout follow-up and recommend the safest scoped validation
+        action.
+      query: checkout delays remain scoped to the canary shard, and responders want
+        the narrowest safe follow-up action
+      summary_hint: 'Return four concise points only: reused cause pattern, competing
+        explanation ruled out, safest scoped action, and post-action validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: reusable
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.db_query_hotfix
+      - tool.worker_queue_triage
+      - tool.collect_more_evidence
+      disallowed_families: []
+      required_prior_case_ids:
+      - rr-checkout-clean
+      required_prior_rejections:
+      - worker_queue_starvation
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: prior worker-route rejection is missing or current evidence
+        reopens both routes
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - checkout
+      - latency
+      - replay-reusable
+      reuse_tags:
+      - release
+      - checkout
+      - latency
+      corpus_doc_roles:
+      - config
+      - scope
+      - reuse
+      - worker-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - db_pool_saturation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
+- family_id: deployment_config_drift
+  task_theme: contest_release_deployment_config_drift
+  task_group: deployment_config_chain
+  goal: Use the cited release artifacts to triage the deployment drift regression
+    and recommend the first action.
+  route_competition:
+  - db_pool_saturation
+  - worker_queue_starvation
+  tool_competition:
+  - tool.collect_more_evidence
+  - tool.db_pool_triage
+  - tool.worker_queue_triage
+  reuse_tags:
+  - release
+  - deployment
+  - config
+  docs:
+    ambiguous:
+      doc_id: rr-deploy-ambiguous
+      title: Ambiguity note keeps worker triage admissible until config drift is preserved
+      tags:
+      - release
+      - deployment
+      - ambiguous
+      - worker
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: A later note records mild worker jitter on one pod set. It says the config-drift
+        route stays primary, but worker triage remains admissible until the pool-drift
+        explanation is carried forward.
+    config:
+      doc_id: rr-deploy-config
+      title: Drift diff changed pool caps and enabled the slower path together
+      tags:
+      - release
+      - deployment
+      - config
+      - structural-anchor
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The diff shows lower pool caps plus a flag that enables the slower path.
+        The rollout note says to revert both together if the wait pattern appears
+        without dominant worker backlog evidence.
+    incident:
+      doc_id: rr-deploy-incident
+      title: Canary drift caused request slowdown after a deployment change
+      tags:
+      - release
+      - deployment
+      - incident
+      - config
+      - canary
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: A deployment drift reached the canary and request completion slowed. The
+        incident note says the degradation began right after the config change, with
+        connection pool headroom loss, db pool saturation, slower request-path activation,
+        and config mismatch signals appearing together, but does not yet fully decide
+        whether the main route is pool/config contention or a worker-side reload issue.
+    logs:
+      doc_id: rr-deploy-logs
+      title: Logs show pool-cap mismatch and slower-path activation
+      tags:
+      - release
+      - deployment
+      - logs
+      - config
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The deployment logs show mismatched pool caps and a slower request path
+        becoming active together. They do not show dominant worker-backlog signs.
+    metrics:
+      doc_id: rr-deploy-metrics
+      title: Metrics show lower headroom and longer waits after the drift landed
+      tags:
+      - release
+      - deployment
+      - metrics
+      - config
+      - database
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The metrics view shows lower headroom and longer request-path waits right
+        after the drift landed. Worker queue depth stays near baseline.
+    reuse:
+      doc_id: rr-deploy-reuse
+      title: Follow-up note requires inherited rejection of reload-driven worker jitter
+      tags:
+      - release
+      - deployment
+      - reusable
+      - scope
+      - validation
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The reusable follow-up says the scoped rollback is safe only if the prior
+        case already rejected reload-driven worker jitter. Without that carried forward
+        rejection, the safe control is to collect more evidence first.
+    scope:
+      doc_id: rr-deploy-scope
+      title: Scope note isolates the drift to the canary shard
+      tags:
+      - release
+      - deployment
+      - scope
+      - config
+      - canary
+      eval_route_label: db_pool_saturation
+      eval_tool_label: tool.db_pool_triage
+      text: The scope note isolates the drift to the canary shard carrying the config
+        mismatch. It says the slowdown follows the drifted shard, connection pool
+        pressure, and database pool contention rather than a broad reload storm, so
+        any first action should stay there until the worker route is rejected.
+    worker-false:
+      doc_id: rr-deploy-worker-false
+      title: Earlier deployment issue came from reload-driven worker jitter
+      tags:
+      - release
+      - deployment
+      - distractor
+      - worker
+      - queue
+      eval_route_label: worker_queue_starvation
+      eval_tool_label: tool.worker_queue_triage
+      text: A previous deployment incident looked similar at the surface but the decisive
+        evidence was worker jitter during reload. That case did not show the same
+        connection pool pressure, db pool saturation, pool-cap mismatch, and slower-path
+        activation.
+  cases:
+    clean:
+      case_id: rr-deploy-clean
+      goal: Use the cited release artifacts to triage the deployment drift regression
+        and recommend the first action.
+      query: deployment canary slowed after a config change, and operators need the
+        safest first validation action
+      summary_hint: 'Return four concise points only: most likely cause, strongest
+        competing explanation ruled out, first action, and first validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: simple
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.worker_queue_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - deployment
+      - config
+      - clean
+      reuse_tags:
+      - release
+      - deployment
+      - config
+      corpus_doc_roles:
+      - incident
+      - metrics
+      - logs
+      - worker-false
+      - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    distractor:
+      case_id: rr-deploy-distractor
+      goal: Re-evaluate the deployment drift regression under a strong competing worker
+        hypothesis and recommend the next action.
+      query: deployment canary remains slow, while some responders argue the real
+        issue is reload-driven worker jitter
+      summary_hint: 'Return four concise points only: surviving cause, competing explanation
+        ruled out, next action, and the validation window to watch.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: distractor
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.worker_queue_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - deployment
+      - config
+      - distractor
+      reuse_tags:
+      - release
+      - deployment
+      - config
+      corpus_doc_roles:
+      - incident
+      - worker-false
+      - logs
+      - metrics
+      - config
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    ambiguous:
+      case_id: rr-deploy-ambiguous
+      goal: Resolve the deployment drift regression under mixed config-versus-worker
+        signals and recommend the safest next action.
+      query: deployment canary stays slow, but the latest review also reports mild
+        worker jitter
+      summary_hint: 'Return four concise points only: best-supported cause, competing
+        explanation still considered, safest next action, and the deciding validation
+        check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: ambiguous
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.worker_queue_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: mixed evidence keeps at least two route families admissible
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - deployment
+      - config
+      - ambiguous
+      reuse_tags:
+      - release
+      - deployment
+      - config
+      corpus_doc_roles:
+      - metrics
+      - logs
+      - worker-false
+      - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    replay_reusable:
+      case_id: rr-deploy-replay_reusable
+      goal: Run the reusable deployment drift follow-up and recommend the safest scoped
+        validation action.
+      query: deployment slowdown remains limited to the canary shard, and responders
+        want the narrowest safe follow-up action
+      summary_hint: 'Return four concise points only: reused cause pattern, competing
+        explanation ruled out, safest scoped action, and post-action validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: reusable
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: db_pool_saturation
+      primary_expected_route: db_pool_saturation
+      primary_expected_tool: tool.db_pool_triage
+      acceptable_routes:
+      - db_pool_saturation
+      - worker_queue_starvation
+      acceptable_tools:
+      - tool.db_pool_triage
+      - tool.worker_queue_triage
+      - tool.collect_more_evidence
+      disallowed_families: []
+      required_prior_case_ids:
+      - rr-deploy-clean
+      required_prior_rejections:
+      - worker_queue_starvation
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: prior worker-route rejection is missing or current evidence
+        reopens both routes
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - deployment
+      - config
+      - replay-reusable
+      reuse_tags:
+      - release
+      - deployment
+      - config
+      corpus_doc_roles:
+      - config
+      - scope
+      - reuse
+      - worker-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - db_pool_saturation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3
+- family_id: inventory_rollout
+  task_theme: contest_release_inventory_rollout
+  task_group: inventory_rollout_chain
+  goal: Use the cited release artifacts to triage the stale inventory regression and
+    recommend the first action.
+  route_competition:
+  - cache_invalidation
+  - cache_replica_stale_read
+  tool_competition:
+  - tool.cache_hook_repair
+  - tool.cache_invalidation_playbook
+  - tool.collect_more_evidence
+  - tool.replica_stale_read_triage
+  reuse_tags:
+  - release
+  - inventory
+  - cache
+  docs:
+    ambiguous:
+      doc_id: rr-cache-ambiguous
+      title: Ambiguity note keeps replica triage admissible until refresh loss is
+        confirmed
+      tags:
+      - release
+      - inventory
+      - ambiguous
+      - replica
+      - cache
+      eval_route_label: cache_invalidation
+      eval_tool_label: tool.cache_invalidation_playbook
+      text: A later review notes one short replica-lag spike near the same window.
+        It says invalidation remains primary, but replica triage stays admissible
+        until the refresh-loss signal is explicitly preserved.
+    flag-diff:
+      doc_id: rr-cache-flag-diff
+      title: Flag diff moved aggregate refresh behind the new sync orchestration path
+      tags:
+      - release
+      - inventory
+      - config
+      - structural-anchor
+      - cache
+      eval_route_label: cache_invalidation
+      eval_tool_label: tool.cache_hook_repair
+      text: The feature-flag diff moved aggregate refresh behind the new sync path.
+        The rollout note says to repair the hook and rerun sync validation if the
+        stale-count issue appears without replica lag.
+    incident:
+      doc_id: rr-cache-incident
+      title: Inventory counts stayed stale after a rollout-region sync window
+      tags:
+      - release
+      - inventory
+      - incident
+      - cache
+      - sync-window
+      eval_route_label: cache_invalidation
+      eval_tool_label: tool.cache_invalidation_playbook
+      text: After the new sync path reached one rollout region, inventory counts on
+        the read side stayed stale after batch sync. The incident note says aggregate-refresh
+        updates are missing on the new sync path while writes stay healthy, with cache
+        invalidation loss, aggregate invalidation misses, and invalidation hook skips
+        appearing together, but does not yet fully close whether the primary cause
+        is invalidation loss or stale replica reads.
+    logs:
+      doc_id: rr-cache-logs
+      title: Logs show aggregate-refresh skips on the new sync path
+      tags:
+      - release
+      - inventory
+      - logs
+      - cache
+      - invalidation
+      eval_route_label: cache_invalidation
+      eval_tool_label: tool.cache_invalidation_playbook
+      text: The logs show repeated skip lines around the aggregate-refresh hook on
+        the new sync path. They do not show persistent replica lag through the same
+        interval.
+    metrics:
+      doc_id: rr-cache-metrics
+      title: Metrics show stale read-side counters while write success remains healthy
+      tags:
+      - release
+      - inventory
+      - metrics
+      - cache
+      - invalidation
+      eval_route_label: cache_invalidation
+      eval_tool_label: tool.cache_invalidation_playbook
+      text: The metrics view shows healthy writes while read-side counters stay stale
+        after sync. The aggregate-refresh rate drops in the same window.
+    replica-false:
+      doc_id: rr-cache-replica-false
+      title: Another stale-count incident was caused by lagging read replicas
+      tags:
+      - release
+      - inventory
+      - distractor
+      - replica
+      - cache
+      eval_route_label: cache_replica_stale_read
+      eval_tool_label: tool.replica_stale_read_triage
+      text: A separate stale-count incident was driven by read replica lag after a
+        failover. That case did not include skipped aggregate-refresh evidence, cache
+        invalidation loss, or invalidation hook skips.
+    reuse:
+      doc_id: rr-cache-reuse
+      title: Follow-up note requires inherited rejection of replica-lag explanation
+      tags:
+      - release
+      - inventory
+      - reusable
+      - scope
+      - validation
+      eval_route_label: cache_invalidation
+      eval_tool_label: tool.cache_hook_repair
+      text: The reusable follow-up says repairing the sync hook is safe only if the
+        prior case already rejected the replica-lag explanation. Otherwise the control
+        action is to collect more evidence before touching the hook.
+    scope:
+      doc_id: rr-cache-scope
+      title: Scope note isolates the stale path to the rollout region and sync lane
+      tags:
+      - release
+      - inventory
+      - scope
+      - cache
+      - rollout
+      eval_route_label: cache_invalidation
+      eval_tool_label: tool.cache_invalidation_playbook
+      text: The scope note isolates the stale path to the rollout region and the new
+        sync lane. It says the stale path follows the new sync lane, cache invalidation
+        failure, and aggregate invalidation loss rather than a broad replica incident,
+        so any first action should stay in that region until the replica hypothesis
+        is rejected.
+  cases:
+    clean:
+      case_id: rr-cache-clean
+      goal: Use the cited release artifacts to triage the stale inventory regression
+        and recommend the first action.
+      query: rollout-region inventory counts stayed stale after sync, and operators
+        need the safest first validation action
+      summary_hint: 'Return four concise points only: most likely cause, strongest
+        competing explanation ruled out, first action, and first validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: simple
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: cache_invalidation
+      primary_expected_route: cache_invalidation
+      primary_expected_tool: tool.cache_invalidation_playbook
+      acceptable_routes:
+      - cache_invalidation
+      - cache_replica_stale_read
+      acceptable_tools:
+      - tool.cache_invalidation_playbook
+      - tool.cache_hook_repair
+      - tool.replica_stale_read_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - inventory
+      - cache
+      - clean
+      reuse_tags:
+      - release
+      - inventory
+      - cache
+      corpus_doc_roles:
+      - incident
+      - metrics
+      - logs
+      - replica-false
+      - flag-diff
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Validation must collapse route competition before execution;
+        collect-more-evidence is not score-valid on the clean slice.
+      expected_intermediate_decisions:
+      - keep the primary and competing routes explicit after retrieval
+      - validate the primary route against scope and artifact evidence before execution
+      - choose the narrowest first action only after validation closes the competing
+        route
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    distractor:
+      case_id: rr-cache-distractor
+      goal: Re-evaluate the stale inventory regression under a strong competing replica
+        hypothesis and recommend the next action.
+      query: stale inventory persists, while some responders argue the real issue
+        is a lagging read replica
+      summary_hint: 'Return four concise points only: surviving cause, competing explanation
+        ruled out, next action, and the validation window to watch.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: distractor
+      case_type: bounded_alternative
+      eval_scope: case_level
+      expected_family: cache_invalidation
+      primary_expected_route: cache_invalidation
+      primary_expected_tool: tool.cache_invalidation_playbook
+      acceptable_routes:
+      - cache_invalidation
+      - cache_replica_stale_read
+      acceptable_tools:
+      - tool.cache_invalidation_playbook
+      - tool.cache_hook_repair
+      - tool.replica_stale_read_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: false
+      allowed_abstain_tool: ''
+      abstain_only_when: ''
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - inventory
+      - cache
+      - distractor
+      reuse_tags:
+      - release
+      - inventory
+      - cache
+      corpus_doc_roles:
+      - incident
+      - replica-false
+      - logs
+      - metrics
+      - flag-diff
+      thickness_setting: S1
+      reasoning_hops_min: 2
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: The distractor route must be explicitly rejected at validation;
+        collect-more-evidence is not score-valid once the distractor is ruled out.
+      expected_intermediate_decisions:
+      - surface the strongest competing route from distractor evidence
+      - validate the surviving route against logs and metrics before execution
+      - reject the distractor route before selecting the next action
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    ambiguous:
+      case_id: rr-cache-ambiguous
+      goal: Resolve the stale inventory regression under mixed invalidation-versus-replica
+        signals and recommend the safest next action.
+      query: stale inventory remains after sync, but the latest review also mentions
+        a short replica lag spike
+      summary_hint: 'Return four concise points only: best-supported cause, competing
+        explanation still considered, safest next action, and the deciding validation
+        check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: ambiguous
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: cache_invalidation
+      primary_expected_route: cache_invalidation
+      primary_expected_tool: tool.cache_invalidation_playbook
+      acceptable_routes:
+      - cache_invalidation
+      - cache_replica_stale_read
+      acceptable_tools:
+      - tool.cache_invalidation_playbook
+      - tool.cache_hook_repair
+      - tool.replica_stale_read_triage
+      disallowed_families: []
+      required_prior_case_ids: []
+      required_prior_rejections: []
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: mixed evidence keeps at least two route families admissible
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - inventory
+      - cache
+      - ambiguous
+      reuse_tags:
+      - release
+      - inventory
+      - cache
+      corpus_doc_roles:
+      - metrics
+      - logs
+      - replica-false
+      - ambiguous
+      thickness_setting: S1
+      reasoning_hops_min: 3
+      dependency_depth: 1
+      required_prior_routes: []
+      abstention_boundary: Collect more evidence is score-valid only while validation
+        keeps at least two competing routes admissible.
+      expected_intermediate_decisions:
+      - keep at least two route families live after retrieval
+      - validate whether current evidence is sufficient to collapse route competition
+      - either abstain for more evidence or choose a scoped action after validation
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+    replay_reusable:
+      case_id: rr-cache-replay_reusable
+      goal: Run the reusable stale inventory follow-up and recommend the safest scoped
+        validation action.
+      query: stale inventory remains scoped to one rollout region, and responders
+        want the narrowest safe follow-up action
+      summary_hint: 'Return four concise points only: reused cause pattern, competing
+        explanation ruled out, safest scoped action, and post-action validation check.'
+      summary_contract: actions_plus_evidence
+      complexity_bucket: reusable
+      case_type: abstention_allowed
+      eval_scope: case_level
+      expected_family: cache_invalidation
+      primary_expected_route: cache_invalidation
+      primary_expected_tool: tool.cache_invalidation_playbook
+      acceptable_routes:
+      - cache_invalidation
+      - cache_replica_stale_read
+      acceptable_tools:
+      - tool.cache_invalidation_playbook
+      - tool.cache_hook_repair
+      - tool.replica_stale_read_triage
+      - tool.collect_more_evidence
+      disallowed_families: []
+      required_prior_case_ids:
+      - rr-cache-clean
+      required_prior_rejections:
+      - cache_replica_stale_read
+      abstention_allowed: true
+      allowed_abstain_tool: tool.collect_more_evidence
+      abstain_only_when: prior replica-route rejection is missing or current evidence
+        reopens both routes
+      text_evidence_text: Use only the referenced release artifacts. This row is the
+        strict pure-text formal baseline.
+      protocol_evidence_text: Use only the referenced release artifacts. This row
+        is the matched minimal typed-packet protocol baseline.
+      tags:
+      - release
+      - inventory
+      - cache
+      - replay-reusable
+      reuse_tags:
+      - release
+      - inventory
+      - cache
+      corpus_doc_roles:
+      - flag-diff
+      - scope
+      - reuse
+      - replica-false
+      thickness_setting: S2
+      reasoning_hops_min: 3
+      dependency_depth: 2
+      required_prior_routes:
+      - cache_invalidation
+      abstention_boundary: Collect more evidence is score-valid only when the prior
+        rejection or inherited scoped route is missing, or when current evidence reopens
+        both competing routes.
+      expected_intermediate_decisions:
+      - recover the prior accepted route together with the competing route that was
+        rejected
+      - validate the carried-forward rejection against the current scoped evidence
+      - either take the scoped follow-up action or abstain for more evidence
+      required_plan_semantic_roles:
+      - retrieve
+      - validate
+      - execute
+      - summarize
+  thickness_contract:
+    route_competition_min: 2
+    tool_competition_min: 3

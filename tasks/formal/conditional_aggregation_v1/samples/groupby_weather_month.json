@@ -1,0 +1,28 @@
+{
+  "task_id": "formal-agg-004",
+  "task_family": "conditional_aggregation_v1",
+  "expected_artifact_type": "json",
+  "scenario_tags": ["aggregation", "groupby", "weather"],
+  "expected_facts": {
+    "monthly_avg_windspeed.month_1": "7.17",
+    "monthly_avg_windspeed.month_12": "5.52"
+  },
+  "request_text": "Calculate average WINDSPEED by month from baro_2015.csv.",
+  "canonical_task_spec": {
+    "task_family": "continuous_csv_table_analysis",
+    "intent_op": "groupby_aggregate",
+    "required_outputs": ["monthly_avg_windspeed", "groupby_artifact_ref"],
+    "required_tools": ["table_retriever", "codeact_executor"],
+    "arguments": {
+      "dataset_id": "weather_baro_2015",
+      "csv_path": "task/csv/baro_2015.csv",
+      "groupby": "month(DATE TIME)",
+      "value_column": "WINDSPEED",
+      "aggregation": "mean",
+      "quality_checks": [
+        "numeric_tolerance:monthly_avg_windspeed.month_1:0.01",
+        "numeric_tolerance:monthly_avg_windspeed.month_12:0.01"
+      ]
+    }
+  }
+}

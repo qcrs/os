@@ -1,0 +1,198 @@
+tasks:
+  - task_id: diag-retrieval-no-tags-001
+    task_group: cache_chain
+    task_order: 1
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins even when the current task provides no tags.
+    query: reporting replica lag after failover caused stale reads
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup]
+    evidence_text: This retrieval diagnostic removes current task tags and keeps only the query plus misleading doc preferences.
+    tags: []
+    reuse_tags: []
+    expected_reuse_mode: none
+    expected_route: cache_replica_stale_read
+    expected_tool_name: tool.replica_stale_read_triage
+    expected_top_doc_id: cache-replica-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the replica-lag route even
+      without current task tags, because the query evidence is strong enough to
+      beat the hinted invalidation docs.
+
+  - task_id: diag-retrieval-misleading-tags-001
+    task_group: cache_chain
+    task_order: 2
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins even when the current task tags lean toward the hinted invalidation path.
+    query: reporting replica lag after failover caused stale reads
+    corpus_doc_ids: [cache-invalid-anchor, cache-invalid-followup]
+    evidence_text: This retrieval diagnostic keeps misleading invalidation tags while the query still points to replica lag.
+    tags: [cache, inventory, invalidation]
+    reuse_tags: [cache, inventory, invalidation]
+    expected_reuse_mode: none
+    expected_route: cache_replica_stale_read
+    expected_tool_name: tool.replica_stale_read_triage
+    expected_top_doc_id: cache-replica-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the replica-lag route even
+      under misleading invalidation tags, because the stronger query evidence
+      points outside the hinted doc set.
+
+  - task_id: diag-retrieval-invalidation-control-001
+    task_group: cache_chain
+    task_order: 3
+    task_theme: repo_local_cache_staleness
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the retrieval refresh has not collapsed into always preferring the replica route.
+    query: inventory aggregate invalidation lag after sync burst
+    corpus_doc_ids: [cache-replica-false, cache-invalid-anchor]
+    evidence_text: This retrieval diagnostic is the negative control; invalidation query evidence should still keep the invalidation route on top.
+    tags: [cache, inventory, replica]
+    reuse_tags: [cache, inventory, replica]
+    expected_reuse_mode: none
+    expected_route: cache_invalidation
+    expected_tool_name: tool.cache_invalidation_playbook
+    expected_top_doc_id: cache-invalid-anchor
+    summary_hint: >
+      This retrieval diagnostic should keep the invalidation route on top,
+      proving that the retrieval refresh has not collapsed into a generic
+      replica-lag bias.
+
+  - task_id: diag-retrieval-latency-no-tags-001
+    task_group: latency_chain
+    task_order: 4
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins for latency triage even when the current task provides no tags.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup]
+    evidence_text: This retrieval diagnostic removes current task tags and keeps only the query plus misleading database doc preferences.
+    tags: []
+    reuse_tags: []
+    expected_reuse_mode: none
+    expected_route: worker_queue_starvation
+    expected_tool_name: tool.worker_queue_triage
+    expected_top_doc_id: latency-worker-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the worker-queue route
+      without current task tags, because the query evidence points outside the
+      hinted database docs.
+
+  - task_id: diag-retrieval-latency-misleading-tags-001
+    task_group: latency_chain
+    task_order: 5
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins for latency triage even when the current task tags lean toward the hinted database path.
+    query: release-17 latency tls reload worker queue stall not database
+    corpus_doc_ids: [latency-db-anchor, latency-db-followup]
+    evidence_text: This retrieval diagnostic keeps misleading database tags while the query still points to worker queue starvation.
+    tags: [latency, database, orders]
+    reuse_tags: [latency, database, orders]
+    expected_reuse_mode: none
+    expected_route: worker_queue_starvation
+    expected_tool_name: tool.worker_queue_triage
+    expected_top_doc_id: latency-worker-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the worker-queue route
+      under misleading database tags, because the stronger query evidence
+      points outside the hinted doc set.
+
+  - task_id: diag-retrieval-latency-db-control-001
+    task_group: latency_chain
+    task_order: 6
+    task_theme: repo_local_latency_triage
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the retrieval refresh has not collapsed into always preferring the latency worker route.
+    query: release-17 orders latency db pool saturation slow query
+    corpus_doc_ids: [latency-worker-false, latency-db-anchor]
+    evidence_text: This retrieval diagnostic is the negative control; database query evidence should still keep the DB route on top.
+    tags: [latency, worker, tls]
+    reuse_tags: [latency, worker, tls]
+    expected_reuse_mode: none
+    expected_route: db_pool_saturation
+    expected_tool_name: tool.db_pool_triage
+    expected_top_doc_id: latency-db-anchor
+    summary_hint: >
+      This retrieval diagnostic should keep the database route on top,
+      proving that the retrieval refresh has not collapsed into a generic
+      worker-queue bias.
+
+  - task_id: diag-retrieval-session-no-tags-001
+    task_group: session_chain
+    task_order: 7
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins for auth triage even when the current task provides no tags.
+    query: auth login failures backoff window looks like session issue
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup]
+    evidence_text: This retrieval diagnostic removes current task tags and keeps only the query plus misleading session-drift doc preferences.
+    tags: []
+    reuse_tags: []
+    expected_reuse_mode: none
+    expected_route: auth_rate_limit
+    expected_tool_name: tool.auth_rate_limit_triage
+    expected_top_doc_id: session-rate-limit-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the rate-limit route
+      without current task tags, because the query evidence points outside the
+      hinted session-drift docs.
+
+  - task_id: diag-retrieval-session-misleading-tags-001
+    task_group: session_chain
+    task_order: 8
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that stronger out-of-hint retrieval still wins for auth triage even when the current task tags lean toward the hinted session-drift path.
+    query: auth login failures backoff window looks like session issue
+    corpus_doc_ids: [session-auth-anchor, session-auth-followup]
+    evidence_text: This retrieval diagnostic keeps misleading JWKS/session tags while the query still points to rate limiting.
+    tags: [auth, session, jwks]
+    reuse_tags: [auth, session, jwks]
+    expected_reuse_mode: none
+    expected_route: auth_rate_limit
+    expected_tool_name: tool.auth_rate_limit_triage
+    expected_top_doc_id: session-rate-limit-false
+    summary_hint: >
+      This retrieval diagnostic should still surface the rate-limit route
+      under misleading session-drift tags, because the stronger query evidence
+      points outside the hinted doc set.
+
+  - task_id: diag-retrieval-session-drift-control-001
+    task_group: session_chain
+    task_order: 9
+    task_theme: repo_local_auth_session_drift
+    benchmark_lane: internal_regression
+    transfer_strategy: state_ref
+    runtime_reuse_contract: reuse_disabled
+    goal: Verify that the retrieval refresh has not collapsed into always preferring the auth rate-limit route.
+    query: sso callback issuer mismatch stale jwks session cookies
+    corpus_doc_ids: [session-rate-limit-false, session-auth-anchor]
+    evidence_text: This retrieval diagnostic is the negative control; session-drift query evidence should still keep the session route on top.
+    tags: [auth, session, rate-limit]
+    reuse_tags: [auth, session, rate-limit]
+    expected_reuse_mode: none
+    expected_route: auth_session_drift
+    expected_tool_name: tool.auth_session_repair
+    expected_top_doc_id: session-auth-anchor
+    summary_hint: >
+      This retrieval diagnostic should keep the session-drift route on top,
+      proving that the retrieval refresh has not collapsed into a generic
+      rate-limit bias.

@@ -1,0 +1,399 @@
+task_set:
+  name: typed_state_mechanism_v3_pack
+  pack_type: typed_state_mechanism_v3
+  description: Protocol-only single-variable mechanism pack for natural handoff text versus minimal typed-state packet on the same contest-release cases.
+  reading_contract: Read this pack only as the protocol-side typed-state mechanism surface. It fixes mode=protocol, runtime_reuse_contract=reuse_disabled, and the same task object, then compares natural_handoff_text against state_packet_minimal.
+  claim_lanes:
+  - state_transfer
+  single_variable: true
+  variable_axes:
+  - handoff_object
+  public_surface: formal_secondary
+  plan_source_default: yaml
+  evidence_tier: formal_secondary
+  benchmark_version: v3
+tasks:
+- task_group: checkout_release_chain
+  task_order: 1
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids:
+  - rr-checkout-incident
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - clean
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  task_id: rr-checkout-clean-natural-handoff-001
+  transfer_strategy: natural_handoff_text
+  case_id: rr-checkout-clean
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_natural_handoff_text
+  complexity_bucket: simple
+  summary_contract: protocol_handoff_audit
+- task_group: checkout_release_chain
+  task_order: 2
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Use the cited release artifacts to triage the checkout regression and recommend the first action.
+  query: checkout release 17.4 canary shows connection pool waits and slow orders query after rollout
+  corpus_doc_ids:
+  - rr-checkout-incident
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - clean
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: most likely cause, strongest competing explanation ruled out, first action, and first validation check.'
+  task_id: rr-checkout-clean-state-packet-101
+  transfer_strategy: state_packet_minimal
+  case_id: rr-checkout-clean
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  complexity_bucket: simple
+  summary_contract: protocol_handoff_audit
+- task_group: checkout_release_chain
+  task_order: 3
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Re-evaluate the checkout regression under a strong competing queue hypothesis and recommend the next action.
+  query: checkout canary still shows slow orders confirmation while a prior tls reload queue incident is being cited as the likely cause
+  corpus_doc_ids:
+  - rr-checkout-incident
+  - rr-checkout-worker-false
+  - rr-checkout-metrics
+  - rr-checkout-config
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - distractor
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch.'
+  task_id: rr-checkout-distractor-natural-handoff-001
+  transfer_strategy: natural_handoff_text
+  case_id: rr-checkout-distractor
+  case_type: bounded_alternative
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_natural_handoff_text
+  complexity_bucket: distractor
+  summary_contract: protocol_handoff_audit
+- task_group: checkout_release_chain
+  task_order: 4
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Re-evaluate the checkout regression under a strong competing queue hypothesis and recommend the next action.
+  query: checkout canary still shows slow orders confirmation while a prior tls reload queue incident is being cited as the likely cause
+  corpus_doc_ids:
+  - rr-checkout-incident
+  - rr-checkout-worker-false
+  - rr-checkout-metrics
+  - rr-checkout-config
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - distractor
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: surviving cause, competing explanation ruled out, next action, and the validation window to watch.'
+  task_id: rr-checkout-distractor-state-packet-101
+  transfer_strategy: state_packet_minimal
+  case_id: rr-checkout-distractor
+  case_type: bounded_alternative
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  complexity_bucket: distractor
+  summary_contract: protocol_handoff_audit
+- task_group: checkout_release_chain
+  task_order: 5
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Resolve the checkout regression under mixed queue-versus-db signals and recommend the safest next action.
+  query: checkout canary shows both sql wait growth and queue pressure after rollout, but orders filter changes still line up with the failures
+  corpus_doc_ids:
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  - rr-checkout-ambiguous
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - ambiguous
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check.'
+  task_id: rr-checkout-ambiguous-natural-handoff-001
+  transfer_strategy: natural_handoff_text
+  case_id: rr-checkout-ambiguous
+  case_type: bounded_alternative
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: mixed evidence keeps at least two route families admissible
+  handoff_profile: protocol_natural_handoff_text
+  complexity_bucket: ambiguous
+  summary_contract: protocol_handoff_audit
+- task_group: checkout_release_chain
+  task_order: 6
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Resolve the checkout regression under mixed queue-versus-db signals and recommend the safest next action.
+  query: checkout canary shows both sql wait growth and queue pressure after rollout, but orders filter changes still line up with the failures
+  corpus_doc_ids:
+  - rr-checkout-metrics
+  - rr-checkout-logs
+  - rr-checkout-worker-false
+  - rr-checkout-ambiguous
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - ambiguous
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: best-supported cause, competing explanation still considered, safest next action, and the deciding validation check.'
+  task_id: rr-checkout-ambiguous-state-packet-101
+  transfer_strategy: state_packet_minimal
+  case_id: rr-checkout-ambiguous
+  case_type: bounded_alternative
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: true
+  allowed_abstain_tool: tool.collect_more_evidence
+  abstain_only_when: mixed evidence keeps at least two route families admissible
+  handoff_profile: protocol_minimal_state_packet
+  complexity_bucket: ambiguous
+  summary_contract: protocol_handoff_audit
+- task_group: checkout_release_chain
+  task_order: 7
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Run the reusable checkout follow-up and recommend the safest scoped validation action.
+  query: checkout canary blast radius stays on the new shard with the same connection wait and slow orders pattern
+  corpus_doc_ids:
+  - rr-checkout-metrics
+  - rr-checkout-config
+  - rr-checkout-scope
+  - rr-checkout-logs
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - reusable
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: confirmed scope, most likely cause, safest scoped action, and the first validation check.'
+  task_id: rr-checkout-reusable-natural-handoff-001
+  transfer_strategy: natural_handoff_text
+  case_id: rr-checkout-reusable
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_natural_handoff_text
+  complexity_bucket: reusable
+  summary_contract: protocol_handoff_audit
+- task_group: checkout_release_chain
+  task_order: 8
+  task_theme: contest_release_checkout_regression
+  benchmark_lane: state_transfer
+  allowed_modes:
+  - protocol
+  corpus_path: contest_release_regression_corpus.yaml
+  goal: Run the reusable checkout follow-up and recommend the safest scoped validation action.
+  query: checkout canary blast radius stays on the new shard with the same connection wait and slow orders pattern
+  corpus_doc_ids:
+  - rr-checkout-metrics
+  - rr-checkout-config
+  - rr-checkout-scope
+  - rr-checkout-logs
+  evidence_text: Use only the referenced release artifacts; compare protocol natural handoff text against the minimal typed-state packet only and keep memory reuse disabled.
+  tags:
+  - release
+  - checkout
+  - latency
+  - database
+  - reusable
+  - typed-state-mechanism
+  reuse_tags:
+  - release
+  - checkout
+  - database
+  expected_reuse_mode: none
+  runtime_reuse_contract: reuse_disabled
+  summary_hint: 'Return four concise points only: confirmed scope, most likely cause, safest scoped action, and the first validation check.'
+  task_id: rr-checkout-reusable-state-packet-101
+  transfer_strategy: state_packet_minimal
+  case_id: rr-checkout-reusable
+  case_type: exact_single_solution
+  eval_scope: case_level
+  expected_family: db_pool_saturation
+  primary_expected_route: db_pool_saturation
+  primary_expected_tool: tool.db_pool_triage
+  acceptable_routes:
+  - db_pool_saturation
+  acceptable_tools:
+  - tool.db_pool_triage
+  disallowed_families: []
+  abstention_allowed: false
+  allowed_abstain_tool: ''
+  abstain_only_when: ''
+  handoff_profile: protocol_minimal_state_packet
+  complexity_bucket: reusable
+  summary_contract: protocol_handoff_audit

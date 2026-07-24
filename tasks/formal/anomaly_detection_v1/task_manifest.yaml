@@ -1,0 +1,11 @@
+family_id: anomaly_detection_v1
+display_name: Anomaly detection over operating metrics
+case_count: 3
+reasoning_type: anomaly_detection
+runtime_task_family: continuous_csv_table_analysis
+validator_contract: statebus_smoke_quality_floor_v1
+source_datasets:
+  - dataset_id: disease_estimates
+    path: task/csv/estimated_numbers.csv
+  - dataset_id: weather_baro_2015
+    path: task/csv/baro_2015.csv
