@@ -7,8 +7,7 @@ import time
 
 from langgraph.store.base import BaseStore
 
-from config import NS_EXECUTIONS, NS_PLANS
-from memory import qdrant_add_from_payload, store_put
+from memory import qdrant_add_from_payload
 from metrics import metrics
 from protocol import hash_text
 from vllm_cache_runtime import get_vllm_cache_runtime, parse_json_object
@@ -69,15 +68,6 @@ Return ONLY valid JSON:
         "separate primary root cause from distractors",
         "identify verification and remediation steps",
     ]
-
-    store_put(store, NS_PLANS, f"cache_plan_{task_group}_{hash_text(query)}", {
-        "text": plan,
-        "sub_queries": sub_queries,
-        "query": query,
-        "cache_handle": _compact_cache(cache_handle),
-        "raw_output": text,
-    }, memory_type="plan", source_agent="planner_cache", task_group=task_group,
-       task_topic=query, summary=plan, tags=["plan", "cache", task_group])
 
     metrics.record_timing("node_planner_cache", time.perf_counter() - t0)
     return {
@@ -237,14 +227,6 @@ Return ONLY valid JSON:
         "cache_handle": _compact_cache(cache_handle),
         "raw_output": text,
     }
-
-    store_put(store, NS_EXECUTIONS, f"cache_execution_{task_group}_{hash_text(query)}", {
-        "query": query,
-        "execution_summary": execution_summary,
-        "execution_result": execution_result,
-        "cache_handle": _compact_cache(cache_handle),
-    }, memory_type="execution", source_agent="executor_cache", task_group=task_group,
-       task_topic=query, summary=execution_summary, tags=["execution", "cache", task_group])
 
     metrics.record_timing("node_executor_cache", time.perf_counter() - t0)
     return {

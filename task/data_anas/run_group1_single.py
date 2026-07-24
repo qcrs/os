@@ -166,6 +166,7 @@ def run_all_tasks(group: int, mode: str) -> dict:
             "validated_memory_ids": result.get("validated_memory_ids", []),
             "execution_result": result.get("execution_result", {}),
             "execution_trace": result.get("execution_trace", []),
+            "memory_commit": result.get("memory_commit", {}),
             "extracted_answers": answers,
             "summary_extracted_answers": extract_answers(summary_text),
             "duration_s": round(duration, 2),

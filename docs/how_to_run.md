@@ -15,7 +15,7 @@ planner → researcher(s) → analyst → executor → summarizer
 - **OpenAI 兼容后端**：默认 `CHAT_BACKEND=openai`，默认 base URL 为 `https://api.deepseek.com`，默认模型为 `deepseek-chat`；也可以指向本机 vLLM 的 OpenAI-compatible API。
 - **本地 Transformers 后端**：设置 `CHAT_BACKEND=transformers` 后加载 `LOCAL_MODEL_PATH`，默认 `/data/models/Qwen3-8B`。
 
-Embedding/共享记忆使用 `InMemoryStore(index=...)`：设置 `DASHSCOPE_API_KEY` 时使用 DashScope `text-embedding-v4`；未设置时自动使用 `LocalHashEmbeddings` 本地 fallback，不会因为缺少 DashScope key 直接退出。长期记忆默认启用，写入 `.memory/shared_memory.jsonl`，下一次启动会自动加载历史 MemoryUnit。
+运行期文档使用无索引的 `InMemoryStore`，只按 `doc_key` 回取完整文档以校验 `context_packet`。跨任务复用只使用 Qdrant；embedding 只服务 Qdrant 和记忆相关的 structured 向量排序，不参与运行期文档回传。
 
 > 不要把 API key 写入文档或 `config.py`。当前代码从环境变量读取 key。
 
@@ -49,19 +49,23 @@ python -m pip install -e third_party/langgraph/libs/checkpoint -e third_party/la
 
 ## 长期共享记忆
 
-默认启用长期记忆。所有通过 `store_put()` 写入的 `MemoryUnit` 会追加保存到仓库根目录的 `.memory/shared_memory.jsonl`；下一次运行 `create_store()` 时会自动加载该文件里的最新记忆，并重新建立 `InMemoryStore` 的语义索引。
+长期记忆默认使用 Qdrant。`analysis`、`summary` 和可选 `task_state` 会写入配置的 Qdrant collection；planner 只从这里检索候选记忆。运行期完整文档不会写入 Qdrant。
 
 常用环境变量：
 
 ```bash
-# 默认 1；设为 0/false/no 可临时关闭长期记忆
-export PERSISTENT_MEMORY_ENABLED=1
+# 设为 0/false/no 可完全关闭跨任务记忆
+export LONG_TERM_MEMORY_ENABLED=1
 
-# 默认 /data/mingwei/SynapseX/.memory/shared_memory.jsonl
-export PERSISTENT_MEMORY_PATH=/data/mingwei/SynapseX/.memory/shared_memory.jsonl
+# 为一次实验指定隔离的本地 Qdrant 数据目录和 collection
+export LONG_TERM_MEMORY_QDRANT_PATH=.memory/experiments/qwen/data/qdrant
+export LONG_TERM_MEMORY_COLLECTION=shared_memories_qwen_1024
+
+# 本地 embedding 服务已启动时使用它；否则可选 dashscope 或 local_hash
+export EMBEDDING_BACKEND=local_api
 ```
 
-如果要做一次完全干净的运行，可以临时关闭长期记忆或删除该 JSONL 文件。`.memory/` 已加入 `.gitignore`，不会把本地长期记忆提交到仓库。
+如果要做一次完全干净的运行，使用新的 Qdrant 目录和 collection，或设 `LONG_TERM_MEMORY_ENABLED=0`。`.memory/` 已加入 `.gitignore`，不会把本地记忆提交到仓库。
 
 ## 方式一：本地 Transformers 后端
 
@@ -163,7 +167,7 @@ export EMBEDDING_BATCH_SIZE=10
 
 - **Protocol A**：`mode=text`，纯文本传输。
 - **Protocol B**：`mode=structured`，只启用压缩文本 `context_packets`，关闭 embedding 非文本通道。
-- **记忆隔离**：实验时设置 `PERSISTENT_MEMORY_ENABLED=0`，避免历史 `.memory` 影响结果。
+- **记忆隔离**：实验时设置 `LONG_TERM_MEMORY_ENABLED=0`，避免历史 Qdrant 记忆影响结果。
 - **模型后端**：推荐使用 vLLM OpenAI-compatible API 跑 `/data/models/Qwen3-8B`，比直接 Transformers 加载更快。
 - **评测来源**：只比较 executor 输出的 `extracted_answers`；`summary` 不参与自动评测。
 
@@ -179,7 +183,7 @@ CHAT_BASE_URL=http://127.0.0.1:8000/v1 \
 CHAT_MODEL=/data/models/Qwen3-8B \
 CHAT_DISABLE_THINKING=1 \
 EXPERIMENT_CONTAINER=SynapseX-wang \
-PERSISTENT_MEMORY_ENABLED=0 \
+LONG_TERM_MEMORY_ENABLED=0 \
 ENABLE_CONTEXT_PACKETS=0 \
 ENABLE_EMBEDDING_TRANSFER=0 \
 python3 -u task/run_group1_single.py --mode text \
@@ -199,7 +203,7 @@ CHAT_BASE_URL=http://127.0.0.1:8000/v1 \
 CHAT_MODEL=/data/models/Qwen3-8B \
 CHAT_DISABLE_THINKING=1 \
 EXPERIMENT_CONTAINER=SynapseX-wang \
-PERSISTENT_MEMORY_ENABLED=0 \
+LONG_TERM_MEMORY_ENABLED=0 \
 ENABLE_CONTEXT_PACKETS=1 \
 ENABLE_EMBEDDING_TRANSFER=0 \
 python3 -u task/run_group1_single.py --mode structured \

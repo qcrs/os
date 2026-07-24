@@ -300,6 +300,7 @@ def main():
         comp_a["validated_memory_ids"] = ra.get("validated_memory_ids", [])
         comp_a["execution_result"] = ra.get("execution_result", {})
         comp_a["execution_trace"] = ra.get("execution_trace", [])
+        comp_a["memory_commit"] = ra.get("memory_commit", {})
         comparison_a.append(comp_a)
 
         # Protocol B
@@ -317,6 +318,7 @@ def main():
         comp_b["validated_memory_ids"] = rb.get("validated_memory_ids", [])
         comp_b["execution_result"] = rb.get("execution_result", {})
         comp_b["execution_trace"] = rb.get("execution_trace", [])
+        comp_b["memory_commit"] = rb.get("memory_commit", {})
         comparison_b.append(comp_b)
 
     # ── Aggregate ────────────────────────────────────────────────────
@@ -339,7 +341,6 @@ def main():
             "backend": BASE_ENV["CHAT_BACKEND"],
             "base_url": BASE_ENV["CHAT_BASE_URL"],
             "model": BASE_ENV["CHAT_MODEL"],
-            "persistent_memory_enabled": _env_default("PERSISTENT_MEMORY_ENABLED", ""),
             "long_term_memory_enabled": _env_default("LONG_TERM_MEMORY_ENABLED", ""),
             "long_term_memory_qdrant_path": _env_default("LONG_TERM_MEMORY_QDRANT_PATH", ""),
             "long_term_memory_collection": _env_default("LONG_TERM_MEMORY_COLLECTION", ""),

@@ -26,7 +26,6 @@ os.environ.setdefault("CHAT_API_KEY", "EMPTY")
 os.environ.setdefault("CHAT_BASE_URL", "http://127.0.0.1:8000/v1")
 os.environ.setdefault("CHAT_MODEL", "/data/models/Qwen3-8B")
 os.environ.setdefault("CHAT_DISABLE_THINKING", "1")
-os.environ.setdefault("PERSISTENT_MEMORY_ENABLED", "0")
 os.environ.pop("http_proxy", None)
 os.environ.pop("https_proxy", None)
 os.environ.pop("HTTP_PROXY", None)
@@ -260,6 +259,7 @@ def run_sessions(args: argparse.Namespace) -> dict[str, Any]:
             "reused_memory_ids": result.get("reused_memory_ids", []),
             "memory_validation": result.get("memory_validation", {}),
             "validated_memory_ids": result.get("validated_memory_ids", []),
+            "memory_commit": result.get("memory_commit", {}),
             "final_answer": result.get("final_answer", ""),
             "summary": clip_text(result.get("summary", ""), args.result_text_chars),
             "analysis": clip_text(result.get("analysis", ""), args.result_text_chars),
@@ -281,16 +281,16 @@ def run_sessions(args: argparse.Namespace) -> dict[str, Any]:
             "backend": os.environ.get("CHAT_BACKEND"),
             "base_url": os.environ.get("CHAT_BASE_URL"),
             "model": os.environ.get("CHAT_MODEL"),
-            "persistent_memory_enabled": os.environ.get("PERSISTENT_MEMORY_ENABLED"),
             "long_term_memory_enabled": os.environ.get("LONG_TERM_MEMORY_ENABLED"),
             "long_term_memory_qdrant_path": os.environ.get("LONG_TERM_MEMORY_QDRANT_PATH"),
             "long_term_memory_collection": os.environ.get("LONG_TERM_MEMORY_COLLECTION"),
             "long_term_memory_search_mode": os.environ.get("LONG_TERM_MEMORY_SEARCH_MODE"),
             "long_term_memory_top_k": os.environ.get("LONG_TERM_MEMORY_TOP_K"),
+            "enable_codeact_executor": os.environ.get("ENABLE_CODEACT_EXECUTOR"),
             "enable_context_packets": os.environ.get("ENABLE_CONTEXT_PACKETS"),
             "enable_embedding_transfer": os.environ.get("ENABLE_EMBEDDING_TRANSFER"),
             "memory_strategy": "fresh_graph_per_session"
-            if args.fresh_graph_per_session else "shared_graph_store",
+            if args.fresh_graph_per_session else "shared_graph_runtime_store",
         },
         "summary": {
             "session_count": len(session_results),

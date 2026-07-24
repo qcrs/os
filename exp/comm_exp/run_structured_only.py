@@ -8,9 +8,8 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from config import NS_SUMMARIES
 from graph import build_graph
-from memory import store_search
+from memory import qdrant_search
 from metrics import metrics as global_metrics
 
 
@@ -91,8 +90,8 @@ def main():
         r = run_single_task(graph, store, task, "structured")
         struct_results.append(r)
         global_metrics.increment("memory_reuse_attempts")
-        store_items = list(store.search(NS_SUMMARIES, limit=5))
-        if len(store_items) > 0 and i > 0:
+        prior_summaries = qdrant_search(task["query"], memory_type="summary", top_k=1)
+        if prior_summaries and i > 0:
             global_metrics.increment("memory_reuse_hits")
         print(f" {r['duration']:.1f}s | findings={r['key_findings_count']} | analysis={r['analysis_len']}chars")
 

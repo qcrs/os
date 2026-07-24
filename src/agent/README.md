@@ -70,11 +70,7 @@ plan
 sub_queries
 ```
 
-写入记忆：
-
-```text
-NS_PLANS = ("plans",)
-```
+长期记忆：读取 Qdrant 中候选的 `analysis` 和 `summary`。
 
 典型职责：
 
@@ -102,7 +98,7 @@ document_payloads
 embedding_payloads
 ```
 
-写入记忆：
+运行期 Store：
 
 ```text
 NS_DOCS = ("docs",)
@@ -139,11 +135,7 @@ selected_context_packets
 context_verification
 ```
 
-写入记忆：
-
-```text
-NS_ANALYSIS = ("analysis",)
-```
+长期记忆：写入 Qdrant `analysis`，并可选写入 `task_state`。
 
 ### 2.4 Executor
 
@@ -169,11 +161,7 @@ final_answer
 extracted_answers
 ```
 
-写入记忆：
-
-```text
-NS_EXECUTIONS = ("executions",)
-```
+持久化：无。执行产物只通过 graph state 传给 summarizer。
 
 ### 2.5 Summarizer
 
@@ -199,11 +187,7 @@ key_findings
 recommendations
 ```
 
-写入记忆：
-
-```text
-NS_SUMMARIES = ("summaries",)
-```
+长期记忆：写入 Qdrant `summary`。
 
 ---
 

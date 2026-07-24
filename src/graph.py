@@ -17,6 +17,7 @@ from langgraph.types import Send
 
 from agent.analyst import analyst
 from agent.executor import executor
+from agent.memory_committer import memory_committer
 from agent.planner import planner
 from agent.researcher import researcher
 from agent.summarizer import summarizer
@@ -28,7 +29,7 @@ from agent.cache_agents import (
     researcher_cache,
     summarizer_cache,
 )
-from memory import create_store
+from runtime_store import create_runtime_store
 
 
 # ─── Structured State Schema ───
@@ -89,6 +90,11 @@ class ResearchState(TypedDict, total=False):
     # Summarizer output
     summary: str
     key_findings: list[str]
+
+    # Long-term memory is staged by producers and committed only after the
+    # executor and summarizer outputs are both available.
+    pending_memory_candidates: Annotated[list[dict], operator.add]
+    memory_commit: dict
 
     # Structured mode: AgentMessage stream (accumulates via operator.add)
     messages: Annotated[list[dict], operator.add]
@@ -153,18 +159,19 @@ def build_graph(mode: str = "text"):
         mode: "text" for natural language passthrough,
               "structured" for AgentMessage-based protocol
 
-    Returns a compiled graph with InMemoryStore for shared memory.
+    Returns a compiled graph with an unindexed current-run document store.
     """
-    store = create_store()
+    store = create_runtime_store()
 
     builder = StateGraph(ResearchState)
 
-    # Add 5 agent nodes
+    # Add agent nodes. The committer is deterministic and makes no LLM call.
     builder.add_node("planner", planner)
     builder.add_node("researcher", researcher)
     builder.add_node("analyst", analyst)
     builder.add_node("executor", executor)
     builder.add_node("summarizer", summarizer)
+    builder.add_node("memory_committer", memory_committer)
 
     # Wire the graph
     builder.add_edge(START, "planner")
@@ -175,10 +182,11 @@ def build_graph(mode: str = "text"):
     # All researchers → analyst (fan-in via Annotated[list, operator.add])
     builder.add_edge("researcher", "analyst")
 
-    # Analyst → executor → summarizer → END
+    # Analyst → executor → summarizer → memory_committer → END
     builder.add_edge("analyst", "executor")
     builder.add_edge("executor", "summarizer")
-    builder.add_edge("summarizer", END)
+    builder.add_edge("summarizer", "memory_committer")
+    builder.add_edge("memory_committer", END)
 
     # Compile with shared store
     graph = builder.compile(store=store)
@@ -192,7 +200,7 @@ def build_cache_graph():
     The cache graph is intentionally linear because vLLM KV cache state is tied
     to a single token prefix and cannot be merged across parallel branches.
     """
-    store = create_store()
+    store = create_runtime_store()
 
     builder = StateGraph(ResearchState)
     builder.add_node("context_prefill", context_prefill)

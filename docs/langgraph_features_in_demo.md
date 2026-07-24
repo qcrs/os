@@ -34,18 +34,12 @@
 
 | API | 作用 | Demo 中的使用位置 |
 |-----|------|------------------|
-| `InMemoryStore` | 运行期 KV 存储，支持语义搜索 | `memory.py` — 创建共享 Store 实例，并从 JSONL 长期记忆加载历史 MemoryUnit |
-| `InMemoryStore(index={...})` | 配置向量索引，启用语义搜索 | `memory.py` — DashScope `text-embedding-v4` 或 `LocalHashEmbeddings`，默认 1024 维 |
+| `InMemoryStore` | 运行期 KV 存储，只按 `doc_key` 回取完整文档 | `runtime_store.py` — 不配置语义索引 |
 | `BaseStore` | Store 抽象接口 | `agents.py` — 所有 Agent 函数的 store 参数类型 |
-| `store.put(ns, key, value)` | 写入运行期 Store | `memory.py` — 所有 Agent 写入计划/文档/分析/摘要，同时追加保存到 `.memory/shared_memory.jsonl` |
-| `store.get(ns, key)` | 按 key 读取 | `memory.py` — 按需获取已存储内容 |
-| `store.search(ns, query=..., limit=...)` | 语义向量搜索 | `memory.py` + `run_demo.py` — 跨任务记忆检索 |
+| `store.put(ns, key, value)` | 写入运行期 Store | `runtime_store.py` — researcher 保存完整文档 |
+| `store.get(ns, key)` | 按 key 读取 | `runtime_store.py` — analyst 校验并 rehydrate context packet |
 
-**命名空间设计**：
-- `("plans",)` — planner 写入的计划
-- `("docs",)` — retriever 写入的检索文档
-- `("analysis",)` — executor 写入的分析结果
-- `("summaries",)` — summarizer 写入的摘要
+运行期只使用 `("docs",)` 命名空间。Qdrant 的 `memory_type` 区分 `analysis`、`summary` 和 `task_state`。
 
 ## 五、LangChain 组件（被 LangGraph 调用）
 
@@ -66,7 +60,7 @@
 │  图编排           │  StateGraph + add_node/edge      │
 │  动态扇出         │  Send + add_conditional_edges    │
 │  结构化状态       │  TypedDict + Annotated reducer   │
-│  共享记忆         │  InMemoryStore + JSONL 长期记忆  │
+│  共享记忆         │  Runtime Store + Qdrant 长期记忆 │
 │  编译执行         │  compile() + invoke()            │
 └──────────────────┴──────────────────────────────────┘
 ```

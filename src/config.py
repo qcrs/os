@@ -59,18 +59,17 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-v4")
 EMBEDDING_DIMS = int(os.getenv("EMBEDDING_DIMS", "1024"))
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "10"))
 
-# Persistent shared memory configuration.
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PERSISTENT_MEMORY_ENABLED = os.getenv("PERSISTENT_MEMORY_ENABLED", "1").lower() in {
-    "1", "true", "yes", "on"
-}
-PERSISTENT_MEMORY_PATH = os.getenv(
-    "PERSISTENT_MEMORY_PATH",
-    os.path.join(PROJECT_ROOT, ".memory", "shared_memory.jsonl"),
-)
+# The local Qwen3 embedding server is intentionally fixed to loopback while it
+# is being evaluated. Only the backend selector remains configurable.
+LOCAL_EMBEDDING_API_BASE_URL = "http://127.0.0.1:9040/v1"
+LOCAL_EMBEDDING_DOCUMENT_MODEL = "qwen3-embedding-doc"
+LOCAL_EMBEDDING_QUERY_MODEL = "qwen3-embedding-query"
+LOCAL_EMBEDDING_API_TIMEOUT_S = 20.0
 
-# Qdrant-backed reusable memory configuration. This is separate from the
-# LangGraph runtime Store, which is still used for current-run state and docs.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Qdrant-backed reusable memory configuration. Runtime documents stay in the
+# unindexed Store from runtime_store.py and never enter this long-term index.
 LONG_TERM_MEMORY_ENABLED = os.getenv("LONG_TERM_MEMORY_ENABLED", "1").lower() in {
     "1", "true", "yes", "on"
 }
@@ -99,12 +98,8 @@ LONG_TERM_TASK_STATE_ENABLED = os.getenv(
     "LONG_TERM_TASK_STATE_ENABLED", "1"
 ).lower() in {"1", "true", "yes", "on"}
 
-# Store namespaces
-NS_PLANS = ("plans",)
+# Runtime Store namespace. Long-term records use Qdrant memory_type instead.
 NS_DOCS = ("docs",)
-NS_ANALYSIS = ("analysis",)
-NS_EXECUTIONS = ("executions",)
-NS_SUMMARIES = ("summaries",)
 
 # Task group IDs
 TASK_GROUP_A = "A_langgraph_analysis"

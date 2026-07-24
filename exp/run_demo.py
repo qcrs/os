@@ -6,7 +6,7 @@ Demonstrates 6 requirements using LangGraph with OpenAI-compatible or local Tran
 1. 3+ Agents: planner, researcher (parallel), analyst, executor, summarizer
 2. Structured communication: AgentMessage protocol with action types
 3. Non-text state: ContextPacket compression, embedding vectors, and optional hidden state transfer
-4. Shared memory: InMemoryStore with semantic search
+4. Shared memory: Qdrant-backed reusable long-term memory
 5. 2 related task groups: B reuses A's memory
 6. Performance metrics: dual-mode comparison (text vs structured)
 
@@ -29,9 +29,9 @@ import time
 # Add src directory to path for local imports
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from config import EMBEDDING_DIMS, EMBEDDING_MODEL, NS_SUMMARIES, TASK_GROUP_A, TASK_GROUP_B
+from config import TASK_GROUP_A, TASK_GROUP_B
 from graph import build_graph
-from memory import store_search
+from memory import qdrant_search
 from metrics import metrics
 from protocol import create_default_registry
 
@@ -96,29 +96,22 @@ def run_task_group(graph, store, task_group: str, query: str, mode: str = "text"
     return result
 
 
-def demonstrate_memory_reuse(graph, store, query: str):
-    """Show that the store contains reusable memories."""
+def demonstrate_memory_reuse(query: str):
+    """Show reusable summary memories stored in Qdrant."""
     print(f"\n{'='*70}")
     print(f"Memory Reuse Demonstration")
     print(f"{'='*70}")
 
-    print(f"\n  Searching store for: '{query}'")
-    results = store_search(store, NS_SUMMARIES, query, limit=3)
+    print(f"\n  Searching Qdrant summaries for: '{query}'")
+    results = qdrant_search(query, memory_type="summary", top_k=3)
 
     if results:
         print(f"  Found {len(results)} relevant memory item(s):")
         for r in results:
-            print(f"    - [{r.key}] score={r.score:.4f}")
-            text = r.value.get("text", "")
-            print(f"      {text[:100]}...")
+            print(f"    - [{r.id}] score={r.score:.4f}")
+            print(f"      {r.payload.content[:100]}...")
     else:
         print("  No relevant memories found.")
-
-    # List all namespaces in the store
-    print(f"\n  All stored memories:")
-    for ns in [NS_SUMMARIES, ("plans",), ("docs",), ("analysis",)]:
-        items = list(store.search(ns, limit=10))
-        print(f"    namespace {ns}: {len(items)} item(s)")
 
 
 def print_comparison(text_summary: dict, struct_summary: dict):
@@ -218,7 +211,7 @@ def main():
     metrics.increment("memory_reuse_attempts")
     result_b_text = run_task_group(graph_text, store_text, TASK_GROUP_B, query_b, mode="text")
 
-    demonstrate_memory_reuse(graph_text, store_text, "多智能体")
+    demonstrate_memory_reuse("多智能体")
     text_report = metrics.report()
     text_summary = metrics.summary_dict()
 
@@ -238,7 +231,7 @@ def main():
     metrics.increment("memory_reuse_attempts")
     result_b_struct = run_task_group(graph_struct, store_struct, TASK_GROUP_B, query_b, mode="structured")
 
-    demonstrate_memory_reuse(graph_struct, store_struct, "多智能体")
+    demonstrate_memory_reuse("多智能体")
     struct_report = metrics.report()
     struct_summary = metrics.summary_dict()
 

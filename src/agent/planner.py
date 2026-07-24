@@ -8,17 +8,13 @@ from langgraph.store.base import BaseStore
 
 from config import (
     LONG_TERM_MEMORY_TOP_K,
-    NS_ANALYSIS,
-    NS_PLANS,
-    NS_SUMMARIES,
-    PERSISTENT_MEMORY_ENABLED,
     PLANNER_MEMORY_CONFIDENCE_THRESHOLD,
     REDUCE_RESEARCH_ON_MEMORY_HIT,
 )
-from memory import qdrant_search, store_put, store_search
+from memory import qdrant_search
 from metrics import metrics
 from models import get_model
-from protocol import ActionType, hash_text, make_message, summarize_text
+from protocol import ActionType, make_message, summarize_text
 
 from .shared import _get_mode, _memory_lookup_query, _normalize_sub_queries
 
@@ -31,7 +27,7 @@ def planner(state: dict, store: BaseStore) -> dict:
     Role: Planning
     Input: query (str)
     Output: plan (str), sub_queries (list[str])
-    Memory: writes plan to Store under ("plans",)
+    Memory: retrieves reusable analysis and summaries from Qdrant.
     """
     t0 = time.perf_counter()
     mode = _get_mode(state)
@@ -73,33 +69,6 @@ def planner(state: dict, store: BaseStore) -> dict:
             )
             for r in prior_results
         )
-    if PERSISTENT_MEMORY_ENABLED:
-        for namespace, memory_type in (
-            (NS_SUMMARIES, "summary"),
-            (NS_ANALYSIS, "analysis"),
-        ):
-            store_results = store_search(store, namespace, memory_query, limit=2)
-            if not store_results:
-                continue
-            store_context = "\n\n".join(
-                f"[Memory id={r.key}; source=store; type={memory_type}; score={r.score:.4f}]: "
-                f"{r.value.get('text', '')}"
-                for r in store_results
-            )
-            prior_context = "\n\n".join(part for part in (prior_context, store_context) if part)
-            reused_memories.extend(
-                _memory_handoff_item(
-                    memory_id=r.key,
-                    memory_type=memory_type,
-                    source_agent=str(r.value.get("source_agent", memory_type)),
-                    source_task_id=r.key,
-                    task_topic=str(r.value.get("task_topic", task_topic)),
-                    content=r.value.get("text", ""),
-                    score=r.score,
-                    source="store",
-                )
-                for r in store_results
-            )
     if reused_memories:
         metrics.increment("memory_reuse_attempts")
         metrics.increment("memory_candidates_found", len(reused_memories))
@@ -176,22 +145,6 @@ Return ONLY valid JSON with this exact format:
         saved = max(original_sub_query_count - len(sub_queries), 0)
         metrics.increment("research_fanout_reduced")
         metrics.increment("research_subqueries_saved", saved)
-    plan_memory_id = f"plan_{task_group}_{hash_text(query)}"
-
-    # Write plan to shared memory
-    store_put(store, NS_PLANS, plan_memory_id, {
-        "text": plan,
-        "sub_queries": sub_queries,
-        "query": query,
-    },
-        memory_type="plan",
-        source_agent="planner",
-        task_group=task_group,
-        task_topic=task_topic,
-        summary=plan,
-        tags=["plan", "planner", task_group],
-    )
-
     duration = time.perf_counter() - t0
     metrics.record_timing("node_planner", duration)
 

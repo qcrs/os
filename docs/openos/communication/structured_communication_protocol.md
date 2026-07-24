@@ -171,17 +171,7 @@ Structured 模式可以启用 embedding 通道：
 
 ## 7. Store 与共享记忆
 
-Structured 模式不依赖全文透传，而是通过 Store 保存完整材料：
-
-| Namespace | 写入 Agent | 内容 |
-|---|---|---|
-| `NS_PLANS` | `planner` | plan、sub_queries |
-| `NS_DOCS` | `researcher` | 完整研究材料 |
-| `NS_ANALYSIS` | `analyst` | analysis、digest、candidate_answers、evidence、selected_doc_keys |
-| `NS_EXECUTIONS` | `executor` | execution_code、execution_result、execution_summary、final_answer |
-| `NS_SUMMARIES` | `summarizer` | summary、key_findings、recommendations |
-
-下游 Agent 可以通过 `doc_key`、`memory_id` 等引用回查 Store，而不是要求上游把所有文本重新传一遍。
+Structured 模式不依赖全文透传。researcher 仅把完整材料写入运行期 Store 的 `NS_DOCS`，analyst 通过 `doc_key` 回查原文并校验 context packet。跨任务复用不经过 Store，而是由 planner 从 Qdrant 的 `analysis`、`summary` 和可选 `task_state` 中检索。
 
 ## 8. 与 trueKV 的边界
 

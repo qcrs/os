@@ -11,12 +11,9 @@ from langgraph.store.base import BaseStore
 from config import (
     ENABLE_CONTEXT_PACKETS,
     ENABLE_EMBEDDING_TRANSFER,
-    NS_ANALYSIS,
-    NS_DOCS,
     LONG_TERM_TASK_STATE_ENABLED,
-    PERSISTENT_MEMORY_ENABLED,
 )
-from memory import qdrant_add_from_payload, store_get, store_put
+from memory_writer import make_memory_candidate
 from metrics import metrics
 from models import get_model
 from protocol import (
@@ -29,6 +26,7 @@ from protocol import (
     summarize_text,
     verify_context_packet,
 )
+from runtime_store import get_document
 
 from .shared import _get_mode
 
@@ -231,7 +229,6 @@ Return ONLY valid JSON:
         {}
     )
     analysis_digest = summarize_text(analysis, 520)
-    analysis_memory_id = f"analysis_{task_group}_{hash_text(query or plan)}"
     selected_doc_keys = [
         item.get("doc_key")
         for item in (verified_packets if verified_packets else selected_documents)
@@ -248,29 +245,20 @@ Return ONLY valid JSON:
         "query": query,
         "task_topic": task_topic,
     }
-    qdrant_add_from_payload(
-        key=analysis_memory_id,
-        value=analysis_memory_payload,
-        memory_type="analysis",
-        source_agent="analyst",
-        task_group=task_group,
-        task_topic=task_topic,
-        summary=analysis_digest,
-        tags=["analysis", "analyst", task_group],
-    )
-    if PERSISTENT_MEMORY_ENABLED:
-        store_put(
-            store,
-            NS_ANALYSIS,
-            analysis_memory_id,
-            analysis_memory_payload,
+    pending_memory_candidates = [
+        make_memory_candidate(
             memory_type="analysis",
             source_agent="analyst",
             task_group=task_group,
             task_topic=task_topic,
+            query=query,
+            value=analysis_memory_payload,
             summary=analysis_digest,
             tags=["analysis", "analyst", task_group],
-        )
+            evidence_refs=evidence,
+            context_verification=verification_summary,
+        ),
+    ]
     if LONG_TERM_TASK_STATE_ENABLED:
         task_state_text = json.dumps(task_state, ensure_ascii=False, sort_keys=True)
         task_state_memory_payload = {
@@ -282,15 +270,19 @@ Return ONLY valid JSON:
             "analysis_digest": analysis_digest,
             "selected_doc_keys": selected_doc_keys,
         }
-        qdrant_add_from_payload(
-            key=f"task_state_{task_group}_{hash_text(query or plan)}",
-            value=task_state_memory_payload,
-            memory_type="task_state",
-            source_agent="analyst",
-            task_group=task_group,
-            task_topic=task_topic,
-            summary=summarize_text(task_state_text, 900),
-            tags=["task_state", "analyst", task_group],
+        pending_memory_candidates.append(
+            make_memory_candidate(
+                memory_type="task_state",
+                source_agent="analyst",
+                task_group=task_group,
+                task_topic=task_topic,
+                query=query,
+                value=task_state_memory_payload,
+                summary=summarize_text(task_state_text, 900),
+                tags=["task_state", "analyst", task_group],
+                evidence_refs=evidence,
+                context_verification=verification_summary,
+            )
         )
 
     duration = time.perf_counter() - t0
@@ -301,6 +293,8 @@ Return ONLY valid JSON:
         "analysis_digest": analysis_digest,
         "candidate_answers": candidate_answers,
         "evidence": evidence,
+        "context_verification": verification_summary,
+        "pending_memory_candidates": pending_memory_candidates,
     }
     if LONG_TERM_TASK_STATE_ENABLED:
         result["task_state"] = task_state
@@ -376,7 +370,7 @@ def _verify_and_rehydrate_packets(
     for packet in packets:
         summary["checked"] += 1
         doc_key = packet.get("doc_key", "")
-        doc_item = store_get(store, NS_DOCS, doc_key) if doc_key else None
+        doc_item = get_document(store, doc_key) if doc_key else None
         if doc_item is None:
             failed_packet = dict(packet)
             failed_packet["verification"] = {

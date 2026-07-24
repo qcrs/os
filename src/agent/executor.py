@@ -10,10 +10,9 @@ from contextlib import redirect_stdout
 
 from langgraph.store.base import BaseStore
 
-from config import ENABLE_CODEACT_EXECUTOR, NS_EXECUTIONS
-from memory import store_put
+from config import ENABLE_CODEACT_EXECUTOR
 from metrics import metrics
-from protocol import ActionType, hash_text, make_message, summarize_text
+from protocol import ActionType, make_message, summarize_text
 
 from .codeact import codeact
 from .shared import _get_mode
@@ -152,12 +151,6 @@ def executor(state: dict, store: BaseStore) -> dict:
 
 
 def _run_executor_with_codeact(state: dict, store: BaseStore) -> dict:
-    query = state.get("query", "")
-    plan = state.get("plan", "")
-    analysis_digest = state.get("analysis_digest", "")
-    task_group = state.get("task_group", "default")
-    task_topic = state.get("task_topic") or task_group
-
     codeact_result = codeact(state, store=store)
     execution_code = codeact_result["execution_code"]
     execution_result = codeact_result["execution_result"]
@@ -166,28 +159,6 @@ def _run_executor_with_codeact(state: dict, store: BaseStore) -> dict:
     extracted_answers = codeact_result["extracted_answers"]
     execution_trace = codeact_result.get("execution_trace", [])
     tool_results = codeact_result.get("tool_results", [])
-
-    execution_memory_id = f"execution_{task_group}_{hash_text(query or plan or analysis_digest)}"
-    store_put(store, NS_EXECUTIONS, execution_memory_id, {
-        "query": query,
-        "plan": plan,
-        "analysis_digest": analysis_digest,
-        "code": execution_code,
-        "execution_result": execution_result,
-        "execution_summary": execution_summary,
-        "final_answer": final_answer,
-        "extracted_answers": extracted_answers,
-        "artifact_refs": state.get("artifact_refs", []),
-        "execution_trace": execution_trace,
-        "tool_results": tool_results,
-    },
-        memory_type="execution",
-        source_agent="executor",
-        task_group=task_group,
-        task_topic=task_topic,
-        summary=execution_summary,
-        tags=["execution", "executor", "codeact", task_group],
-    )
 
     return {
         "execution_code": execution_code,
@@ -202,14 +173,10 @@ def _run_executor_with_codeact(state: dict, store: BaseStore) -> dict:
 
 def _run_executor_legacy(state: dict, store: BaseStore) -> dict:
     query = state.get("query", "")
-    plan = state.get("plan", "")
     analysis = state.get("analysis", "")
-    analysis_digest = state.get("analysis_digest", "")
     candidate_answers = state.get("candidate_answers", {})
     evidence = state.get("evidence", [])
     selected_context_packets = state.get("selected_context_packets", [])
-    task_group = state.get("task_group", "default")
-    task_topic = state.get("task_topic") or task_group
 
     code = _build_codeact_program(
         evidence=evidence,
@@ -227,27 +194,6 @@ def _run_executor_legacy(state: dict, store: BaseStore) -> dict:
         execution_result["final_answer"] = final_answer
         execution_result["extracted_answers"] = extracted_answers
     execution_summary = _summarize_execution_result(execution_result)
-    execution_memory_id = f"execution_{task_group}_{hash_text(query or plan or analysis_digest)}"
-
-    store_put(store, NS_EXECUTIONS, execution_memory_id, {
-        "query": query,
-        "plan": plan,
-        "analysis_digest": analysis_digest,
-        "code": code,
-        "execution_result": execution_result,
-        "execution_summary": execution_summary,
-        "final_answer": final_answer,
-        "extracted_answers": extracted_answers,
-        "task_topic": task_topic,
-    },
-        memory_type="execution",
-        source_agent="executor",
-        task_group=task_group,
-        task_topic=task_topic,
-        summary=execution_summary,
-        tags=["execution", "executor", "codeact", task_group],
-    )
-
     return {
         "execution_code": code,
         "execution_result": execution_result,

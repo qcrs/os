@@ -20,9 +20,9 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 - **结构化通信协议**：`AgentMessage`、`ActionType`、`AgentCard`、`AgentRegistry`。
 - **Context Packet 压缩**：把 researcher 生成的大段材料压缩为可校验、可回溯的上下文包。
 - **非文本状态传递**：structured 模式仅保留 embedding payload；真正的模型中间状态传递由 trueKV/KV cache 路径实现。
-- **共享记忆机制**：基于 LangGraph `InMemoryStore`，并支持 JSONL 长期记忆。
+- **共享记忆机制**：运行期 `InMemoryStore` 只回传完整文档；跨任务记忆使用 Qdrant。
 - **CodeAct Executor**：在 `analyst` 后执行受限 Python 代码，生成 `execution_result` 和 `execution_summary`。
-- **实验入口**：包含基础 demo、通信协议对比实验、memory reuse 实验和任务评测脚本。
+- **实验入口**：包含基础 demo、通信协议对比实验和任务评测脚本。
 
 ---
 
@@ -52,7 +52,8 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 | [`../src/agent/summarizer.py`](../src/agent/summarizer.py) | 最终总结生成 |
 | [`../src/graph.py`](../src/graph.py) | LangGraph `StateGraph`、fan-out / fan-in、节点连线 |
 | [`../src/protocol.py`](../src/protocol.py) | `AgentMessage`、`ActionType`、Context Packet、Agent Registry |
-| [`../src/memory.py`](../src/memory.py) | Store、MemoryUnit、JSONL 长期记忆、检索工具 |
+| [`../src/runtime_store.py`](../src/runtime_store.py) | 无索引的运行期文档回传 Store |
+| [`../src/memory.py`](../src/memory.py) | embedding 适配器和 Qdrant 长期记忆接口 |
 | [`../src/models.py`](../src/models.py) | OpenAI-compatible 和 Transformers Chat 后端封装 |
 | [`../src/metrics.py`](../src/metrics.py) | token、时延、通信、压缩和 embedding 指标统计 |
 | [`../src/config.py`](../src/config.py) | 环境变量、模型、命名空间和功能开关 |
@@ -67,9 +68,7 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 | [`how_to_run.md`](how_to_run.md) | 运行方式、依赖安装、后端选择、环境变量、入口脚本说明 |
 | [`langgraph_features_in_demo.md`](langgraph_features_in_demo.md) | SynapseX 中用到的 LangGraph / LangChain 能力说明 |
 | [`openos/communication/structured_communication_protocol.md`](openos/communication/structured_communication_protocol.md) | 结构化通信协议、Context Packet 和 embedding 通道说明 |
-| [`openos/memory/memory_mechanism.md`](openos/memory/memory_mechanism.md) | 共享记忆机制、MemoryUnit schema、检索与持久化说明 |
-| [`openos/memory_reuse_experiment.md`](openos/memory_reuse_experiment.md) | memory reuse 实验设计与结果记录 |
-| [`openos/shared_memory_completion_status.md`](openos/shared_memory_completion_status.md) | 共享记忆模块完成度核查 |
+| [`openos/memory/delayed_memory_commit.md`](openos/memory/delayed_memory_commit.md) | 长期记忆与运行期文档的边界、候选缓冲、延迟提交和实验观测说明 |
 | [`openos/race9.md`](openos/race9.md) | 赛题/需求原文或整理版，用于对照实现范围 |
 
 > 注意：部分历史报告类文档可能仍保留旧命名，例如 `retriever` / `executor` 四节点架构描述。当前实现以 `src/agent/README.md`、`src/graph.py` 和本 README 为准。
@@ -82,7 +81,6 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 |---|---|
 | [`../exp/run_demo.py`](../exp/run_demo.py) | 基础 demo：Text / Structured 双模式对比 |
 | [`../exp/comm_exp/`](../exp/comm_exp/) | 通信协议、context packet 和任务评测相关产物 |
-| [`../exp/mem_exp/run_memory_reuse_experiment.py`](../exp/mem_exp/run_memory_reuse_experiment.py) | 共享记忆复用实验 |
 | [`../exp/12run_smoke/run_12rounds.py`](../exp/12run_smoke/run_12rounds.py) | 12 轮连续任务 smoke / 对比实验入口 |
 | [`../task/`](../task/) | 任务评测脚本、结果和报告材料 |
 
@@ -96,9 +94,7 @@ SynapseX 是一个基于 LangGraph 的多智能体研究与评测系统，重点
 2. [`../src/agent/README.md`](../src/agent/README.md)：理解五个 Agent 的职责和完整工作流。
 3. [`how_to_run.md`](how_to_run.md)：选择运行后端并设置环境变量。
 4. [`openos/communication/structured_communication_protocol.md`](openos/communication/structured_communication_protocol.md)：理解 structured mode、context packet 和非文本状态传递。
-5. [`openos/memory/memory_mechanism.md`](openos/memory/memory_mechanism.md)：理解共享记忆和跨任务复用。
-6. [`langgraph_features_in_demo.md`](langgraph_features_in_demo.md)：对照 LangGraph API 看实现细节。
-7. [`openos/memory_reuse_experiment.md`](openos/memory_reuse_experiment.md)：查看 memory reuse 实验设计。
+5. [`langgraph_features_in_demo.md`](langgraph_features_in_demo.md)：对照 LangGraph API 看实现细节。
 
 ---
 
@@ -127,15 +123,12 @@ planner / researcher / analyst / executor / summarizer
 
 ---
 
-## 当前记忆命名空间
+## 当前记忆边界
 
-| Namespace | 写入 Agent | 内容 |
+| 层级 | 存储内容 | 生命周期 |
 |---|---|---|
-| `("plans",)` | `planner` | plan、sub_queries |
-| `("docs",)` | `researcher` | 完整研究材料、sub_query、document metadata |
-| `("analysis",)` | `analyst` | analysis、analysis_digest、evidence、selected_doc_keys |
-| `("executions",)` | `executor` | execution_code、execution_result、execution_summary |
-| `("summaries",)` | `summarizer` | summary、key_findings、recommendations |
+| Runtime Store `("docs",)` | researcher 的完整文档，按 `doc_key` 回填 | 单个 graph 实例 |
+| Qdrant `analysis` / `summary` / `task_state` | 可复用的长期分析、总结和状态 | 跨任务、跨进程 |
 
 ---
 

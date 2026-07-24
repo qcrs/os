@@ -5,11 +5,11 @@ import time
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.store.base import BaseStore
 
-from config import ENABLE_CONTEXT_PACKETS, ENABLE_EMBEDDING_TRANSFER, NS_DOCS
-from memory import store_put, store_search
+from config import ENABLE_CONTEXT_PACKETS, ENABLE_EMBEDDING_TRANSFER
 from metrics import metrics
 from models import get_model
 from protocol import ActionType, build_context_packet, hash_text, make_document_key, make_message, summarize_text
+from runtime_store import put_document
 
 from .shared import _get_mode
 
@@ -23,7 +23,7 @@ def researcher(state: dict, store: BaseStore) -> dict:
     Role: Source material generation and context packaging
     Input: sub_query (str) — received via Send
     Output: documents (list[str])
-    Memory: writes documents to Store under ("docs", task_group)
+    Memory: writes complete documents to the current-run Store by ``doc_key``.
     """
     t0 = time.perf_counter()
     mode = _get_mode(state)
@@ -75,22 +75,15 @@ Return your response as plain text (3-5 paragraphs)."""),
         except Exception:
             embedding = None
 
-    # Store document
+    # Keep full source text available for structured-packet verification.
     doc_key = make_document_key(task_group, sub_query, doc_text)
-    store_put(store, NS_DOCS, doc_key, {
+    put_document(store, doc_key, {
         "text": doc_text,
         "sub_query": sub_query,
         "query": query,
         "task_group": task_group,
         "has_source_context": bool(source_context),
-    },
-        memory_type="document",
-        source_agent="researcher",
-        task_group=task_group,
-        task_topic=task_topic,
-        summary=summarize_text(doc_text, 240),
-        tags=["document", "researcher", task_group, *sub_query.split()[:6]],
-    )
+    })
 
     document_payload = {
         "doc_key": doc_key,
@@ -99,12 +92,6 @@ Return your response as plain text (3-5 paragraphs)."""),
         "text_hash": hash_text(doc_text),
         "original_chars": len(doc_text),
     }
-    # Search for related prior documents (memory reuse)
-    related = store_search(store, NS_DOCS, sub_query, limit=3)
-    related_docs = [r.value.get("text", "") for r in related if r.key != doc_key]
-    if related_docs:
-        metrics.increment("document_memory_reuse_hits")
-
     duration = time.perf_counter() - t0
     metrics.record_timing("node_researcher", duration)
 
@@ -154,7 +141,7 @@ Return your response as plain text (3-5 paragraphs)."""),
         else:
             metrics.increment("context_packets_disabled")
             result_payload["context_packets_enabled"] = False
-            result["documents"] = [doc_text] + related_docs[:1]
+            result["documents"] = [doc_text]
             result["document_payloads"] = [document_payload]
 
         msg = make_message(
@@ -178,7 +165,7 @@ Return your response as plain text (3-5 paragraphs)."""),
         return result
 
     return {
-        "documents": [doc_text] + related_docs[:1],
+        "documents": [doc_text],
     }
 
 

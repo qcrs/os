@@ -12,7 +12,7 @@
 - **Protocol A**：`mode=text`，纯文本传输。
 - **Protocol B**：`mode=structured`，仅启用压缩文本 `context_packets`。
 - **B 通道开关**：`ENABLE_CONTEXT_PACKETS=1`，`ENABLE_EMBEDDING_TRANSFER=0`，`ENABLE_HIDDEN_STATE_TRANSFER=0`。
-- **记忆隔离**：`PERSISTENT_MEMORY_ENABLED=0`。
+- **记忆隔离**：`LONG_TERM_MEMORY_ENABLED=0`。
 - **评测取值**：只读取 executor 的 `final_answer` / `extracted_answers`，不再从 summarizer 的 `summary` 抽取。
 - **输出文件**：
   - `exp/comm_exp/task1_protocol_a_text.json`

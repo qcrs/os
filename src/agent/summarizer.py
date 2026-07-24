@@ -6,11 +6,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.store.base import BaseStore
 
-from config import NS_SUMMARIES, PERSISTENT_MEMORY_ENABLED
-from memory import qdrant_add_from_payload, store_put
 from metrics import metrics
 from models import get_model
-from protocol import ActionType, hash_text, make_message
+from memory_writer import make_memory_candidate
+from protocol import ActionType, make_message
 
 from .shared import _get_mode
 
@@ -93,8 +92,6 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
     summary = str(parsed.get("summary", "")).strip()
     key_findings = parsed.get("key_findings", [])
     recommendations = parsed.get("recommendations", [])
-    summary_memory_id = f"summary_{task_group}_{hash_text(query or summary)}"
-
     summary_memory_payload = {
         "text": summary,
         "key_findings": key_findings,
@@ -106,30 +103,21 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
         "extracted_answers": extracted_answers,
         "task_topic": task_topic,
     }
-    qdrant_add_from_payload(
-        key=summary_memory_id,
-        value=summary_memory_payload,
+    summary_memory_candidate = make_memory_candidate(
         memory_type="summary",
         source_agent="summarizer",
         task_group=task_group,
         task_topic=task_topic,
+        query=query,
+        value=summary_memory_payload,
         summary=summary,
         tags=["summary", "summarizer", task_group],
+        evidence_refs=evidence,
+        context_verification=(
+            state.get("context_verification", {})
+            or _context_verification_from_packets(state.get("selected_context_packets", []))
+        ),
     )
-    if PERSISTENT_MEMORY_ENABLED:
-        store_put(
-            store,
-            NS_SUMMARIES,
-            summary_memory_id,
-            summary_memory_payload,
-            memory_type="summary",
-            source_agent="summarizer",
-            task_group=task_group,
-            task_topic=task_topic,
-            summary=summary,
-            tags=["summary", "summarizer", task_group],
-        )
-
     duration = time.perf_counter() - t0
     metrics.record_timing("node_summarizer", duration)
 
@@ -138,6 +126,7 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
         "key_findings": key_findings,
         "final_answer": final_answer,
         "extracted_answers": extracted_answers,
+        "pending_memory_candidates": [summary_memory_candidate],
     }
     if mode == "structured":
         msg = make_message(
@@ -163,6 +152,18 @@ Executor final answer for machine evaluation: {final_answer or 'N/A'}"""),
         result["messages"] = [msg.to_dict()]
 
     return result
+
+
+def _context_verification_from_packets(packets: list[dict]) -> dict:
+    """Preserve analyst packet verification for the delayed memory gate."""
+    checked = len(packets or [])
+    reliable = 0
+    rehydrated = 0
+    for packet in packets or []:
+        verification = packet.get("verification", {}) if isinstance(packet, dict) else {}
+        reliable += int(bool(verification.get("reliable", False)))
+        rehydrated += int(bool(verification.get("rehydrated", False)))
+    return {"checked": checked, "reliable": reliable, "rehydrated": rehydrated}
 
 
 def _format_execution_context(execution_summary: str, execution_result: dict) -> str:

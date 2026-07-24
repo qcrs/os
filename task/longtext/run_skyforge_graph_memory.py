@@ -898,7 +898,6 @@ def main() -> None:
             "chat_backend": os.getenv("CHAT_BACKEND"),
             "chat_base_url": os.getenv("CHAT_BASE_URL"),
             "chat_model": os.getenv("CHAT_MODEL"),
-            "persistent_memory_enabled": os.getenv("PERSISTENT_MEMORY_ENABLED"),
             "long_term_memory_enabled": os.getenv("LONG_TERM_MEMORY_ENABLED"),
             "long_term_memory_search_mode": os.getenv("LONG_TERM_MEMORY_SEARCH_MODE"),
             "enable_context_packets": os.getenv("ENABLE_CONTEXT_PACKETS"),
