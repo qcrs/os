@@ -381,6 +381,12 @@ def _claim_set_from_payload(payload: dict[str, object]) -> ClaimSet:
 
 def _isolated_role_completion(role: str, payload: dict[str, object]) -> RoleWorkerResult:
     worker_timeout_s = float(os.getenv("STATEBUS_ADAPTIVE_ROLE_WORKER_TIMEOUT_S", "105"))
+    project_root = Path(__file__).resolve().parents[2]
+    worker_environment = os.environ.copy()
+    python_path = [entry for entry in worker_environment.get("PYTHONPATH", "").split(os.pathsep) if entry]
+    if str(project_root) not in python_path:
+        python_path.insert(0, str(project_root))
+    worker_environment["PYTHONPATH"] = os.pathsep.join(python_path)
     try:
         completed = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--role-worker", role],
@@ -389,6 +395,8 @@ def _isolated_role_completion(role: str, payload: dict[str, object]) -> RoleWork
             capture_output=True,
             timeout=worker_timeout_s,
             check=False,
+            cwd=project_root,
+            env=worker_environment,
         )
     except subprocess.TimeoutExpired:
         error = f"{role}_worker_timeout:{worker_timeout_s:.1f}s"
