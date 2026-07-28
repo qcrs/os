@@ -1621,22 +1621,8 @@ from the v6 ledger before proposing a rerun.
 
 Human-readable source reports:
 
-- `docs/reports/contest_evidence_closure_final_report_20260720.md`
 - `docs/reports/contest_recovery_baseline_asset_audit_20260724.md`
-- `docs/reports/contest_recovery_ppt_evidence_reconciliation_20260724.md`
-- `docs/reports/final_v2_contest_evidence_index_20260720.md`
 
-Interpretation-only planning sources, read from
-`feat/native-latent-alignment` and deliberately not used as an additional
-numeric baseline:
-
-- `docs/planning/contest_rebuild_20260722/09_convergence_decision.md`
-- `docs/planning/contest_rebuild_20260722/05_experiment_matrix_metrics_and_statistics.md`
-- `docs/planning/contest_rebuild_20260722/00_executive_decision_and_packaging.md`
-
-They provide the C/N/M narrative, evidence-level vocabulary and claim
-discipline used in Sections 4.1 and 15. They do not add historical run values
-to any E0-E6 table.
 
 Container-root inventory:
 

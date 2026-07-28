@@ -2,7 +2,6 @@
 
 这组文档面向需要阅读、维护或继续扩展 StateBus 的开发者。项目说明书回答的是“项目解决什么问题、为什么这样设计以及实验得到什么结果”，这里进一步回答“对象从哪里产生、经过哪些校验、由哪个模块保存、失败后如何收敛，以及界面看到的内容如何回到真实运行记录”。文档尽量沿源码中的类名、合同字段和事件名称展开，读者不需要先理解全部历史分支，也不必从实验报告反推实现。
 
-当前实现主线位于仓库的 `v2/` 目录。顶层的 `runtime/`、`agents/`、`statepool/` 和 `memory/` 仍保留 host-mainline / v1 代码与历史原型，但它们不是本手册描述的正式 v2 调用链。涉及控制面时，以 **UDS + typed Protobuf** 为准；涉及数据面时，必须区分检索用 `SemanticStateRef`、决策用 `LogitStateRef`、文件型 `ExecutionArtifactRef` 与跨任务 `MemoryRef`，不能把生命周期和消费语义不同的对象统称为一个模糊的“状态引用”。KV cache 或 hidden state 跨引擎传递尚不属于当前正式能力，只能按 Engine-Local Prefix Reuse 的后续方向理解。
 
 ## 从哪里开始读
 

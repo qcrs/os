@@ -392,9 +392,6 @@ or LogitState.
    and `ledger.json` for every root summary, manifest and log event.
 3. `/home/qcrs/statebus/runs/contest_baseline_asset_audit_20260724_container/summary.md`
    and `inventory.json` for every source path and integrity record.
-4. `docs/reports/contest_evidence_closure_final_report_20260720.md` only as a
-   human narrative cross-reference; the artifact ledger remains the detailed
-   source layer.
 
 The next discussion should start from these gaps and the presentation story:
 which existing asset becomes a slide, which claim is already earned, and which

@@ -23,3 +23,9 @@ deploy/statebus_llm.yaml.local
 studio-ui/node_modules/
 studio-ui/dist/
 studio-ui/*.tsbuildinfo
+docs/**/*.xml
+docs/**/*.drawio
+docs/**/*.pptx
+docs/**/*.pdf
+docs/**/*.docx
+docs/improvement/**/artifacts/

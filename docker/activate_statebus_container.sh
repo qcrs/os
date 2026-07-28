@@ -36,7 +36,6 @@ _statebus_container_activate_main() {
   export STATEBUS_RUNS_DIR="${STATEBUS_RUNS_DIR:-$STATEBUS_HOME/runs}"
   export STATEBUS_LOGS_DIR="${STATEBUS_LOGS_DIR:-$STATEBUS_HOME/logs}"
   export STATEBUS_MODELS_DIR="${STATEBUS_MODELS_DIR:-$STATEBUS_HOME/models}"
-  export CODEX_HOME="${CODEX_HOME:-$STATEBUS_HOME/work/codex-home}"
   export NPM_CACHE="${NPM_CACHE:-$STATEBUS_HOME/caches/npm}"
   export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.local}"
   export PATH="$HOME/.local/bin${PATH:+:${PATH}}"
@@ -56,7 +55,6 @@ _statebus_container_activate_main() {
     "$STATEBUS_RUNS_DIR" \
     "$STATEBUS_LOGS_DIR" \
     "$STATEBUS_MODELS_DIR" \
-    "$CODEX_HOME" \
     "$NPM_CACHE" \
     "$NPM_CONFIG_PREFIX"
 
@@ -73,7 +71,6 @@ _statebus_container_activate_main() {
   echo "[statebus-container] statepool dir: $STATEBUS_STATEPOOL_DIR"
   echo "[statebus-container] llm config: $STATEBUS_LLM_CONFIG_FILE"
   echo "[statebus-container] embed device: $STATEBUS_EMBED_DEVICE"
-  echo "[statebus-container] codex home: $CODEX_HOME"
 }
 
 _STATEBUS_CONTAINER_HAD_ERREXIT=0
