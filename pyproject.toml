@@ -28,8 +28,8 @@ langgraph = [
 ]
 
 [project.scripts]
-statebus-project-smoke = "runtime.smoke:main"
-statebus-project-benchmark = "eval.runner:main"
+statebus-project-smoke = "v2.runtime.smoke:main"
+statebus-project-benchmark = "v2.benchmark.live_runner:main"
 
 [tool.setuptools]
 py-modules = []
