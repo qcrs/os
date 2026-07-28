@@ -106,7 +106,6 @@ export STATEBUS_EMBED_DEVICE=cuda:0
   - 激活脚本与配置模板
 - `scripts/`
   - 环境初始化与维护脚本
-- `docs/archive/`
   - 旧 host-mainline / v1 过程文档归档区，不作为当前 v2 source-of-truth
 
 ## 5. 测试命令
@@ -187,10 +186,6 @@ python -m v2.benchmark.live_runner --suite compare --benchmark-tier dev --role-p
 
 历史报告已归档，只能当背景材料，不能替代当前 source-of-truth：
 
-- `docs/archive/legacy_202606_host_mainline/reports/MASTER_PRESENTATION_GUIDE.md`
-- `docs/archive/legacy_202606_host_mainline/reports/task_design_and_mode_comparison.md`
-- `docs/archive/legacy_202606_host_mainline/reports/current_architecture_overview_20260622.md`
-- `docs/archive/legacy_202606_host_mainline/reports/benchmark_results_interpretation_20260610.md`
 
 这些历史报告如果保留旧 headline、旧 pack 命名或旧实现假设，只能按“历史背景/机制示意”读取；当前 formal 结论以 active object、当前 docs 冻结口径和对应 `runs/*/benchmark_report.md` 为准。
 
