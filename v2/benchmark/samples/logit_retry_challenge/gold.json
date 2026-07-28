@@ -1,0 +1,17 @@
+{
+  "schema_version": "statebus.logit_retry_challenge_gold.v1",
+  "facts": {
+    "logit-easy-01-anomaly": {"expected_outcome": "select", "expected_candidate_id": "detect_outliers"},
+    "logit-easy-02-correlation": {"expected_outcome": "select", "expected_candidate_id": "correlate_columns"},
+    "logit-easy-03-trend": {"expected_outcome": "select", "expected_candidate_id": "compute_multi_period_trend"},
+    "logit-easy-04-extreme": {"expected_outcome": "select", "expected_candidate_id": "aggregate_and_extreme"},
+    "logit-easy-05-dsl": {"expected_outcome": "select", "expected_candidate_id": "execute_analysis_dsl"},
+    "logit-ambiguous-01-anomaly": {"expected_outcome": "select", "expected_candidate_id": "detect_outliers"},
+    "logit-ambiguous-02-join": {"expected_outcome": "select", "expected_candidate_id": "join_tables"},
+    "logit-ambiguous-03-trend": {"expected_outcome": "select", "expected_candidate_id": "compute_multi_period_trend"},
+    "logit-ambiguous-04-extreme": {"expected_outcome": "select", "expected_candidate_id": "aggregate_and_extreme"},
+    "logit-ambiguous-05-python": {"expected_outcome": "select", "expected_candidate_id": "execute_bounded_python"},
+    "logit-unresolved-01-replica": {"expected_outcome": "fail_closed", "expected_candidate_id": ""},
+    "logit-unresolved-02-policy": {"expected_outcome": "fail_closed", "expected_candidate_id": ""}
+  }
+}

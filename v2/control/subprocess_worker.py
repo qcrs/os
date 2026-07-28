@@ -50,7 +50,11 @@ from v2.control.transport import (
     send_text_message,
 )
 from v2.state import (
+    LogitStateValidationError,
     SemanticStateValidationError,
+    evaluate_logit_state,
+    logit_ref_from_sidecar,
+    resolve_logit_state,
     select_dense_semantic_state,
     semantic_ref_from_sidecar,
 )
@@ -151,6 +155,7 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     runtime_reuse_contract = message.runtime_reuse_contract or ""
     semantic_optional = "no_semantic_state" in runtime_reuse_contract
     semantic_selection = message.operation == "semantic_select_v1"
+    logit_gate = message.operation == "logit_gate_v1"
 
     errors: list[str] = []
     if not message.workspace_root.strip():
@@ -161,7 +166,7 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         errors.append("output_contract_version_missing")
     if not semantic_optional and not message.state_refs:
         errors.append("state_refs_missing")
-    if not semantic_selection and not message.artifact_refs:
+    if not semantic_selection and not logit_gate and not message.artifact_refs:
         errors.append("artifact_refs_missing")
     if semantic_selection:
         if not message.state_root.strip():
@@ -174,6 +179,11 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
             errors.append("capability_grant_hash_missing")
         if len(message.state_refs) != 1:
             errors.append("semantic_state_ref_count_invalid")
+    if logit_gate:
+        if not message.state_root.strip():
+            errors.append("state_root_missing")
+        if len(message.state_refs) != 1:
+            errors.append("logit_state_ref_count_invalid")
 
     if errors:
         send_message(
@@ -266,6 +276,54 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
                 consumer_pid=selection.consumer_pid,
                 producer_pid=selection.producer_pid,
                 encoder_signature=selection.encoder_signature,
+            ),
+        )
+    elif logit_gate:
+        try:
+            state_ref = logit_ref_from_sidecar(
+                Path(message.state_root),
+                message.state_refs[0].ref_id,
+            )
+            resolved = resolve_logit_state(
+                state_root=Path(message.state_root),
+                ref=state_ref,
+                unregister_shared_memory_tracker=True,
+            )
+            receipt = evaluate_logit_state(resolved)
+        except (LogitStateValidationError, ValueError, OSError) as exc:
+            send_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="logit_state_consume_failed",
+                    error_detail=str(exc) or type(exc).__name__,
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
+        send_message(
+            sock,
+            SuccessResult(
+                header=replace(header, event_type=EventType.RES_SUCC),
+                state_refs=message.state_refs,
+                output_contract_version=message.output_contract_version,
+                completed_at_ns=time.time_ns(),
+                consumed_state_ref_id=receipt.state_id,
+                consumer_pid=receipt.consumer_pid,
+                producer_pid=receipt.producer_pid,
+                gate_action=receipt.action.value,
+                gate_reason=receipt.reason,
+                selected_alias=receipt.selected_alias,
+                selected_candidate_id=receipt.selected_candidate_id,
+                top1_alias=receipt.top1_alias,
+                selected_probability=receipt.selected_probability,
+                top_margin=receipt.top_margin,
+                normalized_entropy=receipt.normalized_entropy,
+                other_mass=receipt.other_mass,
+                decision_id=receipt.decision_id,
+                margin_threshold=receipt.margin_threshold,
+                gate_candidate_count=receipt.candidate_count,
             ),
         )
     else:

@@ -92,6 +92,22 @@ from v2.contracts.llm_codeact import (
     CodeRepairRecord,
     GeneratedCodeCandidate,
 )
+from v2.contracts.logit import (
+    CandidateAliasBinding,
+    CandidateSurfaceV2,
+    EXECUTOR_CHOICE_DECISION_TYPE,
+    LOGIT_BYTE_ORDER,
+    LOGIT_DTYPE,
+    LOGIT_GATE_MARGIN_THRESHOLD,
+    LOGIT_GATE_RECEIPT_SCHEMA_VERSION,
+    LOGIT_PROBABILITY_SEMANTICS,
+    LOGIT_PRODUCER_RECEIPT_SCHEMA_VERSION,
+    LOGIT_STATE_SCHEMA_VERSION,
+    LogitGateAction,
+    LogitGateReceipt,
+    LogitProducerReceipt,
+    LogitProducerStatus,
+)
 
 __all__ = [
     "BENCHMARK_QUALITY_FLOOR_SCHEMA_VERSION",
@@ -180,4 +196,18 @@ __all__ = [
     "CodePolicyReport",
     "CodeRepairRecord",
     "GeneratedCodeCandidate",
+    "CandidateAliasBinding",
+    "CandidateSurfaceV2",
+    "EXECUTOR_CHOICE_DECISION_TYPE",
+    "LOGIT_BYTE_ORDER",
+    "LOGIT_DTYPE",
+    "LOGIT_GATE_MARGIN_THRESHOLD",
+    "LOGIT_GATE_RECEIPT_SCHEMA_VERSION",
+    "LOGIT_PROBABILITY_SEMANTICS",
+    "LOGIT_PRODUCER_RECEIPT_SCHEMA_VERSION",
+    "LOGIT_STATE_SCHEMA_VERSION",
+    "LogitGateAction",
+    "LogitGateReceipt",
+    "LogitProducerReceipt",
+    "LogitProducerStatus",
 ]

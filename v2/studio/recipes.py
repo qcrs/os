@@ -107,6 +107,19 @@ RECIPES: tuple[Recipe, ...] = (
 RECIPE_BY_ID = {recipe.recipe_id: recipe for recipe in RECIPES}
 
 
+def resolve_embedding_model_path() -> Path:
+    configured = os.getenv("STATEBUS_EMBED_MODEL_PATH", "").strip()
+    if configured:
+        return Path(configured)
+    models_dir = os.getenv("STATEBUS_MODELS_DIR", "").strip()
+    if models_dir:
+        return Path(models_dir) / "Qwen3-Embedding-0.6B"
+    statebus_home = Path(
+        os.getenv("STATEBUS_HOME", str(Path.home() / "statebus"))
+    )
+    return statebus_home / "models" / "Qwen3-Embedding-0.6B"
+
+
 def _common_live_command(run_dir: Path, run_id: str) -> list[str]:
     return [
         sys.executable,
@@ -138,10 +151,7 @@ def build_command(recipe_id: str, run_dir: Path, run_id: str) -> list[str]:
         raise KeyError(recipe_id)
     common = _common_live_command(run_dir, run_id)
     if recipe_id == "quick-operating-codeact":
-        embedding_model = os.getenv(
-            "STATEBUS_EMBED_MODEL_PATH",
-            str(Path.home() / "statebus" / "models" / "Qwen3-Embedding-0.6B"),
-        )
+        embedding_model = str(resolve_embedding_model_path())
         return [
             sys.executable,
             "-m",
@@ -200,10 +210,7 @@ def build_command(recipe_id: str, run_dir: Path, run_id: str) -> list[str]:
             "deterministic_codeact",
         ]
     if recipe_id == "capability-coverage":
-        embedding_model = os.getenv(
-            "STATEBUS_EMBED_MODEL_PATH",
-            str(Path.home() / "statebus" / "models" / "Qwen3-Embedding-0.6B"),
-        )
+        embedding_model = str(resolve_embedding_model_path())
         return [
             sys.executable,
             "-m",

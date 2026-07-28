@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from v2.studio.catalog import PROJECT_ROOT, load_catalog, load_evidence_snapshot
 from v2.studio.jobs import JobManager
 from v2.studio.models import RunCreate, RunView
-from v2.studio.recipes import RECIPES, RECIPE_BY_ID
+from v2.studio.recipes import RECIPES, RECIPE_BY_ID, resolve_embedding_model_path
 from v2.studio.task_flow import build_task_flow_index
 
 
@@ -122,12 +122,7 @@ async def system_health() -> dict[str, Any]:
     model_config = Path(
         os.getenv("STATEBUS_LLM_CONFIG_FILE", str(PROJECT_ROOT / "deploy" / "statebus_llm.yaml.local"))
     )
-    embedding_model_path = Path(
-        os.getenv(
-            "STATEBUS_EMBED_MODEL_PATH",
-            str(Path.home() / "statebus" / "models" / "Qwen3-Embedding-0.6B"),
-        )
-    )
+    embedding_model_path = resolve_embedding_model_path()
     embedding_device = os.getenv("STATEBUS_EMBED_DEVICE", "auto")
     health_url = os.getenv("STATEBUS_LOCAL_VLLM_HEALTH_URL", "http://127.0.0.1:53334/health")
     model_service, role_worker, embedding_runtime = await asyncio.gather(
@@ -183,12 +178,7 @@ async def list_runs() -> list[RunView]:
 async def create_run(request: RunCreate) -> RunView:
     if request.recipe_id not in RECIPE_BY_ID:
         raise HTTPException(status_code=422, detail="Unknown or disabled recipe_id")
-    embedding_model_path = Path(
-        os.getenv(
-            "STATEBUS_EMBED_MODEL_PATH",
-            str(Path.home() / "statebus" / "models" / "Qwen3-Embedding-0.6B"),
-        )
-    )
+    embedding_model_path = resolve_embedding_model_path()
     embedding_device = os.getenv("STATEBUS_EMBED_DEVICE", "auto")
     health_url = os.getenv("STATEBUS_LOCAL_VLLM_HEALTH_URL", "http://127.0.0.1:53334/health")
     role_worker, embedding_runtime, model_service = await asyncio.gather(
