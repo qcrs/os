@@ -1,1 +1,0 @@
-{"claim_boundary": "no vLLM prefix-cache mechanism claim from this skipped optional probe", "ok": true, "reason": "STATEBUS_RUN_VLLM_PREFIX_PROBE is not 1", "schema_version": "statebus.local_api_vllm_prefix_metrics_probe.v1", "skipped": true}

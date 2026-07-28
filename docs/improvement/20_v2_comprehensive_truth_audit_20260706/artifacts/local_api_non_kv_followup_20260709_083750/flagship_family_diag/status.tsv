@@ -1,2 +1,0 @@
-stage	exit_code	required	kind	artifact	log_path	duration_s
-flagship_failed_family_diagnostics	0	1	json	/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship-families/artifacts/stages/flagship_failed_family_diagnostics/stdout.json	/statebus/runs/v2-local-api-non-kv-followup-20260709_083750-flagship-families/artifacts/stages/flagship_failed_family_diagnostics/console.log	3802

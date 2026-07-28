@@ -421,7 +421,6 @@ PPT 主图只用第一行，第二行放侧边强化卡。
 ### 10.1 基线报告
 
 - `docs/reports/contest_recovery_fixed_baseline_experiment_compendium_20260724.md`
-- `docs/reports/contest_recovery_ppt_experiment_evidence_digest_20260724.md`
 - `docs/reference/题目.md`
 
 ### 10.2 正式实验根

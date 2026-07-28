@@ -45,7 +45,6 @@ services:
       STATEBUS_PIP_INDEX_URL: ${STATEBUS_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
       STATEBUS_TORCH_SPEC: ${STATEBUS_TORCH_SPEC:-torch==2.5.1}
       STATEBUS_TORCH_INDEX_URL: ${STATEBUS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
-      CODEX_HOME: /statebus/work/codex-home
       NPM_CACHE: /statebus/caches/npm
       NPM_CONFIG_PREFIX: /root/.local
       PIP_CACHE_DIR: /statebus/caches/pip

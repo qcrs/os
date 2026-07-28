@@ -103,8 +103,6 @@ COPY docker/activate_statebus_container.sh /usr/local/bin/activate_statebus_cont
 RUN chmod +x /usr/local/bin/activate_statebus_container.sh
 COPY scripts/setup_container_embed_stack.sh /usr/local/bin/statebus-setup-container-embed-stack.sh
 RUN chmod +x /usr/local/bin/statebus-setup-container-embed-stack.sh
-COPY scripts/setup_container_codex_cli.sh /usr/local/bin/statebus-setup-container-codex-cli.sh
-RUN chmod +x /usr/local/bin/statebus-setup-container-codex-cli.sh
 
 USER 0:0
 
@@ -128,8 +126,6 @@ COPY docker/activate_statebus_container.sh /usr/local/bin/activate_statebus_cont
 RUN chmod +x /usr/local/bin/activate_statebus_container.sh
 COPY scripts/setup_container_embed_stack.sh /usr/local/bin/statebus-setup-container-embed-stack.sh
 RUN chmod +x /usr/local/bin/statebus-setup-container-embed-stack.sh
-COPY scripts/setup_container_codex_cli.sh /usr/local/bin/statebus-setup-container-codex-cli.sh
-RUN chmod +x /usr/local/bin/statebus-setup-container-codex-cli.sh
 
 USER 0:0
 

@@ -54,5 +54,3 @@
 | Studio API/jobs | [`studio/app.py`](../../../v2/studio/app.py)、[`studio/jobs.py`](../../../v2/studio/jobs.py) | [`studio/recipes.py`](../../../v2/studio/recipes.py) |
 | Studio task-flow adapter | [`studio/task_flow.py`](../../../v2/studio/task_flow.py) | [`studio-ui/src/types.ts`](../../../studio-ui/src/types.ts) |
 | Studio pages/flow | [`EvidencePage.tsx`](../../../studio-ui/src/pages/EvidencePage.tsx)、[`LiveStudioPage.tsx`](../../../studio-ui/src/pages/LiveStudioPage.tsx) | [`AgentFlowCanvas.tsx`](../../../studio-ui/src/components/AgentFlowCanvas.tsx) |
-
-顶层 `runtime/`、`agents/`、`memory/` 等仍是 host-mainline/v1 参考。修改当前正式链时先确认 import 以 `v2.` 开头，避免在旧模块中修了一个同名类却没有影响当前 Runner。
