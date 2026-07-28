@@ -1,5 +1,11 @@
 __pycache__/
 .pytest_cache/
+.venv/
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
 *.pyc
 *.pyo
 *.pyd
@@ -25,7 +31,8 @@ studio-ui/dist/
 studio-ui/*.tsbuildinfo
 docs/**/*.xml
 docs/**/*.drawio
-docs/**/*.pptx
-docs/**/*.pdf
-docs/**/*.docx
+*.pptx
+*.pdf
+*.docx
+~$*
 docs/improvement/**/artifacts/

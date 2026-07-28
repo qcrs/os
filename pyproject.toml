@@ -5,21 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "statebus-project"
 version = "0.1.0"
-description = "Host-side StateBus implementation repo"
+description = "StateBus v2 contest recovery runtime"
 requires-python = ">=3.11"
 dependencies = [
   "numpy",
   "protobuf",
   "pydantic>=2",
-  "orjson",
   "msgpack",
   "openai",
   "faiss-cpu",
   "transformers>=4.51.3,<5",
   "sentence-transformers==5.5.1",
-  "networkx",
   "pyyaml",
-  "rich",
 ]
 
 [project.optional-dependencies]
