@@ -41,6 +41,9 @@ def test_catalog_exposes_registered_tasks_without_external_paths() -> None:
 
 def test_api_serves_snapshot_catalog_and_controlled_run(tmp_path, monkeypatch) -> None:
     manager = JobManager(tmp_path / "studio-runs")
+    embedding_model = tmp_path / "embedding-model"
+    embedding_model.mkdir()
+    monkeypatch.setenv("STATEBUS_EMBED_MODEL_PATH", str(embedding_model))
     monkeypatch.setattr(studio_app, "manager", manager)
     monkeypatch.setattr(
         studio_app,
@@ -138,6 +141,9 @@ def test_api_rejects_run_when_isolated_role_worker_is_unavailable(tmp_path, monk
 
 def test_api_rejects_run_when_embedding_device_is_unavailable(tmp_path, monkeypatch) -> None:
     manager = JobManager(tmp_path / "studio-runs")
+    embedding_model = tmp_path / "embedding-model"
+    embedding_model.mkdir()
+    monkeypatch.setenv("STATEBUS_EMBED_MODEL_PATH", str(embedding_model))
     monkeypatch.setattr(studio_app, "manager", manager)
     monkeypatch.setattr(
         studio_app,

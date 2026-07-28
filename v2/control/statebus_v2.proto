@@ -88,6 +88,18 @@ message SuccessResult {
   int64 consumer_pid = 11;
   int64 producer_pid = 12;
   string encoder_signature = 13;
+  string gate_action = 14;
+  string gate_reason = 15;
+  string selected_alias = 16;
+  string selected_candidate_id = 17;
+  string top1_alias = 18;
+  double selected_probability = 19;
+  double top_margin = 20;
+  double normalized_entropy = 21;
+  double other_mass = 22;
+  string decision_id = 23;
+  double margin_threshold = 24;
+  uint32 gate_candidate_count = 25;
 }
 
 message ErrorResult {

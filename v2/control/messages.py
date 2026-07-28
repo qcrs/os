@@ -105,6 +105,18 @@ class SuccessResult:
     consumer_pid: int = 0
     producer_pid: int = 0
     encoder_signature: str = ""
+    gate_action: str = ""
+    gate_reason: str = ""
+    selected_alias: str = ""
+    selected_candidate_id: str = ""
+    top1_alias: str = ""
+    selected_probability: float = 0.0
+    top_margin: float = 0.0
+    normalized_entropy: float = 0.0
+    other_mass: float = 0.0
+    decision_id: str = ""
+    margin_threshold: float = 0.0
+    gate_candidate_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -250,6 +262,18 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.consumer_pid = message.consumer_pid
         body_pb.producer_pid = message.producer_pid
         body_pb.encoder_signature = message.encoder_signature
+        body_pb.gate_action = message.gate_action
+        body_pb.gate_reason = message.gate_reason
+        body_pb.selected_alias = message.selected_alias
+        body_pb.selected_candidate_id = message.selected_candidate_id
+        body_pb.top1_alias = message.top1_alias
+        body_pb.selected_probability = message.selected_probability
+        body_pb.top_margin = message.top_margin
+        body_pb.normalized_entropy = message.normalized_entropy
+        body_pb.other_mass = message.other_mass
+        body_pb.decision_id = message.decision_id
+        body_pb.margin_threshold = message.margin_threshold
+        body_pb.gate_candidate_count = message.gate_candidate_count
     elif isinstance(message, ErrorResult):
         body_pb.error_code = message.error_code
         body_pb.error_detail = message.error_detail
@@ -332,6 +356,18 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             consumer_pid=int(body_pb.consumer_pid),
             producer_pid=int(body_pb.producer_pid),
             encoder_signature=body_pb.encoder_signature,
+            gate_action=body_pb.gate_action,
+            gate_reason=body_pb.gate_reason,
+            selected_alias=body_pb.selected_alias,
+            selected_candidate_id=body_pb.selected_candidate_id,
+            top1_alias=body_pb.top1_alias,
+            selected_probability=float(body_pb.selected_probability),
+            top_margin=float(body_pb.top_margin),
+            normalized_entropy=float(body_pb.normalized_entropy),
+            other_mass=float(body_pb.other_mass),
+            decision_id=body_pb.decision_id,
+            margin_threshold=float(body_pb.margin_threshold),
+            gate_candidate_count=int(body_pb.gate_candidate_count),
         )
     if body_field == "res_err":
         return ErrorResult(
@@ -482,6 +518,18 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
             consumer_pid=int(decoded.get("consumer_pid", 0)),
             producer_pid=int(decoded.get("producer_pid", 0)),
             encoder_signature=str(decoded.get("encoder_signature", "")),
+            gate_action=str(decoded.get("gate_action", "")),
+            gate_reason=str(decoded.get("gate_reason", "")),
+            selected_alias=str(decoded.get("selected_alias", "")),
+            selected_candidate_id=str(decoded.get("selected_candidate_id", "")),
+            top1_alias=str(decoded.get("top1_alias", "")),
+            selected_probability=float(decoded.get("selected_probability", 0.0)),
+            top_margin=float(decoded.get("top_margin", 0.0)),
+            normalized_entropy=float(decoded.get("normalized_entropy", 0.0)),
+            other_mass=float(decoded.get("other_mass", 0.0)),
+            decision_id=str(decoded.get("decision_id", "")),
+            margin_threshold=float(decoded.get("margin_threshold", 0.0)),
+            gate_candidate_count=int(decoded.get("gate_candidate_count", 0)),
         )
     if message_type == "res_err":
         return ErrorResult(

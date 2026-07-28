@@ -51,6 +51,7 @@ from v2.contracts import (
     StorageKind,
     TaskCompilerInput,
     TaskMode,
+    LOGIT_GATE_MARGIN_THRESHOLD,
 )
 from v2.memory import (
     DeterministicEmbeddingEncoder,
@@ -130,6 +131,13 @@ from v2.runtime import (
     select_history_replay_candidate,
 )
 from v2.runtime.preflight import runtime_preflight
+from v2.runtime.logit_gate import (
+    LogitGateAttempt,
+    LogitGateMode,
+    make_logit_state_store,
+    normalize_logit_gate_mode,
+    run_logit_gate_attempt,
+)
 from v2.runtime.runtime_signature import runtime_signature_payload
 from v2.runtime.semantic_plan import resolve_semantic_task_plan
 from v2.runtime.session import RuntimeTaskSession, RuntimeWorkflowStep
@@ -1966,6 +1974,59 @@ def _workflow_template(*, step_id: str, artifact_id: str) -> tuple[RuntimeWorkfl
     )
 
 
+def _merge_executor_retry_accounting(
+    first: ExecutorRoleDecision,
+    second: ExecutorRoleDecision,
+) -> ExecutorRoleDecision:
+    return replace(
+        second,
+        prompt_tokens=first.prompt_tokens + second.prompt_tokens,
+        completion_tokens=first.completion_tokens + second.completion_tokens,
+        total_tokens=first.total_tokens + second.total_tokens,
+        prompt_bytes=first.prompt_bytes + second.prompt_bytes,
+        latency_ms=first.latency_ms + second.latency_ms,
+    )
+
+
+def _write_logit_gate_audit(
+    *,
+    path: Path,
+    task_id: str,
+    mode: LogitGateMode,
+    attempts: list[LogitGateAttempt],
+    final_status: str,
+    retry_triggered: bool,
+    failure_reason: str,
+    decision: ExecutorRoleDecision,
+    extraction_attempt_count: int,
+    extraction_available_count: int,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        stable_json_dumps({
+            "schema_version": "statebus.logit_gate_experiment.v1",
+            "task_id": task_id,
+            "mode": mode.value,
+            "margin_threshold": LOGIT_GATE_MARGIN_THRESHOLD,
+            "extraction_attempt_count": extraction_attempt_count,
+            "extraction_available_count": extraction_available_count,
+            "attempt_count": len(attempts),
+            "retry_triggered": retry_triggered,
+            "final_status": final_status,
+            "failure_reason": failure_reason,
+            "final_route": decision.route,
+            "final_tool_name": decision.tool_name,
+            "extraction_available": bool(
+                decision.logit_exact_result is not None
+                and decision.logit_exact_result.available
+            ),
+            "unavailable_reason": decision.logit_unavailable_reason,
+            "attempts": [attempt.canonical_payload() for attempt in attempts],
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+
 def run_smoke(
     *,
     workspace_root: Path,
@@ -1982,6 +2043,15 @@ def run_smoke(
     driver_profile_override: RuntimeDriverProfile | None = None,
 ) -> SmokeResult:
     layer_config = layer_config or SmokeLayerConfig()
+    logit_gate_mode = normalize_logit_gate_mode(
+        os.getenv("STATEBUS_LOGIT_GATE_MODE", "off")
+    )
+    logit_gate_attempts: list[LogitGateAttempt] = []
+    logit_gate_final_status = "off"
+    logit_gate_failure_reason = ""
+    logit_retry_triggered = False
+    logit_extraction_attempt_count = 0
+    logit_extraction_available_count = 0
     benchmark_quality_checks = tuple(
         str(item).strip()
         for item in (canonical_task_spec.arguments.get("quality_checks", []) if canonical_task_spec else ())
@@ -2058,11 +2128,14 @@ def run_smoke(
         role_path_runner = RolePathRunner(
             llm_client=role_dispatch_client,
             handoff_mode=layer_config.handoff_mode,
+            logit_gate_mode=logit_gate_mode.value,
         )
     except TypeError:
         role_path_runner = RolePathRunner(llm_client=role_dispatch_client)
         if hasattr(role_path_runner, "handoff_mode"):
             object.__setattr__(role_path_runner, "handoff_mode", layer_config.handoff_mode)
+        if hasattr(role_path_runner, "logit_gate_mode"):
+            object.__setattr__(role_path_runner, "logit_gate_mode", logit_gate_mode.value)
     prefix_metrics_url = _vllm_metrics_url()
     prefix_metrics_enabled = "local_vllm" in {
         layer_config.llm_mode_for_role(role)
@@ -2810,6 +2883,125 @@ def run_smoke(
             if route_hints_enabled
             else (),
         )
+        if logit_gate_mode is not LogitGateMode.OFF:
+            logit_audit_path = layout.logs_dir / "logit_gate.json"
+            logit_store = make_logit_state_store(runtime_root / "logit_state")
+            initial_decision = executor_decision
+            extraction = executor_decision.logit_exact_result
+            surface = executor_decision.logit_candidate_surface
+            logit_extraction_attempt_count = 1
+            if extraction is not None and surface is not None and extraction.available:
+                logit_extraction_available_count = 1
+            try:
+                if extraction is None or surface is None or not extraction.available:
+                    logit_gate_failure_reason = (
+                        executor_decision.logit_unavailable_reason or "logit_unavailable"
+                    )
+                    logit_gate_final_status = "logit_unavailable"
+                else:
+                    first_gate_attempt = run_logit_gate_attempt(
+                        store=logit_store,
+                        extraction=extraction,
+                        candidate_surface=surface,
+                        task_id=task_id,
+                        trace_id=trace_id,
+                        attempt_index=1,
+                    )
+                    logit_gate_attempts.append(first_gate_attempt)
+                    if logit_gate_mode is LogitGateMode.TELEMETRY:
+                        logit_gate_final_status = (
+                            "telemetry_accept"
+                            if first_gate_attempt.gate_receipt.action.value == "accept"
+                            else "telemetry_retry_recommended"
+                        )
+                    elif first_gate_attempt.gate_receipt.action.value == "accept":
+                        logit_gate_final_status = "accepted_initial"
+                    else:
+                        logit_retry_triggered = True
+                        logit_extraction_attempt_count += 1
+                        retry_decision = role_path_runner.validate_execution_choice(
+                            route=initial_decision.route,
+                            tool_name=initial_decision.tool_name,
+                            visible_candidates=role_candidates,
+                            action_contract=initial_decision.action_contract,
+                            prompt_slice=executor_prompt_slice,
+                            strict_surface=True,
+                            allow_assisted_correction=False,
+                            route_hints=(
+                                compiler_result.canonical_task_spec.intent_op,
+                                top_candidate.route,
+                            )
+                            if route_hints_enabled
+                            else (),
+                            logit_recheck=True,
+                        )
+                        retry_extraction = retry_decision.logit_exact_result
+                        retry_surface = retry_decision.logit_candidate_surface
+                        if (
+                            retry_extraction is None
+                            or retry_surface is None
+                            or not retry_extraction.available
+                        ):
+                            executor_decision = _merge_executor_retry_accounting(
+                                initial_decision,
+                                retry_decision,
+                            )
+                            logit_gate_failure_reason = (
+                                retry_decision.logit_unavailable_reason
+                                or "logit_unavailable_after_retry"
+                            )
+                            logit_gate_final_status = "fail_closed"
+                        else:
+                            logit_extraction_available_count += 1
+                            second_gate_attempt = run_logit_gate_attempt(
+                                store=logit_store,
+                                extraction=retry_extraction,
+                                candidate_surface=retry_surface,
+                                task_id=task_id,
+                                trace_id=trace_id,
+                                attempt_index=2,
+                            )
+                            logit_gate_attempts.append(second_gate_attempt)
+                            executor_decision = _merge_executor_retry_accounting(
+                                initial_decision,
+                                retry_decision,
+                            )
+                            if second_gate_attempt.gate_receipt.action.value == "accept":
+                                logit_gate_final_status = "accepted_after_retry"
+                            else:
+                                logit_gate_failure_reason = "low_confidence_after_retry"
+                                logit_gate_final_status = "fail_closed"
+            except (RuntimeError, ValueError, OSError) as exc:
+                logit_gate_failure_reason = str(exc) or type(exc).__name__
+                logit_gate_final_status = (
+                    "telemetry_error"
+                    if logit_gate_mode is LogitGateMode.TELEMETRY
+                    else "fail_closed"
+                )
+            finally:
+                _write_logit_gate_audit(
+                    path=logit_audit_path,
+                    task_id=task_id,
+                    mode=logit_gate_mode,
+                    attempts=logit_gate_attempts,
+                    final_status=logit_gate_final_status,
+                    retry_triggered=logit_retry_triggered,
+                    failure_reason=logit_gate_failure_reason,
+                    decision=executor_decision,
+                    extraction_attempt_count=logit_extraction_attempt_count,
+                    extraction_available_count=logit_extraction_available_count,
+                )
+                logit_store.teardown()
+            if (
+                logit_gate_mode is LogitGateMode.RETRY_ONCE
+                and logit_gate_final_status in {"logit_unavailable", "fail_closed"}
+            ):
+                state_store.teardown()
+                if logit_gate_final_status == "logit_unavailable":
+                    raise RuntimeError(
+                        f"logit_unavailable:{logit_gate_failure_reason}"
+                    )
+                raise RuntimeError(logit_gate_failure_reason or "logit_gate_fail_closed")
         actions_text = (
             f"route={executor_decision.route}\n"
             f"tool={executor_decision.tool_name}\n"
@@ -3539,12 +3731,55 @@ def run_smoke(
     task_metrics["evidence_pruning_estimated_kv_tokens_saved"] = float(
         retrieval.pruning_profile.estimated_kv_tokens_saved
     )
-    task_metrics["logit_state_transfer_count"] = float(
-        1 if executor_decision.logit_state_bytes > 0 else 0
+    cross_pid_logit_attempts = tuple(
+        attempt
+        for attempt in logit_gate_attempts
+        if attempt.gate_receipt.producer_pid != attempt.gate_receipt.consumer_pid
+    )
+    retry_recommended_count = sum(
+        attempt.gate_receipt.action.value == "retry"
+        for attempt in logit_gate_attempts
+    )
+    task_metrics["logit_gate_enabled_count"] = float(
+        logit_gate_mode is not LogitGateMode.OFF
+    )
+    task_metrics["logit_gate_telemetry_mode_count"] = float(
+        logit_gate_mode is LogitGateMode.TELEMETRY
+    )
+    task_metrics["logit_gate_retry_once_mode_count"] = float(
+        logit_gate_mode is LogitGateMode.RETRY_ONCE
+    )
+    task_metrics["logit_extraction_attempt_count"] = float(
+        logit_extraction_attempt_count
+    )
+    task_metrics["logit_extraction_available_count"] = float(
+        logit_extraction_available_count
+    )
+    task_metrics["logit_state_publish_count"] = float(len(logit_gate_attempts))
+    task_metrics["logit_state_consume_count"] = float(len(cross_pid_logit_attempts))
+    task_metrics["logit_state_release_count"] = float(
+        sum(bool(attempt.tombstone_path) for attempt in logit_gate_attempts)
+    )
+    task_metrics["logit_state_transfer_count"] = float(len(cross_pid_logit_attempts))
+    task_metrics["logit_state_bytes_transferred"] = float(
+        sum(attempt.state_bytes for attempt in cross_pid_logit_attempts)
+    )
+    task_metrics["logit_gate_accept_count"] = float(
+        sum(
+            attempt.gate_receipt.action.value == "accept"
+            for attempt in logit_gate_attempts
+        )
+    )
+    task_metrics["logit_gate_retry_recommended_count"] = float(
+        retry_recommended_count
+    )
+    task_metrics["logit_retry_trigger_count"] = float(logit_retry_triggered)
+    task_metrics["logit_gate_fail_closed_count"] = float(
+        logit_gate_final_status == "fail_closed"
     )
     task_metrics["logit_state_mean_entropy"] = float(executor_decision.logit_entropy)
     task_metrics["logit_confidence_gate_trigger_count"] = float(
-        1 if executor_decision.logit_state_bytes > 0 and executor_decision.logit_confidence_proxy < 0.3 else 0
+        retry_recommended_count
     )
     # Extended logit-state signals (v2 peak-entropy implementation).
     # logit_varentropy: variance of per-position entropy across the output sequence.
@@ -3644,7 +3879,7 @@ def run_smoke(
     execution_role_call_counts = {
         "planner": 1,
         "retriever": 0 if replay_restore_enabled else 1,
-        "executor": 0 if replay_restore_enabled else 1,
+        "executor": 0 if replay_restore_enabled else 1 + int(logit_retry_triggered),
         "summarizer": 0 if replay_restore_enabled else 1,
     }
     # Control flow is the source of truth for role invocation. Rendered requests

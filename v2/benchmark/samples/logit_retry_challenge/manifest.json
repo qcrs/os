@@ -1,0 +1,235 @@
+{
+  "schema_version": "statebus.logit_retry_challenge_manifest.v1",
+  "suite_id": "logit_retry_challenge_v1",
+  "design": "Controlled RoleView ambiguity with contract expansion only after a numeric retry decision.",
+  "cases": [
+    {
+      "task_id": "logit-easy-01-anomaly",
+      "group": "easy_control",
+      "request_text": "在运营指标表中识别 IQR 异常行，并返回异常记录及上下界。",
+      "initial_context": "输入是一张已经对齐的数值表；输出合同要求异常记录、下界和上界。",
+      "recheck_context": "与首次合同相同；该任务不需要上下文升级。",
+      "candidates": [
+        {
+          "candidate_id": "groupby_aggregate",
+          "initial_view": "按指定字段分组并返回每组聚合值，不判断离群点。",
+          "recheck_view": "按指定字段分组并返回每组聚合值，不判断离群点。"
+        },
+        {
+          "candidate_id": "detect_outliers",
+          "initial_view": "计算四分位距并返回异常行、下界和上界。",
+          "recheck_view": "计算四分位距并返回异常行、下界和上界。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-easy-02-correlation",
+      "group": "easy_control",
+      "request_text": "对同一张已对齐表中的 backlog_units 与 sla_hours 计算 Pearson 相关系数。",
+      "initial_context": "两列位于同一张表且行已经对齐；输出只要求相关系数。",
+      "recheck_context": "与首次合同相同；该任务不需要上下文升级。",
+      "candidates": [
+        {
+          "candidate_id": "correlate_columns",
+          "initial_view": "在已对齐的数值列之间计算相关系数。",
+          "recheck_view": "在已对齐的数值列之间计算相关系数。"
+        },
+        {
+          "candidate_id": "join_tables",
+          "initial_view": "根据键连接两张独立表并输出连接后的记录。",
+          "recheck_view": "根据键连接两张独立表并输出连接后的记录。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-easy-03-trend",
+      "group": "easy_control",
+      "request_text": "根据 2025Q4、2026Q1、2026Q2 三个季度的收入判断整体趋势方向。",
+      "initial_context": "输出合同要求三个时点的完整序列和 increasing、flat 或 decreasing 趋势标签。",
+      "recheck_context": "与首次合同相同；该任务不需要上下文升级。",
+      "candidates": [
+        {
+          "candidate_id": "compare_two_periods",
+          "initial_view": "比较两个时点并返回单个差值或变化率。",
+          "recheck_view": "比较两个时点并返回单个差值或变化率。"
+        },
+        {
+          "candidate_id": "compute_multi_period_trend",
+          "initial_view": "读取三个及以上时点并返回完整序列与趋势方向。",
+          "recheck_view": "读取三个及以上时点并返回完整序列与趋势方向。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-easy-04-extreme",
+      "group": "easy_control",
+      "request_text": "按区域计算平均延迟，并只返回平均延迟最高的区域及其数值。",
+      "initial_context": "输出合同要求分组均值以及全局最大组，不能只返回完整分组表。",
+      "recheck_context": "与首次合同相同；该任务不需要上下文升级。",
+      "candidates": [
+        {
+          "candidate_id": "aggregate_and_extreme",
+          "initial_view": "先完成分组聚合，再从聚合结果选择最大或最小组。",
+          "recheck_view": "先完成分组聚合，再从聚合结果选择最大或最小组。"
+        },
+        {
+          "candidate_id": "groupby_aggregate",
+          "initial_view": "返回所有分组及其聚合值，不执行全局极值选择。",
+          "recheck_view": "返回所有分组及其聚合值，不执行全局极值选择。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-easy-05-dsl",
+      "group": "easy_control",
+      "request_text": "筛选 period=2026Q2 的记录，按 revenue 降序排列并选择 company、period、revenue 三列。",
+      "initial_context": "任务只包含单表筛选、排序和列选择，不包含自连接、透视或自定义循环。",
+      "recheck_context": "与首次合同相同；该任务不需要上下文升级。",
+      "candidates": [
+        {
+          "candidate_id": "execute_analysis_dsl",
+          "initial_view": "执行白名单内的单表筛选、排序、重命名和列选择。",
+          "recheck_view": "执行白名单内的单表筛选、排序、重命名和列选择。"
+        },
+        {
+          "candidate_id": "execute_bounded_python",
+          "initial_view": "为超出 DSL 表达能力的自连接、透视或复杂组合生成受限 Python。",
+          "recheck_view": "为超出 DSL 表达能力的自连接、透视或复杂组合生成受限 Python。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-ambiguous-01-anomaly",
+      "group": "ambiguity_challenge",
+      "request_text": "完成下一步运营指标分析，并交付符合完整输出合同的结构化结果。",
+      "initial_context": "当前最小 RoleView 只确认输入表已经验证；两个候选在可见合同下同等适用，决定性输出字段尚未展开。",
+      "recheck_context": "上下文升级：输出必须包含逐行 IQR 异常标记、下界和上界，不需要分组汇总表。",
+      "candidates": [
+        {
+          "candidate_id": "groupby_aggregate",
+          "initial_view": "读取已验证运营表并产生结构化分析结果。",
+          "recheck_view": "按字段分组并返回聚合表，不产生逐行异常标记。"
+        },
+        {
+          "candidate_id": "detect_outliers",
+          "initial_view": "读取已验证运营表并产生结构化分析结果。",
+          "recheck_view": "计算 IQR 边界并返回逐行异常标记、下界和上界。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-ambiguous-02-join",
+      "group": "ambiguity_challenge",
+      "request_text": "处理两份已验证经营数据，并交付完整合同要求的结构化结果。",
+      "initial_context": "当前最小 RoleView 只确认存在两份数值输入；连接键和最终输出类型尚未展开，两个候选无优先级。",
+      "recheck_context": "上下文升级：两张表分别保存 facility 与 period 维度，必须先按 facility+period 连接并返回连接后的逐行记录；本步不计算相关系数。",
+      "candidates": [
+        {
+          "candidate_id": "join_tables",
+          "initial_view": "读取两份已验证输入并产生结构化分析结果。",
+          "recheck_view": "按复合键连接两张表并返回连接后的逐行记录。"
+        },
+        {
+          "candidate_id": "correlate_columns",
+          "initial_view": "读取两份已验证输入并产生结构化分析结果。",
+          "recheck_view": "要求数值列已经行对齐，并返回一个相关系数。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-ambiguous-03-trend",
+      "group": "ambiguity_challenge",
+      "request_text": "分析已经验证的跨期收入状态，并返回完整合同要求的结果。",
+      "initial_context": "当前最小 RoleView 未展开时间范围和输出形状；两个时间分析候选在可见信息下同等适用。",
+      "recheck_context": "上下文升级：输入包含连续三个季度，输出必须保留三点序列并给出整体趋势方向，而不是只算两个季度的差值。",
+      "candidates": [
+        {
+          "candidate_id": "compute_multi_period_trend",
+          "initial_view": "读取已验证跨期状态并产生结构化时间分析结果。",
+          "recheck_view": "消费三个及以上时点，返回完整序列和趋势方向。"
+        },
+        {
+          "candidate_id": "compare_two_periods",
+          "initial_view": "读取已验证跨期状态并产生结构化时间分析结果。",
+          "recheck_view": "只比较两个时点并返回单个差值或变化率。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-ambiguous-04-extreme",
+      "group": "ambiguity_challenge",
+      "request_text": "对经营表执行聚合分析，并交付完整合同指定的结果。",
+      "initial_context": "当前最小 RoleView 未展开是否需要极值选择；两个聚合候选在可见信息下同等适用。",
+      "recheck_context": "上下文升级：先计算每个业务单元的平均收入，然后只返回平均收入最低的业务单元及数值。",
+      "candidates": [
+        {
+          "candidate_id": "groupby_aggregate",
+          "initial_view": "对已验证表执行聚合并产生结构化结果。",
+          "recheck_view": "返回全部业务单元及其平均收入，不选择全局极值。"
+        },
+        {
+          "candidate_id": "aggregate_and_extreme",
+          "initial_view": "对已验证表执行聚合并产生结构化结果。",
+          "recheck_view": "在分组均值完成后继续选择全局最低业务单元。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-ambiguous-05-python",
+      "group": "ambiguity_challenge",
+      "request_text": "执行已经批准的数据转换任务，并返回通过 Validator 的结构化产物。",
+      "initial_context": "当前最小 RoleView 只确认输入是表格；转换算子尚未展开，两个执行表示在可见信息下同等适用。",
+      "recheck_context": "上下文升级：任务需要按 company 自连接两个期间，再将 metric 类别透视为列；该组合超出白名单 DSL 的表达能力。",
+      "candidates": [
+        {
+          "candidate_id": "execute_bounded_python",
+          "initial_view": "在受控执行环境中产生结构化表格结果。",
+          "recheck_view": "支持经过 AST/Policy 审计的自连接与透视组合。"
+        },
+        {
+          "candidate_id": "execute_analysis_dsl",
+          "initial_view": "在受控执行环境中产生结构化表格结果。",
+          "recheck_view": "只支持白名单单表筛选、排序、重命名和基础聚合。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-unresolved-01-replica",
+      "group": "unresolved_negative",
+      "request_text": "从两个经过验证且声明完全相同的只读副本中选择一个执行路径。",
+      "initial_context": "两个副本具有相同哈希、版本、时延预算和授权范围；当前合同没有提供任何合法的优先级。",
+      "recheck_context": "上下文升级后仍确认两个副本完全等价，且 Policy 禁止按候选顺序、名称或随机性决定。",
+      "candidates": [
+        {
+          "candidate_id": "verified_replica_alpha",
+          "initial_view": "等价只读副本；无优先级。",
+          "recheck_view": "相同哈希、版本、预算和授权；无优先级。"
+        },
+        {
+          "candidate_id": "verified_replica_beta",
+          "initial_view": "等价只读副本；无优先级。",
+          "recheck_view": "相同哈希、版本、预算和授权；无优先级。"
+        }
+      ]
+    },
+    {
+      "task_id": "logit-unresolved-02-policy",
+      "group": "unresolved_negative",
+      "request_text": "在两个尚未获得资源授权的执行计划之间选择一个进入 Worker。",
+      "initial_context": "两个计划都缺少同一个资源授权，当前没有任何一个满足执行前置条件。",
+      "recheck_context": "上下文升级后授权仍缺失；两个计划都不应进入 Worker，且不得根据顺序强行选择。",
+      "candidates": [
+        {
+          "candidate_id": "pending_plan_alpha",
+          "initial_view": "等待相同资源授权的候选计划。",
+          "recheck_view": "资源授权缺失，当前不可执行。"
+        },
+        {
+          "candidate_id": "pending_plan_beta",
+          "initial_view": "等待相同资源授权的候选计划。",
+          "recheck_view": "资源授权缺失，当前不可执行。"
+        }
+      ]
+    }
+  ]
+}
