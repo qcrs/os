@@ -92,6 +92,13 @@ from v2.contracts.llm_codeact import (
     CodeRepairRecord,
     GeneratedCodeCandidate,
 )
+from v2.contracts.engine_local_kv import (
+    ENGINE_LOCAL_KV_PROOF_SCHEMA_VERSION,
+    ENGINE_LOCAL_KV_SCHEMA_VERSION,
+    EngineLocalKVHandle,
+    KVForwardProof,
+    KVHandleStatus,
+)
 
 __all__ = [
     "BENCHMARK_QUALITY_FLOOR_SCHEMA_VERSION",
@@ -180,4 +187,9 @@ __all__ = [
     "CodePolicyReport",
     "CodeRepairRecord",
     "GeneratedCodeCandidate",
+    "ENGINE_LOCAL_KV_PROOF_SCHEMA_VERSION",
+    "ENGINE_LOCAL_KV_SCHEMA_VERSION",
+    "EngineLocalKVHandle",
+    "KVForwardProof",
+    "KVHandleStatus",
 ]

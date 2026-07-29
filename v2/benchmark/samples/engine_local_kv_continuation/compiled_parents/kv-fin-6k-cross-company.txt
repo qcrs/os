@@ -1,0 +1,228 @@
+<|im_start|>system
+You are a financial operations analyst. Use only the supplied offline evidence. Treat each report's Metric Table as authoritative, preserve units, and do not invent values. The supplemental ledger provides context but never overrides a Metric Table.<|im_end|>
+<|im_start|>user
+# StateBus Engine-Local KV Case: kv-fin-6k-cross-company
+
+# Offline Evidence Dossier
+
+# Orion Factory Systems 2026 Operating Review
+
+Document id: `doc-orion-factory-ops-2026`
+
+## Executive Overview
+
+Orion Factory Systems supplies motion-control assemblies and predictive-maintenance software to industrial customers. The 2026 operating review covers the first three quarters after Orion consolidated two regional assembly lines into the Cedar Park manufacturing hub. Management expected the consolidation to raise throughput and improve revenue visibility, but the transition created a temporary training backlog in Q2 and higher expedited freight spend in Q3.
+
+Revenue increased each quarter as the installed base expanded and renewal rates improved. Gross margin held above 39 percent, although margin declined in Q3 because expedited freight and supplier qualification work raised unit costs. Operating expense rose steadily as Orion hired reliability engineers and funded a new field diagnostics team. Churn stayed below five percent, but Q3 churn rose after several enterprise customers delayed maintenance-window approvals. On-time delivery weakened in Q3 when two high-volume encoder suppliers missed September slots.
+
+The dataset is designed for repeated multi-agent metric extraction. The table below is the stable corpus prefix used by the KV prefix reuse probe. Subsequent tasks ask for different metrics from the same report so the content is realistic while still deterministic.
+
+## Metric Table
+
+| quarter | revenue_musd | gross_margin_pct | operating_expense_musd | churn_rate_pct | on_time_delivery_pct |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2026Q1 | 184 | 41.2 | 57 | 3.2 | 96.4 |
+| 2026Q2 | 197 | 40.5 | 61 | 3.6 | 94.1 |
+| 2026Q3 | 211 | 39.7 | 66 | 4.4 | 90.8 |
+
+## Revenue Drivers
+
+The revenue increase from Q1 to Q3 came from three sources. First, four automotive customers expanded orders for servo controller kits after validating Orion's new vibration-monitoring firmware. Second, the retrofit program for older assembly lines produced a larger mix of software-attached hardware sales. Third, the service team converted several one-time inspection projects into annual contracts. Finance attributed roughly half of the Q3 sequential gain to subscription attach and half to higher hardware volume.
+
+## Margin And Cost Notes
+
+Gross margin softened because expedited freight increased in late August and because the new Cedar Park line required extra inspection labor during supplier qualification. The finance controller flagged motor-driver boards and high-resolution encoders as the main pressure points. The procurement team expects relief in Q4 after a second encoder supplier completes reliability testing. No one-time restructuring charge is included in the operating expense line; the table reflects recurring operating expense only.
+
+## Customer Retention Notes
+
+Churn rose to 4.4 percent in Q3. The customer success team traced the increase to delayed deployment windows for three enterprise manufacturing accounts. None of the churned accounts were in the top ten by annual contract value, but two had high reference value in the automotive vertical. Management assigned a dedicated deployment coordinator to the affected segment.
+
+## Delivery Notes
+
+On-time delivery fell from 96.4 percent in Q1 to 90.8 percent in Q3. The operations team linked the decline to supplier misses and training delays on the consolidated line. A temporary night shift was approved for October, and logistics contracts were renegotiated to reduce emergency shipping cost.
+
+## Management Actions
+
+Management approved five actions: complete second-source qualification for encoders, move firmware validation earlier in the sales cycle, assign deployment coordinators to enterprise accounts, reduce Q4 emergency freight by reserving carrier capacity, and publish a weekly risk dashboard for high-volume purchase orders.
+
+## Segment Detail
+
+The motion-control hardware segment remained the largest revenue contributor. Orders for servo controller kits increased after two automotive customers completed line-trial acceptance. The predictive-maintenance software segment grew more slowly but improved revenue quality because subscription attach rates were higher on retrofit projects than on new assembly-line projects. Field services remained capacity constrained. Several customers requested installation support in shorter maintenance windows, which created scheduling conflicts for the reliability engineering team.
+
+The Cedar Park hub consolidation changed the operating cadence. Before the consolidation, regional lines carried overlapping safety stock and used separate inspection routines. After consolidation, inventory visibility improved, but training requirements were concentrated in one location. The production manager reported that Q2 output recovered faster than expected, while Q3 reliability checks took longer because new supplier lots required additional inspection.
+
+## Evidence Notes For Reuse
+
+The same metric table supports multiple downstream questions. A revenue query, a margin query, and a delivery query all need the same stable report context: the business overview, the metric definitions, and the quarter table. Only the requested metric name changes. This makes the report suitable for cache-aware scheduling experiments because the shared prefix should remain identical while role-specific instructions and requested outputs vary.
+
+The table values should be treated as authoritative. Narrative paragraphs are provided to make retrieval realistic and to give the summarizer enough context for non-numeric explanations. If a numeric value in a narrative sentence conflicts with the metric table, the metric table wins. No such conflict is intentionally present in this report.
+
+## Metric Definitions
+
+`revenue_musd` is recognized revenue in millions of US dollars for the quarter. `gross_margin_pct` is gross profit divided by revenue. `operating_expense_musd` includes recurring sales, support, engineering, and general administrative cost, but excludes one-time restructuring charges. `churn_rate_pct` is quarterly customer revenue churn. `on_time_delivery_pct` is the percentage of customer orders delivered within the committed delivery window.
+
+## Risk Register
+
+The highest operational risk is supplier concentration in high-resolution encoders. A second risk is the backlog of deployment windows for enterprise accounts. A third risk is emergency freight cost, which can reduce margin even when revenue grows. Management believes the risks are manageable because no single customer cancellation materially changes the revenue outlook, but the combination of supplier misses and deployment delays can affect customer confidence.
+
+## Q4 Watch Items
+
+The finance team will monitor whether Q4 revenue growth is supported by subscription attach rather than only hardware volume. Operations will monitor on-time delivery recovery after second-source qualification. Customer success will track whether deployment coordinators reduce churn risk among enterprise manufacturing accounts. The weekly risk dashboard will combine purchase-order status, deployment-window status, and freight-cost exceptions.
+
+
+# Nova Retail Logistics 2026 Operating Review
+
+Document id: `doc-nova-retail-ops-2026`
+
+## Executive Overview
+
+Nova Retail Logistics operates regional fulfillment centers for specialty retailers. The 2026 operating review covers the first three quarters after Nova rolled out a new warehouse slotting system and expanded same-day delivery coverage in three metro areas. The program lifted order volume, but it also created pressure on delivery reliability while the new carrier mix stabilized.
+
+Revenue grew through Q3 as Nova added two apparel customers and increased same-day delivery penetration. Gross margin improved in Q2 when route density increased, then eased in Q3 because temporary labor and cross-dock overflow charges rose during peak back-to-school demand. Operating expense increased as Nova staffed a network-planning team and paid for slotting-system support. Churn remained modest, but Q3 churn rose after one specialty retailer moved low-margin overflow work back in-house. On-time delivery declined in Q3 as two carrier partners missed weekend coverage commitments.
+
+This report intentionally mirrors the Orion report structure while representing a different operational domain. It is realistic enough for retrieval and summarization tasks, but deterministic enough for metric validation. The KV prefix probe uses repeated questions over this report to test whether StateBus can keep same-corpus tasks adjacent when desired.
+
+## Metric Table
+
+| quarter | revenue_musd | gross_margin_pct | operating_expense_musd | churn_rate_pct | on_time_delivery_pct |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2026Q1 | 142 | 36.8 | 44 | 2.8 | 95.7 |
+| 2026Q2 | 156 | 37.4 | 47 | 3.1 | 93.6 |
+| 2026Q3 | 169 | 36.2 | 53 | 4.0 | 89.9 |
+
+## Revenue Drivers
+
+Nova's revenue increase was driven by customer additions and higher same-day order density. The apparel segment accounted for the largest contribution in Q2, while the specialty home segment contributed more in Q3. Management noted that same-day delivery volume is more profitable when routes are dense, but margin falls quickly when weekend coverage requires spot-market carrier capacity.
+
+## Margin And Cost Notes
+
+Gross margin reached 37.4 percent in Q2 before dropping to 36.2 percent in Q3. The Q3 decline came from overflow cross-dock charges, temporary labor, and carrier premiums. The network-planning team believes margin can recover if order cutoff times are moved forward by thirty minutes and if weekend demand is allocated to two additional regional carriers.
+
+## Customer Retention Notes
+
+Churn increased to 4.0 percent in Q3. The lost revenue came mostly from low-margin overflow work, but the churn event still matters because it reduced route density in one metro area. Account managers reported that the customer objected to missed weekend delivery windows rather than price.
+
+## Delivery Notes
+
+On-time delivery declined from 95.7 percent in Q1 to 89.9 percent in Q3. Two carrier partners missed coverage commitments during August and September. Nova created a carrier scorecard and moved the weakest weekend lanes to contingency carriers for the first month of Q4.
+
+## Management Actions
+
+Management approved five actions: renegotiate weekend carrier commitments, adjust order cutoff times, expand contingency carrier coverage, automate slotting exception review, and use daily route-density forecasts to decide when same-day orders should be capped.
+
+## Segment Detail
+
+The apparel fulfillment segment produced the highest order volume and benefited most from the new slotting system. Apparel orders were predictable during weekday demand peaks, so route density improved and picking paths shortened. The specialty home segment was more volatile. Large items required more cross-dock handling, and weekend delivery coverage depended on carrier availability in a smaller number of metro lanes.
+
+Nova's same-day delivery expansion created a useful revenue tailwind, but the expansion also changed cost behavior. Dense routes improved gross margin in Q2. In Q3, temporary labor and overflow cross-dock charges offset the volume benefit. The network-planning team reported that margin pressure was concentrated in a limited number of weekend lanes, which makes the issue operationally addressable rather than structural.
+
+## Evidence Notes For Reuse
+
+The report is intended to support repeated questions over the same corpus. A revenue query, a margin query, an operating-expense query, and a delivery query all use the same business context and the same metric table. StateBus should be able to identify this shared corpus and group the tasks when running in a cache-friendly schedule. The requested metric changes, but the long report prefix should remain stable.
+
+The metric table is the authoritative source for numeric validation. Narrative text exists to make the document realistic for semantic retrieval and summarization. If a narrative sentence is less precise than a table cell, the table cell should be used for deterministic validation. The report intentionally avoids hidden values or ambiguous aliases so that failures are attributable to retrieval, scheduling, or prompt construction rather than data quality.
+
+## Metric Definitions
+
+`revenue_musd` is recognized fulfillment and logistics revenue in millions of US dollars for the quarter. `gross_margin_pct` is gross profit divided by revenue after carrier and warehouse labor cost. `operating_expense_musd` includes recurring network planning, customer support, technology, and general administrative expense. `churn_rate_pct` is quarterly customer revenue churn. `on_time_delivery_pct` is the percentage of orders delivered inside the committed customer window.
+
+## Risk Register
+
+The highest operational risk is weekend carrier reliability. A second risk is route-density loss if low-margin overflow work exits a metro area. A third risk is temporary labor dependence during seasonal peaks. Management believes the risk profile is manageable because the same-day program still increases revenue quality when route density is high. The main control point is deciding when to cap same-day promises before the carrier network becomes unstable.
+
+## Q4 Watch Items
+
+The finance team will monitor whether Q4 margin recovers as weekend carrier contracts reset. Operations will track whether adjusted order cutoff times reduce late-route exceptions. Customer success will monitor whether the lost overflow customer affects adjacent retailers in the same metro area. The network-planning team will publish daily route-density forecasts to help decide when new orders should be accepted, delayed, or moved to contingency carriers.
+
+
+# Supplemental Regional Operating Ledger
+
+The following deterministic ledger adds realistic regional and control detail. It does not override either company's authoritative quarterly metric table.
+
+| company | quarter | region | backlog_units | supplier_otif_pct | expedite_cost_kusd | training_hours | exception_count | control_action |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Orion | 2026Q1 | Central | 118 | 96.40 | 142 | 380 | 3 | reserve carrier capacity |
+| Orion | 2026Q1 | Northeast | 120 | 96.27 | 150 | 387 | 4 | qualify a secondary supplier |
+| Orion | 2026Q1 | Southeast | 122 | 96.14 | 158 | 394 | 5 | advance deployment-window confirmation |
+| Orion | 2026Q1 | Great Lakes | 124 | 96.01 | 166 | 401 | 6 | add a supervised night shift |
+| Orion | 2026Q1 | Mountain | 126 | 95.88 | 174 | 408 | 7 | tighten exception review |
+| Orion | 2026Q1 | Pacific | 128 | 95.75 | 182 | 415 | 8 | rebalance weekend lanes |
+| Orion | 2026Q1 | Southwest | 130 | 95.62 | 190 | 422 | 9 | increase reliability sampling |
+| Orion | 2026Q1 | Mid-Atlantic | 132 | 95.49 | 198 | 429 | 10 | publish daily backlog aging |
+| Orion | 2026Q2 | Central | 127 | 95.30 | 178 | 415 | 5 | qualify a secondary supplier |
+| Orion | 2026Q2 | Northeast | 129 | 95.17 | 186 | 422 | 6 | advance deployment-window confirmation |
+| Orion | 2026Q2 | Southeast | 131 | 95.04 | 194 | 429 | 7 | add a supervised night shift |
+| Orion | 2026Q2 | Great Lakes | 133 | 94.91 | 202 | 436 | 8 | tighten exception review |
+| Orion | 2026Q2 | Mountain | 135 | 94.78 | 210 | 443 | 9 | rebalance weekend lanes |
+| Orion | 2026Q2 | Pacific | 137 | 94.65 | 218 | 450 | 10 | increase reliability sampling |
+| Orion | 2026Q2 | Southwest | 139 | 94.52 | 226 | 457 | 11 | publish daily backlog aging |
+| Orion | 2026Q2 | Mid-Atlantic | 141 | 94.39 | 234 | 464 | 12 | reserve carrier capacity |
+| Orion | 2026Q3 | Central | 136 | 94.20 | 214 | 450 | 7 | advance deployment-window confirmation |
+| Orion | 2026Q3 | Northeast | 138 | 94.07 | 222 | 457 | 8 | add a supervised night shift |
+| Orion | 2026Q3 | Southeast | 140 | 93.94 | 230 | 464 | 9 | tighten exception review |
+| Orion | 2026Q3 | Great Lakes | 142 | 93.81 | 238 | 471 | 10 | rebalance weekend lanes |
+| Orion | 2026Q3 | Mountain | 144 | 93.68 | 246 | 478 | 11 | increase reliability sampling |
+| Orion | 2026Q3 | Pacific | 146 | 93.55 | 254 | 485 | 12 | publish daily backlog aging |
+| Orion | 2026Q3 | Southwest | 148 | 93.42 | 262 | 492 | 13 | reserve carrier capacity |
+| Orion | 2026Q3 | Mid-Atlantic | 150 | 93.29 | 270 | 499 | 14 | qualify a secondary supplier |
+| Nova | 2026Q1 | Central | 99 | 95.70 | 131 | 310 | 3 | qualify a secondary supplier |
+| Nova | 2026Q1 | Northeast | 101 | 95.57 | 139 | 317 | 4 | advance deployment-window confirmation |
+| Nova | 2026Q1 | Southeast | 103 | 95.44 | 147 | 324 | 5 | add a supervised night shift |
+| Nova | 2026Q1 | Great Lakes | 105 | 95.31 | 155 | 331 | 6 | tighten exception review |
+| Nova | 2026Q1 | Mountain | 107 | 95.18 | 163 | 338 | 7 | rebalance weekend lanes |
+| Nova | 2026Q1 | Pacific | 109 | 95.05 | 171 | 345 | 8 | increase reliability sampling |
+| Nova | 2026Q1 | Southwest | 111 | 94.92 | 179 | 352 | 9 | publish daily backlog aging |
+| Nova | 2026Q1 | Mid-Atlantic | 113 | 94.79 | 187 | 359 | 10 | reserve carrier capacity |
+| Nova | 2026Q2 | Central | 108 | 94.60 | 167 | 345 | 5 | advance deployment-window confirmation |
+| Nova | 2026Q2 | Northeast | 110 | 94.47 | 175 | 352 | 6 | add a supervised night shift |
+| Nova | 2026Q2 | Southeast | 112 | 94.34 | 183 | 359 | 7 | tighten exception review |
+| Nova | 2026Q2 | Great Lakes | 114 | 94.21 | 191 | 366 | 8 | rebalance weekend lanes |
+| Nova | 2026Q2 | Mountain | 116 | 94.08 | 199 | 373 | 9 | increase reliability sampling |
+| Nova | 2026Q2 | Pacific | 118 | 93.95 | 207 | 380 | 10 | publish daily backlog aging |
+| Nova | 2026Q2 | Southwest | 120 | 93.82 | 215 | 387 | 11 | reserve carrier capacity |
+| Nova | 2026Q2 | Mid-Atlantic | 122 | 93.69 | 223 | 394 | 12 | qualify a secondary supplier |
+| Nova | 2026Q3 | Central | 117 | 93.50 | 203 | 380 | 7 | add a supervised night shift |
+| Nova | 2026Q3 | Northeast | 119 | 93.37 | 211 | 387 | 8 | tighten exception review |
+| Nova | 2026Q3 | Southeast | 121 | 93.24 | 219 | 394 | 9 | rebalance weekend lanes |
+| Nova | 2026Q3 | Great Lakes | 123 | 93.11 | 227 | 401 | 10 | increase reliability sampling |
+| Nova | 2026Q3 | Mountain | 125 | 92.98 | 235 | 408 | 11 | publish daily backlog aging |
+| Nova | 2026Q3 | Pacific | 127 | 92.85 | 243 | 415 | 12 | reserve carrier capacity |
+| Nova | 2026Q3 | Southwest | 129 | 92.72 | 251 | 422 | 13 | qualify a secondary supplier |
+| Nova | 2026Q3 | Mid-Atlantic | 131 | 92.59 | 259 | 429 | 14 | advance deployment-window confirmation |
+
+# Supplier And Carrier Qualification Register
+
+Each line is a distinct review item with an owner, observed control signal, and next verification step.
+
+| item_id | company | dependency | control_signal | owner | next_check | disposition |
+| --- | --- | --- | --- | --- | --- | --- |
+| REG-O-01 | Orion | encoder lot A | control score 72; variance band 2 | owner-1 | 2026-10-05 | monitor weekly |
+| REG-O-02 | Orion | encoder lot B | control score 74; variance band 3 | owner-2 | 2026-10-06 | complete second-source audit |
+| REG-O-03 | Orion | motor-driver board | control score 76; variance band 4 | owner-3 | 2026-10-07 | hold capacity buffer |
+| REG-O-04 | Orion | firmware validation queue | control score 78; variance band 5 | owner-4 | 2026-10-08 | escalate missed threshold |
+| REG-O-05 | Orion | enterprise deployment window | control score 80; variance band 6 | owner-5 | 2026-11-09 | verify recovery evidence |
+| REG-O-06 | Orion | reserved freight lane | control score 82; variance band 2 | owner-6 | 2026-11-10 | close after two stable periods |
+| REG-O-07 | Orion | weekend carrier north | control score 84; variance band 3 | owner-1 | 2026-11-11 | monitor weekly |
+| REG-O-08 | Orion | weekend carrier south | control score 86; variance band 4 | owner-2 | 2026-11-12 | complete second-source audit |
+| REG-O-09 | Orion | cross-dock overflow | control score 88; variance band 5 | owner-3 | 2026-12-13 | hold capacity buffer |
+| REG-O-10 | Orion | temporary labor pool | control score 90; variance band 6 | owner-4 | 2026-12-14 | escalate missed threshold |
+| REG-O-11 | Orion | slotting exception queue | control score 92; variance band 2 | owner-5 | 2026-12-15 | verify recovery evidence |
+| REG-O-12 | Orion | route-density forecast | control score 94; variance band 3 | owner-6 | 2026-12-16 | close after two stable periods |
+| REG-N-01 | Nova | encoder lot A | control score 77; variance band 2 | owner-1 | 2026-10-05 | complete second-source audit |
+| REG-N-02 | Nova | encoder lot B | control score 79; variance band 3 | owner-2 | 2026-10-06 | hold capacity buffer |
+| REG-N-03 | Nova | motor-driver board | control score 81; variance band 4 | owner-3 | 2026-10-07 | escalate missed threshold |
+| REG-N-04 | Nova | firmware validation queue | control score 83; variance band 5 | owner-4 | 2026-10-08 | verify recovery evidence |
+| REG-N-05 | Nova | enterprise deployment window | control score 85; variance band 6 | owner-5 | 2026-11-09 | close after two stable periods |
+| REG-N-06 | Nova | reserved freight lane | control score 87; variance band 2 | owner-6 | 2026-11-10 | monitor weekly |
+| REG-N-07 | Nova | weekend carrier north | control score 89; variance band 3 | owner-1 | 2026-11-11 | complete second-source audit |
+| REG-N-08 | Nova | weekend carrier south | control score 91; variance band 4 | owner-2 | 2026-11-12 | hold capacity buffer |
+| REG-N-09 | Nova | cross-dock overflow | control score 93; variance band 5 | owner-3 | 2026-12-13 | escalate missed threshold |
+| REG-N-10 | Nova | temporary labor pool | control score 95; variance band 6 | owner-4 | 2026-12-14 | verify recovery evidence |
+| REG-N-11 | Nova | slotting exception queue | control score 97; variance band 2 | owner-5 | 2026-12-15 | close after two stable periods |
+| REG-N-12 | Nova | route-density forecast | control score 99; variance band 3 | owner-6 | 2026-12-16 | monitor weekly |
+
+# Monthly Exception Commentary
+
+- 2026-01 Orion: review 3 recorded maintenance-window reschedule; the control owner retained evidence packet EP-O-01, checked 14 sampled orders, and scheduled follow-up after 3 operating weeks.
+- 2026-02 Orion: review 4 recorded expedited freight approval; the control owner retained evidence packet EP-O-02, checked 17 sampled orders, and scheduled follow-up after 4 operating weeks.
+- 2026-

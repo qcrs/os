@@ -1,0 +1,109 @@
+{
+  "schema_version": "statebus.engine_local_kv_cases.v1",
+  "block_size": 16,
+  "max_model_len": 8192,
+  "max_logical_sequence_tokens": 7168,
+  "producer_max_tokens": 96,
+  "consumer_max_tokens": 96,
+  "cases": [
+    {
+      "case_id": "kv-fin-2k-orion",
+      "target_parent_tokens": 2048,
+      "source_documents": [
+        "orion_factory_ops_report_2026.md"
+      ],
+      "task_instruction": "Return exactly one compact JSON object with these keys and no others: company, q1_rev, q3_rev, rev_delta, q3_margin, delivery_risk. Use revenue in USD millions, margin in percentage points, calculate q3_rev minus q1_rev, and summarize the primary delivery risk in a short string.",
+      "required_keys": [
+        "company",
+        "q1_rev",
+        "q3_rev",
+        "rev_delta",
+        "q3_margin",
+        "delivery_risk"
+      ],
+      "expected_json": {
+        "company": "Orion Factory Systems",
+        "q1_rev": 184,
+        "q3_rev": 211,
+        "rev_delta": 27,
+        "q3_margin": 39.7,
+        "delivery_risk": "high-resolution encoder supplier misses"
+      },
+      "keyword_expectations": {
+        "delivery_risk": [
+          "encoder",
+          "supplier"
+        ]
+      }
+    },
+    {
+      "case_id": "kv-fin-4k-nova",
+      "target_parent_tokens": 4096,
+      "source_documents": [
+        "nova_retail_ops_report_2026.md"
+      ],
+      "task_instruction": "Return exactly one compact JSON object with these keys and no others: company, q1_rev, q3_rev, rev_delta, q2_margin, q3_margin, margin_delta_pp, q3_otd. Use revenue in USD millions, percentages as numeric values, rev_delta as Q3 minus Q1, and margin_delta_pp as Q3 minus Q2.",
+      "required_keys": [
+        "company",
+        "q1_rev",
+        "q3_rev",
+        "rev_delta",
+        "q2_margin",
+        "q3_margin",
+        "margin_delta_pp",
+        "q3_otd"
+      ],
+      "expected_json": {
+        "company": "Nova Retail Logistics",
+        "q1_rev": 142,
+        "q3_rev": 169,
+        "rev_delta": 27,
+        "q2_margin": 37.4,
+        "q3_margin": 36.2,
+        "margin_delta_pp": -1.2,
+        "q3_otd": 89.9
+      },
+      "keyword_expectations": {}
+    },
+    {
+      "case_id": "kv-fin-6k-cross-company",
+      "target_parent_tokens": 6144,
+      "source_documents": [
+        "orion_factory_ops_report_2026.md",
+        "nova_retail_ops_report_2026.md"
+      ],
+      "task_instruction": "Return exactly one compact JSON object with these keys and no others: orion_q3_rev, nova_q3_rev, rev_gap, orion_q3_margin, nova_q3_margin, margin_gap_pp, orion_q3_otd, nova_q3_otd, otd_gap_pp, higher_churn. Define each gap as Orion minus Nova and name the company with the higher Q3 churn.",
+      "required_keys": [
+        "orion_q3_rev",
+        "nova_q3_rev",
+        "rev_gap",
+        "orion_q3_margin",
+        "nova_q3_margin",
+        "margin_gap_pp",
+        "orion_q3_otd",
+        "nova_q3_otd",
+        "otd_gap_pp",
+        "higher_churn"
+      ],
+      "expected_json": {
+        "orion_q3_rev": 211,
+        "nova_q3_rev": 169,
+        "rev_gap": 42,
+        "orion_q3_margin": 39.7,
+        "nova_q3_margin": 36.2,
+        "margin_gap_pp": 3.5,
+        "orion_q3_otd": 90.8,
+        "nova_q3_otd": 89.9,
+        "otd_gap_pp": 0.9,
+        "higher_churn": "Orion Factory Systems"
+      },
+      "keyword_expectations": {
+        "higher_churn": [
+          "Orion"
+        ]
+      },
+      "producer_max_tokens": 160,
+      "consumer_max_tokens": 160
+    }
+  ]
+}
