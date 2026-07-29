@@ -1,0 +1,33 @@
+{
+  "round_id": 4,
+  "task_id": "incident_round_04_kafka_isr_settlement_lag",
+  "title": "消息链路异常：Kafka ISR 丢失导致结算阻塞",
+  "mode": "B_structured",
+  "wall_time_s": 285.64,
+  "llm_calls": 6,
+  "input_tokens": 7297,
+  "output_tokens": 3033,
+  "latent_steps": 0,
+  "kv_bytes_transfer": 0,
+  "answer": {
+    "root_cause_service": "string",
+    "root_cause_code": "string",
+    "severity": "P0|P1|P2",
+    "primary_action": "one valid action",
+    "report_deadline_minutes": "integer",
+    "estimated_loss_usd": "integer"
+  },
+  "expected": {
+    "root_cause_service": "Kafka",
+    "root_cause_code": "isr_loss_stuck_leader",
+    "severity": "P0",
+    "primary_action": "failover_kafka_and_rebalance",
+    "report_deadline_minutes": 15,
+    "estimated_loss_usd": 184000
+  },
+  "correct_fields": 0,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "Summary of research on: # Trading Incident Response Benchmark\n\nYou are running a multi-agent incident-response pipeline.\nThe intermediate agents must be verbose; the final answer must be short structured JSON.\n\n## Required Intermediate Work\n- researcher: produce a 1200-1600 Chinese-character evidence report citing metrics/logs/changes.\n- analyst: produce a 1000-1400 Chinese-character causal analysis comparing at least 3 candidate root causes.\n- executor: produce a 600-900 Chinese-character calculation and action matrix.\n- summarizer: return only the final JSON object matching the schema.\n\n## Platform\nSkyBridge 实时交易与清结算平台，包含 OrderGateway、RiskEngine、MatchingCore、ClearingService、SettlementService、MarketDataFeed、NotificationHub、AuditLogger、PositionManager、RegulatoryReporter。\n\n## Severity Rules\n{\n  \"P0\": [\n    \"rejected_orders >= 15000\",\n    \"duplicated_fills >= 1000\",\n    \"downtime_minutes >= 15\",\n    \"settlement_blocked_usd >= 50000000\",\n    \"regulatory_breach == true\"\n  ],\n  \"P1\": [\n    ",
+  "error": ""
+}

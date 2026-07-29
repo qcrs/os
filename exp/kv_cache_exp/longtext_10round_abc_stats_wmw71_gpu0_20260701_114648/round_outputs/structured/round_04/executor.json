@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 4,
+  "task_id": 9004,
+  "required_answer_format": "@round[4] @feature_scope[storm_shield_fragility] @depends_on[1,2,3] @new_systems[storm,shield,package_damage,risk_roll] @deliverable[incremental_spec]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}

@@ -27,7 +27,11 @@ from protocol import (
     verify_context_packet,
 )
 
-from .shared import _get_mode
+from .shared import (
+    _clean_json_contract_answer,
+    _extract_json_final_contract_fields,
+    _get_mode,
+)
 
 
 # ─── Analyst Agent ───
@@ -136,14 +140,30 @@ def analyst(state: dict, store: BaseStore) -> dict:
     parser = JsonOutputParser()
 
     answer_format = _extract_answer_format(query)
-    required_answer_fields = _required_answer_fields(answer_format)
-    answer_instruction = (
-        "\nIf the original query specifies an Expected answer format, populate "
-        "candidate_answers as a JSON object whose keys are exactly those @field "
-        "names and whose values are scalar strings. Do not wrap these values in "
-        "@field[...] tags."
-        if required_answer_fields else
-        "\nNo machine-graded @field[value] answer format is required for this query."
+    json_contract_fields = _extract_json_final_contract_fields(query)
+    required_answer_fields = json_contract_fields or _required_answer_fields(answer_format)
+    if json_contract_fields:
+        answer_instruction = (
+            "\nThe original query specifies a JSON final answer contract. Populate "
+            f"candidate_answers as a JSON object whose keys are exactly {json_contract_fields}. "
+            "Values may be JSON-compatible strings, numbers, booleans, arrays, or objects. "
+            "Do not copy placeholder values from the contract template."
+        )
+    elif required_answer_fields:
+        answer_instruction = (
+            "\nIf the original query specifies an Expected answer format, populate "
+            "candidate_answers as a JSON object whose keys are exactly those @field "
+            "names and whose values are scalar strings. Do not wrap these values in "
+            "@field[...] tags."
+        )
+    else:
+        answer_instruction = (
+            "\nNo machine-graded JSON or @field[value] answer format is required for this query."
+        )
+
+    expected_answer_format = (
+        answer_format
+        or ("JSON final answer contract" if json_contract_fields else "N/A")
     )
 
     messages = [
@@ -163,7 +183,7 @@ Return ONLY valid JSON:
   ],
   "confidence": 0.85
 }}"""),
-        HumanMessage(content=f"Original query: {query}\nRequired answer fields: {required_answer_fields}\nExpected answer format: {answer_format or 'N/A'}\nPlan: {plan}\n\n{context_label}:\n{docs_text}"
+        HumanMessage(content=f"Original query: {query}\nRequired answer fields: {required_answer_fields}\nExpected answer format: {expected_answer_format}\nPlan: {plan}\n\n{context_label}:\n{docs_text}"
                      + (f"\n\nPrior analyses:\n{prior_context}" if prior_context else "")),
     ]
 
@@ -181,10 +201,20 @@ Return ONLY valid JSON:
             "confidence": 0.7,
         }
 
+    # Guard: JsonOutputParser may return int/str when the model responds with a
+    # bare number instead of a JSON object (common on counting tasks).
+    if not isinstance(parsed, dict):
+        parsed = {
+            "analysis": f"Analysis based on: {plan}",
+            "candidate_answers": {},
+            "evidence": [{"claim": "Key finding", "support": "From selected context"}],
+            "confidence": 0.7,
+        }
     analysis = parsed.get("analysis", "")
     candidate_answers = _clean_candidate_answers(
         parsed.get("candidate_answers", {}),
         required_answer_fields,
+        allow_json_values=bool(json_contract_fields),
     )
     evidence = parsed.get("evidence", [])
     analysis_digest = summarize_text(analysis, 520)
@@ -363,8 +393,16 @@ def _required_answer_fields(answer_format: str) -> list[str]:
     return fields
 
 
-def _clean_candidate_answers(value: object, required_fields: list[str]) -> dict[str, str]:
+def _clean_candidate_answers(
+    value: object,
+    required_fields: list[str],
+    *,
+    allow_json_values: bool = False,
+) -> dict[str, object]:
     """Normalize analyst-proposed answer fields to scalar strings."""
+    if allow_json_values:
+        return _clean_json_contract_answer(value, required_fields)
+
     if not isinstance(value, dict):
         text = str(value or "")
         extracted = dict(re.findall(r"@(\w+)\[([^\]]*)\]", text))

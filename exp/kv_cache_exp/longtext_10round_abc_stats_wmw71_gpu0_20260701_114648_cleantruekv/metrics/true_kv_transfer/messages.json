@@ -1,0 +1,642 @@
+[
+  {
+    "round_id": 1,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 563,
+    "text_tokens": 241
+  },
+  {
+    "round_id": 1,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 563,
+    "text_tokens": 241
+  },
+  {
+    "round_id": 1,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 563,
+    "text_tokens": 241
+  },
+  {
+    "round_id": 1,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 655,
+    "text_tokens": 285
+  },
+  {
+    "round_id": 1,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 667,
+    "text_tokens": 283
+  },
+  {
+    "round_id": 1,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 666,
+    "text_tokens": 287
+  },
+  {
+    "round_id": 1,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 667,
+    "text_tokens": 264
+  },
+  {
+    "round_id": 1,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 663,
+    "text_tokens": 234
+  },
+  {
+    "round_id": 2,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 466,
+    "text_tokens": 237
+  },
+  {
+    "round_id": 2,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 466,
+    "text_tokens": 237
+  },
+  {
+    "round_id": 2,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 466,
+    "text_tokens": 237
+  },
+  {
+    "round_id": 2,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 691,
+    "text_tokens": 281
+  },
+  {
+    "round_id": 2,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 610,
+    "text_tokens": 286
+  },
+  {
+    "round_id": 2,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 660,
+    "text_tokens": 284
+  },
+  {
+    "round_id": 2,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 653,
+    "text_tokens": 306
+  },
+  {
+    "round_id": 2,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 666,
+    "text_tokens": 235
+  },
+  {
+    "round_id": 3,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 498,
+    "text_tokens": 246
+  },
+  {
+    "round_id": 3,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 498,
+    "text_tokens": 246
+  },
+  {
+    "round_id": 3,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 498,
+    "text_tokens": 246
+  },
+  {
+    "round_id": 3,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 574,
+    "text_tokens": 278
+  },
+  {
+    "round_id": 3,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 574,
+    "text_tokens": 281
+  },
+  {
+    "round_id": 3,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 605,
+    "text_tokens": 282
+  },
+  {
+    "round_id": 3,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 665,
+    "text_tokens": 290
+  },
+  {
+    "round_id": 3,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 678,
+    "text_tokens": 239
+  },
+  {
+    "round_id": 4,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 478,
+    "text_tokens": 240
+  },
+  {
+    "round_id": 4,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 478,
+    "text_tokens": 240
+  },
+  {
+    "round_id": 4,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 478,
+    "text_tokens": 240
+  },
+  {
+    "round_id": 4,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 643,
+    "text_tokens": 283
+  },
+  {
+    "round_id": 4,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 575,
+    "text_tokens": 280
+  },
+  {
+    "round_id": 4,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 673,
+    "text_tokens": 284
+  },
+  {
+    "round_id": 4,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 655,
+    "text_tokens": 330
+  },
+  {
+    "round_id": 4,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 680,
+    "text_tokens": 242
+  },
+  {
+    "round_id": 5,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 514,
+    "text_tokens": 240
+  },
+  {
+    "round_id": 5,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 514,
+    "text_tokens": 240
+  },
+  {
+    "round_id": 5,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 514,
+    "text_tokens": 240
+  },
+  {
+    "round_id": 5,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 676,
+    "text_tokens": 284
+  },
+  {
+    "round_id": 5,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 659,
+    "text_tokens": 283
+  },
+  {
+    "round_id": 5,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 618,
+    "text_tokens": 277
+  },
+  {
+    "round_id": 5,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 663,
+    "text_tokens": 273
+  },
+  {
+    "round_id": 5,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 680,
+    "text_tokens": 245
+  },
+  {
+    "round_id": 6,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 531,
+    "text_tokens": 242
+  },
+  {
+    "round_id": 6,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 531,
+    "text_tokens": 242
+  },
+  {
+    "round_id": 6,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 531,
+    "text_tokens": 242
+  },
+  {
+    "round_id": 6,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 582,
+    "text_tokens": 283
+  },
+  {
+    "round_id": 6,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 591,
+    "text_tokens": 277
+  },
+  {
+    "round_id": 6,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 613,
+    "text_tokens": 284
+  },
+  {
+    "round_id": 6,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 673,
+    "text_tokens": 293
+  },
+  {
+    "round_id": 6,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 675,
+    "text_tokens": 243
+  },
+  {
+    "round_id": 7,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 563,
+    "text_tokens": 246
+  },
+  {
+    "round_id": 7,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 563,
+    "text_tokens": 246
+  },
+  {
+    "round_id": 7,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 563,
+    "text_tokens": 246
+  },
+  {
+    "round_id": 7,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 641,
+    "text_tokens": 285
+  },
+  {
+    "round_id": 7,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 630,
+    "text_tokens": 283
+  },
+  {
+    "round_id": 7,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 701,
+    "text_tokens": 266
+  },
+  {
+    "round_id": 7,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 675,
+    "text_tokens": 257
+  },
+  {
+    "round_id": 7,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 681,
+    "text_tokens": 247
+  },
+  {
+    "round_id": 8,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 508,
+    "text_tokens": 243
+  },
+  {
+    "round_id": 8,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 508,
+    "text_tokens": 243
+  },
+  {
+    "round_id": 8,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 508,
+    "text_tokens": 243
+  },
+  {
+    "round_id": 8,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 667,
+    "text_tokens": 279
+  },
+  {
+    "round_id": 8,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 661,
+    "text_tokens": 279
+  },
+  {
+    "round_id": 8,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 601,
+    "text_tokens": 278
+  },
+  {
+    "round_id": 8,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 671,
+    "text_tokens": 284
+  },
+  {
+    "round_id": 8,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 681,
+    "text_tokens": 249
+  },
+  {
+    "round_id": 9,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 580,
+    "text_tokens": 244
+  },
+  {
+    "round_id": 9,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 580,
+    "text_tokens": 244
+  },
+  {
+    "round_id": 9,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 580,
+    "text_tokens": 244
+  },
+  {
+    "round_id": 9,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 635,
+    "text_tokens": 281
+  },
+  {
+    "round_id": 9,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 652,
+    "text_tokens": 282
+  },
+  {
+    "round_id": 9,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 673,
+    "text_tokens": 284
+  },
+  {
+    "round_id": 9,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 653,
+    "text_tokens": 294
+  },
+  {
+    "round_id": 9,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 681,
+    "text_tokens": 255
+  },
+  {
+    "round_id": 10,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 485,
+    "text_tokens": 244
+  },
+  {
+    "round_id": 10,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 485,
+    "text_tokens": 244
+  },
+  {
+    "round_id": 10,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 485,
+    "text_tokens": 244
+  },
+  {
+    "round_id": 10,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 597,
+    "text_tokens": 285
+  },
+  {
+    "round_id": 10,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 611,
+    "text_tokens": 279
+  },
+  {
+    "round_id": 10,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 597,
+    "text_tokens": 286
+  },
+  {
+    "round_id": 10,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 658,
+    "text_tokens": 329
+  },
+  {
+    "round_id": 10,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 682,
+    "text_tokens": 246
+  }
+]

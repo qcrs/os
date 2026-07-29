@@ -1,0 +1,39 @@
+{
+  "round_id": 5,
+  "task_id": "route_round_05",
+  "title": "固定终点的最短哈密顿路径",
+  "query": "本轮不要求返回 A。求从 A 出发、访问 B、C、D 各一次并最终停在 D 的最短路径。**用 Python 代码枚举所有 3!=6 种路径（A→?→?→D），选择成本最小的。**",
+  "mode": "D_latent_kv",
+  "wall_time_s": 108.881,
+  "message_count": 4,
+  "llm_calls": 6,
+  "input_tokens": 8258,
+  "output_tokens": 2816,
+  "text_chars_param": 2960,
+  "text_chars_result": 2979,
+  "latent_transfers": 3,
+  "latent_steps": 112,
+  "kv_bytes_added": 16515072,
+  "kv_bytes_transfer": 1231847424,
+  "raw_route": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "raw_total_cost": 60,
+  "route": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "total_cost": 60,
+  "answer_source": "model_parse",
+  "final_answer": "</think>\n\n{\"route\":[\"A\",\"B\",\"C\",\"D\"],\"total_cost\":60,\"verification\":\"A→B→C→D: 10+35+30=75 (but D is fixed end, so only A→B→C→D and A→C→B→D are valid; A→B→C→D cost 10+35+30=75, A→C→B→D cost 15+35+25=75, but the minimal is A→B→C→D with 10+35+30=75, but correct calculation shows A→B→C→D is 10+35+30=75, A→C→B→D is 15+35+25=75, A→B→D→C is 10+25+30=65, A→D→B→C is 20+25+35=80, A→D→C→B is 20+30+35=85, A→C→D→B is 15+30+25=70, so the minimal is A→B→D→C with 65\"}\n\n```json\n{\"route\":[\"A\",\"B\",\"D\",\"C\"],\"total_",
+  "summary": "</think>\n\n{\"route\":[\"A\",\"B\",\"C\",\"D\"],\"total_cost\":60,\"verification\":\"A→B→C→D: 10+35+30=75 (but D is fixed end, so only A→B→C→D and A→C→B→D are valid; A→B→C→D cost 10+35+30=75, A→C→B→D cost 15+35+25=75, but the minimal is A→B→C→D with 10+35+30=75, but correct calculation shows A→B→C→D is 10+35+30=75, A→C→B→D is 15+35+25=75, A→B→D→C is 10+25+30=65, A→D→B→C is 20+25+35=80, A→D→C→B is 20+30+35=85, A→C→D→B is 15+30+25=70, so the minimal is A→B→D→C with 65\"}\n\n```json\n{\"route\":[\"A\",\"B\",\"D\",\"C\"],\"total_",
+  "route_correct": true,
+  "cost_correct": false,
+  "ok": false,
+  "error": ""
+}

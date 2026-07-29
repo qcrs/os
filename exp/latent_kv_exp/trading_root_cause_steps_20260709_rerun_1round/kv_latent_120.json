@@ -1,0 +1,44 @@
+{
+  "mode": "kv_latent_120",
+  "task_id": "trading_root_cause_round_01_order_entry_rejections",
+  "title": "开盘订单拒单激增：长日志根因定位",
+  "wall_time_s": 191.852,
+  "llm_calls": 5,
+  "input_tokens": 30218,
+  "output_tokens": 2560,
+  "latent_steps": 120,
+  "kv_bytes_transfer": 3625353216,
+  "message_count": 4,
+  "logical_agent_handoffs": 4,
+  "text_comm_chars": 270443,
+  "text_comm_tokens_est": 67611,
+  "embedding_transfer_count": 3,
+  "embedding_transfer_bytes": 12288,
+  "latent_kv_transfer_count": 4,
+  "latent_kv_transfer_bytes": 3625353216,
+  "nontext_transfer_count": 7,
+  "nontext_transfer_bytes": 3625365504,
+  "answer": {
+    "root_cause": "ordergateway_auth_cache_key_normalization",
+    "severity": "P1",
+    "first_bad_component": "OrderGateway"
+  },
+  "expected": {
+    "root_cause": "ordergateway_auth_cache_key_normalization",
+    "severity": "P1",
+    "first_bad_component": "OrderGateway"
+  },
+  "correct_fields": 3,
+  "total_fields": 3,
+  "ok": true,
+  "final_answer": "{\"root_cause\":\"ordergateway_auth_cache_key_normalization\",\"severity\":\"P1\",\"first_bad_component\":\"OrderGateway\"}",
+  "summary": "</think>\n\n{\"root_cause\": \"ordergateway_auth_cache_key_normalization\", \"severity\": \"P1\", \"first_bad_component\": \"OrderGateway\"}\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",\n  \"first_bad_component\": \"OrderGateway\"\n}\n```\n\n```json\n{\n  \"root_cause\": \"ordergateway_auth_cache_key_normalization\",\n  \"severity\": \"P1\",",
+  "execution_tool": "no_code_evidence_synthesis",
+  "step_config": {
+    "ANALYST_LATENT_STEPS": "64",
+    "EXECUTOR_LATENT_STEPS": "32",
+    "POST_EXEC_LATENT_STEPS": "16",
+    "SUMMARIZER_LATENT_STEPS": "8"
+  },
+  "error": ""
+}

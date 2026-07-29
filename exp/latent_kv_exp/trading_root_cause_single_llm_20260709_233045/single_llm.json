@@ -1,0 +1,34 @@
+{
+  "mode": "single_llm",
+  "task_id": "trading_root_cause_round_01_order_entry_rejections",
+  "title": "开盘订单拒单激增：长日志根因定位",
+  "wall_time_s": 20.081,
+  "llm_calls": 1,
+  "input_tokens": 5276,
+  "output_tokens": 464,
+  "total_tokens": 5740,
+  "message_count": 2,
+  "logical_agent_handoffs": 0,
+  "latent_steps": 0,
+  "nontext_transfer_count": 0,
+  "nontext_transfer_bytes": 0,
+  "prompt_chars": 12258,
+  "response_chars": 111,
+  "text_comm_chars": 12369,
+  "text_comm_tokens_est": 3093,
+  "answer": {
+    "root_cause": "ordergateway_auth_cache_key_normalization",
+    "severity": "P1",
+    "first_bad_component": "OrderGateway"
+  },
+  "expected": {
+    "root_cause": "ordergateway_auth_cache_key_normalization",
+    "severity": "P1",
+    "first_bad_component": "OrderGateway"
+  },
+  "correct_fields": 3,
+  "total_fields": 3,
+  "ok": true,
+  "raw_response": "{\"root_cause\":\"ordergateway_auth_cache_key_normalization\",\"severity\":\"P1\",\"first_bad_component\":\"OrderGateway\"}",
+  "error": ""
+}

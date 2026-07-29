@@ -1,0 +1,33 @@
+{
+  "round_id": 2,
+  "task_id": "incident_round_02_risk_rule_false_positive",
+  "title": "风控误拦截：RiskEngine 规则热加载异常",
+  "mode": "D_latent_kv",
+  "wall_time_s": 284.058,
+  "llm_calls": 6,
+  "input_tokens": 8227,
+  "output_tokens": 2816,
+  "latent_steps": 112,
+  "kv_bytes_transfer": 677265408,
+  "answer": {
+    "root_cause_service": "RiskEngine",
+    "root_cause_code": "R-77_THRESHOLD_PARSE_ERROR",
+    "severity": "P1",
+    "primary_action": "disable_risk_rule_and_reload",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 256000
+  },
+  "expected": {
+    "root_cause_service": "RiskEngine",
+    "root_cause_code": "risk_rule_threshold_parse_error",
+    "severity": "P1",
+    "primary_action": "disable_risk_rule_and_reload",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 469200
+  },
+  "correct_fields": 4,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "</think>\n\n{\n  \"root_cause_service\": \"RiskEngine\",\n  \"root_cause_code\": \"R-77_THRESHOLD_PARSE_ERROR\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"disable_risk_rule_and_reload\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 256000\n}\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```",
+  "error": ""
+}

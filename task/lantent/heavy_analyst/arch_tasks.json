@@ -1,0 +1,220 @@
+{
+  "suite_id": "skybridge_arch_analysis_10round_v1",
+  "suite_name": "SkyBridge架构规格深度分析任务集（重分析输出版）",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "long_document_multi_hop_analysis",
+  "design_goal": "最大化 analyst 输出长度（目标 2000+ tokens），使 D 模式跳过文本传递的优势最显著",
+  "latent_config": {
+    "analyst_latent_steps": 64,
+    "executor_latent_steps": 32,
+    "post_exec_latent_steps": 16,
+    "total": 112,
+    "note": "与7城市实验相同的112步配置，实测可获得10.8%提速"
+  },
+  "shared_context": {
+    "document_path": "task/lantent/heavy_analyst/arch_spec.txt",
+    "document_summary": "SkyBridge分布式实时交易平台技术架构规格书v3.2，包含10个微服务、API端点、数据库、消息队列、安全审计、性能基准等详细信息。",
+    "analysis_requirements": [
+      "必须逐服务、逐章节展开分析，不能跳过任何微服务",
+      "每个结论必须引用文档中的具体数字或原文表述",
+      "分析需覆盖多个维度（功能、安全、性能、依赖）",
+      "输出必须包含详细推理过程，要求2000字以上，不能只给结论"
+    ]
+  },
+  "output_requirements": {
+    "researcher_output": "每个researcher输出500-800词的深度检索，需引用具体数字",
+    "analyst_output": "analyst输出2000词以上的全面综合分析，逐服务展开，是本实验关键",
+    "executor_output": "executor输出完整的计算过程，包含中间步骤",
+    "summarizer_output": "summarizer输出200-300词的精确结论"
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "api_count_round_01",
+      "title": "API端点总数统计",
+      "prompt": "阅读 SkyBridge 架构规格书，统计平台所有10个微服务的 **API 端点总数**。\n\n**分析要求**：\n1. 逐一列出每个微服务的所有 API 端点（HTTP方法 + 路径）\n2. 对每个端点说明其功能和安全配置\n3. 统计每个服务的端点数量，并汇总\n4. 分析端点分布是否合理（哪个服务端点最多/最少，原因是什么）\n5. 评估 API 设计的 RESTful 规范符合程度\n6. 给出 **最终答案（纯数字）**：全平台 API 端点总数\n\n**重要：你的分析必须逐服务展开，每个服务至少分析100字，总分析长度不少于2000字。不能只列数字。**",
+      "reference_answer": {
+        "correct_option": 59,
+        "breakdown": {
+          "OrderGateway": 8,
+          "RiskEngine": 6,
+          "MatchingCore": 5,
+          "ClearingService": 7,
+          "SettlementService": 6,
+          "MarketDataFeed": 9,
+          "NotificationHub": 4,
+          "AuditLogger": 3,
+          "PositionManager": 6,
+          "RegulatoryReporter": 5
+        },
+        "total": 59
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "db_count_round_02",
+      "title": "数据库种类统计",
+      "inherits": ["round_01_context"],
+      "prompt": "统计 SkyBridge 平台使用的 **不同数据库种类总数**，并对数据库选型进行深度分析。\n\n**分析要求**：\n1. 列出所有数据库实例（名称、类型、使用服务、存储容量）\n2. 解释每种数据库的选型理由（为什么用 Redis 而不是 Memcached？为什么用 TimescaleDB？）\n3. 分析数据库之间的依赖和数据流向\n4. 识别数据库架构中的潜在风险（如Oracle RAC遗留系统、单点故障等）\n5. 计算数据库总存储容量\n6. 给出 **最终答案（纯数字）**：不同数据库种类总数（每种只算一次）\n\n**重要：分析需覆盖所有数据库，说明每个数据库的技术特性，总长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 7,
+        "database_list": [
+          "PostgreSQL（关系型，主力数据库）",
+          "Redis（内存KV，缓存层）",
+          "InfluxDB（时序，行情数据）",
+          "TimescaleDB（时序关系型，清算数据）",
+          "MongoDB（文档型，通知记录）",
+          "Oracle RAC（关系型遗留，结算对账）",
+          "Elasticsearch（搜索引擎，审计索引）"
+        ],
+        "total_storage_tb": 35.5
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "kafka_topics_round_03",
+      "title": "Kafka事件类型统计",
+      "inherits": ["round_01_context"],
+      "prompt": "统计 SkyBridge 平台消息总线（Apache Kafka）中定义的 **事件类型（Topic）总数**，并分析消息流架构。\n\n**分析要求**：\n1. 列出所有Kafka Topic，说明生产者和消费者\n2. 分析每个事件的业务语义（触发条件、下游影响）\n3. 绘制消息流向图（文字描述，从订单提交到结算完成的完整路径）\n4. 识别消息链中的关键节点和潜在丢失风险\n5. 分析消费者数量最多的Topic，解释为什么被多个服务订阅\n6. 给出 **最终答案（纯数字）**：Kafka事件类型总数（以文档表格中列出的为准）\n\n**重要：逐条分析每个Topic，不能跳过，总分析长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 14,
+        "note": "文档表格中共列出14个Topic，文档标题曾误写18，以表格实际内容为准",
+        "most_consumed_topic": "match.trade.executed（4个消费者：ClearingService, PositionManager, AuditLogger, MarketDataFeed）"
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "security_vuln_round_04",
+      "title": "安全漏洞总数统计",
+      "inherits": ["round_01_context"],
+      "prompt": "对 SkyBridge 平台进行全面安全审查，统计文档中明确记录的 **安全漏洞总数**，并进行风险评估。\n\n**分析要求**：\n1. 逐一描述每个安全漏洞（位置、类型、严重程度、攻击向量）\n2. 评估每个漏洞的潜在业务影响（金融损失、数据泄露、服务中断）\n3. 给出每个漏洞的修复建议（具体到技术方案层面）\n4. 分析漏洞的优先修复顺序和理由\n5. 评估整体安全成熟度\n6. 给出 **最终答案（纯数字）**：文档明确记录的安全漏洞总数\n\n**重要：每个漏洞详细分析不少于300字，总长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 4,
+        "vulnerabilities": [
+          "[高危] OrderGateway: 做市商账户绕过IP白名单",
+          "[高危] RiskEngine: /risk/rules/reload无鉴权",
+          "[中危] ClearingService: 所有端点无速率限制",
+          "[中危] NotificationHub: /notify/send仅验IP不验身份"
+        ]
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "high_risk_vuln_round_05",
+      "title": "高危漏洞数量统计",
+      "inherits": ["round_04_context"],
+      "prompt": "基于第4轮的安全分析结果，统计被标记为 **[高危]** 级别的安全漏洞数量，并深入分析其利用场景。\n\n**分析要求**：\n1. 列出所有高危漏洞（名称、所在服务、触发条件）\n2. 为每个高危漏洞构建完整的攻击链（攻击者视角，步骤化描述）\n3. 分析高危漏洞的综合影响（对清算结算、交易连续性、监管合规的影响）\n4. 对比两个高危漏洞的严重性（哪个更危险？为什么？）\n5. 建议应急修复方案和时间线\n6. 给出 **最终答案（纯数字）**：高危级别漏洞数量\n\n**重要：攻击链分析要具体可操作，总分析长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 2,
+        "high_risk_list": [
+          "OrderGateway: 做市商账户IP白名单绕过（高危）",
+          "RiskEngine: 风控规则热加载无鉴权（高危）"
+        ]
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "external_dep_round_06",
+      "title": "外部依赖系统总数统计",
+      "inherits": ["round_01_context"],
+      "prompt": "统计 SkyBridge 平台的 **外部依赖系统总数**，并进行供应商风险评估。\n\n**分析要求**：\n1. 列出所有外部依赖（名称、协议、使用服务、SLA保障）\n2. 按依赖类型分类（金融基础设施、云服务、数据供应商）\n3. 分析每个依赖故障对系统的影响程度（高/中/低影响）\n4. 识别单点故障依赖（只有一家供应商，无备用方案的依赖）\n5. 评估SLA差异：99.9% vs 99.99% vs 99.999% 在金融系统中意味着什么年停机时长\n6. 给出 **最终答案（纯数字）**：外部依赖系统总数（以文档依赖清单表格为准）\n\n**重要：每个依赖详细分析，重点分析金融基础设施依赖的合规要求，总长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 8,
+        "external_deps": [
+          "中央登记结算系统（CSD）",
+          "中央银行RTGS",
+          "全球托管行网络（5家算1个整体依赖）",
+          "阿里云短信服务",
+          "SendGrid",
+          "Firebase Cloud Messaging",
+          "彭博行情数据",
+          "路孚特行情数据"
+        ]
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "no_ratelimit_round_07",
+      "title": "完全无速率限制的服务数统计",
+      "inherits": ["round_04_context", "round_06_context"],
+      "prompt": "统计 SkyBridge 中 **所有端点均无速率限制** 的微服务数量，并分析该设计决策的风险。\n\n**分析要求**：\n1. 逐服务检查速率限制配置（需引用文档原文）\n2. 区分：a) 完全无速率限制的服务；b) 部分端点无速率限制的服务；c) 已配置速率限制的服务\n3. 分析无速率限制的服务在高并发场景下的具体风险（结合其业务职责分析）\n4. 在金融交易系统中，缺少速率限制的服务如何被滥用（内部威胁模型）\n5. 提出速率限制的实施方案（哪些端点应设多少req/s）\n6. 给出 **最终答案（纯数字）**：所有端点均明确说明无速率限制的服务数量\n\n**重要：逐服务分析，引用文档原文，总分析长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 2,
+        "services_no_ratelimit": [
+          "ClearingService（原文：ClearingService所有端点均未配置速率限制）",
+          "RegulatoryReporter（原文：本服务所有端点无速率限制）"
+        ],
+        "note": "RiskEngine的/risk/rules/reload无鉴权但文档未明确说明整个服务无速率限制；NotificationHub部分端点有问题但非完全无速率限制"
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "position_manager_events_round_08",
+      "title": "PositionManager订阅的Kafka事件数",
+      "inherits": ["round_03_context"],
+      "prompt": "根据 Kafka Topic 消费关系表，统计 **PositionManager 订阅（消费）的事件类型总数**，并分析其持仓更新逻辑。\n\n**分析要求**：\n1. 从Kafka消费关系表中找出所有将PositionManager列为消费者的Topic\n2. 注意：文档Section 2.9描述的订阅事件与Kafka表格可能有出入，需分别列出并说明差异\n3. 分析PositionManager收到每个事件后的处理逻辑（如收到match.trade.executed后如何更新持仓）\n4. 评估PositionManager的事件消费覆盖是否完整（是否遗漏了应该订阅的事件）\n5. 分析如果某个上游事件丢失，PositionManager的持仓数据会出现什么不一致\n6. 给出 **最终答案（纯数字）**：Kafka表格中PositionManager作为消费者的事件数量\n\n**重要：必须同时参考Section 2.9和Kafka表格，明确说明两处信息的差异，总分析长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 3,
+        "events": [
+          "match.trade.executed（Kafka表格）",
+          "clearing.margin.called（Kafka表格）",
+          "settlement.completed（Kafka表格）"
+        ],
+        "note": "Section 2.9只列出了match.trade.executed，但Kafka表格显示还订阅了clearing.margin.called和settlement.completed，以Kafka表格为准"
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "stress_test_tps_round_09",
+      "title": "双节点故障极限压测TPS",
+      "inherits": ["round_01_context"],
+      "prompt": "从性能基准测试结果中，找出 **极限压测 + 双节点故障** 场景下的实测 TPS 值，并进行容灾能力评估。\n\n**分析要求**：\n1. 列出所有性能测试场景及其完整指标（TPS、P99延迟、CPU、内存）\n2. 分析双节点故障时系统性能下降的规律（从极限压测到双故障，各指标如何变化）\n3. 计算双节点故障场景下相比正常峰值的容量损失百分比\n4. 分析P99延迟从7.8ms升至12.1ms对金融交易的影响（SLA是否还能满足）\n5. 评估现有容灾架构是否满足监管对系统可用性的要求（RTO≤4分钟，RPO=0）\n6. 识别压测中暴露的架构瓶颈（MatchingCore CPU、Oracle RAC连接池等）并提出改进方案\n7. 给出 **最终答案（纯数字）**：极限压测+双节点故障场景的实测TPS\n\n**重要：需对每个测试场景逐一详细分析，特别是瓶颈分析，总长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": 143200,
+        "table_row": "极限压测（180k TPS） + 双节点故障 → 143,200 TPS",
+        "capacity_loss_pct": "20.4%（相比极限压测无故障的179,422）"
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "total_storage_round_10",
+      "title": "数据库总存储容量计算（TB）",
+      "inherits": ["round_02_context", "round_03_context"],
+      "prompt": "计算 SkyBridge 平台所有数据库的 **总存储容量（单位：TB）**，并进行存储规划分析。\n\n**分析要求**：\n1. 列出每个数据库及其存储容量（以文档数据库汇总表为准）\n2. 按数据库类型分类统计存储占用（关系型 vs 时序 vs 文档 vs 搜索）\n3. 分析存储分配是否合理（哪个数据库占比最高？为什么？）\n4. 估算数据增长速率（按年，基于业务量推算）：极限压测180k TPS × 每笔交易存储大小\n5. 预测现有存储容量在当前增长率下的耗尽时间\n6. 识别存储架构中的单点风险（如Oracle RAC待迁移）\n7. 给出 **最终答案（数字，单位TB，精确到小数点后一位）**：全部数据库存储总容量\n\n**重要：必须给出完整的加法计算过程：各数据库容量逐一相加，不能只给最终结果，总分析长度不少于2000字。**",
+      "reference_answer": {
+        "correct_option": "35.5",
+        "calculation": "12 + 2 + 8 + 3 + 0.5 + 4 + 6 = 35.5 TB",
+        "breakdown": {
+          "PostgreSQL-Main": "12 TB",
+          "Redis-Cluster": "2 TB",
+          "InfluxDB": "8 TB",
+          "TimescaleDB": "3 TB",
+          "MongoDB": "0.5 TB（500GB）",
+          "Oracle-RAC": "4 TB",
+          "Elasticsearch": "6 TB"
+        }
+      }
+    }
+  ],
+  "evaluation": {
+    "reference_answer_visibility": "evaluator_only",
+    "run_modes": ["text", "structured", "latent_kv"],
+    "required_metrics": [
+      "task_accuracy",
+      "input_tokens",
+      "output_tokens",
+      "latent_steps",
+      "latent_kv_bytes_transferred",
+      "total_latency_ms",
+      "analyst_output_length"
+    ],
+    "success_condition": "答案数字正确，且分析包含逐服务展开的详细推理（analyst输出 > 1500 tokens）",
+    "expected_advantage": {
+      "latent_steps": 112,
+      "A_mode_avg_time_s": "160-200（analyst需生成2000字导致慢）",
+      "D_mode_avg_time_s": "120-140（analyst跳过文本生成）",
+      "expected_speedup_pct": "20-30%"
+    }
+  }
+}

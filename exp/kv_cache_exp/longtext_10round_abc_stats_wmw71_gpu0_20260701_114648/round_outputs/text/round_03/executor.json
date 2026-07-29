@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 3,
+  "task_id": 9003,
+  "required_answer_format": "@round[3] @feature_scope[wind_lane_obstacles] @depends_on[1,2] @new_systems[wind_lane,cloud_wall_collision,route_choice] @deliverable[incremental_spec]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}

@@ -1,0 +1,552 @@
+{
+  "suite_id": "retail_peak_incident_latent_kv_10round_v1",
+  "suite_name": "电商大促连续事故响应长中间状态任务集",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "continuous_incident_response_long_intermediate_reasoning",
+  "design_goal": "构造一组最适合 latent_kv 的十轮连续任务：planner/researcher 保留显式证据链，analyst/executor/summarizer 之间存在长中间推理、计算矩阵和跨轮约束继承，最终只输出短 JSON。",
+  "why_latent_kv_should_help": [
+    "每轮都有结构化 evidence_packet、候选根因、近期变更和跨轮处置历史，structured 模式会反复传递长证据与长分析文本。",
+    "analyst 需要比较至少 3 个候选根因，executor 需要计算损失、事故等级、上报时限和动作矩阵，中间状态长但最终答案短。",
+    "executor 可以通过短 CodeAct 片段计算 estimated_loss_usd，再把执行结果 inject 回 KV 链。",
+    "summarizer 只需要从继承的 KV 状态中 decode 最终 JSON，因此适合展示后半段 server-side KV continuation 的收益。"
+  ],
+  "shared_context": {
+    "system": "OmniRetail 全球电商大促平台，包含 APIEdge、CartService、InventoryService、PaymentService、FraudEngine、OrderOrchestrator、WarehouseAllocator、SearchService、PricingService、NotificationService。大促窗口内，系统需要连续处理入口流量、购物车、库存、支付、风控、订单编排、仓配、搜索、定价和通知链路的生产事故。",
+    "incident_roles": [
+      "researcher：阅读本轮 evidence_packet，输出 1200-1600 字证据报告，逐条引用指标、日志、变更和约束。",
+      "analyst：基于 researcher 报告输出 1000-1400 字因果分析，比较至少 3 个候选根因并排序。",
+      "executor：输出 600-900 字计算与处置矩阵，计算损失、事故等级和上报时限。",
+      "summarizer：只输出最终 JSON，不输出长解释。"
+    ],
+    "severity_rules": {
+      "P0": [
+        "failed_checkouts >= 20000",
+        "duplicate_charges >= 1000",
+        "downtime_minutes >= 20",
+        "payment_authorization_stuck_usd >= 50000000",
+        "regulatory_breach == true"
+      ],
+      "P1": [
+        "failed_checkouts >= 5000",
+        "fraud_false_declines >= 3000",
+        "oversold_units >= 2000",
+        "p99_latency_ms >= 2500 for 10 minutes",
+        "payment_authorization_stuck_usd >= 10000000"
+      ],
+      "P2": [
+        "不满足 P0/P1，但影响生产链路、订单体验、库存一致性或需要人工回补"
+      ]
+    },
+    "loss_formula": "estimated_loss_usd = failed_checkouts * 8 + duplicate_charges * 25 + fraud_false_declines * 6 + oversold_units * 15 + floor(payment_authorization_stuck_usd * 0.0015) + downtime_minutes * 12000",
+    "reporting_deadline_rule": {
+      "P0": 15,
+      "P1": 60,
+      "P2": 240
+    },
+    "valid_actions": [
+      "rollback_apiedge_route_config",
+      "disable_fraud_rule_and_reload",
+      "restore_inventory_snapshot_and_reconcile",
+      "pause_order_orchestrator_and_dedupe",
+      "failover_payment_provider_and_replay",
+      "scale_search_cache_and_purge_bad_keys",
+      "rollback_pricing_rules_and_reprice",
+      "rebalance_warehouse_allocator",
+      "enable_notification_fallback_and_backfill",
+      "throttle_flash_sale_and_open_waiting_room"
+    ],
+    "final_output_schema": {
+      "root_cause_service": "string",
+      "root_cause_code": "string",
+      "severity": "P0|P1|P2",
+      "primary_action": "one valid action",
+      "report_deadline_minutes": "integer",
+      "estimated_loss_usd": "integer"
+    }
+  },
+  "quality_metric": {
+    "type": "exact_structured_match",
+    "fields": [
+      "root_cause_service",
+      "root_cause_code",
+      "severity",
+      "primary_action",
+      "report_deadline_minutes",
+      "estimated_loss_usd"
+    ],
+    "pass_condition": "所有字段精确匹配 reference_answer"
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "retail_round_01_apiedge_route_cache",
+      "title": "入口路由缓存异常：APIEdge 将结账流量打到旧集群",
+      "inherits": ["shared_context"],
+      "prompt": "完成本轮大促事故响应决策。必须先让 researcher 输出长证据报告，再让 analyst 输出长因果分析，再让 executor 输出计算与处置矩阵，最终 summarizer 只返回 final_output_schema JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 20:00-20:11 CST",
+        "symptoms": [
+          "大促开场后 checkout/create 请求大量 404，商品浏览和搜索链路正常。",
+          "APIEdge 5xx 未升高，但 checkout 路由到 old-checkout-v2 的比例从 0% 升至 42%。",
+          "PaymentService 和 FraudEngine 没有收到对应结账请求。"
+        ],
+        "metrics": {
+          "failed_checkouts": 22600,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 0,
+          "oversold_units": 0,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 9,
+          "p99_latency_ms": 340,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "APIEdge route-cache key checkout/create points to old-checkout-v2 after config epoch 20260708",
+          "Canary rollback of route-cache TTL restores 98.7% checkout/create success",
+          "CartService confirms cart tokens are valid and not expired"
+        ],
+        "recent_changes": [
+          "19:55 APIEdge route cache TTL changed from 20s to 900s",
+          "19:58 checkout-v3 cutover completed in config center"
+        ],
+        "candidate_root_causes": [
+          "APIEdge stale route cache",
+          "CartService token serialization regression",
+          "PaymentService provider outage"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "APIEdge",
+        "root_cause_code": "stale_checkout_route_cache",
+        "severity": "P0",
+        "primary_action": "rollback_apiedge_route_config",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 288800
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "retail_round_02_fraud_rule_false_decline",
+      "title": "风控误拒：FraudEngine 大促白名单规则解析错误",
+      "inherits": ["round_01_context"],
+      "prompt": "基于第 1 轮入口路由回滚后的状态继续响应。保持长证据、长分析、长执行矩阵和短最终 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 20:18-20:27 CST",
+        "symptoms": [
+          "结账路由恢复后，大量高信誉用户在支付前被 fraud_decline。",
+          "FraudEngine 规则 F-204 命中率从 0.3% 升至 16.8%。",
+          "PaymentService 未出现授权失败，拒绝发生在支付前。"
+        ],
+        "metrics": {
+          "failed_checkouts": 4300,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 6120,
+          "oversold_units": 0,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 5,
+          "p99_latency_ms": 510,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "FraudEngine rule F-204 threshold parsed as 0.04 instead of 0.4",
+          "Shadow replay with F-204 disabled reduces false decline count from 6120 to 53",
+          "Audit trail shows manual rule reload from fraud-ops workstation"
+        ],
+        "recent_changes": [
+          "20:14 fraud-rules.yaml hot reload",
+          "20:16 whitelist campaign_id field renamed from campaign to campaignId"
+        ],
+        "candidate_root_causes": [
+          "FraudEngine threshold parse error",
+          "APIEdge route rollback side effect",
+          "PaymentService risk gateway failure"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "FraudEngine",
+        "root_cause_code": "fraud_rule_threshold_parse_error",
+        "severity": "P1",
+        "primary_action": "disable_fraud_rule_and_reload",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 131120
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "retail_round_03_inventory_snapshot_lag",
+      "title": "库存快照滞后：InventoryService 导致热卖 SKU 超卖",
+      "inherits": ["round_02_context"],
+      "prompt": "本轮要判断是否回滚库存快照并启动对账。继续要求 researcher/analyst/executor 产生长中间状态，最终只给 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 20:34-20:42 CST",
+        "symptoms": [
+          "热卖 SKU 显示 available，但仓库实时库存为 0。",
+          "OrderOrchestrator 接收订单成功后，WarehouseAllocator 返回 out_of_stock。",
+          "InventoryService read-replica lag 从 1.2s 升至 310s。"
+        ],
+        "metrics": {
+          "failed_checkouts": 1700,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 0,
+          "oversold_units": 2840,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 4,
+          "p99_latency_ms": 760,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "InventoryService snapshot watermark stuck at 20:28:41 while order writes continue",
+          "SKU hotset replay reports 2840 oversold units across 37 SKUs",
+          "Manual read from primary shows correct zero inventory"
+        ],
+        "recent_changes": [
+          "20:29 inventory read path switched from primary to replica pool inv-rp-7",
+          "20:31 replica lag alert suppressed by maintenance tag"
+        ],
+        "candidate_root_causes": [
+          "InventoryService stale replica snapshot",
+          "WarehouseAllocator capacity model regression",
+          "PricingService promotion rule mismatch"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "InventoryService",
+        "root_cause_code": "stale_replica_inventory_snapshot",
+        "severity": "P1",
+        "primary_action": "restore_inventory_snapshot_and_reconcile",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 104200
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "retail_round_04_payment_auth_stuck",
+      "title": "支付授权堆积：PaymentService 主通道授权卡滞",
+      "inherits": ["round_03_context"],
+      "prompt": "判断是否需要切换支付通道并回放授权请求。长中间输出、短最终 JSON 的要求保持不变。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 20:51-21:00 CST",
+        "symptoms": [
+          "支付页提交成功后大量订单处于 AUTH_PENDING。",
+          "PaymentService 主 provider p95 response time 从 420ms 升至 18s。",
+          "FraudEngine 放行率恢复正常，InventoryService 对账进行中。"
+        ],
+        "metrics": {
+          "failed_checkouts": 9600,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 0,
+          "oversold_units": 0,
+          "payment_authorization_stuck_usd": 62000000,
+          "downtime_minutes": 7,
+          "p99_latency_ms": 1900,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "PaymentService provider primary returns timeout after acquirer maintenance route change",
+          "Secondary provider health is green with auth success 98.9%",
+          "Replay queue contains 421k idempotent auth requests"
+        ],
+        "recent_changes": [
+          "20:48 acquirer route preference changed to primary-only",
+          "20:49 idempotency key format validated in dry-run"
+        ],
+        "candidate_root_causes": [
+          "PaymentService provider route stuck",
+          "FraudEngine false decline recurrence",
+          "OrderOrchestrator duplicate submit"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "PaymentService",
+        "root_cause_code": "primary_provider_authorization_stuck",
+        "severity": "P0",
+        "primary_action": "failover_payment_provider_and_replay",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 253800
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "retail_round_05_order_duplicate_submit",
+      "title": "订单编排重试异常：OrderOrchestrator 重复提交扣款",
+      "inherits": ["round_04_context"],
+      "prompt": "本轮要识别是否需要暂停订单编排并去重。必须结合第 4 轮支付回放背景，最终只输出 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 21:08-21:16 CST",
+        "symptoms": [
+          "部分用户收到两条支付成功通知，对应同一个 cart_id。",
+          "PaymentService idempotency 命中正常，但 OrderOrchestrator 重试层生成了不同 order_attempt_id。",
+          "NotificationService 只是转发两条成功事件，不是根因。"
+        ],
+        "metrics": {
+          "failed_checkouts": 2400,
+          "duplicate_charges": 1260,
+          "fraud_false_declines": 0,
+          "oversold_units": 0,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 6,
+          "p99_latency_ms": 840,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "OrderOrchestrator retry policy emits new order_attempt_id on HTTP 409",
+          "Dedupe scanner finds 1260 duplicate charges linked by cart_id",
+          "PaymentService replay queue from previous round is idempotent by payment_intent_id"
+        ],
+        "recent_changes": [
+          "21:05 retry policy changed from fixed order_attempt_id to generated attempt id",
+          "21:06 replay worker scaled from 4 to 24 consumers"
+        ],
+        "candidate_root_causes": [
+          "OrderOrchestrator retry idempotency gap",
+          "PaymentService replay duplicate authorization",
+          "NotificationService duplicated fanout"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "OrderOrchestrator",
+        "root_cause_code": "retry_idempotency_gap",
+        "severity": "P0",
+        "primary_action": "pause_order_orchestrator_and_dedupe",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 122700
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "retail_round_06_search_cache_poison",
+      "title": "搜索缓存污染：SearchService 返回过期促销页",
+      "inherits": ["round_05_context"],
+      "prompt": "判断是否需要扩容搜索缓存并清理坏 key。继续保留长中间推理，最终答案只允许 final_output_schema JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 21:24-21:30 CST",
+        "symptoms": [
+          "搜索结果页显示已下架促销商品，点击后结账失败。",
+          "SearchService cache hit rate 99.7%，但 bad_key 比例升至 23%。",
+          "PricingService 和 InventoryService 均返回正确实时结果。"
+        ],
+        "metrics": {
+          "failed_checkouts": 5100,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 0,
+          "oversold_units": 0,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 3,
+          "p99_latency_ms": 3100,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "SearchService cache namespace promo-hotset reused from pre-sale rehearsal",
+          "Purging bad keys for 2% traffic restores search-to-checkout conversion",
+          "APIEdge and CartService traces show failures start after stale search click"
+        ],
+        "recent_changes": [
+          "21:20 search cache warmup job skipped namespace version suffix",
+          "21:22 autoscaler capped SearchService at 40 pods despite queue growth"
+        ],
+        "candidate_root_causes": [
+          "SearchService stale cache namespace",
+          "PricingService discount rollback",
+          "InventoryService replica lag recurrence"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "SearchService",
+        "root_cause_code": "stale_promo_cache_namespace",
+        "severity": "P1",
+        "primary_action": "scale_search_cache_and_purge_bad_keys",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 76800
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "retail_round_07_pricing_rule_misfire",
+      "title": "定价规则误触发：PricingService 错误折扣与补差",
+      "inherits": ["round_06_context"],
+      "prompt": "本轮事故不一定达到 P1/P0，但需要判断正确服务和回滚动作。仍要求长证据、长分析、长执行矩阵。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 21:38-21:43 CST",
+        "symptoms": [
+          "部分品牌商品出现 90% 折扣，但库存和支付链路稳定。",
+          "PricingService rule PR-88 在非目标 campaign_id 上命中。",
+          "客服补差工单开始增加，但未触发支付或库存大规模失败。"
+        ],
+        "metrics": {
+          "failed_checkouts": 900,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 0,
+          "oversold_units": 360,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 2,
+          "p99_latency_ms": 620,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "PricingService PR-88 condition campaign_id in [flash-a] evaluated as wildcard after null coalesce",
+          "Rollback simulation re-prices 99.2% affected carts correctly",
+          "OrderOrchestrator confirms no duplicate submit pattern in this window"
+        ],
+        "recent_changes": [
+          "21:35 pricing DSL null-coalesce operator deployed",
+          "21:36 merch team imported campaign flash-b with missing campaign_id"
+        ],
+        "candidate_root_causes": [
+          "PricingService DSL null-coalesce bug",
+          "SearchService stale promo cache",
+          "InventoryService oversell recurrence"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "PricingService",
+        "root_cause_code": "pricing_rule_null_coalesce_wildcard",
+        "severity": "P2",
+        "primary_action": "rollback_pricing_rules_and_reprice",
+        "report_deadline_minutes": 240,
+        "estimated_loss_usd": 36600
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "retail_round_08_warehouse_region_skew",
+      "title": "仓配分配倾斜：WarehouseAllocator 单区过载导致延迟履约",
+      "inherits": ["round_07_context"],
+      "prompt": "判断是否要重平衡仓配分配。需要继承前序库存和定价修复背景，最终只输出 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 21:52-22:00 CST",
+        "symptoms": [
+          "华东仓订单积压，华北和华南仓仍有可用拣货能力。",
+          "WarehouseAllocator 把 71% 热卖 SKU 分配到 east-3。",
+          "InventoryService 对账完成，当前库存数可信。"
+        ],
+        "metrics": {
+          "failed_checkouts": 1300,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 0,
+          "oversold_units": 2150,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 5,
+          "p99_latency_ms": 1120,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "WarehouseAllocator region weight east-3=0.71 while capacity target is 0.36",
+          "Rebalance dry-run reduces late fulfillment forecast by 64%",
+          "Pricing rollback from previous round no longer changes SKU demand ranking"
+        ],
+        "recent_changes": [
+          "21:49 warehouse capacity feed missed north-2 after schema optional field change",
+          "21:50 allocator switched to last-known-good weights for missing regions"
+        ],
+        "candidate_root_causes": [
+          "WarehouseAllocator stale capacity weights",
+          "InventoryService stale replica snapshot",
+          "PricingService campaign over-demand"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "WarehouseAllocator",
+        "root_cause_code": "stale_region_capacity_weights",
+        "severity": "P1",
+        "primary_action": "rebalance_warehouse_allocator",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 102650
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "retail_round_09_notification_fallback_gap",
+      "title": "通知降级缺口：NotificationService 未补发关键订单状态",
+      "inherits": ["round_08_context"],
+      "prompt": "本轮主要影响用户可见状态和客服工单。判断是否启用通知 fallback 并 backfill，最终仍只输出 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 22:08-22:16 CST",
+        "symptoms": [
+          "订单状态已经更新，但用户未收到支付成功和仓配调整通知。",
+          "NotificationService primary SMS provider 返回 202，但回执缺失。",
+          "订单、支付、库存和仓配核心链路均已稳定。"
+        ],
+        "metrics": {
+          "failed_checkouts": 600,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 0,
+          "oversold_units": 0,
+          "payment_authorization_stuck_usd": 0,
+          "downtime_minutes": 4,
+          "p99_latency_ms": 700,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "NotificationService delivery_receipt_missing_rate=82% on primary SMS provider",
+          "Fallback provider test sends succeed with receipt in 8 seconds",
+          "AuditLogger confirms order state events exist and can be backfilled"
+        ],
+        "recent_changes": [
+          "22:03 primary SMS provider switched receipt endpoint",
+          "22:05 NotificationService fallback disabled during anti-spam review"
+        ],
+        "candidate_root_causes": [
+          "NotificationService receipt endpoint mismatch",
+          "OrderOrchestrator missing state event",
+          "WarehouseAllocator delayed fulfillment"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "NotificationService",
+        "root_cause_code": "sms_receipt_endpoint_mismatch",
+        "severity": "P2",
+        "primary_action": "enable_notification_fallback_and_backfill",
+        "report_deadline_minutes": 240,
+        "estimated_loss_usd": 52800
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "retail_round_10_flash_sale_admission_control",
+      "title": "终局流量冲击：缺少等待室导致结账雪崩",
+      "inherits": ["round_09_context"],
+      "prompt": "第 10 轮需要综合前序处置原则，判断是否进入等待室/限流策略。必须输出长中间推理，但最终只返回 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-09 22:30-22:58 CST",
+        "symptoms": [
+          "压轴秒杀开启后，入口 QPS 超过容量模型 2.8 倍。",
+          "APIEdge 未启用 waiting-room，CartService 和 checkout-v3 出现队列雪崩。",
+          "PaymentService 次级通道稳定，但上游请求堆积导致授权排队。"
+        ],
+        "metrics": {
+          "failed_checkouts": 28600,
+          "duplicate_charges": 0,
+          "fraud_false_declines": 1200,
+          "oversold_units": 0,
+          "payment_authorization_stuck_usd": 12000000,
+          "downtime_minutes": 24,
+          "p99_latency_ms": 4200,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "APIEdge waiting_room_enabled=false for campaign finale-sale",
+          "CartService queue depth hits 4.2M; checkout-v3 autoscaler at max pod limit",
+          "Synthetic test with 35% admission throttle restores p99 latency below 900ms"
+        ],
+        "recent_changes": [
+          "22:24 finale-sale traffic forecast raised from 1.2M to 3.4M users",
+          "22:26 waiting-room rollout paused because of NotificationService backfill concern"
+        ],
+        "candidate_root_causes": [
+          "APIEdge missing admission control",
+          "PaymentService provider stuck recurrence",
+          "CartService serialization regression"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "APIEdge",
+        "root_cause_code": "missing_flash_sale_admission_control",
+        "severity": "P0",
+        "primary_action": "throttle_flash_sale_and_open_waiting_room",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 542000
+      }
+    }
+  ]
+}

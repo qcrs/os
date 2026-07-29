@@ -1,0 +1,14 @@
+{
+  "suite_id": "trading_incident_response_latentmas_10round_v1",
+  "task_file": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/task/lantent/incident_response_10round/incident_response_tasks.json",
+  "modes": [
+    "B",
+    "D"
+  ],
+  "rounds": 10,
+  "output_dir": "exp/latent_kv_exp/incident_response_bd_20260707_1751",
+  "server_base_url": "http://localhost:8101/v1",
+  "started_at": "2026-07-07 18:02:20",
+  "resume": false,
+  "current_d_topology": "planner -> researcher are explicit structured; analyst -> executor -> summarizer continue sequentially through Delta KV; no reducer agent"
+}

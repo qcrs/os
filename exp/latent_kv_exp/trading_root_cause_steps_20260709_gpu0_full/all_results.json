@@ -1,0 +1,235 @@
+[
+  {
+    "reconstructed_from_conversation": true,
+    "mode": "structured",
+    "wall_time_s": 231.345,
+    "correct_fields": 0,
+    "total_fields": 3,
+    "ok": false,
+    "answer": {
+      "root_cause": "True",
+      "severity": "TRUE",
+      "first_bad_component": "True"
+    },
+    "expected": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "latent_steps": 0,
+    "kv_mb": 0.0,
+    "message_count": 7,
+    "text_comm_chars": 290974,
+    "text_comm_tokens_est": 72744,
+    "nontext_transfer_count": 3,
+    "nontext_mb": 0.01,
+    "input_tokens": 36000,
+    "output_tokens": 3072,
+    "execution_tool": "no_code_evidence_synthesis",
+    "step_config": null
+  },
+  {
+    "reconstructed_from_conversation": true,
+    "mode": "kv_latent_0",
+    "wall_time_s": 180.951,
+    "correct_fields": 1,
+    "total_fields": 3,
+    "ok": false,
+    "answer": {
+      "root_cause": "clearing_batch_backpressure",
+      "severity": "P2",
+      "first_bad_component": "OrderGateway"
+    },
+    "expected": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "latent_steps": 0,
+    "kv_mb": 2544.75,
+    "message_count": 4,
+    "text_comm_chars": 269904,
+    "text_comm_tokens_est": 67476,
+    "nontext_transfer_count": 6,
+    "nontext_mb": 2544.76,
+    "input_tokens": 30098,
+    "output_tokens": 2560,
+    "execution_tool": "no_code_evidence_synthesis",
+    "step_config": {
+      "ANALYST_LATENT_STEPS": "0",
+      "EXECUTOR_LATENT_STEPS": "0",
+      "POST_EXEC_LATENT_STEPS": "0",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    }
+  },
+  {
+    "reconstructed_from_conversation": true,
+    "mode": "kv_latent_16",
+    "wall_time_s": 224.328,
+    "correct_fields": 3,
+    "total_fields": 3,
+    "ok": true,
+    "answer": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "expected": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "latent_steps": 16,
+    "kv_mb": 2550.38,
+    "message_count": 4,
+    "text_comm_chars": 270454,
+    "text_comm_tokens_est": 67614,
+    "nontext_transfer_count": 6,
+    "nontext_mb": 2550.39,
+    "input_tokens": 30114,
+    "output_tokens": 2560,
+    "execution_tool": "no_code_evidence_synthesis",
+    "step_config": {
+      "ANALYST_LATENT_STEPS": "8",
+      "EXECUTOR_LATENT_STEPS": "8",
+      "POST_EXEC_LATENT_STEPS": "0",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    }
+  },
+  {
+    "reconstructed_from_conversation": true,
+    "mode": "kv_latent_32",
+    "wall_time_s": 206.279,
+    "correct_fields": 3,
+    "total_fields": 3,
+    "ok": true,
+    "answer": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "expected": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "latent_steps": 32,
+    "kv_mb": 2556.0,
+    "message_count": 4,
+    "text_comm_chars": 270453,
+    "text_comm_tokens_est": 67614,
+    "nontext_transfer_count": 6,
+    "nontext_mb": 2556.01,
+    "input_tokens": 30130,
+    "output_tokens": 2560,
+    "execution_tool": "no_code_evidence_synthesis",
+    "step_config": {
+      "ANALYST_LATENT_STEPS": "16",
+      "EXECUTOR_LATENT_STEPS": "16",
+      "POST_EXEC_LATENT_STEPS": "0",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    }
+  },
+  {
+    "reconstructed_from_conversation": true,
+    "mode": "kv_latent_56",
+    "wall_time_s": 198.379,
+    "correct_fields": 3,
+    "total_fields": 3,
+    "ok": true,
+    "answer": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "expected": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "latent_steps": 56,
+    "kv_mb": 2563.88,
+    "message_count": 4,
+    "text_comm_chars": 270375,
+    "text_comm_tokens_est": 67594,
+    "nontext_transfer_count": 6,
+    "nontext_mb": 2563.89,
+    "input_tokens": 30154,
+    "output_tokens": 2560,
+    "execution_tool": "no_code_evidence_synthesis",
+    "step_config": {
+      "ANALYST_LATENT_STEPS": "32",
+      "EXECUTOR_LATENT_STEPS": "16",
+      "POST_EXEC_LATENT_STEPS": "8",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    }
+  },
+  {
+    "reconstructed_from_conversation": true,
+    "mode": "kv_latent_80",
+    "wall_time_s": 230.29,
+    "correct_fields": 3,
+    "total_fields": 3,
+    "ok": true,
+    "answer": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "expected": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "latent_steps": 80,
+    "kv_mb": 2572.88,
+    "message_count": 4,
+    "text_comm_chars": 270459,
+    "text_comm_tokens_est": 67615,
+    "nontext_transfer_count": 6,
+    "nontext_mb": 2572.89,
+    "input_tokens": 30178,
+    "output_tokens": 2560,
+    "execution_tool": "no_code_evidence_synthesis",
+    "step_config": {
+      "ANALYST_LATENT_STEPS": "48",
+      "EXECUTOR_LATENT_STEPS": "24",
+      "POST_EXEC_LATENT_STEPS": "8",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    }
+  },
+  {
+    "reconstructed_from_conversation": true,
+    "mode": "kv_latent_120",
+    "wall_time_s": 201.453,
+    "correct_fields": 3,
+    "total_fields": 3,
+    "ok": true,
+    "answer": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "expected": {
+      "root_cause": "ordergateway_auth_cache_key_normalization",
+      "severity": "P1",
+      "first_bad_component": "OrderGateway"
+    },
+    "latent_steps": 120,
+    "kv_mb": 3457.41,
+    "message_count": 4,
+    "text_comm_chars": 270461,
+    "text_comm_tokens_est": 67616,
+    "nontext_transfer_count": 7,
+    "nontext_mb": 3457.42,
+    "input_tokens": 30218,
+    "output_tokens": 2560,
+    "execution_tool": "no_code_evidence_synthesis",
+    "step_config": {
+      "ANALYST_LATENT_STEPS": "64",
+      "EXECUTOR_LATENT_STEPS": "32",
+      "POST_EXEC_LATENT_STEPS": "16",
+      "SUMMARIZER_LATENT_STEPS": "8"
+    }
+  }
+]

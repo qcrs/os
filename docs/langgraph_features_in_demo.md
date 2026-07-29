@@ -4,7 +4,7 @@
 
 | API | 作用 | Demo 中的使用位置 |
 |-----|------|------------------|
-| `StateGraph` | 核心图构建器，定义节点和边 | `graph.py` — 构建 ResearchState 图 |
+| `StateGraph` | 核心图构建器，定义节点和边 | `graph.py` — 构建 AgentWorkflowState 图 |
 | `START` | 图入口哨兵节点 | `graph.py` — `add_edge(START, "planner")` |
 | `END` | 图出口哨兵节点 | `graph.py` — `add_edge("summarizer", END)` |
 | `add_node(name, fn)` | 注册 Agent 函数为图节点 | `graph.py` — 注册 planner/retriever/executor/summarizer |
@@ -25,7 +25,7 @@
 
 | 模式 | 作用 | Demo 中的使用位置 |
 |------|------|------------------|
-| `TypedDict` 状态定义 | 类型化的图状态声明 | `graph.py` — `ResearchState(TypedDict, total=False)` |
+| `TypedDict` 状态定义 | 类型化的图状态声明 | `graph.py` — `AgentWorkflowState(TypedDict, total=False)` |
 | `Annotated[list[T], operator.add]` | 并行分支结果累加（fan-in） | `graph.py` — `documents` 字段，多个 retriever 的结果自动合并 |
 
 **作用**：替代自然语言交互，Agent 之间通过 TypedDict 字段传递结构化数据。

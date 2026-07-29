@@ -1,0 +1,33 @@
+{
+  "round_id": 9,
+  "task_id": "incident_round_09_regulatory_schema_reject",
+  "title": "监管报文拒收：RegulatoryReporter Schema 回滚",
+  "mode": "D_latent_kv",
+  "wall_time_s": 265.459,
+  "llm_calls": 6,
+  "input_tokens": 11285,
+  "output_tokens": 2816,
+  "latent_steps": 112,
+  "kv_bytes_transfer": 693780480,
+  "answer": {
+    "root_cause_service": "RegulatoryReporter",
+    "root_cause_code": "SCHEMA_MISMATCH_V2",
+    "severity": "P0",
+    "primary_action": "rollback_regulatory_schema_and_resubmit",
+    "report_deadline_minutes": 15,
+    "estimated_loss_usd": 0
+  },
+  "expected": {
+    "root_cause_service": "RegulatoryReporter",
+    "root_cause_code": "incompatible_schema_mapper",
+    "severity": "P0",
+    "primary_action": "rollback_regulatory_schema_and_resubmit",
+    "report_deadline_minutes": 15,
+    "estimated_loss_usd": 0
+  },
+  "correct_fields": 5,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "</think>\n\n{\n  \"root_cause_service\": \"RegulatoryReporter\",\n  \"root_cause_code\": \"SCHEMA_MISMATCH_V2\",\n  \"severity\": \"P0\",\n  \"primary_action\": \"rollback_regulatory_schema_and_resubmit\",\n  \"report_deadline_minutes\": 15,\n  \"estimated_loss_usd\": 0\n}\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```",
+  "error": ""
+}

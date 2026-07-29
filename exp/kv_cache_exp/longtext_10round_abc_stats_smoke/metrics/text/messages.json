@@ -1,0 +1,66 @@
+[
+  {
+    "round_id": 1,
+    "source": "planner",
+    "target": "researcher_1",
+    "action": "plan_to_research",
+    "text_chars": 479,
+    "text_tokens": 160
+  },
+  {
+    "round_id": 1,
+    "source": "planner",
+    "target": "researcher_2",
+    "action": "plan_to_research",
+    "text_chars": 479,
+    "text_tokens": 160
+  },
+  {
+    "round_id": 1,
+    "source": "planner",
+    "target": "researcher_3",
+    "action": "plan_to_research",
+    "text_chars": 479,
+    "text_tokens": 160
+  },
+  {
+    "round_id": 1,
+    "source": "researcher_1",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 540,
+    "text_tokens": 192
+  },
+  {
+    "round_id": 1,
+    "source": "researcher_2",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 445,
+    "text_tokens": 192
+  },
+  {
+    "round_id": 1,
+    "source": "researcher_3",
+    "target": "analyst",
+    "action": "research_to_analysis",
+    "text_chars": 445,
+    "text_tokens": 192
+  },
+  {
+    "round_id": 1,
+    "source": "analyst",
+    "target": "executor",
+    "action": "analysis_to_execution",
+    "text_chars": 1264,
+    "text_tokens": 256
+  },
+  {
+    "round_id": 1,
+    "source": "executor",
+    "target": "summarizer",
+    "action": "execution_to_summary",
+    "text_chars": 452,
+    "text_tokens": 140
+  }
+]

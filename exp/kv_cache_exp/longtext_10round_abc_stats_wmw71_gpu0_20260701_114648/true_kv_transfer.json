@@ -1,0 +1,264 @@
+{
+  "mode": "true_kv_transfer",
+  "aggregate": {
+    "mode": "true_kv_transfer",
+    "rounds_completed": 10,
+    "mode_wall_time_sec": 881.598,
+    "model_load_wall_time_sec": 28.9176,
+    "sum_round_wall_time_sec": 852.1684,
+    "avg_single_task_wall_time_sec": 85.2168,
+    "min_single_task_wall_time_sec": 72.8085,
+    "max_single_task_wall_time_sec": 108.1815,
+    "llm_call_count": 60,
+    "inter_agent_message_count": 80,
+    "message_edge_counts": {
+      "analyst->executor": 10,
+      "executor->summarizer": 10,
+      "planner->researcher_1": 10,
+      "planner->researcher_2": 10,
+      "planner->researcher_3": 10,
+      "researcher_1->analyst": 10,
+      "researcher_2->analyst": 10,
+      "researcher_3->analyst": 10
+    },
+    "logical_prompt_tokens": 365804,
+    "effective_prompt_tokens": 165044,
+    "output_tokens": 14142,
+    "logical_total_tokens": 379946,
+    "effective_total_tokens": 179186,
+    "text_transfer_tokens": 165104,
+    "text_transfer_chars": 430815,
+    "kv_reused_tokens": 200760,
+    "source_prefix_tokens": 3346,
+    "source_prefix_chars": 6439,
+    "producer_wall_time_sec": 0.4348,
+    "non_text_state_transfer_count": 61,
+    "non_text_state_bytes": 31770488340,
+    "kv_storage": {
+      "handoff_handle": {
+        "handoff_id": "true-kv-longtext_10round_context_prefill-cb4d9f9fc4a11078",
+        "backend": "vllm_kv_transfer",
+        "connector": "SharedStorageConnector",
+        "storage_path": "exp/kv_cache_exp/longtext_10round_abc_stats_wmw71_gpu0_20260701_114648/true_kv_shared_storage",
+        "model_path": "/data/models/Qwen3-8B",
+        "token_hash": "cb4d9f9fc4a11078",
+        "prompt_tokens": 3346,
+        "prompt_chars": 6439,
+        "producer_agent": "longtext_10round_context_prefill",
+        "created_at": 1782881664.2985852,
+        "prompt_text_required_for_lookup": true,
+        "note": "The handle points to KV tensors stored by vLLM KVTransferConfig. The same token prefix is still used as lookup key, but the cached K/V tensors are saved and loaded by the connector."
+      },
+      "storage_after_producer": {
+        "file_count": 1908,
+        "total_bytes": 31770447840,
+        "sample_files": [
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.8.self_attn.attn.safetensors",
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.27.self_attn.attn.safetensors",
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.29.self_attn.attn.safetensors",
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.34.self_attn.attn.safetensors",
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.16.self_attn.attn.safetensors",
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.19.self_attn.attn.safetensors",
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.31.self_attn.attn.safetensors",
+          "878888d53cbe986d40607a2c52eaf32c/model.layers.30.self_attn.attn.safetensors"
+        ]
+      },
+      "kv_transfer_config": {
+        "kv_connector": "SharedStorageConnector",
+        "kv_role": "kv_both",
+        "kv_connector_extra_config": {
+          "shared_storage_path": "exp/kv_cache_exp/longtext_10round_abc_stats_wmw71_gpu0_20260701_114648/true_kv_shared_storage"
+        }
+      }
+    }
+  },
+  "rounds": [
+    {
+      "round_id": 1,
+      "task_id": 9001,
+      "wall_time_sec": 72.8085,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 4335,
+      "text_transfer_chars": 12475,
+      "effective_prompt_tokens": 4329,
+      "logical_prompt_tokens": 24405,
+      "output_tokens": 1375,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 2,
+      "task_id": 9002,
+      "wall_time_sec": 77.9454,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 6870,
+      "text_transfer_chars": 19410,
+      "effective_prompt_tokens": 6864,
+      "logical_prompt_tokens": 26940,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 3,
+      "task_id": 9003,
+      "wall_time_sec": 79.1526,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 9637,
+      "text_transfer_chars": 26854,
+      "effective_prompt_tokens": 9631,
+      "logical_prompt_tokens": 29707,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 4,
+      "task_id": 9004,
+      "wall_time_sec": 81.8039,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 13005,
+      "text_transfer_chars": 34566,
+      "effective_prompt_tokens": 12999,
+      "logical_prompt_tokens": 33075,
+      "output_tokens": 1375,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 5,
+      "task_id": 9005,
+      "wall_time_sec": 84.3143,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 16414,
+      "text_transfer_chars": 42486,
+      "effective_prompt_tokens": 16408,
+      "logical_prompt_tokens": 36484,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 6,
+      "task_id": 9006,
+      "wall_time_sec": 85.5728,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 19557,
+      "text_transfer_chars": 50172,
+      "effective_prompt_tokens": 19551,
+      "logical_prompt_tokens": 39627,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 7,
+      "task_id": 9007,
+      "wall_time_sec": 87.7415,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 22550,
+      "text_transfer_chars": 57899,
+      "effective_prompt_tokens": 22544,
+      "logical_prompt_tokens": 42620,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 8,
+      "task_id": 9008,
+      "wall_time_sec": 87.4728,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 24123,
+      "text_transfer_chars": 61019,
+      "effective_prompt_tokens": 24117,
+      "logical_prompt_tokens": 44193,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 9,
+      "task_id": 9009,
+      "wall_time_sec": 87.1751,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 23881,
+      "text_transfer_chars": 60831,
+      "effective_prompt_tokens": 23875,
+      "logical_prompt_tokens": 43951,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    },
+    {
+      "round_id": 10,
+      "task_id": 9010,
+      "wall_time_sec": 108.1815,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 24732,
+      "text_transfer_chars": 65103,
+      "effective_prompt_tokens": 24726,
+      "logical_prompt_tokens": 44802,
+      "output_tokens": 1760,
+      "kv_reused_tokens": 20076,
+      "non_text_state_events": 6,
+      "non_text_state_bytes": 4050
+    }
+  ],
+  "kv_storage": {
+    "handoff_handle": {
+      "handoff_id": "true-kv-longtext_10round_context_prefill-cb4d9f9fc4a11078",
+      "backend": "vllm_kv_transfer",
+      "connector": "SharedStorageConnector",
+      "storage_path": "exp/kv_cache_exp/longtext_10round_abc_stats_wmw71_gpu0_20260701_114648/true_kv_shared_storage",
+      "model_path": "/data/models/Qwen3-8B",
+      "token_hash": "cb4d9f9fc4a11078",
+      "prompt_tokens": 3346,
+      "prompt_chars": 6439,
+      "producer_agent": "longtext_10round_context_prefill",
+      "created_at": 1782881664.2985852,
+      "prompt_text_required_for_lookup": true,
+      "note": "The handle points to KV tensors stored by vLLM KVTransferConfig. The same token prefix is still used as lookup key, but the cached K/V tensors are saved and loaded by the connector."
+    },
+    "storage_after_producer": {
+      "file_count": 1908,
+      "total_bytes": 31770447840,
+      "sample_files": [
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.8.self_attn.attn.safetensors",
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.27.self_attn.attn.safetensors",
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.29.self_attn.attn.safetensors",
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.34.self_attn.attn.safetensors",
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.16.self_attn.attn.safetensors",
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.19.self_attn.attn.safetensors",
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.31.self_attn.attn.safetensors",
+        "878888d53cbe986d40607a2c52eaf32c/model.layers.30.self_attn.attn.safetensors"
+      ]
+    },
+    "kv_transfer_config": {
+      "kv_connector": "SharedStorageConnector",
+      "kv_role": "kv_both",
+      "kv_connector_extra_config": {
+        "shared_storage_path": "exp/kv_cache_exp/longtext_10round_abc_stats_wmw71_gpu0_20260701_114648/true_kv_shared_storage"
+      }
+    }
+  }
+}

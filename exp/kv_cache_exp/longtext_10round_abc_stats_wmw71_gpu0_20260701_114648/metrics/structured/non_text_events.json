@@ -1,0 +1,642 @@
+[
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 1,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 2,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 3,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 4,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 5,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 6,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 7,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 8,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 159,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 9,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 162,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_1",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_2",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "planner",
+    "target": "researcher_3",
+    "size_bytes": 160,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "researcher_1",
+    "target": "analyst",
+    "size_bytes": 164,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "researcher_2",
+    "target": "analyst",
+    "size_bytes": 164,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "researcher_3",
+    "target": "analyst",
+    "size_bytes": 164,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "analyst",
+    "target": "executor",
+    "size_bytes": 161,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  },
+  {
+    "round_id": 10,
+    "event_type": "structured_agent_message",
+    "source": "executor",
+    "target": "summarizer",
+    "size_bytes": 163,
+    "note": "Typed protocol object serialized outside free-form text passthrough."
+  }
+]

@@ -1,0 +1,508 @@
+{
+"suite_id": "7city_reasoning_10round_v1",
+"suite_name": "七城市巡检路线连续推理任务集",
+"language": "zh-CN",
+"model_target": "Qwen3-8B",
+"task_type": "continuous_combinatorial_reasoning",
+"benchmark_goal": [
+"验证多智能体在长中间推理、短最终答案场景下的 latent KV 传递效果",
+"比较 text、structured 和 latent_kv 三种模式的中间输出 token",
+"比较后继 Agent 的重复 prefill token 和端到端时延",
+"验证连续任务中的共享上下文和历史结果复用"
+],
+"agent_policy": {
+"autonomous_planning": true,
+"autonomous_agent_assignment": true,
+"codeact_allowed": true,
+"full_chain_of_thought_not_required": true,
+"final_answer_should_include": [
+"最优路线",
+"总成本",
+"约束检查结果",
+"简短的最优性验证说明"
+]
+},
+"shared_context": {
+"description": "有 A、B、C、D、E、F、G 七个城市。除特别说明外，路线从 A 出发，访问其余每个城市恰好一次，最后返回 A。距离是对称的。",
+"cities": [
+"A",
+"B",
+"C",
+"D",
+"E",
+"F",
+"G"
+],
+"distance_matrix": {
+"A": {
+"A": 0,
+"B": 6,
+"C": 20,
+"D": 4,
+"E": 10,
+"F": 5,
+"G": 17
+},
+"B": {
+"A": 6,
+"B": 0,
+"C": 16,
+"D": 17,
+"E": 14,
+"F": 8,
+"G": 5
+},
+"C": {
+"A": 20,
+"B": 16,
+"C": 0,
+"D": 17,
+"E": 2,
+"F": 14,
+"G": 15
+},
+"D": {
+"A": 4,
+"B": 17,
+"C": 17,
+"D": 0,
+"E": 2,
+"F": 16,
+"G": 10
+},
+"E": {
+"A": 10,
+"B": 14,
+"C": 2,
+"D": 2,
+"E": 0,
+"F": 9,
+"G": 20
+},
+"F": {
+"A": 5,
+"B": 8,
+"C": 14,
+"D": 16,
+"E": 9,
+"F": 0,
+"G": 5
+},
+"G": {
+"A": 17,
+"B": 5,
+"C": 15,
+"D": 10,
+"E": 20,
+"F": 5,
+"G": 0
+}
+},
+"default_rules": [
+"每个城市恰好访问一次",
+"除特别说明外，路线从 A 出发并返回 A",
+"距离矩阵对称",
+"正向路线和完全反向路线视为同一个环形方案",
+"允许使用动态规划、分支限界或穷举 6! 条候选路线进行验证",
+"不得只返回程序输出，必须给出简短的约束和最优性说明"
+]
+},
+"output_schema": {
+"route": [
+"A",
+"...",
+"A"
+],
+"total_cost": "integer",
+"constraint_satisfied": "boolean",
+"verification": "short string"
+},
+"tasks": [
+{
+"round": 1,
+"task_id": "route_round_01",
+"title": "基础最短巡回路线",
+"inherits": [
+"shared_context"
+],
+"prompt": "求从 A 出发、访问其余每个城市恰好一次并返回 A 的最短路线。系统应自主决定如何分工、是否进行代码验证，并说明为什么不存在成本更低的路线。",
+"latent_value": "需要先形成候选边组合和剪枝判断，再由后续 Agent 验证；最终答案只需路线和成本。",
+"reference_answer": {
+"route": [
+"A",
+"B",
+"G",
+"F",
+"C",
+"E",
+"D",
+"A"
+],
+"reverse_route_also_valid": true,
+"total_cost": 38,
+"unique_up_to_reversal": true
+}
+},
+{
+"round": 2,
+"task_id": "route_round_02",
+"title": "道路关闭后的重新规划",
+"inherits": [
+"shared_context",
+"round_01_context"
+],
+"prompt": "沿用相同距离矩阵，但道路 C-E 已关闭，路线中不得直接经过 C-E。重新求最短巡回路线，并比较它相对第 1 轮最优路线增加了多少成本。",
+"latent_value": "需要继承第 1 轮路线和成本，识别原最优解失效的原因，再搜索新的最优路线。",
+"reference_answer": {
+"route": [
+"A",
+"B",
+"G",
+"C",
+"F",
+"E",
+"D",
+"A"
+],
+"reverse_route_also_valid": true,
+"total_cost": 55,
+"cost_increase_from_round_01": 17
+}
+},
+{
+"round": 3,
+"task_id": "route_round_03",
+"title": "包含指定道路的最短路线",
+"inherits": [
+"shared_context"
+],
+"prompt": "恢复全部道路，但要求路线必须直接经过道路 B-F。求满足该条件的最短巡回路线，并验证 B-F 确实属于最终路线。",
+"latent_value": "分析 Agent 需要传播强制边约束，执行 Agent 再验证剩余排列。",
+"reference_answer": {
+"route": [
+"A",
+"D",
+"E",
+"C",
+"G",
+"B",
+"F",
+"A"
+],
+"reverse_route_also_valid": true,
+"total_cost": 41,
+"required_edge": [
+"B",
+"F"
+]
+}
+},
+{
+"round": 4,
+"task_id": "route_round_04",
+"title": "带访问先后顺序的巡回路线",
+"inherits": [
+"shared_context"
+],
+"prompt": "求从 A 出发并返回 A 的最短路线，但在实际行进方向上必须先访问 D 再访问 G，同时先访问 E 再访问 C。由于存在访问顺序约束，反向路线不再自动等价。",
+"latent_value": "需要同时处理距离优化和两个偏序约束，后继 Agent 必须继承前序约束传播结果。",
+"reference_answer": {
+"route": [
+"A",
+"D",
+"E",
+"C",
+"F",
+"G",
+"B",
+"A"
+],
+"reverse_route_also_valid": false,
+"total_cost": 38,
+"order_constraints": [
+"D before G",
+"E before C"
+]
+}
+},
+{
+"round": 5,
+"task_id": "route_round_05",
+"title": "固定终点的最短哈密顿路径",
+"inherits": [
+"shared_context"
+],
+"prompt": "本轮不要求返回 A。求从 A 出发、访问其余城市恰好一次并最终停在 G 的最短路径。",
+"latent_value": "需要从巡回路线问题切换为有固定起点和终点的路径问题，同时复用原距离结构。",
+"reference_answer": {
+"route": [
+"A",
+"D",
+"E",
+"C",
+"F",
+"B",
+"G"
+],
+"reverse_route_also_valid": false,
+"total_cost": 35
+}
+},
+{
+"round": 6,
+"task_id": "route_round_06",
+"title": "异或道路约束",
+"inherits": [
+"shared_context"
+],
+"prompt": "求最短巡回路线，要求道路 B-C 和道路 E-F 中必须且只能使用一条。两条都使用或两条都不使用均不合法。",
+"latent_value": "需要处理异或约束，并在候选路线中持续检查两条边的使用状态。",
+"reference_answer": {
+"route": [
+"A",
+"D",
+"E",
+"C",
+"B",
+"G",
+"F",
+"A"
+],
+"reverse_route_also_valid": true,
+"total_cost": 39,
+"used_edge": [
+"B",
+"C"
+],
+"unused_edge": [
+"E",
+"F"
+]
+}
+},
+{
+"round": 7,
+"task_id": "route_round_07",
+"title": "强制边与禁止边组合",
+"inherits": [
+"shared_context"
+],
+"prompt": "求最短巡回路线，要求必须使用道路 D-G，同时禁止使用道路 A-C。给出满足两个约束的最优路线。",
+"latent_value": "强制边和禁止边需要共同传播，适合由前序 Agent形成候选结构，后序 Agent直接继承并验证。",
+"reference_answer": {
+"route": [
+"A",
+"B",
+"G",
+"D",
+"E",
+"C",
+"F",
+"A"
+],
+"reverse_route_also_valid": true,
+"total_cost": 44,
+"required_edge": [
+"D",
+"G"
+],
+"forbidden_edge": [
+"A",
+"C"
+]
+}
+},
+{
+"round": 8,
+"task_id": "route_round_08",
+"title": "低重合备用路线",
+"inherits": [
+"shared_context",
+"round_01_answer"
+],
+"prompt": "为避免单一路线故障，设计一条新的最短巡回路线。它与第 1 轮最优路线最多只能共享 3 条无向道路。求满足条件的最低成本路线，并列出共享的道路。",
+"latent_value": "必须准确继承第 1 轮最优路线的边集合，再进行集合交集约束和成本优化。",
+"reference_answer": {
+"route": [
+"A",
+"D",
+"G",
+"B",
+"C",
+"E",
+"F",
+"A"
+],
+"reverse_route_also_valid": true,
+"total_cost": 51,
+"shared_edge_count": 3,
+"shared_edges_with_round_01": [
+[
+"A",
+"D"
+],
+[
+"B",
+"G"
+],
+[
+"C",
+"E"
+]
+]
+}
+},
+{
+"round": 9,
+"task_id": "route_round_09",
+"title": "严格次优路线",
+"inherits": [
+"shared_context",
+"round_01_answer"
+],
+"prompt": "求基础问题中的严格第二短巡回路线。它不能与第 1 轮最优路线相同，也不能只是第 1 轮路线的反向表示。说明它与最优路线的成本差。",
+"latent_value": "需要继承并排除第 1 轮最优等价类，而不是重新把最优路线作为答案。",
+"reference_answer": {
+"route": [
+"A",
+"D",
+"E",
+"C",
+"B",
+"G",
+"F",
+"A"
+],
+"reverse_route_also_valid": true,
+"total_cost": 39,
+"cost_gap_from_round_01": 1
+}
+},
+{
+"round": 10,
+"task_id": "route_round_10",
+"title": "双场景鲁棒路线",
+"inherits": [
+"shared_context",
+"round_01_to_09_history"
+],
+"storm_distance_matrix": {
+"A": {
+"A": 0,
+"B": 6,
+"C": 21,
+"D": 5,
+"E": 15,
+"F": 7,
+"G": 27
+},
+"B": {
+"A": 6,
+"B": 0,
+"C": 20,
+"D": 21,
+"E": 23,
+"F": 11,
+"G": 14
+},
+"C": {
+"A": 21,
+"B": 20,
+"C": 0,
+"D": 17,
+"E": 11,
+"F": 24,
+"G": 17
+},
+"D": {
+"A": 5,
+"B": 21,
+"C": 17,
+"D": 0,
+"E": 8,
+"F": 26,
+"G": 16
+},
+"E": {
+"A": 15,
+"B": 23,
+"C": 11,
+"D": 8,
+"E": 0,
+"F": 17,
+"G": 25
+},
+"F": {
+"A": 7,
+"B": 11,
+"C": 24,
+"D": 26,
+"E": 17,
+"F": 0,
+"G": 13
+},
+"G": {
+"A": 27,
+"B": 14,
+"C": 17,
+"D": 16,
+"E": 25,
+"F": 13,
+"G": 0
+}
+},
+"prompt": "现在存在正常和暴雨两种距离场景。对每条巡回路线，分别计算它在正常矩阵和暴雨矩阵下的总成本，并以两者中的较大值作为最坏情况成本。求最坏情况成本最小的鲁棒路线；若并列，再选择两种场景成本之和更小的路线。",
+"latent_value": "需要继承原矩阵，引入第二场景并进行双目标比较，适合作为连续十轮后的综合推理和记忆复用测试。",
+"reference_answer": {
+"route": [
+"A",
+"B",
+"F",
+"G",
+"C",
+"E",
+"D",
+"A"
+],
+"reverse_route_also_valid": true,
+"normal_cost": 42,
+"storm_cost": 71,
+"worst_case_cost": 71,
+"sum_of_two_costs": 113
+}
+}
+],
+"evaluation": {
+"reference_answer_visibility": "evaluator_only",
+"run_modes": [
+"text",
+"structured",
+"latent_kv"
+],
+"required_metrics": [
+"task_accuracy",
+"intermediate_output_tokens",
+"final_output_tokens",
+"latent_steps",
+"avoided_reprefill_tokens",
+"logical_kv_delta_bytes",
+"physical_kv_copy_bytes",
+"total_latency_ms",
+"peak_gpu_memory_bytes",
+"memory_reuse_hits"
+],
+"recommended_latent_steps": {
+"analyst": [
+16,
+32,
+64
+],
+"executor": [
+8,
+16,
+32
+]
+},
+"success_condition": "路线和成本正确，所有附加约束满足，并且最终说明能够被程序验证。"
+}
+}

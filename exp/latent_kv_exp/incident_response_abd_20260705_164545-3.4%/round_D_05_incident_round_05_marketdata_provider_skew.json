@@ -1,0 +1,33 @@
+{
+  "round_id": 5,
+  "task_id": "incident_round_05_marketdata_provider_skew",
+  "title": "行情偏移：MarketDataFeed 主供应商价格漂移",
+  "mode": "D_latent_kv",
+  "wall_time_s": 301.812,
+  "llm_calls": 6,
+  "input_tokens": 12853,
+  "output_tokens": 2816,
+  "latent_steps": 112,
+  "kv_bytes_transfer": 1170653184,
+  "answer": {
+    "root_cause_service": "MarketDataFeed",
+    "root_cause_code": "primary_provider_skew",
+    "severity": "P1",
+    "primary_action": "switch_marketdata_to_secondary",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 125000
+  },
+  "expected": {
+    "root_cause_service": "MarketDataFeed",
+    "root_cause_code": "primary_provider_price_skew",
+    "severity": "P1",
+    "primary_action": "switch_marketdata_to_secondary",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 155000
+  },
+  "correct_fields": 4,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "</think>\n\n{\n  \"root_cause_service\": \"MarketDataFeed\",\n  \"root_cause_code\": \"primary_provider_skew\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"switch_marketdata_to_secondary\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 125000\n}\n\n```json\n{\n  \"root_cause_service\": \"MarketDataFeed\",\n  \"root_cause_code\": \"primary_provider_skew\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"switch_marketdata_to_secondary\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 125000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"MarketDataFeed\",\n  \"root_cause_code\": \"primary_provider_skew\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"switch_marketdata_to_secondary\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 125000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"MarketDataFeed\",\n  \"root_cause_code\": \"primary_provider_skew\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"switch_marketdata_to_secondary\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 125000\n}\n```\n\n```json\n{\n  \"root_cause_servic",
+  "error": ""
+}

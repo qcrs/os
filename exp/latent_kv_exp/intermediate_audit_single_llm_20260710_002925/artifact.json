@@ -1,0 +1,95 @@
+{
+  "researcher_report": "本次审计窗口共分析4个涉密访问案例，均涉及研发、国防项目、财务模型及客户合同仓库数据。C-117（contractor_delta）通过未托管终端导出S4级国防项目数据至外部对象存储桶，存在设备绑定失效（E002）、过期审批（E003）及令牌绑定绕过（E006）等多重漏洞，且历史记录显示该主体曾多次被拒绝S4级导出请求（E005）。C-118（analyst_india）虽涉及S4级受限财务模型，但数据仅传输至内部沙箱（E010），且84%数据被隔离（E009），缓解措施包含含有效审批（E008）和快速隔离（E012）。C-119（batch_svc_rnd）通过服务账户执行S3级原型材料索引导出，存在地理异常（E014）和非计划窗口执行（E015），但数据全程未外泄（E016）。C-120（hr_report_bot）为S2级员工培训清单生成，经DLP红action处理（E021）且审批完整（E020），风险最低。所有案例均需重点核查设备绑定、审批有效性及数据流向合规性。",
+  "analyst_analysis": "风险排序为C-117 > C-118 > C-119 > C-120。C-117因S4级数据、未托管终端、外部存储桶、过期审批及令牌绕过五重风险叠加，且历史拒绝记录强化其威胁性。C-118虽为S4级但数据隔离率高（84%）、目的地内部，且含有效审批，风险次之。C-119虽体积大（78GB）且存在地理异常，但数据未外泄且敏感度仅为S3，风险低于C-118。C-120为S2级数据，经DLP处理且审批完整，风险最低。后三案均因敏感度不足、数据隔离或缓解措施有效而无法超越C-117的综合风险值。",
+  "executor_matrix": [
+    {
+      "case_id": "C-117",
+      "sensitivity_points": 40,
+      "volume_points": 20,
+      "channel_points": 18,
+      "anomaly_points": 14,
+      "repeat_points": 8,
+      "exposure_points": 12,
+      "mitigation_points": 4,
+      "risk_score": 108,
+      "tier": "CRITICAL",
+      "action": "isolate_account_and_open_major_incident",
+      "supporting_evidence_ids": [
+        "E001",
+        "E002",
+        "E003",
+        "E004",
+        "E005",
+        "E006"
+      ]
+    },
+    {
+      "case_id": "C-118",
+      "sensitivity_points": 40,
+      "volume_points": 12,
+      "channel_points": 14,
+      "anomaly_points": 6,
+      "repeat_points": 4,
+      "exposure_points": 8,
+      "mitigation_points": 12,
+      "risk_score": 76,
+      "tier": "HIGH",
+      "action": "freeze_export_and_start_review",
+      "supporting_evidence_ids": [
+        "E007",
+        "E008",
+        "E009",
+        "E010",
+        "E011",
+        "E012"
+      ]
+    },
+    {
+      "case_id": "C-119",
+      "sensitivity_points": 28,
+      "volume_points": 20,
+      "channel_points": 10,
+      "anomaly_points": 10,
+      "repeat_points": 0,
+      "exposure_points": 6,
+      "mitigation_points": 8,
+      "risk_score": 66,
+      "tier": "HIGH",
+      "action": "freeze_export_and_start_review",
+      "supporting_evidence_ids": [
+        "E013",
+        "E014",
+        "E015",
+        "E016",
+        "E017",
+        "E018"
+      ]
+    },
+    {
+      "case_id": "C-120",
+      "sensitivity_points": 16,
+      "volume_points": 6,
+      "channel_points": 3,
+      "anomaly_points": 0,
+      "repeat_points": 0,
+      "exposure_points": 2,
+      "mitigation_points": 10,
+      "risk_score": 43,
+      "tier": "MEDIUM",
+      "action": "require_manager_reapproval",
+      "supporting_evidence_ids": [
+        "E019",
+        "E020",
+        "E021",
+        "E022"
+      ]
+    }
+  ],
+  "final_answer": {
+    "case_id": "C-117",
+    "risk_score": 108,
+    "tier": "CRITICAL",
+    "action": "isolate_account_and_open_major_incident",
+    "primary_control_gap": "token_binding_bypass"
+  }
+}

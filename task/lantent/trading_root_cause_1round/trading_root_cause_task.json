@@ -1,0 +1,238 @@
+{
+  "suite_id": "trading_root_cause_latent_steps_1round_v1",
+  "suite_name": "合成交易系统长日志根因定位单轮任务",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "long_log_root_cause_synthesis_short_json",
+  "synthetic_notice": "本任务全部为合成脱敏场景，不包含真实交易数据、真实客户、真实系统密钥或真实事故。",
+  "design_goal": "构造一个适合检验 latent steps 是否能帮助长中间推理的任务：输入包含覆盖 1480 行原始日志的摘要、指标快照和变更记录；最终只输出 root_cause、severity、first_bad_component 三个短字段。任务不依赖确定性公式或代码执行，要求模型综合多段证据排除干扰候选。",
+  "why_latent_steps_should_help": [
+    "关键证据分散在日志摘要、指标、变更记录和排除性证据中，需要跨段落整合。",
+    "最终 JSON 很短，但中间必须比较多个候选根因，包括风控规则、撮合队列、市场数据、清结算批处理和订单网关认证缓存。",
+    "存在多个同时异常的下游组件，必须识别最早出现且能解释多数症状的 first_bad_component。",
+    "不允许 executor 运行代码或调用工具，因此正确性主要来自证据综合和因果排序，而不是确定性计算。"
+  ],
+  "fairness_controls": [
+    "所有模式应读取同一份 prompt、日志摘要、指标和变更记录。",
+    "reference_answer 仅供评测使用，不应拼入模型 prompt。",
+    "任务正文不直接给出 root_cause 标签；root_cause 必须由证据链推断。",
+    "所有候选根因均有至少一个表面支持证据，但只有一个候选同时满足 earliest-change、earliest-symptom、blast-radius 和 recovery-correlation。",
+    "禁止使用外部知识；只能根据当前 evidence_packet 判断。",
+    "禁止 executor 执行代码、shell、SQL 或外部工具；executor 只能写证据综合和候选排序。"
+  ],
+  "latent_config_recommendation": {
+    "ANALYST_LATENT_STEPS": 0,
+    "EXECUTOR_LATENT_STEPS": 16,
+    "POST_EXEC_LATENT_STEPS": 0,
+    "SUMMARIZER_LATENT_STEPS": 0,
+    "ablation_note": "建议做 0/16/32/56/80/120 latent steps 消融。若正确率或候选排除质量随 steps 稳定提升，才可说明 latent steps 提供了有效的非文本内部计算轨迹。"
+  },
+  "output_schema": {
+    "root_cause": "string enum",
+    "severity": "P0|P1|P2",
+    "first_bad_component": "string enum"
+  },
+  "quality_metric": {
+    "type": "exact_structured_match",
+    "fields": [
+      "root_cause",
+      "severity",
+      "first_bad_component"
+    ],
+    "pass_condition": "三个字段全部精确匹配 reference_answer 才算通过"
+  },
+  "shared_context": {
+    "system": "SkyBridge 是一个合成实时交易平台，包含 OrderGateway、RiskEngine、MatchingCore、ClearingService、SettlementService、MarketDataFeed、NotificationHub、AuditLogger、PositionManager、RegulatoryReporter。任务目标是从长日志摘要、指标和变更记录中定位事故根因。",
+    "allowed_root_cause_labels": [
+      "ordergateway_auth_cache_key_normalization",
+      "riskengine_false_positive_rule",
+      "matchingcore_queue_starvation",
+      "marketdata_provider_skew",
+      "clearing_batch_backpressure",
+      "settlement_deadlock",
+      "auditlogger_index_lag",
+      "unknown"
+    ],
+    "allowed_components": [
+      "OrderGateway",
+      "RiskEngine",
+      "MatchingCore",
+      "ClearingService",
+      "SettlementService",
+      "MarketDataFeed",
+      "AuditLogger",
+      "PositionManager",
+      "RegulatoryReporter"
+    ],
+    "severity_rule": {
+      "P0": [
+        "rejected_orders >= 15000",
+        "duplicated_fills >= 1000",
+        "downtime_minutes >= 15 with no workaround",
+        "settlement_blocked_usd >= 50000000",
+        "regulatory_breach == true"
+      ],
+      "P1": [
+        "5000 <= rejected_orders < 15000 and customer_visible_minutes >= 5",
+        "partial_order_entry_outage >= 10 minutes with workaround",
+        "manual mitigation required for an active trading window"
+      ],
+      "P2": [
+        "customer_visible_minutes < 5",
+        "self-healed incident without manual mitigation",
+        "no trading impact beyond monitoring noise"
+      ]
+    },
+    "required_intermediate_work": [
+      "researcher 必须输出 900-1300 中文字证据报告，覆盖日志时间线、指标异常、变更记录和恢复相关性。",
+      "analyst 必须输出 900-1300 中文字因果分析，比较至少 5 个候选根因，并明确排除理由。",
+      "executor 不得执行代码或工具调用，只能输出证据矩阵：每个候选的支持证据、反证、最早症状、恢复相关性。",
+      "summarizer 只输出 final_contract JSON，不输出解释文本。"
+    ],
+    "final_answer_contract": {
+      "root_cause": "<one allowed_root_cause_labels value>",
+      "severity": "<P0|P1|P2>",
+      "first_bad_component": "<one allowed_components value>"
+    }
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "trading_root_cause_round_01_order_entry_rejections",
+      "title": "开盘订单拒单激增：长日志根因定位",
+      "inherits": [
+        "shared_context"
+      ],
+      "prompt": "分析本轮交易系统事故。你会看到覆盖 1480 行原始日志的压缩摘要、关键指标和变更记录。必须先长篇综合证据并比较候选根因；executor 阶段不得执行代码或工具，只能做证据矩阵。最终只输出 JSON，字段为 root_cause、severity、first_bad_component。",
+      "evidence_packet": {
+        "incident_window": "2026-07-09 09:25:00-09:48:00 CST",
+        "raw_input_profile": {
+          "raw_log_line_count": 1480,
+          "compressed_summary_line_count": 58,
+          "metric_snapshot_count": 6,
+          "change_record_count": 5,
+          "note": "log_digest 的每条 raw_span 表示被压缩摘要覆盖的原始日志行范围；模型只能使用摘要、指标和变更记录进行判断。"
+        },
+        "business_impact_summary": {
+          "customer_visible_minutes": 18,
+          "rejected_orders": 8420,
+          "duplicated_fills": 0,
+          "downtime_minutes": 0,
+          "settlement_blocked_usd": 0,
+          "regulatory_breach": false,
+          "manual_mitigation": "09:43 rollback OrderGateway auth cache key normalizer, 09:46 rejection rate returns below alert threshold",
+          "workaround_available": "manual route orders through secondary gateway pool OGW-B after 09:39"
+        },
+        "candidate_root_causes": [
+          {
+            "label": "ordergateway_auth_cache_key_normalization",
+            "plain_name": "OrderGateway 认证缓存 key 规范化变更导致 token cache miss 与错误拒单"
+          },
+          {
+            "label": "riskengine_false_positive_rule",
+            "plain_name": "RiskEngine 新风控规则误杀订单"
+          },
+          {
+            "label": "matchingcore_queue_starvation",
+            "plain_name": "MatchingCore 撮合队列饥饿导致订单入口堆积"
+          },
+          {
+            "label": "marketdata_provider_skew",
+            "plain_name": "MarketDataFeed 行情提供方时间偏移导致风控价格校验失败"
+          },
+          {
+            "label": "clearing_batch_backpressure",
+            "plain_name": "ClearingService 批处理背压影响交易链路"
+          }
+        ],
+        "log_digest": [
+          {"id": "L001", "raw_span": "0001-0025", "time": "09:24:30-09:24:59", "component": "OrderGateway", "summary": "开盘前健康检查通过。OGW-A、OGW-B、OGW-C 三个入口池 TLS、auth、route、risk precheck 均返回 green；token_cache_hit_ratio=0.982；reject_rate=0.12%。"},
+          {"id": "L002", "raw_span": "0026-0048", "time": "09:25:00-09:25:21", "component": "ChangeController", "summary": "开始灰度发布 CHG-4817 到 OGW-A 20% 实例：auth-cache-key-normalizer v2.3.1。发布说明写明仅调整 token subject canonicalization，不应改变交易语义。"},
+          {"id": "L003", "raw_span": "0049-0074", "time": "09:25:22-09:25:51", "component": "OrderGateway", "summary": "OGW-A 实例首次出现 WARN auth_cache_miss_burst，miss key 模式从 acct:{raw_subject}:scope:{route} 变为 acct:{upper_subject}:scope:{route}；同一客户 token 在 OGW-B 仍命中旧 key。"},
+          {"id": "L004", "raw_span": "0075-0098", "time": "09:25:52-09:26:20", "component": "RiskEngine", "summary": "RiskEngine 收到来自 OGW-A 的 precheck 请求下降，rule_version 2026.07.09-r17 命中率保持 1.8%-2.0%；没有出现单条规则命中暴增。"},
+          {"id": "L005", "raw_span": "0099-0124", "time": "09:26:21-09:26:49", "component": "OrderGateway", "summary": "OGW-A reject_reason=AUTH_CONTEXT_STALE 从 0.04% 升到 6.7%；reject_reason=RISK_PRICE_BAND 维持 0.2%；下游 MatchingCore accepted_order_rate 同步下降。"},
+          {"id": "L006", "raw_span": "0125-0148", "time": "09:26:50-09:27:15", "component": "MarketDataFeed", "summary": "主行情源 MDF-P 和备行情源 MDF-S 的 timestamp skew 均低于 18ms；price_band_reference_refresh 正常；无 cross_symbol stale quote 告警。"},
+          {"id": "L007", "raw_span": "0149-0175", "time": "09:27:16-09:27:44", "component": "OrderGateway", "summary": "OGW-A auth cache evictions 正常但 cache lookup error 增加；日志显示 normalized_subject=UPPERCASE，而 token introspection 返回 subject 保持 lowercase。"},
+          {"id": "L008", "raw_span": "0176-0204", "time": "09:27:45-09:28:20", "component": "AuditLogger", "summary": "AuditLogger 写入延迟从 55ms 升到 190ms，但 append success rate 99.99%；延迟只影响审计索引可见性，不影响 OrderGateway 同步鉴权路径。"},
+          {"id": "L009", "raw_span": "0205-0230", "time": "09:28:21-09:28:52", "component": "MatchingCore", "summary": "MatchingCore queue_depth 从 190 降到 118；match_latency_p99 未升高。撮合侧看到的是订单减少，不是入口堆积。"},
+          {"id": "L010", "raw_span": "0231-0258", "time": "09:28:53-09:29:20", "component": "OrderGateway", "summary": "OGW-A 对同一 account_id 的连续订单出现 first request accepted, next request stale auth context；session_id 未变，subject casing 变更是唯一差异。"},
+          {"id": "L011", "raw_span": "0259-0282", "time": "09:29:21-09:29:48", "component": "RiskEngine", "summary": "RiskEngine CPU、rule_eval_ms、reject_reason 分布稳定。风控拒单总数略降，因为大量订单在 OrderGateway auth 阶段已被拒绝。"},
+          {"id": "L012", "raw_span": "0283-0308", "time": "09:29:49-09:30:16", "component": "OrderGateway", "summary": "CHG-4817 灰度扩大到 OGW-A 60% 实例后，AUTH_CONTEXT_STALE reject_rate 在 OGW-A 从 6.7% 升到 17.9%；OGW-B、OGW-C 未发布实例保持 0.05%-0.08%。"},
+          {"id": "L013", "raw_span": "0309-0334", "time": "09:30:17-09:30:45", "component": "NotificationHub", "summary": "客户通知队列出现 backlog，但 enqueue reason 是 rejected_order_notice 激增；NotificationHub 无发布或错误率异常。"},
+          {"id": "L014", "raw_span": "0335-0360", "time": "09:30:46-09:31:14", "component": "ClearingService", "summary": "ClearingService batch lag 从 3s 升到 12s，源于成交量下降后的批大小不足等待；没有阻塞资金清算，也没有反向影响订单入口。"},
+          {"id": "L015", "raw_span": "0361-0385", "time": "09:31:15-09:31:43", "component": "OrderGateway", "summary": "OGW-A 日志重复出现 cache_key_mismatch: lookup_key=acct:ALPHA772:scope:trade, stored_key=acct:alpha772:scope:trade；fallback introspection 被 rate limit 保护压低。"},
+          {"id": "L016", "raw_span": "0386-0412", "time": "09:31:44-09:32:10", "component": "PositionManager", "summary": "PositionManager exposure check 正常。被拒订单没有进入 position reservation，因此 PositionManager 未产生 reject。"},
+          {"id": "L017", "raw_span": "0413-0438", "time": "09:32:11-09:32:39", "component": "OrderGateway", "summary": "OGW-A auth_introspection_fallback_qps 到达保护阈值 900/s 后开始返回 soft-deny；soft-deny 被映射为 AUTH_CONTEXT_STALE。"},
+          {"id": "L018", "raw_span": "0439-0462", "time": "09:32:40-09:33:05", "component": "MarketDataFeed", "summary": "MDF-P 出现一次 640ms provider heartbeat gap，但发生在 09:32:58，且 price_band rejects 未随之上升；该异常影响 dashboard noise。"},
+          {"id": "L019", "raw_span": "0463-0488", "time": "09:33:06-09:33:34", "component": "RegulatoryReporter", "summary": "RegulatoryReporter 未记录 report schema reject；监管上报队列深度稳定，未触发 regulatory_breach。"},
+          {"id": "L020", "raw_span": "0489-0515", "time": "09:33:35-09:34:02", "component": "OrderGateway", "summary": "值班工程师将 10% 流量从 OGW-A 切到 OGW-B 后，整体 reject_rate 从 9.8% 降到 8.1%，OGW-A 单池仍高。"},
+          {"id": "L021", "raw_span": "0516-0541", "time": "09:34:03-09:34:30", "component": "RiskEngine", "summary": "临时关闭 r17 的 high_volatility_guard 后，AUTH_CONTEXT_STALE reject_rate 不变，RISK_PRICE_BAND reject_rate 从 0.21% 降到 0.18%。"},
+          {"id": "L022", "raw_span": "0542-0568", "time": "09:34:31-09:34:59", "component": "OrderGateway", "summary": "OGW-A 中仅运行 normalizer v2.3.1 的实例异常；同池未升级实例正常。相同客户在未升级实例上 token cache 命中。"},
+          {"id": "L023", "raw_span": "0569-0592", "time": "09:35:00-09:35:26", "component": "MatchingCore", "summary": "matching_queue_starvation_alert 触发一次，但告警详情为 input_rate_low，不是 worker starvation；worker idle_ratio 上升。"},
+          {"id": "L024", "raw_span": "0593-0618", "time": "09:35:27-09:35:55", "component": "OrderGateway", "summary": "trace T-9f12 显示订单 O-771884 在 OrderGateway 鉴权阶段拒绝，未调用 RiskEngine，未进入 MatchingCore。"},
+          {"id": "L025", "raw_span": "0619-0645", "time": "09:35:56-09:36:22", "component": "SettlementService", "summary": "SettlementService no-op；没有成交重复、结算锁等待或资金冻结。settlement_blocked_usd=0。"},
+          {"id": "L026", "raw_span": "0646-0672", "time": "09:36:23-09:36:50", "component": "OrderGateway", "summary": "OGW-A token_cache_hit_ratio 降到 0.611；OGW-B=0.981，OGW-C=0.979。差异只按发布批次分布，不按客户地区或交易品种分布。"},
+          {"id": "L027", "raw_span": "0673-0698", "time": "09:36:51-09:37:19", "component": "AuditLogger", "summary": "AuditLogger index lag 被误报为 9s，但 raw append stream 仍可见 OrderGateway reject；审计延迟不是交易拒单先因。"},
+          {"id": "L028", "raw_span": "0699-0724", "time": "09:37:20-09:37:48", "component": "OrderGateway", "summary": "特征开关 auth.subject.uppercase_normalization 在 OGW-A enabled；OGW-B、OGW-C disabled。enabled 实例异常率显著高于 disabled 实例。"},
+          {"id": "L029", "raw_span": "0725-0750", "time": "09:37:49-09:38:16", "component": "RiskEngine", "summary": "RiskEngine trace sample R-2bc9 对应成功进入风控的订单全部正常返回；没有因行情 skew 或新规则导致大面积 reject。"},
+          {"id": "L030", "raw_span": "0751-0776", "time": "09:38:17-09:38:45", "component": "OrderGateway", "summary": "SRE 将 auth_introspection_fallback_qps 从 900/s 提到 1400/s，整体 reject_rate 只短暂下降 0.7pp 后回升，说明 fallback 只是缓解不是根因。"},
+          {"id": "L031", "raw_span": "0777-0804", "time": "09:38:46-09:39:14", "component": "OrderRouter", "summary": "开始将机构客户路由到 OGW-B secondary pool。被迁移客户拒单率下降，但 OGW-A 未迁移客户仍高。"},
+          {"id": "L032", "raw_span": "0805-0830", "time": "09:39:15-09:39:42", "component": "MarketDataFeed", "summary": "MDF provider gap 已恢复；OrderGateway AUTH_CONTEXT_STALE 仍持续在 12%-16%。行情恢复与拒单恢复无同步关系。"},
+          {"id": "L033", "raw_span": "0831-0856", "time": "09:39:43-09:40:09", "component": "OrderGateway", "summary": "OGW-A debug diff 显示 v2.3.1 将 subject canonicalize 后用于 cache lookup，但 token writer 仍用原始 subject 写入，形成 read/write key split。"},
+          {"id": "L034", "raw_span": "0857-0882", "time": "09:40:10-09:40:38", "component": "ClearingService", "summary": "Clearing batch lag 自行恢复到 4s；订单拒单率没有同步下降，排除清结算背压作为先因。"},
+          {"id": "L035", "raw_span": "0883-0908", "time": "09:40:39-09:41:05", "component": "OrderGateway", "summary": "回放 12 条失败请求：失败均发生在 auth_context_resolve，输入 token 有效、签名有效、账户状态 active；错误集中在 cache lookup 后 stale context 分支。"},
+          {"id": "L036", "raw_span": "0909-0934", "time": "09:41:06-09:41:34", "component": "RiskEngine", "summary": "风控团队确认 r17 发布在 08:50 全量完成，事故窗口没有变更；关闭/恢复 r17 对 AUTH_CONTEXT_STALE 无影响。"},
+          {"id": "L037", "raw_span": "0935-0960", "time": "09:41:35-09:42:02", "component": "OrderGateway", "summary": "准备回滚 CHG-4817。canary rollback 在 5 个 OGW-A 实例执行；这些实例 token_cache_hit_ratio 30 秒内从 0.62 回到 0.97。"},
+          {"id": "L038", "raw_span": "0961-0986", "time": "09:42:03-09:42:30", "component": "MatchingCore", "summary": "随着回滚实例恢复，MatchingCore input_rate 回升；没有队列清理、worker 扩容或撮合配置变更。"},
+          {"id": "L039", "raw_span": "0987-1012", "time": "09:42:31-09:42:58", "component": "OrderGateway", "summary": "继续回滚剩余 OGW-A 实例；AUTH_CONTEXT_STALE 从 15.4% 降到 5.2%。其它 reject reason 曲线不变。"},
+          {"id": "L040", "raw_span": "1013-1038", "time": "09:42:59-09:43:25", "component": "ChangeController", "summary": "CHG-4817 rollback marked complete for OGW-A。变更系统记录回滚对象为 auth-cache-key-normalizer v2.3.1。"},
+          {"id": "L041", "raw_span": "1039-1064", "time": "09:43:26-09:43:54", "component": "OrderGateway", "summary": "回滚后 OGW-A token_cache_hit_ratio=0.974；AUTH_CONTEXT_STALE reject_rate=0.41%；总拒单率仍因排队补单短暂高于正常。"},
+          {"id": "L042", "raw_span": "1065-1090", "time": "09:43:55-09:44:22", "component": "NotificationHub", "summary": "rejected_order_notice backlog 开始下降；NotificationHub 无需重启，说明其 backlog 是下游通知症状。"},
+          {"id": "L043", "raw_span": "1091-1116", "time": "09:44:23-09:44:50", "component": "MarketDataFeed", "summary": "行情链路指标稳定，且未参与恢复动作。price_band reject 始终低位。"},
+          {"id": "L044", "raw_span": "1117-1142", "time": "09:44:51-09:45:18", "component": "RiskEngine", "summary": "RiskEngine r17 恢复开启后拒单没有反弹；证明风控规则不是主因。"},
+          {"id": "L045", "raw_span": "1143-1168", "time": "09:45:19-09:45:46", "component": "OrderGateway", "summary": "所有入口池总 reject_rate 降到 1.1%，接近开盘正常波动；OGW-A 与 OGW-B/OGW-C 差异消失。"},
+          {"id": "L046", "raw_span": "1169-1194", "time": "09:45:47-09:46:14", "component": "MatchingCore", "summary": "MatchingCore accepted_order_rate 恢复到 baseline。没有发现 duplicate fill、sequence gap 或 worker crash。"},
+          {"id": "L047", "raw_span": "1195-1220", "time": "09:46:15-09:46:42", "component": "OrderGateway", "summary": "事故复盘初稿记录：cache reader 和 cache writer 在 subject casing 上不一致；该不一致只出现在 CHG-4817 发布实例，回滚后不再出现。"},
+          {"id": "L048", "raw_span": "1221-1245", "time": "09:46:43-09:47:08", "component": "RegulatoryReporter", "summary": "RegulatoryReporter 确认无需特别上报；所有拒单均在订单进入撮合前发生，无错误成交、无重复成交。"},
+          {"id": "L049", "raw_span": "1246-1270", "time": "09:47:09-09:47:34", "component": "AuditLogger", "summary": "AuditLogger 索引延迟恢复；该恢复晚于交易拒单恢复，因此不能解释 first bad symptom。"},
+          {"id": "L050", "raw_span": "1271-1296", "time": "09:47:35-09:48:00", "component": "OrderGateway", "summary": "事故窗口结束。最终拒单 8420；其中 91% 标记 AUTH_CONTEXT_STALE，集中于 CHG-4817 发布实例和发布时间窗。"},
+          {"id": "L051", "raw_span": "1297-1320", "time": "09:48:01-09:48:28", "component": "IncidentCommander", "summary": "候选排除记录：RiskEngine rule r17 与事故时间不一致，关闭后无效果；MarketDataFeed gap 时间晚且 reject reason 不匹配；MatchingCore 队列低输入率是症状。"},
+          {"id": "L052", "raw_span": "1321-1344", "time": "09:48:29-09:48:55", "component": "IncidentCommander", "summary": "候选排除记录：ClearingService batch lag 不影响 OrderGateway auth path；AuditLogger index lag 只影响可观测性，不参与同步拒单路径。"},
+          {"id": "L053", "raw_span": "1345-1368", "time": "09:48:56-09:49:22", "component": "OrderGateway", "summary": "补充样本：所有失败样本的 token 均通过 cryptographic verification；失败发生在 context lookup miss 后 stale policy 分支。"},
+          {"id": "L054", "raw_span": "1369-1392", "time": "09:49:23-09:49:49", "component": "ChangeController", "summary": "CHG-4817 diff：normalizeSubject(subject).toUpperCase() 被用于 cache reader，但 writer 仍调用 rawSubject()；单元测试只覆盖 reader 未覆盖 writer compatibility。"},
+          {"id": "L055", "raw_span": "1393-1416", "time": "09:49:50-09:50:15", "component": "OrderGateway", "summary": "补充验证：在 staging 重放同一 token，v2.3.1 复现 cache miss；v2.3.0 不复现。"},
+          {"id": "L056", "raw_span": "1417-1440", "time": "09:50:16-09:50:42", "component": "SRE", "summary": "SRE 对时间线做交叉检查：最早异常、拒单发生点、恢复动作和 staging 复现点均位于同一入口鉴权路径；下游组件异常出现时间更晚。"},
+          {"id": "L057", "raw_span": "1441-1460", "time": "09:50:43-09:51:08", "component": "IncidentCommander", "summary": "严重性材料：客户可见 18 分钟、拒单 8420、有人工回滚和路由绕行；无停机、无错误成交、无监管违约、无大额结算阻塞。"},
+          {"id": "L058", "raw_span": "1461-1480", "time": "09:51:09-09:51:35", "component": "IncidentCommander", "summary": "后续行动草案：补充 cache reader/writer 兼容性测试，扩大 canary guardrail，并要求入口鉴权路径变更在扩大灰度前验证跨实例 token cache 行为。"}
+        ],
+        "metric_snapshots": [
+          {"time": "09:24", "OrderGateway.reject_rate_pct": 0.12, "OrderGateway.auth_context_stale_pct": 0.04, "OrderGateway.token_cache_hit_ratio": 0.982, "RiskEngine.reject_rate_pct": 1.9, "MatchingCore.queue_depth": 190},
+          {"time": "09:27", "OrderGateway.reject_rate_pct": 6.9, "OrderGateway.auth_context_stale_pct": 6.7, "OrderGateway.token_cache_hit_ratio": 0.733, "RiskEngine.reject_rate_pct": 1.8, "MatchingCore.queue_depth": 118},
+          {"time": "09:30", "OrderGateway.reject_rate_pct": 18.2, "OrderGateway.auth_context_stale_pct": 17.9, "OrderGateway.token_cache_hit_ratio": 0.642, "RiskEngine.reject_rate_pct": 1.7, "MatchingCore.queue_depth": 101},
+          {"time": "09:36", "OrderGateway.reject_rate_pct": 16.1, "OrderGateway.auth_context_stale_pct": 15.6, "OrderGateway.token_cache_hit_ratio": 0.611, "RiskEngine.reject_rate_pct": 1.6, "MatchingCore.queue_depth": 88},
+          {"time": "09:43", "OrderGateway.reject_rate_pct": 5.5, "OrderGateway.auth_context_stale_pct": 5.2, "OrderGateway.token_cache_hit_ratio": 0.913, "RiskEngine.reject_rate_pct": 1.8, "MatchingCore.queue_depth": 134},
+          {"time": "09:46", "OrderGateway.reject_rate_pct": 1.1, "OrderGateway.auth_context_stale_pct": 0.41, "OrderGateway.token_cache_hit_ratio": 0.974, "RiskEngine.reject_rate_pct": 1.9, "MatchingCore.queue_depth": 188}
+        ],
+        "change_records": [
+          {"id": "CHG-4809", "time": "08:50", "component": "RiskEngine", "summary": "rule_version 2026.07.09-r17 completed before incident; no change during incident window"},
+          {"id": "CHG-4812", "time": "09:10", "component": "MarketDataFeed", "summary": "provider heartbeat dashboard threshold adjusted; alerting-only change"},
+          {"id": "CHG-4817", "time": "09:25", "component": "OrderGateway", "summary": "auth-cache-key-normalizer v2.3.1 canary to OGW-A; changes subject canonicalization"},
+          {"id": "CHG-4818", "time": "09:32", "component": "AuditLogger", "summary": "index refresh interval changed from 2s to 5s; not on trading request path"},
+          {"id": "CHG-4817-rollback", "time": "09:42-09:43", "component": "OrderGateway", "summary": "rollback auth-cache-key-normalizer v2.3.1; cache hit ratio and reject rate recover"}
+        ],
+        "triage_observations": [
+          "RiskEngine r17 was disabled temporarily; AUTH_CONTEXT_STALE stayed high during that interval.",
+          "MarketDataFeed heartbeat gap occurred after the first large reject spike; price band reject rate did not move with the gap.",
+          "MatchingCore queue alert detail was input_rate_low; worker idle_ratio rose rather than fell.",
+          "ClearingService lag recovered before order rejects fully recovered and was not on the synchronous order-entry auth path.",
+          "AuditLogger lag affected index visibility; raw append stream still recorded OrderGateway rejects during the lag."
+        ]
+      },
+      "reference_answer": {
+        "root_cause": "ordergateway_auth_cache_key_normalization",
+        "severity": "P1",
+        "first_bad_component": "OrderGateway"
+      }
+    }
+  ]
+}

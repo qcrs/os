@@ -1,0 +1,365 @@
+{
+  "suite_id": "kv_reuse_audit_fanout_10round_v1",
+  "suite_name": "KV复用审计状态扇出连续任务集",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "continuous_large_state_fanout_extractive_qa",
+  "design_goal": "构造一个更适合 latent_kv 的任务形态：每轮先形成一个较大的审计状态包，然后由多个下游 reviewer 从同一状态中抽取短答案。A/B 需要每个 reviewer 重复读取完整状态，D 可以预填充一次 KV 后复用。",
+  "latent_value": [
+    "每轮 transfer_state 是大共享状态，后续 5 个 reviewer 问题都依赖同一状态。",
+    "A_text 基线应把 prose transfer_state 重复放入每个 reviewer prompt。",
+    "B_structured 基线应把 structured JSON transfer_state 重复放入每个 reviewer prompt。",
+    "D_latent_kv 应对 structured transfer_state 只 prefill 一次，再对 5 个 reviewer decode 复用同一 KV handle。",
+    "任务是抽取式答案，质量用 answer + cite 精确匹配，避免用速度牺牲答案质量。"
+  ],
+  "latent_config_recommendation": {
+    "analyst_latent_steps": 0,
+    "executor_latent_steps": 0,
+    "post_exec_latent_steps": 0,
+    "note": "当前 latent aligner 是未训练 normalized_identity，本任务优先展示 KV state reuse；需要 stress test 时可额外加少量 latent steps。"
+  },
+  "shared_context": {
+    "state_expansion_policy": "每轮 transfer_state.answer_capsule 是事实源；distractor_seed 和 distractor_count 用于生成大量干扰审计日志，使状态足够长。",
+    "default_distractor_count": 96,
+    "reviewer_count_per_round": 5,
+    "output_contract": "每个 reviewer 只输出紧凑 JSON：{\"answer\":\"...\",\"cite\":\"...\"}",
+    "quality_rule": "answer 和 cite 必须同时与 reference_answer 精确匹配才算正确。",
+    "continuity_rule": "10轮连续任务按时间推进；每轮可继承前一轮的审计口径，但当前轮答案只来自当前轮 ANSWER_CAPSULE。"
+  },
+  "output_schema": {
+    "answer": "string",
+    "cite": "string"
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "kv_audit_round_01",
+      "title": "开盘撮合链路审计状态扇出",
+      "inherits": ["shared_context"],
+      "prompt": "读取本轮完整审计状态，先缓存 ANSWER_CAPSULE，再回答 5 个 reviewer 的字段抽取问题。不要使用外部知识。",
+      "transfer_state": {
+        "case_id": "C01",
+        "distractor_seed": 1706,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C01-Q1", "field": "primary_breach_service", "answer": "SettlementService", "cite": "C01-E011"},
+          {"question_id": "C01-Q2", "field": "responsible_owner_team", "answer": "team-auditlogger", "cite": "C01-E012"},
+          {"question_id": "C01-Q3", "field": "p99_latency_ms", "answer": "126", "cite": "C01-E013"},
+          {"question_id": "C01-Q4", "field": "rejected_order_count", "answer": "807", "cite": "C01-E014"},
+          {"question_id": "C01-Q5", "field": "escalation_queue", "answer": "Q-01-ESC-19", "cite": "C01-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C01-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C01-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C01-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C01-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C01-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C01-Q1": {"answer": "SettlementService", "cite": "C01-E011"},
+        "C01-Q2": {"answer": "team-auditlogger", "cite": "C01-E012"},
+        "C01-Q3": {"answer": "126", "cite": "C01-E013"},
+        "C01-Q4": {"answer": "807", "cite": "C01-E014"},
+        "C01-Q5": {"answer": "Q-01-ESC-19", "cite": "C01-E015"}
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "kv_audit_round_02",
+      "title": "盘中风控重载审计状态扇出",
+      "inherits": ["round_01_context"],
+      "prompt": "继承第1轮审计口径，读取本轮新的完整审计状态，缓存 ANSWER_CAPSULE，并回答 5 个 reviewer 字段抽取问题。",
+      "transfer_state": {
+        "case_id": "C02",
+        "distractor_seed": 1707,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C02-Q1", "field": "primary_breach_service", "answer": "AuditLogger", "cite": "C02-E011"},
+          {"question_id": "C02-Q2", "field": "responsible_owner_team", "answer": "team-matchingcore", "cite": "C02-E012"},
+          {"question_id": "C02-Q3", "field": "p99_latency_ms", "answer": "135", "cite": "C02-E013"},
+          {"question_id": "C02-Q4", "field": "rejected_order_count", "answer": "854", "cite": "C02-E014"},
+          {"question_id": "C02-Q5", "field": "escalation_queue", "answer": "Q-02-ESC-38", "cite": "C02-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C02-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C02-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C02-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C02-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C02-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C02-Q1": {"answer": "AuditLogger", "cite": "C02-E011"},
+        "C02-Q2": {"answer": "team-matchingcore", "cite": "C02-E012"},
+        "C02-Q3": {"answer": "135", "cite": "C02-E013"},
+        "C02-Q4": {"answer": "854", "cite": "C02-E014"},
+        "C02-Q5": {"answer": "Q-02-ESC-38", "cite": "C02-E015"}
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "kv_audit_round_03",
+      "title": "订单网关准入审计状态扇出",
+      "inherits": ["round_02_context"],
+      "prompt": "继承前两轮审计口径，读取本轮审计状态；所有答案只能来自当前轮 ANSWER_CAPSULE。",
+      "transfer_state": {
+        "case_id": "C03",
+        "distractor_seed": 1708,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C03-Q1", "field": "primary_breach_service", "answer": "OrderGateway", "cite": "C03-E011"},
+          {"question_id": "C03-Q2", "field": "responsible_owner_team", "answer": "team-notificationhub", "cite": "C03-E012"},
+          {"question_id": "C03-Q3", "field": "p99_latency_ms", "answer": "144", "cite": "C03-E013"},
+          {"question_id": "C03-Q4", "field": "rejected_order_count", "answer": "901", "cite": "C03-E014"},
+          {"question_id": "C03-Q5", "field": "escalation_queue", "answer": "Q-03-ESC-57", "cite": "C03-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C03-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C03-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C03-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C03-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C03-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C03-Q1": {"answer": "OrderGateway", "cite": "C03-E011"},
+        "C03-Q2": {"answer": "team-notificationhub", "cite": "C03-E012"},
+        "C03-Q3": {"answer": "144", "cite": "C03-E013"},
+        "C03-Q4": {"answer": "901", "cite": "C03-E014"},
+        "C03-Q5": {"answer": "Q-03-ESC-57", "cite": "C03-E015"}
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "kv_audit_round_04",
+      "title": "清算限额审计状态扇出",
+      "inherits": ["round_03_context"],
+      "prompt": "继续审计链路第4轮，先读取本轮状态并缓存，再分别回答 5 个 reviewer 字段抽取问题。",
+      "transfer_state": {
+        "case_id": "C04",
+        "distractor_seed": 1709,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C04-Q1", "field": "primary_breach_service", "answer": "ClearingService", "cite": "C04-E011"},
+          {"question_id": "C04-Q2", "field": "responsible_owner_team", "answer": "team-ordergateway", "cite": "C04-E012"},
+          {"question_id": "C04-Q3", "field": "p99_latency_ms", "answer": "153", "cite": "C04-E013"},
+          {"question_id": "C04-Q4", "field": "rejected_order_count", "answer": "948", "cite": "C04-E014"},
+          {"question_id": "C04-Q5", "field": "escalation_queue", "answer": "Q-04-ESC-76", "cite": "C04-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C04-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C04-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C04-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C04-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C04-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C04-Q1": {"answer": "ClearingService", "cite": "C04-E011"},
+        "C04-Q2": {"answer": "team-ordergateway", "cite": "C04-E012"},
+        "C04-Q3": {"answer": "153", "cite": "C04-E013"},
+        "C04-Q4": {"answer": "948", "cite": "C04-E014"},
+        "C04-Q5": {"answer": "Q-04-ESC-76", "cite": "C04-E015"}
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "kv_audit_round_05",
+      "title": "行情广播审计状态扇出",
+      "inherits": ["round_04_context"],
+      "prompt": "第5轮使用同一审计协议，当前轮答案只来自当前 ANSWER_CAPSULE，不得混入历史轮次字段值。",
+      "transfer_state": {
+        "case_id": "C05",
+        "distractor_seed": 1710,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C05-Q1", "field": "primary_breach_service", "answer": "MarketDataFeed", "cite": "C05-E011"},
+          {"question_id": "C05-Q2", "field": "responsible_owner_team", "answer": "team-settlementservice", "cite": "C05-E012"},
+          {"question_id": "C05-Q3", "field": "p99_latency_ms", "answer": "162", "cite": "C05-E013"},
+          {"question_id": "C05-Q4", "field": "rejected_order_count", "answer": "995", "cite": "C05-E014"},
+          {"question_id": "C05-Q5", "field": "escalation_queue", "answer": "Q-05-ESC-95", "cite": "C05-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C05-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C05-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C05-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C05-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C05-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C05-Q1": {"answer": "MarketDataFeed", "cite": "C05-E011"},
+        "C05-Q2": {"answer": "team-settlementservice", "cite": "C05-E012"},
+        "C05-Q3": {"answer": "162", "cite": "C05-E013"},
+        "C05-Q4": {"answer": "995", "cite": "C05-E014"},
+        "C05-Q5": {"answer": "Q-05-ESC-95", "cite": "C05-E015"}
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "kv_audit_round_06",
+      "title": "通知链路审计状态扇出",
+      "inherits": ["round_05_context"],
+      "prompt": "第6轮继续执行大状态扇出审计，先缓存完整状态，再处理 5 个下游 reviewer。",
+      "transfer_state": {
+        "case_id": "C06",
+        "distractor_seed": 1711,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C06-Q1", "field": "primary_breach_service", "answer": "NotificationHub", "cite": "C06-E011"},
+          {"question_id": "C06-Q2", "field": "responsible_owner_team", "answer": "team-regulatoryreporter", "cite": "C06-E012"},
+          {"question_id": "C06-Q3", "field": "p99_latency_ms", "answer": "171", "cite": "C06-E013"},
+          {"question_id": "C06-Q4", "field": "rejected_order_count", "answer": "1042", "cite": "C06-E014"},
+          {"question_id": "C06-Q5", "field": "escalation_queue", "answer": "Q-06-ESC-17", "cite": "C06-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C06-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C06-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C06-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C06-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C06-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C06-Q1": {"answer": "NotificationHub", "cite": "C06-E011"},
+        "C06-Q2": {"answer": "team-regulatoryreporter", "cite": "C06-E012"},
+        "C06-Q3": {"answer": "171", "cite": "C06-E013"},
+        "C06-Q4": {"answer": "1042", "cite": "C06-E014"},
+        "C06-Q5": {"answer": "Q-06-ESC-17", "cite": "C06-E015"}
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "kv_audit_round_07",
+      "title": "持仓更新审计状态扇出",
+      "inherits": ["round_06_context"],
+      "prompt": "第7轮继承审计流程，当前轮 reviewer 只抽取本轮 ANSWER_CAPSULE 中的字段。",
+      "transfer_state": {
+        "case_id": "C07",
+        "distractor_seed": 1712,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C07-Q1", "field": "primary_breach_service", "answer": "PositionManager", "cite": "C07-E011"},
+          {"question_id": "C07-Q2", "field": "responsible_owner_team", "answer": "team-riskengine", "cite": "C07-E012"},
+          {"question_id": "C07-Q3", "field": "p99_latency_ms", "answer": "180", "cite": "C07-E013"},
+          {"question_id": "C07-Q4", "field": "rejected_order_count", "answer": "1089", "cite": "C07-E014"},
+          {"question_id": "C07-Q5", "field": "escalation_queue", "answer": "Q-07-ESC-36", "cite": "C07-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C07-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C07-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C07-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C07-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C07-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C07-Q1": {"answer": "PositionManager", "cite": "C07-E011"},
+        "C07-Q2": {"answer": "team-riskengine", "cite": "C07-E012"},
+        "C07-Q3": {"answer": "180", "cite": "C07-E013"},
+        "C07-Q4": {"answer": "1089", "cite": "C07-E014"},
+        "C07-Q5": {"answer": "Q-07-ESC-36", "cite": "C07-E015"}
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "kv_audit_round_08",
+      "title": "监管报送审计状态扇出",
+      "inherits": ["round_07_context"],
+      "prompt": "第8轮使用相同大状态复用协议；请回答 5 个 reviewer 的短字段抽取问题。",
+      "transfer_state": {
+        "case_id": "C08",
+        "distractor_seed": 1713,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C08-Q1", "field": "primary_breach_service", "answer": "RegulatoryReporter", "cite": "C08-E011"},
+          {"question_id": "C08-Q2", "field": "responsible_owner_team", "answer": "team-clearingservice", "cite": "C08-E012"},
+          {"question_id": "C08-Q3", "field": "p99_latency_ms", "answer": "189", "cite": "C08-E013"},
+          {"question_id": "C08-Q4", "field": "rejected_order_count", "answer": "1136", "cite": "C08-E014"},
+          {"question_id": "C08-Q5", "field": "escalation_queue", "answer": "Q-08-ESC-55", "cite": "C08-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C08-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C08-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C08-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C08-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C08-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C08-Q1": {"answer": "RegulatoryReporter", "cite": "C08-E011"},
+        "C08-Q2": {"answer": "team-clearingservice", "cite": "C08-E012"},
+        "C08-Q3": {"answer": "189", "cite": "C08-E013"},
+        "C08-Q4": {"answer": "1136", "cite": "C08-E014"},
+        "C08-Q5": {"answer": "Q-08-ESC-55", "cite": "C08-E015"}
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "kv_audit_round_09",
+      "title": "撮合核心回放审计状态扇出",
+      "inherits": ["round_08_context"],
+      "prompt": "第9轮关注回放审计。读取本轮完整状态，所有 reviewer 输出必须来自当前轮 ANSWER_CAPSULE。",
+      "transfer_state": {
+        "case_id": "C09",
+        "distractor_seed": 1714,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C09-Q1", "field": "primary_breach_service", "answer": "MatchingCore", "cite": "C09-E011"},
+          {"question_id": "C09-Q2", "field": "responsible_owner_team", "answer": "team-marketdatafeed", "cite": "C09-E012"},
+          {"question_id": "C09-Q3", "field": "p99_latency_ms", "answer": "198", "cite": "C09-E013"},
+          {"question_id": "C09-Q4", "field": "rejected_order_count", "answer": "1183", "cite": "C09-E014"},
+          {"question_id": "C09-Q5", "field": "escalation_queue", "answer": "Q-09-ESC-74", "cite": "C09-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C09-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C09-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C09-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C09-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C09-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C09-Q1": {"answer": "MatchingCore", "cite": "C09-E011"},
+        "C09-Q2": {"answer": "team-marketdatafeed", "cite": "C09-E012"},
+        "C09-Q3": {"answer": "198", "cite": "C09-E013"},
+        "C09-Q4": {"answer": "1183", "cite": "C09-E014"},
+        "C09-Q5": {"answer": "Q-09-ESC-74", "cite": "C09-E015"}
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "kv_audit_round_10",
+      "title": "收盘结算终审状态扇出",
+      "inherits": ["round_09_context"],
+      "prompt": "第10轮为连续审计终审。先读取并缓存本轮完整状态，再回答 5 个 reviewer 字段抽取问题。",
+      "transfer_state": {
+        "case_id": "C10",
+        "distractor_seed": 1715,
+        "distractor_count": 96,
+        "answer_capsule": [
+          {"question_id": "C10-Q1", "field": "primary_breach_service", "answer": "RiskEngine", "cite": "C10-E011"},
+          {"question_id": "C10-Q2", "field": "responsible_owner_team", "answer": "team-positionmanager", "cite": "C10-E012"},
+          {"question_id": "C10-Q3", "field": "p99_latency_ms", "answer": "207", "cite": "C10-E013"},
+          {"question_id": "C10-Q4", "field": "rejected_order_count", "answer": "1230", "cite": "C10-E014"},
+          {"question_id": "C10-Q5", "field": "escalation_queue", "answer": "Q-10-ESC-93", "cite": "C10-E015"}
+        ]
+      },
+      "reviewer_questions": [
+        {"question_id": "C10-Q1", "field": "primary_breach_service", "prompt": "返回本轮 primary_breach_service 的值和 cite。"},
+        {"question_id": "C10-Q2", "field": "responsible_owner_team", "prompt": "返回本轮 responsible_owner_team 的值和 cite。"},
+        {"question_id": "C10-Q3", "field": "p99_latency_ms", "prompt": "返回本轮 p99_latency_ms 的值和 cite。"},
+        {"question_id": "C10-Q4", "field": "rejected_order_count", "prompt": "返回本轮 rejected_order_count 的值和 cite。"},
+        {"question_id": "C10-Q5", "field": "escalation_queue", "prompt": "返回本轮 escalation_queue 的值和 cite。"}
+      ],
+      "reference_answer": {
+        "C10-Q1": {"answer": "RiskEngine", "cite": "C10-E011"},
+        "C10-Q2": {"answer": "team-positionmanager", "cite": "C10-E012"},
+        "C10-Q3": {"answer": "207", "cite": "C10-E013"},
+        "C10-Q4": {"answer": "1230", "cite": "C10-E014"},
+        "C10-Q5": {"answer": "Q-10-ESC-93", "cite": "C10-E015"}
+      }
+    }
+  ]
+}

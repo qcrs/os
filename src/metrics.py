@@ -17,6 +17,9 @@ class Metrics:
     token_log: list[dict] = field(default_factory=list)
     # Context compression records for structured protocol
     compression_log: list[dict] = field(default_factory=list)
+    # Latent KV mode metrics
+    latent_steps_log: list[dict] = field(default_factory=list)
+    latent_kv_bytes_log: list[dict] = field(default_factory=list)
 
     def reset(self):
         """Reset all metrics (for mode comparison)."""
@@ -26,6 +29,8 @@ class Metrics:
         self.message_log.clear()
         self.token_log.clear()
         self.compression_log.clear()
+        self.latent_steps_log.clear()
+        self.latent_kv_bytes_log.clear()
 
     def record_message(self, source: str, target: str, action: str,
                        param_chars: int, result_chars: int,
@@ -81,6 +86,27 @@ class Metrics:
             "key": key,
             "duration": duration,
             **extra,
+        })
+
+    def record_latent_steps(self, agent: str, n_steps: int, duration: float, kv_bytes_added: int):
+        """Record latent KV steps for an agent."""
+        self.latent_steps_log.append({
+            "agent": agent,
+            "n_steps": n_steps,
+            "duration": duration,
+            "time_per_step": duration / max(n_steps, 1),
+            "kv_bytes_added": kv_bytes_added,
+            "timestamp": time.time(),
+        })
+
+    def record_kv_transfer(self, from_agent: str, to_agent: str, kv_bytes: int, copied_bytes: int = 0):
+        """Record KV state transfer between agents."""
+        self.latent_kv_bytes_log.append({
+            "from_agent": from_agent,
+            "to_agent": to_agent,
+            "kv_bytes": kv_bytes,
+            "copied_bytes": copied_bytes,
+            "timestamp": time.time(),
         })
 
     def report(self) -> str:
@@ -225,6 +251,40 @@ class Metrics:
                              f"total={d['input'] + d['output']}")
             lines.append("")
 
+        # Latent KV mode metrics
+        if self.latent_steps_log:
+            lines.append("--- Latent KV Steps ---")
+            total_steps = sum(l["n_steps"] for l in self.latent_steps_log)
+            total_duration = sum(l["duration"] for l in self.latent_steps_log)
+            total_kv_bytes = sum(l["kv_bytes_added"] for l in self.latent_steps_log)
+            lines.append(f"  Total latent steps: {total_steps}")
+            lines.append(f"  Total latent forward time: {total_duration:.4f}s")
+            lines.append(f"  Avg time per step: {total_duration / max(total_steps, 1) * 1000:.2f}ms")
+            lines.append(f"  Total KV bytes added: {total_kv_bytes} ({total_kv_bytes / 1024 / 1024:.2f} MB)")
+            # Per-agent breakdown
+            by_agent = {}
+            for l in self.latent_steps_log:
+                a = l["agent"]
+                if a not in by_agent:
+                    by_agent[a] = {"steps": 0, "duration": 0, "kv_bytes": 0}
+                by_agent[a]["steps"] += l["n_steps"]
+                by_agent[a]["duration"] += l["duration"]
+                by_agent[a]["kv_bytes"] += l["kv_bytes_added"]
+            for a, d in sorted(by_agent.items()):
+                lines.append(f"  {a}: {d['steps']} steps, {d['duration']:.4f}s, "
+                             f"{d['kv_bytes'] / 1024:.1f} KB")
+            lines.append("")
+
+        if self.latent_kv_bytes_log:
+            lines.append("--- Latent KV Transfers ---")
+            total_kv = sum(l["kv_bytes"] for l in self.latent_kv_bytes_log)
+            total_copied = sum(l["copied_bytes"] for l in self.latent_kv_bytes_log)
+            lines.append(f"  Transfers: {len(self.latent_kv_bytes_log)}")
+            lines.append(f"  Total KV bytes passed: {total_kv} ({total_kv / 1024 / 1024:.2f} MB)")
+            lines.append(f"  Actual copied bytes: {total_copied} ({total_copied / 1024 / 1024:.2f} MB)")
+            lines.append(f"  Copy overhead: {total_copied / max(total_kv, 1) * 100:.1f}%")
+            lines.append("")
+
         lines.append("=" * 70)
         return "\n".join(lines)
 
@@ -236,6 +296,14 @@ class Metrics:
         total_node_time = sum(sum(v) for v in node_timings.values()) if node_timings else 0
         total_input_tokens = sum(t["input_tokens"] for t in self.token_log)
         total_output_tokens = sum(t["output_tokens"] for t in self.token_log)
+
+        # Latent KV metrics
+        total_latent_steps = sum(l["n_steps"] for l in self.latent_steps_log)
+        total_latent_duration = sum(l["duration"] for l in self.latent_steps_log)
+        total_kv_bytes = sum(l["kv_bytes_added"] for l in self.latent_steps_log)
+        total_kv_transferred = sum(l["kv_bytes"] for l in self.latent_kv_bytes_log)
+        total_kv_copied = sum(l["copied_bytes"] for l in self.latent_kv_bytes_log)
+
         return {
             "message_count": len(self.message_log),
             "param_chars": sum(m["param_chars"] for m in self.message_log),
@@ -257,6 +325,13 @@ class Metrics:
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
+            # Latent KV specific
+            "latent_steps_total": total_latent_steps,
+            "latent_forward_time": total_latent_duration,
+            "latent_kv_bytes_added": total_kv_bytes,
+            "latent_kv_bytes_transferred": total_kv_transferred,
+            "latent_kv_bytes_copied": total_kv_copied,
+            "avoided_prefill_tokens": self.counters.get("avoided_prefill_tokens", 0),
         }
 
 

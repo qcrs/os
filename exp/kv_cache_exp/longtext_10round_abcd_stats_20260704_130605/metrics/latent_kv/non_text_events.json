@@ -1,0 +1,82 @@
+[
+  {
+    "round_id": 1,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=594; copied_bytes=0"
+  },
+  {
+    "round_id": 2,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=577; copied_bytes=0"
+  },
+  {
+    "round_id": 3,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=589; copied_bytes=0"
+  },
+  {
+    "round_id": 4,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=595; copied_bytes=0"
+  },
+  {
+    "round_id": 5,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=590; copied_bytes=0"
+  },
+  {
+    "round_id": 6,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=584; copied_bytes=0"
+  },
+  {
+    "round_id": 7,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=594; copied_bytes=0"
+  },
+  {
+    "round_id": 8,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=590; copied_bytes=0"
+  },
+  {
+    "round_id": 9,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=593; copied_bytes=0"
+  },
+  {
+    "round_id": 10,
+    "event_type": "latent_kv_transfer",
+    "source": "analyst_latent",
+    "target": "summarizer_latent",
+    "size_bytes": 14680064,
+    "note": "latent_steps=112; avoided_prefill=763; copied_bytes=0"
+  }
+]

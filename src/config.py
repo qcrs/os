@@ -71,3 +71,16 @@ NS_SUMMARIES = ("summaries",)
 # Task group IDs
 TASK_GROUP_A = "A_langgraph_analysis"
 TASK_GROUP_B = "B_system_design"
+
+# Latent KV mode configuration
+COMM_MODE = os.getenv("COMM_MODE", "structured")  # "text" | "structured" | "cache" | "latent_kv"
+RESEARCHER_FANOUT = max(1, int(os.getenv("RESEARCHER_FANOUT", "3")))
+PLANNER_LATENT_STEPS = int(os.getenv("PLANNER_LATENT_STEPS", "16"))
+RESEARCHER_LATENT_STEPS = int(os.getenv("RESEARCHER_LATENT_STEPS", "32"))
+ANALYST_LATENT_STEPS = int(os.getenv("ANALYST_LATENT_STEPS", "64"))
+EXECUTOR_LATENT_STEPS = int(os.getenv("EXECUTOR_LATENT_STEPS", "32"))
+POST_EXEC_LATENT_STEPS = int(os.getenv("POST_EXEC_LATENT_STEPS", "16"))
+SUMMARIZER_LATENT_STEPS = int(os.getenv("SUMMARIZER_LATENT_STEPS", "8"))
+LATENT_ALIGNMENT = os.getenv("LATENT_ALIGNMENT", "normalized_identity")  # "normalized_identity" | "linear" | "pca"
+LATENT_KV_DOCKER_CONTAINER = os.getenv("LATENT_KV_DOCKER_CONTAINER", "SynapseX-wmw71")
+LATENT_KV_USE_DOCKER = os.getenv("LATENT_KV_USE_DOCKER", "1").lower() in {"1", "true", "yes"}

@@ -1,0 +1,358 @@
+{
+  "suite_id": "intermediate_audit_artifact_1round_v1",
+  "suite_name": "合成涉密导出中间审计产物一轮任务",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "auditable_intermediate_artifacts_short_final_json",
+  "synthetic_notice": "本任务全部为合成脱敏场景，不包含真实客户、真实员工、真实系统、真实密钥或真实涉密数据。",
+  "design_goal": "构造一个一轮审计任务：最终答案很短，但必须先形成可验证的中间审计链路，包括证据报告、候选风险分析和逐 case 计算矩阵。评测不只检查最终 JSON，也检查中间产物是否覆盖指定证据、候选比较和公式一致性。",
+  "fairness_controls": [
+    "所有模式应读取同一份 prompt、评分规则、候选 case 和 evidence_packet。",
+    "reference_answer 仅供离线评测使用，不应拼入模型 prompt。",
+    "禁止使用外部知识；只能根据当前 evidence_packet 判断。",
+    "中间产物必须显式引用 evidence_id，不能只给最终结论。",
+    "executor 可以做算术，但不得调用外部系统、shell、SQL 或网络工具。",
+    "最终答案必须能从 researcher_report、analyst_analysis 和 executor_matrix 追溯。"
+  ],
+  "shared_context": {
+    "system": "ArgusSecure 是一个合成涉密数据访问审计平台，用于审计研发、财务、人事、客户和国防项目数据的导出、批处理和跨域复制。每个审计窗口需要选择最高优先级风险 case，并给出可追溯处置结论。",
+    "case_id_space": [
+      "C-117",
+      "C-118",
+      "C-119",
+      "C-120"
+    ],
+    "valid_tiers": [
+      "LOW",
+      "MEDIUM",
+      "HIGH",
+      "CRITICAL"
+    ],
+    "valid_actions": {
+      "CRITICAL": "isolate_account_and_open_major_incident",
+      "HIGH": "freeze_export_and_start_review",
+      "MEDIUM": "require_manager_reapproval",
+      "LOW": "log_and_monitor"
+    },
+    "risk_formula": "risk_score = sensitivity_points + volume_points + channel_points + anomaly_points + repeat_points + exposure_points - mitigation_points",
+    "tier_rule": {
+      "CRITICAL": "risk_score >= 85",
+      "HIGH": "65 <= risk_score < 85",
+      "MEDIUM": "40 <= risk_score < 65",
+      "LOW": "risk_score < 40"
+    },
+    "required_intermediate_artifacts": {
+      "researcher_report": "900-1300 中文字证据报告；必须覆盖所有 4 个 case，并至少引用 required_research_evidence_ids 中的每个 evidence_id 一次。",
+      "analyst_analysis": "900-1300 中文字风险分析；必须比较所有 4 个 case，写出排序 C-117 > C-118 > C-119 > C-120，并说明 C-118、C-119、C-120 为什么不是最高优先级。",
+      "executor_matrix": "逐 case 计算矩阵；每个 case 必须列出 sensitivity_points、volume_points、channel_points、anomaly_points、repeat_points、exposure_points、mitigation_points、risk_score、tier、action、supporting_evidence_ids。",
+      "final_answer": "只输出 final_contract JSON，不输出解释文本。"
+    },
+    "final_contract": {
+      "case_id": "<one case_id_space value>",
+      "risk_score": "<integer>",
+      "tier": "<LOW|MEDIUM|HIGH|CRITICAL>",
+      "action": "<one valid action>",
+      "primary_control_gap": "<string enum>"
+    }
+  },
+  "verifier_contract": {
+    "artifact_shape": {
+      "researcher_report": "string",
+      "analyst_analysis": "string",
+      "executor_matrix": [
+        {
+          "case_id": "string",
+          "sensitivity_points": "integer",
+          "volume_points": "integer",
+          "channel_points": "integer",
+          "anomaly_points": "integer",
+          "repeat_points": "integer",
+          "exposure_points": "integer",
+          "mitigation_points": "integer",
+          "risk_score": "integer",
+          "tier": "string",
+          "action": "string",
+          "supporting_evidence_ids": [
+            "string"
+          ]
+        }
+      ],
+      "final_answer": {
+        "case_id": "string",
+        "risk_score": "integer",
+        "tier": "string",
+        "action": "string",
+        "primary_control_gap": "string"
+      }
+    },
+    "required_research_evidence_ids": [
+      "E001",
+      "E003",
+      "E006",
+      "E009",
+      "E012",
+      "E015",
+      "E018",
+      "E021"
+    ],
+    "required_analyst_phrases": [
+      "C-117 > C-118 > C-119 > C-120",
+      "token_binding_bypass",
+      "reader_writer_policy_split"
+    ],
+    "required_executor_cases": [
+      "C-117",
+      "C-118",
+      "C-119",
+      "C-120"
+    ],
+    "pass_condition": "final_answer 全字段精确匹配 reference_answer，且 researcher_report、analyst_analysis、executor_matrix 全部通过 verifier。"
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "intermediate_audit_round_01_cross_domain_export",
+      "title": "跨域涉密导出审计：生成可追溯中间产物并选择最高风险 case",
+      "inherits": [
+        "shared_context"
+      ],
+      "prompt": "分析本轮审计窗口的 4 个候选涉密访问 case。必须先输出 researcher_report、analyst_analysis、executor_matrix 三类中间审计产物，再输出 final_answer JSON。最终 case 必须由计算矩阵和证据链共同支持。不要使用外部知识；只能使用 evidence_packet。",
+      "evidence_packet": {
+        "audit_window": "2026-07-09 10:00:00-10:18:00 CST",
+        "audit_scope": "研发、国防项目、财务模型和客户合同仓库的导出、跨域复制、临时例外审批和审计网关处置。",
+        "policy_notes": [
+          "S4 表示最高敏感级别，涉及国防项目或密钥材料。",
+          "未托管终端导出和跨域复制必须有设备绑定、审批 ticket 和 DLP shadow log 三者一致。",
+          "mitigation_points 表示已经生效且可验证的缓解；仅有口头说明或过期审批不得计入缓解。"
+        ],
+        "candidate_cases": [
+          {
+            "case_id": "C-117",
+            "subject": "contractor_delta",
+            "department": "external_research",
+            "dataset": "defense_nav_project_raw_bundle",
+            "sensitivity": "S4",
+            "access_path": "VPN -> ResearchPortal -> unmanaged_export_proxy -> external object bucket",
+            "score_terms": {
+              "sensitivity_points": 40,
+              "volume_points": 20,
+              "channel_points": 18,
+              "anomaly_points": 14,
+              "repeat_points": 8,
+              "exposure_points": 12,
+              "mitigation_points": 4
+            },
+            "primary_control_gap": "token_binding_bypass",
+            "evidence": [
+              {
+                "evidence_id": "E001",
+                "time": "10:00:31",
+                "source": "AccessGateway",
+                "text": "C-117 subject=contractor_delta started export job J-7712 against defense_nav_project_raw_bundle; dataset sensitivity S4; requested volume 63.4GB."
+              },
+              {
+                "evidence_id": "E002",
+                "time": "10:01:08",
+                "source": "DeviceTrust",
+                "text": "Device binding check returned UNKNOWN_DEVICE for contractor_delta; device fingerprint was absent from managed endpoint inventory."
+              },
+              {
+                "evidence_id": "E003",
+                "time": "10:02:44",
+                "source": "DLPGateway",
+                "text": "Unmanaged export proxy allowed temporary stream because ticket T-8841 contained reviewer=legacy_auto_approval; the ticket expired 2026-07-08 18:00 CST."
+              },
+              {
+                "evidence_id": "E004",
+                "time": "10:04:19",
+                "source": "AuditLogger",
+                "text": "DLP shadow log records external object bucket destination bucket ext-nav-cache-17; destination account is not in approved partner allowlist."
+              },
+              {
+                "evidence_id": "E005",
+                "time": "10:06:02",
+                "source": "IdentityRisk",
+                "text": "Previous seven-day history shows two denied S4 export attempts by contractor_delta from different ASN ranges."
+              },
+              {
+                "evidence_id": "E006",
+                "time": "10:07:40",
+                "source": "PolicyEngine",
+                "text": "token_binding_bypass fired: reader accepted raw session token while writer policy expected device-bound token hash; mitigation only throttled stream after 19.8GB had left protected network."
+              }
+            ]
+          },
+          {
+            "case_id": "C-118",
+            "subject": "analyst_india",
+            "department": "finance_modeling",
+            "dataset": "restricted_margin_model",
+            "sensitivity": "S4",
+            "access_path": "Managed VDI -> cross_domain_copy -> finance sandbox",
+            "score_terms": {
+              "sensitivity_points": 40,
+              "volume_points": 12,
+              "channel_points": 14,
+              "anomaly_points": 6,
+              "repeat_points": 4,
+              "exposure_points": 8,
+              "mitigation_points": 12
+            },
+            "primary_control_gap": "reader_writer_policy_split",
+            "evidence": [
+              {
+                "evidence_id": "E007",
+                "time": "10:03:25",
+                "source": "CrossDomainBroker",
+                "text": "C-118 copied restricted_margin_model into finance sandbox; volume 26.1GB; broker classified operation as cross_domain_copy."
+              },
+              {
+                "evidence_id": "E008",
+                "time": "10:04:12",
+                "source": "ApprovalService",
+                "text": "Approval ticket T-9012 is valid and signed by finance data owner, but did not include derived feature table fm_sensitive_join_09."
+              },
+              {
+                "evidence_id": "E009",
+                "time": "10:05:55",
+                "source": "PolicyEngine",
+                "text": "reader_writer_policy_split detected: reader policy permitted sandbox analytics, writer policy blocked derived feature table egress; broker quarantined 84% of rows before export completion."
+              },
+              {
+                "evidence_id": "E010",
+                "time": "10:09:30",
+                "source": "DLPGateway",
+                "text": "DLP shadow log confirms destination is internal finance sandbox; no external object bucket or unmanaged endpoint was used."
+              },
+              {
+                "evidence_id": "E011",
+                "time": "10:11:04",
+                "source": "IdentityRisk",
+                "text": "analyst_india has one prior warning for derived table access but no denied S4 export attempts in the last seven days."
+              },
+              {
+                "evidence_id": "E012",
+                "time": "10:12:20",
+                "source": "Containment",
+                "text": "Containment token revoked the derived feature table stream within 92 seconds; remaining rows stayed in quarantine."
+              }
+            ]
+          },
+          {
+            "case_id": "C-119",
+            "subject": "batch_svc_rnd",
+            "department": "research_platform",
+            "dataset": "prototype_materials_index",
+            "sensitivity": "S3",
+            "access_path": "Scheduler -> batch_download -> internal analytics lake",
+            "score_terms": {
+              "sensitivity_points": 28,
+              "volume_points": 20,
+              "channel_points": 10,
+              "anomaly_points": 10,
+              "repeat_points": 0,
+              "exposure_points": 6,
+              "mitigation_points": 8
+            },
+            "primary_control_gap": "service_account_geo_velocity",
+            "evidence": [
+              {
+                "evidence_id": "E013",
+                "time": "10:02:15",
+                "source": "Scheduler",
+                "text": "C-119 batch_svc_rnd downloaded prototype_materials_index; dataset sensitivity S3; volume 78.0GB; destination internal analytics lake."
+              },
+              {
+                "evidence_id": "E014",
+                "time": "10:03:02",
+                "source": "IdentityRisk",
+                "text": "Service account showed geo velocity anomaly: scheduler heartbeat moved from Beijing region to Frankfurt region within 11 minutes."
+              },
+              {
+                "evidence_id": "E015",
+                "time": "10:06:49",
+                "source": "DLPGateway",
+                "text": "Batch channel is approved for nightly index refresh, but this run started outside the approved 02:00-04:00 maintenance window."
+              },
+              {
+                "evidence_id": "E016",
+                "time": "10:08:27",
+                "source": "NetworkGuard",
+                "text": "No external egress observed; all chunks landed in internal analytics lake partition rnd_proto_20260709."
+              },
+              {
+                "evidence_id": "E017",
+                "time": "10:10:33",
+                "source": "ApprovalService",
+                "text": "Runbook approval exists for batch_svc_rnd index refresh, but it does not authorize off-window manual trigger."
+              },
+              {
+                "evidence_id": "E018",
+                "time": "10:13:15",
+                "source": "Containment",
+                "text": "Scheduler lock paused the job after 44.7GB; partial dataset remained internal and was marked read-only for review."
+              }
+            ]
+          },
+          {
+            "case_id": "C-120",
+            "subject": "hr_report_bot",
+            "department": "people_ops",
+            "dataset": "employee_training_roster",
+            "sensitivity": "S2",
+            "access_path": "ReportService -> approved_report -> managed mailbox",
+            "score_terms": {
+              "sensitivity_points": 16,
+              "volume_points": 6,
+              "channel_points": 3,
+              "anomaly_points": 0,
+              "repeat_points": 0,
+              "exposure_points": 2,
+              "mitigation_points": 10
+            },
+            "primary_control_gap": "none",
+            "evidence": [
+              {
+                "evidence_id": "E019",
+                "time": "10:01:52",
+                "source": "ReportService",
+                "text": "C-120 generated employee_training_roster report; dataset sensitivity S2; volume 7.4GB; destination managed mailbox."
+              },
+              {
+                "evidence_id": "E020",
+                "time": "10:02:30",
+                "source": "ApprovalService",
+                "text": "Monthly HR training report ticket T-7702 is valid and matches exact dataset, recipient group and reporting date."
+              },
+              {
+                "evidence_id": "E021",
+                "time": "10:04:48",
+                "source": "DLPGateway",
+                "text": "DLP redacted personal phone and address columns before delivery; no policy violation remains after redaction."
+              },
+              {
+                "evidence_id": "E022",
+                "time": "10:06:28",
+                "source": "AuditLogger",
+                "text": "Audit trail for C-120 is complete: sender, recipient group, redaction hash and retention tag all match policy."
+              }
+            ]
+          }
+        ],
+        "triage_notes": [
+          "C-117 is the only case combining S4, unmanaged export proxy, external bucket, expired approval and token binding bypass.",
+          "C-118 is serious but most rows were quarantined quickly and destination stayed internal.",
+          "C-119 has large volume and off-window execution, but sensitivity is S3 and no external egress occurred.",
+          "C-120 is a normal approved report after DLP redaction."
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-117",
+        "risk_score": 108,
+        "tier": "CRITICAL",
+        "action": "isolate_account_and_open_major_incident",
+        "primary_control_gap": "token_binding_bypass"
+      }
+    }
+  ]
+}

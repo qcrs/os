@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 7,
+  "task_id": 9007,
+  "required_answer_format": "@round[7] @feature_scope[weather_forecast_dynamic_events] @depends_on[1,2,3,4,5,6] @new_systems[weather_script,forecast,temporary_blocked,storm_intensity] @deliverable[incremental_spec]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}

@@ -1,0 +1,33 @@
+{
+  "round_id": 10,
+  "task_id": "route_round_10",
+  "title": "固定起点和终点的路径",
+  "query": "求从 A 出发、访问 B、C 各一次并最终停在 B 的最短路径（不要求返回 A，也不要求访问 D）。**用 Python 代码枚举所有可能路径，选择成本最小的。**",
+  "mode": "B_structured",
+  "wall_time_s": 116.069,
+  "message_count": 7,
+  "llm_calls": 6,
+  "input_tokens": 5568,
+  "output_tokens": 3072,
+  "text_chars_param": 5155,
+  "text_chars_result": 3746,
+  "latent_transfers": 3,
+  "latent_steps": 0,
+  "kv_bytes_added": 0,
+  "kv_bytes_transfer": 0,
+  "raw_route": [],
+  "raw_total_cost": 0,
+  "route": [
+    "A",
+    "C",
+    "B"
+  ],
+  "total_cost": 50,
+  "answer_source": "reference_fallback_for_reporting",
+  "final_answer": "{\"route\":[\"A\",\"...\"],\"total_cost\":\"<integer>\",\"verification\":\"<short string>\"}",
+  "summary": "{\"route\":[\"A\",\"...\"],\"total_cost\":\"<integer>\",\"verification\":\"<short string>\"}",
+  "route_correct": false,
+  "cost_correct": false,
+  "ok": false,
+  "error": ""
+}

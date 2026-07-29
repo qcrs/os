@@ -1,0 +1,12 @@
+{
+  "suite_id": "trading_root_cause_latent_steps_1round_v1",
+  "task_file": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/task/lantent/trading_root_cause_1round/trading_root_cause_task.json",
+  "output_dir": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/exp/latent_kv_exp/trading_root_cause_single_llm_20260709_233045",
+  "mode": "single_llm",
+  "base_url": "http://localhost:8101/v1",
+  "model": "/data/models/Qwen3-8B",
+  "max_tokens": 1024,
+  "temperature": 0.0,
+  "chat_disable_thinking": "1",
+  "started_at": "2026-07-09 23:30:45"
+}

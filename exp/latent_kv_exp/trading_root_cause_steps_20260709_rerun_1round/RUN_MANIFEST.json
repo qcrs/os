@@ -1,0 +1,54 @@
+{
+  "suite_id": "trading_root_cause_latent_steps_1round_v1",
+  "task_file": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/task/lantent/trading_root_cause_1round/trading_root_cause_task.json",
+  "modes": [
+    "structured",
+    "kv_latent_0",
+    "kv_latent_16",
+    "kv_latent_32",
+    "kv_latent_56",
+    "kv_latent_80",
+    "kv_latent_120"
+  ],
+  "output_dir": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/exp/latent_kv_exp/trading_root_cause_steps_20260709_rerun_1round",
+  "server_base_url": "http://localhost:8101/v1",
+  "started_at": "2026-07-09 22:04:59",
+  "step_configs": {
+    "kv_latent_0": {
+      "ANALYST_LATENT_STEPS": "0",
+      "EXECUTOR_LATENT_STEPS": "0",
+      "POST_EXEC_LATENT_STEPS": "0",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    },
+    "kv_latent_16": {
+      "ANALYST_LATENT_STEPS": "8",
+      "EXECUTOR_LATENT_STEPS": "8",
+      "POST_EXEC_LATENT_STEPS": "0",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    },
+    "kv_latent_32": {
+      "ANALYST_LATENT_STEPS": "16",
+      "EXECUTOR_LATENT_STEPS": "16",
+      "POST_EXEC_LATENT_STEPS": "0",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    },
+    "kv_latent_56": {
+      "ANALYST_LATENT_STEPS": "32",
+      "EXECUTOR_LATENT_STEPS": "16",
+      "POST_EXEC_LATENT_STEPS": "8",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    },
+    "kv_latent_80": {
+      "ANALYST_LATENT_STEPS": "48",
+      "EXECUTOR_LATENT_STEPS": "24",
+      "POST_EXEC_LATENT_STEPS": "8",
+      "SUMMARIZER_LATENT_STEPS": "0"
+    },
+    "kv_latent_120": {
+      "ANALYST_LATENT_STEPS": "64",
+      "EXECUTOR_LATENT_STEPS": "32",
+      "POST_EXEC_LATENT_STEPS": "16",
+      "SUMMARIZER_LATENT_STEPS": "8"
+    }
+  }
+}

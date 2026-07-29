@@ -1,0 +1,845 @@
+{
+  "suite_id": "classified_data_audit_latent_kv_10round_v1",
+  "suite_name": "合成涉密数据访问审计长中间推理任务集",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "classified_data_analysis_long_intermediate_short_answer",
+  "synthetic_notice": "本任务集全部为合成脱敏场景，不包含真实涉密数据、真实人员、真实项目或真实系统口令。",
+  "design_goal": "构造一组正确率更容易提升、同时适合 latent_kv 的涉密数据分析计算任务。每轮有长证据、长审计解释和计算矩阵，但最终只输出 4 字段短 JSON。公式全部为整数加减法，便于 executor 用短 CodeAct 计算并校验。",
+  "why_latent_kv_should_help": [
+    "每轮都共享同一套保密分级、访问通道、处置动作和风险分层规则，structured 模式会反复把这些长规则和分析文本传给下游。",
+    "researcher 需要把审计线索、访问动机、历史继承和候选 case 解释成长证据报告。",
+    "analyst 需要比较 3 个候选 case 的风险路径，说明为什么最高风险 case 应优先处置。",
+    "executor 只需要按固定公式计算 risk_score 并选择 tier/action，最终答案短且可精确评测。",
+    "相比事故响应 6 字段任务，本任务最终只要求 case_id、risk_score、tier、action 四个字段，正确率应更高。"
+  ],
+  "required_d_mode_topology": "planner -> 3x researcher -> analyst_latent -> executor_latent -> summarizer_latent",
+  "latent_config_recommendation": {
+    "ANALYST_LATENT_STEPS": 48,
+    "EXECUTOR_LATENT_STEPS": 24,
+    "POST_EXEC_LATENT_STEPS": 8,
+    "SUMMARIZER_LATENT_STEPS": 0,
+    "note": "任务需要长中间解释，但最终计算简单，建议 latent steps 少于事故响应任务，以提高速度和降低 drift。"
+  },
+  "output_schema": {
+    "case_id": "string",
+    "risk_score": "integer",
+    "tier": "LOW|MEDIUM|HIGH|CRITICAL",
+    "action": "one valid action"
+  },
+  "quality_metric": {
+    "type": "exact_structured_match",
+    "fields": [
+      "case_id",
+      "risk_score",
+      "tier",
+      "action"
+    ],
+    "pass_condition": "四个字段全部精确匹配 reference_answer 才算该轮通过"
+  },
+  "shared_context": {
+    "system": "ArgusSecure 是一个合成的涉密数据访问审计平台，用于审计研发、财务、人事、客户和国防项目数据的导出、批处理和跨域访问。每轮任务代表一个新的审计窗口，系统需要选择最高优先级的风险 case，并给出短 JSON 处置结论。",
+    "confidentiality_policy": [
+      "S1 内部数据：sensitivity_points=10",
+      "S2 限制传播数据：sensitivity_points=20",
+      "S3 秘密级业务数据：sensitivity_points=30",
+      "S4 核心涉密数据：sensitivity_points=40"
+    ],
+    "domain_points": {
+      "finance": 8,
+      "personnel": 6,
+      "source_code": 10,
+      "customer": 7,
+      "defense_project": 12
+    },
+    "channel_points": {
+      "bastion": 2,
+      "vpn": 4,
+      "emergency_console": 6,
+      "batch_export": 8
+    },
+    "risk_formula": "risk_score = sensitivity_points + domain_points + channel_points + anomaly_points + repeat_points - mitigation_points",
+    "tier_rule": {
+      "CRITICAL": "risk_score >= 70",
+      "HIGH": "55 <= risk_score < 70",
+      "MEDIUM": "40 <= risk_score < 55",
+      "LOW": "risk_score < 40"
+    },
+    "action_rule": {
+      "CRITICAL": "isolate_account_and_open_major_incident",
+      "HIGH": "freeze_export_and_start_review",
+      "MEDIUM": "require_manager_reapproval",
+      "LOW": "log_and_monitor"
+    },
+    "valid_actions": [
+      "isolate_account_and_open_major_incident",
+      "freeze_export_and_start_review",
+      "require_manager_reapproval",
+      "log_and_monitor"
+    ],
+    "required_intermediate_work": [
+      "researcher 必须输出 900-1300 中文字的证据报告，解释每个候选 case 的访问路径、涉密等级、异常原因和历史继承。",
+      "analyst 必须输出 900-1300 中文字的长分析，比较 3 个候选 case，说明最高风险 case 的排序依据。",
+      "executor 必须输出计算矩阵：逐 case 列出公式各项、risk_score、tier 和 action。",
+      "summarizer 只输出 final_contract JSON，不输出长解释。"
+    ],
+    "final_answer_contract": {
+      "case_id": "<highest risk case id>",
+      "risk_score": "<integer risk_score>",
+      "tier": "<LOW|MEDIUM|HIGH|CRITICAL>",
+      "action": "<one valid action>"
+    }
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "classified_round_01_export_spike",
+      "title": "批量导出突增：识别最高风险涉密访问",
+      "inherits": [
+        "shared_context"
+      ],
+      "prompt": "分析本轮 3 个候选涉密访问 case。必须先长篇解释证据与排序，再按公式计算 risk_score，最终只输出 final_contract JSON。",
+      "evidence_packet": {
+        "window": "2026-07-09 09:00-09:30 CST",
+        "briefing": "本轮审计窗口发现研发和国防项目数据导出行为增加。需要判断哪个 case 应优先处置。所有 points 已由审计系统预处理，executor 只需代入公式。",
+        "cases": [
+          {
+            "case_id": "C-001",
+            "subject": "contractor_alpha",
+            "classification": "S3",
+            "domain": "source_code",
+            "channel": "batch_export",
+            "sensitivity_points": 30,
+            "domain_points": 10,
+            "channel_points": 8,
+            "anomaly_points": 18,
+            "repeat_points": 4,
+            "mitigation_points": 5,
+            "evidence": [
+              "单次导出 1.8GB 源码快照",
+              "审批单覆盖模块不含导出目录",
+              "DLP 已阻断外发通道"
+            ]
+          },
+          {
+            "case_id": "C-002",
+            "subject": "project_liaison_bravo",
+            "classification": "S4",
+            "domain": "defense_project",
+            "channel": "emergency_console",
+            "sensitivity_points": 40,
+            "domain_points": 12,
+            "channel_points": 6,
+            "anomaly_points": 12,
+            "repeat_points": 0,
+            "mitigation_points": 3,
+            "evidence": [
+              "使用应急控制台读取国防项目目录",
+              "工单说明缺少二级审批编号",
+              "会话录屏完整但未做导出拦截"
+            ]
+          },
+          {
+            "case_id": "C-003",
+            "subject": "hr_ops_charlie",
+            "classification": "S2",
+            "domain": "personnel",
+            "channel": "vpn",
+            "sensitivity_points": 20,
+            "domain_points": 6,
+            "channel_points": 4,
+            "anomaly_points": 8,
+            "repeat_points": 0,
+            "mitigation_points": 8,
+            "evidence": [
+              "远程查询人事报表",
+              "查询范围与排班任务一致",
+              "数据水印和访问审批均有效"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-002",
+        "risk_score": 67,
+        "tier": "HIGH",
+        "action": "freeze_export_and_start_review"
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "classified_round_02_repeat_after_warning",
+      "title": "预警后重复访问：高风险批处理导出",
+      "inherits": [
+        "round_01_context"
+      ],
+      "prompt": "继承第 1 轮已冻结 C-002 导出的背景，分析本轮新增 3 个 case。最终仍只输出最高风险 case 的短 JSON。",
+      "evidence_packet": {
+        "window": "2026-07-09 10:00-10:30 CST",
+        "briefing": "本轮重点关注是否存在预警后的重复访问。repeat_points 已包含历史继承影响。",
+        "cases": [
+          {
+            "case_id": "C-014",
+            "subject": "data_scientist_delta",
+            "classification": "S4",
+            "domain": "source_code",
+            "channel": "batch_export",
+            "sensitivity_points": 40,
+            "domain_points": 10,
+            "channel_points": 8,
+            "anomaly_points": 22,
+            "repeat_points": 5,
+            "mitigation_points": 4,
+            "evidence": [
+              "预警后再次导出模型特征生成代码",
+              "目标目录包含未发布安全规则",
+              "导出任务被审计网关延迟但未完全阻断"
+            ]
+          },
+          {
+            "case_id": "C-015",
+            "subject": "finance_echo",
+            "classification": "S3",
+            "domain": "finance",
+            "channel": "emergency_console",
+            "sensitivity_points": 30,
+            "domain_points": 8,
+            "channel_points": 6,
+            "anomaly_points": 10,
+            "repeat_points": 0,
+            "mitigation_points": 5,
+            "evidence": [
+              "查询预算预测表",
+              "存在应急工单但附件缺失",
+              "导出被限制为脱敏字段"
+            ]
+          },
+          {
+            "case_id": "C-016",
+            "subject": "support_foxtrot",
+            "classification": "S2",
+            "domain": "customer",
+            "channel": "vpn",
+            "sensitivity_points": 20,
+            "domain_points": 7,
+            "channel_points": 4,
+            "anomaly_points": 6,
+            "repeat_points": 0,
+            "mitigation_points": 6,
+            "evidence": [
+              "远程查看客户工单",
+              "字段级脱敏开启",
+              "访问来源与值班记录一致"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-014",
+        "risk_score": 81,
+        "tier": "CRITICAL",
+        "action": "isolate_account_and_open_major_incident"
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "classified_round_03_cross_domain_review",
+      "title": "跨域访问复核：源代码与国防项目并行告警",
+      "inherits": [
+        "round_02_context"
+      ],
+      "prompt": "本轮出现两个接近的 HIGH case。请严格按公式计算，不要凭主观严重性排序。",
+      "evidence_packet": {
+        "window": "2026-07-09 11:00-11:30 CST",
+        "briefing": "审计系统提示 C-031 与 C-032 都可能达到 HIGH。需要通过计算矩阵区分最高风险。",
+        "cases": [
+          {
+            "case_id": "C-031",
+            "subject": "ops_golf",
+            "classification": "S3",
+            "domain": "defense_project",
+            "channel": "batch_export",
+            "sensitivity_points": 30,
+            "domain_points": 12,
+            "channel_points": 8,
+            "anomaly_points": 14,
+            "repeat_points": 5,
+            "mitigation_points": 6,
+            "evidence": [
+              "批量导出项目部署清单",
+              "复用上一轮被提醒的跳板机账号",
+              "导出包已加密封存"
+            ]
+          },
+          {
+            "case_id": "C-032",
+            "subject": "architect_hotel",
+            "classification": "S4",
+            "domain": "source_code",
+            "channel": "emergency_console",
+            "sensitivity_points": 40,
+            "domain_points": 10,
+            "channel_points": 6,
+            "anomaly_points": 20,
+            "repeat_points": 0,
+            "mitigation_points": 10,
+            "evidence": [
+              "应急控制台读取核心服务仓库",
+              "读取时间在变更窗口外",
+              "强制水印和只读策略生效"
+            ]
+          },
+          {
+            "case_id": "C-033",
+            "subject": "analyst_india",
+            "classification": "S3",
+            "domain": "finance",
+            "channel": "vpn",
+            "sensitivity_points": 30,
+            "domain_points": 8,
+            "channel_points": 4,
+            "anomaly_points": 12,
+            "repeat_points": 0,
+            "mitigation_points": 2,
+            "evidence": [
+              "远程访问季度预测表",
+              "审批范围覆盖项目但未覆盖时间段",
+              "未触发导出"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-032",
+        "risk_score": 66,
+        "tier": "HIGH",
+        "action": "freeze_export_and_start_review"
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "classified_round_04_major_incident_candidate",
+      "title": "重大事件候选：核心涉密项目批量读取",
+      "inherits": [
+        "round_03_context"
+      ],
+      "prompt": "判断是否达到 CRITICAL。必须展示三个候选 case 的计算矩阵，最终只输出短 JSON。",
+      "evidence_packet": {
+        "window": "2026-07-09 12:00-12:30 CST",
+        "briefing": "本轮存在高敏分级、国防项目域和批量导出叠加，需要按公式判断是否启动重大事件。",
+        "cases": [
+          {
+            "case_id": "C-044",
+            "subject": "integration_juliet",
+            "classification": "S4",
+            "domain": "defense_project",
+            "channel": "batch_export",
+            "sensitivity_points": 40,
+            "domain_points": 12,
+            "channel_points": 8,
+            "anomaly_points": 24,
+            "repeat_points": 5,
+            "mitigation_points": 6,
+            "evidence": [
+              "读取核心项目接口包和测试密级标签",
+              "同一主体 24 小时内第二次触达 S4 域",
+              "CASB 只阻断外发，未阻断本地批处理"
+            ]
+          },
+          {
+            "case_id": "C-045",
+            "subject": "crm_kilo",
+            "classification": "S3",
+            "domain": "customer",
+            "channel": "emergency_console",
+            "sensitivity_points": 30,
+            "domain_points": 7,
+            "channel_points": 6,
+            "anomaly_points": 18,
+            "repeat_points": 0,
+            "mitigation_points": 5,
+            "evidence": [
+              "应急查询客户名单",
+              "审批链缺少数据负责人确认",
+              "字段脱敏和截图水印生效"
+            ]
+          },
+          {
+            "case_id": "C-046",
+            "subject": "hr_lima",
+            "classification": "S2",
+            "domain": "personnel",
+            "channel": "vpn",
+            "sensitivity_points": 20,
+            "domain_points": 6,
+            "channel_points": 4,
+            "anomaly_points": 8,
+            "repeat_points": 0,
+            "mitigation_points": 7,
+            "evidence": [
+              "查询入职批次名单",
+              "业务审批和导出水印完整",
+              "访问量低于基线阈值"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-044",
+        "risk_score": 83,
+        "tier": "CRITICAL",
+        "action": "isolate_account_and_open_major_incident"
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "classified_round_05_high_tie_break",
+      "title": "高风险近似分数：严格选择最高 risk_score",
+      "inherits": [
+        "round_04_context"
+      ],
+      "prompt": "本轮多个 HIGH case 分数接近。必须严格计算并选择最高 risk_score 的 case。",
+      "evidence_packet": {
+        "window": "2026-07-09 13:00-13:30 CST",
+        "briefing": "审计系统要求不要因 S4 标签自动选择 case，必须按照公式比较最终 risk_score。",
+        "cases": [
+          {
+            "case_id": "C-052",
+            "subject": "dev_mike",
+            "classification": "S3",
+            "domain": "source_code",
+            "channel": "batch_export",
+            "sensitivity_points": 30,
+            "domain_points": 10,
+            "channel_points": 8,
+            "anomaly_points": 14,
+            "repeat_points": 0,
+            "mitigation_points": 4,
+            "evidence": [
+              "导出分支差异包",
+              "审批说明包含代码审计用途",
+              "导出位置仍偏离审批目录"
+            ]
+          },
+          {
+            "case_id": "C-053",
+            "subject": "finance_november",
+            "classification": "S4",
+            "domain": "finance",
+            "channel": "emergency_console",
+            "sensitivity_points": 40,
+            "domain_points": 8,
+            "channel_points": 6,
+            "anomaly_points": 12,
+            "repeat_points": 5,
+            "mitigation_points": 5,
+            "evidence": [
+              "应急查询未发布并购预算",
+              "主体在上一周有同类越权提醒",
+              "只读控制开启但缺少复核人"
+            ]
+          },
+          {
+            "case_id": "C-054",
+            "subject": "program_oscar",
+            "classification": "S3",
+            "domain": "defense_project",
+            "channel": "vpn",
+            "sensitivity_points": 30,
+            "domain_points": 12,
+            "channel_points": 4,
+            "anomaly_points": 16,
+            "repeat_points": 0,
+            "mitigation_points": 8,
+            "evidence": [
+              "远程读取项目计划",
+              "VPN 设备合规",
+              "审批单未覆盖全部附件"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-053",
+        "risk_score": 66,
+        "tier": "HIGH",
+        "action": "freeze_export_and_start_review"
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "classified_round_06_critical_repeat",
+      "title": "重复主体升级：隔离账号与重大事件",
+      "inherits": [
+        "round_05_context"
+      ],
+      "prompt": "重点检查 repeat_points 对最终 tier 的影响。最终只输出最高风险 case 的 4 字段 JSON。",
+      "evidence_packet": {
+        "window": "2026-07-09 14:00-14:30 CST",
+        "briefing": "本轮存在重复主体和高敏国防项目域叠加，适合检验跨轮继承是否被正确吸收。",
+        "cases": [
+          {
+            "case_id": "C-061",
+            "subject": "program_papa",
+            "classification": "S4",
+            "domain": "defense_project",
+            "channel": "batch_export",
+            "sensitivity_points": 40,
+            "domain_points": 12,
+            "channel_points": 8,
+            "anomaly_points": 18,
+            "repeat_points": 5,
+            "mitigation_points": 3,
+            "evidence": [
+              "导出核心项目预算和供应商映射",
+              "重复触发上周封存告警",
+              "导出包仅部分加密"
+            ]
+          },
+          {
+            "case_id": "C-062",
+            "subject": "dev_quebec",
+            "classification": "S3",
+            "domain": "source_code",
+            "channel": "emergency_console",
+            "sensitivity_points": 30,
+            "domain_points": 10,
+            "channel_points": 6,
+            "anomaly_points": 20,
+            "repeat_points": 0,
+            "mitigation_points": 8,
+            "evidence": [
+              "控制台读取安全模块源码",
+              "变更窗口已备案",
+              "会话水印和只读策略生效"
+            ]
+          },
+          {
+            "case_id": "C-063",
+            "subject": "support_romeo",
+            "classification": "S2",
+            "domain": "customer",
+            "channel": "vpn",
+            "sensitivity_points": 20,
+            "domain_points": 7,
+            "channel_points": 4,
+            "anomaly_points": 10,
+            "repeat_points": 0,
+            "mitigation_points": 6,
+            "evidence": [
+              "查看客户脱敏画像",
+              "来源 IP 与值班地点一致",
+              "访问量低"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-061",
+        "risk_score": 80,
+        "tier": "CRITICAL",
+        "action": "isolate_account_and_open_major_incident"
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "classified_round_07_mitigation_misleading",
+      "title": "缓解措施误导：不要只看原始敏感等级",
+      "inherits": [
+        "round_06_context"
+      ],
+      "prompt": "本轮要注意 mitigation_points 会显著降低部分 case 分数。严格按公式输出最高风险 case。",
+      "evidence_packet": {
+        "window": "2026-07-09 15:00-15:30 CST",
+        "briefing": "两个 S4 case 的缓解措施不同，不能只按 classification 排序。",
+        "cases": [
+          {
+            "case_id": "C-071",
+            "subject": "dev_sierra",
+            "classification": "S3",
+            "domain": "source_code",
+            "channel": "batch_export",
+            "sensitivity_points": 30,
+            "domain_points": 10,
+            "channel_points": 8,
+            "anomaly_points": 16,
+            "repeat_points": 5,
+            "mitigation_points": 10,
+            "evidence": [
+              "重复导出代码包",
+              "但导出包已完全脱敏并封存",
+              "审批人要求复核目录范围"
+            ]
+          },
+          {
+            "case_id": "C-072",
+            "subject": "program_tango",
+            "classification": "S4",
+            "domain": "defense_project",
+            "channel": "emergency_console",
+            "sensitivity_points": 40,
+            "domain_points": 12,
+            "channel_points": 6,
+            "anomaly_points": 14,
+            "repeat_points": 0,
+            "mitigation_points": 4,
+            "evidence": [
+              "应急控制台读取任务附件",
+              "审批缺少项目安全负责人签字",
+              "录屏完整但未启用字段级脱敏"
+            ]
+          },
+          {
+            "case_id": "C-073",
+            "subject": "architect_uniform",
+            "classification": "S4",
+            "domain": "source_code",
+            "channel": "batch_export",
+            "sensitivity_points": 40,
+            "domain_points": 10,
+            "channel_points": 8,
+            "anomaly_points": 21,
+            "repeat_points": 5,
+            "mitigation_points": 8,
+            "evidence": [
+              "重复主体批量导出核心架构代码",
+              "审批只覆盖接口文档不覆盖源码",
+              "CASB 延迟阻断导致本地包已生成"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-073",
+        "risk_score": 76,
+        "tier": "CRITICAL",
+        "action": "isolate_account_and_open_major_incident"
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "classified_round_08_high_not_critical",
+      "title": "高风险但非重大：冻结导出复核",
+      "inherits": [
+        "round_07_context"
+      ],
+      "prompt": "本轮最高分未达到 CRITICAL。请确保 tier 和 action 不要升级过度。",
+      "evidence_packet": {
+        "window": "2026-07-09 16:00-16:30 CST",
+        "briefing": "本轮用于测试边界分层：最高 case 是 HIGH，不应输出 CRITICAL。",
+        "cases": [
+          {
+            "case_id": "C-081",
+            "subject": "hr_victor",
+            "classification": "S2",
+            "domain": "personnel",
+            "channel": "vpn",
+            "sensitivity_points": 20,
+            "domain_points": 6,
+            "channel_points": 4,
+            "anomaly_points": 8,
+            "repeat_points": 0,
+            "mitigation_points": 4,
+            "evidence": [
+              "VPN 查询人事明细",
+              "审批有效但查询时间略晚",
+              "字段脱敏生效"
+            ]
+          },
+          {
+            "case_id": "C-082",
+            "subject": "finance_whiskey",
+            "classification": "S3",
+            "domain": "finance",
+            "channel": "emergency_console",
+            "sensitivity_points": 30,
+            "domain_points": 8,
+            "channel_points": 6,
+            "anomaly_points": 16,
+            "repeat_points": 0,
+            "mitigation_points": 5,
+            "evidence": [
+              "控制台查看预测报表",
+              "审批人不在当班名单",
+              "只读和水印均生效"
+            ]
+          },
+          {
+            "case_id": "C-083",
+            "subject": "program_xray",
+            "classification": "S3",
+            "domain": "defense_project",
+            "channel": "batch_export",
+            "sensitivity_points": 30,
+            "domain_points": 12,
+            "channel_points": 8,
+            "anomaly_points": 18,
+            "repeat_points": 5,
+            "mitigation_points": 6,
+            "evidence": [
+              "批量导出项目测试计划",
+              "重复主体但数据集不含 S4 标签",
+              "导出被封存等待复核"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-083",
+        "risk_score": 67,
+        "tier": "HIGH",
+        "action": "freeze_export_and_start_review"
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "classified_round_09_clear_critical",
+      "title": "明确重大事件：国防项目核心包导出",
+      "inherits": [
+        "round_08_context"
+      ],
+      "prompt": "本轮最高 case 明显超过 CRITICAL 阈值。必须按公式计算并输出正确处置动作。",
+      "evidence_packet": {
+        "window": "2026-07-09 17:00-17:30 CST",
+        "briefing": "本轮用于测试模型能否稳定识别 CRITICAL 并输出隔离动作。",
+        "cases": [
+          {
+            "case_id": "C-091",
+            "subject": "integration_yankee",
+            "classification": "S4",
+            "domain": "defense_project",
+            "channel": "batch_export",
+            "sensitivity_points": 40,
+            "domain_points": 12,
+            "channel_points": 8,
+            "anomaly_points": 25,
+            "repeat_points": 5,
+            "mitigation_points": 5,
+            "evidence": [
+              "导出核心项目接口包",
+              "重复主体并绕过二级审批",
+              "DLP 仅阻断外发未阻断本地生成"
+            ]
+          },
+          {
+            "case_id": "C-092",
+            "subject": "dev_zulu",
+            "classification": "S3",
+            "domain": "source_code",
+            "channel": "emergency_console",
+            "sensitivity_points": 30,
+            "domain_points": 10,
+            "channel_points": 6,
+            "anomaly_points": 20,
+            "repeat_points": 0,
+            "mitigation_points": 4,
+            "evidence": [
+              "控制台查看服务源码",
+              "变更窗口外访问",
+              "会话录屏完整"
+            ]
+          },
+          {
+            "case_id": "C-093",
+            "subject": "support_amber",
+            "classification": "S2",
+            "domain": "customer",
+            "channel": "vpn",
+            "sensitivity_points": 20,
+            "domain_points": 7,
+            "channel_points": 4,
+            "anomaly_points": 12,
+            "repeat_points": 0,
+            "mitigation_points": 6,
+            "evidence": [
+              "查询客户投诉记录",
+              "数据脱敏开启",
+              "审批范围基本匹配"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-091",
+        "risk_score": 85,
+        "tier": "CRITICAL",
+        "action": "isolate_account_and_open_major_incident"
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "classified_round_10_final_audit_lockdown",
+      "title": "终局审计：多个高敏 case 中选择最高风险",
+      "inherits": [
+        "round_09_context"
+      ],
+      "prompt": "最后一轮需要继承前面多次隔离、冻结、复核的处置背景。请仍然只基于本轮公式选择最高风险 case，并输出短 JSON。",
+      "evidence_packet": {
+        "window": "2026-07-09 18:00-18:30 CST",
+        "briefing": "本轮有两个 CRITICAL 候选，需要准确比较 risk_score 大小。",
+        "cases": [
+          {
+            "case_id": "C-101",
+            "subject": "program_cobalt",
+            "classification": "S4",
+            "domain": "defense_project",
+            "channel": "batch_export",
+            "sensitivity_points": 40,
+            "domain_points": 12,
+            "channel_points": 8,
+            "anomaly_points": 24,
+            "repeat_points": 5,
+            "mitigation_points": 8,
+            "evidence": [
+              "批量导出项目集成包",
+              "继承上轮重大事件后的重复模式",
+              "封存策略生效但生成包已存在"
+            ]
+          },
+          {
+            "case_id": "C-102",
+            "subject": "architect_denim",
+            "classification": "S4",
+            "domain": "source_code",
+            "channel": "emergency_console",
+            "sensitivity_points": 40,
+            "domain_points": 10,
+            "channel_points": 6,
+            "anomaly_points": 18,
+            "repeat_points": 0,
+            "mitigation_points": 4,
+            "evidence": [
+              "控制台读取核心仓库",
+              "审批缺失但会话录屏完整",
+              "只读策略开启"
+            ]
+          },
+          {
+            "case_id": "C-103",
+            "subject": "finance_ember",
+            "classification": "S3",
+            "domain": "finance",
+            "channel": "batch_export",
+            "sensitivity_points": 30,
+            "domain_points": 8,
+            "channel_points": 8,
+            "anomaly_points": 22,
+            "repeat_points": 5,
+            "mitigation_points": 10,
+            "evidence": [
+              "批量导出财务预测",
+              "重复主体但已强制脱敏",
+              "导出包封存"
+            ]
+          }
+        ]
+      },
+      "reference_answer": {
+        "case_id": "C-101",
+        "risk_score": 81,
+        "tier": "CRITICAL",
+        "action": "isolate_account_and_open_major_incident"
+      }
+    }
+  ]
+}

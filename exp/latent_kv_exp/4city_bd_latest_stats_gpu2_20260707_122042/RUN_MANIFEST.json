@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-07 12:20:42",
+  "task_file": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/task/lantent/4city.json",
+  "output_dir": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/exp/latent_kv_exp/4city_bd_latest_stats_gpu2_20260707_122042",
+  "modes": [
+    "B",
+    "D"
+  ],
+  "rounds": 10,
+  "server_base_url": "http://localhost:8101/v1",
+  "model": "/data/models/Qwen3-8B",
+  "latent_steps": {
+    "analyst": "64",
+    "executor": "32",
+    "post_exec": "16",
+    "summarizer": "0"
+  },
+  "stats_schema": "latest_0707_plus_4city_accuracy"
+}

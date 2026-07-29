@@ -1,0 +1,33 @@
+{
+  "round_id": 7,
+  "task_id": "incident_round_07_position_consumer_stopped",
+  "title": "持仓更新停滞：PositionManager 消费者恢复",
+  "mode": "D_latent_kv",
+  "wall_time_s": 246.555,
+  "llm_calls": 6,
+  "input_tokens": 7555,
+  "output_tokens": 2795,
+  "latent_steps": 112,
+  "kv_bytes_transfer": 748634112,
+  "answer": {
+    "root_cause_service": "PositionManager",
+    "root_cause_code": "CONSUMER_PAUSE_POLL_INTERVAL_BREACH",
+    "severity": "P1",
+    "primary_action": "resume_position_consumer_from_committed_offset",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 340000
+  },
+  "expected": {
+    "root_cause_service": "PositionManager",
+    "root_cause_code": "consumer_paused_poll_interval",
+    "severity": "P1",
+    "primary_action": "resume_position_consumer_from_committed_offset",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 430000
+  },
+  "correct_fields": 4,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "</think>\n\n{\n  \"root_cause_service\": \"PositionManager\",\n  \"root_cause_code\": \"CONSUMER_PAUSE_POLL_INTERVAL_BREACH\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"resume_position_consumer_from_committed_offset\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 340000\n}\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```",
+  "error": ""
+}

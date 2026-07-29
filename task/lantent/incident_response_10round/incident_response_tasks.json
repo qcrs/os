@@ -1,0 +1,557 @@
+{
+  "suite_id": "trading_incident_response_latentmas_10round_v1",
+  "suite_name": "交易系统连续事故响应长中间状态任务集",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "continuous_incident_response_long_intermediate_reasoning",
+  "design_goal": "构造一个有实际工程意义且适合 LatentMAS/latent_kv 的顺序式多 Agent 任务：每轮从 researcher 开始产生长证据报告，analyst 产生长因果分析，executor 产生长计算和决策矩阵，只有最终 summarizer 解码短 JSON 决策。",
+  "why_latent_kv_should_help": [
+    "A/B 模式下 researcher 的长证据报告需要自然语言解码，并被 analyst 重新 prefill。",
+    "A/B 模式下 analyst 的长因果分析需要自然语言解码，并被 executor 重新 prefill。",
+    "A/B 模式下 executor 的长计算过程需要自然语言解码，并被 summarizer 重新 prefill。",
+    "D 模式理想实现应从 researcher_latent 开始，逐 Agent 追加 latent thoughts 和 KV cache，只在最后输出最终决策 JSON。",
+    "任务质量由可验证字段约束，不依赖主观长文评分。"
+  ],
+  "required_d_mode_topology": {
+    "intended": "planner_text -> researcher_latent -> analyst_latent -> executor_latent -> summarizer_decode",
+    "note": "如果当前代码仍是 planner/researcher 文本、analyst 之后才 latent，则只能展示部分收益，无法完整验证本任务目标。"
+  },
+  "shared_context": {
+    "system": "SkyBridge 实时交易与清结算平台，包含 OrderGateway、RiskEngine、MatchingCore、ClearingService、SettlementService、MarketDataFeed、NotificationHub、AuditLogger、PositionManager、RegulatoryReporter。",
+    "incident_roles": [
+      "researcher：阅读本轮 evidence_packet，输出 1200-1600 字证据报告，逐条引用指标、日志、变更和约束。",
+      "analyst：基于 researcher 报告输出 1000-1400 字因果分析，比较至少 3 个候选根因并排序。",
+      "executor：输出 600-900 字计算与处置矩阵，计算损失、事故级别和上报时限。",
+      "summarizer：只输出最终 JSON，不输出长解释。"
+    ],
+    "severity_rules": {
+      "P0": [
+        "rejected_orders >= 15000",
+        "duplicated_fills >= 1000",
+        "downtime_minutes >= 15",
+        "settlement_blocked_usd >= 50000000",
+        "regulatory_breach == true"
+      ],
+      "P1": [
+        "rejected_orders >= 5000",
+        "risk_false_positive_blocks >= 2000",
+        "market_data_skew_bps >= 25",
+        "p99_latency_ms >= 500 for 10 minutes",
+        "settlement_blocked_usd >= 10000000"
+      ],
+      "P2": [
+        "不满足 P0/P1，但影响生产链路或需要人工回补"
+      ]
+    },
+    "loss_formula": "estimated_loss_usd = rejected_orders * 50 + duplicated_fills * 200 + risk_false_positive_blocks * 35 + floor(settlement_blocked_usd * 0.002) + downtime_minutes * 10000",
+    "reporting_deadline_rule": {
+      "P0": 15,
+      "P1": 60,
+      "P2": 240
+    },
+    "valid_actions": [
+      "rollback_ordergateway_config",
+      "disable_risk_rule_and_reload",
+      "pause_matching_replay_and_dedupe",
+      "failover_kafka_and_rebalance",
+      "switch_marketdata_to_secondary",
+      "restart_clearing_batch_idempotently",
+      "resume_position_consumer_from_committed_offset",
+      "enable_notification_fallback_and_backfill",
+      "rollback_regulatory_schema_and_resubmit",
+      "failover_settlement_worker_and_freeze_window"
+    ],
+    "final_output_schema": {
+      "root_cause_service": "string",
+      "root_cause_code": "string",
+      "severity": "P0|P1|P2",
+      "primary_action": "one valid action",
+      "report_deadline_minutes": "integer",
+      "estimated_loss_usd": "integer"
+    }
+  },
+  "quality_metric": {
+    "type": "exact_structured_match",
+    "fields": [
+      "root_cause_service",
+      "root_cause_code",
+      "severity",
+      "primary_action",
+      "report_deadline_minutes",
+      "estimated_loss_usd"
+    ],
+    "pass_condition": "所有字段精确匹配 reference_answer"
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "incident_round_01_ordergateway_auth_cache",
+      "title": "开盘准入异常：OrderGateway 鉴权缓存回归",
+      "inherits": ["shared_context"],
+      "prompt": "完成本轮事故响应决策。必须先让 researcher 输出长证据报告，再让 analyst 输出长因果分析，再让 executor 输出计算与处置矩阵，最终 summarizer 只返回 final_output_schema JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 09:30-09:42 CST",
+        "symptoms": [
+          "开盘后做市商和普通机构账户出现大面积下单拒绝。",
+          "OrderGateway 5xx 未升高，但 401/403 比例从 0.8% 升至 31.4%。",
+          "RiskEngine、MatchingCore 未发现同步异常。"
+        ],
+        "metrics": {
+          "rejected_orders": 18640,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 0,
+          "downtime_minutes": 12,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 184,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "OrderGateway auth-cache hit stale tenant_acl_version=20260704 while config-center version=20260705.3",
+          "AuditLogger confirms deploy ogw-auth-cache-ttl-600s at 09:26 CST",
+          "Rejected orders recovered immediately in canary after cache TTL rollback"
+        ],
+        "recent_changes": [
+          "09:26 OrderGateway auth cache TTL changed from 30s to 600s",
+          "09:28 config center pushed updated market-maker whitelist"
+        ],
+        "candidate_root_causes": [
+          "OrderGateway stale auth cache",
+          "RiskEngine false positives",
+          "MatchingCore throttle saturation"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "OrderGateway",
+        "root_cause_code": "stale_auth_cache_ttl",
+        "severity": "P0",
+        "primary_action": "rollback_ordergateway_config",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 1052000
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "incident_round_02_risk_rule_false_positive",
+      "title": "风控误拦截：RiskEngine 规则热加载异常",
+      "inherits": ["round_01_context"],
+      "prompt": "基于第1轮处置记录继续响应本轮事故。输出链路要求不变：researcher 长证据、analyst 长分析、executor 长计算，最终只给 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 10:05-10:13 CST",
+        "symptoms": [
+          "多家低风险机构被标记为 high-risk，订单在风控层被拦截。",
+          "OrderGateway 鉴权拒绝恢复正常，MatchingCore 未收到对应订单。",
+          "RiskEngine 规则 R-77 命中率从 0.2% 升至 18.7%。"
+        ],
+        "metrics": {
+          "rejected_orders": 4200,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 5120,
+          "settlement_blocked_usd": 0,
+          "downtime_minutes": 8,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 221,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "RiskEngine rule R-77 threshold parsed as 0.02 instead of 0.2",
+          "Rule reload endpoint accepted payload from maintenance subnet without dry-run",
+          "Disabling R-77 in shadow mode reduces false positive replay count to 41"
+        ],
+        "recent_changes": [
+          "10:01 risk-rules.yaml hot reload",
+          "10:03 manual override from ops workstation"
+        ],
+        "candidate_root_causes": [
+          "RiskEngine threshold parse error",
+          "OrderGateway stale ACL",
+          "MarketDataFeed quote delay"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "RiskEngine",
+        "root_cause_code": "risk_rule_threshold_parse_error",
+        "severity": "P1",
+        "primary_action": "disable_risk_rule_and_reload",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 469200
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "incident_round_03_matching_replay_duplicate_fill",
+      "title": "撮合回放异常：MatchingCore 重复成交",
+      "inherits": ["round_02_context"],
+      "prompt": "本轮要判断是否暂停撮合回放并去重。中间 Agent 必须长输出，最终答案仍为结构化 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 10:44-10:50 CST",
+        "symptoms": [
+          "回放分区 replay-3 后，部分 client_order_id 出现两条 fill_id。",
+          "OrderGateway 和 RiskEngine 均显示原始订单只接收一次。",
+          "ClearingService 收到 duplicated fill 告警。"
+        ],
+        "metrics": {
+          "rejected_orders": 0,
+          "duplicated_fills": 1840,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 0,
+          "downtime_minutes": 6,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 266,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "MatchingCore replay cursor reset from offset 882193 to 880901",
+          "Idempotency key includes order_id but omits replay_epoch",
+          "Duplicate fill detector reports 1840 unique client_order_id affected"
+        ],
+        "recent_changes": [
+          "10:41 replay job started for partition replay-3",
+          "10:42 matching-core build mc-20260705.2 enabled replay fast path"
+        ],
+        "candidate_root_causes": [
+          "MatchingCore replay idempotency gap",
+          "ClearingService duplicate ingest",
+          "Kafka broker offset truncation"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "MatchingCore",
+        "root_cause_code": "replay_idempotency_gap",
+        "severity": "P0",
+        "primary_action": "pause_matching_replay_and_dedupe",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 428000
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "incident_round_04_kafka_isr_settlement_lag",
+      "title": "消息链路异常：Kafka ISR 丢失导致结算阻塞",
+      "inherits": ["round_03_context"],
+      "prompt": "判断是否需要 Kafka 故障转移和分区再均衡。保持长中间输出、短最终 JSON 的任务形态。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 11:18-11:22 CST",
+        "symptoms": [
+          "settlement.completed topic 延迟超过 900 秒。",
+          "ClearingService 已完成保证金计算，但 SettlementService 未收到完整事件。",
+          "Kafka broker-7 ISR 从 3 降至 1，leader 仍留在 broker-7。"
+        ],
+        "metrics": {
+          "rejected_orders": 0,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 72000000,
+          "downtime_minutes": 4,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 312,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "Kafka controller reports under_replicated_partitions=46 on broker-7",
+          "SettlementService consumer lag grows from 12k to 1.8M messages",
+          "Manual leader move test on one partition clears lag within 90 seconds"
+        ],
+        "recent_changes": [
+          "11:09 broker-7 disk firmware alert",
+          "11:14 auto leader rebalance disabled during maintenance window"
+        ],
+        "candidate_root_causes": [
+          "Kafka broker ISR loss and stuck leader",
+          "SettlementService worker deadlock",
+          "ClearingService margin calculation slowdown"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "Kafka",
+        "root_cause_code": "isr_loss_stuck_leader",
+        "severity": "P0",
+        "primary_action": "failover_kafka_and_rebalance",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 184000
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "incident_round_05_marketdata_provider_skew",
+      "title": "行情偏移：MarketDataFeed 主供应商价格漂移",
+      "inherits": ["round_04_context"],
+      "prompt": "本轮关注行情质量和交易风险。要求中间 Agent 充分比较主备供应商、行情偏移和拒单影响。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 13:02-13:05 CST",
+        "symptoms": [
+          "主行情供应商 A 的 ETF 篮子价格相对备用供应商 B 偏移 42 bps。",
+          "RiskEngine 因价格偏移触发部分订单保护。",
+          "切换到备用供应商的灰度节点恢复正常。"
+        ],
+        "metrics": {
+          "rejected_orders": 2500,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 0,
+          "downtime_minutes": 3,
+          "market_data_skew_bps": 42,
+          "p99_latency_ms": 190,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "MarketDataFeed provider=A symbol_set=ETF_BASKET_09 skew_bps=42",
+          "Provider B and exchange direct feed agree within 3 bps",
+          "RiskEngine protection trigger references stale provider A quote sequence"
+        ],
+        "recent_changes": [
+          "12:58 provider A multicast path migrated",
+          "13:00 backup provider B health check remains green"
+        ],
+        "candidate_root_causes": [
+          "MarketDataFeed primary provider skew",
+          "RiskEngine threshold parse error",
+          "OrderGateway auth rejection"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "MarketDataFeed",
+        "root_cause_code": "primary_provider_price_skew",
+        "severity": "P1",
+        "primary_action": "switch_marketdata_to_secondary",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 155000
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "incident_round_06_clearing_batch_stuck",
+      "title": "清算批处理卡滞：ClearingService 幂等重启决策",
+      "inherits": ["round_05_context"],
+      "prompt": "判断清算批处理是否可幂等重启，并计算事故级别和损失。保持长中间状态。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 14:10-14:24 CST",
+        "symptoms": [
+          "ClearingService margin batch 卡在 phase=netting。",
+          "SettlementService 等待清算结果，但未出现重复成交。",
+          "批处理 checkpoint 显示 last_committed_batch=7844，可安全从 7845 恢复。"
+        ],
+        "metrics": {
+          "rejected_orders": 0,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 44000000,
+          "downtime_minutes": 14,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 288,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "ClearingService phase=netting lock_owner=batch-7845 stale_for=13m42s",
+          "Idempotency checkpoint verified up to batch-7844",
+          "Dry-run restart on shadow partition emits zero duplicate margin calls"
+        ],
+        "recent_changes": [
+          "14:03 clearing worker pool size reduced from 32 to 16",
+          "14:08 nightly reconciliation overlapped with intraday netting"
+        ],
+        "candidate_root_causes": [
+          "ClearingService stale netting lock",
+          "Kafka ISR loss",
+          "SettlementService deadlock"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "ClearingService",
+        "root_cause_code": "stale_netting_lock",
+        "severity": "P1",
+        "primary_action": "restart_clearing_batch_idempotently",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 228000
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "incident_round_07_position_consumer_stopped",
+      "title": "持仓更新停滞：PositionManager 消费者恢复",
+      "inherits": ["round_06_context"],
+      "prompt": "本轮需要判断持仓消费者是否可从 committed offset 恢复。要求给出长证据和计算过程。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 14:55-15:04 CST",
+        "symptoms": [
+          "PositionManager 持仓视图落后 MatchingCore 成交流 9 分钟。",
+          "OrderGateway 对部分账户触发持仓未知保护，产生拒单。",
+          "Kafka committed offset 保持稳定，无 offset 回退。"
+        ],
+        "metrics": {
+          "rejected_orders": 6800,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 0,
+          "downtime_minutes": 9,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 243,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "PositionManager consumer group pos-mgr-main paused by max_poll_interval breach",
+          "Last committed offset equals last applied offset; no replay gap detected",
+          "Resuming from committed offset in staging rebuilds positions within 3m"
+        ],
+        "recent_changes": [
+          "14:50 PositionManager GC threshold changed",
+          "14:52 position snapshot compaction job started"
+        ],
+        "candidate_root_causes": [
+          "PositionManager consumer paused after poll interval breach",
+          "MatchingCore duplicate fill",
+          "RiskEngine false positive"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "PositionManager",
+        "root_cause_code": "consumer_paused_poll_interval",
+        "severity": "P1",
+        "primary_action": "resume_position_consumer_from_committed_offset",
+        "report_deadline_minutes": 60,
+        "estimated_loss_usd": 430000
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "incident_round_08_notification_fallback_failure",
+      "title": "通知降级失败：NotificationHub 合规通知补发",
+      "inherits": ["round_07_context"],
+      "prompt": "判断通知降级失败是否构成监管事件，并给出补发动作。中间输出必须保留完整证据链。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 15:35-15:39 CST",
+        "symptoms": [
+          "高风险账户追加保证金通知未发送给 418 个客户。",
+          "交易链路未停机，订单拒绝未升高。",
+          "监管规则要求高风险保证金通知失败 15 分钟内上报并补发。"
+        ],
+        "metrics": {
+          "rejected_orders": 0,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 0,
+          "downtime_minutes": 0,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 160,
+          "regulatory_breach": true
+        },
+        "logs": [
+          "NotificationHub primary SMS provider returns HTTP 202 but delivery_receipt missing",
+          "Email fallback disabled by feature flag notify.email_fallback=false",
+          "Backfill dry run identifies 418 undelivered margin notifications"
+        ],
+        "recent_changes": [
+          "15:28 notification fallback flag changed during cost-control rollout",
+          "15:32 SMS provider delivery receipt API degraded"
+        ],
+        "candidate_root_causes": [
+          "NotificationHub fallback disabled",
+          "RiskEngine margin rule error",
+          "ClearingService batch stuck"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "NotificationHub",
+        "root_cause_code": "fallback_disabled_delivery_receipt_missing",
+        "severity": "P0",
+        "primary_action": "enable_notification_fallback_and_backfill",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 0
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "incident_round_09_regulatory_schema_reject",
+      "title": "监管报文拒收：RegulatoryReporter Schema 回滚",
+      "inherits": ["round_08_context"],
+      "prompt": "本轮要判断监管报文拒收的根因和重报动作。长中间推理必须包含 schema 差异和上报时限。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 16:20-16:26 CST",
+        "symptoms": [
+          "RegulatoryReporter 日内成交汇总报文被交易所网关拒收。",
+          "交易撮合和清结算正常，但监管回执状态为 rejected。",
+          "拒收原因包含 unknown field client_algo_tag_v2。"
+        ],
+        "metrics": {
+          "rejected_orders": 0,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 0,
+          "downtime_minutes": 0,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 172,
+          "regulatory_breach": true
+        },
+        "logs": [
+          "RegulatoryReporter schema_mapper version rr-20260705.4 adds client_algo_tag_v2",
+          "Exchange gateway schema is still 2026.06 and rejects unknown fields",
+          "Replay with mapper rr-20260704.9 accepted in certification sandbox"
+        ],
+        "recent_changes": [
+          "16:12 regulatory schema mapper upgraded",
+          "16:15 compatibility flag remove_unknown_fields=false"
+        ],
+        "candidate_root_causes": [
+          "RegulatoryReporter incompatible schema mapper",
+          "AuditLogger index lag",
+          "SettlementService blocked settlement"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "RegulatoryReporter",
+        "root_cause_code": "incompatible_schema_mapper",
+        "severity": "P0",
+        "primary_action": "rollback_regulatory_schema_and_resubmit",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 0
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "incident_round_10_settlement_deadlock_close",
+      "title": "收盘结算阻塞：SettlementService 死锁与冻结窗口",
+      "inherits": ["round_09_context"],
+      "prompt": "第10轮为收盘终审事故。需要综合前序处置原则，判断是否冻结结算窗口并故障转移 worker。最终只输出 JSON。",
+      "evidence_packet": {
+        "time_window": "2026-07-05 16:48-17:06 CST",
+        "symptoms": [
+          "收盘后 SettlementService 对账 worker 出现数据库死锁。",
+          "125M USD 结算金额处于 blocked 状态。",
+          "部分晚盘订单因持仓和结算状态不一致被 OrderGateway 拒绝。"
+        ],
+        "metrics": {
+          "rejected_orders": 3200,
+          "duplicated_fills": 0,
+          "risk_false_positive_blocks": 0,
+          "settlement_blocked_usd": 125000000,
+          "downtime_minutes": 18,
+          "market_data_skew_bps": 0,
+          "p99_latency_ms": 540,
+          "regulatory_breach": false
+        },
+        "logs": [
+          "SettlementService worker ss-close-4 waits on Oracle RAC lock TX-98231",
+          "Failover worker ss-close-standby completes dry-run reconciliation with checksum match",
+          "Risk committee policy says blocked settlement above 100M requires freeze window before replay"
+        ],
+        "recent_changes": [
+          "16:40 settlement close worker parallelism increased from 4 to 8",
+          "16:44 Oracle RAC connection pool max lifetime changed to 20m"
+        ],
+        "candidate_root_causes": [
+          "SettlementService close worker database deadlock",
+          "Kafka ISR loss",
+          "RegulatoryReporter schema reject"
+        ]
+      },
+      "reference_answer": {
+        "root_cause_service": "SettlementService",
+        "root_cause_code": "close_worker_database_deadlock",
+        "severity": "P0",
+        "primary_action": "failover_settlement_worker_and_freeze_window",
+        "report_deadline_minutes": 15,
+        "estimated_loss_usd": 590000
+      }
+    }
+  ]
+}

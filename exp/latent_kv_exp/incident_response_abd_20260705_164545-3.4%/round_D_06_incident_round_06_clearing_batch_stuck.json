@@ -1,0 +1,33 @@
+{
+  "round_id": 6,
+  "task_id": "incident_round_06_clearing_batch_stuck",
+  "title": "清算批处理卡滞：ClearingService 幂等重启决策",
+  "mode": "D_latent_kv",
+  "wall_time_s": 294.492,
+  "llm_calls": 6,
+  "input_tokens": 10927,
+  "output_tokens": 2816,
+  "latent_steps": 112,
+  "kv_bytes_transfer": 679182336,
+  "answer": {
+    "root_cause_service": "ClearingService",
+    "root_cause_code": "STALE_NETTING_LOCK",
+    "severity": "P1",
+    "primary_action": "restart_clearing_batch_idempotently",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 88000
+  },
+  "expected": {
+    "root_cause_service": "ClearingService",
+    "root_cause_code": "stale_netting_lock",
+    "severity": "P1",
+    "primary_action": "restart_clearing_batch_idempotently",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 228000
+  },
+  "correct_fields": 4,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "</think>\n\n```json\n{\n  \"root_cause_service\": \"ClearingService\",\n  \"root_cause_code\": \"STALE_NETTING_LOCK\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"restart_clearing_batch_idempotently\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 88000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"ClearingService\",\n  \"root_cause_code\": \"STALE_NETTING_LOCK\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"restart_clearing_batch_idempotently\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 88000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"ClearingService\",\n  \"root_cause_code\": \"STALE_NETTING_LOCK\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"restart_clearing_batch_idempotently\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 88000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"ClearingService\",\n  \"root_cause_code\": \"STALE_NETTING_LOCK\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"restart_clearing_batch_idempotently\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 88000\n}\n```\n\n```json\n{\n",
+  "error": ""
+}

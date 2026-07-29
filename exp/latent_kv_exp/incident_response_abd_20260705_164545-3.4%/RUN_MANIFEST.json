@@ -1,0 +1,15 @@
+{
+  "suite_id": "trading_incident_response_latentmas_10round_v1",
+  "task_file": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/task/lantent/incident_response_10round/incident_response_tasks.json",
+  "modes": [
+    "A",
+    "B",
+    "D"
+  ],
+  "rounds": 10,
+  "output_dir": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/exp/latent_kv_exp/incident_response_abd_20260705_164545",
+  "server_base_url": "http://localhost:8101/v1",
+  "started_at": "2026-07-05 17:16:07",
+  "resume": true,
+  "current_d_limitation": "researcher is text; latent starts at analyst"
+}

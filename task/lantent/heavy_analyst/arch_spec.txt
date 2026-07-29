@@ -1,0 +1,370 @@
+# SkyBridge 分布式实时交易平台 — 技术架构规格书 v3.2
+
+文档编号: SB-ARCH-2026-032
+发布日期: 2026-03-15
+密级: 内部机密
+
+---
+
+## 一、系统概览
+
+SkyBridge 是一套面向全球金融机构的实时交易清算与结算平台，峰值处理能力为每秒 180,000 笔交易（TPS），端到端延迟 P99 ≤ 8ms。平台采用事件驱动微服务架构，部署于混合云环境（主机房 + AWS us-east-1 + AWS ap-southeast-1）。
+
+系统由以下 **10 个核心微服务** 组成：
+
+1. **OrderGateway**（订单网关）
+2. **RiskEngine**（风控引擎）
+3. **MatchingCore**（撮合核心）
+4. **ClearingService**（清算服务）
+5. **SettlementService**（结算服务）
+6. **MarketDataFeed**（行情数据服务）
+7. **NotificationHub**（通知中心）
+8. **AuditLogger**（审计日志）
+9. **PositionManager**（持仓管理）
+10. **RegulatoryReporter**（监管报送）
+
+---
+
+## 二、各微服务详细规格
+
+### 2.1 OrderGateway（订单网关）
+
+**职责**：接收来自客户端的交易指令，进行身份验证、格式校验、限流，并转发至风控引擎。
+
+**API 端点（共 8 个）**：
+- POST /v1/orders/submit — 提交新订单
+- DELETE /v1/orders/{orderId} — 撤销订单
+- PUT /v1/orders/{orderId}/amend — 改单
+- GET /v1/orders/{orderId}/status — 查询订单状态
+- GET /v1/orders/history — 查询历史订单
+- POST /v1/orders/batch — 批量提交订单（最多 50 笔）
+- GET /v1/orders/pending — 查询待处理订单
+- POST /v1/sessions/heartbeat — 会话心跳保活
+
+**限流配置**：
+- 普通账户：500 req/s
+- 机构账户：5,000 req/s
+- 做市商账户：50,000 req/s
+
+**依赖服务**：RiskEngine（同步调用，超时 2ms），AuditLogger（异步写入）
+
+**安全配置**：
+- mTLS 双向认证（所有外部连接强制）
+- JWT 令牌有效期 30 分钟，滑动刷新
+- IP 白名单（机构级）
+- 无速率限制豁免机制（**安全漏洞：做市商账户可绕过 IP 白名单校验**）
+
+**数据库**：Redis Cluster（会话缓存，TTL=1800s），写入延迟 < 0.5ms
+
+---
+
+### 2.2 RiskEngine（风控引擎）
+
+**职责**：实时评估订单风险，包括仓位限额、信用额度、市场风险指标（VAR）计算。
+
+**API 端点（共 6 个）**：
+- POST /v1/risk/evaluate — 单笔订单风险评估
+- GET /v1/risk/limits/{accountId} — 查询账户风险限额
+- PUT /v1/risk/limits/{accountId} — 更新风险限额
+- GET /v1/risk/metrics/var — 获取当前VAR指标
+- POST /v1/risk/rules/reload — 热加载风控规则（**无鉴权保护，任何内部服务均可调用**）
+- GET /v1/risk/circuit-breaker/status — 查询熔断器状态
+
+**计算模型**：
+- 历史模拟法 VAR，置信度 99%，持有期 1 天
+- 压力测试场景：2008 金融危机、2020 新冠暴跌、2022 利率快速上升
+- 实时 Greeks 计算（仅期权类产品）
+
+**性能指标**：
+- 单笔评估延迟 P50=0.8ms，P99=1.9ms
+- 并发处理能力：12,000 req/s（单节点），水平扩展至 96,000 req/s（8节点）
+
+**数据库**：PostgreSQL（风控规则、限额配置），Redis（实时仓位缓存）
+
+**消息队列事件（发出）**：
+- `risk.order.approved` — 风控通过
+- `risk.order.rejected` — 风控拒绝
+- `risk.limit.breached` — 限额触发警告
+- `risk.circuit.tripped` — 熔断器触发
+
+---
+
+### 2.3 MatchingCore（撮合核心）
+
+**职责**：实现价格-时间优先级的订单撮合（FIFO），支持限价单、市价单、冰山单、止损单。
+
+**API 端点（共 5 个）**：
+- POST /v1/match/order — 注入待撮合订单
+- GET /v1/match/orderbook/{symbol} — 获取实时订单簿快照
+- GET /v1/match/trades/latest — 获取最新成交明细
+- GET /v1/match/depth/{symbol} — 获取行情深度（5/10/20档）
+- DELETE /v1/match/orders/cancel-all — 全撤（按账户或品种）
+
+**撮合引擎技术规格**：
+- 内存撮合，数据结构：红黑树（价格索引）+ 链表（时间队列）
+- 单品种撮合吞吐：45,000 TPS（单核）
+- 支持品种数：最多 2,400 个（当前上线 1,847 个）
+- 订单簿深度：每侧最多 10,000 档
+
+**消息队列事件（发出）**：
+- `match.trade.executed` — 成交通知
+- `match.orderbook.updated` — 订单簿变更
+- `match.order.expired` — 订单到期
+
+**数据库**：无持久化（纯内存），成交数据实时推送至 ClearingService
+
+---
+
+### 2.4 ClearingService（清算服务）
+
+**职责**：对成交交易进行多边净额轧差，生成清算指令，管理清算基金。
+
+**API 端点（共 7 个）**：
+- POST /v1/clearing/confirm — 确认成交并进入清算
+- GET /v1/clearing/netting/{sessionId} — 查询轧差结果
+- POST /v1/clearing/margin/call — 发起追加保证金通知
+- GET /v1/clearing/fund/balance — 查询清算基金余额
+- POST /v1/clearing/fund/contribute — 清算基金注入
+- GET /v1/clearing/positions/{memberId} — 查询会员持仓净额
+- POST /v1/clearing/default/declare — 宣布违约（仅限清算监督员角色）
+
+**清算周期**：T+0 实时清算（股票衍生品），T+1 日间净额（现货股票）
+
+**无速率限制**：ClearingService 所有端点均未配置速率限制（**安全漏洞**）
+
+**数据库**：PostgreSQL（清算记录，分区表按日期，保留 7 年），TimescaleDB（保证金时序数据）
+
+**消息队列事件（发出）**：
+- `clearing.netting.completed` — 轧差完成
+- `clearing.margin.called` — 追保通知发出
+- `clearing.default.detected` — 违约检测
+- `clearing.fund.updated` — 基金余额变更
+
+---
+
+### 2.5 SettlementService（结算服务）
+
+**职责**：DVP（券款对付）结算，与外部托管机构及中央银行实时全额结算系统（RTGS）对接。
+
+**API 端点（共 6 个）**：
+- POST /v1/settlement/instruct — 发出结算指令
+- GET /v1/settlement/status/{instrId} — 查询结算状态
+- POST /v1/settlement/fail/handle — 处理结算失败
+- GET /v1/settlement/queue/depth — 查询结算队列深度
+- POST /v1/settlement/priority/elevate — 提升结算优先级
+- GET /v1/settlement/reconcile/report — 获取对账报告
+
+**外部依赖**：
+- 中央登记结算系统（CSD）：SWIFT ISO 20022 接口，延迟 200-800ms
+- 中央银行 RTGS 系统：专线连接，每日结算窗口 06:00-22:00
+- 全球托管行网络（5家）：FIX 5.0SP2 协议
+
+**消息队列事件（发出）**：
+- `settlement.completed` — 结算完成
+- `settlement.failed` — 结算失败
+- `settlement.pending` — 待结算
+
+**数据库**：PostgreSQL（结算记录），Oracle RAC（与托管行对账，遗留系统）
+
+---
+
+### 2.6 MarketDataFeed（行情数据服务）
+
+**职责**：归一化处理来自交易所的原始行情数据，向内部和外部客户分发实时及历史行情。
+
+**API 端点（共 9 个）**：
+- GET /v1/market/ticker/{symbol} — 获取实时报价
+- GET /v1/market/ohlcv/{symbol} — 获取K线数据（支持 1m/5m/15m/1h/4h/1d）
+- GET /v1/market/depth/{symbol} — 获取盘口深度
+- WS /v1/market/stream/{symbol} — WebSocket 实时推流
+- GET /v1/market/index/{indexId} — 获取指数行情
+- POST /v1/market/snapshot/request — 请求行情全量快照
+- GET /v1/market/history/{symbol} — 查询历史成交（最多180天）
+- GET /v1/market/status — 市场交易状态（开市/休市/集合竞价）
+- GET /v1/market/instruments — 获取可交易品种列表
+
+**数据来源**：直连交易所行情源（Level 2），外部数据供应商（彭博、路孚特）作为备用
+
+**延迟**：交易所→客户端，P99 ≤ 3ms（内网），P99 ≤ 15ms（互联网）
+
+**数据库**：InfluxDB（时序行情数据），Redis（实时报价缓存）
+
+---
+
+### 2.7 NotificationHub（通知中心）
+
+**职责**：多渠道（邮件、短信、Webhook、Push）交易通知和系统告警分发。
+
+**API 端点（共 4 个）**：
+- POST /v1/notify/send — 发送单条通知
+- POST /v1/notify/batch — 批量发送通知
+- GET /v1/notify/history/{userId} — 查询通知历史
+- PUT /v1/notify/preferences/{userId} — 更新通知偏好
+
+**无鉴权问题**：`/v1/notify/send` 端点仅校验来源 IP 是否在内部网段，未验证调用方服务身份（**安全漏洞**）
+
+**依赖外部服务**：
+- 阿里云短信服务（SMS）
+- SendGrid（邮件）
+- Firebase Cloud Messaging（Push）
+- 自建 Webhook 分发器
+
+**数据库**：MongoDB（通知记录，TTL 索引 90 天自动清理）
+
+---
+
+### 2.8 AuditLogger（审计日志）
+
+**职责**：不可篡改的操作审计日志，满足 MiFID II 和 SEC Rule 17a-4 合规要求。
+
+**API 端点（共 3 个）**：
+- POST /v1/audit/write — 写入审计事件（仅限内部服务，mTLS强制）
+- GET /v1/audit/query — 查询审计记录（仅限合规人员角色）
+- POST /v1/audit/export — 导出审计报告（CSV/PDF）
+
+**存储**：
+- 主存储：Apache Kafka（持久化，保留期 7 年）
+- 索引：Elasticsearch（快速检索，保留 1 年）
+- 冷存储：S3 Glacier（归档，自动按年迁移）
+
+**完整性保护**：每条日志附带 HMAC-SHA256 签名，密钥每季度轮换
+
+---
+
+### 2.9 PositionManager（持仓管理）
+
+**职责**：实时维护全体账户的持仓快照，支持多资产类别（股票、期货、期权、债券）。
+
+**API 端点（共 6 个）**：
+- GET /v1/positions/{accountId} — 查询账户持仓
+- GET /v1/positions/{accountId}/pnl — 查询当日盈亏
+- POST /v1/positions/rebalance — 触发持仓重算（系统级操作）
+- GET /v1/positions/exposure/aggregate — 查询聚合风险敞口
+- POST /v1/positions/adjust/manual — 手动调整持仓（需四眼原则审批）
+- GET /v1/positions/history/{accountId} — 查询历史持仓
+
+**数据库**：Redis（实时持仓快照，每笔成交后 < 1ms 内更新），PostgreSQL（持仓历史）
+
+**消息队列事件（订阅）**：
+- `match.trade.executed` — 实时更新持仓
+
+---
+
+### 2.10 RegulatoryReporter（监管报送）
+
+**职责**：自动生成并提交至监管机构的各类法规报告（EMIR, MiFIR, HKMA）。
+
+**API 端点（共 5 个）**：
+- POST /v1/regulatory/report/submit — 提交监管报告
+- GET /v1/regulatory/report/{reportId}/status — 查询报告状态
+- GET /v1/regulatory/deadlines — 查询报告截止时间表
+- POST /v1/regulatory/reconcile — 与监管机构数据对账
+- GET /v1/regulatory/errors — 查询提交错误列表
+
+**报告类型**：EMIR 交易报告（T+1），MiFIR 交易报告（T+1），HKMA 仓位报告（每周五），SEC 大宗持仓披露（超阈值即时上报）
+
+**无速率限制**：本服务所有端点无速率限制（内部假设）
+
+**数据库**：PostgreSQL（报告记录）
+
+---
+
+## 三、消息总线架构
+
+平台使用 Apache Kafka 作为统一消息总线。
+
+**Kafka 集群配置**：
+- Broker 节点：9 个（3 AZ × 3 节点），复制因子 3
+- 分区策略：按品种 Hash 分区，确保单品种事件顺序
+
+**全平台 Topic 清单**（共 14 个事件类型）：
+
+| Topic | 生产者 | 消费者 |
+|-------|--------|--------|
+| risk.order.approved | RiskEngine | MatchingCore |
+| risk.order.rejected | RiskEngine | OrderGateway, NotificationHub |
+| risk.limit.breached | RiskEngine | NotificationHub, AuditLogger |
+| risk.circuit.tripped | RiskEngine | OrderGateway, NotificationHub, AuditLogger |
+| match.trade.executed | MatchingCore | ClearingService, PositionManager, AuditLogger, MarketDataFeed |
+| match.orderbook.updated | MatchingCore | MarketDataFeed |
+| match.order.expired | MatchingCore | NotificationHub, AuditLogger |
+| clearing.netting.completed | ClearingService | SettlementService, AuditLogger |
+| clearing.margin.called | ClearingService | NotificationHub, PositionManager |
+| clearing.default.detected | ClearingService | RiskEngine, NotificationHub, AuditLogger, RegulatoryReporter |
+| clearing.fund.updated | ClearingService | AuditLogger |
+| settlement.completed | SettlementService | PositionManager, NotificationHub, AuditLogger |
+| settlement.failed | SettlementService | NotificationHub, AuditLogger, RegulatoryReporter |
+| settlement.pending | SettlementService | AuditLogger |
+
+---
+
+## 四、数据库汇总
+
+| 数据库 | 类型 | 使用服务 | 存储容量 | 备注 |
+|--------|------|----------|----------|------|
+| PostgreSQL-Main | RDBMS | RiskEngine, ClearingService, SettlementService, PositionManager, RegulatoryReporter | 12 TB | 主从 + 热备，跨AZ |
+| Redis-Cluster | 内存KV | OrderGateway, RiskEngine, MarketDataFeed, PositionManager | 2 TB | 32节点集群 |
+| InfluxDB | 时序数据库 | MarketDataFeed | 8 TB | 按热/温/冷自动分层 |
+| TimescaleDB | 时序RDBMS | ClearingService | 3 TB | 基于PostgreSQL扩展 |
+| MongoDB | 文档数据库 | NotificationHub | 500 GB | 副本集，3节点 |
+| Oracle RAC | RDBMS | SettlementService | 4 TB | 遗留系统，待迁移 |
+| Elasticsearch | 搜索引擎 | AuditLogger | 6 TB | 7节点集群 |
+
+**总存储容量：35.5 TB**
+
+---
+
+## 五、安全审计摘要
+
+经 2026 年 Q1 安全评审，发现以下 **4 处安全漏洞**：
+
+1. **[高危] OrderGateway**：做市商账户可绕过 IP 白名单校验（配置错误）
+2. **[高危] RiskEngine**：`/v1/risk/rules/reload` 端点无鉴权，内部任意服务可热加载风控规则
+3. **[中危] ClearingService**：所有端点未配置速率限制，存在内部滥用风险
+4. **[中危] NotificationHub**：`/v1/notify/send` 仅验证来源 IP，未验证调用方服务身份
+
+---
+
+## 六、性能基准测试结果（2026-02-20）
+
+| 场景 | 实测 TPS | P99 延迟 | CPU 使用率 | 内存使用率 |
+|------|---------|---------|-----------|-----------|
+| 正常负载（60k TPS） | 61,240 | 5.2ms | 38% | 52% |
+| 峰值负载（120k TPS） | 118,756 | 7.8ms | 71% | 78% |
+| 极限压测（180k TPS） | 179,422 | 9.4ms | 94% | 91% |
+| 极限压测 + 双节点故障 | 143,200 | 12.1ms | 98% | 95% |
+
+**瓶颈分析**：极限负载下，MatchingCore 成为首要瓶颈（CPU 占用达 97%），SettlementService 次之（Oracle RAC 连接池耗尽）。
+
+---
+
+## 七、外部依赖清单
+
+| 依赖系统 | 协议 | 使用服务 | SLA | 备注 |
+|---------|------|----------|-----|------|
+| 中央登记结算系统（CSD） | SWIFT ISO 20022 | SettlementService | 99.95% | 主要外部依赖 |
+| 中央银行 RTGS | 专线 TCP | SettlementService | 99.99% | 结算窗口限制 |
+| 全球托管行网络 | FIX 5.0SP2 | SettlementService | 99.9% | 5家机构 |
+| 阿里云短信服务 | HTTPS REST | NotificationHub | 99.95% | — |
+| SendGrid | HTTPS REST | NotificationHub | 99.99% | — |
+| Firebase Cloud Messaging | HTTPS REST | NotificationHub | 99.9% | — |
+| 彭博行情数据 | B-PIPE | MarketDataFeed | 99.99% | 备用行情源 |
+| 路孚特行情数据 | TREP | MarketDataFeed | 99.99% | 备用行情源 |
+
+**外部依赖总计：8 个**
+
+---
+
+## 八、灾备与高可用
+
+- **RTO**（恢复时间目标）：≤ 4 分钟（主机房故障切换至备机房）
+- **RPO**（恢复点目标）：≤ 0 笔交易丢失（Kafka 复制因子 3）
+- **单点故障分析**：
+  - MatchingCore 无持久化状态，重启后需重建订单簿（约需 90 秒）
+  - Oracle RAC（SettlementService 依赖）跨 AZ 延迟较高，为已知瓶颈
+  - MarketDataFeed 的 InfluxDB 若主节点故障，写入延迟升高约 2 秒（选主期间）
+
+---
+
+*文档结束 — SkyBridge Platform Engineering Team*
+*下次评审日期: 2026-06-15*

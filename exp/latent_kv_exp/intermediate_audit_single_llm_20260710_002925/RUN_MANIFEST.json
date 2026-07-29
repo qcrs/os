@@ -1,0 +1,12 @@
+{
+  "suite_id": "intermediate_audit_artifact_1round_v1",
+  "task_file": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/task/lantent/intermediate_audit_1round/intermediate_audit_task.json",
+  "output_dir": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/exp/latent_kv_exp/intermediate_audit_single_llm_20260710_002925",
+  "mode": "single_llm_full_artifact",
+  "base_url": "http://localhost:8101/v1",
+  "model": "/data/models/Qwen3-8B",
+  "max_tokens": 4096,
+  "temperature": 0.0,
+  "chat_disable_thinking": "1",
+  "started_at": "2026-07-10 00:29:25"
+}

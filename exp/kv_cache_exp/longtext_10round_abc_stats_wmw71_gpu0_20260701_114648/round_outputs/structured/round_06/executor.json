@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 6,
+  "task_id": 9006,
+  "required_answer_format": "@round[6] @feature_scope[supply_items] @depends_on[1,2,3,4,5] @new_systems[supply,battery,shield_cell,parcel_wrap] @deliverable[incremental_spec]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}

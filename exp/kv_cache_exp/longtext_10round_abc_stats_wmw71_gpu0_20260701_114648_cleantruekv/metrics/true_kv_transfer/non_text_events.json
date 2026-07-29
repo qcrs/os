@@ -1,0 +1,490 @@
+[
+  {
+    "round_id": 0,
+    "event_type": "kv_tensor_store_prefill",
+    "source": "context_prefill",
+    "target": "SharedStorageConnector",
+    "size_bytes": 493096032,
+    "note": "source_prefix_tokens=3346; file_count=36"
+  },
+  {
+    "round_id": 1,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9001; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 1,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9001; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 1,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9001; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 1,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9001; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 1,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9001; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 1,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9001; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 2,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9002; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 2,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9002; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 2,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9002; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 2,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9002; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 2,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9002; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 2,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9002; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 3,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9003; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 3,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9003; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 3,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9003; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 3,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9003; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 3,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9003; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 3,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9003; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 4,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9004; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 4,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9004; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 4,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9004; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 4,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9004; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 4,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9004; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 4,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9004; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 5,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9005; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 5,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9005; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 5,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9005; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 5,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9005; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 5,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9005; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 5,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9005; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 6,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9006; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 6,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9006; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 6,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9006; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 6,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9006; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 6,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9006; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 6,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9006; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 7,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9007; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 7,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9007; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 7,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9007; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 7,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9007; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 7,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9007; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 7,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9007; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 8,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9008; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 8,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9008; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 8,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9008; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 8,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9008; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 8,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9008; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 8,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9008; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 9,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9009; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 9,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9009; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 9,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9009; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 9,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9009; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 9,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9009; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 9,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9009; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 10,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "planner",
+    "size_bytes": 687,
+    "note": "task_id=9010; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 10,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_1",
+    "size_bytes": 687,
+    "note": "task_id=9010; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 10,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_2",
+    "size_bytes": 687,
+    "note": "task_id=9010; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 10,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "researcher_3",
+    "size_bytes": 687,
+    "note": "task_id=9010; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 10,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "analyst",
+    "size_bytes": 687,
+    "note": "task_id=9010; source_prefix_tokens=3346"
+  },
+  {
+    "round_id": 10,
+    "event_type": "kv_handle_lookup",
+    "source": "SharedStorageConnector",
+    "target": "summarizer",
+    "size_bytes": 687,
+    "note": "task_id=9010; source_prefix_tokens=3346"
+  }
+]

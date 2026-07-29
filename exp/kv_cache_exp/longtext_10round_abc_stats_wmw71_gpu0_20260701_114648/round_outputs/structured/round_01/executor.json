@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 1,
+  "task_id": 9001,
+  "required_answer_format": "@round[1] @feature_scope[mvp_movement_delivery] @depends_on[none] @new_systems[map,movement,core_order,delivery] @deliverable[design_spec]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}

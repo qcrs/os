@@ -1,0 +1,33 @@
+{
+  "round_id": 1,
+  "task_id": "incident_round_01_ordergateway_auth_cache",
+  "title": "开盘准入异常：OrderGateway 鉴权缓存回归",
+  "mode": "D_latent_kv",
+  "wall_time_s": 276.026,
+  "llm_calls": 6,
+  "input_tokens": 7526,
+  "output_tokens": 2775,
+  "latent_steps": 112,
+  "kv_bytes_transfer": 774586368,
+  "answer": {
+    "root_cause_service": "OrderGateway",
+    "root_cause_code": "AUTH_CACHE_STALE_VERSION",
+    "severity": "P0",
+    "primary_action": "rollback_ordergateway_config",
+    "report_deadline_minutes": 15,
+    "estimated_loss_usd": 932000
+  },
+  "expected": {
+    "root_cause_service": "OrderGateway",
+    "root_cause_code": "stale_auth_cache_ttl",
+    "severity": "P0",
+    "primary_action": "rollback_ordergateway_config",
+    "report_deadline_minutes": 15,
+    "estimated_loss_usd": 1052000
+  },
+  "correct_fields": 4,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "</think>\n\n{\n  \"root_cause_service\": \"OrderGateway\",\n  \"root_cause_code\": \"AUTH_CACHE_STALE_VERSION\",\n  \"severity\": \"P0\",\n  \"primary_action\": \"rollback_ordergateway_config\",\n  \"report_deadline_minutes\": 15,\n  \"estimated_loss_usd\": 932000\n}\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```\n\n```",
+  "error": ""
+}

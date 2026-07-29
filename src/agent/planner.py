@@ -1,5 +1,6 @@
 """Planner agent for decomposing research tasks."""
 
+import json
 import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -12,7 +13,7 @@ from metrics import metrics
 from models import get_model
 from protocol import ActionType, hash_text, make_message
 
-from .shared import _get_mode, _normalize_sub_queries
+from .shared import _get_mode, _normalize_sub_queries, _researcher_fanout
 
 
 # ─── Planner Agent ───
@@ -44,18 +45,22 @@ def planner(state: dict, store: BaseStore) -> dict:
 
     model = get_model(temperature=0.5)
     parser = JsonOutputParser()
+    fanout = _researcher_fanout()
+    example_sub_queries = [
+        f"focused sub-query {index}" for index in range(1, fanout + 1)
+    ]
 
     messages = [
-        SystemMessage(content="""You are a research planner. Given a research query,
-break it down into a structured plan with exactly 3 specific sub-queries for information retrieval.
-The 3 sub-queries should cover complementary aspects for downstream context
-packet ranking and pruning.
+        SystemMessage(content=f"""You are a research planner. Given a research query,
+break it down into a structured plan with exactly {fanout} specific, complementary sub-queries for information retrieval.
+The sub-queries should cover distinct evidence, constraints, and verification angles
+so downstream agents can run {fanout} researcher branches.
 
 Return ONLY valid JSON with this exact format:
-{
+{{
   "plan": "A concise research plan describing the approach",
-  "sub_queries": ["sub-query 1", "sub-query 2", "sub-query 3"]
-}"""),
+  "sub_queries": {json.dumps(example_sub_queries, ensure_ascii=False)}
+}}"""),
         HumanMessage(content=f"Research query: {query}"
                      + (f"\n\nPrior context:\n{prior_context}" if prior_context else "")),
     ]
@@ -71,12 +76,23 @@ Return ONLY valid JSON with this exact format:
         parsed = {
             "plan": f"Research plan for: {query}",
             "sub_queries": [
-                f"What is {query}?",
-                f"What are the key features of {query}?",
-                f"What are the applications of {query}?",
+                f"What evidence and constraints determine the final answer for {query}?",
+                f"What calculations or verification steps are needed for {query}?",
+                f"What edge cases or alternative interpretations could affect {query}?",
             ],
         }
 
+    # Guard: JsonOutputParser may return int/list/str when the model responds
+    # with a bare number instead of a JSON object (common on counting tasks).
+    if not isinstance(parsed, dict):
+        parsed = {
+            "plan": f"Research plan for: {query}",
+            "sub_queries": [
+                f"What evidence and constraints determine the final answer for {query}?",
+                f"What calculations or verification steps are needed for {query}?",
+                f"What edge cases or alternative interpretations could affect {query}?",
+            ],
+        }
     plan = parsed.get("plan", "")
     sub_queries = _normalize_sub_queries(query, parsed.get("sub_queries", []))
     plan_memory_id = f"plan_{task_group}_{hash_text(query)}"

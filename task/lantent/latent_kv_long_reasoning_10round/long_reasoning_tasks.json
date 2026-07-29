@@ -1,0 +1,565 @@
+{
+  "suite_id": "latent_kv_grid_recovery_long_reasoning_10round_v1",
+  "suite_name": "KV Latent 长推理连续任务：跨区域电网恢复与储能调度",
+  "language": "zh",
+  "task_type": "continuous_long_reasoning_planning",
+  "model_target": "Qwen3-8B or comparable long-reasoning model",
+  "design_goal": "构造适合 D_latent_kv 的十轮连续长推理任务。任务要求前半段保留显式 plan/sub_queries/context_packets，后半段 analyst -> executor -> summarizer 需要继承长链路推理状态、计算矩阵、前轮决策和约束冲突，因此适合用 KV handle 传递模型内部状态，而不是反复文本化长分析。",
+  "why_latent_kv_should_help": [
+    "每轮都有长 shared_context、长 evidence_packet 和前轮决策历史，A/B 需要反复把长分析文本传给下游。",
+    "每轮最终答案很短，但得出答案需要 analyst 维护约束、依赖、风险、预算和历史动作的隐含推理状态。",
+    "executor 需要在 analyst 的因果分析基础上继续做约束检查和数值计算；summarizer 只输出短 JSON，适合继承 KV 状态后压缩输出。",
+    "任务不是短抽取问答，不依赖单行答案胶囊；D 的收益应来自后半段长中间状态的连续推理，而不是简单 KV reuse。"
+  ],
+  "required_d_mode_topology": "planner -> 3x researcher -> analyst_latent -> executor_latent -> summarizer_latent",
+  "latent_config_recommendation": {
+    "ANALYST_LATENT_STEPS": 96,
+    "EXECUTOR_LATENT_STEPS": 48,
+    "POST_EXEC_LATENT_STEPS": 24,
+    "SUMMARIZER_LATENT_STEPS": 8,
+    "note": "该任务要求 analyst 保留跨轮约束和多目标权衡，建议比短审计任务使用更多 analyst/executor latent steps。"
+  },
+  "quality_metric": {
+    "primary": "逐字段精确匹配 reference_answer 中的 final_contract 字段",
+    "secondary": "计算字段允许 1% 相对误差；枚举字段必须精确匹配；列表字段按集合比较",
+    "strict_success": "每轮 final_contract 全字段正确才算该轮通过",
+    "field_names": [
+      "selected_strategy",
+      "dispatch_plan",
+      "net_restored_mw",
+      "remaining_budget_musd",
+      "risk_tier",
+      "next_constraint"
+    ]
+  },
+  "output_schema": {
+    "selected_strategy": "string",
+    "dispatch_plan": "array of strings",
+    "net_restored_mw": "integer",
+    "remaining_budget_musd": "number",
+    "risk_tier": "LOW|MEDIUM|HIGH|CRITICAL",
+    "next_constraint": "string"
+  },
+  "shared_context": {
+    "system": "NorthSea Grid 是一个跨 7 个区域的海上风电、氢储能、城市负载和跨境互联调度系统。台风后 48 小时内，调度中心必须逐轮恢复供电、稳定频率、避免潮流过载，并保留足够预算应对后续故障。所有轮次共享同一个资产池、成本模型和风险规则；后续轮次会继承前轮已执行动作。",
+    "regions": [
+      "Aster",
+      "Boreal",
+      "Cygnus",
+      "Delta",
+      "Eos",
+      "Fjord",
+      "Gale"
+    ],
+    "asset_table": [
+      {
+        "asset_id": "W1",
+        "type": "offshore_wind_cluster",
+        "region": "Aster",
+        "base_mw": 180,
+        "restoration_cost_musd": 6.0,
+        "restart_hours": 4,
+        "risk": "saltwater_converter_trip"
+      },
+      {
+        "asset_id": "W2",
+        "type": "offshore_wind_cluster",
+        "region": "Boreal",
+        "base_mw": 150,
+        "restoration_cost_musd": 5.0,
+        "restart_hours": 3,
+        "risk": "blade_pitch_alarm"
+      },
+      {
+        "asset_id": "W3",
+        "type": "offshore_wind_cluster",
+        "region": "Cygnus",
+        "base_mw": 210,
+        "restoration_cost_musd": 7.5,
+        "restart_hours": 5,
+        "risk": "subsea_cable_partial_discharge"
+      },
+      {
+        "asset_id": "H1",
+        "type": "hydrogen_storage",
+        "region": "Delta",
+        "base_mw": 120,
+        "restoration_cost_musd": 4.0,
+        "restart_hours": 2,
+        "risk": "compressor_derate"
+      },
+      {
+        "asset_id": "H2",
+        "type": "hydrogen_storage",
+        "region": "Eos",
+        "base_mw": 90,
+        "restoration_cost_musd": 3.5,
+        "restart_hours": 2,
+        "risk": "purity_monitor_alarm"
+      },
+      {
+        "asset_id": "B1",
+        "type": "battery",
+        "region": "Fjord",
+        "base_mw": 80,
+        "restoration_cost_musd": 2.0,
+        "restart_hours": 1,
+        "risk": "thermal_watch"
+      },
+      {
+        "asset_id": "B2",
+        "type": "battery",
+        "region": "Gale",
+        "base_mw": 70,
+        "restoration_cost_musd": 1.8,
+        "restart_hours": 1,
+        "risk": "soc_low"
+      },
+      {
+        "asset_id": "I1",
+        "type": "interconnector",
+        "region": "Aster-Boreal",
+        "base_mw": 130,
+        "restoration_cost_musd": 4.5,
+        "restart_hours": 3,
+        "risk": "phase_angle_limit"
+      },
+      {
+        "asset_id": "I2",
+        "type": "interconnector",
+        "region": "Cygnus-Delta",
+        "base_mw": 160,
+        "restoration_cost_musd": 5.5,
+        "restart_hours": 4,
+        "risk": "relay_coordination"
+      },
+      {
+        "asset_id": "I3",
+        "type": "interconnector",
+        "region": "Eos-Fjord",
+        "base_mw": 110,
+        "restoration_cost_musd": 3.8,
+        "restart_hours": 3,
+        "risk": "reactive_power_margin"
+      }
+    ],
+    "global_rules": {
+      "initial_budget_musd": 28.0,
+      "frequency_security": "任何一轮的可调度电池或氢储能容量必须至少为当轮新增恢复 MW 的 20%，否则 risk_tier 至少为 HIGH。",
+      "interconnector_dependency": "跨区互联 I1/I2/I3 只有在两端区域至少各有一个已恢复发电或储能资产时，才能计入 net_restored_mw。",
+      "wind_derate_rule": "若 evidence_packet 中 sea_state >= 6，则 W1/W2/W3 当轮新增恢复 MW 只能按 base_mw 的 70% 计入。",
+      "hydrogen_derate_rule": "若 evidence_packet 中 hydrogen_purity_alarm 为 true，则 H1/H2 当轮新增恢复 MW 只能按 base_mw 的 80% 计入。",
+      "battery_duration_rule": "B1/B2 只能作为短时稳定资源，计入 net_restored_mw，但连续两轮都把同一电池作为主策略会把 next_constraint 设为 battery_rest_required。",
+      "risk_tier_rule": {
+        "LOW": "所有硬约束满足，预算余额 >= 8.0，且没有未缓解安全告警。",
+        "MEDIUM": "所有硬约束满足，但预算余额 < 8.0 或存在一个非关键告警。",
+        "HIGH": "有一个软约束未满足，或稳定资源低于 20% 门槛但仍 >= 15%。",
+        "CRITICAL": "违反互联依赖、预算为负、或稳定资源低于 15%。"
+      }
+    },
+    "required_intermediate_work": [
+      "researcher 必须输出 1200-1600 中文字的证据报告，覆盖资产状态、约束、前轮继承和候选动作。",
+      "analyst 必须输出 1200-1800 中文字的长因果推理，比较至少三种策略并说明被淘汰原因。",
+      "executor 必须输出计算矩阵：新增 MW、扣减成本、预算余额、稳定资源比例、互联依赖检查、risk_tier。",
+      "summarizer 只输出 final_contract JSON，不输出长解释。"
+    ],
+    "initial_state": {
+      "restored_assets": [],
+      "remaining_budget_musd": 28.0,
+      "cumulative_restored_mw": 0,
+      "active_constraints": [
+        "must_restore_at_least_250mw_by_round_3",
+        "keep_budget_for_blackstart_reserve"
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "grid_round_01_blackstart_seed",
+      "title": "黑启动种子选择：先稳定还是先恢复大容量",
+      "inherits": [
+        "shared_context"
+      ],
+      "prompt": "台风后第 1 轮恢复。请在 W1、H1、B1、B2 中选择本轮策略，必须详细比较“先恢复大风电”和“先建立稳定资源”的长期影响。最终输出 final_contract JSON。",
+      "latent_value": "需要 analyst 在长推理中保存稳定资源比例、预算约束和后续互联依赖，为 executor/summarizer 继承。",
+      "evidence_packet": {
+        "sea_state": 5,
+        "hydrogen_purity_alarm": false,
+        "load_shed_mw": 620,
+        "operator_notes": [
+          "Fjord 数据中心需要 60 MW 快速恢复以避免二次停机。",
+          "Delta 氢储能 H1 黑启动检查通过，可在 2 小时内并网。",
+          "Aster 海上风 W1 容量大但换流器盐雾告警未完全清除。"
+        ],
+        "available_assets": [
+          "H1",
+          "B1",
+          "B2",
+          "W1"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "stability_first_blackstart",
+        "dispatch_plan": [
+          "H1",
+          "B1"
+        ],
+        "net_restored_mw": 200,
+        "remaining_budget_musd": 22.0,
+        "risk_tier": "LOW",
+        "next_constraint": "restore_at_least_50mw_more_by_round_3"
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "grid_round_02_wind_or_interconnector",
+      "title": "第二轮扩容：风电恢复与互联依赖冲突",
+      "inherits": [
+        "shared_context",
+        "round_01_decision"
+      ],
+      "prompt": "继承第 1 轮 H1+B1 已恢复、剩余预算 22.0 的状态。现在可选 W1、W2、I1、B2。请判断是否应优先恢复互联 I1，注意互联依赖规则。最终输出 final_contract JSON。",
+      "latent_value": "需要继承第 1 轮已恢复区域 Delta/Fjord，识别 I1 两端 Aster/Boreal 仍缺少本地资产，因此直接恢复 I1 无效。",
+      "evidence_packet": {
+        "sea_state": 5,
+        "hydrogen_purity_alarm": false,
+        "line_sync_status": {
+          "I1": "mechanically_ready_but_dependency_unmet"
+        },
+        "operator_notes": [
+          "I1 机械修复完成，但 Aster/Boreal 两端均未恢复本地发电或储能。",
+          "W2 blade pitch alarm 已解除，Boreal 可提供较快风电恢复。",
+          "B2 SOC 低但可短时支撑 70 MW。"
+        ],
+        "available_assets": [
+          "W1",
+          "W2",
+          "I1",
+          "B2"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "restore_boreal_generation_before_i1",
+        "dispatch_plan": [
+          "W2",
+          "B2"
+        ],
+        "net_restored_mw": 220,
+        "remaining_budget_musd": 15.2,
+        "risk_tier": "MEDIUM",
+        "next_constraint": "avoid_reusing_B2_next_round"
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "grid_round_03_meet_minimum_recovery",
+      "title": "第三轮达标：在海况恶化下完成最低恢复目标",
+      "inherits": [
+        "shared_context",
+        "round_01_to_02_history"
+      ],
+      "prompt": "前两轮已恢复 H1、B1、W2、B2，累计恢复 420 MW，剩余预算 15.2。海况升至 6，风电需折减。请在 W1、I1、I3 中选择动作，既要增加恢复量，也要避免违反互联依赖。最终输出 final_contract JSON。",
+      "latent_value": "需要保留风电折减规则、I1 依赖是否满足、I3 两端是否满足，以及 B2 休息约束。",
+      "evidence_packet": {
+        "sea_state": 6,
+        "hydrogen_purity_alarm": false,
+        "dependency_status": {
+          "I1": "Aster_missing_Boreal_ready",
+          "I3": "Eos_missing_Fjord_ready"
+        },
+        "available_assets": [
+          "W1",
+          "I1",
+          "I3"
+        ],
+        "operator_notes": [
+          "B2 上轮作为短时稳定资源，本轮不建议再作为主策略。",
+          "W1 即使折减仍可给 Aster 提供本地发电，使 I1 下一轮依赖满足。",
+          "I3 因 Eos 侧仍未恢复，不能计入有效恢复量。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "restore_w1_under_derate",
+        "dispatch_plan": [
+          "W1"
+        ],
+        "net_restored_mw": 126,
+        "remaining_budget_musd": 9.2,
+        "risk_tier": "MEDIUM",
+        "next_constraint": "I1_dependency_now_satisfied"
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "grid_round_04_interconnector_activation",
+      "title": "第四轮互联激活：利用已满足依赖的 I1",
+      "inherits": [
+        "shared_context",
+        "round_01_to_03_history"
+      ],
+      "prompt": "继承 H1、B1、W2、B2、W1 已恢复，剩余预算 9.2。I1 两端 Aster/Boreal 依赖已满足。请比较恢复 I1、恢复 H2、恢复 I3 的收益和风险。最终输出 final_contract JSON。",
+      "latent_value": "需要继承 I1 依赖已满足这一隐含状态，并计算预算余额是否进入 MEDIUM 风险。",
+      "evidence_packet": {
+        "sea_state": 5,
+        "hydrogen_purity_alarm": true,
+        "dependency_status": {
+          "I1": "dependency_met",
+          "I3": "Eos_missing_Fjord_ready"
+        },
+        "available_assets": [
+          "I1",
+          "H2",
+          "I3"
+        ],
+        "operator_notes": [
+          "I1 phase angle limit 可通过同步控制缓解。",
+          "H2 受 purity alarm 影响，新增 MW 按 80% 计入。",
+          "I3 的 Eos 侧尚无本地恢复资产，直接恢复无效。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "activate_i1_after_dependency_met",
+        "dispatch_plan": [
+          "I1"
+        ],
+        "net_restored_mw": 130,
+        "remaining_budget_musd": 4.7,
+        "risk_tier": "MEDIUM",
+        "next_constraint": "budget_below_8_prioritize_low_cost_actions"
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "grid_round_05_low_budget_tradeoff",
+      "title": "第五轮低预算权衡：Eos/Fjord 互联前置条件",
+      "inherits": [
+        "shared_context",
+        "round_01_to_04_history"
+      ],
+      "prompt": "剩余预算只有 4.7。可选 H2、I3、B2 维护复位。请制定低成本但能为后续 I3 激活铺路的策略。注意 H2 受氢纯度告警折减。最终输出 final_contract JSON。",
+      "latent_value": "需要保留预算约束、H2 折减、I3 依赖和 B2 休息约束，适合 latent 状态连续推理。",
+      "evidence_packet": {
+        "sea_state": 4,
+        "hydrogen_purity_alarm": true,
+        "dependency_status": {
+          "I3": "Eos_missing_Fjord_ready"
+        },
+        "available_assets": [
+          "H2",
+          "I3",
+          "B2"
+        ],
+        "operator_notes": [
+          "H2 可在 Eos 建立本地恢复资产，使 I3 下一轮依赖满足。",
+          "H2 受 purity alarm 影响，只能按 72 MW 计入。",
+          "直接恢复 I3 仍不计入 net_restored_mw。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "restore_h2_to_unlock_i3",
+        "dispatch_plan": [
+          "H2"
+        ],
+        "net_restored_mw": 72,
+        "remaining_budget_musd": 1.2,
+        "risk_tier": "MEDIUM",
+        "next_constraint": "I3_dependency_now_satisfied_but_budget_tight"
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "grid_round_06_budget_exception",
+      "title": "第六轮预算例外：是否动用应急互联修复金",
+      "inherits": [
+        "shared_context",
+        "round_01_to_05_history"
+      ],
+      "prompt": "预算余额 1.2，不足以常规恢复 I3。调度委员会允许一次性应急互联修复金 3.0，只能本轮使用，且会把 risk_tier 至少提高到 HIGH。请判断是否激活 I3。最终输出 final_contract JSON。",
+      "latent_value": "需要在 KV 状态中继承 I3 依赖已满足、预算不足和一次性例外条款，进行多目标权衡。",
+      "evidence_packet": {
+        "sea_state": 4,
+        "hydrogen_purity_alarm": false,
+        "emergency_fund_musd": 3.0,
+        "available_assets": [
+          "I3"
+        ],
+        "operator_notes": [
+          "Eos 已通过 H2 恢复，Fjord 已通过 B1 恢复，I3 依赖满足。",
+          "I3 常规成本 3.8，使用应急基金后现金预算仍需 0.8。",
+          "应急基金使用会触发审计风险，risk_tier 至少 HIGH。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "use_emergency_fund_for_i3",
+        "dispatch_plan": [
+          "I3"
+        ],
+        "net_restored_mw": 110,
+        "remaining_budget_musd": 0.4,
+        "risk_tier": "HIGH",
+        "next_constraint": "no_large_capex_without_load_shed_penalty"
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "grid_round_07_no_capex_operational_rebalance",
+      "title": "第七轮无资本开支：通过调度重平衡降低风险",
+      "inherits": [
+        "shared_context",
+        "round_01_to_06_history"
+      ],
+      "prompt": "当前几乎没有预算，不能新增大修资产。请通过已恢复资产 H1、H2、B1、B2、W1、W2、I1、I3 做调度重平衡，使风险从 HIGH 降到 MEDIUM。最终输出 final_contract JSON。",
+      "latent_value": "该轮没有新资产抽取，主要靠继承长历史和稳定资源比例进行推理，特别适合 analyst/executor KV 状态连续传递。",
+      "evidence_packet": {
+        "sea_state": 5,
+        "hydrogen_purity_alarm": false,
+        "allowed_actions": [
+          "rebalance_dispatch",
+          "battery_rest_rotation",
+          "curtail_wind_10_percent"
+        ],
+        "operator_notes": [
+          "通过削减 W1/W2 10% 并提高 H1/H2 调频，可把频率安全裕度恢复到 20% 以上。",
+          "该操作不增加 net_restored_mw，也不消耗预算。",
+          "B2 需要轮休，B1 可承担短时稳定。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "rebalance_without_capex",
+        "dispatch_plan": [
+          "curtail_W1_W2_10pct",
+          "increase_H1_H2_regulation",
+          "rest_B2"
+        ],
+        "net_restored_mw": 0,
+        "remaining_budget_musd": 0.4,
+        "risk_tier": "MEDIUM",
+        "next_constraint": "prepare_final_high_value_restoration"
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "grid_round_08_conditional_grant",
+      "title": "第八轮条件补助：是否恢复 W3",
+      "inherits": [
+        "shared_context",
+        "round_01_to_07_history"
+      ],
+      "prompt": "政府提供 7.5 的条件补助，只能用于 W3 subsea cable partial discharge 修复。海况为 6，W3 当轮按 70% 计入。请判断是否恢复 W3，并说明风险。最终输出 final_contract JSON。",
+      "latent_value": "需要继承低预算、W3 高容量但海况折减、补助专款专用和当前 MEDIUM 风险状态。",
+      "evidence_packet": {
+        "sea_state": 6,
+        "hydrogen_purity_alarm": false,
+        "conditional_grant_musd": 7.5,
+        "available_assets": [
+          "W3"
+        ],
+        "operator_notes": [
+          "W3 修复成本正好等于补助金额，不消耗现金预算。",
+          "海况 6 下 W3 只能按 147 MW 计入。",
+          "W3 subsea cable partial discharge 修复后仍需下一轮观察。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "restore_w3_with_conditional_grant",
+        "dispatch_plan": [
+          "W3"
+        ],
+        "net_restored_mw": 147,
+        "remaining_budget_musd": 0.4,
+        "risk_tier": "MEDIUM",
+        "next_constraint": "monitor_W3_partial_discharge"
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "grid_round_09_final_security_review",
+      "title": "第九轮安全复核：避免最后一轮过载",
+      "inherits": [
+        "shared_context",
+        "round_01_to_08_history"
+      ],
+      "prompt": "W3 已恢复但需要监控，I1/I3 均已激活。现在出现 reactive power margin 告警。请决定是否降低 I3 潮流 20 MW 并由 H2 补偿，目标是为最终轮降低过载风险。最终输出 final_contract JSON。",
+      "latent_value": "需要继承所有已恢复资产、互联状态和预算，推理一个净恢复量可能为 0 但能降低最终风险的操作。",
+      "evidence_packet": {
+        "sea_state": 4,
+        "hydrogen_purity_alarm": false,
+        "alerts": [
+          "I3 reactive_power_margin warning",
+          "W3 partial_discharge monitor stable for 6 hours"
+        ],
+        "allowed_actions": [
+          "reduce_I3_flow_20mw",
+          "raise_H2_output_20mw",
+          "no_action"
+        ],
+        "operator_notes": [
+          "降低 I3 20 MW 并由 H2 补偿，不改变 net_restored_mw。",
+          "该操作能把最终轮过载概率从 0.31 降至 0.14。",
+          "无动作会保留 MEDIUM 以上风险并可能在第 10 轮升级。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "preemptive_reactive_margin_rebalance",
+        "dispatch_plan": [
+          "reduce_I3_flow_20mw",
+          "raise_H2_output_20mw"
+        ],
+        "net_restored_mw": 0,
+        "remaining_budget_musd": 0.4,
+        "risk_tier": "LOW",
+        "next_constraint": "final_integrated_plan"
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "grid_round_10_integrated_final_plan",
+      "title": "第十轮综合收束：形成 48 小时恢复计划",
+      "inherits": [
+        "shared_context",
+        "round_01_to_09_history"
+      ],
+      "prompt": "整合前 9 轮决策，输出最终 48 小时恢复计划。必须计算累计新增恢复 MW、剩余预算、最终风险等级，并列出仍需监控的唯一约束。最终输出 final_contract JSON。",
+      "latent_value": "这是最适合 D 的收束轮：summarizer 只输出短 JSON，但正确结果依赖前 9 轮长链路推理、预算流水和多个约束的隐含状态。",
+      "evidence_packet": {
+        "final_review": true,
+        "must_integrate_rounds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "operator_notes": [
+          "累计新增恢复 MW 应只统计资产恢复轮和调度净增量，重平衡轮不重复计入。",
+          "最终仍需监控 W3 partial discharge，但 reactive margin 已降为 LOW。",
+          "最终计划不应再新增资本开支。"
+        ]
+      },
+      "reference_answer": {
+        "selected_strategy": "final_integrated_recovery_plan",
+        "dispatch_plan": [
+          "H1",
+          "B1",
+          "W2",
+          "B2",
+          "W1",
+          "I1",
+          "H2",
+          "I3",
+          "W3",
+          "reactive_margin_rebalance"
+        ],
+        "net_restored_mw": 1005,
+        "remaining_budget_musd": 0.4,
+        "risk_tier": "LOW",
+        "next_constraint": "monitor_W3_partial_discharge"
+      }
+    }
+  ]
+}

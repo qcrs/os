@@ -1,0 +1,17 @@
+[
+  {
+    "round_id": 1,
+    "task_id": 9001,
+    "wall_time_sec": 69.7439,
+    "llm_call_count": 6,
+    "inter_agent_message_count": 8,
+    "text_transfer_tokens": 24254,
+    "text_transfer_chars": 51926,
+    "effective_prompt_tokens": 24254,
+    "logical_prompt_tokens": 24254,
+    "output_tokens": 1376,
+    "kv_reused_tokens": 0,
+    "non_text_state_events": 0,
+    "non_text_state_bytes": 0
+  }
+]

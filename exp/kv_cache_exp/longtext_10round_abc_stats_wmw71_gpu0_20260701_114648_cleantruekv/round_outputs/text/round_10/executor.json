@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 10,
+  "task_id": 9010,
+  "required_answer_format": "@round[10] @feature_scope[playable_python_game_with_manual] @depends_on[1,2,3,4,5,6,7,8,9] @new_systems[integration,terminal_ui,playable_loop,gameplay_manual,file_packaging] @deliverable[python_game_file+gameplay_manual_same_folder]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}

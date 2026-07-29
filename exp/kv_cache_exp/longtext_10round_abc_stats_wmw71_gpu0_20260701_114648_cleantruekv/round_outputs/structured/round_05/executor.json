@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 5,
+  "task_id": 9005,
+  "required_answer_format": "@round[5] @feature_scope[multi_order_cargo_selection] @depends_on[1,2,3,4] @new_systems[cargo_slots,order_selection,priority_delivery] @deliverable[incremental_spec]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}

@@ -1,0 +1,73 @@
+{
+  "ok": false,
+  "errors": [
+    "researcher_report too short: 443 chars < 600",
+    "researcher_report missing required evidence E001",
+    "researcher_report missing required evidence E018",
+    "analyst_analysis too short: 246 chars < 600",
+    "analyst_analysis missing required phrase: token_binding_bypass",
+    "analyst_analysis missing required phrase: reader_writer_policy_split",
+    "C-118.risk_score formula mismatch: row=76 computed=72",
+    "C-118.risk_score expected 72 got 76",
+    "C-120.risk_score formula mismatch: row=43 computed=17",
+    "C-120.risk_score expected 17 got 43",
+    "C-120.tier expected LOW got 'MEDIUM'",
+    "C-120.action expected log_and_monitor got 'require_manager_reapproval'"
+  ],
+  "warnings": [],
+  "checks": {
+    "researcher_report": {
+      "ok": false,
+      "errors": [
+        "researcher_report too short: 443 chars < 600",
+        "researcher_report missing required evidence E001",
+        "researcher_report missing required evidence E018"
+      ],
+      "warnings": [],
+      "details": {
+        "chars": 443
+      }
+    },
+    "analyst_analysis": {
+      "ok": false,
+      "errors": [
+        "analyst_analysis too short: 246 chars < 600",
+        "analyst_analysis missing required phrase: token_binding_bypass",
+        "analyst_analysis missing required phrase: reader_writer_policy_split"
+      ],
+      "warnings": [],
+      "details": {
+        "chars": 246
+      }
+    },
+    "executor_matrix": {
+      "ok": false,
+      "errors": [
+        "C-118.risk_score formula mismatch: row=76 computed=72",
+        "C-118.risk_score expected 72 got 76",
+        "C-120.risk_score formula mismatch: row=43 computed=17",
+        "C-120.risk_score expected 17 got 43",
+        "C-120.tier expected LOW got 'MEDIUM'",
+        "C-120.action expected log_and_monitor got 'require_manager_reapproval'"
+      ],
+      "warnings": [],
+      "details": {
+        "rows": 4
+      }
+    },
+    "final_answer": {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "details": {
+        "answer": {
+          "case_id": "C-117",
+          "risk_score": 108,
+          "tier": "CRITICAL",
+          "action": "isolate_account_and_open_major_incident",
+          "primary_control_gap": "token_binding_bypass"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "suite_id": "medical_case_analysis_10round_v1",
+  "suite_name": "医学病例分析连续推理任务集（长输出版）",
+  "language": "zh-CN",
+  "model_target": "Qwen3-8B",
+  "task_type": "long_document_reasoning",
+  "benchmark_goal": [
+    "验证 latent KV 在长输出场景下的效率优势",
+    "让 researcher/analyst/executor 生成详细分析（多输出 token）",
+    "连续10轮任务，每轮依赖前轮结果",
+    "有客观的医学判断标准，可验证正确性"
+  ],
+  "shared_context": {
+    "document_path": "task/lantent/long_out/medical_case_doc.txt",
+    "document_summary": "45岁女性患者，反复头痛3个月伴视物模糊2周，有高血压、糖尿病、血脂异常及颈动脉斑块，父亲脑卒中史，属脑血管病高危人群。",
+    "analysis_requirements": [
+      "必须详细引用病例中的具体数据",
+      "分析需包含多个维度（症状、体征、检查、危险因素）",
+      "每个结论需有充分的医学依据",
+      "输出应包含详细推理过程，不要只给简单答案"
+    ]
+  },
+  "output_requirements": {
+    "researcher_output": "每个 researcher 应输出 300-500 词的详细检索结果和证据",
+    "analyst_output": "analyst 应输出 500-800 词的综合分析，包含多维度评估",
+    "executor_output": "executor 应输出详细的计算过程和结果验证",
+    "summarizer_output": "summarizer 应输出 200-300 词的最终结论"
+  },
+  "tasks": [
+    {
+      "round": 1,
+      "task_id": "diagnosis_round_01",
+      "title": "主要诊断判断",
+      "prompt": "阅读病例文档（task/lantent/long_out/medical_case_doc.txt），根据患者的症状、体征、辅助检查结果，判断以下哪个是**最可能的主要诊断**？\n\nA. 紧张性头痛\nB. 偏头痛\nC. 高血压性头痛\nD. 脑血管病（TIA）\n\n**要求：**\n1. 详细列出支持和反对每个诊断的证据（引用具体数据）\n2. 分析各诊断的可能性排序\n3. 给出最终答案（单选：A/B/C/D）\n4. 解释为什么选择该答案\n\n请生成详细的分析报告，不要只给简单答案。",
+      "reference_answer": {
+        "correct_option": "C",
+        "reasoning": "高血压性头痛最可能，因为：1) 血压145/92 mmHg控制欠佳；2) 头痛进行性加重与血压波动相关；3) 患者有5年高血压史；4) 虽有紧张因素但症状进展不符合单纯紧张性头痛。脑血管病需MRI进一步排除。"
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "risk_round_02",
+      "title": "10年脑卒中风险评估",
+      "inherits": ["round_01_context"],
+      "prompt": "基于病例信息，评估该患者10年内发生脑卒中的风险等级。\n\n风险分级标准：\n- 低风险：<10%\n- 中风险：10-20%\n- 高风险：>20%\n\n**要求：**\n1. 列出所有危险因素并量化评分\n2. 计算 Framingham 卒中风险评分（简化版）：\n   - 年龄45岁：+3分\n   - 女性：+0分\n   - 高血压（BP>140/90）：+5分\n   - 糖尿病：+3分\n   - 吸烟：+3分（患者不吸烟：0分）\n   - 心血管病史：+4分（无：0分）\n   - 房颤：+6分（无：0分）\n   - 左心室肥厚：+5分（未检查，按0分）\n   总分 >15分为高风险\n3. 结合颈动脉斑块、家族史等额外因素\n4. 给出最终风险等级（低/中/高）\n\n请提供详细的计算过程和风险分层依据。",
+      "reference_answer": {
+        "correct_option": "中风险",
+        "framingham_score": 11,
+        "calculation": "年龄3 + 高血压5 + 糖尿病3 = 11分，但考虑颈动脉斑块和父亲卒中史，实际风险升至中高风险区间（15-20%）",
+        "risk_level": "中风险"
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "bp_target_round_03",
+      "title": "血压控制目标值",
+      "inherits": ["round_01_context", "round_02_context"],
+      "prompt": "根据患者的具体情况（年龄、合并症、风险评估），确定其血压控制的目标值。\n\n可选答案：\nA. <140/90 mmHg\nB. <130/80 mmHg\nC. <120/80 mmHg\nD. <150/90 mmHg\n\n**要求：**\n1. 分析患者的合并症（糖尿病、颈动脉斑块）\n2. 参考指南推荐（合并糖尿病的高血压患者）\n3. 评估当前血压145/92 mmHg距目标值的差距\n4. 给出答案（单选）并详细解释理由\n\n请生成包含指南依据的详细分析。",
+      "reference_answer": {
+        "correct_option": "B",
+        "reasoning": "患者合并糖尿病且有脑卒中高危因素，根据指南推荐目标<130/80 mmHg。当前145/92需降低15/12 mmHg。"
+      }
+    },
+    {
+      "round": 4,
+      "task_id": "ldl_target_round_04",
+      "title": "LDL-C控制目标值",
+      "inherits": ["round_02_context"],
+      "prompt": "患者当前 LDL-C 为 3.6 mmol/L，根据其脑卒中风险等级，确定 LDL-C 的控制目标值。\n\n可选答案：\nA. <3.4 mmol/L\nB. <2.6 mmol/L\nC. <1.8 mmol/L\nD. <1.4 mmol/L\n\n**要求：**\n1. 回顾第2轮的风险评估结果\n2. 根据风险等级确定降脂目标（参考指南）\n3. 计算需降低的 LDL-C 数值\n4. 给出答案并说明理由\n\n请提供详细的目标设定依据和降脂策略。",
+      "reference_answer": {
+        "correct_option": "B",
+        "reasoning": "中高危患者 LDL-C 目标<2.6 mmol/L，需从3.6降至2.6以下，降幅约1.0 mmol/L。阿托伐他汀20mg可降低30-40%。"
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "hba1c_target_round_05",
+      "title": "糖化血红蛋白控制目标",
+      "inherits": ["round_01_context"],
+      "prompt": "患者当前糖化血红蛋白（HbA1c）为 7.1%，判断是否达标，并确定其控制目标值。\n\n可选答案：\nA. <6.0%\nB. <6.5%\nC. <7.0%\nD. <7.5%\n\n**要求：**\n1. 分析患者年龄、病程、并发症情况\n2. 参考糖尿病控制目标的个体化原则\n3. 评估当前 7.1% 的控制水平\n4. 给出目标值并说明是否需要调整降糖方案\n\n请提供详细的目标设定理由和治疗建议。",
+      "reference_answer": {
+        "correct_option": "C",
+        "reasoning": "45岁中年患者，病程3年，无严重并发症，目标<7.0%。当前7.1%接近达标，可通过调整二甲双胍剂量实现。"
+      }
+    },
+    {
+      "round": 6,
+      "task_id": "carotid_management_round_06",
+      "title": "颈动脉斑块管理策略",
+      "inherits": ["round_01_context"],
+      "prompt": "患者左侧颈内动脉起始部有 3×2mm 斑块，管腔狭窄<30%，判断正确的管理策略。\n\n可选答案：\nA. 立即手术治疗\nB. 介入支架治疗\nC. 药物保守治疗 + 定期随访\nD. 无需特殊处理\n\n**要求：**\n1. 分析斑块大小和狭窄程度的临床意义\n2. 评估手术/介入适应证\n3. 说明药物治疗的具体方案（抗血小板、降脂）\n4. 制定随访计划（时间间隔、复查项目）\n5. 给出答案并详细解释\n\n请生成完整的管理方案和随访计划。",
+      "reference_answer": {
+        "correct_option": "C",
+        "reasoning": "狭窄<30%属轻度，不需介入或手术。药物治疗包括：阿司匹林100mg qd + 阿托伐他汀20mg qn，3-6个月复查超声监测斑块变化。"
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "medication_count_round_07",
+      "title": "药物种类统计",
+      "inherits": ["round_03_context", "round_04_context", "round_05_context", "round_06_context"],
+      "prompt": "根据前几轮确定的治疗方案，统计患者需要长期服用的药物总数。\n\n计算范围：\n1. 降压药物（从第3轮）\n2. 降糖药物（从第5轮）\n3. 降脂药物（从第4轮）\n4. 抗血小板药物（从第6轮）\n5. 病例中原有药物\n\n**要求：**\n1. 列出所有药物名称和剂量\n2. 分类统计（降压、降糖、降脂、抗血小板）\n3. 计算药物总数（种类数，不是片数）\n4. 评估药物相互作用风险\n5. 给出最终答案（数字）\n\n请提供详细的药物清单和总数计算过程。",
+      "reference_answer": {
+        "correct_option": 5,
+        "medication_list": [
+          "氨氯地平5mg + 缬沙坦80mg（算1种复方制剂或2种单药）",
+          "二甲双胍850mg",
+          "阿托伐他汀20mg",
+          "阿司匹林100mg"
+        ],
+        "total_count": "5种（如复方制剂算1种则4种，但通常分开计算为5种）"
+      }
+    },
+    {
+      "round": 8,
+      "task_id": "cost_benefit_round_08",
+      "title": "二级预防获益评估",
+      "inherits": ["round_02_context", "round_07_context"],
+      "prompt": "基于第2轮的风险评估（10年脑卒中风险15-20%）和第7轮的治疗方案，评估二级预防措施的预期获益。\n\n假设：\n- 规范药物治疗可使脑卒中风险相对降低 30-40%\n- 生活方式干预额外降低 10-15%\n\n**要求：**\n1. 计算治疗前10年绝对风险（假设17.5%为中值）\n2. 计算药物治疗后的相对风险降低\n3. 计算绝对风险降低（ARR）和需治疗人数（NNT）\n4. 评估总体获益\n5. 给出治疗后10年脑卒中风险估计值（选择最接近的）\n\n可选答案：\nA. 5-8%\nB. 8-10%\nC. 10-12%\nD. 12-15%\n\n请提供详细的计算过程和获益分析。",
+      "reference_answer": {
+        "correct_option": "B",
+        "calculation": "基线风险17.5% × (1 - 0.35药物) × (1 - 0.12生活方式) = 17.5% × 0.65 × 0.88 ≈ 10.0%",
+        "reasoning": "综合治疗可将10年风险从17.5%降至约10%，绝对风险降低7.5%，NNT≈13。"
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "mri_necessity_round_09",
+      "title": "MRI检查必要性判断",
+      "inherits": ["round_01_context"],
+      "prompt": "患者头颅CT未见异常，但症状进行性加重。判断是否需要进一步行头颅MRI + MRA检查。\n\n可选答案：\nA. 必须立即检查（3天内）\nB. 建议2周内检查\nC. 可选择性检查（1个月内）\nD. 无需检查，CT已足够\n\n**要求：**\n1. 分析CT的局限性（对微小病灶、后颅窝的敏感性）\n2. 评估MRI的优势（识别早期梗死、微出血）\n3. 结合患者症状特点（进行性加重、视物模糊）\n4. 评估检查的紧迫性\n5. 给出答案并详细说明理由\n\n请生成完整的检查必要性分析和时机建议。",
+      "reference_answer": {
+        "correct_option": "B",
+        "reasoning": "症状进行性加重、有多重危险因素，CT阴性不能完全排除微小梗死灶或TIA，建议2周内完善MRI + MRA以明确诊断，不必过于紧急但也不宜拖延过久。"
+      }
+    },
+    {
+      "round": 10,
+      "task_id": "followup_plan_round_10",
+      "title": "综合随访计划制定",
+      "inherits": ["round_01_to_09_history"],
+      "prompt": "基于前9轮的分析和治疗方案，制定完整的随访计划。需要包含以下随访项目的时间安排：\n\n1. 血压监测\n2. 血糖（空腹+HbA1c）\n3. 血脂\n4. 肝肾功能\n5. 颈部血管超声\n6. 头颅MRI（如第9轮建议）\n\n**要求：**\n1. 为每个项目确定首次随访时间\n2. 确定后续随访频率\n3. 列出随访的关键指标和目标值\n4. 计算患者第一个月内需要进行的检查总数\n5. 给出答案（数字）\n\n请提供详细的随访时间表和检查项目清单。",
+      "reference_answer": {
+        "correct_option": 4,
+        "first_month_tests": [
+          "1周后：血压复查",
+          "1周后：空腹血糖",
+          "2周内：头颅MRI + MRA",
+          "4周后：血脂、肝肾功能复查"
+        ],
+        "total_count": "4次就诊/检查"
+      }
+    }
+  ],
+  "evaluation": {
+    "reference_answer_visibility": "evaluator_only",
+    "run_modes": [
+      "text",
+      "structured",
+      "latent_kv"
+    ],
+    "required_metrics": [
+      "task_accuracy",
+      "input_tokens",
+      "output_tokens",
+      "latent_steps",
+      "latent_kv_bytes_transferred",
+      "total_latency_ms",
+      "researcher_avg_output_length",
+      "analyst_output_length",
+      "executor_output_length"
+    ],
+    "recommended_latent_steps": {
+      "analyst": [
+        64,
+        128
+      ],
+      "executor": [
+        32,
+        64
+      ]
+    },
+    "success_condition": "答案正确且输出包含详细的医学推理过程（researcher > 300词，analyst > 500词）"
+  }
+}

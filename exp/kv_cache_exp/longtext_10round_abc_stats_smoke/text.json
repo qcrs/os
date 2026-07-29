@@ -1,0 +1,57 @@
+{
+  "mode": "text",
+  "aggregate": {
+    "mode": "text",
+    "rounds_completed": 1,
+    "mode_wall_time_sec": 99.27,
+    "model_load_wall_time_sec": 29.5008,
+    "sum_round_wall_time_sec": 69.7439,
+    "avg_single_task_wall_time_sec": 69.7439,
+    "min_single_task_wall_time_sec": 69.7439,
+    "max_single_task_wall_time_sec": 69.7439,
+    "llm_call_count": 6,
+    "inter_agent_message_count": 8,
+    "message_edge_counts": {
+      "analyst->executor": 1,
+      "executor->summarizer": 1,
+      "planner->researcher_1": 1,
+      "planner->researcher_2": 1,
+      "planner->researcher_3": 1,
+      "researcher_1->analyst": 1,
+      "researcher_2->analyst": 1,
+      "researcher_3->analyst": 1
+    },
+    "logical_prompt_tokens": 24254,
+    "effective_prompt_tokens": 24254,
+    "output_tokens": 1376,
+    "logical_total_tokens": 25630,
+    "effective_total_tokens": 25630,
+    "text_transfer_tokens": 24254,
+    "text_transfer_chars": 51926,
+    "kv_reused_tokens": 0,
+    "source_prefix_tokens": 3346,
+    "source_prefix_chars": 6439,
+    "producer_wall_time_sec": 0.0,
+    "non_text_state_transfer_count": 0,
+    "non_text_state_bytes": 0,
+    "kv_storage": {}
+  },
+  "rounds": [
+    {
+      "round_id": 1,
+      "task_id": 9001,
+      "wall_time_sec": 69.7439,
+      "llm_call_count": 6,
+      "inter_agent_message_count": 8,
+      "text_transfer_tokens": 24254,
+      "text_transfer_chars": 51926,
+      "effective_prompt_tokens": 24254,
+      "logical_prompt_tokens": 24254,
+      "output_tokens": 1376,
+      "kv_reused_tokens": 0,
+      "non_text_state_events": 0,
+      "non_text_state_bytes": 0
+    }
+  ],
+  "kv_storage": {}
+}

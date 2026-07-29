@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 8,
+  "task_id": 9008,
+  "required_answer_format": "@round[8] @feature_scope[post_run_upgrades_progression] @depends_on[1,2,3,4,5,6,7] @new_systems[upgrade_state,coin_costs,wind_control,storm_resistance] @deliverable[incremental_spec]",
+  "tag_hits": {
+    "@round": true,
+    "@feature_scope": true,
+    "@depends_on": true,
+    "@new_systems": true,
+    "@deliverable": true
+  },
+  "covered_tag_count": 5,
+  "note": "deterministic validation executor; no LLM call"
+}

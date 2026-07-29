@@ -1,0 +1,33 @@
+{
+  "round_id": 3,
+  "task_id": "incident_round_03_matching_replay_duplicate_fill",
+  "title": "撮合回放异常：MatchingCore 重复成交",
+  "mode": "D_latent_kv",
+  "wall_time_s": 293.972,
+  "llm_calls": 6,
+  "input_tokens": 10411,
+  "output_tokens": 2816,
+  "latent_steps": 112,
+  "kv_bytes_transfer": 644235264,
+  "answer": {
+    "root_cause_service": "MatchingCore",
+    "root_cause_code": "REPLAY_IDEMPOTENCY_GAP",
+    "severity": "P1",
+    "primary_action": "pause_matching_replay_and_dedupe",
+    "report_deadline_minutes": 60,
+    "estimated_loss_usd": 368000
+  },
+  "expected": {
+    "root_cause_service": "MatchingCore",
+    "root_cause_code": "replay_idempotency_gap",
+    "severity": "P0",
+    "primary_action": "pause_matching_replay_and_dedupe",
+    "report_deadline_minutes": 15,
+    "estimated_loss_usd": 428000
+  },
+  "correct_fields": 2,
+  "total_fields": 6,
+  "ok": false,
+  "summary": "</think>\n\n```json\n{\n  \"root_cause_service\": \"MatchingCore\",\n  \"root_cause_code\": \"REPLAY_IDEMPOTENCY_GAP\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"pause_matching_replay_and_dedupe\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 368000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"MatchingCore\",\n  \"root_cause_code\": \"REPLAY_IDEMPOTENCY_GAP\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"pause_matching_replay_and_dedupe\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 368000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"MatchingCore\",\n  \"root_cause_code\": \"REPLAY_IDEMPOTENCY_GAP\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"pause_matching_replay_and_dedupe\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 368000\n}\n```\n\n```json\n{\n  \"root_cause_service\": \"MatchingCore\",\n  \"root_cause_code\": \"REPLAY_IDEMPOTENCY_GAP\",\n  \"severity\": \"P1\",\n  \"primary_action\": \"pause_matching_replay_and_dedupe\",\n  \"report_deadline_minutes\": 60,\n  \"estimated_loss_usd\": 368000\n}\n```\n\n```json\n{\n  \"r",
+  "error": ""
+}

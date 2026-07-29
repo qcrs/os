@@ -1,0 +1,14 @@
+{
+  "suite_id": "classified_data_audit_latent_kv_10round_v1",
+  "task_file": "/data/mingwei/yzmxdzntxzddkxtxztcdygxjyjz/task/lantent/classified_data_audit_10round/classified_data_audit_tasks.json",
+  "modes": [
+    "B",
+    "D"
+  ],
+  "rounds": 10,
+  "output_dir": "exp/latent_kv_exp/classified_data_audit_bd_executor_tool_gpu1_20260709_full10",
+  "server_base_url": "http://localhost:8101/v1",
+  "started_at": "2026-07-09 14:57:49",
+  "resume": false,
+  "synthetic_notice": "本任务集全部为合成脱敏场景，不包含真实涉密数据、真实人员、真实项目或真实系统口令。"
+}

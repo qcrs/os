@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "round": 2,
+  "task_id": 9002,
+  "required_answer_format": "@round[2] @feature_scope[time_stamina_summary] @depends_on[1] @new_systems[time_left,stamina,run_summary] @deliverable[incremental_spec]",
+  "tag_hits": {
+    "@round": false,
+    "@feature_scope": false,
+    "@depends_on": false,
+    "@new_systems": false,
+    "@deliverable": false
+  },
+  "covered_tag_count": 0,
+  "note": "deterministic validation executor; no LLM call"
+}
