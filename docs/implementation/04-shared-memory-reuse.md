@@ -18,5 +18,5 @@ MemoryQuery
   -> behavioral effect
 ```
 
-文档始终区分 candidate、compatible、consumed 和 effect。候选数量或向量相似度不能直接称为复用率。
-
+文档分别统计 candidate、compatible、consumed 和 effect。复用率使用实际消费与行为效果
+对应的查询数作为分子。

@@ -26,6 +26,8 @@ runs/
 work/
 deploy/statebus_llm.env.local
 deploy/statebus_llm.yaml.local
+deploy/vllm.env.local
+docker/.env
 studio-ui/node_modules/
 studio-ui/dist/
 studio-ui/*.tsbuildinfo

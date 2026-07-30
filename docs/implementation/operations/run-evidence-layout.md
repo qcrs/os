@@ -13,7 +13,12 @@ Run 根目录是一次执行的事实集合，不同 runner 的具体子目录�
 │   │   ├── runtime_events.jsonl
 │   │   └── runtime_facts.jsonl
 │   ├── adaptive_mainline_manifest.json
+│   ├── engine_local_kv_mainline.json   # KV mode enabled 时的 role audit
 │   └── sidecars/ ...
+├── logs/
+│   ├── prefix_cache_observation.json   # Prefix policy enabled 时
+│   ├── logit_gate.json                 # Logit Gate enabled 时
+│   └── task_metrics.json
 ├── state/
 │   ├── metadata/ ...
 │   ├── manifests/ ...
@@ -51,3 +56,12 @@ Studio 的 `task_flow.py` 读取 summary、trace 与 execution record，生成�
 
 固定 evidence snapshot 是经过显式发布的展示层，不属于每个临时 Run。实时运行、历史 Run、PPT 基线和说明书数字应通过明确的 snapshot ID/git SHA/Run ID 区分。
 
+模型侧三条机制的原始证据入口不同：
+
+| 机制 | 单任务原始记录 | 套件汇总 |
+|:--|:--|:--|
+| Logit Gate | `logs/logit_gate.json`、Logit sidecar/tombstone、runtime events | challenge `summary.json` |
+| Prefix | `logs/prefix_cache_observation.json`、rendered request audit | paired repeat `repeat_summary.json` |
+| 显式 KV | `runtime/engine_local_kv_mainline.json`、service telemetry/proof | 10-round `summary.json` |
+
+专项 runner 的目录会多出 `rounds/<task>/<mode>/`、环境快照和服务快照。报告中的 p50、计数与逐任务值应能回到这些 JSON；文档表格不是新的事实源。

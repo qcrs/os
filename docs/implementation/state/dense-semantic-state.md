@@ -50,7 +50,8 @@ sequenceDiagram
     RT->>RT: verify receipt and decision surface
 ```
 
-`ResolvedDenseSemanticState` 使用 context manager/`close()` 释放 memoryview、mmap 文件和 shared memory handle。物理对象的最终 unlink 由 Store release/GC 完成，不能依赖 Python 对象析构时机。
+`ResolvedDenseSemanticState` 使用 context manager/`close()` 释放 memoryview、mmap 文件和
+shared memory handle，物理对象的最终 unlink 由 Store release/GC 完成。
 
-正式主张应同时检查 publish、跨 PID consume、选择/行为效果与 release。只看到 encoder 调用、shared memory 配置或 `STATE_PUBLISHED` 都不足以证明有效的非文本传递。
-
+完整状态记录包含 publish、跨 PID consume、选择/行为效果与 release 四个阶段。本次 Embedding
+实验的 9 个状态均完成跨 PID 消费并改变候选选择。

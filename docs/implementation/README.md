@@ -1,98 +1,186 @@
 # StateBus 实现手册
 
-这组文档面向需要阅读、维护或继续扩展 StateBus 的开发者。项目说明书回答的是“项目解决什么问题、为什么这样设计以及实验得到什么结果”，这里进一步回答“对象从哪里产生、经过哪些校验、由哪个模块保存、失败后如何收敛，以及界面看到的内容如何回到真实运行记录”。文档尽量沿源码中的类名、合同字段和事件名称展开，读者不需要先理解全部历史分支，也不必从实验报告反推实现。
+本手册对应当前 `statebus/` 源码，说明对象、调用、存储、验证和恢复流程。实验总览回答
+“结果是多少”，这里回答“请求经过哪些模块、状态如何取得下游资格、证据落在哪里”。
 
+## 系统总图
 
-## 从哪里开始读
+```mermaid
+flowchart TB
+    UI[Studio / CLI / Benchmark] --> TC[Task Compiler]
 
-如果只想先建立整体认识，可以依次阅读[系统架构](01-system-architecture.md)和[端到端任务走读](07-end-to-end-task-walkthrough.md)。前者给出模块边界，后者用一个运营指标异常分析任务把 Planner、Retriever、Executor、Summarizer、StateRef、CodeAct 和质量门串在一起。
+    subgraph RT[Runtime]
+        TC --> TS[CanonicalTaskSpec]
+        TS --> PP[Planner and PlanPolicy]
+        PP --> DP[自适应调度]
+        DP --> QG[Validator 与提交门]
+        DP --> TL[遥测与账本]
+    end
 
-准备修改 Runtime 或协议时，重点阅读[任务合同与控制面](02-task-contract-and-control-plane.md)、[语义状态与数据面](03-semantic-state-and-data-plane.md)以及[可观测性与恢复](08-observability-and-recovery.md)。这三篇说明计划为什么不能直接执行、Protobuf 帧中传递什么、重对象为什么只传 Ref，以及 step/attempt/lease 如何阻止晚到结果污染新尝试。
+    subgraph ROLES[角色客户端]
+        P[Planner]
+        R[Retriever]
+        E[Executor]
+        S[Summarizer]
+    end
 
-准备修改检索、记忆或 Executor 时，阅读[共享记忆复用](04-shared-memory-reuse.md)与[CodeAct、产物和质量门](05-codeact-artifact-and-quality.md)。前者把 candidate、compatible、consumed 和 behavioral effect 分开，后者说明模型生成代码为何仍只是候选，什么时候才能成为 verified artifact。
+    subgraph CONTROL[控制面]
+        PB[Typed Protobuf]
+        UDS[UDS]
+        GR[能力与 Ref 注册表]
+    end
 
-准备修改演示产品时，阅读[StateBus Studio](06-statebus-studio.md)。最后的[代码地图与扩展指南](09-code-map-and-extension-guide.md)按能力列出主要入口、相邻合同和测试位置，适合作为开发时的索引。
+    subgraph DATA[数据面]
+        SHM[shared_memory]
+        MM[mmap and CAS]
+        WS[attempt 工作区]
+    end
 
-## 按问题直达
+    subgraph MEMORY[记忆面]
+        SQL[SQLite 与 FTS]
+        VEC[向量索引]
+        CG[兼容与重放门]
+    end
 
-不需要从头顺序阅读。下面这些入口直接落到细分专题：
+    subgraph MODEL[模型侧状态]
+        EM[Embedding 状态]
+        LG[Logit Gate]
+        PR[Prefix reuse]
+        KV[Explicit KV continuation]
+    end
 
-| 想了解的内容 | 直接阅读 |
+    DP --> P
+    DP --> R
+    DP --> E
+    DP --> S
+    DP <--> CONTROL
+    R <--> DATA
+    E <--> DATA
+    S <--> DATA
+    DP <--> MEMORY
+    R -.-> EM
+    E -.-> LG
+    E -.-> PR
+    E -.-> KV
+    KV -.-> S
+```
+
+Agent 生成候选，Runtime 负责批准、验证和状态提升。控制面传身份、授权和 Ref；重对象留在数据面；跨任务知识进入记忆面；模型侧状态路径分别作用于证据选择、执行授权和 Prefill 复用。
+
+## 阅读顺序
+
+| 顺序 | 主题 | 入口 | 读完应能回答 |
+|--:|:--|:--|:--|
+| 1 | 架构 | [系统架构](01-system-architecture.md) | Runtime、四角色、控制/数据/记忆面如何分工 |
+| 2 | 任务与控制 | [Runtime 与控制面](02-task-contract-and-control-plane.md) | 任务怎样编译，计划怎样批准，Worker 如何收敛 |
+| 3 | 状态与载体 | [非文本状态与数据面](03-semantic-state-and-data-plane.md) | Ref 如何解析、消费和释放 |
+| 4 | 模型侧状态 | [模型侧状态路径](runtime/model-state-paths.md) | Embedding、Logit、Prefix、KV 分别处理什么 |
+| 5 | 执行 | [CodeAct 与质量门](05-codeact-artifact-and-quality.md) | 模型代码怎样变成 verified artifact |
+| 6 | 记忆 | [共享记忆复用](04-shared-memory-reuse.md) | 检索命中怎样经过兼容门并产生真实复用 |
+| 7 | 任务走读 | [端到端任务](07-end-to-end-task-walkthrough.md) | 一次 Run 中对象和回执如何连接 |
+| 8 | 运维与界面 | [可观测性与恢复](08-observability-and-recovery.md)、[Studio](06-statebus-studio.md) | 失败、证据、页面状态怎样回到运行事实 |
+| 9 | 扩展 | [代码地图与扩展](09-code-map-and-extension-guide.md) | 新任务、能力、状态或页面应修改哪些位置 |
+
+## 按工程问题定位
+
+| 问题 | 文档 |
 |:--|:--|
-| 为什么是 Runtime 主导而不是四个 Agent 互传文本 | [总体分层](architecture/overview.md)、[对象模型](architecture/object-model.md) |
-| 四个 Agent 分别能看见、产出和禁止做什么 | [角色合同总览](roles/README.md)、[Planner](roles/planner.md)、[Retriever](roles/retriever.md)、[Executor](roles/executor.md)、[Summarizer](roles/summarizer.md) |
-| formal task 为什么不能临场猜测 | [任务编译](runtime/task-compilation.md) |
-| Planner 输出为什么不能直接执行 | [计划策略与能力授权](runtime/plan-policy-and-capability.md) |
-| UDS 上到底发送了什么 | [Protobuf 与 UDS](runtime/protobuf-and-uds.md) |
-| 重试为什么不会接收旧 Worker 的晚到结果 | [Worker 生命周期](runtime/worker-lifecycle.md) |
-| embedding 如何保持 float32 跨进程传递 | [稠密语义状态](state/dense-semantic-state.md) |
-| 模型候选概率如何决定执行、重查或拒绝 | [Logit Retry Gate](runtime/logit-retry-gate.md)、[LogitState](state/logit-state.md) |
-| Logit Gate 的 12 个受控 case 得到了什么 | [受控挑战走读](walkthrough/logit-retry-challenge.md) |
-| 向量行号怎样恢复成可引用证据 | [Hydration 与证据](state/hydration-and-evidence.md) |
-| 记忆命中、实际使用和跳步有什么差别 | [兼容门与真实消费](memory/compatibility-and-consumption.md) |
-| LLM 生成 Python 后有哪些安全门 | [受限 Python CodeAct](execution/bounded-python-codeact.md) |
-| Python 与 DSL 的区别 | [Transform DSL](execution/transform-dsl.md)、[产物质量门](execution/artifact-and-quality-gate.md) |
-| Studio 页面展示的是不是实际运行 | [Run 事实重建](studio/run-reconstruction-and-security.md) |
-| 想沿一次真实任务完整看一遍 | [IQR 单任务走读](walkthrough/single-task-iqr.md) |
-| 想看跨任务记忆怎样发生 | [三轮财务记忆链](walkthrough/continuous-financial-memory.md) |
-| 两组 10 轮和五类 25 个 case 分别做什么、使用哪些数据 | [正式基准任务与数据集目录](benchmark-task-and-dataset-catalog.md) |
-| 出错后系统如何恢复和清理 | [失败恢复](operations/failure-recovery.md) |
-| 准备新增任务或 capability | [扩展流程](extensions/extension-recipes.md)、[测试清单](extensions/testing-and-review.md) |
+| Planner 结果怎样取得执行资格 | [计划策略与能力授权](runtime/plan-policy-and-capability.md) |
+| formal task 如何避免临场猜测 | [任务编译](runtime/task-compilation.md) |
+| UDS 帧中有什么 | [Protobuf 与 UDS](runtime/protobuf-and-uds.md) |
+| timeout 后怎样隔离旧 attempt | [Worker 生命周期](runtime/worker-lifecycle.md) |
+| embedding 如何跨 PID | [稠密语义状态](state/dense-semantic-state.md) |
+| 候选概率如何控制 dispatch | [Logit Retry Gate](runtime/logit-retry-gate.md) |
+| shared prefix 如何触发 vLLM cache | [Engine-Local Prefix Reuse](runtime/engine-local-prefix-reuse.md) |
+| Executor 的 KV 如何交给 Summarizer | [显式 KV Continuation](runtime/engine-local-kv-continuation.md) |
+| Prefix 和显式 KV 怎样配合 | [模型侧状态路径](runtime/model-state-paths.md) |
+| 行号怎样恢复成证据 | [Hydration 与证据扇入](state/hydration-and-evidence.md) |
+| Python 与 DSL 如何选择 | [受限 Python CodeAct](execution/bounded-python-codeact.md)、[Transform DSL](execution/transform-dsl.md) |
+| Artifact 何时变成 verified | [产物与质量门](execution/artifact-and-quality-gate.md) |
+| 相似记忆怎样判断复用资格 | [兼容门与真实消费](memory/compatibility-and-consumption.md) |
+| Run 的原始证据在哪里 | [Run 目录与 Ledger](operations/run-evidence-layout.md) |
+| 指标怎样避免重复累加 | [Telemetry 与指标聚合](operations/telemetry-and-metrics.md) |
+| Studio 是否读取真实运行记录 | [Run 事实重建](studio/run-reconstruction-and-security.md) |
+| 正式任务和数据集有哪些 | [基准任务与数据集目录](benchmark-task-and-dataset-catalog.md) |
 
-| 文档 | 解决的主要问题 |
-|:--|:--|
-| [01-system-architecture.md](01-system-architecture.md) | StateBus 的进程、模块、三层基础设施和对象总链路如何组合 |
-| [02-task-contract-and-control-plane.md](02-task-contract-and-control-plane.md) | 任务如何编译、计划如何批准、能力如何授权、Worker 会话如何收敛 |
-| [03-semantic-state-and-data-plane.md](03-semantic-state-and-data-plane.md) | float32 语义状态如何发布、跨进程选择、回执、释放与回溯 |
-| [04-shared-memory-reuse.md](04-shared-memory-reuse.md) | 记忆如何混合召回、兼容判定、真实消费和安全写回 |
-| [05-codeact-artifact-and-quality.md](05-codeact-artifact-and-quality.md) | Python/DSL 如何执行，workspace、Validator 和 Commit Gate 如何形成可信产物 |
-| [06-statebus-studio.md](06-statebus-studio.md) | FastAPI、单 Worker 队列、SSE、React Flow 与固定证据页如何实现 |
-| [07-end-to-end-task-walkthrough.md](07-end-to-end-task-walkthrough.md) | 一个真实任务在四 Agent 间具体传入、转换和传出什么 |
-| [08-observability-and-recovery.md](08-observability-and-recovery.md) | Telemetry、Ledger、失败状态、重试隔离和资源回收如何协同 |
-| [09-code-map-and-extension-guide.md](09-code-map-and-extension-guide.md) | 新任务族、新能力、新载体或新 Studio recipe 应改哪些位置 |
-| [benchmark-task-and-dataset-catalog.md](benchmark-task-and-dataset-catalog.md) | E2 两条连续 10 轮任务链与 E5 五类 25 个固定 case 的输入、依赖、Gold 和 Validator |
-
-## 一条必须保持稳定的对象链
-
-源码中对象很多，但业务主链可以压缩成下面这条关系。箭头不是简单的函数返回，而是“当前对象经过 Runtime 校验后，成为下一阶段可见输入”。
+## 可信对象主链
 
 ```mermaid
 flowchart LR
-    A[CanonicalTaskSpec] --> B[PlanProposal]
-    B -->|PlanPolicy| C[ApprovedPlan]
-    C --> D[EvidenceRequest]
-    D --> E[CanonicalEvidencePack]
-    E --> F[SemanticStateRef]
-    E --> X[Executor choice]
-    X -->|gate off| G[ExecutionArtifactRef candidate]
-    X -->|gate enabled| L[LogitStateRef]
-    L -->|GateReceipt| G
-    F -->|消费回执| G
-    G -->|Validators + Commit Gate| H[ExecutionArtifactRef verified]
-    H --> I[ClaimSet]
-    I --> J[MemoryCommit]
-    J --> K[MemoryRef committed]
+    TS[CanonicalTaskSpec] --> PP[PlanProposal]
+    PP -->|PlanPolicy| AP[ApprovedPlan]
+    AP --> ER[EvidenceRequest]
+    ER --> EP[CanonicalEvidencePack]
+    EP --> SS[SemanticStateRef]
+    EP --> EC[Executor choice]
+    EC -->|gate off| AC[Artifact candidate]
+    EC -->|gate enabled| LS[LogitStateRef]
+    LS -->|GateReceipt| AC
+    SS -->|ConsumptionReceipt| AC
+    AC -->|Validators| AV[Artifact verified]
+    AV --> CS[ClaimSet]
+    CS --> MC[MemoryCommit candidate]
+    MC -->|Commit Gate| MR[MemoryRef committed]
 ```
 
-其中 `SemanticStateRef` 表示 embedding、query/candidate 稠密矩阵等检索状态；`LogitStateRef` 表示 Executor 闭集候选概率及 `other_mass`，只服务于执行前 Gate；`ExecutionArtifactRef` 表示 Python 或 DSL 执行后产生的文件型结果；`MemoryRef` 表示跨任务保存、可检索且带兼容条件的知识单元。状态“能读取”、程序“退出码为 0”、记忆“相似度较高”，都不足以自动把对象提升到下一状态。
+箭头表示 Runtime 校验后的可见性提升。`candidate`、`approved`、`active`、`consumed`、
+`verified` 和 `committed` 都有明确的合同和回执。
 
-## 文档中的实现事实与证据边界
+Prefix 与显式 KV 是这条链上的支路：Prefix 改变请求中共同证据的位置，让 vLLM 自动命中；显式 KV 改变 Executor 与 Summarizer 之间共同 parent 的物理来源。两者都不替代 EvidencePack、Artifact 或 ClaimSet。
 
-本手册以源码为实现事实层，主要参考以下入口：
+## 文档目录
 
-- [statebus/runtime](../../statebus/runtime/)：任务编译、计划策略、调度、执行、状态消费、重放、质量门与遥测。
-- [statebus/control](../../statebus/control/)：typed Protobuf 消息、UDS 帧、进程间 Worker 会话。
-- [statebus/state](../../statebus/state/)与 [statebus/refs](../../statebus/refs/)：物理状态、引用合同、manifest 和生命周期。
-- [statebus/memory](../../statebus/memory/)：记忆合同、SQLite/FTS 索引、向量召回、RRF 与兼容判定。
-- [statebus/studio](../../statebus/studio/)与 [studio-ui](../../studio-ui/)：演示后端、受控作业与前端视图。
-- [tests](../../tests/)：合同、状态、记忆、Runtime、Studio 和 benchmark 的回归约束。
+```text
+implementation/
+  architecture/   分层、对象和进程拓扑
+  runtime/        任务、授权、协议、Worker、Logit、Prefix、KV
+  state/          Ref、稠密状态、Hydration、存储生命周期
+  roles/          Planner、Retriever、Executor、Summarizer 合同
+  execution/      Python、DSL、Workspace、Validator、Commit Gate
+  memory/         混合检索、兼容、消费、提交与重放
+  walkthrough/    单任务、连续任务和受控挑战
+  operations/     Telemetry、Run 证据和失败恢复
+  studio/         后端作业、前端交互和事实重建
+  extensions/     代码地图、扩展步骤和测试清单
+```
 
-实验数字和比赛结论不在这里重新计算。需要引用正式基线时，应回到[最终实验结果与绘图数据](../reports/StateBus-最终实验结果与绘图数据-20260726.md)；Logit Gate 的独立挑战结果应单独引用[受控机制实验报告](../reports/StateBus-LogitRetryGate受控机制实验-20260727.md)，不得把其中 `12/12` 合并进正式 `95/95`。本手册会解释指标由哪些事件和对象形成，但不会把临时 Studio Run 自动当作固定实验基线。
+顶层 `01` 到 `09` 是稳定导航页，专题实现放在对应子目录。模型侧新增内容统一放在 `runtime/`，避免再创建一套按实验名称分组的平行目录。
 
-## 阅读源码时的几个约定
+## 四类 Ref 与一个 engine-local handle
 
-`task_id` 标识业务任务，`step_id` 标识批准计划中的逻辑步骤，`attempt_id` 标识该步骤的一次具体执行。重试可以复用 `step_id`，但必须产生新的 `attempt_id`。`trace_id` 贯穿整条运行链，`session_id` 用于绑定一次 Runtime 会话和能力授权。
+| 对象 | 用途 | 载体 | 生命周期 |
+|:--|:--|:--|:--|
+| `SemanticStateRef` | embedding query/candidate matrix | shared memory、mmap | 单任务或单 step |
+| `LogitStateRef` | 候选概率和 `other_mass` | shared memory | 单次 Gate attempt |
+| `ExecutionArtifactRef` | Python/DSL 输出文件 | workspace、artifact root、CAS | candidate 到 verified |
+| `MemoryRef` | 跨任务知识与产物关系 | SQLite/FTS、向量索引、sidecar | committed 后跨任务 |
+| `EngineLocalKVHandle` | 同 Worker 的 paged KV continuation | Worker-local registry | one-shot、TTL、显式 release |
 
-带 `Ref` 后缀的对象是受注册表管理的引用，而不是允许任意访问的文件路径。Ref 至少需要关联对象类型、存储类型、内容 hash、状态和 schema；调用方取得 Ref 并不意味着取得了所有权或写权限。`candidate`、`verified`、`committed`、`invalidated` 等词描述 Runtime 确认的生命周期状态，而不是 Agent 在自然语言中自述的结论。
+KV handle 由同一 vLLM Worker 的 registry 管理，运行范围为同一 engine generation、
+one-shot 消费和显式释放。
 
-文档中的 Mermaid 图用于表达调用和状态关系。若阅读器不支持 Mermaid，可以先看图下方的对象表和文字说明；图中的连线只省略实现细节，不改变合同边界。
+## 实现与实验入口
+
+实现事实以当前源码和测试为准：
+
+- [`statebus/runtime`](../../statebus/runtime/)：编译、调度、Gate、执行、重放和遥测；
+- [`statebus/control`](../../statebus/control/)：typed Protobuf、UDS 和 Worker transport；
+- [`statebus/state`](../../statebus/state/) 与 [`statebus/refs`](../../statebus/refs/)：物理状态、Ref 和生命周期；
+- [`statebus/integrations/vllm_kv`](../../statebus/integrations/vllm_kv/)：显式 KV sideband；
+- [`statebus/memory`](../../statebus/memory/)：检索、兼容和提交；
+- [`tests`](../../tests/)：合同和行为回归。
+
+实验数字按各自任务和统计分母记录：
+
+- 全部实验指标、逐任务数据和运行目录见[实验结果总览](../experiments/README.md)；
+- 正式任务、专项机制任务、Gold 和 Validator 见[任务与数据集目录](benchmark-task-and-dataset-catalog.md)；
+- Prefix 的 40 请求和显式 KV 的 10 任务数据也在各自实现页保留原始 run summary；
+- Token、命中率和时延分别按对应实验的请求、任务或状态分母聚合。
+
+## 标识与审阅约定
+
+`task_id` 标识业务任务，`step_id` 标识批准计划中的逻辑步骤，`attempt_id` 标识一次执行尝试，`trace_id` 贯穿运行，`session_id` 绑定 Runtime 会话和能力授权。重试可复用 `step_id`，但必须创建新的 `attempt_id`。
+
+带 `Ref` 后缀的对象经过 Registry、sidecar、hash、schema、状态和授权检查。Ref 解析与
+对象所有权分别记录。新增状态类型时，文档和代码同步说明 producer、validator、consumer、
+状态提升条件、异常处理和清理责任。

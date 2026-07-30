@@ -33,5 +33,5 @@ flowchart LR
 
 Hydration 让“数值选择”和“最终可引用证据”重新汇合：选择过程使用的是非文本矩阵，Executor/Summarizer 最终仍能回到具体表格单元格或文本区间。缺少 Manifest 会让 row index 无法解释；缺少 dense state 和消费回执则只能证明文本筛选，二者都不完整。
 
-来源 hash 与 extractor version 也是 Replay 的一部分。即使文字表面相同，源文档或抽取器变化也可能使 locator 失效，因此历史 EvidencePack 不能只靠字符串相似度直接恢复。
-
+来源 hash 与 extractor version 也是 Replay key 的组成部分。源文档或抽取器变化时，历史
+EvidencePack 进入兼容检查，再决定当前任务的恢复级别。

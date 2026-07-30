@@ -21,107 +21,55 @@ _statebus_local_vllm_restore_shell_options() {
 _statebus_activate_local_vllm_profile_main() {
   set -euo pipefail
 
-  local script_dir profile
+  local script_dir profile vllm_env_file
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  profile="${1:-${STATEBUS_LOCAL_VLLM_PROFILE:-qwen3-8b}}"
+  profile="${1:-${STATEBUS_LOCAL_VLLM_PROFILE:-qwen3-32b}}"
 
   if [[ ! -f "${script_dir}/activate_statebus_host.sh" ]]; then
-    echo "[statebus-local-vllm] missing host activation script: ${script_dir}/activate_statebus_host.sh" >&2
+    echo "[statebus-local-vllm] 缺少宿主机环境脚本：${script_dir}/activate_statebus_host.sh" >&2
     return 1
   fi
 
   # shellcheck disable=SC1090
   source "${script_dir}/activate_statebus_host.sh"
 
-  case "$profile" in
-    qwen3-8b|8b|dev-8b)
-      export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-8b"
-      export STATEBUS_VLLM_MODEL_PATH="/data/models/Qwen3-8B"
-      export STATEBUS_VLLM_SERVED_MODEL_NAME="qwen3-8b"
-      export STATEBUS_LOCAL_VLLM_MODEL="qwen3-8b"
-      export STATEBUS_VLLM_HOST="0.0.0.0"
-      export STATEBUS_VLLM_PORT="53333"
-      export STATEBUS_LOCAL_VLLM_PORT="53333"
-      export STATEBUS_LOCAL_VLLM_BASE_URL="http://127.0.0.1:53333/v1"
-      export STATEBUS_LOCAL_VLLM_HEALTH_URL="http://127.0.0.1:53333/health"
-      export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="1"
-      export STATEBUS_VLLM_MAX_MODEL_LEN="8192"
-      export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.35"
-      export STATEBUS_VLLM_MAX_NUM_SEQS="4"
-      export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
-      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
-      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE=""
-      ;;
-    qwen3-32b|32b|formal-32b)
-      export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-32b"
-      export STATEBUS_VLLM_MODEL_PATH="/data/models/Qwen3-32B"
-      export STATEBUS_VLLM_SERVED_MODEL_NAME="qwen3-32b"
-      export STATEBUS_LOCAL_VLLM_MODEL="qwen3-32b"
-      export STATEBUS_VLLM_HOST="127.0.0.1"
-      export STATEBUS_VLLM_PORT="53334"
-      export STATEBUS_LOCAL_VLLM_PORT="53334"
-      export STATEBUS_LOCAL_VLLM_BASE_URL="http://127.0.0.1:53334/v1"
-      export STATEBUS_LOCAL_VLLM_HEALTH_URL="http://127.0.0.1:53334/health"
-      export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="0"
-      export STATEBUS_VLLM_MAX_MODEL_LEN="8192"
-      export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.82"
-      export STATEBUS_VLLM_MAX_NUM_SEQS="1"
-      export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
-      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
-      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE="573"
-      ;;
-    qwen3-32b-2gpu|32b-2gpu|formal-32b-2gpu)
-      export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-32b-2gpu"
-      export STATEBUS_VLLM_MODEL_PATH="/data/models/Qwen3-32B"
-      export STATEBUS_VLLM_SERVED_MODEL_NAME="qwen3-32b"
-      export STATEBUS_LOCAL_VLLM_MODEL="qwen3-32b"
-      export STATEBUS_VLLM_HOST="127.0.0.1"
-      export STATEBUS_VLLM_PORT="53334"
-      export STATEBUS_LOCAL_VLLM_PORT="53334"
-      export STATEBUS_LOCAL_VLLM_BASE_URL="http://127.0.0.1:53334/v1"
-      export STATEBUS_LOCAL_VLLM_HEALTH_URL="http://127.0.0.1:53334/health"
-      export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="0,1"
-      export STATEBUS_VLLM_MAX_MODEL_LEN="8192"
-      export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.90"
-      export STATEBUS_VLLM_MAX_NUM_SEQS="1"
-      export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="8192"
-      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="2"
-      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE=""
-      ;;
-    qwen2.5-14b|14b|fallback-14b)
-      export STATEBUS_LOCAL_VLLM_PROFILE="qwen2.5-14b"
-      export STATEBUS_VLLM_MODEL_PATH="/data/models/Qwen2.5-14B-Instruct"
-      export STATEBUS_VLLM_SERVED_MODEL_NAME="qwen2.5-14b-instruct"
-      export STATEBUS_LOCAL_VLLM_MODEL="qwen2.5-14b-instruct"
-      export STATEBUS_VLLM_HOST="0.0.0.0"
-      export STATEBUS_VLLM_PORT="53335"
-      export STATEBUS_LOCAL_VLLM_PORT="53335"
-      export STATEBUS_LOCAL_VLLM_BASE_URL="http://127.0.0.1:53335/v1"
-      export STATEBUS_LOCAL_VLLM_HEALTH_URL="http://127.0.0.1:53335/health"
-      export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="1"
-      export STATEBUS_VLLM_MAX_MODEL_LEN="8192"
-      export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="0.50"
-      export STATEBUS_VLLM_MAX_NUM_SEQS="2"
-      export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="4096"
-      export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="1"
-      export STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE=""
-      ;;
-    *)
-      echo "[statebus-local-vllm] unsupported profile: $profile" >&2
-      echo "[statebus-local-vllm] supported profiles: qwen3-8b, qwen3-32b, qwen3-32b-2gpu, qwen2.5-14b" >&2
-      return 1
-      ;;
-  esac
+  if [[ "$profile" != "qwen3-32b" && "$profile" != "32b" ]]; then
+    echo "[statebus-local-vllm] 不支持的 profile：$profile" >&2
+    echo "[statebus-local-vllm] 当前支持：qwen3-32b" >&2
+    return 1
+  fi
 
-  echo "[statebus-local-vllm] profile=$STATEBUS_LOCAL_VLLM_PROFILE"
-  echo "[statebus-local-vllm] model_path=$STATEBUS_VLLM_MODEL_PATH"
-  echo "[statebus-local-vllm] served_model_name=$STATEBUS_VLLM_SERVED_MODEL_NAME"
-  echo "[statebus-local-vllm] base_url=$STATEBUS_LOCAL_VLLM_BASE_URL"
-  echo "[statebus-local-vllm] health_url=$STATEBUS_LOCAL_VLLM_HEALTH_URL"
-  echo "[statebus-local-vllm] cuda_visible_devices=$STATEBUS_VLLM_CUDA_VISIBLE_DEVICES"
-  echo "[statebus-local-vllm] tensor_parallel_size=$STATEBUS_VLLM_TENSOR_PARALLEL_SIZE"
+  vllm_env_file="${STATEBUS_VLLM_ENV_FILE:-${script_dir}/vllm.env.local}"
+  if [[ -f "$vllm_env_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$vllm_env_file"
+  fi
+
+  export STATEBUS_LOCAL_VLLM_PROFILE="qwen3-32b"
+  export STATEBUS_VLLM_MODEL_PATH="${STATEBUS_VLLM_MODEL_PATH:-/data/models/Qwen3-32B}"
+  export STATEBUS_VLLM_SERVED_MODEL_NAME="${STATEBUS_VLLM_SERVED_MODEL_NAME:-qwen3-32b}"
+  export STATEBUS_LOCAL_VLLM_MODEL="$STATEBUS_VLLM_SERVED_MODEL_NAME"
+  export STATEBUS_VLLM_HOST="${STATEBUS_VLLM_HOST:-127.0.0.1}"
+  export STATEBUS_VLLM_PORT="${STATEBUS_VLLM_PORT:-53334}"
+  export STATEBUS_LOCAL_VLLM_PORT="$STATEBUS_VLLM_PORT"
+  export STATEBUS_LOCAL_VLLM_BASE_URL="http://127.0.0.1:${STATEBUS_VLLM_PORT}/v1"
+  export STATEBUS_LOCAL_VLLM_HEALTH_URL="http://127.0.0.1:${STATEBUS_VLLM_PORT}/health"
+  export STATEBUS_VLLM_CUDA_VISIBLE_DEVICES="${STATEBUS_VLLM_CUDA_VISIBLE_DEVICES:-1}"
+  export STATEBUS_VLLM_MAX_MODEL_LEN="${STATEBUS_VLLM_MAX_MODEL_LEN:-8192}"
+  export STATEBUS_VLLM_GPU_MEMORY_UTILIZATION="${STATEBUS_VLLM_GPU_MEMORY_UTILIZATION:-0.82}"
+  export STATEBUS_VLLM_MAX_NUM_SEQS="${STATEBUS_VLLM_MAX_NUM_SEQS:-1}"
+  export STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS="${STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS:-8192}"
+  export STATEBUS_VLLM_TENSOR_PARALLEL_SIZE="${STATEBUS_VLLM_TENSOR_PARALLEL_SIZE:-1}"
+
+  echo "[statebus-local-vllm] 配置=$STATEBUS_LOCAL_VLLM_PROFILE"
+  echo "[statebus-local-vllm] 模型目录=$STATEBUS_VLLM_MODEL_PATH"
+  echo "[statebus-local-vllm] 服务模型名=$STATEBUS_VLLM_SERVED_MODEL_NAME"
+  echo "[statebus-local-vllm] API地址=$STATEBUS_LOCAL_VLLM_BASE_URL"
+  echo "[statebus-local-vllm] 健康地址=$STATEBUS_LOCAL_VLLM_HEALTH_URL"
+  echo "[statebus-local-vllm] 物理GPU=$STATEBUS_VLLM_CUDA_VISIBLE_DEVICES"
+  echo "[statebus-local-vllm] 张量并行=$STATEBUS_VLLM_TENSOR_PARALLEL_SIZE"
   if [[ -n "${STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE:-}" ]]; then
-    echo "[statebus-local-vllm] num_gpu_blocks_override=$STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE"
+    echo "[statebus-local-vllm] GPU块覆盖=$STATEBUS_VLLM_NUM_GPU_BLOCKS_OVERRIDE"
   fi
 }
 

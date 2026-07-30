@@ -62,7 +62,10 @@ Retriever 从批准的数据对象中构造 source rows 和 locator，不向 Exe
 
 ApprovedPlan 中 capability 决定实际执行表示。若为 `execute_bounded_python_v2`，模型根据 task goal、operation semantics、授权 schema、输入路径和输出合同生成 Python。源码先过 AST/路径策略，再在真实 bwrap profile 中运行；输入只读、网络关闭、唯一 outputs mount 可写。结果还要通过 IQR 业务 Validator，而不是只检查 JSON 字段。
 
-若注册 capability 选择 Transform DSL，Executor 产生结构化 operations，由解释器执行 `filter`、`sort`、`anomaly`、`aggregate` 等允许操作。DSL 不使用 eval，也不能携带任意路径。两条路径都会生成 ExecutionArtifactRef 和质量报告；Studio 的程序面板根据真实 execution record 显示 Python 或 DSL。
+若注册 capability 选择 Transform DSL，Executor 产生结构化 operations，由解释器执行
+`filter`、`sort`、`anomaly`、`aggregate` 等注册操作。DSL 输入由字段、Ref 和结构化参数组成。
+两条路径都会生成 ExecutionArtifactRef 和质量报告；Studio 程序面板根据真实 execution record
+显示 Python 或 DSL。
 
 ## 对象台账
 
@@ -83,4 +86,3 @@ ApprovedPlan 中 capability 决定实际执行表示。若为 `execute_bounded_p
 Runtime 发出 `ADAPTIVE_PLAN_APPROVED`、`STEP_RUNNING`、`STATE_PUBLISHED`、`STATE_CONSUMED`、`ARTIFACT_PUBLISHED`、`ARTIFACT_VALIDATED`、`STEP_COMPLETED` 和 `TASK_SUMMARY_METRICS` 等事件。JobManager tail JSONL，筛选安全字段后通过 SSE 推送；task-flow adapter 同时轮询 summary/trace，补充 Agent 输入、生成程序和 Validator。
 
 React Flow 节点的 active/done/error 来自这些事实。动画只表示当前对象正在交接，不表示模型的隐式推理内容。任务完成后，“新建运行”只清空前端当前工作台，历史 Run 与磁盘证据仍保留。
-

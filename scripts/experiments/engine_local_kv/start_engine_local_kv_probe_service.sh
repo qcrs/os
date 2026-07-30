@@ -12,13 +12,24 @@ PORT="${STATEBUS_VLLM_PORT:-53334}"
 SERVED_MODEL="${STATEBUS_VLLM_SERVED_MODEL_NAME:-qwen3-32b}"
 ENGINE_ID="${STATEBUS_KV_ENGINE_ID:-statebus-kv-qwen3-32b-gpu1}"
 ENGINE_GENERATION="${STATEBUS_KV_ENGINE_GENERATION:?STATEBUS_KV_ENGINE_GENERATION is required}"
+GPU_INDEX="${STATEBUS_VLLM_CUDA_VISIBLE_DEVICES:-1}"
+MAX_MODEL_LEN="${STATEBUS_VLLM_MAX_MODEL_LEN:-8192}"
+MAX_NUM_SEQS="${STATEBUS_VLLM_MAX_NUM_SEQS:-1}"
+MAX_NUM_BATCHED_TOKENS="${STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS:-$MAX_MODEL_LEN}"
+MAX_LOGPROBS="${STATEBUS_VLLM_MAX_LOGPROBS:-20}"
+GPU_MEMORY_UTILIZATION="${STATEBUS_VLLM_GPU_MEMORY_UTILIZATION:-0.82}"
+DTYPE="${STATEBUS_VLLM_DTYPE:-bfloat16}"
 
 if [[ ! -x "$VLLM_ENV_PREFIX/bin/vllm" ]]; then
-  printf 'vLLM executable is missing: %s\n' "$VLLM_ENV_PREFIX/bin/vllm" >&2
+  printf '找不到 vLLM 可执行文件：%s\n' "$VLLM_ENV_PREFIX/bin/vllm" >&2
+  exit 2
+fi
+if [[ "$GPU_INDEX" == *","* ]]; then
+  printf '显式 KV 启动脚本只支持一张物理 GPU，当前配置为：%s\n' "$GPU_INDEX" >&2
   exit 2
 fi
 if [[ ! -s "$TOKEN_FILE" || "$(stat -c '%a' "$TOKEN_FILE")" != "600" ]]; then
-  printf 'KV API token file must be non-empty with mode 600: %s\n' "$TOKEN_FILE" >&2
+  printf 'KV API token 文件必须非空且权限为 600：%s\n' "$TOKEN_FILE" >&2
   exit 2
 fi
 
@@ -30,7 +41,7 @@ identity_files=(
 )
 for identity_file in "${identity_files[@]}"; do
   if [[ ! -r "$identity_file" ]]; then
-    printf 'model identity file is missing: %s\n' "$identity_file" >&2
+    printf '缺少模型身份文件：%s\n' "$identity_file" >&2
     exit 2
   fi
 done
@@ -40,6 +51,7 @@ combined_sha256() {
 }
 
 export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export CUDA_VISIBLE_DEVICES="$GPU_INDEX"
 export VLLM_USE_V1=1
 export VLLM_NO_USAGE_STATS=1
 export STATEBUS_KV_API_TOKEN_FILE="$TOKEN_FILE"
@@ -55,7 +67,7 @@ export STATEBUS_KV_PIN_MEMORY=false
 
 kv_transfer_config="$(printf '{"kv_connector":"StateBusLocalKVConnector","engine_id":"%s","kv_role":"kv_both","kv_connector_module_path":"statebus.integrations.vllm_kv.connector"}' "$ENGINE_ID")"
 
-printf '[statebus-vllm-kv] physical_gpu=1 (restricted by Docker device request)\n'
+printf '[statebus-vllm-kv] physical_gpu=%s\n' "$CUDA_VISIBLE_DEVICES"
 printf '[statebus-vllm-kv] visible_gpu_count=1\n'
 printf '[statebus-vllm-kv] endpoint=http://%s:%s\n' "$HOST" "$PORT"
 printf '[statebus-vllm-kv] engine_generation=%s\n' "$ENGINE_GENERATION"
@@ -66,14 +78,14 @@ exec "$VLLM_ENV_PREFIX/bin/vllm" serve "$MODEL_PATH" \
   --host "$HOST" \
   --port "$PORT" \
   --served-model-name "$SERVED_MODEL" \
-  --dtype bfloat16 \
+  --dtype "$DTYPE" \
   --tensor-parallel-size 1 \
   --pipeline-parallel-size 1 \
-  --max-model-len 8192 \
-  --max-num-seqs 1 \
-  --max-num-batched-tokens 8192 \
-  --max-logprobs 20 \
-  --gpu-memory-utilization 0.82 \
+  --max-model-len "$MAX_MODEL_LEN" \
+  --max-num-seqs "$MAX_NUM_SEQS" \
+  --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" \
+  --max-logprobs "$MAX_LOGPROBS" \
+  --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
   --generation-config vllm \
   --no-enable-prefix-caching \
   --enforce-eager \

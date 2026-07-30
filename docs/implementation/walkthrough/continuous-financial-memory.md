@@ -57,7 +57,7 @@ sequenceDiagram
     V-->>RT: verified delta + cited ClaimSet
 ```
 
-## 兼容门拒绝时发生什么
+## 兼容检查分支
 
 如果后续文档出现 schema drift、Runtime signature/Validator 变化、memory 未 committed 或 task family 不同，候选会得到 `INCOMPATIBLE/DISALLOWED`，并记录具体 reason。Runtime 回到当前数据重新检索和计算；这种拒绝不是 Run 失败。
 
@@ -67,7 +67,8 @@ similar memory found
   └─ incompatible -> record rejection -> recompute current task
 ```
 
-只有 MemoryRef 真正进入 Retriever/Executor/Summarizer 输入并生成 `MemoryConsumptionRecord`，该查询才算 actual-use。若只是候选被 RRF 找到，或兼容后没有改变任何 decision surface，不能称为跳步收益。跳过 generation step、跳过 LLM call 和 recipe recomputed 分别记录，避免用一个“命中率”掩盖不同效果。
+actual-use 查询由进入 Retriever/Executor/Summarizer 输入并生成 `MemoryConsumptionRecord` 的
+MemoryRef 计数。候选发现、兼容、消费、decision surface 变化、跳过 generation step、跳过
+LLM call 和 recipe recomputed 分别记录。
 
 这条三轮链也说明了记忆的主要价值：复用的是经过验证的策略、产物和来源关系，而不是把上轮自然语言答案无条件拼进本轮 Prompt。
-

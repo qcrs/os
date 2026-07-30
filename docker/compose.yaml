@@ -5,7 +5,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      target: ${STATEBUS_DOCKER_TARGET:-core}
+      target: ${STATEBUS_DOCKER_TARGET:-embed}
       args:
         USER_NAME: ${STATEBUS_USER_NAME:-qcrs}
         USER_UID: ${STATEBUS_UID:-1000}
@@ -13,13 +13,12 @@ services:
         STATEBUS_PIP_INDEX_URL: ${STATEBUS_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         STATEBUS_TORCH_SPEC: ${STATEBUS_TORCH_SPEC:-torch==2.5.1}
         STATEBUS_TORCH_INDEX_URL: ${STATEBUS_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
-    image: statebus-dev-openeuler:24.03-lts-sp3-${STATEBUS_DOCKER_TARGET:-core}
+    image: statebus-dev-openeuler:24.03-lts-sp3-${STATEBUS_DOCKER_TARGET:-embed}
     container_name: statebus-dev-qcrs
     init: true
     stdin_open: true
     tty: true
     network_mode: host
-    runtime: ${STATEBUS_DOCKER_RUNTIME:-nvidia}
     shm_size: 1g
     working_dir: /workspace/statebus/project
     volumes:
@@ -31,6 +30,7 @@ services:
       - ${HOME}/statebus/work:/statebus/work
       - ${HOME}/statebus/work/container-home/.local:/root/.local
       - ${HOME}/statebus/work/container-home/.local:/home/${STATEBUS_USER_NAME:-qcrs}/.local
+      - ${STATEBUS_VLLM_MODELS_ROOT:-/data/models}:/data/models:ro
     environment:
       HOME: /root
       STATEBUS_HOME: /statebus
@@ -53,8 +53,20 @@ services:
       HUGGINGFACE_HUB_CACHE: /statebus/caches/hf/hub
       TRANSFORMERS_CACHE: /statebus/caches/hf/transformers
       SENTENCE_TRANSFORMERS_HOME: /statebus/caches/hf/sentence_transformers
-      STATEBUS_LLM_CONFIG_FILE: /workspace/statebus/project/deploy/statebus_llm.yaml.local
+      STATEBUS_LLM_CONFIG_FILE: ${STATEBUS_LLM_CONFIG_FILE:-/workspace/statebus/project/deploy/statebus_llm.local_vllm.example}
       STATEBUS_LLM_ENV_FILE: /workspace/statebus/project/deploy/statebus_llm.env.local
-      STATEBUS_EMBED_DEVICE: auto
-      NVIDIA_VISIBLE_DEVICES: ${STATEBUS_NVIDIA_VISIBLE_DEVICES:-all}
-      NVIDIA_DRIVER_CAPABILITIES: ${STATEBUS_NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      STATEBUS_LOCAL_VLLM_BASE_URL: ${STATEBUS_LOCAL_VLLM_BASE_URL:-http://127.0.0.1:53334/v1}
+      STATEBUS_LOCAL_VLLM_HEALTH_URL: ${STATEBUS_LOCAL_VLLM_HEALTH_URL:-http://127.0.0.1:53334/health}
+      STATEBUS_VLLM_METRICS_URL: ${STATEBUS_VLLM_METRICS_URL:-http://127.0.0.1:53334/metrics}
+      STATEBUS_VLLM_MODEL_PATH: ${STATEBUS_VLLM_MODEL_PATH:-/data/models/Qwen3-32B}
+      STATEBUS_VLLM_TOKENIZER_PATH: ${STATEBUS_VLLM_TOKENIZER_PATH:-/data/models/Qwen3-32B}
+      STATEBUS_KV_API_BASE_URL: ${STATEBUS_KV_API_BASE_URL:-http://127.0.0.1:53334}
+      STATEBUS_KV_API_TOKEN_FILE: ${STATEBUS_KV_API_TOKEN_FILE:-}
+      STATEBUS_ENGINE_LOCAL_KV_MODEL: ${STATEBUS_ENGINE_LOCAL_KV_MODEL:-qwen3-32b}
+      STATEBUS_ENGINE_LOCAL_KV_PARENT_TOKENS: ${STATEBUS_ENGINE_LOCAL_KV_PARENT_TOKENS:-4096}
+      STATEBUS_EMBED_DEVICE: ${STATEBUS_EMBED_DEVICE:-cpu}
+      STATEBUS_STUDIO_EMBED_DEVICE: ${STATEBUS_STUDIO_EMBED_DEVICE:-cpu}
+      STATEBUS_PREFIX_ALIGNMENT_MODE: ${STATEBUS_PREFIX_ALIGNMENT_MODE:-independent}
+      STATEBUS_PREFIX_POLICY: ${STATEBUS_PREFIX_POLICY:-off}
+      STATEBUS_LOGIT_GATE_MODE: ${STATEBUS_LOGIT_GATE_MODE:-off}
+      STATEBUS_ENGINE_LOCAL_KV_MODE: ${STATEBUS_ENGINE_LOCAL_KV_MODE:-off}

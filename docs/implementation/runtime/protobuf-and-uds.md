@@ -47,8 +47,11 @@ sequenceDiagram
     D->>U: GarbageCollectCommand
 ```
 
-仓库保留 canonical JSON/text carrier 作为 comparator 和诊断路径，使相同逻辑消息可以比较不同表示的线路载荷。它不是正式主合同，也不应反向影响 Protobuf 的字段和状态语义。
+仓库保留 canonical JSON/text carrier 作为 comparator 和诊断路径，用于比较相同逻辑消息的
+不同线路表示；正式控制合同由 Protobuf 字段和状态语义定义。
 
-协议只保证消息可解析和关联，不保证业务正确。`SuccessResult` 返回后仍要检查 Ref、hash、schema、PID/encoder 回执和 Validator。新增消息字段时，应保持控制面“小而可验证”；若字段实际承载完整文档、矩阵或产物，应改为 Ref。
+协议负责消息解析与关联；`SuccessResult` 返回后，Runtime 继续检查 Ref、hash、schema、
+PID/encoder 回执和 Validator。控制面携带小型类型化字段，完整文档、矩阵和产物通过 Ref 进入
+数据面。
 
 协议测试可从 [`test_control_plane.py`](../../../tests/test_control_plane.py) 和 [`test_runtime_session_and_ledger.py`](../../../tests/test_runtime_session_and_ledger.py) 查找；若具体文件名发生变化，可在 `tests` 中检索 `ExecRequest` 与 `ControlEnvelope`。

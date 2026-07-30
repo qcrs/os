@@ -27,6 +27,18 @@ _HIT_RATE_GAUGE_NAMES = (
     "vllm:prefix_cache_hit_rate",
     "vllm_prefix_cache_hit_rate",
 )
+_COUNTER_ALIAS_PAIRS = (
+    ("vllm:prefix_cache_queries_total", "vllm:prefix_cache_hits_total"),
+    ("vllm_prefix_cache_queries_total", "vllm_prefix_cache_hits_total"),
+    ("vllm:gpu_prefix_cache_queries_total", "vllm:gpu_prefix_cache_hits_total"),
+    ("vllm_gpu_prefix_cache_queries_total", "vllm_gpu_prefix_cache_hits_total"),
+)
+_GAUGE_ALIAS_PRIORITY = (
+    "vllm:prefix_cache_hit_rate",
+    "vllm_prefix_cache_hit_rate",
+    "vllm:gpu_prefix_cache_hit_rate",
+    "vllm_gpu_prefix_cache_hit_rate",
+)
 _SAMPLE_RE = re.compile(
     r"^(?P<name>[A-Za-z_:][A-Za-z0-9_:]*)"
     r"(?:\{(?P<labels>.*)\})?\s+"
@@ -201,9 +213,8 @@ def parse_vllm_prefix_cache_metrics(metrics_text: str) -> VllmPrefixCacheMetrics
             continue
         samples.append((name, labels, value))
 
-    query_samples = tuple(sample for sample in samples if sample[0] in _QUERY_COUNTER_NAMES)
-    hit_samples = tuple(sample for sample in samples if sample[0] in _HIT_COUNTER_NAMES)
-    gauge_samples = tuple(sample for sample in samples if sample[0] in _HIT_RATE_GAUGE_NAMES)
+    query_samples, hit_samples = _select_counter_alias_pair(samples)
+    gauge_samples = _select_gauge_alias(samples)
     schema_errors: list[str] = []
     query_names = {sample[0] for sample in query_samples}
     hit_names = {sample[0] for sample in hit_samples}
@@ -390,6 +401,35 @@ def _parse_labels(raw_labels: str) -> tuple[tuple[str, str], ...]:
     if len({name for name, _ in labels}) != len(labels):
         raise ValueError("duplicate Prometheus label")
     return tuple(sorted(labels))
+
+
+def _select_counter_alias_pair(
+    samples: list[tuple[str, tuple[tuple[str, str], ...], float]],
+) -> tuple[
+    tuple[tuple[str, tuple[tuple[str, str], ...], float], ...],
+    tuple[tuple[str, tuple[tuple[str, str], ...], float], ...],
+]:
+    names = {sample[0] for sample in samples}
+    for query_name, hit_name in _COUNTER_ALIAS_PAIRS:
+        if query_name in names and hit_name in names:
+            return (
+                tuple(sample for sample in samples if sample[0] == query_name),
+                tuple(sample for sample in samples if sample[0] == hit_name),
+            )
+    return (
+        tuple(sample for sample in samples if sample[0] in _QUERY_COUNTER_NAMES),
+        tuple(sample for sample in samples if sample[0] in _HIT_COUNTER_NAMES),
+    )
+
+
+def _select_gauge_alias(
+    samples: list[tuple[str, tuple[tuple[str, str], ...], float]],
+) -> tuple[tuple[str, tuple[tuple[str, str], ...], float], ...]:
+    names = {sample[0] for sample in samples}
+    for gauge_name in _GAUGE_ALIAS_PRIORITY:
+        if gauge_name in names:
+            return tuple(sample for sample in samples if sample[0] == gauge_name)
+    return ()
 
 
 def _matching_series_labels(

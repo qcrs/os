@@ -32,6 +32,7 @@ _statebus_container_activate_main() {
   export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
   export SENTENCE_TRANSFORMERS_HOME="${SENTENCE_TRANSFORMERS_HOME:-$HF_HOME/sentence_transformers}"
   export STATEBUS_WORKDIR="${STATEBUS_WORKDIR:-$STATEBUS_HOME/work}"
+  export STATEBUS_WORKSPACES_DIR="${STATEBUS_WORKSPACES_DIR:-$STATEBUS_WORKDIR/workspaces}"
   export STATEBUS_STATEPOOL_DIR="${STATEBUS_STATEPOOL_DIR:-$STATEBUS_WORKDIR/statepool}"
   export STATEBUS_RUNS_DIR="${STATEBUS_RUNS_DIR:-$STATEBUS_HOME/runs}"
   export STATEBUS_LOGS_DIR="${STATEBUS_LOGS_DIR:-$STATEBUS_HOME/logs}"
@@ -39,7 +40,7 @@ _statebus_container_activate_main() {
   export NPM_CACHE="${NPM_CACHE:-$STATEBUS_HOME/caches/npm}"
   export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.local}"
   export PATH="$HOME/.local/bin${PATH:+:${PATH}}"
-  export STATEBUS_LLM_CONFIG_FILE="${STATEBUS_LLM_CONFIG_FILE:-$PROJECT_ROOT/deploy/statebus_llm.yaml.local}"
+  export STATEBUS_LLM_CONFIG_FILE="${STATEBUS_LLM_CONFIG_FILE:-$PROJECT_ROOT/deploy/statebus_llm.local_vllm.example}"
   export STATEBUS_LLM_ENV_FILE="${STATEBUS_LLM_ENV_FILE:-$PROJECT_ROOT/deploy/statebus_llm.env.local}"
   export STATEBUS_EMBED_DEVICE="${STATEBUS_EMBED_DEVICE:-auto}"
   export PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
@@ -51,6 +52,7 @@ _statebus_container_activate_main() {
     "$TRANSFORMERS_CACHE" \
     "$SENTENCE_TRANSFORMERS_HOME" \
     "$STATEBUS_WORKDIR" \
+    "$STATEBUS_WORKSPACES_DIR" \
     "$STATEBUS_STATEPOOL_DIR" \
     "$STATEBUS_RUNS_DIR" \
     "$STATEBUS_LOGS_DIR" \

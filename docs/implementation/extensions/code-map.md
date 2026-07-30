@@ -29,8 +29,27 @@
 | Ref 类型 | [`refs/models.py`](../../../statebus/refs/models.py) | [`contracts/models.py`](../../../statebus/contracts/models.py) |
 | layered state backend | [`state/store.py`](../../../statebus/state/store.py) | [`state/disk.py`](../../../statebus/state/disk.py) |
 | dense semantic state | [`state/semantic_state.py`](../../../statebus/state/semantic_state.py) | [`runtime/state_consumption.py`](../../../statebus/runtime/state_consumption.py) |
-| candidate probability / LogitState | [`contracts/logit.py`](../../../statebus/contracts/logit.py)、[`state/logit_state.py`](../../../statebus/state/logit_state.py) | [`runtime/logit_state.py`](../../../statebus/runtime/logit_state.py)、[`runtime/logit_gate.py`](../../../statebus/runtime/logit_gate.py) |
 | locator / manifest / fan-in | [`provenance/hydration.py`](../../../statebus/provenance/hydration.py) | [`runtime/evidence_projection.py`](../../../statebus/runtime/evidence_projection.py) |
+
+## 模型侧状态与推理复用
+
+```mermaid
+flowchart LR
+    C[Contract] --> R[Runtime wiring]
+    R --> E[Engine or state integration]
+    E --> A[Audit and proof]
+    A --> B[Benchmark]
+```
+
+| 对象/行为 | 入口 | 相邻实现与证据 |
+|:--|:--|:--|
+| Embedding selection | [`state/semantic_state.py`](../../../statebus/state/semantic_state.py) | [`runtime/state_consumption.py`](../../../statebus/runtime/state_consumption.py)、`STATE_CONSUMED` receipt |
+| candidate probability / LogitState | [`contracts/logit.py`](../../../statebus/contracts/logit.py)、[`runtime/logit_state.py`](../../../statebus/runtime/logit_state.py) | [`state/logit_state.py`](../../../statebus/state/logit_state.py)、[`runtime/logit_gate.py`](../../../statebus/runtime/logit_gate.py) |
+| canonical Prefix / exact-token identity | [`contracts/prefix.py`](../../../statebus/contracts/prefix.py)、[`runtime/prefix_identity.py`](../../../statebus/runtime/prefix_identity.py) | [`runtime/role_path.py`](../../../statebus/runtime/role_path.py)、[`runtime/vllm_metrics.py`](../../../statebus/runtime/vllm_metrics.py) |
+| Prefix 调度与反馈 | [`benchmark/kv_prefix_schedule.py`](../../../statebus/benchmark/kv_prefix_schedule.py) | [`runtime/prefix_feedback.py`](../../../statebus/runtime/prefix_feedback.py)、[`benchmark/kv_prefix_experiment.py`](../../../statebus/benchmark/kv_prefix_experiment.py) |
+| 显式 KV 合同与主链接入 | [`contracts/engine_local_kv.py`](../../../statebus/contracts/engine_local_kv.py)、[`integrations/vllm_kv/role_client.py`](../../../statebus/integrations/vllm_kv/role_client.py) | [`runtime/smoke.py`](../../../statebus/runtime/smoke.py)、`runtime/engine_local_kv_mainline.json` |
+| KV 私有 API 与 Worker 生命周期 | [`integrations/vllm_kv/middleware.py`](../../../statebus/integrations/vllm_kv/middleware.py)、[`integrations/vllm_kv/worker_extension.py`](../../../statebus/integrations/vllm_kv/worker_extension.py) | [`integrations/vllm_kv/connector.py`](../../../statebus/integrations/vllm_kv/connector.py)、[`integrations/vllm_kv/registry.py`](../../../statebus/integrations/vllm_kv/registry.py) |
+| KV paged tensor capture/load | [`integrations/vllm_kv/paged_cache.py`](../../../statebus/integrations/vllm_kv/paged_cache.py) | [`integrations/vllm_kv/telemetry.py`](../../../statebus/integrations/vllm_kv/telemetry.py)、`KVForwardProof` |
 
 ## 记忆与执行
 
@@ -51,6 +70,8 @@
 | formal task adapter/registry | [`benchmark/task_registry.py`](../../../statebus/benchmark/task_registry.py)、[`benchmark/formal_registry_adapter.py`](../../../statebus/benchmark/formal_registry_adapter.py) | [`benchmark/adaptive_formal.py`](../../../statebus/benchmark/adaptive_formal.py) |
 | continuous family | [`benchmark/continuous_task_family.py`](../../../statebus/benchmark/continuous_task_family.py) | [`benchmark/continuous_runner.py`](../../../statebus/benchmark/continuous_runner.py) |
 | Logit Retry Gate challenge | [`benchmark/logit_retry_challenge.py`](../../../statebus/benchmark/logit_retry_challenge.py) | [`tests/test_logit_gate.py`](../../../tests/test_logit_gate.py)、[`tests/test_logit_retry_challenge.py`](../../../tests/test_logit_retry_challenge.py) |
+| Prefix mechanism probe | [`benchmark/kv_prefix_experiment.py`](../../../statebus/benchmark/kv_prefix_experiment.py) | [`tests/test_prefix_render_identity.py`](../../../tests/test_prefix_render_identity.py)、[`tests/test_prefix_metrics_observation.py`](../../../tests/test_prefix_metrics_observation.py) |
+| KV continuation 任务与 A/B | [`benchmark/engine_local_kv_tasks.py`](../../../statebus/benchmark/engine_local_kv_tasks.py)、[`benchmark/engine_local_kv_experiment.py`](../../../statebus/benchmark/engine_local_kv_experiment.py) | [`scripts/experiments/engine_local_kv`](../../../scripts/experiments/engine_local_kv/)、[`tests/test_engine_local_kv_mainline_suite.py`](../../../tests/test_engine_local_kv_mainline_suite.py) |
 | Studio API/jobs | [`studio/app.py`](../../../statebus/studio/app.py)、[`studio/jobs.py`](../../../statebus/studio/jobs.py) | [`studio/recipes.py`](../../../statebus/studio/recipes.py) |
 | Studio task-flow adapter | [`studio/task_flow.py`](../../../statebus/studio/task_flow.py) | [`studio-ui/src/types.ts`](../../../studio-ui/src/types.ts) |
 | Studio pages/flow | [`EvidencePage.tsx`](../../../studio-ui/src/pages/EvidencePage.tsx)、[`LiveStudioPage.tsx`](../../../studio-ui/src/pages/LiveStudioPage.tsx) | [`AgentFlowCanvas.tsx`](../../../studio-ui/src/components/AgentFlowCanvas.tsx) |

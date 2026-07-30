@@ -1,6 +1,8 @@
 # 兼容门与真实消费
 
-语义相似只能说明历史对象值得检查，不能说明它可以改变当前任务。[`MemoryIndexStore._compatibility_decision()`](../../../statebus/memory/store.py) 在 RRF 之后逐个检查 commit、Runtime、任务合同、schema、lineage 和复用策略，形成 `MemoryCompatibilityDecision`。
+语义相似用于发现历史候选。[`MemoryIndexStore._compatibility_decision()`](../../../statebus/memory/store.py)
+在 RRF 之后逐个检查 commit、Runtime、任务合同、schema、lineage 和复用策略，形成
+`MemoryCompatibilityDecision`，再决定候选如何进入当前任务。
 
 ```mermaid
 flowchart TD
@@ -18,12 +20,15 @@ flowchart TD
     P -->|exact conditions| E[EXACT_REPLAY]
     P -->|validated conditions| V[VALIDATED_REPLAY]
     P -->|assist allowed| AS[ASSIST]
-    P -->|不允许| X
+    P -->|关闭| X
 ```
 
-硬不兼容条件包括 memory 未提交、未通过 Runtime 验证、Runtime signature 不符、输出合同不符、Validator digest 不符或 task family 不同。intent/required outputs 变化、task arguments 变化、input schema drift 和 lineage 变化会限制重放级别；它们通常仍可在策略允许时作为 assist，而不能恢复旧结果。
+memory 未提交、Runtime 验证未通过、Runtime signature、输出合同、Validator digest 或 task
+family 不一致时，决策为 `INCOMPATIBLE/DISALLOWED`。intent/required outputs、task arguments、
+input schema 或 lineage 变化时，ReplayClass 降为 assist 或 validated replay。
 
-通过兼容门后，Runtime 仍需为目标角色构造受限输入视图。Executor 可以得到经验证的 execution recipe 或 artifact 关系，Summarizer 可以得到可引用的摘要与来源；角色不能看到与自己 capability 无关的任意历史 payload。
+通过兼容门后，Runtime 为目标角色构造 capability 对应的输入视图。Executor 得到经验证的
+execution recipe 或 Artifact 关系，Summarizer 得到可引用摘要与来源。
 
 实际使用由 `MemoryConsumptionRecord` 记录，而不是由 candidate pool 推断。该记录包含 query hash、memory ID、consumer role/step、输入 Ref、ReplayClass、compatibility verdict、输入 payload hash、消费前后 decision surface hash、behavioral effect、下游 Ref，以及是否跳过生成步骤、是否跳过 LLM call、是否发生 recipe recompute。
 
@@ -43,4 +48,3 @@ candidate discovered
 不兼容拒绝不是任务失败。Runtime 记录 reasons，然后沿当前任务的检索/执行路径重新计算。`recipe_recomputed`、skipped step 和 skipped LLM call 使正向复用与负向拒绝都可以在同一套事件里解释。
 
 消费记录的构造与效果分类主要位于 [`state_consumption.py`](../../../statebus/runtime/state_consumption.py) 和 [`adaptive_dispatcher.py`](../../../statebus/runtime/adaptive_dispatcher.py)。记忆真实性回归可从 [`test_memory_runtime.py`](../../../tests/test_memory_runtime.py) 与 [`test_adaptive_formal_compare.py`](../../../tests/test_adaptive_formal_compare.py) 阅读。
-

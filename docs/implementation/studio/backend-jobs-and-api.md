@@ -3,7 +3,7 @@
 Studio 后端入口是 [`statebus/studio/app.py`](../../../statebus/studio/app.py)，服务默认监听 `127.0.0.1:8765`。[`scripts/run_statebus_studio.sh`](../../../scripts/run_statebus_studio.sh) 负责选择项目 Python：容器内先加载 `docker/activate_statebus_container.sh`，宿主机使用 `$HOME/statebus/conda-envs/statebus_host`，并显式设置项目 `PYTHONPATH`、Run/Model 目录和 Embedding device。脚本只复用现有模型服务，不负责重启 vLLM。
 
 ```bash
-cd /home/qcrs/statebus/project
+# 在仓库根目录执行
 bash scripts/run_statebus_studio.sh
 ```
 
@@ -43,7 +43,6 @@ stateDiagram-v2
 
 子进程使用 `create_subprocess_exec(*argv)`，不是 shell 字符串；cwd 固定为项目根，stdout/stderr 合并写入 `console.log`，进程使用独立 session，取消时终止整个进程组。`command.json` 保存实际 argv，便于审计。
 
-JobManager 同时读取 runner stdout 中的阶段 JSON，并 tail 当前 Run 内的 `telemetry/runtime_events.jsonl`。只有白名单 event type、metric key 和 payload key会进入前端事件，长字符串和数组会截断；原始日志仍留在 Run 目录，不通过 SSE 无限制推送。
+JobManager 同时读取 runner stdout 中的阶段 JSON，并 tail 当前 Run 内的 `telemetry/runtime_events.jsonl`。只有白名单 event type、metric key 和 payload key 会进入前端事件，长字符串和数组会截断；原始日志仍留在 Run 目录，不通过 SSE 无限制推送。
 
 SSE 使用递增 sequence，客户端可以带 `after` 游标恢复；终态发送 `stream-end`，空闲时发送 keepalive。Job 状态与事件分别持久化到 `studio_job.json` 和 `studio_events.jsonl`。服务重启时，已到终态的 Run 可恢复；尚在 queued/running 的旧记录被标为“Studio 重启中断”，不会伪造进程仍在继续。
-

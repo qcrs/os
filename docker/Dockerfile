@@ -61,12 +61,14 @@ WORKDIR /workspace/statebus/project
 FROM base AS core-deps
 
 COPY requirements-container-core.txt /tmp/statebus-requirements-container-core.txt
+COPY requirements-studio.txt /tmp/statebus-requirements-studio.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install \
     --prefer-binary \
     --index-url ${STATEBUS_DEFAULT_PIP_INDEX_URL} \
-    -r /tmp/statebus-requirements-container-core.txt
+    -r /tmp/statebus-requirements-container-core.txt \
+    -r /tmp/statebus-requirements-studio.txt
 
 FROM core-deps AS embed-deps
 
@@ -101,8 +103,6 @@ COPY docker/entrypoint.sh /usr/local/bin/statebus-entrypoint.sh
 RUN chmod +x /usr/local/bin/statebus-entrypoint.sh
 COPY docker/activate_statebus_container.sh /usr/local/bin/activate_statebus_container.sh
 RUN chmod +x /usr/local/bin/activate_statebus_container.sh
-COPY scripts/setup_container_embed_stack.sh /usr/local/bin/statebus-setup-container-embed-stack.sh
-RUN chmod +x /usr/local/bin/statebus-setup-container-embed-stack.sh
 
 USER 0:0
 
@@ -124,8 +124,6 @@ COPY docker/entrypoint.sh /usr/local/bin/statebus-entrypoint.sh
 RUN chmod +x /usr/local/bin/statebus-entrypoint.sh
 COPY docker/activate_statebus_container.sh /usr/local/bin/activate_statebus_container.sh
 RUN chmod +x /usr/local/bin/activate_statebus_container.sh
-COPY scripts/setup_container_embed_stack.sh /usr/local/bin/statebus-setup-container-embed-stack.sh
-RUN chmod +x /usr/local/bin/statebus-setup-container-embed-stack.sh
 
 USER 0:0
 

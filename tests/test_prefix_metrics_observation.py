@@ -32,6 +32,24 @@ def test_matching_labeled_token_counters_produce_valid_request_observation() -> 
     assert payload["observed_token_hit_rate"] == 0.6
 
 
+def test_vllm_09_dual_counter_aliases_prefer_canonical_series() -> None:
+    metrics = parse_vllm_prefix_cache_metrics(
+        'vllm:prefix_cache_queries_total{model_name="qwen",engine="0"} 20\n'
+        'vllm:prefix_cache_hits_total{model_name="qwen",engine="0"} 12\n'
+        'vllm:gpu_prefix_cache_queries_total{model_name="qwen",engine="0"} 20\n'
+        'vllm:gpu_prefix_cache_hits_total{model_name="qwen",engine="0"} 12\n'
+    )
+
+    assert metrics.metric_schema_valid is True
+    assert metrics.queries_total == 20
+    assert metrics.hits_total == 12
+    assert metrics.hit_rate == 0.6
+    assert metrics.counter_metric_names == (
+        "vllm:prefix_cache_hits_total",
+        "vllm:prefix_cache_queries_total",
+    )
+
+
 def test_label_cardinality_change_invalidates_observation() -> None:
     delta = compute_vllm_prefix_cache_counter_delta(
         _metrics(10, 4, worker="0"),

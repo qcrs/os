@@ -1,6 +1,9 @@
 # Executor、CodeAct 与质量门导航
 
-Executor 有两条主要执行表示：受限 Python CodeAct 与结构化 Transform DSL。两条路径最终都必须产生 `ExecutionArtifactRef`，并经过输入、输出和业务质量检查。若启用 Logit Retry Gate，闭集 route/tool 选择还会在代码生成或 DSL 执行之前经过一次数值授权门。为避免把候选选择、模型生成、安全隔离和业务正确性混在一起，这些机制分别说明。
+Executor 有两条主要执行表示：受限 Python CodeAct 与结构化 Transform DSL。两条路径最终
+都产生 `ExecutionArtifactRef`，并经过输入、输出和业务质量检查。启用 Logit Retry Gate
+时，闭集 route/tool 选择在代码生成或 DSL 执行之前经过数值授权门。候选选择、模型生成、
+执行隔离和业务正确性分别留下记录。
 
 | 文档 | 核心问题 |
 |:--|:--|
@@ -11,14 +14,19 @@ Executor 有两条主要执行表示：受限 Python CodeAct 与结构化 Transf
 
 ```text
 CapabilityGrant
-  -> closed-set route/tool choice
-  -> optional LogitStateRef / GateReceipt
-  -> Python candidate or TransformProgram
-  -> policy validation
-  -> isolated/bounded execution
-  -> output schema + capability validator
+  -> 闭集 route/tool 选择
+  -> 可选 LogitStateRef / GateReceipt
+  -> Python 候选或 TransformProgram
+  -> 策略校验
+  -> 隔离且有预算的执行
+  -> 输出 Schema 与能力 Validator
   -> ExecutionArtifactRef candidate/verified
-  -> Runtime Commit Gate and settlement
+  -> Runtime 提交门与结算
 ```
 
-具体 benchmark 的 `executor-mode` 决定程序来自 LLM 生成、注册的确定性 recipe 还是 DSL。不能因为名称中出现 CodeAct 就假定每个实验都让 LLM 临场写 Python。
+具体 benchmark 的 `executor-mode` 记录程序来自 LLM 生成、注册的确定性 recipe 还是 DSL。
+实验汇总按真实 execution record 统计每一种路径。
+
+显式 KV Continuation 的 handle 来源是 Executor 模型 prefill，并跨过 CodeAct 阶段留在同一
+vLLM Worker，等待 Summarizer 消费。CodeAct 的业务结果形成 verified
+`ExecutionArtifactRef`。两类对象分别验证 parent KV 继承和业务质量门。

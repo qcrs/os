@@ -5,7 +5,7 @@
 !.dockerignore
 !docker/
 !docker/**
+docker/.env
 !requirements-container-core.txt
 !requirements-container-embed.txt
-!scripts/
-!scripts/setup_container_embed_stack.sh
+!requirements-studio.txt

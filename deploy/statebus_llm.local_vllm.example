@@ -3,7 +3,7 @@ mode: local_vllm
 providers:
   default:
     kind: openai_compatible
-    base_url: http://127.0.0.1:53333/v1
+    base_url: http://127.0.0.1:53334/v1
     api_key: EMPTY
     timeout_s: 120
     request_max_attempts: 1
@@ -11,7 +11,7 @@ providers:
 roles:
   planner:
     provider: default
-    model: qwen3-8b
+    model: qwen3-32b
     json_output: true
     temperature: 0.0
     max_tokens: 1024
@@ -20,7 +20,7 @@ roles:
         enable_thinking: false
   retriever:
     provider: default
-    model: qwen3-8b
+    model: qwen3-32b
     json_output: true
     temperature: 0.0
     max_tokens: 1024
@@ -29,7 +29,7 @@ roles:
         enable_thinking: false
   executor:
     provider: default
-    model: qwen3-8b
+    model: qwen3-32b
     json_output: true
     temperature: 0.0
     max_tokens: 1536
@@ -38,7 +38,7 @@ roles:
         enable_thinking: false
   summarizer:
     provider: default
-    model: qwen3-8b
+    model: qwen3-32b
     json_output: true
     temperature: 0.0
     max_tokens: 1024
