@@ -7,20 +7,9 @@
 让 Planner、Retriever、Executor 与 Summarizer 传递可验证、可追踪、可释放的状态，
 而不是不断复制越来越长的文本上下文。
 
-<p>
-  <img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11">
-  <img src="https://img.shields.io/badge/Control-UDS%20%2B%20Protobuf-2F6F61" alt="UDS and Protobuf">
-  <img src="https://img.shields.io/badge/vLLM-0.9.2-4B5563" alt="vLLM 0.9.2">
-  <img src="https://img.shields.io/badge/Model-Qwen3--32B-8A4F2D" alt="Qwen3-32B">
-  <img src="https://img.shields.io/badge/Status-Active%20Implementation-2563EB" alt="Active implementation">
-</p>
+<p><img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11"> <img src="https://img.shields.io/badge/Control-UDS%20%2B%20Protobuf-2F6F61" alt="UDS and Protobuf"> <img src="https://img.shields.io/badge/vLLM-0.9.2-4B5563" alt="vLLM 0.9.2"> <img src="https://img.shields.io/badge/Model-Qwen3--32B-8A4F2D" alt="Qwen3-32B"> <img src="https://img.shields.io/badge/Status-Active%20Implementation-2563EB" alt="Active implementation"></p>
 
-[快速开始](#快速开始) ·
-[系统架构](#系统架构) ·
-[核心能力](#核心能力) ·
-[实验结果](#实验结果总览) ·
-[项目目录](#项目目录) ·
-[实现文档](#实现文档)
+<p><a href="#快速开始">快速开始</a> · <a href="#系统架构">系统架构</a> · <a href="#核心能力">核心能力</a> · <a href="#实验结果总览">实验结果</a> · <a href="#项目目录">项目目录</a> · <a href="#实现文档">实现文档</a></p>
 
 </div>
 
@@ -43,62 +32,7 @@ StateBus 把任务执行拆成两部分：
 
 ## 系统架构
 
-```mermaid
-flowchart TB
-    UI[Studio / CLI / Benchmark] --> TC[Task Compiler]
-    TC --> RT[StateBus Runtime]
-
-    subgraph ROLES[角色层]
-        P[Planner]
-        R[Retriever]
-        E[Executor]
-        S[Summarizer]
-    end
-
-    subgraph CONTROL[控制面]
-        PB[Typed Protobuf]
-        UDS[Unix Domain Socket]
-        REG[Capability / Ref Registry]
-    end
-
-    subgraph DATA[数据面]
-        SHM[shared_memory]
-        MM[mmap / CAS]
-        WS[Task Workspace]
-    end
-
-    subgraph MEMORY[记忆面]
-        SQL[SQLite / FTS]
-        VEC[Vector Index]
-        RP[Compatibility / Replay Gate]
-    end
-
-    subgraph MODEL[模型侧可选路径]
-        EMB[Embedding State]
-        LOG[Logit Gate]
-        PRE[Prefix Reuse]
-        KV[Explicit KV Continuation]
-    end
-
-    RT --> P
-    RT --> R
-    RT --> E
-    RT --> S
-    RT <--> UDS
-    UDS --- PB
-    RT <--> REG
-    RT <--> SHM
-    RT <--> MM
-    RT <--> WS
-    RT <--> SQL
-    RT <--> VEC
-    RT <--> RP
-    R -.-> EMB
-    E -.-> LOG
-    E -.-> PRE
-    E -.-> KV
-    KV -.-> S
-```
+[![StateBus 系统总体架构](docs/contracts/StateBus_系统架构图.svg)](docs/contracts/StateBus_系统架构图.svg)
 
 控制面只传任务身份、能力授权、状态引用和运行事件；大对象保留在数据面。跨任务知识
 经过兼容门后进入记忆面。模型侧能力默认关闭，只在对应运行模式下参与证据选择、执行
