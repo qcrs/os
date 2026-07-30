@@ -20,7 +20,7 @@ class KVProduceRequestModel(KVApiModel):
     request_id: str = Field(min_length=1, max_length=256)
     task_id: str = Field(min_length=1, max_length=256)
     parent_token_ids: list[int] = Field(min_length=1, max_length=8192)
-    producer_suffix_token_ids: list[int] = Field(min_length=1, max_length=512)
+    producer_suffix_token_ids: list[int] = Field(min_length=1, max_length=4096)
     capture_kv: bool = True
     ttl_s: int = Field(default=120, ge=1, le=3600)
     sampling: KVSamplingModel = Field(default_factory=KVSamplingModel)
@@ -34,7 +34,7 @@ class KVContinueRequestModel(KVApiModel):
     lane: Literal["full_replay", "kv_continuation"]
     handle_id: str = Field(default="", max_length=256)
     parent_token_ids: list[int] = Field(default_factory=list, max_length=8192)
-    suffix_token_ids: list[int] = Field(min_length=1, max_length=1024)
+    suffix_token_ids: list[int] = Field(min_length=1, max_length=4096)
     stream: bool = True
     sampling: KVSamplingModel = Field(default_factory=KVSamplingModel)
     expected_compatibility_digest: str = Field(min_length=1, max_length=256)

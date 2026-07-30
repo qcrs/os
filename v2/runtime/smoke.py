@@ -61,6 +61,7 @@ from v2.memory import (
     MemoryRef,
     MemoryType,
 )
+from v2.integrations.vllm_kv.role_client import maybe_wrap_engine_local_kv_role_client
 from v2.provenance import (
     RoleHydratedSlice,
     build_hydration_registry_from_evidence_pack,
@@ -2054,13 +2055,18 @@ def run_smoke(
         clients=role_clients,
         execution_modes=resolved_role_modes,
     )
+    role_llm_client = maybe_wrap_engine_local_kv_role_client(
+        role_dispatch_client,
+        task_id=task_id,
+        runtime_root=runtime_root,
+    )
     try:
         role_path_runner = RolePathRunner(
-            llm_client=role_dispatch_client,
+            llm_client=role_llm_client,
             handoff_mode=layer_config.handoff_mode,
         )
     except TypeError:
-        role_path_runner = RolePathRunner(llm_client=role_dispatch_client)
+        role_path_runner = RolePathRunner(llm_client=role_llm_client)
         if hasattr(role_path_runner, "handoff_mode"):
             object.__setattr__(role_path_runner, "handoff_mode", layer_config.handoff_mode)
     prefix_metrics_url = _vllm_metrics_url()
