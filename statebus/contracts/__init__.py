@@ -92,6 +92,13 @@ from statebus.contracts.llm_codeact import (
     CodeRepairRecord,
     GeneratedCodeCandidate,
 )
+from statebus.contracts.engine_local_kv import (
+    ENGINE_LOCAL_KV_PROOF_SCHEMA_VERSION,
+    ENGINE_LOCAL_KV_SCHEMA_VERSION,
+    EngineLocalKVHandle,
+    KVForwardProof,
+    KVHandleStatus,
+)
 from statebus.contracts.prefix import (
     CANONICAL_SHARED_PREFIX_SCHEMA_VERSION,
     EXACT_TOKEN_PREFIX_IDENTITY_SCHEMA_VERSION,
@@ -210,6 +217,11 @@ __all__ = [
     "CodePolicyReport",
     "CodeRepairRecord",
     "GeneratedCodeCandidate",
+    "ENGINE_LOCAL_KV_PROOF_SCHEMA_VERSION",
+    "ENGINE_LOCAL_KV_SCHEMA_VERSION",
+    "EngineLocalKVHandle",
+    "KVForwardProof",
+    "KVHandleStatus",
     "CANONICAL_SHARED_PREFIX_SCHEMA_VERSION",
     "EXACT_TOKEN_PREFIX_IDENTITY_SCHEMA_VERSION",
     "PREFIX_OBSERVATION_SCHEMA_VERSION",
