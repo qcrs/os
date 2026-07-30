@@ -43,7 +43,7 @@ flowchart LR
     VR --> Q[Quality / settlement]
 ```
 
-[`ReplayLedgerEntry`](../../../v2/runtime/ledger.py) 保存 session/task、candidate、memory/artifact、ReplayClass、decision reason、compatibility verdict、Runtime signature、signature manifest bundle、spec/planner handoff、input artifact hashes、output contract、code/extractor version、exact key、degraded 标志和 skipped step count。它回答“为什么允许这次跳过”。
+[`ReplayLedgerEntry`](../../../statebus/runtime/ledger.py) 保存 session/task、candidate、memory/artifact、ReplayClass、decision reason、compatibility verdict、Runtime signature、signature manifest bundle、spec/planner handoff、input artifact hashes、output contract、code/extractor version、exact key、degraded 标志和 skipped step count。它回答“为什么允许这次跳过”。
 
 Artifact settlement/invalidation 保存前后状态、Commit Gate reason、QualityFloor、Validator report hashes 和 replay-ready。SemanticState sidecar 保存物理载体与 Dense contract，消费事件保存 PID、selected rows/IDs 和 effect。将这些记录连接起来，可以区分“对象存在”“对象被读取”“对象改变行为”“对象通过质量门”四种事实。
 

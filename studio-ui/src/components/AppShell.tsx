@@ -67,7 +67,7 @@ export function AppShell() {
       </main>
       {location.pathname !== "/live" && <footer className="app-footer">
         <span><Database size={14} />固定证据快照与实时运行记录分开存储</span>
-        <span>StateBus v2</span>
+        <span>StateBus</span>
       </footer>}
     </div>
   );

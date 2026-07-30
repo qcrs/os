@@ -37,7 +37,7 @@ Capability descriptor 至少需要稳定 ID/version、owner role、execution kin
 
 ## 新增 Studio recipe
 
-在 [`recipes.py`](../../../v2/studio/recipes.py) 增加公开描述，并在 `build_command()` 中返回固定 argv。浏览器参数不能直接拼入命令。若新 runner 产生不同 summary 布局，要扩 `task_flow.py` 的受限解析，而不是在 React 中直接扫描文件。
+在 [`recipes.py`](../../../statebus/studio/recipes.py) 增加公开描述，并在 `build_command()` 中返回固定 argv。浏览器参数不能直接拼入命令。若新 runner 产生不同 summary 布局，要扩 `task_flow.py` 的受限解析，而不是在 React 中直接扫描文件。
 
 catalog 只暴露安全元数据。新增数据源时使用 project-root containment、checksum 与受限 preview，不暴露系统任意路径。长任务仍进入单 Worker 队列。
 

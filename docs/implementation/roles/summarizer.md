@@ -13,5 +13,5 @@ Summarizer 位于业务链末端，但它不是一个可以重新检索或修补
 | 权威校验 | `ClaimSetValidator`、summary artifact 写入、Runtime memory commit decision |
 | 禁止范围 | 重选工具、补读证据、修改执行产物、绕过引用校验 |
 
-主要调度逻辑位于 [adaptive_dispatcher.py](../../../v2/runtime/adaptive_dispatcher.py)，Claim 校验位于 [claims.py](../../../v2/runtime/claims.py)，记忆提交由 [adaptive_mainline.py](../../../v2/runtime/adaptive_mainline.py) 收口。跨任务写回与重放边界另见[记忆提交与分级重放](../memory/commit-and-replay.md)。
+主要调度逻辑位于 [adaptive_dispatcher.py](../../../statebus/runtime/adaptive_dispatcher.py)，Claim 校验位于 [claims.py](../../../statebus/runtime/claims.py)，记忆提交由 [adaptive_mainline.py](../../../statebus/runtime/adaptive_mainline.py) 收口。跨任务写回与重放边界另见[记忆提交与分级重放](../memory/commit-and-replay.md)。
 

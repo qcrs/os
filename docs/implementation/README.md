@@ -1,4 +1,4 @@
-# StateBus v2 实现手册
+# StateBus 实现手册
 
 这组文档面向需要阅读、维护或继续扩展 StateBus 的开发者。项目说明书回答的是“项目解决什么问题、为什么这样设计以及实验得到什么结果”，这里进一步回答“对象从哪里产生、经过哪些校验、由哪个模块保存、失败后如何收敛，以及界面看到的内容如何回到真实运行记录”。文档尽量沿源码中的类名、合同字段和事件名称展开，读者不需要先理解全部历史分支，也不必从实验报告反推实现。
 
@@ -35,12 +35,13 @@
 | Studio 页面展示的是不是实际运行 | [Run 事实重建](studio/run-reconstruction-and-security.md) |
 | 想沿一次真实任务完整看一遍 | [IQR 单任务走读](walkthrough/single-task-iqr.md) |
 | 想看跨任务记忆怎样发生 | [三轮财务记忆链](walkthrough/continuous-financial-memory.md) |
+| 两组 10 轮和五类 25 个 case 分别做什么、使用哪些数据 | [正式基准任务与数据集目录](benchmark-task-and-dataset-catalog.md) |
 | 出错后系统如何恢复和清理 | [失败恢复](operations/failure-recovery.md) |
 | 准备新增任务或 capability | [扩展流程](extensions/extension-recipes.md)、[测试清单](extensions/testing-and-review.md) |
 
 | 文档 | 解决的主要问题 |
 |:--|:--|
-| [01-system-architecture.md](01-system-architecture.md) | v2 的进程、模块、三层基础设施和对象总链路如何组合 |
+| [01-system-architecture.md](01-system-architecture.md) | StateBus 的进程、模块、三层基础设施和对象总链路如何组合 |
 | [02-task-contract-and-control-plane.md](02-task-contract-and-control-plane.md) | 任务如何编译、计划如何批准、能力如何授权、Worker 会话如何收敛 |
 | [03-semantic-state-and-data-plane.md](03-semantic-state-and-data-plane.md) | float32 语义状态如何发布、跨进程选择、回执、释放与回溯 |
 | [04-shared-memory-reuse.md](04-shared-memory-reuse.md) | 记忆如何混合召回、兼容判定、真实消费和安全写回 |
@@ -49,6 +50,7 @@
 | [07-end-to-end-task-walkthrough.md](07-end-to-end-task-walkthrough.md) | 一个真实任务在四 Agent 间具体传入、转换和传出什么 |
 | [08-observability-and-recovery.md](08-observability-and-recovery.md) | Telemetry、Ledger、失败状态、重试隔离和资源回收如何协同 |
 | [09-code-map-and-extension-guide.md](09-code-map-and-extension-guide.md) | 新任务族、新能力、新载体或新 Studio recipe 应改哪些位置 |
+| [benchmark-task-and-dataset-catalog.md](benchmark-task-and-dataset-catalog.md) | E2 两条连续 10 轮任务链与 E5 五类 25 个固定 case 的输入、依赖、Gold 和 Validator |
 
 ## 一条必须保持稳定的对象链
 
@@ -78,14 +80,14 @@ flowchart LR
 
 本手册以源码为实现事实层，主要参考以下入口：
 
-- [v2/runtime](../../v2/runtime/)：任务编译、计划策略、调度、执行、状态消费、重放、质量门与遥测。
-- [v2/control](../../v2/control/)：typed Protobuf 消息、UDS 帧、进程间 Worker 会话。
-- [v2/state](../../v2/state/)与 [v2/refs](../../v2/refs/)：物理状态、引用合同、manifest 和生命周期。
-- [v2/memory](../../v2/memory/)：记忆合同、SQLite/FTS 索引、向量召回、RRF 与兼容判定。
-- [v2/studio](../../v2/studio/)与 [studio-ui](../../studio-ui/)：演示后端、受控作业与前端视图。
-- [tests/v2](../../tests/v2/)：合同、状态、记忆、Runtime、Studio 和 benchmark 的回归约束。
+- [statebus/runtime](../../statebus/runtime/)：任务编译、计划策略、调度、执行、状态消费、重放、质量门与遥测。
+- [statebus/control](../../statebus/control/)：typed Protobuf 消息、UDS 帧、进程间 Worker 会话。
+- [statebus/state](../../statebus/state/)与 [statebus/refs](../../statebus/refs/)：物理状态、引用合同、manifest 和生命周期。
+- [statebus/memory](../../statebus/memory/)：记忆合同、SQLite/FTS 索引、向量召回、RRF 与兼容判定。
+- [statebus/studio](../../statebus/studio/)与 [studio-ui](../../studio-ui/)：演示后端、受控作业与前端视图。
+- [tests](../../tests/)：合同、状态、记忆、Runtime、Studio 和 benchmark 的回归约束。
 
-实验数字、PPT 口径和比赛结论不在这里重新计算。需要引用正式基线时，应回到[最终实验结果与 PPT 绘图数据](../reports/StateBus-v2-最终实验结果与PPT绘图数据-20260726.md)；Logit Gate 的独立挑战结果应单独引用[受控机制实验报告](../reports/StateBus-v2-LogitRetryGate受控机制实验-20260727.md)，不得把其中 `12/12` 合并进正式 `95/95`。需要正式叙述时参考[项目说明书正文](../reports/项目说明书-总-正文.md)。本手册会解释指标由哪些事件和对象形成，但不会把临时 Studio Run 自动当作固定实验基线。
+实验数字和比赛结论不在这里重新计算。需要引用正式基线时，应回到[最终实验结果与绘图数据](../reports/StateBus-最终实验结果与绘图数据-20260726.md)；Logit Gate 的独立挑战结果应单独引用[受控机制实验报告](../reports/StateBus-LogitRetryGate受控机制实验-20260727.md)，不得把其中 `12/12` 合并进正式 `95/95`。本手册会解释指标由哪些事件和对象形成，但不会把临时 Studio Run 自动当作固定实验基线。
 
 ## 阅读源码时的几个约定
 

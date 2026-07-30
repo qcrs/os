@@ -7,7 +7,7 @@
 | TaskSpec / Ref 合同 | `test_contracts_and_refs.py`、`test_adaptive_contracts.py`、`test_runtime_and_benchmark.py` |
 | PlanPolicy / capability | `test_adaptive_planner_policy.py`、`test_adaptive_capability_surface.py`、`test_adaptive_mainline_integration.py` |
 | Protobuf / UDS / subprocess | `test_control_plane.py`、`test_uds_loopback.py`、`test_subprocess_executor.py` |
-| SemanticState / backend | `test_state_materialization.py`、`test_embedding_state_consumer.py`、`test_memfd_statepool.py` |
+| SemanticState / backend | `test_state_materialization.py`、`test_embedding_state_consumer.py`、`test_control_plane.py` |
 | LogitState / Retry Gate | `test_logit_state.py`、`test_logit_gate.py`、`test_logit_retry_challenge.py` |
 | Hydration / retrieval | `test_provenance_and_evidence.py`、`test_retrieval_pipeline.py`、`test_evidence_projection.py` |
 | Memory / Replay | `test_memory_store.py`、`test_hybrid_memory_query.py`、`test_memory_runtime.py`、`test_replay.py` |
@@ -20,8 +20,8 @@
 
 ```bash
 source deploy/activate_statebus_host.sh
-python -m pytest -q tests/v2/test_control_plane.py tests/v2/test_contracts_and_refs.py
-python -m pytest -q tests/v2/test_studio_api.py
+python -m pytest -q tests/test_control_plane.py tests/test_contracts_and_refs.py
+python -m pytest -q tests/test_studio_api.py
 
 cd studio-ui
 npm run typecheck

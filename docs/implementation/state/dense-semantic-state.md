@@ -1,6 +1,6 @@
 # 稠密语义状态
 
-[`semantic_state.py`](../../../v2/state/semantic_state.py) 将 query embedding 与候选 embedding 保持为原生 float32 数值矩阵。编码格式固定为 little-endian `<f4`、C-order；第 0 行是 query，第 1 行起是候选。所有向量必须维数相同、来自同一 encoding、数值有限且归一化。
+[`semantic_state.py`](../../../statebus/state/semantic_state.py) 将 query embedding 与候选 embedding 保持为原生 float32 数值矩阵。编码格式固定为 little-endian `<f4`、C-order；第 0 行是 query，第 1 行起是候选。所有向量必须维数相同、来自同一 encoding、数值有限且归一化。
 
 ```text
 row 0   query       [q0, q1, ... q(d-1)]

@@ -14,7 +14,7 @@
     "required_tools": ["csv_profiler", "codeact_executor"],
     "arguments": {
       "dataset_id": "weather_baro_2015",
-      "csv_path": "task/csv/baro_2015.csv",
+      "csv_path": "datasets/operating_metrics/baro_2015.csv",
       "column": "WINDSPEED",
       "quality_checks": ["numeric_tolerance:mean_windspeed:0.001", "artifact_exists:schema_profile_ref"]
     }

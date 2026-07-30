@@ -44,4 +44,4 @@ if [[ -f "$STATEBUS_LLM_ENV_FILE" ]]; then
 fi
 
 cd "$PROJECT_ROOT"
-exec "$STUDIO_PYTHON" -m v2.studio
+exec "$STUDIO_PYTHON" -m statebus.studio

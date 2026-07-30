@@ -1,6 +1,6 @@
 # 计划策略与能力授权
 
-Planner 输出的是 `PlanProposal`，不是可以直接发给 Worker 的命令。一个 proposal 由多个 `PlanStepProposal` 组成，每步声明 role、capability、goal、依赖、输入 Ref、输入 Ref 类型、输出合同、完成条件、失败策略和必需字段。Runtime 用 [`PlanPolicyValidator`](../../../v2/runtime/plan_policy.py) 把模型建议限制在当前任务 envelope 和 capability registry 内。
+Planner 输出的是 `PlanProposal`，不是可以直接发给 Worker 的命令。一个 proposal 由多个 `PlanStepProposal` 组成，每步声明 role、capability、goal、依赖、输入 Ref、输入 Ref 类型、输出合同、完成条件、失败策略和必需字段。Runtime 用 [`PlanPolicyValidator`](../../../statebus/runtime/plan_policy.py) 把模型建议限制在当前任务 envelope 和 capability registry 内。
 
 ```mermaid
 flowchart LR
@@ -50,5 +50,5 @@ dispatch 前，Runtime 再根据当前 Ref Registry 和 ApprovedPlan 复核 Gran
 
 新增 capability 时，不能只登记一个函数名。它至少需要 owner role、版本、输入 Ref kind、输出合同、风险等级、Validator 和预算；若允许 LLM Python，还要显式开启 envelope 的 `allow_llm_python`，而不是让 Planner 自行选择任意执行面。
 
-主要类型位于 [`v2/contracts/adaptive.py`](../../../v2/contracts/adaptive.py)，能力表与校验测试可参考 [`test_adaptive_capability_surface.py`](../../../tests/v2/test_adaptive_capability_surface.py) 和 [`test_adaptive_mainline_integration.py`](../../../tests/v2/test_adaptive_mainline_integration.py)。
+主要类型位于 [`statebus/contracts/adaptive.py`](../../../statebus/contracts/adaptive.py)，能力表与校验测试可参考 [`test_adaptive_capability_surface.py`](../../../tests/test_adaptive_capability_surface.py) 和 [`test_adaptive_mainline_integration.py`](../../../tests/test_adaptive_mainline_integration.py)。
 

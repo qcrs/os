@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -17,18 +18,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from v2.runtime.role_path import compile_prefix_layout  # noqa: E402
-from v2.runtime.vllm_metrics import parse_vllm_prefix_cache_metrics  # noqa: E402
-from v2.utils import sha256_digest, stable_json_dumps  # noqa: E402
+from statebus.runtime.role_path import compile_prefix_layout  # noqa: E402
+from statebus.runtime.vllm_metrics import parse_vllm_prefix_cache_metrics  # noqa: E402
+from statebus.utils import sha256_digest, stable_json_dumps  # noqa: E402
 
 
 DEFAULT_EVIDENCE_FILE = Path(
-    "v2/benchmark/samples/continuous_task_families/kv_prefix_reuse/"
+    "statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/"
     "orion_factory_ops_report_2026.md"
 )
 DEFAULT_ARTIFACT_ROOT = Path(
-    "docs/improvement/20_v2_comprehensive_truth_audit_20260706/artifacts"
-)
+    os.getenv("STATEBUS_RUNS_DIR", str(REPO_ROOT / "runs"))
+) / "prefix_alignment"
 DEFAULT_ROLES = ("planner", "retriever", "executor", "summarizer", "verifier")
 JSON_RESPONSE_FORMAT = {"type": "json_object"}
 

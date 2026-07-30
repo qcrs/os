@@ -35,5 +35,5 @@ Gate Worker 通过 UDS + typed Protobuf 取得 Ref，只读打开 shared memory�
 
 AB/BA 反事实校准属于[受控挑战实验](../walkthrough/logit-retry-challenge.md)的公平性设计。它在发布前交换候选与 A/B 的绑定、按 candidate ID 对齐后取均值，用来抵消模型对首个别名的位置偏差；基础 `LogitState` 合同本身不强制每次线上运行都做两次 AB/BA 请求。
 
-主要实现位于 [`contracts/logit.py`](../../../v2/contracts/logit.py)、[`runtime/logit_state.py`](../../../v2/runtime/logit_state.py)、[`state/logit_state.py`](../../../v2/state/logit_state.py) 与 [`refs/models.py`](../../../v2/refs/models.py)。
+主要实现位于 [`contracts/logit.py`](../../../statebus/contracts/logit.py)、[`runtime/logit_state.py`](../../../statebus/runtime/logit_state.py)、[`state/logit_state.py`](../../../statebus/state/logit_state.py) 与 [`refs/models.py`](../../../statebus/refs/models.py)。
 

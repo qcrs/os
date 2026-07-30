@@ -1,6 +1,6 @@
 # 四 Agent 角色合同
 
-StateBus v2 保留 Planner、Retriever、Executor、Summarizer 四个认知角色，但它们并不是四个可以任意互发文本、共享目录或直接修改全局状态的自治进程。每个角色只在 Runtime 给出的可见面内生成候选对象；对象能否进入下一阶段，由计划策略、CapabilityGrant、Ref Registry、Validator 和 Commit Gate 决定。这样既保留 LLM 对任务语义的处理能力，也把执行权限和可信状态迁移留在确定性的系统边界内。
+StateBus 保留 Planner、Retriever、Executor、Summarizer 四个认知角色，但它们并不是四个可以任意互发文本、共享目录或直接修改全局状态的自治进程。每个角色只在 Runtime 给出的可见面内生成候选对象；对象能否进入下一阶段，由计划策略、CapabilityGrant、Ref Registry、Validator 和 Commit Gate 决定。这样既保留 LLM 对任务语义的处理能力，也把执行权限和可信状态迁移留在确定性的系统边界内。
 
 ```mermaid
 flowchart LR
@@ -28,4 +28,4 @@ flowchart LR
 | [Executor](executor.md) | 闭集选择、TransformProgram 或受限 Python 候选 | `LogitGateReceipt`、verified `ExecutionArtifactRef` | 越权取证、扩展能力范围、提交记忆摘要 |
 | [Summarizer](summarizer.md) | `ClaimSet` 候选、可复用步骤描述 | validated `ClaimSet`、受控的记忆提交输入 | 重选工具、修改产物、绕过引用校验 |
 
-源码中的 [role_contract.py](../../../v2/runtime/role_contract.py) 还为四个角色规定了必须出现的遥测键、预期产物和 forbidden scope，用于审计实际报告是否真的经过完整角色图。具体任务执行由 [adaptive_mainline.py](../../../v2/runtime/adaptive_mainline.py)、[adaptive_runtime.py](../../../v2/runtime/adaptive_runtime.py) 和 [adaptive_dispatcher.py](../../../v2/runtime/adaptive_dispatcher.py) 共同编排；角色合同不是提示词约定，而是与计划、授权、对象状态和遥测相互印证的运行约束。
+源码中的 [role_contract.py](../../../statebus/runtime/role_contract.py) 还为四个角色规定了必须出现的遥测键、预期产物和 forbidden scope，用于审计实际报告是否真的经过完整角色图。具体任务执行由 [adaptive_mainline.py](../../../statebus/runtime/adaptive_mainline.py)、[adaptive_runtime.py](../../../statebus/runtime/adaptive_runtime.py) 和 [adaptive_dispatcher.py](../../../statebus/runtime/adaptive_dispatcher.py) 共同编排；角色合同不是提示词约定，而是与计划、授权、对象状态和遥测相互印证的运行约束。

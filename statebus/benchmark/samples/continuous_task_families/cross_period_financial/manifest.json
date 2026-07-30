@@ -1,0 +1,505 @@
+{
+  "schema_version": "statebus.continuous_task_family.v1",
+  "family_id": "cross_period_financial_v1",
+  "display_name": "Cross-period financial revenue analysis (ACME and BETA, 3 quarters)",
+  "claim_tier": "formal_secondary",
+  "source_basis": {
+    "design_note": "10-round continuous family demonstrating validated replay of reusable cross-period extraction strategy. Rounds 2/4/6/8 reuse the persisted compare_metric execution pattern while later compute rounds continue to execute against the current in-memory task state."
+  },
+  "round_count": 10,
+  "datasets": [
+    {
+      "dataset_id": "cross_period_financial",
+      "path": "statebus/benchmark/samples/continuous_task_families/cross_period_financial/cross_period_financial_report.md",
+      "kind": "markdown_long_doc",
+      "primary_entities": [
+        "ACME",
+        "BETA",
+        "revenue",
+        "revenue_musd"
+      ]
+    }
+  ],
+  "quality_floor": {
+    "deterministic_validator": [
+      "answer_fields_present",
+      "artifact_manifest_present",
+      "numeric_tolerance"
+    ],
+    "fact_coverage": [
+      "required_metric_values_match",
+      "metric_name_matches_request"
+    ],
+    "llm_judge": "not_required"
+  },
+  "l0_l3_expectations": {
+    "L0": {
+      "expected_zero_metrics": [
+        "semantic_state_transfer_count",
+        "skipped_step_count"
+      ]
+    },
+    "L1": {
+      "required": [
+        "control_bytes_delta_l0_to_l1 < 0"
+      ]
+    },
+    "L2": {
+      "required": [
+        "semantic_state_transfer_count > 0",
+        "raw_evidence_bytes_seen_by_llm_delta_l1_to_l2 < 0"
+      ]
+    },
+    "L3": {
+      "required": [
+        "memory_match_count > 0",
+        "validated_replay_count > 0",
+        "skipped_step_count > 0"
+      ],
+      "target_nonzero_rounds": [2, 4, 6, 8]
+    }
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "task_id": "cross-period-001",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Extract the revenue figure for ACME in 2026Q1 from the cross-period financial report and persist a memory entry.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compare_metric",
+        "required_outputs": [
+          "revenue_value",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever",
+          "semantic_retriever"
+        ],
+        "arguments": {
+          "ticker": "ACME",
+          "quarter": "2026Q1",
+          "metric": "revenue",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [],
+      "reuse_contract": {
+        "produces": [
+          "metric:acme_2026q1_revenue",
+          "strategy:compare_metric_table_retriever"
+        ],
+        "consumes": [],
+        "minimum_reuse_class": "none"
+      },
+      "expected_facts": {
+        "revenue_value": "120"
+      },
+      "quality_checks": [
+        "exact:revenue_value"
+      ],
+      "expected_metric_effects": {
+        "L2_semantic_state_transfer_count_min": 1
+      }
+    },
+    {
+      "round": 2,
+      "task_id": "cross-period-002",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Extract the revenue figure for ACME in 2025Q4 from the cross-period financial report.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compare_metric",
+        "required_outputs": [
+          "revenue_value",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever",
+          "semantic_retriever"
+        ],
+        "arguments": {
+          "ticker": "ACME",
+          "quarter": "2025Q4",
+          "metric": "revenue",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [1],
+      "reuse_contract": {
+        "produces": [
+          "metric:acme_2025q4_revenue"
+        ],
+        "consumes": [
+          "strategy:compare_metric_table_retriever"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "revenue_value": "109"
+      },
+      "quality_checks": [
+        "exact:revenue_value"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1
+      }
+    },
+    {
+      "round": 3,
+      "task_id": "cross-period-003",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Compute the quarter-over-quarter revenue delta for ACME between 2025Q4 and 2026Q1. Both values are already in memory.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compute_delta",
+        "required_outputs": [
+          "delta_value",
+          "delta_pct",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "ticker": "ACME",
+          "metric": "revenue",
+          "period_from": "2025Q4",
+          "period_to": "2026Q1",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [1, 2],
+      "reuse_contract": {
+        "produces": [
+          "analysis:acme_q4_to_q1_delta"
+        ],
+        "consumes": [
+          "metric:acme_2026q1_revenue",
+          "metric:acme_2025q4_revenue"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "delta_value": "11"
+      },
+      "quality_checks": [
+        "exact:delta_value"
+      ],
+      "expected_metric_effects": {}
+    },
+    {
+      "round": 4,
+      "task_id": "cross-period-004",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Extract the revenue figure for ACME in 2025Q3 from the cross-period financial report.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compare_metric",
+        "required_outputs": [
+          "revenue_value",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever",
+          "semantic_retriever"
+        ],
+        "arguments": {
+          "ticker": "ACME",
+          "quarter": "2025Q3",
+          "metric": "revenue",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [1, 2, 3],
+      "reuse_contract": {
+        "produces": [
+          "metric:acme_2025q3_revenue"
+        ],
+        "consumes": [
+          "strategy:compare_metric_table_retriever"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "revenue_value": "98"
+      },
+      "quality_checks": [
+        "exact:revenue_value"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1
+      }
+    },
+    {
+      "round": 5,
+      "task_id": "cross-period-005",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Compute the three-quarter revenue trend for ACME (2025Q3, 2025Q4, 2026Q1). All values are already in memory.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compute_trend",
+        "required_outputs": [
+          "trend_values",
+          "trend_direction",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "ticker": "ACME",
+          "metric": "revenue",
+          "quarters": ["2025Q3", "2025Q4", "2026Q1"],
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [1, 2, 4],
+      "reuse_contract": {
+        "produces": [
+          "analysis:acme_3q_revenue_trend"
+        ],
+        "consumes": [
+          "metric:acme_2025q3_revenue",
+          "metric:acme_2025q4_revenue",
+          "metric:acme_2026q1_revenue"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "trend_direction": "increasing"
+      },
+      "quality_checks": [
+        "exact:trend_direction"
+      ],
+      "expected_metric_effects": {}
+    },
+    {
+      "round": 6,
+      "task_id": "cross-period-006",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Extract the revenue figure for BETA in 2026Q1 from the cross-period financial report.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compare_metric",
+        "required_outputs": [
+          "revenue_value",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever",
+          "semantic_retriever"
+        ],
+        "arguments": {
+          "ticker": "BETA",
+          "quarter": "2026Q1",
+          "metric": "revenue",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [1],
+      "reuse_contract": {
+        "produces": [
+          "metric:beta_2026q1_revenue"
+        ],
+        "consumes": [
+          "strategy:compare_metric_table_retriever"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "revenue_value": "87"
+      },
+      "quality_checks": [
+        "exact:revenue_value"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1
+      }
+    },
+    {
+      "round": 7,
+      "task_id": "cross-period-007",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Compare ACME and BETA 2026Q1 revenue. Both values are already in memory.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compare_metric",
+        "required_outputs": [
+          "acme_revenue_value",
+          "beta_revenue_value",
+          "gap_value",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "tickers": ["ACME", "BETA"],
+          "quarter": "2026Q1",
+          "metric": "revenue",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [1, 6],
+      "reuse_contract": {
+        "produces": [
+          "analysis:acme_vs_beta_2026q1"
+        ],
+        "consumes": [
+          "metric:acme_2026q1_revenue",
+          "metric:beta_2026q1_revenue"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "gap_value": "33"
+      },
+      "quality_checks": [
+        "exact:gap_value"
+      ],
+      "expected_metric_effects": {}
+    },
+    {
+      "round": 8,
+      "task_id": "cross-period-008",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Extract the revenue figure for BETA in 2025Q4 from the cross-period financial report.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compare_metric",
+        "required_outputs": [
+          "revenue_value",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever",
+          "semantic_retriever"
+        ],
+        "arguments": {
+          "ticker": "BETA",
+          "quarter": "2025Q4",
+          "metric": "revenue",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [6],
+      "reuse_contract": {
+        "produces": [
+          "metric:beta_2025q4_revenue"
+        ],
+        "consumes": [
+          "strategy:compare_metric_table_retriever"
+        ],
+        "minimum_reuse_class": "validated_replay"
+      },
+      "expected_facts": {
+        "revenue_value": "79"
+      },
+      "quality_checks": [
+        "exact:revenue_value"
+      ],
+      "expected_metric_effects": {
+        "L3_validated_replay_count_min": 1,
+        "L3_skipped_step_count_min": 1
+      }
+    },
+    {
+      "round": 9,
+      "task_id": "cross-period-009",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Compute the BETA revenue trend for 2025Q4 to 2026Q1. Both values are already in memory.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compute_delta",
+        "required_outputs": [
+          "delta_value",
+          "delta_pct",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "ticker": "BETA",
+          "metric": "revenue",
+          "period_from": "2025Q4",
+          "period_to": "2026Q1",
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [6, 8],
+      "reuse_contract": {
+        "produces": [
+          "analysis:beta_q4_to_q1_delta"
+        ],
+        "consumes": [
+          "metric:beta_2025q4_revenue",
+          "metric:beta_2026q1_revenue"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "delta_value": "8"
+      },
+      "quality_checks": [
+        "exact:delta_value"
+      ],
+      "expected_metric_effects": {}
+    },
+    {
+      "round": 10,
+      "task_id": "cross-period-010",
+      "dataset_id": "cross_period_financial",
+      "request_text": "Generate a full cross-period comparison report for ACME and BETA covering 2025Q3 through 2026Q1. All data is already in memory.",
+      "canonical_task_spec": {
+        "task_family": "cross_period_financial_analysis",
+        "intent_op": "compute_trend",
+        "required_outputs": [
+          "acme_trend_values",
+          "beta_trend_values",
+          "acme_trend_direction",
+          "beta_trend_direction",
+          "summary_text"
+        ],
+        "required_tools": [
+          "table_retriever"
+        ],
+        "arguments": {
+          "tickers": ["ACME", "BETA"],
+          "metric": "revenue",
+          "quarters": ["2025Q3", "2025Q4", "2026Q1"],
+          "dataset_id": "cross_period_financial"
+        }
+      },
+      "depends_on_rounds": [1, 2, 4, 5, 6, 7, 8, 9],
+      "reuse_contract": {
+        "produces": [
+          "analysis:full_cross_period_report"
+        ],
+        "consumes": [
+          "metric:acme_2025q3_revenue",
+          "metric:acme_2025q4_revenue",
+          "metric:acme_2026q1_revenue",
+          "metric:beta_2025q4_revenue",
+          "metric:beta_2026q1_revenue",
+          "analysis:acme_3q_revenue_trend",
+          "analysis:beta_q4_to_q1_delta"
+        ],
+        "minimum_reuse_class": "assist"
+      },
+      "expected_facts": {
+        "acme_trend_direction": "increasing",
+        "beta_trend_direction": "increasing"
+      },
+      "quality_checks": [
+        "exact:acme_trend_direction",
+        "exact:beta_trend_direction"
+      ],
+      "expected_metric_effects": {}
+    }
+  ]
+}

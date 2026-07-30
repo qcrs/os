@@ -15,7 +15,7 @@
     "required_tools": ["csv_profiler", "codeact_executor"],
     "arguments": {
       "dataset_id": "disease_estimates",
-      "csv_path": "task/csv/estimated_numbers.csv",
+      "csv_path": "datasets/operating_metrics/estimated_numbers.csv",
       "columns": ["No. of cases_min", "No. of deaths_max"],
       "quality_checks": [
         "numeric_tolerance:percentage_cases_min:0.01",

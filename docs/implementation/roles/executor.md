@@ -15,4 +15,4 @@ Python 候选要经过 AST 与 policy 检查，再由隔离执行器运行；DSL
 | Runtime 物化 | `LogitStateRef`/GateReceipt、candidate 到 verified 的 `ExecutionArtifactRef`、执行记录与 validator receipt |
 | 禁止范围 | 读取隐藏证据、扩大 capability、修改任务合同、提交记忆摘要 |
 
-调度与产物注册位于 [adaptive_dispatcher.py](../../../v2/runtime/adaptive_dispatcher.py)；CodeAct 主体位于 [llm_codeact.py](../../../v2/runtime/llm_codeact.py)，DSL 位于 [transform_dsl.py](../../../v2/runtime/transform_dsl.py)。更完整的执行链见[Logit Retry Gate](../runtime/logit-retry-gate.md)、[受限 Python CodeAct](../execution/bounded-python-codeact.md)、[Transform DSL](../execution/transform-dsl.md)和[产物质量门](../execution/artifact-and-quality-gate.md)。
+调度与产物注册位于 [adaptive_dispatcher.py](../../../statebus/runtime/adaptive_dispatcher.py)；CodeAct 主体位于 [llm_codeact.py](../../../statebus/runtime/llm_codeact.py)，DSL 位于 [transform_dsl.py](../../../statebus/runtime/transform_dsl.py)。更完整的执行链见[Logit Retry Gate](../runtime/logit-retry-gate.md)、[受限 Python CodeAct](../execution/bounded-python-codeact.md)、[Transform DSL](../execution/transform-dsl.md)和[产物质量门](../execution/artifact-and-quality-gate.md)。

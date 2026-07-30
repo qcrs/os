@@ -46,4 +46,4 @@ flowchart LR
 
 贯穿对象链的核心原则是“生成权与批准权分离”。Planner 不批准自己的计划，Executor 不验证自己的业务结果，Retriever 不宣布相似记忆兼容，Summarizer 不读取失败 attempt 的 candidate。新增对象类型时也应明确 producer、validator、consumer、状态提升条件和清理责任。
 
-主要类型位于 [`v2/contracts/models.py`](../../../v2/contracts/models.py)、[`v2/contracts/adaptive.py`](../../../v2/contracts/adaptive.py)、[`v2/refs/models.py`](../../../v2/refs/models.py) 和 [`v2/memory/models.py`](../../../v2/memory/models.py)。
+主要类型位于 [`statebus/contracts/models.py`](../../../statebus/contracts/models.py)、[`statebus/contracts/adaptive.py`](../../../statebus/contracts/adaptive.py)、[`statebus/refs/models.py`](../../../statebus/refs/models.py) 和 [`statebus/memory/models.py`](../../../statebus/memory/models.py)。

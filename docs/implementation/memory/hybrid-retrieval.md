@@ -1,8 +1,8 @@
 # 混合召回与 RRF
 
-一次 Runtime 记忆查询由 [`MemoryQuery`](../../../v2/memory/models.py) 表达。它把 text、tags 和可选 dense embedding 三种独立信号放在同一个合同中，同时携带当前 task/spec、允许的 memory type、复用策略、Runtime signature、输出合同、输入 lineage/schema 和 Validator digest。
+一次 Runtime 记忆查询由 [`MemoryQuery`](../../../statebus/memory/models.py) 表达。它把 text、tags 和可选 dense embedding 三种独立信号放在同一个合同中，同时携带当前 task/spec、允许的 memory type、复用策略、Runtime signature、输出合同、输入 lineage/schema 和 Validator digest。
 
-三种检索源不直接比较原始分数。关键词可能来自 SQLite FTS，标签是离散重合度，向量是余弦相似度，它们的数值空间不同。[`lookup_hybrid()`](../../../v2/memory/store.py) 分别得到有序列表，再使用 Reciprocal Rank Fusion：
+三种检索源不直接比较原始分数。关键词可能来自 SQLite FTS，标签是离散重合度，向量是余弦相似度，它们的数值空间不同。[`lookup_hybrid()`](../../../statebus/memory/store.py) 分别得到有序列表，再使用 Reciprocal Rank Fusion：
 
 ```text
 RRF(memory) = sum(1 / (k + rank_source(memory)))
@@ -31,5 +31,5 @@ flowchart LR
 
 检索层不负责把 MemoryRef 放进 Agent 输入。它只交付带决策记录的候选；角色可见性、复用级别与实际消费由下一层处理。
 
-相关回归主要位于 [`test_memory_store.py`](../../../tests/v2/test_memory_store.py) 和 [`test_hybrid_memory_query.py`](../../../tests/v2/test_hybrid_memory_query.py)。
+相关回归主要位于 [`test_memory_store.py`](../../../tests/test_memory_store.py) 和 [`test_hybrid_memory_query.py`](../../../tests/test_hybrid_memory_query.py)。
 

@@ -6,4 +6,4 @@ runtime_task_family: cross_period_financial_analysis
 validator_contract: statebus_smoke_quality_floor_v1
 source_dataset:
   dataset_id: cross_period_financial
-  path: v2/benchmark/samples/continuous_task_families/cross_period_financial/cross_period_financial_report.md
+  path: statebus/benchmark/samples/continuous_task_families/cross_period_financial/cross_period_financial_report.md

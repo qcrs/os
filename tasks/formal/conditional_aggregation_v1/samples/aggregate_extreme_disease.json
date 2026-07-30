@@ -16,7 +16,7 @@
     "required_tools": ["table_retriever", "codeact_executor"],
     "arguments": {
       "dataset_id": "disease_estimates",
-      "csv_path": "task/csv/estimated_numbers.csv",
+      "csv_path": "datasets/operating_metrics/estimated_numbers.csv",
       "mean_column": "No. of cases",
       "mean_rounding": "nearest_integer",
       "max_column": "No. of deaths",

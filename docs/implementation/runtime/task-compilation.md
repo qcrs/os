@@ -1,6 +1,6 @@
 # 任务编译与正式任务合同
 
-[`TaskCompiler`](../../../v2/runtime/compiler.py) 是 Runtime 的入口边界。它不负责生成执行计划，而是把调用方的请求收敛为 `CanonicalTaskSpec`，让 Planner、Retriever、Executor、Summarizer 和 Replay Gate 使用同一个任务事实面。
+[`TaskCompiler`](../../../statebus/runtime/compiler.py) 是 Runtime 的入口边界。它不负责生成执行计划，而是把调用方的请求收敛为 `CanonicalTaskSpec`，让 Planner、Retriever、Executor、Summarizer 和 Replay Gate 使用同一个任务事实面。
 
 `TaskCompilerInput` 包含原始 request text、任务模式、可选的 corpus family、requested outputs，以及可选的预编译 spec。交互模式可以解析带 `task_family` 与 `intent_op` 的 JSON，也可以使用受限启发式规则。无法可靠规范化时返回 `OPAQUE_FREEFORM` 和 warning，上层可以选择交互降级，但不能把它当成正式 benchmark 输入。
 
@@ -37,7 +37,7 @@ flowchart TD
 
 任务合同并不包含自由 Python，也不允许调用方用 `arguments` 塞入任意路径或 shell。具体 capability 会再次验证参数、输入 Ref 和 workspace。编译成功只表示任务可以进入 Planner 阶段，不表示任务已经获准执行。
 
-与 task spec 分开的 [`RuntimeCompatibilitySignature`](../../../v2/contracts/models.py) 保存 OS、Python、依赖、工具注册表、Prompt bundle 和 extractor bundle 摘要。任务相同但运行签名变化时，历史记忆可以降级为 assist 或被拒绝，不能只依赖自然语言相似度恢复结果。
+与 task spec 分开的 [`RuntimeCompatibilitySignature`](../../../statebus/contracts/models.py) 保存 OS、Python、依赖、工具注册表、Prompt bundle 和 extractor bundle 摘要。任务相同但运行签名变化时，历史记忆可以降级为 assist 或被拒绝，不能只依赖自然语言相似度恢复结果。
 
-正式任务样本和任务族在 [`v2/benchmark/samples`](../../../v2/benchmark/samples/)；相关合同回归可从 [`test_runtime_and_benchmark.py`](../../../tests/v2/test_runtime_and_benchmark.py) 与 [`test_contracts_and_refs.py`](../../../tests/v2/test_contracts_and_refs.py) 开始阅读。
+正式任务样本和任务族在 [`statebus/benchmark/samples`](../../../statebus/benchmark/samples/)；相关合同回归可从 [`test_runtime_and_benchmark.py`](../../../tests/test_runtime_and_benchmark.py) 与 [`test_contracts_and_refs.py`](../../../tests/test_contracts_and_refs.py) 开始阅读。
 

@@ -15,7 +15,7 @@
     "required_tools": ["table_retriever", "codeact_executor"],
     "arguments": {
       "dataset_id": "weather_baro_2015",
-      "csv_path": "task/csv/baro_2015.csv",
+      "csv_path": "datasets/operating_metrics/baro_2015.csv",
       "groupby": "month(DATE TIME)",
       "value_column": "WINDSPEED",
       "aggregation": "mean",

@@ -1,6 +1,6 @@
 # 单任务全链路：运营指标 IQR 异常分析
 
-Studio 的快速配方 `quick-operating-codeact` 通过 [`recipes.py`](../../../v2/studio/recipes.py) 启动 adaptive formal mainline，并选择 `formal-anomaly-001`。业务目标是对获准的运营指标列执行 IQR 异常检测，输出异常相关统计与可引用结论。下面关注运行对象，而不是固定某一次模型措辞。
+Studio 的快速配方 `quick-operating-codeact` 通过 [`recipes.py`](../../../statebus/studio/recipes.py) 启动 adaptive formal mainline，并选择 `formal-anomaly-001`。业务目标是对获准的运营指标列执行 IQR 异常检测，输出异常相关统计与可引用结论。下面关注运行对象，而不是固定某一次模型措辞。
 
 ## 启动到计划批准
 

@@ -1,6 +1,6 @@
 # 三轮财务任务：记忆如何进入下一轮
 
-Studio 的 `financial-three-step` 配方运行 `formal_financial_reports` 前三轮。任务清单位于 [`manifest.json`](../../../v2/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json)，三轮分别提取 ACME 2026Q1 收入、提取 ACME 2025Q4 收入，再计算两期差额。它适合展示“历史候选不等于直接恢复答案”。
+Studio 的 `financial-three-step` 配方运行 `formal_financial_reports` 前三轮。任务清单位于 [`manifest.json`](../../../statebus/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json)，三轮分别提取 ACME 2026Q1 收入、提取 ACME 2025Q4 收入，再计算两期差额。它适合展示“历史候选不等于直接恢复答案”。
 
 ## 三轮依赖
 

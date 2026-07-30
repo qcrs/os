@@ -34,4 +34,4 @@ Ref Registry 使用小型索引字段维护 `ref_id`、`ref_kind`、`storage_kin
 
 四类 Ref 分离也让 Telemetry 语义清楚。embedding 状态消费、Logit Gate 尝试、Artifact 验证和 Memory 复用分别具有不同分母；把它们统一记成“state hit”会破坏实验统计和故障定位。
 
-主要模型位于 [`v2/refs/models.py`](../../../v2/refs/models.py)、[`v2/contracts/models.py`](../../../v2/contracts/models.py)、[`v2/contracts/logit.py`](../../../v2/contracts/logit.py) 和 [`v2/memory/models.py`](../../../v2/memory/models.py)。
+主要模型位于 [`statebus/refs/models.py`](../../../statebus/refs/models.py)、[`statebus/contracts/models.py`](../../../statebus/contracts/models.py)、[`statebus/contracts/logit.py`](../../../statebus/contracts/logit.py) 和 [`statebus/memory/models.py`](../../../statebus/memory/models.py)。

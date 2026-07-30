@@ -1,6 +1,6 @@
 # 总体分层
 
-StateBus v2 的主体是 Runtime，而不是四个 Agent 卡片的简单排列。Planner、Retriever、Executor 与 Summarizer 负责需要语言理解、检索判断、程序生成和结论组织的工作；Runtime 则负责批准计划、签发能力、管理 Worker 会话、登记引用、验证产物和收敛失败。Agent 产生的是候选，Runtime 决定候选何时可以成为下游可见对象。
+StateBus 的主体是 Runtime，而不是四个 Agent 卡片的简单排列。Planner、Retriever、Executor 与 Summarizer 负责需要语言理解、检索判断、程序生成和结论组织的工作；Runtime 则负责批准计划、签发能力、管理 Worker 会话、登记引用、验证产物和收敛失败。Agent 产生的是候选，Runtime 决定候选何时可以成为下游可见对象。
 
 传统文本工作流通常让上游把中间结果写成一段自然语言，再由下游重新解析。这样虽然容易搭建，却把控制指令、业务证据、数值状态、执行文件和历史经验混在同一载体中。StateBus 把它们拆到控制面、数据面和记忆面，并用 task、step、attempt、Ref、hash 和 schema 保持关联。
 
@@ -70,4 +70,4 @@ flowchart TB
 
 这套分层允许控制表示、物理载体和业务能力独立演进。例如将 dense state 从 shared memory 切换到 mmap，不需要改变 `SemanticStateRef` 的语义；给 Executor 增加新的 DSL 操作，也不应改变 CapabilityGrant 和 Artifact Validator 的边界。
 
-相关源码入口：[`v2/runtime`](../../../v2/runtime/)、[`v2/control`](../../../v2/control/)、[`v2/state`](../../../v2/state/)、[`v2/memory`](../../../v2/memory/)。
+相关源码入口：[`statebus/runtime`](../../../statebus/runtime/)、[`statebus/control`](../../../statebus/control/)、[`statebus/state`](../../../statebus/state/)、[`statebus/memory`](../../../statebus/memory/)。

@@ -1,6 +1,6 @@
 # Transform DSL
 
-对于字段稳定、操作可枚举的表格任务，Python 并不是唯一合理执行表示。[`TransformProgram`](../../../v2/contracts/adaptive.py) 用输入 ArtifactRef、输出合同和一组 `TransformStep` 表达变换，[`TransformDslInterpreter`](../../../v2/runtime/transform_dsl.py) 在确定性解释器中执行。
+对于字段稳定、操作可枚举的表格任务，Python 并不是唯一合理执行表示。[`TransformProgram`](../../../statebus/contracts/adaptive.py) 用输入 ArtifactRef、输出合同和一组 `TransformStep` 表达变换，[`TransformDslInterpreter`](../../../statebus/runtime/transform_dsl.py) 在确定性解释器中执行。
 
 当前注册操作按用途分为：
 

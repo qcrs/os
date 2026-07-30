@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "statebus-project"
+name = "statebus"
 version = "0.1.0"
-description = "StateBus v2 contest recovery runtime"
+description = "Typed state-transfer runtime for multi-agent workflows"
 requires-python = ">=3.11"
 dependencies = [
   "numpy",
@@ -25,11 +25,22 @@ langgraph = [
 ]
 
 [project.scripts]
-statebus-project-smoke = "v2.runtime.smoke:main"
-statebus-project-benchmark = "v2.benchmark.live_runner:main"
+statebus-smoke = "statebus.runtime.smoke:main"
+statebus-benchmark = "statebus.benchmark.live_runner:main"
 
 [tool.setuptools]
+include-package-data = true
 py-modules = []
+
+[tool.setuptools.packages.find]
+include = ["statebus*"]
+
+[tool.setuptools.package-data]
+statebus = [
+  "benchmark/samples/**/*",
+  "control/*.proto",
+  "studio/data/*.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

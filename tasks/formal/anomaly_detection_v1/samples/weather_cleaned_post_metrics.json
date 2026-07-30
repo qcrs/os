@@ -15,7 +15,7 @@
     "required_tools": ["codeact_executor", "artifact_writer"],
     "arguments": {
       "dataset_id": "weather_baro_2015",
-      "csv_path": "task/csv/baro_2015.csv",
+      "csv_path": "datasets/operating_metrics/baro_2015.csv",
       "outlier_column": "WINDSPEED",
       "impute_column": "AT",
       "outlier_method": "iqr",

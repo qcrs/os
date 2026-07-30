@@ -1,6 +1,6 @@
 # 分层存储与生命周期
 
-[`LayeredStoragePolicy`](../../../v2/state/store.py) 根据 object kind 和运行 profile 选择物理后端。Ref 合同保持稳定，后端可以在 shared memory、memfd、mmap、CAS sidecar、inline 和 workspace 之间按能力与生命周期选择。
+[`LayeredStoragePolicy`](../../../statebus/state/store.py) 根据 object kind 和运行 profile 选择物理后端。Ref 合同保持稳定，后端可以在 shared memory、memfd、mmap、CAS sidecar、inline 和 workspace 之间按能力与生命周期选择。
 
 | object kind | 默认倾向 | 原因 |
 |:--|:--|:--|

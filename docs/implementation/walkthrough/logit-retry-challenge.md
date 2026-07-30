@@ -29,14 +29,13 @@ AB/BA 校准是实验公平性的一部分。同一 RoleView 分别使用正向�
 
 机制成本也必须保留。Gate off 发生 24 次 vLLM 调用、共 6,110 Token；Retry once 发生 38 次调用、共 9,952 Token。差异来自每个阶段的 AB/BA 双探测和 7 个低 margin case 的二次选择。这组数据用于证明控制效果，不用于声称 Token 或时延下降。
 
-结果不能与正式 `95/95` 基线合并：`12/12` 只是挑战套件的 Validator，正式证据快照没有被修改。机制交付时容器内 `tests/v2` 为 582 passed，说明合同、控制帧、跨 PID 状态、Runtime 接入和既有回归同时通过，但测试数量也不替代业务实验分母。
+结果不能与正式 `95/95` 基线合并：`12/12` 只是挑战套件的 Validator，正式证据快照没有被修改。机制交付时容器内 `tests` 为 582 passed，说明合同、控制帧、跨 PID 状态、Runtime 接入和既有回归同时通过，但测试数量也不替代业务实验分母。
 
-详细实验口径与 PPT 绘图建议见[受控机制实验报告](../../reports/StateBus-v2-LogitRetryGate受控机制实验-20260727.md)。复现入口为：
+详细实验口径与绘图建议见[受控机制实验报告](../../reports/StateBus-LogitRetryGate受控机制实验-20260727.md)。复现入口为：
 
 ```bash
 cd /home/qcrs/statebus/project
-bash scripts/v2_diagnostics/run_logit_retry_challenge_gpu2.sh
+bash scripts/diagnostics/run_logit_retry_challenge_gpu2.sh
 ```
 
 脚本复用健康的 vLLM，不负责启动或重启模型服务；正式运行仍应遵守容器环境和 GPU 映射约束。
-

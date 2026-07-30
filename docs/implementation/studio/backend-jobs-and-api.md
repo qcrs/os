@@ -1,6 +1,6 @@
 # FastAPI 与受控作业
 
-Studio 后端入口是 [`v2/studio/app.py`](../../../v2/studio/app.py)，服务默认监听 `127.0.0.1:8765`。[`scripts/run_statebus_studio.sh`](../../../scripts/run_statebus_studio.sh) 负责选择项目 Python：容器内先加载 `docker/activate_statebus_container.sh`，宿主机使用 `$HOME/statebus/conda-envs/statebus_host`，并显式设置项目 `PYTHONPATH`、Run/Model 目录和 Embedding device。脚本只复用现有模型服务，不负责重启 vLLM。
+Studio 后端入口是 [`statebus/studio/app.py`](../../../statebus/studio/app.py)，服务默认监听 `127.0.0.1:8765`。[`scripts/run_statebus_studio.sh`](../../../scripts/run_statebus_studio.sh) 负责选择项目 Python：容器内先加载 `docker/activate_statebus_container.sh`，宿主机使用 `$HOME/statebus/conda-envs/statebus_host`，并显式设置项目 `PYTHONPATH`、Run/Model 目录和 Embedding device。脚本只复用现有模型服务，不负责重启 vLLM。
 
 ```bash
 cd /home/qcrs/statebus/project
@@ -24,9 +24,9 @@ bash scripts/run_statebus_studio.sh
 | `GET /api/v1/runs/{id}/artifacts` | 返回 Run 根目录内受限深度的文件索引 |
 | `POST /api/v1/runs/{id}/cancel` | 取消排队或终止运行进程组 |
 
-健康检查不只看 API 自身。角色 Worker probe 会从临时目录启动当前 Python 并导入 `runtime.llm` 与 `v2.contracts`，用于暴露缺少项目 `PYTHONPATH` 的问题；Embedding probe 检查模型目录和指定 device；vLLM 通过既有 53334 health URL 检查。任何关键项未就绪，`POST /runs` 返回 503，而不是先创建一个必然失败的长任务。
+健康检查不只看 API 自身。角色 Worker probe 会从临时目录启动当前 Python 并导入 `statebus.integrations.llm` 与 `statebus.contracts`，用于暴露缺少项目 `PYTHONPATH` 的问题；Embedding probe 检查模型目录和指定 device；vLLM 通过既有 53334 health URL 检查。任何关键项未就绪，`POST /runs` 返回 503，而不是先创建一个必然失败的长任务。
 
-[`JobManager`](../../../v2/studio/jobs.py) 使用一个 `asyncio.Queue` 和一个 Worker task，确保 GPU/模型型作业串行执行。创建 Run 时生成独立 run ID 和目录，写 `RUN_QUEUED` 事件并持久化 `studio_job.json`。Worker 从队列取出 ID 后，调用 [`build_command()`](../../../v2/studio/recipes.py) 把 recipe 映射为固定 argv。
+[`JobManager`](../../../statebus/studio/jobs.py) 使用一个 `asyncio.Queue` 和一个 Worker task，确保 GPU/模型型作业串行执行。创建 Run 时生成独立 run ID 和目录，写 `RUN_QUEUED` 事件并持久化 `studio_job.json`。Worker 从队列取出 ID 后，调用 [`build_command()`](../../../statebus/studio/recipes.py) 把 recipe 映射为固定 argv。
 
 ```mermaid
 stateDiagram-v2

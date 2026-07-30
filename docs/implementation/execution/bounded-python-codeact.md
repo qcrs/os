@@ -1,6 +1,6 @@
 # 受限 Python CodeAct
 
-[`LlmCodeActRunner`](../../../v2/runtime/llm_codeact.py) 处理的是模型生成的候选 Python。候选源码只有在 CapabilityGrant、静态策略、bubblewrap readiness、隔离执行、输出 schema 和 capability quality validator 全部通过后，才形成 verified artifact。LLM 提供适应性，但不拥有文件权限和可信状态的最终决定权。
+[`LlmCodeActRunner`](../../../statebus/runtime/llm_codeact.py) 处理的是模型生成的候选 Python。候选源码只有在 CapabilityGrant、静态策略、bubblewrap readiness、隔离执行、输出 schema 和 capability quality validator 全部通过后，才形成 verified artifact。LLM 提供适应性，但不拥有文件权限和可信状态的最终决定权。
 
 生成请求 `CodeGenerationRequest` 绑定 task/session/step/attempt、capability、ApprovedPlan hash、Grant hash、输入 Ref、input manifest digest、允许路径、输出 schema、operation semantics、completion criteria、Validator 和 Runtime/model/prompt signature。生成 Prompt 明确告诉模型可导入模块、确切输入文件、唯一输出路径、字段与排序要求，并禁止读取原始数据集路径、网络和环境变量。
 

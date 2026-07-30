@@ -1,6 +1,6 @@
 # 兼容门与真实消费
 
-语义相似只能说明历史对象值得检查，不能说明它可以改变当前任务。[`MemoryIndexStore._compatibility_decision()`](../../../v2/memory/store.py) 在 RRF 之后逐个检查 commit、Runtime、任务合同、schema、lineage 和复用策略，形成 `MemoryCompatibilityDecision`。
+语义相似只能说明历史对象值得检查，不能说明它可以改变当前任务。[`MemoryIndexStore._compatibility_decision()`](../../../statebus/memory/store.py) 在 RRF 之后逐个检查 commit、Runtime、任务合同、schema、lineage 和复用策略，形成 `MemoryCompatibilityDecision`。
 
 ```mermaid
 flowchart TD
@@ -42,5 +42,5 @@ candidate discovered
 
 不兼容拒绝不是任务失败。Runtime 记录 reasons，然后沿当前任务的检索/执行路径重新计算。`recipe_recomputed`、skipped step 和 skipped LLM call 使正向复用与负向拒绝都可以在同一套事件里解释。
 
-消费记录的构造与效果分类主要位于 [`state_consumption.py`](../../../v2/runtime/state_consumption.py) 和 [`adaptive_dispatcher.py`](../../../v2/runtime/adaptive_dispatcher.py)。记忆真实性回归可从 [`test_memory_runtime.py`](../../../tests/v2/test_memory_runtime.py) 与 [`test_adaptive_formal_compare.py`](../../../tests/v2/test_adaptive_formal_compare.py) 阅读。
+消费记录的构造与效果分类主要位于 [`state_consumption.py`](../../../statebus/runtime/state_consumption.py) 和 [`adaptive_dispatcher.py`](../../../statebus/runtime/adaptive_dispatcher.py)。记忆真实性回归可从 [`test_memory_runtime.py`](../../../tests/test_memory_runtime.py) 与 [`test_adaptive_formal_compare.py`](../../../tests/test_adaptive_formal_compare.py) 阅读。
 

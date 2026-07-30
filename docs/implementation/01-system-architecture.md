@@ -1,6 +1,6 @@
 # 系统架构导航
 
-这一组文档说明 StateBus v2 的整体形态。建议先读“总体分层”，再根据关注点进入对象模型或进程与存储拓扑。每篇只保留一个视角，避免把所有模块堆在同一张图里。
+这一组文档说明 StateBus 的整体形态。建议先读“总体分层”，再根据关注点进入对象模型或进程与存储拓扑。每篇只保留一个视角，避免把所有模块堆在同一张图里。
 
 | 文档 | 适合解决的问题 |
 |:--|:--|
@@ -25,4 +25,4 @@ flowchart LR
     F --> G[MemoryCommit]
 ```
 
-当前 v2 的正式控制面是 UDS + typed Protobuf。检索用 `SemanticStateRef`、可选决策门使用的 `LogitStateRef`、文件型 `ExecutionArtifactRef` 与跨任务 `MemoryRef` 是不同合同；KV cache / hidden state handoff 不属于当前正式主链。
+当前 StateBus 的正式控制面是 UDS + typed Protobuf。检索用 `SemanticStateRef`、可选决策门使用的 `LogitStateRef`、文件型 `ExecutionArtifactRef` 与跨任务 `MemoryRef` 是不同合同；KV cache / hidden state handoff 不属于当前正式主链。

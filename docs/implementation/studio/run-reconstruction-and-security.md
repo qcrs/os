@@ -1,6 +1,6 @@
 # Run 事实重建与安全边界
 
-Studio 的动态流程不是独立模拟器。[`task_flow.py`](../../../v2/studio/task_flow.py) 在指定 Run 根目录中发现 case `summary.json` 与 `planner_trace.json`，把 Runtime 已写出的对象重建为 `TaskFlow`。它优先使用完整 summary；任务仍在运行时，也可以从 Planner trace 先展示已批准计划。
+Studio 的动态流程不是独立模拟器。[`task_flow.py`](../../../statebus/studio/task_flow.py) 在指定 Run 根目录中发现 case `summary.json` 与 `planner_trace.json`，把 Runtime 已写出的对象重建为 `TaskFlow`。它优先使用完整 summary；任务仍在运行时，也可以从 Planner trace 先展示已批准计划。
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ task-flow 文件读取始终以已解析 Run root 为边界。候选路径必须
 
 现有 recipe 包括快速运营 IQR、跨期财务三步链、完整效率矩阵、语义状态 holdout、记忆真实性、双任务族连续运行和 25 任务能力覆盖。公开 catalog 只暴露名称、模式、描述、时长、数据集/任务 ID 和 accent，不暴露可编辑命令。
 
-固定证据与实时 Run 彻底分离。`/evidence/current` 读取 [`evidence_snapshot_20260726.json`](../../../v2/studio/data/evidence_snapshot_20260726.json)，Live 页读取 `$STATEBUS_STUDIO_RUNS_DIR/<run-id>`。Run 完成不会覆盖 snapshot；更新正式数字需要独立审计和显式发布步骤。
+固定证据与实时 Run 彻底分离。`/evidence/current` 读取 [`evidence_snapshot_20260726.json`](../../../statebus/studio/data/evidence_snapshot_20260726.json)，Live 页读取 `$STATEBUS_STUDIO_RUNS_DIR/<run-id>`。Run 完成不会覆盖 snapshot；更新正式数字需要独立审计和显式发布步骤。
 
 Studio 也不拥有 vLLM 生命周期。health 只检查指定 URL，启动脚本与 recipe 复用现有服务，不执行 stop/restart。GPU 作业由单 Worker 队列串行化，避免网页并发启动多个正式实验破坏资源与时延口径。
 

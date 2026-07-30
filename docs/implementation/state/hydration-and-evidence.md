@@ -11,7 +11,7 @@ matrix row 3 -> candidate_id=note-7
              -> TextSpanLocator(doc_hash, text_id, start, end)
 ```
 
-[`HydrationRegistry`](../../../v2/provenance/hydration.py) 保存 locator 到 rendered text 的受控映射。数值选择完成后，Runtime 只 hydrate 被选中的 locator，并按角色与预算生成 `RoleHydratedSlice`。这样 Planner、Executor 与 Summarizer 可以看到不同的证据投影，而不必把原始长文档重复放进每个 Prompt。
+[`HydrationRegistry`](../../../statebus/provenance/hydration.py) 保存 locator 到 rendered text 的受控映射。数值选择完成后，Runtime 只 hydrate 被选中的 locator，并按角色与预算生成 `RoleHydratedSlice`。这样 Planner、Executor 与 Summarizer 可以看到不同的证据投影，而不必把原始长文档重复放进每个 Prompt。
 
 ```mermaid
 flowchart LR
@@ -29,7 +29,7 @@ flowchart LR
 
 `CanonicalEvidencePack` 将证据分成五个 bucket：hard facts 保存必须保留的硬事实，structured evidence 保存表格/结构化记录，semantic contexts 保存语义相关上下文，lexical hints 保存检索线索，conflicts 明确保留冲突证据。Pack 同时记录 source document hashes、预算元数据、schema 与自身 hash。
 
-[`DeterministicFanInBuilder`](../../../v2/provenance/hydration.py) 负责把多路 EvidenceCandidate 合并为稳定 EvidencePack。它先按稳定 key 去重，再用确定性 RRF 排序；相同输入不会因 Python 集合遍历顺序改变结果。预算不足时，hard facts 和冲突处理优先级由合同决定，而不是由模型自由删减。
+[`DeterministicFanInBuilder`](../../../statebus/provenance/hydration.py) 负责把多路 EvidenceCandidate 合并为稳定 EvidencePack。它先按稳定 key 去重，再用确定性 RRF 排序；相同输入不会因 Python 集合遍历顺序改变结果。预算不足时，hard facts 和冲突处理优先级由合同决定，而不是由模型自由删减。
 
 Hydration 让“数值选择”和“最终可引用证据”重新汇合：选择过程使用的是非文本矩阵，Executor/Summarizer 最终仍能回到具体表格单元格或文本区间。缺少 Manifest 会让 row index 无法解释；缺少 dense state 和消费回执则只能证明文本筛选，二者都不完整。
 

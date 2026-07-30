@@ -13,11 +13,10 @@ flowchart LR
     FE[React UI] --> API[FastAPI]
     API --> Q[single Worker queue]
     Q --> RECIPE[allowlisted recipe argv]
-    RECIPE --> RUN[real v2 runner]
+    RECIPE --> RUN[real StateBus runner]
     RUN --> FACTS[events / summary / artifacts]
     FACTS --> SSE[SSE + task-flow adapter]
     SSE --> FE
 ```
 
 Evidence Center 读取固定快照；Live Studio 读取临时 Run。实时运行不会自动改写 PPT 和实验报告使用的正式数字。
-

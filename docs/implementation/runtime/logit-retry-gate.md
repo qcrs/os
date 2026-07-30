@@ -32,5 +32,5 @@ Gate 调用仍使用正式控制协议。Runtime 发送 `ExecRequest(operation="
 
 该机制不承诺降低 Token 或时延。真实概率提取需要模型返回 top logprobs，retry 会增加一次角色请求；受控挑战的 AB/BA 校准还会让每个选择阶段执行两次反事实探测。它的价值是把不确定性变成可测、可回执、可拒绝的授权条件，而不是把额外调用包装成性能收益。
 
-主要实现位于 [`runtime/logit_gate.py`](../../../v2/runtime/logit_gate.py)、[`runtime/role_path.py`](../../../v2/runtime/role_path.py)、[`runtime/smoke.py`](../../../v2/runtime/smoke.py) 和 [`control/subprocess_worker.py`](../../../v2/control/subprocess_worker.py)。状态载体见[LogitState](../state/logit-state.md)，受控效果见[挑战实验走读](../walkthrough/logit-retry-challenge.md)。
+主要实现位于 [`runtime/logit_gate.py`](../../../statebus/runtime/logit_gate.py)、[`runtime/role_path.py`](../../../statebus/runtime/role_path.py)、[`runtime/smoke.py`](../../../statebus/runtime/smoke.py) 和 [`control/subprocess_worker.py`](../../../statebus/control/subprocess_worker.py)。状态载体见[LogitState](../state/logit-state.md)，受控效果见[挑战实验走读](../walkthrough/logit-retry-challenge.md)。
 

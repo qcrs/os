@@ -1,6 +1,6 @@
 # Protobuf 与 UDS 控制协议
 
-正式 v2 控制消息定义在 [`messages.py`](../../../v2/control/messages.py) 与 [`statebus_v2.proto`](../../../v2/control/statebus_v2.proto)。消息共享 `ControlHeader`，具体 body 通过 Protobuf `oneof` 选择。Header 固定 trace、task、step、attempt、目标角色、timeout、event type 和 schema version，使每条线路事件都能回到具体执行尝试。
+正式控制消息定义在 [`messages.py`](../../../statebus/control/messages.py) 与 [`statebus_control.proto`](../../../statebus/control/statebus_control.proto)。消息共享 `ControlHeader`，具体 body 通过 Protobuf `oneof` 选择。Header 固定 trace、task、step、attempt、目标角色、timeout、event type 和 schema version，使每条线路事件都能回到具体执行尝试。
 
 | 消息 | 主要字段 | 语义 |
 |:--|:--|:--|
@@ -18,7 +18,7 @@
 
 Logit Gate 复用同一控制合同：`operation="logit_gate_v1"` 的请求只携带 `LogitStateRef` handle 和输入 manifest hash，独立 Worker 返回 consumed ref、producer/consumer PID、gate action/reason、selected/top-1 alias、margin、entropy 与 decision ID。Protobuf 能保存这些结构化字段，但最终是否执行、重查或 fail closed 仍由 Runtime 根据 Gate 模式和尝试次数决定。
 
-[`transport.py`](../../../v2/control/transport.py) 使用 `AF_UNIX/SOCK_STREAM`。每个序列化 payload 前有 4 字节 big-endian 长度，接收端通过 `_recv_exact()` 读取完整帧。长度不一致、body 缺失或 schema 无法解析都会失败，不会把残帧当成合法消息。
+[`transport.py`](../../../statebus/control/transport.py) 使用 `AF_UNIX/SOCK_STREAM`。每个序列化 payload 前有 4 字节 big-endian 长度，接收端通过 `_recv_exact()` 读取完整帧。长度不一致、body 缺失或 schema 无法解析都会失败，不会把残帧当成合法消息。
 
 ```text
 wire frame
@@ -27,7 +27,7 @@ wire frame
 └──────────────────────────┴─────────────────────────────────────┘
 ```
 
-UDS 路径受 `sockaddr_un.sun_path` 长度限制。`effective_unix_socket_path()` 在路径过长时使用原绝对路径的 SHA-256 摘要生成稳定短路径，并在必要时落到用户相关的 `/tmp/statebus-v2-uds-<uid>/`，避免深层 Run 目录导致 bind 失败。
+UDS 路径受 `sockaddr_un.sun_path` 长度限制。`effective_unix_socket_path()` 在路径过长时使用原绝对路径的 SHA-256 摘要生成稳定短路径，并在必要时落到用户相关的 `/tmp/statebus-uds-<uid>/`，避免深层 Run 目录导致 bind 失败。
 
 ```mermaid
 sequenceDiagram
@@ -47,8 +47,8 @@ sequenceDiagram
     D->>U: GarbageCollectCommand
 ```
 
-仓库保留 canonical JSON/text carrier 作为 comparator 和诊断路径，使相同逻辑消息可以比较不同表示的线路载荷。它不是正式 v2 主合同，也不应反向影响 Protobuf 的字段和状态语义。
+仓库保留 canonical JSON/text carrier 作为 comparator 和诊断路径，使相同逻辑消息可以比较不同表示的线路载荷。它不是正式主合同，也不应反向影响 Protobuf 的字段和状态语义。
 
 协议只保证消息可解析和关联，不保证业务正确。`SuccessResult` 返回后仍要检查 Ref、hash、schema、PID/encoder 回执和 Validator。新增消息字段时，应保持控制面“小而可验证”；若字段实际承载完整文档、矩阵或产物，应改为 Ref。
 
-协议测试可从 [`test_control_plane.py`](../../../tests/v2/test_control_plane.py) 和 [`test_runtime_session_and_ledger.py`](../../../tests/v2/test_runtime_session_and_ledger.py) 查找；若具体文件名发生变化，可在 `tests/v2` 中检索 `ExecRequest` 与 `ControlEnvelope`。
+协议测试可从 [`test_control_plane.py`](../../../tests/test_control_plane.py) 和 [`test_runtime_session_and_ledger.py`](../../../tests/test_runtime_session_and_ledger.py) 查找；若具体文件名发生变化，可在 `tests` 中检索 `ExecRequest` 与 `ControlEnvelope`。
