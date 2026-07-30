@@ -140,17 +140,9 @@ class PrefixCacheFeedbackLoop:
         predicted_hit_rate: float,
         observed: VllmPrefixCacheMetrics,
     ) -> None:
-        """Append one (predicted, observed) pair to the sliding window.
-
-        Args:
-            predicted_hit_rate: the hit rate estimated by the StateBus
-                control plane for the just-completed task batch
-                (typically ``NeuralPrefixReuseEstimate.estimated_prefix_cache_hit_rate``).
-            observed: live metrics fetched from the vLLM ``/metrics``
-                endpoint via :func:`~statebus.runtime.vllm_metrics.fetch_vllm_prefix_cache_metrics`.
-        """
-        self._predicted_window.append(float(predicted_hit_rate))
-        self._observed_window.append(float(observed.hit_rate))
+        """Reject service-lifetime gauges; feedback requires a validated delta."""
+        del predicted_hit_rate, observed
+        raise ValueError("prefix feedback requires VllmPrefixCacheCounterDelta")
 
     def record_observation(
         self,
@@ -253,6 +245,10 @@ def record_live(
     before: VllmPrefixCacheMetrics,
     metrics_url: str = "http://127.0.0.1:8000/metrics",
     timeout_s: float = 2.0,
+    exclusive_interval: bool = False,
+    pollution_detected: bool = False,
+    request_count: int = 1,
+    retry_count: int = 0,
 ) -> PrefixCacheFeedbackSnapshot:
     """Fetch post-task metrics and record the task-local counter delta.
 
@@ -280,6 +276,13 @@ def record_live(
         return loop.snapshot()
     loop.record_observation(
         predicted_hit_rate,
-        compute_vllm_prefix_cache_counter_delta(before, after),
+        compute_vllm_prefix_cache_counter_delta(
+            before,
+            after,
+            exclusive_interval=exclusive_interval,
+            pollution_detected=pollution_detected,
+            request_count=request_count,
+            retry_count=retry_count,
+        ),
     )
     return loop.snapshot()

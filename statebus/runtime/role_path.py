@@ -35,11 +35,15 @@ from statebus.runtime.logit_state import (
     ExactChoiceLogitResult,
     extract_exact_choice_logit_state,
 )
+from statebus.runtime.prefix_identity import (
+    SHARED_PREFIX_LAYOUT_VERSION,
+    shared_prefix_envelope,
+)
 from statebus.runtime.semantic_plan import planner_semantic_plan_response_schema
 from statebus.utils import sha256_digest
 
 
-PREFIX_LAYOUT_PLAN_SCHEMA_VERSION = "statebus.prefix_layout_plan.v1"
+PREFIX_LAYOUT_PLAN_SCHEMA_VERSION = "statebus.prefix_layout_plan.v2"
 RENDERED_ROLE_REQUEST_SCHEMA_VERSION = "statebus.rendered_role_request.v1"
 PREFIX_LAYOUT_CLAIM_BOUNDARY = (
     "prompt_prefix_layout_control_plane_only_no_kv_tensor_export"
@@ -565,6 +569,7 @@ class PrefixLayoutPlan:
     removed_text_section_count: int = 0
     removed_evidence_block_count: int = 0
     suffix_payload_keys: tuple[str, ...] = ()
+    prefix_layout_version: str = SHARED_PREFIX_LAYOUT_VERSION
     claim_boundary: str = PREFIX_LAYOUT_CLAIM_BOUNDARY
     schema_version: str = PREFIX_LAYOUT_PLAN_SCHEMA_VERSION
 
@@ -585,6 +590,7 @@ class PrefixLayoutPlan:
             "removed_text_section_count": self.removed_text_section_count,
             "removed_evidence_block_count": self.removed_evidence_block_count,
             "suffix_payload_keys": list(self.suffix_payload_keys),
+            "prefix_layout_version": self.prefix_layout_version,
             "claim_boundary": self.claim_boundary,
             "schema_version": self.schema_version,
         }
@@ -710,11 +716,10 @@ def _prefix_aligned_prompt(
     if not normalized_prefix:
         return role_suffix_prompt
     return (
-        "<statebus-shared-prefix-v1>\n"
-        f"{normalized_prefix}\n"
-        "</statebus-shared-prefix-v1>\n\n"
-        f"[STATEBUS_ROLE_SUFFIX:{role_label}]\n"
-        f"{role_suffix_prompt}"
+        shared_prefix_envelope(normalized_prefix)
+        + f'<statebus-role-suffix-v2 role="{role_label}">\n'
+        + role_suffix_prompt
+        + "</statebus-role-suffix-v2>\n"
     )
 
 
@@ -734,11 +739,11 @@ def _role_suffix_payload_without_shared_prefix(
     suffix_payload = dict(payload)
     if str(suffix_payload.get("e", "")).strip() == normalized_prefix:
         suffix_payload.pop("e", None)
-        suffix_payload["sp"] = {
-            "contract": "statebus-shared-prefix-v1",
-            "contains": "hydrated_evidence",
-            "bytes": len(normalized_prefix.encode("utf-8")),
-        }
+    suffix_payload["sp"] = {
+        "contract": "statebus-shared-prefix-v2",
+        "contains": "hydrated_evidence",
+        "bytes": len(normalized_prefix.encode("utf-8")),
+    }
     return suffix_payload
 
 
@@ -1920,6 +1925,7 @@ class RolePathRunner:
         allow_assisted_correction: bool = True,
         route_hints: tuple[str, ...] = (),
         logit_recheck: bool = False,
+        shared_prefix_text: str = "",
     ) -> ExecutorRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="executor")
         logit_gate_mode = _normalize_logit_gate_mode(self.logit_gate_mode)
@@ -1964,6 +1970,7 @@ class RolePathRunner:
         if preferred_candidate and self.handoff_mode != "text_collaboration":
             payload["pc"] = preferred_candidate
         evidence_text = _compact_text_value(prompt_slice.combined_text())
+        prefix_text = _compact_text_value(shared_prefix_text) or evidence_text
         if evidence_text:
             payload["e"] = evidence_text
         prompt = self._render_prompt(
@@ -1979,11 +1986,11 @@ class RolePathRunner:
                 ("Preferred Candidate", _preferred_candidate_text(preferred_candidate)),
                 ("Hydrated Evidence", evidence_text),
             ),
-            shared_prefix_text=evidence_text,
+            shared_prefix_text=prefix_text,
         )
         if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
             self.prefix_alignment_mode,
-            evidence_text,
+            prefix_text,
         ):
             preferred_candidate_section = (
                 f"Preferred candidate: {_preferred_candidate_text(preferred_candidate)}\n\n"
@@ -2156,6 +2163,7 @@ class RolePathRunner:
         actions_text: str,
         tags: tuple[str, ...] = (),
         reusable_steps: tuple[str, ...] = ("retrieve", "execute"),
+        shared_prefix_text: str = "",
     ) -> SummarizerRoleDecision:
         prompt_slice = prompt_slice or RolePromptSlice(role="summarizer")
         instruction = self._summarizer_instruction()
@@ -2166,6 +2174,7 @@ class RolePathRunner:
             "r": list(reusable_steps),
         }
         evidence_text = _compact_text_value(prompt_slice.combined_text())
+        prefix_text = _compact_text_value(shared_prefix_text) or evidence_text
         compact_actions_text = _compact_text_value(actions_text)
         if evidence_text:
             payload["e"] = evidence_text
@@ -2184,11 +2193,11 @@ class RolePathRunner:
                 ("Hydrated Evidence", evidence_text),
                 ("Action Handoff", compact_actions_text),
             ),
-            shared_prefix_text=evidence_text,
+            shared_prefix_text=prefix_text,
         )
         if self.handoff_mode == "text_collaboration" and not _shared_prefix_enabled(
             self.prefix_alignment_mode,
-            evidence_text,
+            prefix_text,
         ):
             prompt = (
                 "You are the StateBus summarizer role.\n"

@@ -95,7 +95,8 @@ def test_prefix_layout_compiler_deduplicates_shared_evidence_from_suffix() -> No
     )
 
     assert compiled.prompt.count(shared_prefix) == 1
-    assert "<statebus-shared-prefix-v1>" in compiled.prompt
+    assert "<statebus-shared-prefix-v2>" in compiled.prompt
+    assert '<statebus-role-suffix-v2 role="retriever">' in compiled.prompt
     assert compiled.layout_plan.shared_prefix_enabled is True
     assert compiled.layout_plan.removed_payload_evidence is True
     assert compiled.layout_plan.removed_text_section_count == 1
@@ -135,3 +136,4 @@ def test_kv_prefix_reuse_family_builds_cache_friendly_and_hostile_schedule_plans
     assert friendly.affinity_switch_count == 1
     assert hostile.affinity_switch_count == 9
     assert friendly.claim_boundary.endswith("no_kv_tensor_export")
+    assert friendly.dependency_proof_digest

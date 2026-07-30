@@ -271,6 +271,48 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert "stdout" in stdout_payload
 
 
+def test_statebus_smoke_shared_prefix_aligns_executor_and_summarizer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("STATEBUS_PREFIX_ALIGNMENT_MODE", "shared_evidence_prefix")
+    monkeypatch.setenv("STATEBUS_PREFIX_POLICY", "observe")
+    monkeypatch.delenv("STATEBUS_VLLM_TOKENIZER_PATH", raising=False)
+    monkeypatch.delenv("STATEBUS_VLLM_MODEL_PATH", raising=False)
+
+    result = run_smoke(
+        workspace_root=tmp_path / "workspaces",
+        runtime_root=tmp_path / "runtime",
+        socket_path=tmp_path / "control.sock",
+    )
+
+    canonical = result.audit_summary["canonical_shared_prefix"]
+    assert canonical["eligible"] is True
+    assert canonical["participant_roles"] == ["executor", "summarizer"]
+    assert canonical["authorized_common_keys"]
+    exact = result.audit_summary["exact_token_prefix_identity"]
+    assert exact["eligible"] is False
+    assert exact["ineligible_reason"] == "request_tokenizer_path_unavailable"
+
+    role_prompts: dict[str, str] = {}
+    for role in ("executor", "summarizer"):
+        request_path = (
+            Path(result.workspace_root)
+            / "logs"
+            / "rendered_llm_requests"
+            / f"{role}.rendered_request.json"
+        )
+        request = json.loads(request_path.read_text(encoding="utf-8"))["requests"][0]
+        role_prompts[role] = request["messages"][0]["content"]
+        assert role_prompts[role].startswith("<statebus-shared-prefix-v2>\n")
+        assert f'<statebus-role-suffix-v2 role="{role}">' in role_prompts[role]
+
+    shared_envelope_end = "</statebus-shared-prefix-v2>\n\n"
+    executor_prefix = role_prompts["executor"].split(shared_envelope_end, 1)[0]
+    summarizer_prefix = role_prompts["summarizer"].split(shared_envelope_end, 1)[0]
+    assert executor_prefix == summarizer_prefix
+
+
 def test_statebus_smoke_default_driver_profile_keeps_strict_roundtrip() -> None:
     profile = _driver_profile_from_layer_config(SmokeLayerConfig())
     assert profile.persistence_verification_level == "strict_roundtrip"

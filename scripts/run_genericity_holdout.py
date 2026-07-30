@@ -94,10 +94,9 @@ ROLE_REQUEST_POLICY = {
 }
 
 SHARED_PREFIX_ROLES = {"retriever", "executor", "summarizer"}
-SHARED_PREFIX_CONTRACT = "statebus-shared-prefix-v1"
 SHARED_PREFIX_CONTAINS = "hydrated_evidence"
 SHARED_PREFIX_PATTERN = re.compile(
-    r"<statebus-shared-prefix-v1>\r?\n(.*?)\r?\n</statebus-shared-prefix-v1>",
+    r"<(statebus-shared-prefix-v[12])>\r?\n(.*?)\r?\n</\1>",
     flags=re.DOTALL,
 )
 
@@ -129,6 +128,7 @@ def _shared_prefix_metadata_error(
         return {"reason": "metadata_missing"}
     if len(prefix_matches) != 1:
         return {"reason": "shared_prefix_marker_count", "count": len(prefix_matches)}
+    prefix_contract, prefix_text = prefix_matches[0]
 
     metadata = tagged_payload.get("sp")
     if not isinstance(metadata, dict):
@@ -141,14 +141,18 @@ def _shared_prefix_metadata_error(
             "missing": sorted(expected_keys - actual_keys),
             "unexpected": sorted(actual_keys - expected_keys),
         }
-    if metadata.get("contract") != SHARED_PREFIX_CONTRACT:
-        return {"reason": "contract", "observed": metadata.get("contract")}
+    if metadata.get("contract") != prefix_contract:
+        return {
+            "reason": "contract",
+            "observed": metadata.get("contract"),
+            "expected": prefix_contract,
+        }
     if metadata.get("contains") != SHARED_PREFIX_CONTAINS:
         return {"reason": "contains", "observed": metadata.get("contains")}
     byte_count = metadata.get("bytes")
     if type(byte_count) is not int or byte_count < 0:
         return {"reason": "bytes_type_or_range", "observed": byte_count}
-    expected_bytes = len(prefix_matches[0].encode("utf-8"))
+    expected_bytes = len(prefix_text.encode("utf-8"))
     if byte_count != expected_bytes:
         return {
             "reason": "bytes_mismatch",

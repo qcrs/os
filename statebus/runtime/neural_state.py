@@ -7,8 +7,8 @@ from typing import Any, Mapping
 from statebus.utils import sha256_digest
 
 
-NEURAL_PREFIX_IDENTITY_SCHEMA_VERSION = "statebus.neural_prefix_identity.v1"
-NEURAL_STATE_HANDLE_SCHEMA_VERSION = "statebus.neural_state_handle.v1"
+NEURAL_PREFIX_IDENTITY_SCHEMA_VERSION = "statebus.prefix_lineage_identity.v2"
+NEURAL_STATE_HANDLE_SCHEMA_VERSION = "statebus.neural_state_handle.v2"
 NEURAL_PREFIX_REUSE_ESTIMATE_SCHEMA_VERSION = "statebus.neural_prefix_reuse_estimate.v1"
 NEURAL_PREFIX_SCHEDULE_HINT_SCHEMA_VERSION = "statebus.neural_prefix_schedule_hint.v1"
 DEFAULT_PREFIX_CONTRACT_VERSION = "statebus.engine_local_prefix.v1"
@@ -25,7 +25,7 @@ def build_corpus_prefix_hash(
     source_doc_hashes: tuple[str, ...] | list[str],
     evidence_pack_hash: str = "",
     hydrate_manifest_hash: str = "",
-    system_prompt_version: str = "statebus-shared-prefix-v1",
+    system_prompt_version: str = "statebus-shared-prefix-v2",
     prefix_contract_version: str = DEFAULT_PREFIX_CONTRACT_VERSION,
 ) -> str:
     """Stable identity for corpus-level scheduling, not for model-private KV bytes.
@@ -50,7 +50,7 @@ def build_evidence_prefix_hash(
     corpus_prefix_hash: str = "",
     evidence_pack_hash: str = "",
     hydrate_manifest_hash: str = "",
-    system_prompt_version: str = "statebus-shared-prefix-v1",
+    system_prompt_version: str = "statebus-shared-prefix-v2",
     prefix_contract_version: str = DEFAULT_PREFIX_CONTRACT_VERSION,
 ) -> str:
     """Stable identity for an exact shared evidence prefix.
@@ -75,13 +75,13 @@ def build_evidence_prefix_hash(
 
 
 @dataclass(frozen=True)
-class NeuralPrefixIdentity:
+class PrefixLineageIdentity:
     corpus_prefix_hash: str
     evidence_prefix_hash: str
     source_doc_hashes: tuple[str, ...] = ()
     evidence_pack_hash: str = ""
     hydrate_manifest_hash: str = ""
-    system_prompt_version: str = "statebus-shared-prefix-v1"
+    system_prompt_version: str = "statebus-shared-prefix-v2"
     prefix_contract_version: str = DEFAULT_PREFIX_CONTRACT_VERSION
     claim_boundary: str = PREFIX_CONTROL_PLANE_CLAIM_BOUNDARY
     schema_version: str = NEURAL_PREFIX_IDENTITY_SCHEMA_VERSION
@@ -97,17 +97,23 @@ class NeuralPrefixIdentity:
             "prefix_contract_version": self.prefix_contract_version,
             "claim_boundary": self.claim_boundary,
             "schema_version": self.schema_version,
+            "identity_kind": "metadata_lineage_only_not_exact_token_identity",
         }
 
 
-def build_neural_prefix_identity(
+# Read-only compatibility name for archived callers. Exact request identity is
+# represented separately by ExactTokenPrefixIdentity.
+NeuralPrefixIdentity = PrefixLineageIdentity
+
+
+def build_prefix_lineage_identity(
     *,
     source_doc_hashes: tuple[str, ...] | list[str],
     evidence_pack_hash: str = "",
     hydrate_manifest_hash: str = "",
-    system_prompt_version: str = "statebus-shared-prefix-v1",
+    system_prompt_version: str = "statebus-shared-prefix-v2",
     prefix_contract_version: str = DEFAULT_PREFIX_CONTRACT_VERSION,
-) -> NeuralPrefixIdentity:
+) -> PrefixLineageIdentity:
     normalized_doc_hashes = tuple(sorted(str(item) for item in source_doc_hashes if str(item)))
     corpus_prefix_hash = build_corpus_prefix_hash(
         source_doc_hashes=normalized_doc_hashes,
@@ -121,7 +127,7 @@ def build_neural_prefix_identity(
         system_prompt_version=system_prompt_version,
         prefix_contract_version=prefix_contract_version,
     )
-    return NeuralPrefixIdentity(
+    return PrefixLineageIdentity(
         corpus_prefix_hash=corpus_prefix_hash,
         evidence_prefix_hash=evidence_prefix_hash,
         source_doc_hashes=normalized_doc_hashes,
@@ -132,6 +138,10 @@ def build_neural_prefix_identity(
     )
 
 
+# Deprecated constructor retained for the existing benchmark surface.
+build_neural_prefix_identity = build_prefix_lineage_identity
+
+
 @dataclass(frozen=True)
 class NeuralStateHandle:
     engine_id: str
@@ -139,15 +149,18 @@ class NeuralStateHandle:
     prefix_hash: str
     model_id: str
     tokenizer_id: str
+    cache_namespace: str = "default"
+    cache_epoch: str = "unknown"
+    chat_template_sha256: str = "unknown"
+    template_kwargs_sha256: str = "unknown"
     corpus_prefix_hash: str = ""
     evidence_prefix_hash: str = ""
     lifetime_scope: str = DEFAULT_NEURAL_REUSE_SCOPE
     created_step_id: str = ""
     expires_at_ns: int = 0
     prefix_token_count: int = 0
-    cache_hit_count: int = 0
-    last_observed_query_ns: int = 0
-    last_observed_hit_ns: int = 0
+    candidate_handle_seen_count: int = 0
+    last_candidate_handle_seen_ns: int = 0
     estimated_resident_until_ns: int = 0
     eviction_risk: str = "unknown"
     schedule_priority: float = 0.0
@@ -162,15 +175,18 @@ class NeuralStateHandle:
             "prefix_hash": self.prefix_hash,
             "model_id": self.model_id,
             "tokenizer_id": self.tokenizer_id,
+            "cache_namespace": self.cache_namespace,
+            "cache_epoch": self.cache_epoch,
+            "chat_template_sha256": self.chat_template_sha256,
+            "template_kwargs_sha256": self.template_kwargs_sha256,
             "corpus_prefix_hash": self.corpus_prefix_hash,
             "evidence_prefix_hash": self.evidence_prefix_hash,
             "lifetime_scope": self.lifetime_scope,
             "created_step_id": self.created_step_id,
             "expires_at_ns": self.expires_at_ns,
             "prefix_token_count": self.prefix_token_count,
-            "cache_hit_count": self.cache_hit_count,
-            "last_observed_query_ns": self.last_observed_query_ns,
-            "last_observed_hit_ns": self.last_observed_hit_ns,
+            "candidate_handle_seen_count": self.candidate_handle_seen_count,
+            "last_candidate_handle_seen_ns": self.last_candidate_handle_seen_ns,
             "estimated_resident_until_ns": self.estimated_resident_until_ns,
             "eviction_risk": self.eviction_risk,
             "schedule_priority": self.schedule_priority,
@@ -178,6 +194,21 @@ class NeuralStateHandle:
             "metadata": dict(sorted(dict(self.metadata).items())),
             "schema_version": self.schema_version,
         }
+
+    @property
+    def cache_hit_count(self) -> int:
+        """Deprecated alias; seeing a registry handle is not an engine cache hit."""
+        return self.candidate_handle_seen_count
+
+    @property
+    def last_observed_query_ns(self) -> int:
+        """Deprecated alias for the control-plane candidate timestamp."""
+        return self.last_candidate_handle_seen_ns
+
+    @property
+    def last_observed_hit_ns(self) -> int:
+        """Deprecated alias; this handle carries no observed engine hit."""
+        return self.last_candidate_handle_seen_ns
 
     def is_compatible_with(
         self,
@@ -187,6 +218,10 @@ class NeuralStateHandle:
         prefix_hash: str,
         model_id: str,
         tokenizer_id: str,
+        cache_namespace: str | None = None,
+        cache_epoch: str | None = None,
+        chat_template_sha256: str | None = None,
+        template_kwargs_sha256: str | None = None,
     ) -> bool:
         return (
             self.engine_id == engine_id
@@ -194,19 +229,34 @@ class NeuralStateHandle:
             and self.prefix_hash == prefix_hash
             and self.model_id == model_id
             and self.tokenizer_id == tokenizer_id
+            and (cache_namespace is None or self.cache_namespace == cache_namespace)
+            and (cache_epoch is None or self.cache_epoch == cache_epoch)
+            and (
+                chat_template_sha256 is None
+                or self.chat_template_sha256 == chat_template_sha256
+            )
+            and (
+                template_kwargs_sha256 is None
+                or self.template_kwargs_sha256 == template_kwargs_sha256
+            )
         )
 
 
 @dataclass(frozen=True)
 class NeuralPrefixRegistryResult:
     handle: NeuralStateHandle
-    cache_hit: bool
+    candidate_handle_seen: bool
+
+    @property
+    def cache_hit(self) -> bool:
+        """Deprecated alias; this never proves a vLLM prefix-cache hit."""
+        return self.candidate_handle_seen
 
     def canonical_payload(self) -> dict[str, Any]:
         return {
             "handle": self.handle.canonical_payload(),
-            "cache_hit": self.cache_hit,
-            "schema_version": "statebus.neural_prefix_registry_result.v1",
+            "candidate_handle_seen": self.candidate_handle_seen,
+            "schema_version": "statebus.neural_prefix_registry_result.v2",
         }
 
 
@@ -215,7 +265,11 @@ class EngineLocalPrefixRegistry:
     engine_id: str
     model_id: str
     tokenizer_id: str
-    handles: dict[tuple[str, str, str, str, str], NeuralStateHandle] = field(default_factory=dict)
+    cache_namespace: str = "default"
+    cache_epoch: str = "unknown"
+    chat_template_sha256: str = "unknown"
+    template_kwargs_sha256: str = "unknown"
+    handles: dict[tuple[str, ...], NeuralStateHandle] = field(default_factory=dict)
 
     def ensure_handle(
         self,
@@ -228,11 +282,13 @@ class EngineLocalPrefixRegistry:
         created_step_id: str = "",
         expires_at_ns: int = 0,
         observed_ns: int = 0,
+        seen_ns: int = 0,
         estimated_resident_until_ns: int = 0,
         eviction_risk: str = "unknown",
         schedule_priority: float = 0.0,
         metadata: Mapping[str, Any] | None = None,
     ) -> NeuralPrefixRegistryResult:
+        candidate_seen_ns = max(int(seen_ns or observed_ns or 0), 0)
         key = self._key(
             session_id=session_id,
             prefix_hash=prefix_hash,
@@ -251,15 +307,20 @@ class EngineLocalPrefixRegistry:
                 prefix_hash=existing.prefix_hash,
                 model_id=existing.model_id,
                 tokenizer_id=existing.tokenizer_id,
+                cache_namespace=existing.cache_namespace,
+                cache_epoch=existing.cache_epoch,
+                chat_template_sha256=existing.chat_template_sha256,
+                template_kwargs_sha256=existing.template_kwargs_sha256,
                 corpus_prefix_hash=existing.corpus_prefix_hash or corpus_prefix_hash,
                 evidence_prefix_hash=existing.evidence_prefix_hash or evidence_prefix_hash,
                 lifetime_scope=existing.lifetime_scope,
                 created_step_id=existing.created_step_id,
                 expires_at_ns=max(existing.expires_at_ns, int(expires_at_ns or 0)),
                 prefix_token_count=max(existing.prefix_token_count, int(prefix_token_count or 0)),
-                cache_hit_count=existing.cache_hit_count + 1,
-                last_observed_query_ns=observed_ns or existing.last_observed_query_ns,
-                last_observed_hit_ns=observed_ns or existing.last_observed_hit_ns,
+                candidate_handle_seen_count=existing.candidate_handle_seen_count + 1,
+                last_candidate_handle_seen_ns=(
+                    candidate_seen_ns or existing.last_candidate_handle_seen_ns
+                ),
                 estimated_resident_until_ns=(
                     estimated_resident_until_ns or existing.estimated_resident_until_ns
                 ),
@@ -273,26 +334,30 @@ class EngineLocalPrefixRegistry:
                 metadata=merged_metadata,
             )
             self.handles[key] = updated
-            return NeuralPrefixRegistryResult(handle=updated, cache_hit=True)
+            return NeuralPrefixRegistryResult(handle=updated, candidate_handle_seen=True)
         handle = NeuralStateHandle(
             engine_id=self.engine_id,
             session_id=session_id,
             prefix_hash=prefix_hash,
             model_id=self.model_id,
             tokenizer_id=self.tokenizer_id,
+            cache_namespace=self.cache_namespace,
+            cache_epoch=self.cache_epoch,
+            chat_template_sha256=self.chat_template_sha256,
+            template_kwargs_sha256=self.template_kwargs_sha256,
             corpus_prefix_hash=corpus_prefix_hash,
             evidence_prefix_hash=evidence_prefix_hash,
             created_step_id=created_step_id,
             expires_at_ns=expires_at_ns,
             prefix_token_count=max(int(prefix_token_count), 0),
-            last_observed_query_ns=max(int(observed_ns), 0),
+            last_candidate_handle_seen_ns=candidate_seen_ns,
             estimated_resident_until_ns=max(int(estimated_resident_until_ns), 0),
             eviction_risk=eviction_risk,
             schedule_priority=float(schedule_priority),
             metadata=metadata or {},
         )
         self.handles[key] = handle
-        return NeuralPrefixRegistryResult(handle=handle, cache_hit=False)
+        return NeuralPrefixRegistryResult(handle=handle, candidate_handle_seen=False)
 
     def lookup(
         self,
@@ -312,7 +377,7 @@ class EngineLocalPrefixRegistry:
         )
 
     def invalidate_session(self, session_id: str) -> int:
-        keys = [key for key in self.handles if key[1] == session_id]
+        keys = [key for key in self.handles if key[3] == session_id]
         for key in keys:
             del self.handles[key]
         return len(keys)
@@ -322,9 +387,13 @@ class EngineLocalPrefixRegistry:
             "engine_id": self.engine_id,
             "model_id": self.model_id,
             "tokenizer_id": self.tokenizer_id,
+            "cache_namespace": self.cache_namespace,
+            "cache_epoch": self.cache_epoch,
+            "chat_template_sha256": self.chat_template_sha256,
+            "template_kwargs_sha256": self.template_kwargs_sha256,
             "handle_count": len(self.handles),
             "handles": [handle.canonical_payload() for _, handle in sorted(self.handles.items())],
-            "schema_version": "statebus.engine_local_prefix_registry.v1",
+            "schema_version": "statebus.engine_local_prefix_registry.v2",
         }
 
     def _key(
@@ -334,8 +403,18 @@ class EngineLocalPrefixRegistry:
         prefix_hash: str,
         model_id: str,
         tokenizer_id: str,
-    ) -> tuple[str, str, str, str, str]:
-        return (self.engine_id, session_id, prefix_hash, model_id, tokenizer_id)
+    ) -> tuple[str, ...]:
+        return (
+            self.engine_id,
+            self.cache_namespace,
+            self.cache_epoch,
+            session_id,
+            prefix_hash,
+            model_id,
+            tokenizer_id,
+            self.chat_template_sha256,
+            self.template_kwargs_sha256,
+        )
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,7 @@ from statebus.runtime.lineage import TaskLineageView, build_task_lineage_view
 from statebus.runtime.neural_state import (
     EngineLocalPrefixRegistry,
     NeuralPrefixIdentity,
+    PrefixLineageIdentity,
     NeuralPrefixReuseEstimate,
     NeuralPrefixRegistryResult,
     NeuralStateHandle,
@@ -18,9 +19,16 @@ from statebus.runtime.neural_state import (
     build_corpus_prefix_hash,
     build_evidence_prefix_hash,
     build_neural_prefix_identity,
+    build_prefix_lineage_identity,
     estimate_engine_local_prefix_reuse,
     order_prefix_schedule_hints,
     order_prefix_schedule_hints_by_task_ids,
+)
+from statebus.runtime.prefix_identity import (
+    SHARED_PREFIX_LAYOUT_VERSION,
+    build_canonical_shared_evidence_prefix,
+    compile_exact_token_prefix_identity,
+    shared_prefix_envelope,
 )
 from statebus.runtime.kv_budget import (
     KVCacheFootprintEstimate,
@@ -32,6 +40,7 @@ from statebus.runtime.kv_budget import (
 )
 from statebus.runtime.vllm_metrics import (
     VllmPrefixCacheCounterDelta,
+    VllmPrefixCacheMetricSeries,
     VllmPrefixCacheMetrics,
     compute_vllm_prefix_cache_counter_delta,
     fetch_vllm_prefix_cache_metrics,
@@ -134,6 +143,7 @@ __all__ = [
     "EngineLocalPrefixRegistry",
     "NeuralPrefixReuseEstimate",
     "NeuralPrefixIdentity",
+    "PrefixLineageIdentity",
     "NeuralPrefixRegistryResult",
     "NeuralStateHandle",
     "PrefixReuseScheduleHint",
@@ -175,14 +185,18 @@ __all__ = [
     "TelemetryEvent",
     "VllmPrefixCacheMetrics",
     "VllmPrefixCacheCounterDelta",
+    "VllmPrefixCacheMetricSeries",
     "build_extended_output_manifest",
     "build_corpus_prefix_hash",
     "build_evidence_prefix_hash",
     "build_neural_prefix_identity",
+    "build_prefix_lineage_identity",
+    "build_canonical_shared_evidence_prefix",
     "build_task_lineage_view",
     "capture_execution_logs",
     "count_exact_replay_candidates",
     "compute_vllm_prefix_cache_counter_delta",
+    "compile_exact_token_prefix_identity",
     "evidence_pack_replay_hash",
     "evidence_execution_input_replay_hash",
     "estimate_engine_local_prefix_reuse",
@@ -197,6 +211,8 @@ __all__ = [
     "load_kv_cache_model_profile",
     "planner_handoff_replay_hash",
     "parse_vllm_prefix_cache_metrics",
+    "shared_prefix_envelope",
+    "SHARED_PREFIX_LAYOUT_VERSION",
     "runtime_signature_json",
     "runtime_signature_payload",
     "runtime_preflight",

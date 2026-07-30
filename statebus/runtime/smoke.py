@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 import json
 import os
@@ -36,6 +36,7 @@ from statebus.control import (
     frame_control_message,
 )
 from statebus.contracts import (
+    CanonicalPrefixEntry,
     CanonicalTaskSpec,
     CompatibilityVerdict,
     HydrationAccountingAudit,
@@ -111,13 +112,15 @@ from statebus.runtime import (
     TelemetryEvent,
     WorkspaceManager,
     best_visible_candidate,
-    build_neural_prefix_identity,
+    build_canonical_shared_evidence_prefix,
+    build_prefix_lineage_identity,
     constrain_visible_candidates,
     build_extended_output_manifest,
     capture_runtime_signature,
     capture_runtime_signature_manifest_bundle,
     build_task_lineage_view,
     compute_vllm_prefix_cache_counter_delta,
+    compile_exact_token_prefix_identity,
     capture_execution_logs,
     evidence_pack_replay_hash,
     evidence_execution_input_replay_hash,
@@ -519,6 +522,98 @@ def _fetch_vllm_prefix_metrics_or_none(metrics_url: str):
         return None
 
 
+@lru_cache(maxsize=2)
+def _load_prefix_tokenizer(tokenizer_path: str):
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=True)
+
+
+def _runtime_exact_prefix_identity_payload(
+    *,
+    role_path_runner: RolePathRunner,
+    shared_prefix_text: str,
+) -> dict[str, object]:
+    policy = os.getenv("STATEBUS_PREFIX_POLICY", "off").strip().lower()
+    if policy not in {"observe", "on"}:
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "prefix_policy_off",
+        }
+    alignment_mode = str(
+        getattr(role_path_runner, "prefix_alignment_mode", "independent")
+    ).strip().lower()
+    if alignment_mode != "shared_evidence_prefix":
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "shared_prefix_layout_disabled",
+        }
+    if not shared_prefix_text:
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "canonical_shared_prefix_ineligible",
+        }
+    audit_reader = getattr(role_path_runner, "rendered_request_audit_payload", None)
+    if not callable(audit_reader):
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "rendered_request_audit_unavailable",
+        }
+
+    prompts: dict[str, str] = {}
+    for role in ("executor", "summarizer"):
+        requests = list(audit_reader(role, include_content=True).get("requests", []))
+        if len(requests) != 1:
+            return {
+                "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+                "eligible": False,
+                "ineligible_reason": f"{role}_request_count_not_one",
+            }
+        messages = list(requests[0].get("messages", []))
+        if len(messages) != 1 or str(messages[0].get("role", "")) != "user":
+            return {
+                "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+                "eligible": False,
+                "ineligible_reason": f"{role}_message_shape_mismatch",
+            }
+        prompts[role] = str(messages[0].get("content", ""))
+
+    tokenizer_path = (
+        os.getenv("STATEBUS_VLLM_TOKENIZER_PATH", "").strip()
+        or os.getenv("STATEBUS_VLLM_MODEL_PATH", "").strip()
+    )
+    if not tokenizer_path or not Path(tokenizer_path).exists():
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": "request_tokenizer_path_unavailable",
+        }
+    try:
+        tokenizer = _load_prefix_tokenizer(tokenizer_path)
+    except Exception as exc:
+        return {
+            "schema_version": "statebus.exact_token_prefix_identity_unavailable.v1",
+            "eligible": False,
+            "ineligible_reason": f"request_tokenizer_load_failed:{type(exc).__name__}",
+        }
+    identity = compile_exact_token_prefix_identity(
+        tokenizer,
+        prompts,
+        shared_prefix_text=shared_prefix_text,
+        block_size=max(int(os.getenv("STATEBUS_PREFIX_BLOCK_SIZE", "16") or "16"), 1),
+        min_full_blocks=max(
+            int(os.getenv("STATEBUS_PREFIX_MIN_FULL_BLOCKS", "1") or "1"),
+            1,
+        ),
+        chat_template_kwargs={"enable_thinking": False},
+    )
+    return identity.canonical_payload()
+
+
 def _empty_role_hydrated_slice(role: str) -> RoleHydratedSlice:
     return RoleHydratedSlice(
         role=role,
@@ -547,15 +642,6 @@ def _role_non_external_prompt_visible_bytes(slice_: RoleHydratedSlice) -> int:
 
 def _prompt_scaffolding_bytes(*, prompt_bytes: int, slice_: RoleHydratedSlice) -> int:
     return max(prompt_bytes - _role_total_prompt_visible_bytes(slice_), 0)
-
-
-def _neural_prefix_consumer_roles(role_hydrated_slices: dict[str, RoleHydratedSlice]) -> tuple[str, ...]:
-    roles: list[str] = []
-    for role in ("executor", "summarizer"):
-        slice_ = role_hydrated_slices.get(role)
-        if slice_ is not None and _role_external_evidence_bytes(slice_) > 0:
-            roles.append(role)
-    return tuple(roles)
 
 
 def _role_hydration_audit_payload(slice_: RoleHydratedSlice) -> dict[str, object]:
@@ -1214,7 +1300,7 @@ def _build_semantic_state_ref(
     bundle: RetrievalBundle,
     materialized_state: MaterializedStateHandle,
 ) -> SemanticStateRef:
-    prefix_identity = build_neural_prefix_identity(
+    prefix_identity = build_prefix_lineage_identity(
         source_doc_hashes=bundle.selected_doc_hashes,
         evidence_pack_hash=bundle.evidence_pack.pack_hash,
         hydrate_manifest_hash=bundle.hydrate_manifest.manifest_hash,
@@ -1234,7 +1320,7 @@ def _build_semantic_state_ref(
             "shared_memory_name": materialized_state.shared_memory_name,
             "corpus_prefix_hash": prefix_identity.corpus_prefix_hash,
             "evidence_prefix_hash": prefix_identity.evidence_prefix_hash,
-            "neural_prefix_identity": prefix_identity.canonical_payload(),
+            "prefix_lineage_identity": prefix_identity.canonical_payload(),
             "neural_reuse_scope": "task_session",
             "neural_reuse_mode": "shared_prefix_role_suffix",
             "neural_reuse_claim_boundary": "engine_local_prefix_reuse_estimate_only_no_kv_tensor_export",
@@ -1332,17 +1418,70 @@ def _stable_keys_from_bucket_items(items: tuple[object, ...]) -> tuple[str, ...]
     keys: list[str] = []
     for item in items:
         locator = getattr(item, "locator", None)
-        if locator is None:
-            continue
-        if hasattr(locator, "canonical_text_id"):
-            keys.append(
-                f"text:{locator.source_doc_hash}:{locator.canonical_text_id}:{locator.start_char}:{locator.end_char}"
-            )
-        elif hasattr(locator, "table_id"):
-            keys.append(
-                f"table:{locator.source_doc_hash}:{locator.table_id}:{locator.sheet_name}:{locator.row_idx}:{locator.col_idx}"
-            )
+        stable_key = _stable_key_from_locator(locator)
+        if stable_key:
+            keys.append(stable_key)
     return tuple(dict.fromkeys(keys))
+
+
+def _stable_key_from_locator(locator: object | None) -> str:
+    if locator is None:
+        return ""
+    if hasattr(locator, "canonical_text_id"):
+        return (
+            f"text:{locator.source_doc_hash}:{locator.canonical_text_id}:"
+            f"{locator.start_char}:{locator.end_char}"
+        )
+    if hasattr(locator, "table_id"):
+        return (
+            f"table:{locator.source_doc_hash}:{locator.table_id}:{locator.sheet_name}:"
+            f"{locator.row_idx}:{locator.col_idx}"
+        )
+    if hasattr(locator, "fragment_id"):
+        return (
+            f"fragment:{locator.source_doc_hash}:{locator.fragment_id}:"
+            f"{getattr(locator, 'page_no', None)}"
+        )
+    return ""
+
+
+def _canonical_prefix_entry(item: object) -> CanonicalPrefixEntry | None:
+    locator = getattr(item, "locator", None)
+    stable_key = _stable_key_from_locator(locator)
+    rendered_text = str(getattr(item, "rendered_text", "")).strip()
+    if not stable_key or locator is None or not rendered_text:
+        return None
+    locator_payload = asdict(locator)
+    return CanonicalPrefixEntry(
+        stable_key=stable_key,
+        source_doc_hash=str(locator_payload.get("source_doc_hash", "")),
+        locator_kind=str(locator_payload.get("locator_type", type(locator).__name__)),
+        locator_fields=locator_payload,
+        evidence_kind=str(getattr(item, "bucket", "evidence")),
+        rendered_text=rendered_text,
+    )
+
+
+def _build_runtime_shared_prefix(bundle: RetrievalBundle):
+    executor_entries = tuple(
+        entry
+        for item in bundle.evidence_pack.hard_facts
+        if (entry := _canonical_prefix_entry(item)) is not None
+    )
+    summarizer_entries = tuple(
+        entry
+        for item in (
+            *bundle.evidence_pack.hard_facts,
+            *bundle.evidence_pack.semantic_contexts,
+        )
+        if (entry := _canonical_prefix_entry(item)) is not None
+    )
+    return build_canonical_shared_evidence_prefix(
+        {
+            "executor": executor_entries,
+            "summarizer": summarizer_entries,
+        }
+    )
 
 
 def _build_role_hydrated_slices(bundle: RetrievalBundle) -> dict[str, RoleHydratedSlice]:
@@ -2365,6 +2504,12 @@ def run_smoke(
     # after cross-process selection so every downstream role sees the selected set.
     role_hydrated_slices = _build_role_hydrated_slices(retrieval)
     role_hydrated_slices["planner"] = _empty_role_hydrated_slice("planner")
+    canonical_shared_prefix = _build_runtime_shared_prefix(retrieval)
+    runtime_shared_prefix_text = (
+        canonical_shared_prefix.rendered_text
+        if canonical_shared_prefix.eligible
+        else ""
+    )
 
     runtime_stage_metrics: dict[str, float] = {}
     runtime_stage_metrics["codeact_execution_stage_ms"] = 0.0
@@ -2882,6 +3027,7 @@ def run_smoke(
             route_hints=(compiler_result.canonical_task_spec.intent_op, top_candidate.route)
             if route_hints_enabled
             else (),
+            shared_prefix_text=runtime_shared_prefix_text,
         )
         if logit_gate_mode is not LogitGateMode.OFF:
             logit_audit_path = layout.logs_dir / "logit_gate.json"
@@ -2934,6 +3080,7 @@ def run_smoke(
                             if route_hints_enabled
                             else (),
                             logit_recheck=True,
+                            shared_prefix_text=runtime_shared_prefix_text,
                         )
                         retry_extraction = retry_decision.logit_exact_result
                         retry_surface = retry_decision.logit_candidate_surface
@@ -3116,6 +3263,7 @@ def run_smoke(
             prompt_slice=summarizer_prompt_slice,
             actions_text=actions_text,
             tags=tuple(compiler_result.canonical_task_spec.required_tools),
+            shared_prefix_text=runtime_shared_prefix_text,
         )
         summary_suffix = summarizer_decision.summary_text or summary_hint
         output_payload = dict(candidate_output_payload)
@@ -3801,7 +3949,7 @@ def run_smoke(
     )
     task_metrics["logit_sequence_length"] = float(executor_decision.logit_sequence_length)
     task_metrics["logit_decision_entropy"] = float(executor_decision.logit_decision_entropy)
-    neural_prefix_identity = build_neural_prefix_identity(
+    neural_prefix_identity = build_prefix_lineage_identity(
         source_doc_hashes=retrieval.selected_doc_hashes,
         evidence_pack_hash=retrieval.evidence_pack.pack_hash,
         hydrate_manifest_hash=retrieval.hydrate_manifest.manifest_hash,
@@ -3810,8 +3958,20 @@ def run_smoke(
         prefix_hash=neural_prefix_identity.evidence_prefix_hash,
         corpus_prefix_hash=neural_prefix_identity.corpus_prefix_hash,
         evidence_prefix_hash=neural_prefix_identity.evidence_prefix_hash,
-        shared_prefix_bytes=retrieval.selected_evidence_bytes,
-        consumer_roles=_neural_prefix_consumer_roles(role_hydrated_slices),
+        shared_prefix_bytes=(
+            len(runtime_shared_prefix_text.encode("utf-8"))
+            if canonical_shared_prefix.eligible
+            else 0
+        ),
+        consumer_roles=(
+            canonical_shared_prefix.participant_roles
+            if canonical_shared_prefix.eligible
+            else ()
+        ),
+    )
+    exact_prefix_identity_payload = _runtime_exact_prefix_identity_payload(
+        role_path_runner=role_path_runner,
+        shared_prefix_text=runtime_shared_prefix_text,
     )
     task_metrics.update(neural_prefix_estimate.metrics())
     if prefix_metrics_before is not None and prefix_metrics_after is not None:
@@ -3921,7 +4081,7 @@ def run_smoke(
     prefix_cache_observation_path.write_text(
         stable_json_dumps(
             {
-                "schema_version": "statebus.task_prefix_cache_observation.v1",
+                "schema_version": "statebus.task_prefix_cache_observation.v2",
                 "claim_boundary": (
                     "engine_local_prefix_reuse_observation_only_no_hidden_state_or_kv_tensor_transfer"
                 ),
@@ -3937,6 +4097,9 @@ def run_smoke(
                 ),
                 "counter_delta": prefix_counter_delta.canonical_payload(),
                 "control_plane_estimate": neural_prefix_estimate.canonical_payload(),
+                "prefix_lineage_identity": neural_prefix_identity.canonical_payload(),
+                "canonical_shared_prefix": canonical_shared_prefix.canonical_payload(),
+                "exact_token_prefix_identity": exact_prefix_identity_payload,
             }
         )
         + "\n",
@@ -4303,7 +4466,9 @@ def run_smoke(
             "drop_count": sum(1 for hint in retrieval.pruning_profile.pruning_hints if not hint.keep_in_budget),
             "estimated_kv_tokens_saved": retrieval.pruning_profile.estimated_kv_tokens_saved,
         },
-        "neural_prefix_identity": neural_prefix_identity.canonical_payload(),
+        "prefix_lineage_identity": neural_prefix_identity.canonical_payload(),
+        "canonical_shared_prefix": canonical_shared_prefix.canonical_payload(),
+        "exact_token_prefix_identity": exact_prefix_identity_payload,
         "neural_prefix_reuse": neural_prefix_estimate.canonical_payload(),
         "artifact": {
             "replay_ready": finalized_artifact.replay_ready,
