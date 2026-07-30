@@ -536,7 +536,7 @@ def test_formal_schema_normalizer_does_not_clear_unknown_retriever_ref() -> None
 
 
 def test_formal_compare_runner_is_new_adaptive_path_not_old_suite_wrapper() -> None:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     source = (root / "statebus/benchmark/adaptive_formal_mainline.py").read_text(
         encoding="utf-8"
     )
@@ -557,7 +557,7 @@ def test_formal_compare_runner_is_new_adaptive_path_not_old_suite_wrapper() -> N
 
 
 def test_formal_runtime_uses_generic_authority_with_declared_operation_contract() -> None:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     source = (root / "statebus/benchmark/adaptive_formal_mainline.py").read_text(
         encoding="utf-8"
     )
