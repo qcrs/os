@@ -4,6 +4,10 @@
 
 状态：最小主链接入完成；Qwen3-32B 物理卡 1 单任务单次 A/B 完成；原 latent 53334 服务已恢复。
 
+后续 10 个不同任务、先 baseline 后 KV 的正式扩展结果见
+`docs/reports/engine_local_kv_mainline_10round_results_20260730.md`。该报告应作为主链接入性能结论的
+优先读取对象；本文保留为第一次单任务接入证据。
+
 ## 1. 结论
 
 本轮已经把独立 KV mechanism probe 接入完整 StateBus smoke 主链：

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 import os
@@ -26,11 +26,46 @@ DEFAULT_DOCUMENT = (
 )
 
 
+@dataclass(frozen=True)
+class MainlineTask:
+    task_id: str
+    company: str
+    target_entity: str
+    dataset_id: str
+    document: Path
+    metric: str
+    request_text: str
+    expected_facts: dict[str, str]
+
+
+def default_task(document: Path = DEFAULT_DOCUMENT) -> MainlineTask:
+    return MainlineTask(
+        task_id="kv-mainline-nova-4k",
+        company="nova",
+        target_entity="Nova Retail Logistics",
+        dataset_id="nova_retail_ops_2026",
+        document=document,
+        metric="revenue_musd",
+        request_text=(
+            "Analyze the Nova operating report and extract revenue_musd for "
+            "2026Q1, 2026Q2, and 2026Q3 through the complete StateBus role chain."
+        ),
+        expected_facts={
+            "metric_name": "revenue_musd",
+            "value_q1": "142",
+            "value_q2": "156",
+            "value_q3": "169",
+        },
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run one serialized full-mainline full-replay/KV-continuation A/B pair."
     )
-    parser.add_argument("--mode", choices=("ab", "full_replay", "continuation"), default="ab")
+    parser.add_argument(
+        "--mode", choices=("ab", "full_replay", "continuation"), default="ab"
+    )
     parser.add_argument("--base-url", default="http://127.0.0.1:53334")
     parser.add_argument("--model", default="qwen3-32b")
     parser.add_argument("--parent-tokens", type=int, default=4096)
@@ -50,7 +85,9 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     _configure_environment(args)
     modes = ("full_replay", "continuation") if args.mode == "ab" else (args.mode,)
-    records = [_run_lane(mode, output_dir=output_dir, document=args.document) for mode in modes]
+    records = [
+        _run_lane(mode, output_dir=output_dir, document=args.document) for mode in modes
+    ]
     summary = _summarize(run_id=run_id, output_dir=output_dir, records=records)
     (output_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
@@ -101,12 +138,25 @@ def _configure_environment(args: argparse.Namespace) -> None:
 
 
 def _run_lane(mode: str, *, output_dir: Path, document: Path) -> dict[str, object]:
+    return _run_task_lane(
+        mode,
+        output_dir=output_dir,
+        task=default_task(document),
+    )
+
+
+def _run_task_lane(
+    mode: str,
+    *,
+    output_dir: Path,
+    task: MainlineTask,
+) -> dict[str, object]:
     os.environ["STATEBUS_ENGINE_LOCAL_KV_MODE"] = mode
     lane_root = output_dir / mode
     spec = CanonicalTaskSpec(
         task_family="continuous_long_doc_table_analysis",
         intent_op="extract_metric_series_generic",
-        target_entities=("Nova Retail Logistics",),
+        target_entities=(task.target_entity,),
         time_scope="2026Q1-2026Q3",
         required_outputs=(
             "metric_series_ref",
@@ -117,9 +167,9 @@ def _run_lane(mode: str, *, output_dir: Path, document: Path) -> dict[str, objec
         ),
         required_tools=("table_retriever",),
         arguments={
-            "dataset_id": "nova_retail_ops_2026",
-            "document_path": str(document.resolve()),
-            "metric": "revenue_musd",
+            "dataset_id": task.dataset_id,
+            "document_path": str(task.document.resolve()),
+            "metric": task.metric,
             "quarters": ["2026Q1", "2026Q2", "2026Q3"],
         },
     )
@@ -128,12 +178,9 @@ def _run_lane(mode: str, *, output_dir: Path, document: Path) -> dict[str, objec
         workspace_root=lane_root / "workspace",
         runtime_root=lane_root / "runtime",
         socket_path=lane_root / "runtime.sock",
-        request_text=(
-            "Analyze the Nova operating report and extract revenue_musd for "
-            "2026Q1, 2026Q2, and 2026Q3 through the complete StateBus role chain."
-        ),
+        request_text=task.request_text,
         canonical_task_spec=spec,
-        task_id="kv-mainline-nova-4k",
+        task_id=task.task_id,
         layer_config=SmokeLayerConfig(
             role_path_mode="local_vllm",
             embedding_mode="deterministic",
@@ -142,12 +189,7 @@ def _run_lane(mode: str, *, output_dir: Path, document: Path) -> dict[str, objec
             multi_attempt_enabled=False,
             force_first_attempt_trap=False,
         ),
-        expected_facts={
-            "metric_name": "revenue_musd",
-            "value_q1": "142",
-            "value_q2": "156",
-            "value_q3": "169",
-        },
+        expected_facts=task.expected_facts,
     )
     mainline_wall_ms = (time.perf_counter_ns() - started_ns) / 1_000_000.0
     audit_path = lane_root / "runtime" / "engine_local_kv_mainline.json"
@@ -156,14 +198,25 @@ def _run_lane(mode: str, *, output_dir: Path, document: Path) -> dict[str, objec
     consumer = audit["consumer_calls"][-1]
     producer_telemetry = dict(producer.get("telemetry") or {})
     consumer_telemetry = dict(consumer.get("telemetry") or {})
-    output_payload = json.loads(Path(result.output_artifact_path).read_text(encoding="utf-8"))
+    output_payload = json.loads(
+        Path(result.output_artifact_path).read_text(encoding="utf-8")
+    )
     record = {
+        "task_id": task.task_id,
+        "company": task.company,
+        "target_entity": task.target_entity,
+        "dataset_id": task.dataset_id,
+        "document_path": str(task.document.resolve()),
+        "metric": task.metric,
+        "request_text": task.request_text,
+        "expected_facts": dict(task.expected_facts),
         "mode": mode,
         "mainline_wall_ms": mainline_wall_ms,
         "runtime_root": result.runtime_root,
         "output_artifact_path": result.output_artifact_path,
         "output_artifact_hash": result.output_artifact_hash,
         "output_payload_digest": sha256_digest(output_payload),
+        "output_payload": output_payload,
         "quality_floor": asdict(result.quality_floor),
         "quality_floor_pass": result.quality_floor.quality_floor_pass,
         "session_state": result.session_state,
@@ -171,18 +224,40 @@ def _run_lane(mode: str, *, output_dir: Path, document: Path) -> dict[str, objec
         "completed_workflow_step_count": result.completed_workflow_step_count,
         "attempt_count": result.attempt_count,
         "consumer_lane": consumer["lane"],
+        "producer_logical_prompt_tokens": producer["logical_prompt_tokens"],
+        "producer_suffix_tokens": producer["suffix_tokens"],
+        "producer_computed_prefill_tokens": int(
+            producer_telemetry.get("computed_prefill_tokens", 0)
+        ),
+        "producer_generated_tokens": int(producer_telemetry.get("generated_tokens", 0)),
+        "producer_client_wall_ms": float(producer["client_wall_ms"]),
+        "producer_server_first_output_ms": float(
+            producer_telemetry.get("server_first_output_ms", 0.0)
+        ),
+        "producer_server_wall_ms": float(producer_telemetry.get("server_wall_ms", 0.0)),
         "parent_tokens": consumer["parent_tokens"],
         "suffix_tokens": consumer["suffix_tokens"],
         "logical_prompt_tokens": consumer["logical_prompt_tokens"],
-        "computed_prefill_tokens": int(consumer_telemetry.get("computed_prefill_tokens", 0)),
+        "computed_prefill_tokens": int(
+            consumer_telemetry.get("computed_prefill_tokens", 0)
+        ),
         "inherited_kv_tokens": int(consumer_telemetry.get("inherited_kv_tokens", 0)),
         "consumer_ttft_ms": float(consumer["client_ttft_ms"]),
         "consumer_wall_ms": float(consumer["client_wall_ms"]),
+        "consumer_server_first_output_ms": float(
+            consumer_telemetry.get("server_first_output_ms", 0.0)
+        ),
+        "consumer_server_wall_ms": float(consumer_telemetry.get("server_wall_ms", 0.0)),
+        "consumer_generated_tokens": int(consumer_telemetry.get("generated_tokens", 0)),
         "consumer_request_bytes": int(consumer["api_request_bytes"]),
+        "producer_consumer_wall_ms": (
+            float(producer["client_wall_ms"]) + float(consumer["client_wall_ms"])
+        ),
         "consumer_output_token_digest": consumer["output_token_digest"],
         "consumer_output_text_digest": consumer["output_text_digest"],
         "producer_output_token_digest": producer["output_token_digest"],
         "producer_logical_token_digest": producer["logical_token_digest"],
+        "producer_parent_token_digest": producer["parent_token_digest"],
         "consumer_logical_token_digest": consumer["logical_token_digest"],
         "kv_store_ms": float(producer_telemetry.get("kv_store_ms", 0.0)),
         "kv_load_ms": float(consumer_telemetry.get("kv_load_ms", 0.0)),
@@ -257,7 +332,8 @@ def _summarize(
         "output_artifact_hash_equal": (
             baseline["output_artifact_hash"] == continuation["output_artifact_hash"]
         ),
-        "quality_floor_equal": baseline["quality_floor"] == continuation["quality_floor"],
+        "quality_floor_equal": baseline["quality_floor"]
+        == continuation["quality_floor"],
     }
     return summary
 

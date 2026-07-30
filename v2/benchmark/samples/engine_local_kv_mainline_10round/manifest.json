@@ -1,0 +1,31 @@
+{
+  "schema_version": "statebus.engine_local_kv_cases.v1",
+  "block_size": 16,
+  "max_model_len": 8192,
+  "max_logical_sequence_tokens": 7168,
+  "producer_max_tokens": 96,
+  "consumer_max_tokens": 128,
+  "cases": [
+    {
+      "case_id": "kv-mainline-4k-orion",
+      "target_parent_tokens": 4096,
+      "source_documents": [
+        "../engine_local_kv_continuation/orion_factory_ops_report_2026.md"
+      ],
+      "task_instruction": "Extract the requested Orion quarterly operating metric through the complete StateBus role chain.",
+      "required_keys": [
+        "metric_name",
+        "value_q1",
+        "value_q2",
+        "value_q3"
+      ],
+      "expected_json": {
+        "metric_name": "revenue_musd",
+        "value_q1": 184,
+        "value_q2": 197,
+        "value_q3": 211
+      },
+      "keyword_expectations": {}
+    }
+  ]
+}
