@@ -8,10 +8,13 @@ from typing import Callable
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
+    ApprovedPlanBundle,
     CanonicalTaskSpec,
     IdentityContractError,
+    PlanNormalizationReceipt,
     PlanPolicyReport,
     PlanProposal,
+    PlanProvenanceError,
     RefStatus,
     ReplayClass,
     RuntimeIdentity,
@@ -99,6 +102,12 @@ class AdaptivePlannerAssemblyRecord:
     policy_repair_used: bool
     hard_rejection: bool
     rejection_category: str = ""
+    initial_policy_approved: bool = False
+    fallback_used: bool = False
+    semantic_replan_required: bool = False
+    fallback_proposal_hash: str = ""
+    normalization_receipt: PlanNormalizationReceipt | None = None
+    approved_plan_bundle: ApprovedPlanBundle | None = None
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -112,6 +121,16 @@ class AdaptivePlannerAssemblyRecord:
             "policy_repair_used": self.policy_repair_used,
             "hard_rejection": self.hard_rejection,
             "rejection_category": self.rejection_category,
+            "initial_policy_approved": self.initial_policy_approved,
+            "fallback_used": self.fallback_used,
+            "semantic_replan_required": self.semantic_replan_required,
+            "fallback_proposal_hash": self.fallback_proposal_hash,
+            "normalization_receipt_hash": (
+                "" if self.normalization_receipt is None else self.normalization_receipt.receipt_hash
+            ),
+            "approved_plan_bundle_hash": (
+                "" if self.approved_plan_bundle is None else self.approved_plan_bundle.bundle_hash
+            ),
         }
 
 
@@ -199,6 +218,7 @@ class AdaptiveMainlineResult:
     state_cleanup_completed: bool
     memory_commit_decision: AdaptiveMemoryCommitDecision
     runtime_identity: RuntimeIdentity | None = None
+    approved_plan_bundle: ApprovedPlanBundle | None = None
 
     @property
     def completed(self) -> bool:
@@ -328,13 +348,10 @@ class AdaptiveMainlineRunner:
             proposal_hash=proposal.proposal_hash,
             planner_model_id=request.planner_model_id or proposal.model_id,
             planner_raw_output_hash=request.planner_raw_output_hash or proposal.raw_output_hash,
-            proposal_valid=not planner_record.policy_repair_used,
-            policy_rejected=planner_record.policy_repair_used,
-            repair_used=planner_record.policy_repair_used,
-            fallback_used=(
-                request.fallback_proposal is not None
-                and approved_plan.source_proposal_id == request.fallback_proposal.proposal_id
-            ),
+            proposal_valid=planner_record.initial_policy_approved,
+            policy_rejected=not planner_record.initial_policy_approved,
+            repair_used=(planner_record.schema_repair_used or planner_record.policy_repair_used),
+            fallback_used=planner_record.fallback_used,
             dispatcher=AdaptiveCapabilityDispatcher(context=context),
             layer_name=request.layer_name,
             runtime_identity=runtime_identity,
@@ -454,6 +471,7 @@ class AdaptiveMainlineRunner:
             state_cleanup_completed=state_cleanup_completed,
             memory_commit_decision=memory_commit_decision,
             runtime_identity=runtime_identity,
+            approved_plan_bundle=planner_record.approved_plan_bundle,
         )
 
     @staticmethod
@@ -461,6 +479,8 @@ class AdaptiveMainlineRunner:
         request: AdaptiveMainlineRequest,
     ) -> tuple[PlanProposal, ApprovedPlan, AdaptivePlannerAssemblyRecord]:
         raw_proposal = request.propose_plan()
+        if not isinstance(raw_proposal, PlanProposal):
+            raise AdaptiveMainlineError("planner_must_return_plan_proposal")
         if raw_proposal.task_id != request.task_id:
             raise AdaptiveMainlineError("planner_proposal_task_id_mismatch")
         validator = PlanPolicyValidator(
@@ -474,40 +494,154 @@ class AdaptiveMainlineRunner:
         )
         effective = raw_proposal
         normalization_fields: tuple[str, ...] = ()
+        normalization_source = raw_proposal
+        normalization_effective = raw_proposal
+
+        def apply_normalizer(
+            proposal: PlanProposal,
+        ) -> tuple[PlanProposal, tuple[str, ...]]:
+            if request.normalize_plan is None:
+                return proposal, ()
+            normalized_result = request.normalize_plan(proposal)
+            if isinstance(normalized_result, PlanProposal):
+                candidate, fields = normalized_result, ()
+            elif (
+                isinstance(normalized_result, tuple)
+                and len(normalized_result) == 2
+                and isinstance(normalized_result[0], PlanProposal)
+            ):
+                candidate = normalized_result[0]
+                fields = tuple(str(item) for item in normalized_result[1])
+            else:
+                raise AdaptiveMainlineError("plan_normalizer_contract_invalid")
+            if not validator.is_mechanically_equivalent(
+                proposal,
+                candidate,
+                registry=request.registry,
+                runtime_task_id=request.task_id,
+                task_contract_hash=request.canonical_task_spec_hash,
+            ):
+                # A mechanical normalizer may complete typed edges, but it may
+                # never alter the semantic graph.  A changed graph needs a new
+                # PlanProposal and a fresh policy decision.
+                raise AdaptiveMainlineError(
+                    "planner_normalization_semantic_change_requires_new_proposal"
+                )
+            return candidate, tuple(dict.fromkeys(item for item in fields if item))
+
         if request.normalize_plan is not None:
-            effective, normalization_fields = request.normalize_plan(raw_proposal)
+            effective, normalization_fields = apply_normalizer(raw_proposal)
+            normalization_effective = effective
+        try:
+            normalization_receipt = PlanNormalizationReceipt.from_proposals(
+                normalization_source,
+                normalization_effective,
+                changed_fields=normalization_fields,
+                runtime_task_id=request.task_id,
+                task_contract_hash=request.canonical_task_spec_hash,
+                task_identity=request.runtime_identity,
+                registry=request.registry,
+            )
+        except PlanProvenanceError as exc:
+            raise AdaptiveMainlineError(f"plan_normalization_provenance_invalid:{exc}") from exc
+        normalization_fields = normalization_receipt.changed_fields
         outcome = validator.validate(
             effective,
             request.envelope,
             available_input_refs=request.available_input_refs,
         )
         policy_repair_used = False
+        semantic_replan_required = False
+        fallback_used = False
+        fallback_proposal_hash = ""
         if outcome.approved_plan is None and request.repair_plan is not None:
             repaired = request.repair_plan(effective, outcome.report, normalization_fields)
+            if repaired is not None and not isinstance(repaired, PlanProposal):
+                raise AdaptiveMainlineError("plan_repair_contract_invalid")
             if repaired is not None:
-                effective = repaired
-                repair_fields: tuple[str, ...] = ()
-                if request.normalize_plan is not None:
-                    effective, repair_fields = request.normalize_plan(repaired)
-                normalization_fields = (*normalization_fields, *repair_fields)
-                outcome = validator.validate(
+                if not validator.is_semantically_equivalent(
                     effective,
-                    request.envelope,
-                    available_input_refs=request.available_input_refs,
-                )
-                policy_repair_used = True
+                    repaired,
+                    runtime_task_id=request.task_id,
+                    task_contract_hash=request.canonical_task_spec_hash,
+                    dependency_order_sensitive=True,
+                ):
+                    # Keep the rejection/fallback path available, but never
+                    # record a semantic graph replacement as a schema repair.
+                    semantic_replan_required = True
+                else:
+                    repaired_effective, repair_fields = apply_normalizer(repaired)
+                    if not validator.is_mechanically_equivalent(
+                        effective,
+                        repaired_effective,
+                        registry=request.registry,
+                        runtime_task_id=request.task_id,
+                        task_contract_hash=request.canonical_task_spec_hash,
+                    ):
+                        semantic_replan_required = True
+                    else:
+                        effective = repaired_effective
+                        normalization_fields = tuple(dict.fromkeys((*normalization_fields, *repair_fields)))
+                        outcome = validator.validate(
+                            effective,
+                            request.envelope,
+                            available_input_refs=request.available_input_refs,
+                        )
+                        policy_repair_used = outcome.approved_plan is not None
+                        if policy_repair_used:
+                            normalization_effective = effective
+                            try:
+                                normalization_receipt = PlanNormalizationReceipt.from_proposals(
+                                    normalization_source,
+                                    normalization_effective,
+                                    changed_fields=normalization_fields,
+                                    runtime_task_id=request.task_id,
+                                    task_contract_hash=request.canonical_task_spec_hash,
+                                    task_identity=request.runtime_identity,
+                                    registry=request.registry,
+                                )
+                            except PlanProvenanceError as exc:
+                                raise AdaptiveMainlineError(
+                                    f"plan_normalization_provenance_invalid:{exc}"
+                                ) from exc
+                            normalization_fields = normalization_receipt.changed_fields
         if outcome.approved_plan is None and request.fallback_proposal is not None:
+            if not isinstance(request.fallback_proposal, PlanProposal):
+                raise AdaptiveMainlineError("fallback_proposal_contract_invalid")
             effective = request.fallback_proposal
-            outcome = validator.validate(
-                effective,
+            # Keep fallback selection in the policy boundary so the final
+            # report remains explicitly ``FALLBACK_FIXED_PLAN`` instead of
+            # looking like an ordinary approved replacement.
+            outcome = validator.fallback(
+                raw_proposal,
                 request.envelope,
+                effective,
                 available_input_refs=request.available_input_refs,
             )
+            fallback_used = outcome.approved_plan is not None
+            fallback_proposal_hash = effective.proposal_hash if fallback_used else ""
         if outcome.approved_plan is None:
             category = _planner_rejection_category(outcome.report)
+            if semantic_replan_required:
+                category = "semantic_replan_required"
             raise AdaptiveMainlineError(f"planner_hard_rejection:{category}")
         if request.validate_approved_plan is not None:
             request.validate_approved_plan(outcome.approved_plan)
+        try:
+            bundle = ApprovedPlanBundle.from_parts(
+                runtime_task_id=request.task_id,
+                task_contract_hash=request.canonical_task_spec_hash,
+                source_proposal=raw_proposal,
+                effective_proposal=effective,
+                normalization_receipt=normalization_receipt,
+                plan_policy_report=outcome.report,
+                approved_plan=outcome.approved_plan,
+                logical_capability_registry_digest=request.registry.digest,
+                fallback_used=fallback_used,
+                fallback_proposal_hash=fallback_proposal_hash,
+            )
+        except PlanProvenanceError as exc:
+            raise AdaptiveMainlineError(f"approved_plan_provenance_invalid:{exc}") from exc
         planner_record = AdaptivePlannerAssemblyRecord(
             initial_proposal_hash=raw_proposal.proposal_hash,
             effective_proposal_hash=effective.proposal_hash,
@@ -518,6 +652,12 @@ class AdaptiveMainlineRunner:
             schema_repair_fields=tuple(normalization_fields),
             policy_repair_used=policy_repair_used,
             hard_rejection=False,
+            initial_policy_approved=raw_outcome.approved_plan is not None,
+            fallback_used=fallback_used,
+            semantic_replan_required=semantic_replan_required,
+            fallback_proposal_hash=fallback_proposal_hash,
+            normalization_receipt=normalization_receipt,
+            approved_plan_bundle=bundle,
         )
         return effective, outcome.approved_plan, planner_record
 
@@ -735,6 +875,21 @@ class AdaptiveMainlineRunner:
             "runtime_identity_hash": runtime_identity.identity_hash,
             "workflow_mode": request.envelope.workflow_mode.value,
             "planner": planner.canonical_payload(),
+            "plan_normalization_receipt": (
+                None
+                if planner.normalization_receipt is None
+                else planner.normalization_receipt.canonical_payload()
+            ),
+            "approved_plan_bundle": (
+                None
+                if planner.approved_plan_bundle is None
+                else planner.approved_plan_bundle.canonical_payload()
+            ),
+            "approved_plan_bundle_hash": (
+                ""
+                if planner.approved_plan_bundle is None
+                else planner.approved_plan_bundle.bundle_hash
+            ),
             "runtime_completed": runtime.completed,
             "runtime_session_hash": sha256_digest(runtime.session.canonical_payload()),
             "dispatches": [dispatch.__dict__ for dispatch in runtime.dispatches],

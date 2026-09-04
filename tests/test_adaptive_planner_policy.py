@@ -84,6 +84,37 @@ def test_plan_policy_enforces_controller_declared_role_cardinality() -> None:
     assert issue.field_path == "steps.role.summarizer"
 
 
+def test_plan_policy_minimum_is_derived_from_envelope_topology() -> None:
+    registry, envelope = _registry_and_envelope()
+    single_step_envelope = replace(
+        envelope,
+        role_cardinality={"executor": (1, 1)},
+        max_plan_steps=1,
+        max_retrieval_steps=0,
+        allowed_output_contracts=("statebus.metric_series.v1",),
+    )
+    single_step = PlanProposal(
+        proposal_id="single-executor-plan",
+        task_id=single_step_envelope.task_id,
+        steps=(
+            PlanStepProposal(
+                step_id="execute",
+                role="executor",
+                capability_id="extract_metric_series_v1",
+                goal="extract the approved metric series",
+                output_contract_version="statebus.metric_series.v1",
+                completion_criteria={"min_rows": 1},
+            ),
+        ),
+        final_output_contract_version="statebus.metric_series.v1",
+    )
+
+    outcome = PlanPolicyValidator(registry).validate(single_step, single_step_envelope)
+
+    assert outcome.approved_plan is not None
+    assert outcome.report.status.value == "approved"
+
+
 def test_plan_policy_rejects_cycle_and_unauthorized_capability_before_dispatch() -> None:
     registry, envelope = _registry_and_envelope()
     proposal = _legal_proposal()
@@ -179,6 +210,115 @@ def test_plan_policy_applies_only_one_repair_then_registered_fallback() -> None:
         malformed, envelope, repair=lambda report: reordered,
     )
     assert reordered_blocked.approved_plan is None
+
+
+def test_shared_semantic_equivalence_rejects_authority_mutations() -> None:
+    registry, _ = _registry_and_envelope()
+    proposal = _legal_proposal()
+    mutations = (
+        replace(
+            proposal,
+            steps=(
+                replace(
+                    proposal.steps[0],
+                    capability_id="retrieve_table_evidence_v1",
+                ),
+                *proposal.steps[1:],
+            ),
+        ),
+        replace(
+            proposal,
+            steps=(
+                replace(proposal.steps[0], goal="retrieve different evidence"),
+                *proposal.steps[1:],
+            ),
+        ),
+        replace(
+            proposal,
+            steps=(*proposal.steps, replace(proposal.steps[-1], step_id="extra")),
+        ),
+        replace(proposal, requested_memory_policy="assist"),
+        replace(
+            proposal,
+            final_output_contract_version="statebus.metric_series.v1",
+        ),
+    )
+
+    validator = PlanPolicyValidator(registry)
+    for candidate in mutations:
+        assert not validator.is_semantically_equivalent(proposal, candidate)
+        assert not validator.is_mechanically_equivalent(
+            proposal,
+            candidate,
+            registry=registry,
+        )
+
+
+def test_plan_policy_rejects_invalid_role_cardinality_and_dependency_cycle() -> None:
+    registry, envelope = _registry_and_envelope()
+    legal = _legal_proposal()
+    invalid_cardinality = replace(
+        envelope,
+        role_cardinality={
+            "retriever": (1, 1),
+            "executor": (2, 2),
+            "summarizer": (1, 1),
+        },
+    )
+    cardinality_outcome = PlanPolicyValidator(registry).validate(
+        legal,
+        invalid_cardinality,
+    )
+    assert cardinality_outcome.approved_plan is None
+    assert "role_cardinality_violation" in {
+        issue.error_code for issue in cardinality_outcome.report.issues
+    }
+
+    cyclic = replace(
+        legal,
+        steps=(
+            replace(legal.steps[0], depends_on=("report",)),
+            legal.steps[1],
+            legal.steps[2],
+        ),
+    )
+    cycle_outcome = PlanPolicyValidator(registry).validate(cyclic, envelope)
+    assert cycle_outcome.approved_plan is None
+    assert "dependency_cycle" in {
+        issue.error_code for issue in cycle_outcome.report.issues
+    }
+
+
+def test_plan_policy_rejects_invalid_final_and_step_output_contracts() -> None:
+    registry, envelope = _registry_and_envelope()
+    legal = _legal_proposal()
+    invalid_final = replace(
+        legal,
+        final_output_contract_version="statebus.unapproved_output.v1",
+    )
+    final_outcome = PlanPolicyValidator(registry).validate(invalid_final, envelope)
+
+    assert final_outcome.approved_plan is None
+    assert "output_contract_not_allowed" in {
+        issue.error_code for issue in final_outcome.report.issues
+    }
+
+    invalid_step = replace(
+        legal,
+        steps=(
+            replace(
+                legal.steps[0],
+                output_contract_version="statebus.metric_series.v1",
+            ),
+            *legal.steps[1:],
+        ),
+    )
+    step_outcome = PlanPolicyValidator(registry).validate(invalid_step, envelope)
+
+    assert step_outcome.approved_plan is None
+    assert "capability_output_contract_mismatch" in {
+        issue.error_code for issue in step_outcome.report.issues
+    }
 
 
 def test_plan_policy_rejects_unknown_memory_policy() -> None:

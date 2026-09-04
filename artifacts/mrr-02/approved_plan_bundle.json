@@ -1,0 +1,316 @@
+{
+  "approved_plan_hash": "5fdd1fe1feeb87cd102495ca139e1d32b2bb327cae6866f60406f0bff8a7f964",
+  "branch": "feat/mrr-02-plan-provenance",
+  "bundle": {
+    "approved_plan": {
+      "approved_plan_id": "approved-static-fixed-retriever-executor-summarizer-v1-mrr-02-evidence-task",
+      "capability_registry_digest": "3a702915bb851985e7750d40409f90a687195901eb90abc414f51d63f1d300c5",
+      "final_output_contract_version": "statebus.cited_report.v1",
+      "normalized_fields": [],
+      "plan_policy_report_hash": "4f0b15f7f5cc79d7a9f9747809bdf5e332074269044ae8636bee6e9e4deba4a7",
+      "requested_memory_policy": "none",
+      "schema_version": "statebus.approved_plan.v1",
+      "source_proposal_id": "static-fixed-retriever-executor-summarizer-v1-mrr-02-evidence-task",
+      "steps": [
+        {
+          "capability_id": "retrieve_semantic_evidence_v1",
+          "completion_criteria": {
+            "min_locator_count": 1
+          },
+          "depends_on": [],
+          "goal": "retrieve registered evidence",
+          "input_ref_ids": [],
+          "input_ref_kinds": [],
+          "on_failure": "request_replan",
+          "output_contract_version": "statebus.evidence_pack.v2",
+          "required_input_fields": [],
+          "role": "retriever",
+          "step_id": "retrieve"
+        },
+        {
+          "capability_id": "extract_metric_series_v1",
+          "completion_criteria": {
+            "min_rows": 1
+          },
+          "depends_on": [
+            "retrieve"
+          ],
+          "goal": "execute the approved metric transformation",
+          "input_ref_ids": [
+            "retrieve-output"
+          ],
+          "input_ref_kinds": [
+            "canonical_evidence_pack"
+          ],
+          "on_failure": "fallback_deterministic",
+          "output_contract_version": "statebus.metric_series.v1",
+          "required_input_fields": [],
+          "role": "executor",
+          "step_id": "execute"
+        },
+        {
+          "capability_id": "compose_cited_report_v1",
+          "completion_criteria": {
+            "min_locator_count": 1
+          },
+          "depends_on": [
+            "retrieve",
+            "execute"
+          ],
+          "goal": "compose the final cited report",
+          "input_ref_ids": [
+            "retrieve-output",
+            "execute-output"
+          ],
+          "input_ref_kinds": [
+            "canonical_evidence_pack",
+            "execution_artifact"
+          ],
+          "on_failure": "fail",
+          "output_contract_version": "statebus.cited_report.v1",
+          "required_input_fields": [],
+          "role": "summarizer",
+          "step_id": "summarize"
+        }
+      ],
+      "task_id": "mrr-02-evidence-task",
+      "total_attempt_budget": 8
+    },
+    "approved_plan_hash": "5fdd1fe1feeb87cd102495ca139e1d32b2bb327cae6866f60406f0bff8a7f964",
+    "effective_proposal": {
+      "completion_tokens": 0,
+      "final_output_contract_version": "statebus.cited_report.v1",
+      "latency_ms": 0.0,
+      "model_id": "statebus.runtime.static_role_recipe",
+      "planner_notes": "static role recipe fixed-retriever-executor-summarizer@v1",
+      "prompt_tokens": 0,
+      "proposal_id": "static-fixed-retriever-executor-summarizer-v1-mrr-02-evidence-task",
+      "raw_output_hash": "539bb96bef8a2a8fc674698bc2021b0142fd872f2e59dac537e9d32344e97a2e",
+      "requested_memory_policy": "none",
+      "schema_version": "statebus.plan_proposal.v1",
+      "steps": [
+        {
+          "capability_id": "retrieve_semantic_evidence_v1",
+          "completion_criteria": {
+            "min_locator_count": 1
+          },
+          "depends_on": [],
+          "goal": "retrieve registered evidence",
+          "input_ref_ids": [],
+          "input_ref_kinds": [],
+          "on_failure": "request_replan",
+          "output_contract_version": "statebus.evidence_pack.v2",
+          "required_input_fields": [],
+          "role": "retriever",
+          "step_id": "retrieve"
+        },
+        {
+          "capability_id": "extract_metric_series_v1",
+          "completion_criteria": {
+            "min_rows": 1
+          },
+          "depends_on": [
+            "retrieve"
+          ],
+          "goal": "execute the approved metric transformation",
+          "input_ref_ids": [
+            "retrieve-output"
+          ],
+          "input_ref_kinds": [
+            "canonical_evidence_pack"
+          ],
+          "on_failure": "fallback_deterministic",
+          "output_contract_version": "statebus.metric_series.v1",
+          "required_input_fields": [],
+          "role": "executor",
+          "step_id": "execute"
+        },
+        {
+          "capability_id": "compose_cited_report_v1",
+          "completion_criteria": {
+            "min_locator_count": 1
+          },
+          "depends_on": [
+            "retrieve",
+            "execute"
+          ],
+          "goal": "compose the final cited report",
+          "input_ref_ids": [
+            "retrieve-output",
+            "execute-output"
+          ],
+          "input_ref_kinds": [
+            "canonical_evidence_pack",
+            "execution_artifact"
+          ],
+          "on_failure": "fail",
+          "output_contract_version": "statebus.cited_report.v1",
+          "required_input_fields": [],
+          "role": "summarizer",
+          "step_id": "summarize"
+        }
+      ],
+      "task_id": "mrr-02-evidence-task"
+    },
+    "effective_proposal_hash": "a6d2f6b4bafe2945cf0087f28c0d4f349139e38014efddc22510dcfda58af905",
+    "fallback_proposal_hash": "",
+    "fallback_used": false,
+    "logical_capability_registry_digest": "3a702915bb851985e7750d40409f90a687195901eb90abc414f51d63f1d300c5",
+    "normalization_receipt": {
+      "after_semantic_hash": "e7d5b403c266519186d5427bbb5a648410b49191b351a0851fe2312b504e4de4",
+      "before_semantic_hash": "e7d5b403c266519186d5427bbb5a648410b49191b351a0851fe2312b504e4de4",
+      "changed_fields": [],
+      "effective_proposal_hash": "a6d2f6b4bafe2945cf0087f28c0d4f349139e38014efddc22510dcfda58af905",
+      "normalization_class": "mechanical_binding",
+      "normalization_id": "normalization-a6d2f6b4bafe2945-a6d2f6b4bafe2945",
+      "normalizer_id": "statebus.runtime.compile_required_input_wiring",
+      "normalizer_version": "v1",
+      "runtime_task_id": "mrr-02-evidence-task",
+      "schema_version": "statebus.plan_normalization_receipt.v1",
+      "source_proposal_hash": "a6d2f6b4bafe2945cf0087f28c0d4f349139e38014efddc22510dcfda58af905",
+      "task_contract_hash": "sha256:mrr-02-evidence-contract"
+    },
+    "normalization_receipt_hash": "99a9fedf157f857895b419123d837ca700793df5f8cf45afb27d1c809b7263c1",
+    "plan_policy_report": {
+      "issues": [],
+      "normalized_fields": [],
+      "policy_version": "statebus.plan_policy.v1",
+      "proposal_id": "static-fixed-retriever-executor-summarizer-v1-mrr-02-evidence-task",
+      "schema_version": "statebus.plan_policy_report.v1",
+      "status": "approved"
+    },
+    "plan_policy_report_hash": "4f0b15f7f5cc79d7a9f9747809bdf5e332074269044ae8636bee6e9e4deba4a7",
+    "recipe_id": "fixed-retriever-executor-summarizer",
+    "recipe_version": "v1",
+    "runtime_task_id": "mrr-02-evidence-task",
+    "schema_version": "statebus.approved_plan_bundle.v1",
+    "source_proposal": {
+      "completion_tokens": 0,
+      "final_output_contract_version": "statebus.cited_report.v1",
+      "latency_ms": 0.0,
+      "model_id": "statebus.runtime.static_role_recipe",
+      "planner_notes": "static role recipe fixed-retriever-executor-summarizer@v1",
+      "prompt_tokens": 0,
+      "proposal_id": "static-fixed-retriever-executor-summarizer-v1-mrr-02-evidence-task",
+      "raw_output_hash": "539bb96bef8a2a8fc674698bc2021b0142fd872f2e59dac537e9d32344e97a2e",
+      "requested_memory_policy": "none",
+      "schema_version": "statebus.plan_proposal.v1",
+      "steps": [
+        {
+          "capability_id": "retrieve_semantic_evidence_v1",
+          "completion_criteria": {
+            "min_locator_count": 1
+          },
+          "depends_on": [],
+          "goal": "retrieve registered evidence",
+          "input_ref_ids": [],
+          "input_ref_kinds": [],
+          "on_failure": "request_replan",
+          "output_contract_version": "statebus.evidence_pack.v2",
+          "required_input_fields": [],
+          "role": "retriever",
+          "step_id": "retrieve"
+        },
+        {
+          "capability_id": "extract_metric_series_v1",
+          "completion_criteria": {
+            "min_rows": 1
+          },
+          "depends_on": [
+            "retrieve"
+          ],
+          "goal": "execute the approved metric transformation",
+          "input_ref_ids": [
+            "retrieve-output"
+          ],
+          "input_ref_kinds": [
+            "canonical_evidence_pack"
+          ],
+          "on_failure": "fallback_deterministic",
+          "output_contract_version": "statebus.metric_series.v1",
+          "required_input_fields": [],
+          "role": "executor",
+          "step_id": "execute"
+        },
+        {
+          "capability_id": "compose_cited_report_v1",
+          "completion_criteria": {
+            "min_locator_count": 1
+          },
+          "depends_on": [
+            "retrieve",
+            "execute"
+          ],
+          "goal": "compose the final cited report",
+          "input_ref_ids": [
+            "retrieve-output",
+            "execute-output"
+          ],
+          "input_ref_kinds": [
+            "canonical_evidence_pack",
+            "execution_artifact"
+          ],
+          "on_failure": "fail",
+          "output_contract_version": "statebus.cited_report.v1",
+          "required_input_fields": [],
+          "role": "summarizer",
+          "step_id": "summarize"
+        }
+      ],
+      "task_id": "mrr-02-evidence-task"
+    },
+    "source_proposal_hash": "a6d2f6b4bafe2945cf0087f28c0d4f349139e38014efddc22510dcfda58af905",
+    "task_contract_hash": "sha256:mrr-02-evidence-contract"
+  },
+  "bundle_hash": "0c2d90c9a49478e90d7a4b356473fea76542bd931964d4f93db9e2c396d0dd68",
+  "effective_proposal_hash": "a6d2f6b4bafe2945cf0087f28c0d4f349139e38014efddc22510dcfda58af905",
+  "evidence_schema": "statebus.mrr02.evidence.v1",
+  "expected_mrr01_checkpoint": "8b6646137fca4a4d79dfe3e67945122045c11d32",
+  "fallback_used": false,
+  "hash_links_verified": true,
+  "logical_capability_registry_digest": "3a702915bb851985e7750d40409f90a687195901eb90abc414f51d63f1d300c5",
+  "normalization_receipt_hash": "99a9fedf157f857895b419123d837ca700793df5f8cf45afb27d1c809b7263c1",
+  "plan_policy_report_hash": "4f0b15f7f5cc79d7a9f9747809bdf5e332074269044ae8636bee6e9e4deba4a7",
+  "runtime_identity": {
+    "external_case_id": "mrr-02-evidence-case",
+    "run_id": "mrr-02-evidence-run",
+    "runtime_task_id": "mrr-02-evidence-task",
+    "schema_version": "statebus.runtime_identity.v1",
+    "session_id": "mrr-02-evidence-session",
+    "task_contract": {
+      "contract_hash": "sha256:mrr-02-evidence-contract",
+      "contract_kind": "canonical_task_spec",
+      "input_asset_set_hash": "",
+      "legacy_canonical_task_spec_hash": "sha256:mrr-02-evidence-contract",
+      "public_context_hash": "",
+      "schema_version": "statebus.task_contract_identity.v1"
+    },
+    "trace_id": "mrr-02-evidence-trace"
+  },
+  "runtime_task_id": "mrr-02-evidence-task",
+  "semantic_replan_fixture": {
+    "new_approved_plan": true,
+    "new_bundle": true,
+    "new_policy_report": true,
+    "new_proposal": true,
+    "replanned_approved_plan_hash": "4116370d9fd442eb5f8f4420b3b0e5fba6e5699cfc37b3a4ad5d035c37ac27e2",
+    "replanned_bundle_hash": "ab6c9ae13a9b555fa81dbd9b91648bd4cb7c9082b44116eefc5a87c3632ab452",
+    "replanned_policy_report_hash": "c3abe73eef95710fa378475a3caa228adbf8f828d7e61869b2bf76c7c3c1ee8c",
+    "replanned_proposal_hash": "7d71e2a378c7c9ac1b8ec1634c5a29b87652eabe6516ced0cfc79f0f14d173ae",
+    "replanned_proposal_id": "static-fixed-retriever-executor-summarizer-v2-mrr-02-evidence-task",
+    "replanned_recipe_version": "v2",
+    "source_approved_plan_hash": "5fdd1fe1feeb87cd102495ca139e1d32b2bb327cae6866f60406f0bff8a7f964",
+    "source_bundle_hash": "0c2d90c9a49478e90d7a4b356473fea76542bd931964d4f93db9e2c396d0dd68",
+    "source_policy_report_hash": "4f0b15f7f5cc79d7a9f9747809bdf5e332074269044ae8636bee6e9e4deba4a7",
+    "source_proposal_hash": "a6d2f6b4bafe2945cf0087f28c0d4f349139e38014efddc22510dcfda58af905",
+    "source_proposal_id": "static-fixed-retriever-executor-summarizer-v1-mrr-02-evidence-task",
+    "source_recipe_version": "v1"
+  },
+  "source_proposal_hash": "a6d2f6b4bafe2945cf0087f28c0d4f349139e38014efddc22510dcfda58af905",
+  "source_sha": "8b6646137fca4a4d79dfe3e67945122045c11d32",
+  "stability_fixture": {
+    "same_inputs_same_bundle_hash": true,
+    "same_inputs_same_bundle_payload": true
+  },
+  "task_contract_hash": "sha256:mrr-02-evidence-contract"
+}

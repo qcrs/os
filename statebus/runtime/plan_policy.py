@@ -13,6 +13,8 @@ from statebus.contracts import (
     PlanProposal,
     PlanStepProposal,
     RiskClass,
+    mechanical_semantic_plan_hash,
+    semantic_plan_hash,
 )
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.utils import sha256_digest
@@ -68,7 +70,13 @@ class PlanPolicyValidator:
             issues.append(self._issue("invalid_schema_version", field_path="schema_version", value=proposal.schema_version))
         if proposal.task_id != envelope.task_id:
             issues.append(self._issue("task_id_mismatch", field_path="task_id", value=proposal.task_id))
-        if not 2 <= len(proposal.steps) <= envelope.max_plan_steps:
+        declared_minimum_steps = sum(
+            max(0, bounds[0])
+            for bounds in envelope.role_cardinality.values()
+            if len(bounds) == 2
+        )
+        minimum_plan_steps = max(1, declared_minimum_steps)
+        if not minimum_plan_steps <= len(proposal.steps) <= envelope.max_plan_steps:
             issues.append(self._issue("step_budget_exceeded", field_path="steps", value=str(len(proposal.steps))))
         if proposal.final_output_contract_version not in envelope.allowed_output_contracts:
             issues.append(self._issue("output_contract_not_allowed", field_path="final_output_contract_version", value=proposal.final_output_contract_version))
@@ -191,6 +199,71 @@ class PlanPolicyValidator:
         return initial
 
     @staticmethod
+    def is_semantically_equivalent(
+        original: PlanProposal,
+        candidate: PlanProposal,
+        *,
+        runtime_task_id: str | None = None,
+        task_contract_hash: str = "",
+        dependency_order_sensitive: bool = True,
+    ) -> bool:
+        """Compare proposals through the shared semantic-plan hash predicate.
+
+        Proposal IDs, planner notes, model telemetry, and schema versions are
+        not semantic.  Repair callers retain dependency order sensitivity for
+        backwards compatibility, while the controller-owned mechanical
+        normalizer uses the same predicate with order-insensitive graph edges.
+        """
+
+        return semantic_plan_hash(
+            original,
+            runtime_task_id=runtime_task_id,
+            task_contract_hash=task_contract_hash,
+            dependency_order_sensitive=dependency_order_sensitive,
+        ) == semantic_plan_hash(
+            candidate,
+            runtime_task_id=runtime_task_id,
+            task_contract_hash=task_contract_hash,
+            dependency_order_sensitive=dependency_order_sensitive,
+        )
+
+    # Explicit aliases for control-plane callers.
+    semantic_equivalent = is_semantically_equivalent
+
+    @staticmethod
+    def is_mechanically_equivalent(
+        original: PlanProposal,
+        candidate: PlanProposal,
+        *,
+        registry: CapabilityRegistry | None = None,
+        runtime_task_id: str | None = None,
+        task_contract_hash: str = "",
+    ) -> bool:
+        """Compare proposals while honoring only registry-implied edge wiring."""
+
+        if len(original.steps) != len(candidate.steps):
+            return False
+        for original_step, candidate_step in zip(original.steps, candidate.steps, strict=True):
+            if original_step.step_id != candidate_step.step_id:
+                return False
+            if not set(original_step.depends_on) <= set(candidate_step.depends_on):
+                return False
+
+        return mechanical_semantic_plan_hash(
+            original,
+            registry=registry,
+            runtime_task_id=runtime_task_id,
+            task_contract_hash=task_contract_hash,
+        ) == mechanical_semantic_plan_hash(
+            candidate,
+            registry=registry,
+            runtime_task_id=runtime_task_id,
+            task_contract_hash=task_contract_hash,
+        )
+
+    mechanical_semantically_equivalent = is_mechanically_equivalent
+
+    @staticmethod
     def _is_schema_only_repair(original: PlanProposal, repaired: PlanProposal) -> bool:
         """Repairs may fix encoding/schema fields, never change approved authority.
 
@@ -199,33 +272,16 @@ class PlanPolicyValidator:
         deterministic fallback or a separately authorized replan instead.
         """
         if (
-            original.task_id != repaired.task_id
-            or original.final_output_contract_version != repaired.final_output_contract_version
-            or original.requested_memory_policy != repaired.requested_memory_policy
-            or original.prompt_tokens != repaired.prompt_tokens
+            original.prompt_tokens != repaired.prompt_tokens
             or original.completion_tokens != repaired.completion_tokens
             or len(original.steps) != len(repaired.steps)
         ):
             return False
-        original_steps = tuple(
-            (
-                step.step_id.strip(), step.role.strip().lower(), step.capability_id.strip(), step.goal.strip(),
-                tuple(step.depends_on), tuple(step.input_ref_ids), tuple(step.input_ref_kinds),
-                step.output_contract_version.strip(), dict(sorted(step.completion_criteria.items())), step.on_failure,
-                tuple(step.required_input_fields),
-            )
-            for step in original.steps
+        return PlanPolicyValidator.is_semantically_equivalent(
+            original,
+            repaired,
+            dependency_order_sensitive=True,
         )
-        repaired_steps = tuple(
-            (
-                step.step_id.strip(), step.role.strip().lower(), step.capability_id.strip(), step.goal.strip(),
-                tuple(step.depends_on), tuple(step.input_ref_ids), tuple(step.input_ref_kinds),
-                step.output_contract_version.strip(), dict(sorted(step.completion_criteria.items())), step.on_failure,
-                tuple(step.required_input_fields),
-            )
-            for step in repaired.steps
-        )
-        return original_steps == repaired_steps
 
     def fallback(
         self,

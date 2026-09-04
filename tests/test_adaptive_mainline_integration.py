@@ -314,6 +314,9 @@ def test_product_adaptive_mainline_owns_runtime_infrastructure_and_role_records(
     assert result.runtime_identity is not None
     assert result.runtime_identity.runtime_task_id == "adaptive-mainline-task"
     assert result.runtime_identity.session_id == "adaptive-session-adaptive-mainline-task"
+    assert result.approved_plan_bundle is not None
+    assert result.approved_plan_bundle.verify_hash_links()
+    assert result.planner.normalization_receipt is not None
 
 
 def test_runtime_mode_selector_requires_the_matching_product_request() -> None:
@@ -443,6 +446,106 @@ def test_mainline_identity_separates_reruns_without_changing_logical_task(tmp_pa
     assert first_manifest["runtime_identity"]["run_id"] == "run-1"
     assert second_manifest["runtime_identity"]["run_id"] == "run-2"
     assert first_manifest["runtime_identity"]["runtime_task_id"] == second_manifest["runtime_identity"]["runtime_task_id"]
+
+
+def test_mainline_repair_cannot_replace_semantic_graph_as_schema_repair(tmp_path: Path) -> None:
+    request = _mainline_request(tmp_path)
+    raw = replace(
+        request.propose_plan(),
+        steps=(
+            replace(request.propose_plan().steps[0], capability_id="unauthorized-capability"),
+            *request.propose_plan().steps[1:],
+        ),
+    )
+
+    with pytest.raises(AdaptiveMainlineError, match="semantic_replan_required"):
+        AdaptiveMainlineRunner().run(
+            replace(
+                request,
+                propose_plan=lambda: raw,
+                repair_plan=lambda _proposal, _report, _fields: request.propose_plan(),
+            )
+        )
+
+
+def test_mainline_schema_repair_records_exact_normalization_provenance(tmp_path: Path) -> None:
+    request = _mainline_request(tmp_path)
+    valid = request.propose_plan()
+    raw = replace(valid, schema_version="statebus.plan_proposal.invalid")
+
+    result = AdaptiveMainlineRunner().run(
+        replace(
+            request,
+            propose_plan=lambda: raw,
+            repair_plan=lambda _proposal, _report, _fields: valid,
+        )
+    )
+
+    assert result.completed
+    assert result.planner.policy_repair_used
+    assert not result.planner.semantic_replan_required
+    assert not result.planner.fallback_used
+    assert result.planner.normalization_receipt is not None
+    receipt = result.planner.normalization_receipt
+    assert receipt.source_proposal_hash == raw.proposal_hash
+    assert receipt.effective_proposal_hash == valid.proposal_hash
+    assert receipt.before_semantic_hash == receipt.after_semantic_hash
+    assert "schema_version" in receipt.changed_fields
+    assert "schema_version" in result.planner.schema_repair_fields
+    assert result.approved_plan_bundle is not None
+    assert result.approved_plan_bundle.verify_hash_links()
+
+
+def test_mainline_records_fallback_as_policy_fallback_provenance(tmp_path: Path) -> None:
+    request = _mainline_request(tmp_path)
+    fallback = request.propose_plan()
+    raw = replace(
+        fallback,
+        proposal_id="rejected-mainline-proposal",
+        steps=(
+            replace(fallback.steps[0], capability_id="unauthorized-capability"),
+            *fallback.steps[1:],
+        ),
+    )
+
+    result = AdaptiveMainlineRunner().run(
+        replace(
+            request,
+            propose_plan=lambda: raw,
+            repair_plan=lambda _proposal, _report, _fields: fallback,
+            fallback_proposal=fallback,
+        )
+    )
+
+    assert result.completed
+    assert result.planner.semantic_replan_required
+    assert result.planner.fallback_used
+    assert not result.planner.policy_repair_used
+    assert result.planner.fallback_proposal_hash == fallback.proposal_hash
+    assert result.planner.approved_plan_bundle is not None
+    bundle = result.planner.approved_plan_bundle
+    assert bundle.verify_hash_links()
+    assert bundle.fallback_used
+    assert bundle.plan_policy_report is not None
+    assert bundle.plan_policy_report.status.value == "fallback_fixed_plan"
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["approved_plan_bundle"]["fallback_used"] is True
+    assert manifest["planner"]["semantic_replan_required"] is True
+
+
+def test_mainline_normalizer_rejects_semantic_mutation(tmp_path: Path) -> None:
+    request = _mainline_request(tmp_path)
+
+    with pytest.raises(AdaptiveMainlineError, match="normalization_semantic_change"):
+        AdaptiveMainlineRunner().run(
+            replace(
+                request,
+                normalize_plan=lambda proposal: replace(
+                    proposal,
+                    requested_memory_policy="assist",
+                ),
+            )
+        )
 
 
 def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: Path) -> None:

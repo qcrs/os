@@ -1,0 +1,48 @@
+{
+  "approved": true,
+  "branch": "feat/mrr-02-plan-provenance",
+  "evidence_schema": "statebus.mrr02.evidence.v1",
+  "expected_mrr01_checkpoint": "8b6646137fca4a4d79dfe3e67945122045c11d32",
+  "generic_policy_fixture": {
+    "approved": true,
+    "declared_role_cardinality": {
+      "executor": [
+        1,
+        1
+      ]
+    },
+    "plan_step_count": 1,
+    "report_hash": "6fe3e7e9ea2425df3bf5c866143af68a6f18e7407ddbda139ba54a13ded733ac",
+    "status": "approved"
+  },
+  "logical_capability_registry_digest": "3a702915bb851985e7750d40409f90a687195901eb90abc414f51d63f1d300c5",
+  "policy_report": {
+    "issues": [],
+    "normalized_fields": [],
+    "policy_version": "statebus.plan_policy.v1",
+    "proposal_id": "static-fixed-retriever-executor-summarizer-v1-mrr-02-evidence-task",
+    "schema_version": "statebus.plan_policy_report.v1",
+    "status": "approved"
+  },
+  "report_hash": "4f0b15f7f5cc79d7a9f9747809bdf5e332074269044ae8636bee6e9e4deba4a7",
+  "runtime_identity": {
+    "external_case_id": "mrr-02-evidence-case",
+    "run_id": "mrr-02-evidence-run",
+    "runtime_task_id": "mrr-02-evidence-task",
+    "schema_version": "statebus.runtime_identity.v1",
+    "session_id": "mrr-02-evidence-session",
+    "task_contract": {
+      "contract_hash": "sha256:mrr-02-evidence-contract",
+      "contract_kind": "canonical_task_spec",
+      "input_asset_set_hash": "",
+      "legacy_canonical_task_spec_hash": "sha256:mrr-02-evidence-contract",
+      "public_context_hash": "",
+      "schema_version": "statebus.task_contract_identity.v1"
+    },
+    "trace_id": "mrr-02-evidence-trace"
+  },
+  "runtime_task_id": "mrr-02-evidence-task",
+  "source_sha": "8b6646137fca4a4d79dfe3e67945122045c11d32",
+  "status": "approved",
+  "task_contract_hash": "sha256:mrr-02-evidence-contract"
+}

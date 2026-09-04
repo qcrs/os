@@ -1,0 +1,22 @@
+MRR-02 plan semantic mutation negative evidence
+source_sha=8b6646137fca4a4d79dfe3e67945122045c11d32
+branch=feat/mrr-02-plan-provenance
+normalization_rule=semantic changes require a new PlanProposal and PlanPolicy decision
+
+PASS normalizer rejects capability: mechanical_normalization_changed_semantics
+PASS normalizer rejects role: mechanical_normalization_changed_semantics
+PASS normalizer rejects goal: mechanical_normalization_changed_semantics
+PASS normalizer rejects semantic_dependency: mechanical_normalization_changed_semantics
+PASS normalizer rejects completion_criteria: mechanical_normalization_changed_semantics
+PASS normalizer rejects step_output_contract: mechanical_normalization_changed_semantics
+PASS normalizer rejects failure_semantics: mechanical_normalization_changed_semantics
+PASS normalizer rejects required_input_fields: mechanical_normalization_changed_semantics
+PASS normalizer rejects semantic_stage: mechanical_normalization_removed_dependency
+PASS normalizer rejects memory_policy: mechanical_normalization_changed_semantics
+PASS normalizer rejects final_output_contract: mechanical_normalization_changed_semantics
+PASS normalizer rejects dependency removal: mechanical_normalization_removed_dependency
+PASS StaticRoleRecipeCompiler returns untrusted PlanProposal: True
+PASS normalizer returns unapproved PlanProposal: True
+PASS PlanPolicy rejects unauthorized static proposal: True
+PASS plan-only no-runtime call-chain test: tests/test_plan_provenance.py::test_plan_only_static_compilation_stops_at_bundle
+PASS semantic replan creates new proposal/policy/plan/bundle hashes: True

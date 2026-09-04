@@ -1,0 +1,16 @@
+MRR-02 fixed recipe structural parity evidence
+source_sha=8b6646137fca4a4d79dfe3e67945122045c11d32
+branch=feat/mrr-02-plan-provenance
+
+legacy post-plan roles: retriever -> executor -> summarizer
+static recipe roles:    retriever -> executor -> summarizer
+role_order_parity: True
+legacy transitive role dependencies: {"executor": ["retriever"], "retriever": [], "summarizer": ["executor", "retriever"]}
+recipe transitive role dependencies: {"executor": ["retriever"], "retriever": [], "summarizer": ["executor", "retriever"]}
+dependency_parity: True
+logical responsibilities: [{"logical_capability_id": "retrieve_semantic_evidence_v1", "output_contract": "statebus.evidence_pack.v2", "registry_owner_role": "retriever", "role": "retriever"}, {"logical_capability_id": "extract_metric_series_v1", "output_contract": "statebus.metric_series.v1", "registry_owner_role": "executor", "role": "executor"}, {"logical_capability_id": "compose_cited_report_v1", "output_contract": "statebus.cited_report.v1", "registry_owner_role": "summarizer", "role": "summarizer"}]
+responsibility_owner_parity: True
+legacy planner lifecycle retained: True
+static recipe provider identity: absent
+static recipe execution kind: absent
+runtime execution invoked: False
