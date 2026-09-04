@@ -93,6 +93,17 @@ from statebus.runtime.session import (
     RuntimeTaskSession,
     StepAttemptRecord,
 )
+from statebus.runtime.identity import (
+    RuntimeIdentityResolutionError,
+    compatibility_runtime_identity,
+    identity_payload,
+    legacy_runtime_identity,
+    new_run_id,
+    resolve_runtime_identity,
+    validate_identity_projection,
+    validate_runtime_id_component,
+)
+from statebus.contracts import RuntimeIdentity, TaskContractIdentity
 from statebus.runtime.supervisor import RuntimeSupervisor, StepRuntimeRecord, WorkerSessionSnapshot
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.workspace import (
@@ -163,6 +174,16 @@ __all__ = [
     "select_history_replay_candidate",
     "RetrieverRoleDecision",
     "RuntimeLeaseConfig",
+    "RuntimeIdentityResolutionError",
+    "RuntimeIdentity",
+    "TaskContractIdentity",
+    "compatibility_runtime_identity",
+    "identity_payload",
+    "legacy_runtime_identity",
+    "new_run_id",
+    "resolve_runtime_identity",
+    "validate_identity_projection",
+    "validate_runtime_id_component",
     "RuntimeReplanRecord",
     "RuntimeCommitGate",
     "RuntimeSessionManager",

@@ -1,0 +1,47 @@
+{
+  "explicit": {
+    "canonical_task_spec_hash_projection": "sha256:evidence-task-contract",
+    "task_contract_hash": "sha256:evidence-task-contract",
+    "identity_hash": "0dddb8d33616034e71d0671d64cc53e67eef7d01a760aafeb631eeea806169f5",
+    "payload": {
+      "external_case_id": "case-evidence-01",
+      "run_id": "run-evidence-01",
+      "runtime_task_id": "runtime-task-evidence",
+      "schema_version": "statebus.runtime_identity.v1",
+      "session_id": "session-evidence-01",
+      "task_contract": {
+        "contract_hash": "sha256:evidence-task-contract",
+        "contract_kind": "canonical_task_spec",
+        "input_asset_set_hash": "",
+        "legacy_canonical_task_spec_hash": "sha256:evidence-task-contract",
+        "public_context_hash": "",
+        "schema_version": "statebus.task_contract_identity.v1"
+      },
+      "trace_id": "trace-evidence-01"
+    },
+    "task_id_projection": "runtime-task-evidence"
+  },
+  "legacy_projection": {
+    "canonical_task_spec_hash_projection": "sha256:evidence-task-contract",
+    "task_contract_hash": "sha256:evidence-task-contract",
+    "identity_hash": "8904e177b0646880639745f0c1997c81f4812bffaaf5bf279fddd08d652fe996",
+    "payload": {
+      "external_case_id": null,
+      "run_id": "run-legacy-evidence",
+      "runtime_task_id": "runtime-task-evidence",
+      "schema_version": "statebus.runtime_identity.v1",
+      "session_id": "adaptive-session-runtime-task-evidence",
+      "task_contract": {
+        "contract_hash": "sha256:evidence-task-contract",
+        "contract_kind": "canonical_task_spec",
+        "input_asset_set_hash": "",
+        "legacy_canonical_task_spec_hash": "sha256:evidence-task-contract",
+        "public_context_hash": "",
+        "schema_version": "statebus.task_contract_identity.v1"
+      },
+      "trace_id": "trace-legacy-evidence"
+    },
+    "task_id_projection": "runtime-task-evidence"
+  },
+  "schema_version": "statebus.runtime_identity.v1"
+}

@@ -12,6 +12,7 @@ from statebus.contracts import (
     PlanPolicyReport,
     PlanStepProposal,
     PlanProposal,
+    RuntimeIdentity,
     StateConsumptionRecord,
     StepLifecycleState,
     WorkflowMode,
@@ -28,6 +29,10 @@ from statebus.runtime.session import (
 )
 from statebus.runtime.supervisor import RuntimeSupervisor
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
+from statebus.runtime.identity import (
+    RuntimeIdentityResolutionError,
+    resolve_runtime_identity,
+)
 from statebus.utils import sha256_digest
 
 if TYPE_CHECKING:
@@ -82,6 +87,10 @@ class AdaptiveRuntimeRequest:
     dispatcher: "AdaptiveCapabilityDispatcher | None" = None
     replan: Callable[[ApprovedPlan, tuple[str, ...], str], ApprovedPlan | None] | None = None
     layer_name: str = "L3"
+    runtime_identity: RuntimeIdentity | None = None
+    # Legacy callers keep the historical attempt labels while the resolved
+    # identity still gives the run a first-class session and contract.
+    identity_is_compatibility_projection: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,6 +169,7 @@ class AdaptiveRuntimeResult:
     plan_replaced: bool = False
     shadow_only: bool = False
     runtime_signature: "AdaptiveRuntimeSignature | None" = None
+    runtime_identity: RuntimeIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -276,6 +286,27 @@ class AdaptiveRuntimeEngine:
     def run(self, request: AdaptiveRuntimeRequest) -> AdaptiveRuntimeResult:
         if request.envelope.workflow_mode == WorkflowMode.STRICT_FIXED:
             raise AdaptiveRuntimeError("strict_fixed_must_use_RuntimeDriver_run")
+        was_explicit_identity = request.runtime_identity is not None
+        try:
+            runtime_identity = resolve_runtime_identity(
+                request.runtime_identity,
+                task_id=request.task_id,
+                trace_id=request.trace_id,
+                canonical_task_spec_hash=request.canonical_task_spec_hash,
+            )
+        except RuntimeIdentityResolutionError as exc:
+            raise AdaptiveRuntimeError(f"runtime_identity_invalid:{exc}") from exc
+        if request.envelope.task_id != runtime_identity.runtime_task_id:
+            raise AdaptiveRuntimeError("runtime_identity_envelope_task_id_mismatch")
+        if request.envelope.canonical_task_spec_hash != runtime_identity.task_contract.contract_hash:
+            raise AdaptiveRuntimeError("runtime_identity_envelope_task_contract_mismatch")
+        request = replace(
+            request,
+            runtime_identity=runtime_identity,
+            identity_is_compatibility_projection=(
+                request.identity_is_compatibility_projection or not was_explicit_identity
+            ),
+        )
         if request.approved_plan.task_id != request.task_id:
             raise AdaptiveRuntimeError("approved_plan_task_id_mismatch")
         if request.approved_plan.capability_registry_digest != request.registry.digest:
@@ -285,13 +316,13 @@ class AdaptiveRuntimeEngine:
         self._validate_approved_plan(request)
 
         session_manager = RuntimeSessionManager()
-        session_id = f"adaptive-session-{request.task_id}"
+        session_id = runtime_identity.session_id
         session = session_manager.start(
             session_id=session_id,
-            trace_id=request.trace_id,
-            task_id=request.task_id,
+            trace_id=runtime_identity.trace_id,
+            task_id=runtime_identity.runtime_task_id,
             layer_name=request.layer_name,
-            canonical_task_spec_hash=request.canonical_task_spec_hash,
+            canonical_task_spec_hash=runtime_identity.task_contract.contract_hash,
             workspace_root=request.runtime_root,
             state_root=request.state_root,
             lease_config=RuntimeLeaseConfig(max_attempts_per_step=1),
@@ -351,6 +382,9 @@ class AdaptiveRuntimeEngine:
                     "registry_digest": request.registry.digest,
                     "requested_memory_policy": current_plan.requested_memory_policy,
                     "adaptive_runtime_signature": runtime_signature.digest,
+                    "runtime_identity_hash": runtime_identity.identity_hash,
+                    "run_id": runtime_identity.run_id,
+                    "session_id": runtime_identity.session_id,
                     "proposal_valid": request.proposal_valid,
                     "policy_rejected": request.policy_rejected,
                     "repair_used": request.repair_used,
@@ -377,6 +411,7 @@ class AdaptiveRuntimeEngine:
                 session=session_manager.sessions[session_id], dispatches=(), telemetry=telemetry,
                 approved_plan_hash=current_plan.approved_plan_hash, completed=True, shadow_only=True,
                 runtime_signature=runtime_signature,
+                runtime_identity=runtime_identity,
             )
         while True:
             remaining = [step for step in current_plan.steps if step.step_id not in completed and step.step_id not in terminal_failed]
@@ -406,7 +441,7 @@ class AdaptiveRuntimeEngine:
                     )
                     continue
                 attempt_count += 1
-                attempt_id = f"adaptive-attempt-{attempt_count}"
+                attempt_id = self._attempt_id(request, attempt_count)
                 descriptor = request.registry.get(step.capability_id)
                 input_refs = self._input_refs(step, produced_refs_by_step, produced_refs)
                 if any(produced_refs[ref_id] not in descriptor.input_ref_kinds for ref_id in input_refs if descriptor.input_ref_kinds):
@@ -504,7 +539,7 @@ class AdaptiveRuntimeEngine:
                         on_failure="fail",
                     )
                     attempt_count += 1
-                    fallback_attempt_id = f"adaptive-attempt-{attempt_count}"
+                    fallback_attempt_id = self._attempt_id(request, attempt_count)
                     fallback_grant = self._issue_grant(
                         request=request,
                         plan=current_plan,
@@ -773,6 +808,7 @@ class AdaptiveRuntimeEngine:
             completed=not terminal_failed and len(completed) == len(current_plan.steps),
             plan_replaced=plan_replaced,
             runtime_signature=runtime_signature,
+            runtime_identity=runtime_identity,
         )
 
     @staticmethod
@@ -810,15 +846,36 @@ class AdaptiveRuntimeEngine:
         attempt_id: str, input_refs: tuple[str, ...],
     ) -> CapabilityGrant:
         descriptor = request.registry.get(step.capability_id)
+        runtime_identity = request.runtime_identity
+        if runtime_identity is None:
+            # The engine resolves identity before any grant can be issued. Keep
+            # this defensive fallback for direct unit calls to this helper.
+            runtime_identity = resolve_runtime_identity(
+                task_id=request.task_id,
+                trace_id=request.trace_id,
+                canonical_task_spec_hash=request.canonical_task_spec_hash,
+            )
         return CapabilityGrant(
-            grant_id=f"grant-{request.task_id}-{step.step_id}-{attempt_id}", task_id=request.task_id,
-            session_id=f"adaptive-session-{request.task_id}", step_id=step.step_id, attempt_id=attempt_id,
+            grant_id=f"grant-{runtime_identity.runtime_task_id}-{step.step_id}-{attempt_id}",
+            task_id=runtime_identity.runtime_task_id,
+            session_id=runtime_identity.session_id,
+            step_id=step.step_id,
+            attempt_id=attempt_id,
             capability_id=descriptor.capability_id, capability_version=descriptor.version,
             input_ref_ids=input_refs, output_contract_version=step.output_contract_version,
             workspace_root_id=request.workspace_root_id, max_runtime_ms=descriptor.max_runtime_ms,
             expires_at_ns=time.time_ns() + (descriptor.max_runtime_ms if request.grant_ttl_ms is None else request.grant_ttl_ms) * 1_000_000,
             approved_plan_hash=plan.approved_plan_hash,
         )
+
+    @staticmethod
+    def _attempt_id(request: AdaptiveRuntimeRequest, attempt_count: int) -> str:
+        if request.identity_is_compatibility_projection:
+            return f"adaptive-attempt-{attempt_count}"
+        runtime_identity = request.runtime_identity
+        if runtime_identity is None:
+            return f"adaptive-attempt-{attempt_count}"
+        return f"adaptive-attempt-{runtime_identity.run_id}-{attempt_count}"
 
     @staticmethod
     def _dispatch_lifecycle(

@@ -56,6 +56,13 @@ from statebus.contracts.models import (
     TaskCompilerResult,
     TaskMode,
 )
+from statebus.contracts.identity import (
+    IdentityContractError,
+    RUNTIME_IDENTITY_SCHEMA_VERSION,
+    TASK_CONTRACT_IDENTITY_SCHEMA_VERSION,
+    RuntimeIdentity,
+    TaskContractIdentity,
+)
 from statebus.contracts.adaptive import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
@@ -185,6 +192,11 @@ __all__ = [
     "TaskCompilerInput",
     "TaskCompilerResult",
     "TaskMode",
+    "IdentityContractError",
+    "RUNTIME_IDENTITY_SCHEMA_VERSION",
+    "TASK_CONTRACT_IDENTITY_SCHEMA_VERSION",
+    "RuntimeIdentity",
+    "TaskContractIdentity",
     "AdaptiveTaskEnvelope",
     "ApprovedPlan",
     "CapabilityDescriptor",

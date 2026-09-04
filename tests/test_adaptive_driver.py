@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import json
 
-from statebus.contracts import AdaptiveTaskEnvelope, PlanProposal, PlanStepProposal, RiskClass, StepLifecycleState, WorkflowMode
+from statebus.contracts import (
+    AdaptiveTaskEnvelope,
+    PlanProposal,
+    PlanStepProposal,
+    RiskClass,
+    RuntimeIdentity,
+    StepLifecycleState,
+    TaskContractIdentity,
+    WorkflowMode,
+)
 from statebus.runtime.adaptive_runtime import AdaptiveRuntimeRequest, AdaptiveStepResult
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.domain_packs import register_long_doc_analysis_capabilities
@@ -234,3 +243,88 @@ def test_driver_records_raw_proposal_policy_separately_from_approved_plan(tmp_pa
     assert metrics["policy_rejected"] == 1.0
     assert metrics["fallback_used"] == 1.0
     assert metrics["approved_plan_valid"] == 1.0
+
+
+def test_explicit_runtime_identity_controls_session_and_attempt_authority(tmp_path) -> None:
+    registry, envelope, approved = _setup()
+    identity = RuntimeIdentity(
+        runtime_task_id="task",
+        run_id="run-explicit",
+        session_id="session-explicit",
+        trace_id="trace-explicit",
+        task_contract=TaskContractIdentity.from_hash("spec"),
+    )
+    observed_grants: list[tuple[str, str, str]] = []
+
+    def execute(step, grant):
+        observed_grants.append((grant.task_id, grant.session_id, grant.attempt_id))
+        kind = "canonical_evidence_pack" if step.role == "retriever" else "execution_artifact"
+        return AdaptiveStepResult(
+            grant_hash=grant.grant_hash,
+            success=True,
+            output_refs=(f"ref-{step.step_id}",),
+            output_ref_kinds=(kind,),
+            attempt_id=grant.attempt_id,
+        )
+
+    result = RuntimeDriver().run_adaptive(
+        AdaptiveRuntimeRequest(
+            trace_id="trace-explicit",
+            task_id="task",
+            canonical_task_spec_hash="spec",
+            envelope=envelope,
+            approved_plan=approved,
+            registry=registry,
+            runtime_root=str(tmp_path),
+            workspace_root_id="workspace",
+            execute_step=execute,
+            runtime_identity=identity,
+        )
+    )
+
+    assert result.completed
+    assert result.runtime_identity == identity
+    assert result.session.session_id == "session-explicit"
+    assert result.session.trace_id == "trace-explicit"
+    assert {session_id for _, session_id, _ in observed_grants} == {"session-explicit"}
+    assert all(attempt_id.startswith("adaptive-attempt-run-explicit-") for _, _, attempt_id in observed_grants)
+    assert [record.attempt_id for record in result.session.attempt_records] == [
+        attempt_id for _, _, attempt_id in observed_grants
+    ]
+
+
+def test_provider_callback_receives_attempt_but_cannot_allocate_next_attempt(tmp_path) -> None:
+    registry, envelope, approved = _setup()
+    calls: list[str] = []
+
+    def forged_provider(step, grant):
+        calls.append(grant.attempt_id)
+        kind = "canonical_evidence_pack" if step.role == "retriever" else "execution_artifact"
+        return AdaptiveStepResult(
+            grant_hash=grant.grant_hash,
+            success=True,
+            output_refs=(f"ref-{step.step_id}",),
+            output_ref_kinds=(kind,),
+            # A provider may report the grant it received, but cannot mint a
+            # successor attempt identity accepted by the Runtime authority.
+            attempt_id="provider-created-attempt",
+        )
+
+    result = RuntimeDriver().run_adaptive(
+        AdaptiveRuntimeRequest(
+            trace_id="trace-forged-provider",
+            task_id="task",
+            canonical_task_spec_hash="spec",
+            envelope=envelope,
+            approved_plan=approved,
+            registry=registry,
+            runtime_root=str(tmp_path),
+            workspace_root_id="workspace",
+            execute_step=forged_provider,
+        )
+    )
+
+    assert calls == ["adaptive-attempt-1"]
+    assert not result.completed
+    assert result.dispatches[0].error_code == "grant_binding_mismatch"
+    assert result.session.attempt_records[0].attempt_id == "adaptive-attempt-1"

@@ -1,0 +1,37 @@
+MRR-01 Adaptive Identity Integration Evidence
+=============================================
+
+Source SHA: 8bfc6464ec236c0e121911095fc283129b0e7696
+Branch: master
+Date: 2026-09-04
+Environment: statebus_host (Conda, Python 3.11)
+
+Command:
+  source ./deploy/activate_statebus_host.sh
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q \
+    tests/test_adaptive_mainline_integration.py \
+    -k 'not adaptive_product_retrieval_owns_cross_process_semantic_state'
+
+Result:
+  9 passed, 1 deselected in 1.13s
+
+Canonical rerun assertions:
+  - Both runs use runtime_task_id=adaptive-mainline-task.
+  - Both runs use the same TaskContractIdentity and approved-plan semantics.
+  - Run 1 uses run_id=run-1, session_id=session-1, trace_id=trace-run-1.
+  - Run 2 uses run_id=run-2, session_id=session-2, trace_id=trace-run-2.
+  - Attempt records are attached to their resolved session and the two
+    attempt-id sets are disjoint (adaptive-attempt-run-1-* vs
+    adaptive-attempt-run-2-*).
+  - Persisted manifests retain the matching logical task and distinct run IDs.
+
+Boundary rejection assertion:
+  test_mainline_rejects_envelope_identity_mismatch rejects an envelope whose
+  canonical task contract hash differs from the resolved RuntimeIdentity.
+
+Excluded environment-dependent test:
+  test_adaptive_product_retrieval_owns_cross_process_semantic_state was not
+  counted in the integration gate because this sandbox cannot bind the
+  requested shared-memory/UDS resource (PermissionError: [Errno 1]
+  Operation not permitted). This is recorded as PRE_EXISTING_FAILURE and is
+  unrelated to the identity changes.

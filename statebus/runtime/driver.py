@@ -29,6 +29,7 @@ from statebus.contracts import (
     RefKind,
     RefStatus,
     ReplayClass,
+    RuntimeIdentity,
     RuntimeCompatibilitySignature,
     RuntimeSignatureManifestBundle,
     StepLifecycleState,
@@ -41,6 +42,7 @@ from statebus.runtime.codeact import CodeActExecutionRecord, CodeActPlan
 from statebus.runtime.commit_gate import CommitGateDecision, RuntimeCommitGate
 from statebus.runtime.execution import ExecutionLogCapture, ExecutionStepRecord
 from statebus.runtime.fallback import FallbackDag, FallbackPlanner, FallbackResolutionRecord
+from statebus.runtime.identity import RuntimeIdentityResolutionError, resolve_runtime_identity
 from statebus.runtime.ledger import ReplayLedger, ReplayLedgerEntry
 from statebus.runtime.lineage import TaskLineageView, build_task_lineage_view
 from statebus.runtime.replay import ReplayCandidate, ReplayDecision
@@ -161,6 +163,7 @@ class RuntimeDriverInput:
     codeact_record: CodeActExecutionRecord | None = None
     runtime_signature_manifest_bundle_relpath: str = ""
     materialized_json_by_hash: dict[str, Path] = field(default_factory=dict)
+    runtime_identity: RuntimeIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,7 @@ class RuntimeDriverResult:
     workspace_file_count: int
     codeact_record: CodeActExecutionRecord | None = None
     control_transport_audit: dict[str, object] = field(default_factory=dict)
+    runtime_identity: RuntimeIdentity | None = None
 
 
 def _elapsed_ms(start_ns: int) -> float:
@@ -311,13 +315,24 @@ class RuntimeDriver:
         )
 
     def run(self, runtime_input: RuntimeDriverInput) -> RuntimeDriverResult:
+        try:
+            runtime_identity = resolve_runtime_identity(
+                runtime_input.runtime_identity,
+                task_id=runtime_input.task_id,
+                trace_id=runtime_input.trace_id,
+                canonical_task_spec_hash=runtime_input.canonical_task_spec_hash,
+                session_prefix="session",
+            )
+        except RuntimeIdentityResolutionError as exc:
+            raise ValueError(f"runtime_identity_invalid:{exc}") from exc
+        runtime_input = replace(runtime_input, runtime_identity=runtime_identity)
         session_manager = RuntimeSessionManager()
         session = session_manager.start(
-            session_id=f"session-{runtime_input.task_id}",
-            trace_id=runtime_input.trace_id,
-            task_id=runtime_input.task_id,
+            session_id=runtime_identity.session_id,
+            trace_id=runtime_identity.trace_id,
+            task_id=runtime_identity.runtime_task_id,
             layer_name=runtime_input.layer_profile.layer_name,
-            canonical_task_spec_hash=runtime_input.canonical_task_spec_hash,
+            canonical_task_spec_hash=runtime_identity.task_contract.contract_hash,
             workspace_root=str(runtime_input.layout.root),
             state_root=str(runtime_input.state_store.root),
             retrieval_log_hash=runtime_input.retrieval.log_hash,
@@ -1219,7 +1234,11 @@ class RuntimeDriver:
                     channel="semantic_state",
                     payload={
                         "ref_id": runtime_input.semantic_state_handle.ref_id,
-                        "owner": f"session-{runtime_input.task_id}",
+                        "owner": (
+                            runtime_input.runtime_identity.session_id
+                            if runtime_input.runtime_identity is not None
+                            else f"session-{runtime_input.task_id}"
+                        ),
                     },
                     metrics={
                         "semantic_state_release_count": 1.0,
@@ -1537,6 +1556,7 @@ class RuntimeDriver:
                 "topology": "driver_uds_executor_subprocess",
                 "attempts": control_transport_attempts,
             },
+            runtime_identity=runtime_identity,
         )
 
     def _emit_data_plane_events(

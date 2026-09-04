@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
@@ -14,6 +17,8 @@ from statebus.contracts import (
     RefStatus,
     ReplayClass,
     RiskClass,
+    RuntimeIdentity,
+    TaskContractIdentity,
     TransformProgram,
     TransformStep,
     WorkflowMode,
@@ -22,6 +27,7 @@ from statebus.refs import ExecutionArtifactRef
 from statebus.runtime.adaptive_dispatcher import StoredAdaptiveArtifact
 from statebus.runtime.adaptive_mainline import (
     AdaptiveMainlineBindings,
+    AdaptiveMainlineError,
     AdaptiveMainlineRequest,
     AdaptiveMainlineRunner,
 )
@@ -305,6 +311,9 @@ def test_product_adaptive_mainline_owns_runtime_infrastructure_and_role_records(
     assert metrics["planner_step_completed"] == 1.0
     assert metrics["planner_final_approved_count"] == 1.0
     assert metrics["adaptive_step_completed"] == 3.0
+    assert result.runtime_identity is not None
+    assert result.runtime_identity.runtime_task_id == "adaptive-mainline-task"
+    assert result.runtime_identity.session_id == "adaptive-session-adaptive-mainline-task"
 
 
 def test_runtime_mode_selector_requires_the_matching_product_request() -> None:
@@ -321,6 +330,119 @@ def test_runtime_mode_selector_requires_the_matching_product_request() -> None:
             assert str(exc) == error
         else:
             raise AssertionError(f"{mode} accepted missing request")
+
+
+def test_plan_source_has_no_attempt_factory(tmp_path: Path) -> None:
+    request = _mainline_request(tmp_path)
+    proposal = replace(
+        request.propose_plan(),
+        proposal_id="plan-source-requested-attempt-999",
+        planner_notes="attempt_id=plan-source-attempt-999",
+    )
+
+    result = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=replace(request, propose_plan=lambda: proposal),
+    )
+
+    assert result.completed
+    assert [record.attempt_id for record in result.runtime.session.attempt_records] == [
+        "adaptive-attempt-1",
+        "adaptive-attempt-2",
+        "adaptive-attempt-3",
+    ]
+    assert all(
+        record.attempt_id != "plan-source-attempt-999"
+        for record in result.runtime.session.attempt_records
+    )
+
+
+def test_mainline_rejects_envelope_identity_mismatch(tmp_path: Path) -> None:
+    request = _mainline_request(tmp_path)
+    identity = RuntimeIdentity(
+        runtime_task_id=request.task_id,
+        run_id="run-explicit",
+        session_id="session-explicit",
+        trace_id=request.trace_id,
+        task_contract=TaskContractIdentity.from_hash(request.canonical_task_spec_hash),
+    )
+    mismatched_envelope = replace(
+        request.envelope,
+        canonical_task_spec_hash="sha256:other-contract",
+    )
+
+    with pytest.raises(AdaptiveMainlineError, match="adaptive_mainline_identity_invalid"):
+        AdaptiveMainlineRunner().run(
+            replace(
+                request,
+                envelope=mismatched_envelope,
+                runtime_identity=identity,
+            )
+        )
+
+
+def test_mainline_identity_separates_reruns_without_changing_logical_task(tmp_path: Path) -> None:
+    base = _mainline_request(tmp_path)
+    contract = TaskContractIdentity.from_hash(base.canonical_task_spec_hash)
+    first_identity = RuntimeIdentity(
+        external_case_id="benchmark-case-7",
+        runtime_task_id=base.task_id,
+        run_id="run-1",
+        session_id="session-1",
+        trace_id="trace-run-1",
+        task_contract=contract,
+    )
+    second_identity = RuntimeIdentity(
+        external_case_id="benchmark-case-7",
+        runtime_task_id=base.task_id,
+        run_id="run-2",
+        session_id="session-2",
+        trace_id="trace-run-2",
+        task_contract=contract,
+    )
+
+    first = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=replace(
+            base,
+            trace_id="trace-run-1",
+            runtime_root=tmp_path / "run-1" / "runtime",
+            workspace_root=tmp_path / "run-1" / "workspaces",
+            runtime_identity=first_identity,
+        ),
+    )
+    second = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=replace(
+            base,
+            trace_id="trace-run-2",
+            runtime_root=tmp_path / "run-2" / "runtime",
+            workspace_root=tmp_path / "run-2" / "workspaces",
+            runtime_identity=second_identity,
+        ),
+    )
+
+    assert first.completed and second.completed
+    assert first.runtime_identity is not None and second.runtime_identity is not None
+    assert first.runtime_identity.runtime_task_id == second.runtime_identity.runtime_task_id == base.task_id
+    assert first.runtime_identity.task_contract == second.runtime_identity.task_contract == contract
+    assert first.runtime_identity.run_id != second.runtime_identity.run_id
+    assert first.runtime_identity.session_id != second.runtime_identity.session_id
+    assert first.planner.approved_plan_hash == second.planner.approved_plan_hash
+    assert first.runtime.session.session_id == "session-1"
+    assert second.runtime.session.session_id == "session-2"
+    assert first.runtime.session.task_id == second.runtime.session.task_id == base.task_id
+    first_attempts = {record.attempt_id for record in first.runtime.session.attempt_records}
+    second_attempts = {record.attempt_id for record in second.runtime.session.attempt_records}
+    assert first_attempts and second_attempts and first_attempts.isdisjoint(second_attempts)
+    assert all(attempt.startswith("adaptive-attempt-run-1-") for attempt in first_attempts)
+    assert all(attempt.startswith("adaptive-attempt-run-2-") for attempt in second_attempts)
+
+    first_manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
+    second_manifest = json.loads(second.manifest_path.read_text(encoding="utf-8"))
+    assert first_manifest["runtime_identity"]["run_id"] == "run-1"
+    assert second_manifest["runtime_identity"]["run_id"] == "run-2"
+    assert first_manifest["runtime_identity"]["runtime_task_id"] == second_manifest["runtime_identity"]["runtime_task_id"]
 
 
 def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: Path) -> None:

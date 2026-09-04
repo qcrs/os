@@ -9,10 +9,12 @@ from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
     CanonicalTaskSpec,
+    IdentityContractError,
     PlanPolicyReport,
     PlanProposal,
     RefStatus,
     ReplayClass,
+    RuntimeIdentity,
     WorkflowMode,
 )
 from statebus.memory import MemoryCommit, MemoryIndexStore, MemoryRef, MemoryType
@@ -41,6 +43,7 @@ from statebus.runtime.capability_validators import (
     CapabilityValidatorRegistry,
     default_capability_validator_registry,
 )
+from statebus.runtime.identity import RuntimeIdentityResolutionError, resolve_runtime_identity
 from statebus.runtime.plan_policy import PlanPolicyValidator
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
 from statebus.runtime.telemetry import TelemetryEvent
@@ -144,6 +147,7 @@ class AdaptiveMainlineRequest:
     input_lineage_hashes: tuple[str, ...] = ()
     input_schema_digest: str = ""
     validator_digest: str = ""
+    runtime_identity: RuntimeIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +198,7 @@ class AdaptiveMainlineResult:
     manifest_path: Path
     state_cleanup_completed: bool
     memory_commit_decision: AdaptiveMemoryCommitDecision
+    runtime_identity: RuntimeIdentity | None = None
 
     @property
     def completed(self) -> bool:
@@ -213,11 +218,25 @@ class AdaptiveMainlineRunner:
             and request.canonical_task_spec.spec_hash != request.canonical_task_spec_hash
         ):
             raise AdaptiveMainlineError("adaptive_mainline_canonical_spec_hash_mismatch")
+        try:
+            runtime_identity = resolve_runtime_identity(
+                request.runtime_identity,
+                task_id=request.task_id,
+                trace_id=request.trace_id,
+                canonical_task_spec_hash=request.canonical_task_spec_hash,
+            )
+            runtime_identity.validate_legacy_projection(
+                task_id=request.envelope.task_id,
+                trace_id=request.trace_id,
+                canonical_task_spec_hash=request.envelope.canonical_task_spec_hash,
+            )
+        except (RuntimeIdentityResolutionError, IdentityContractError) as exc:
+            raise AdaptiveMainlineError(f"adaptive_mainline_identity_invalid:{exc}") from exc
 
         runtime_root = Path(request.runtime_root)
         runtime_root.mkdir(parents=True, exist_ok=True)
         workspace_manager = WorkspaceManager(Path(request.workspace_root))
-        workspace_layout = workspace_manager.ensure_layout(request.task_id)
+        workspace_layout = workspace_manager.ensure_layout(runtime_identity.runtime_task_id)
         state_store = LayeredStateStore(
             root=runtime_root / "state",
             policy=LayeredStoragePolicy.for_state_pool_mode(request.state_pool_mode),
@@ -318,6 +337,8 @@ class AdaptiveMainlineRunner:
             ),
             dispatcher=AdaptiveCapabilityDispatcher(context=context),
             layer_name=request.layer_name,
+            runtime_identity=runtime_identity,
+            identity_is_compatibility_projection=request.runtime_identity is None,
         )
 
         state_cleanup_completed = False
@@ -337,6 +358,7 @@ class AdaptiveMainlineRunner:
                 runtime=runtime_result,
                 context=context,
                 memory_store=memory_store,
+                runtime_identity=runtime_identity,
             )
             runtime_result.telemetry.emit(
                 TelemetryEvent.create(
@@ -413,6 +435,7 @@ class AdaptiveMainlineRunner:
                 context=context,
                 infrastructure=infrastructure,
                 memory_commit_decision=memory_commit_decision,
+                runtime_identity=runtime_identity,
             )
         finally:
             for state_id in tuple(context.semantic_state_publications):
@@ -430,6 +453,7 @@ class AdaptiveMainlineRunner:
             manifest_path=manifest_path or (runtime_root / "adaptive_mainline_manifest.json"),
             state_cleanup_completed=state_cleanup_completed,
             memory_commit_decision=memory_commit_decision,
+            runtime_identity=runtime_identity,
         )
 
     @staticmethod
@@ -505,7 +529,15 @@ class AdaptiveMainlineRunner:
         runtime: AdaptiveRuntimeResult,
         context: AdaptiveDispatchContext,
         memory_store: MemoryIndexStore,
+        runtime_identity: RuntimeIdentity | None = None,
     ) -> AdaptiveMemoryCommitDecision:
+        if runtime_identity is None:
+            runtime_identity = runtime.runtime_identity or resolve_runtime_identity(
+                request.runtime_identity,
+                task_id=request.task_id,
+                trace_id=request.trace_id,
+                canonical_task_spec_hash=request.canonical_task_spec_hash,
+            )
         if not request.memory_commit_enabled:
             return AdaptiveMemoryCommitDecision(False, False, "memory_commit_disabled")
         if request.canonical_task_spec is None:
@@ -626,6 +658,9 @@ class AdaptiveMainlineRunner:
                 task_theme=request.memory_topic or request.canonical_task_spec.task_family,
                 tags=tags,
                 source_role_path=("planner", "retriever", "executor"),
+                # Keep the legacy memory provenance projection in Batch 1;
+                # RunID is recorded by the runtime identity/manifest without
+                # changing MemoryRef hashing or replay semantics.
                 producer_run_id=request.trace_id,
                 summary=summary,
                 canonical_task_spec_hash=request.canonical_task_spec_hash,
@@ -682,12 +717,22 @@ class AdaptiveMainlineRunner:
         context: AdaptiveDispatchContext,
         infrastructure: AdaptiveMainlineInfrastructure,
         memory_commit_decision: AdaptiveMemoryCommitDecision,
+        runtime_identity: RuntimeIdentity | None = None,
     ) -> Path:
+        if runtime_identity is None:
+            runtime_identity = runtime.runtime_identity or resolve_runtime_identity(
+                request.runtime_identity,
+                task_id=request.task_id,
+                trace_id=request.trace_id,
+                canonical_task_spec_hash=request.canonical_task_spec_hash,
+            )
         manifest_path = Path(request.runtime_root) / "adaptive_mainline_manifest.json"
         payload = {
             "schema_version": "statebus.adaptive_mainline_manifest.v1",
             "trace_id": request.trace_id,
             "task_id": request.task_id,
+            "runtime_identity": runtime_identity.canonical_payload(),
+            "runtime_identity_hash": runtime_identity.identity_hash,
             "workflow_mode": request.envelope.workflow_mode.value,
             "planner": planner.canonical_payload(),
             "runtime_completed": runtime.completed,
