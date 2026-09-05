@@ -1,0 +1,10 @@
+MRR-03B targeted local tests
+environment=source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+command=PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q tests/test_fixed_canonical_mainline.py tests/test_adaptive_mainline_integration.py::test_product_adaptive_mainline_owns_runtime_infrastructure_and_role_records
+result=6 passed in 0.98s
+fixed_slice_tests=5 passed
+adjacent_adaptive_regression=1 passed
+docker_started=false
+vllm_started=false
+benchmark_started=false
+competition_run=false

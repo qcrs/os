@@ -273,12 +273,17 @@ class RuntimeDriver:
         mode: str,
         *,
         strict_input: RuntimeDriverInput | None = None,
+        fixed_request=None,
         adaptive_request=None,
         shadow_request=None,
     ):
         """Explicit product workflow selector used by normal runtime entrypoints."""
         normalized = str(mode).strip().lower()
         if normalized == "strict_fixed":
+            if fixed_request is not None:
+                return self.run_adaptive_mainline(
+                    fixed_request.to_adaptive_mainline_request()
+                )
             if strict_input is None:
                 raise ValueError("strict_fixed_runtime_input_required")
             return self.run(strict_input)

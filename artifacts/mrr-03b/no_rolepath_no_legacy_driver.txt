@@ -1,0 +1,10 @@
+MRR-03B canonical fixed boundary evidence
+test=tests/test_fixed_canonical_mainline.py::test_fixed_mainline_completes_through_runtime_grants_without_legacy_paths
+proof=RolePathRunner.__init__, run_smoke, build_default_workflow, and RuntimeDriver.run were monkeypatched to fail if called
+role_path_runner_called=false
+run_smoke_called=false
+build_default_workflow_called=false
+legacy_runtime_driver_run_called=false
+canonical_entry=RuntimeDriver.run_mode(strict_fixed, fixed_request=...)
+canonical_runner=AdaptiveMainlineRunner
+canonical_engine=AdaptiveRuntimeEngine

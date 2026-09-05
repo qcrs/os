@@ -143,8 +143,9 @@ class AdaptiveMainlineRequest:
     registry: CapabilityRegistry
     runtime_root: Path
     workspace_root: Path
-    propose_plan: Callable[[], PlanProposal]
+    propose_plan: Callable[[], PlanProposal] | None
     bindings: AdaptiveMainlineBindings
+    approved_plan_bundle: ApprovedPlanBundle | None = None
     available_input_refs: dict[str, str] = field(default_factory=dict)
     normalize_plan: PlanNormalizer | None = None
     repair_plan: PlanRepair | None = None
@@ -226,11 +227,15 @@ class AdaptiveMainlineResult:
 
 
 class AdaptiveMainlineRunner:
-    """Single product assembly point for bounded adaptive execution."""
+    """Single product assembly point for canonical Runtime execution."""
 
     def run(self, request: AdaptiveMainlineRequest) -> AdaptiveMainlineResult:
-        if request.envelope.workflow_mode != WorkflowMode.ADAPTIVE_BOUNDED:
-            raise AdaptiveMainlineError("adaptive_bounded_workflow_mode_required")
+        if request.envelope.workflow_mode not in {
+            WorkflowMode.STRICT_FIXED,
+            WorkflowMode.ADAPTIVE_SHADOW,
+            WorkflowMode.ADAPTIVE_BOUNDED,
+        }:
+            raise AdaptiveMainlineError("unsupported_mainline_workflow_mode")
         if request.envelope.task_id != request.task_id:
             raise AdaptiveMainlineError("adaptive_mainline_task_id_mismatch")
         if (
@@ -478,6 +483,41 @@ class AdaptiveMainlineRunner:
     def _assemble_plan(
         request: AdaptiveMainlineRequest,
     ) -> tuple[PlanProposal, ApprovedPlan, AdaptivePlannerAssemblyRecord]:
+        if request.approved_plan_bundle is not None:
+            bundle = request.approved_plan_bundle
+            if (
+                not bundle.verify_hash_links()
+                or bundle.runtime_task_id != request.task_id
+                or bundle.task_contract_hash != request.canonical_task_spec_hash
+                or bundle.logical_capability_registry_digest != request.registry.digest
+                or bundle.source_proposal is None
+                or bundle.effective_proposal is None
+                or bundle.normalization_receipt is None
+                or bundle.plan_policy_report is None
+                or bundle.approved_plan is None
+            ):
+                raise AdaptiveMainlineError("approved_plan_bundle_invalid")
+            if request.validate_approved_plan is not None:
+                request.validate_approved_plan(bundle.approved_plan)
+            planner_record = AdaptivePlannerAssemblyRecord(
+                initial_proposal_hash=bundle.source_proposal_hash,
+                effective_proposal_hash=bundle.effective_proposal_hash,
+                initial_policy_report_hash=bundle.plan_policy_report_hash,
+                final_policy_report_hash=bundle.plan_policy_report_hash,
+                approved_plan_hash=bundle.approved_plan_hash,
+                schema_repair_used=bool(bundle.normalization_receipt.changed_fields),
+                schema_repair_fields=bundle.normalization_receipt.changed_fields,
+                policy_repair_used=False,
+                hard_rejection=False,
+                initial_policy_approved=True,
+                fallback_used=bundle.fallback_used,
+                fallback_proposal_hash=bundle.fallback_proposal_hash,
+                normalization_receipt=bundle.normalization_receipt,
+                approved_plan_bundle=bundle,
+            )
+            return bundle.effective_proposal, bundle.approved_plan, planner_record
+        if request.propose_plan is None:
+            raise AdaptiveMainlineError("plan_source_or_approved_bundle_required")
         raw_proposal = request.propose_plan()
         if not isinstance(raw_proposal, PlanProposal):
             raise AdaptiveMainlineError("planner_must_return_plan_proposal")
