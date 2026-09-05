@@ -1,0 +1,7 @@
+MRR-03A canonical strict execution evidence
+workflow_mode=strict_fixed
+engine=AdaptiveRuntimeEngine
+completed=True
+legacy_runtime_driver_run_called=False
+runtime_attempt_count=3
+runtime_grant_count=3

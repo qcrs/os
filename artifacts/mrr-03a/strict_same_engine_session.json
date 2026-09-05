@@ -1,0 +1,204 @@
+{
+  "approved_plan_hash": "f63d44e2d045562fd50732007ba9fc983372a9fd00d391e8ddf29dd749286418",
+  "callback_steps": [
+    "retrieve",
+    "execute",
+    "summarize"
+  ],
+  "capability_grants": [
+    {
+      "approved_plan_hash": "f63d44e2d045562fd50732007ba9fc983372a9fd00d391e8ddf29dd749286418",
+      "attempt_id": "adaptive-attempt-run-strict-evidence-1",
+      "capability_id": "retrieve",
+      "capability_version": "v1",
+      "expires_at_ns": 1788530371077328763,
+      "grant_id": "grant-mode-task-retrieve-adaptive-attempt-run-strict-evidence-1",
+      "input_ref_ids": [],
+      "max_runtime_ms": 100,
+      "output_contract_version": "evidence-v1",
+      "schema_version": "statebus.capability_grant.v1",
+      "session_id": "session-strict-evidence",
+      "step_id": "retrieve",
+      "task_id": "mode-task",
+      "workspace_root_id": "workspace-strict-evidence"
+    },
+    {
+      "approved_plan_hash": "f63d44e2d045562fd50732007ba9fc983372a9fd00d391e8ddf29dd749286418",
+      "attempt_id": "adaptive-attempt-run-strict-evidence-2",
+      "capability_id": "execute",
+      "capability_version": "v1",
+      "expires_at_ns": 1788530371078372907,
+      "grant_id": "grant-mode-task-execute-adaptive-attempt-run-strict-evidence-2",
+      "input_ref_ids": [
+        "ref-strict-evidence-retrieve"
+      ],
+      "max_runtime_ms": 100,
+      "output_contract_version": "artifact-v1",
+      "schema_version": "statebus.capability_grant.v1",
+      "session_id": "session-strict-evidence",
+      "step_id": "execute",
+      "task_id": "mode-task",
+      "workspace_root_id": "workspace-strict-evidence"
+    },
+    {
+      "approved_plan_hash": "f63d44e2d045562fd50732007ba9fc983372a9fd00d391e8ddf29dd749286418",
+      "attempt_id": "adaptive-attempt-run-strict-evidence-3",
+      "capability_id": "summarize",
+      "capability_version": "v1",
+      "expires_at_ns": 1788530371079367004,
+      "grant_id": "grant-mode-task-summarize-adaptive-attempt-run-strict-evidence-3",
+      "input_ref_ids": [
+        "ref-strict-evidence-execute"
+      ],
+      "max_runtime_ms": 100,
+      "output_contract_version": "report-v1",
+      "schema_version": "statebus.capability_grant.v1",
+      "session_id": "session-strict-evidence",
+      "step_id": "summarize",
+      "task_id": "mode-task",
+      "workspace_root_id": "workspace-strict-evidence"
+    }
+  ],
+  "completed": true,
+  "dispatch_records": [
+    {
+      "attempt_id": "adaptive-attempt-run-strict-evidence-1",
+      "error_code": "",
+      "grant_hash": "60226a1019a6eb25b7c1a849813e65c82ff70a465bee9462712f7fafbd610ea4",
+      "output_refs": [
+        "ref-strict-evidence-retrieve"
+      ],
+      "state": "COMPLETED",
+      "step_id": "retrieve"
+    },
+    {
+      "attempt_id": "adaptive-attempt-run-strict-evidence-2",
+      "error_code": "",
+      "grant_hash": "fcb9f13b0439d8aab19bd8ef09c6f1c2443d6f5f466a1034296ae075e4ad576e",
+      "output_refs": [
+        "ref-strict-evidence-execute"
+      ],
+      "state": "COMPLETED",
+      "step_id": "execute"
+    },
+    {
+      "attempt_id": "adaptive-attempt-run-strict-evidence-3",
+      "error_code": "",
+      "grant_hash": "cda3071ecc0fc8c18a538d02b8b4638779be5f410db22db1eab078e272c2c9da",
+      "output_refs": [
+        "ref-strict-evidence-summarize"
+      ],
+      "state": "COMPLETED",
+      "step_id": "summarize"
+    }
+  ],
+  "engine": "AdaptiveRuntimeEngine",
+  "legacy_runtime_driver_run_called": false,
+  "session": {
+    "adaptive_approved_plan_hash": "f63d44e2d045562fd50732007ba9fc983372a9fd00d391e8ddf29dd749286418",
+    "adaptive_plan_policy_report_hash": "b8db33cde47fbc5bfd8e81a19dce2e781c592c82337377dd88a13fdf0264af6a",
+    "attempt_records": [
+      {
+        "attempt_id": "adaptive-attempt-run-strict-evidence-1",
+        "owner_role": "retriever",
+        "resource_handle_count": 1,
+        "resource_handle_hash": "69e538ce44e9f4b0d5bf80ba1c11b66c71246871714971632c54e72375a5f349",
+        "state": "COMPLETED",
+        "step_id": "retrieve",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "f548bd80f39278607e4b2a03e186e23f6134f3e10ccb7283fa7bc9b37eb53a4f"
+      },
+      {
+        "attempt_id": "adaptive-attempt-run-strict-evidence-2",
+        "owner_role": "executor",
+        "resource_handle_count": 1,
+        "resource_handle_hash": "14a9ed737a93951403a37a4d6ff14085bacb76300ccec3bbe7415b1cf7497706",
+        "state": "COMPLETED",
+        "step_id": "execute",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "f548bd80f39278607e4b2a03e186e23f6134f3e10ccb7283fa7bc9b37eb53a4f"
+      },
+      {
+        "attempt_id": "adaptive-attempt-run-strict-evidence-3",
+        "owner_role": "summarizer",
+        "resource_handle_count": 1,
+        "resource_handle_hash": "10032b6b88c14f0fabb1f96092d87395f0778d5e7e271343c6fd4dbea52b357c",
+        "state": "COMPLETED",
+        "step_id": "summarize",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "f548bd80f39278607e4b2a03e186e23f6134f3e10ccb7283fa7bc9b37eb53a4f"
+      }
+    ],
+    "canonical_task_spec_hash": "mode-contract",
+    "capability_grant_hashes": [
+      "60226a1019a6eb25b7c1a849813e65c82ff70a465bee9462712f7fafbd610ea4",
+      "fcb9f13b0439d8aab19bd8ef09c6f1c2443d6f5f466a1034296ae075e4ad576e",
+      "cda3071ecc0fc8c18a538d02b8b4638779be5f410db22db1eab078e272c2c9da"
+    ],
+    "created_at_ns": 1788530370976182198,
+    "current_attempt_id": "adaptive-attempt-run-strict-evidence-3",
+    "current_step_id": "summarize",
+    "layer_name": "L3",
+    "lease_config": {
+      "ack_timeout_ms": 250,
+      "heartbeat_interval_ms": 2000,
+      "lease_timeout_ms": 6000,
+      "max_attempts_per_step": 1,
+      "teardown_grace_ms": 1000
+    },
+    "schema_version": "statebus.runtime_task_session.v1",
+    "session_id": "session-strict-evidence",
+    "session_state": "COMPLETED",
+    "task_id": "mode-task",
+    "trace_id": "trace-strict-evidence",
+    "updated_at_ns": 1788530370979992066,
+    "workflow_mode": "strict_fixed",
+    "workflow_steps": [
+      {
+        "attempt_id": "adaptive-attempt-run-strict-evidence-1",
+        "capability": "retrieve",
+        "output_ref_count": 1,
+        "output_ref_hash": "fa80cc4dd8fe17066ba280b990dd9e7d839abc15bc5a590ac70fbd05e0f0e26e",
+        "role": "retriever",
+        "state": "COMPLETED",
+        "step_id": "retrieve"
+      },
+      {
+        "attempt_id": "adaptive-attempt-run-strict-evidence-2",
+        "capability": "execute",
+        "depends_on": [
+          "retrieve"
+        ],
+        "output_ref_count": 1,
+        "output_ref_hash": "8245b2bbba9a6d9b4aa1ad8bd89f6427f2698e5e4f62747cdfc0d8b98e532f4f",
+        "role": "executor",
+        "state": "COMPLETED",
+        "step_id": "execute"
+      },
+      {
+        "attempt_id": "adaptive-attempt-run-strict-evidence-3",
+        "capability": "summarize",
+        "depends_on": [
+          "execute"
+        ],
+        "output_ref_count": 1,
+        "output_ref_hash": "5c4a7c6163504f9a5cbf05e20e265869aee755176329e3664f6727c43853b04d",
+        "role": "summarizer",
+        "state": "COMPLETED",
+        "step_id": "summarize"
+      }
+    ],
+    "workspace_root": "/tmp/statebus-mrr03a-re1i93z7"
+  },
+  "step_attempt_record_types": [
+    "StepAttemptRecord",
+    "StepAttemptRecord",
+    "StepAttemptRecord"
+  ],
+  "workflow_mode": "strict_fixed",
+  "workflow_step_types": [
+    "RuntimeWorkflowStep",
+    "RuntimeWorkflowStep",
+    "RuntimeWorkflowStep"
+  ]
+}

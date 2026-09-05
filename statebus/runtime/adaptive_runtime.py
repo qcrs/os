@@ -284,8 +284,12 @@ class AdaptiveRuntimeEngine:
     """Controller-owned bounded dispatcher. Role code only receives a one-attempt grant."""
 
     def run(self, request: AdaptiveRuntimeRequest) -> AdaptiveRuntimeResult:
-        if request.envelope.workflow_mode == WorkflowMode.STRICT_FIXED:
-            raise AdaptiveRuntimeError("strict_fixed_must_use_RuntimeDriver_run")
+        if request.envelope.workflow_mode not in {
+            WorkflowMode.STRICT_FIXED,
+            WorkflowMode.ADAPTIVE_SHADOW,
+            WorkflowMode.ADAPTIVE_BOUNDED,
+        }:
+            raise AdaptiveRuntimeError("unsupported_runtime_workflow_mode")
         was_explicit_identity = request.runtime_identity is not None
         try:
             runtime_identity = resolve_runtime_identity(
