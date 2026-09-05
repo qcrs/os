@@ -24,6 +24,11 @@ message ControlHeader {
   uint32 timeout_ms = 6;
   string schema_version = 7;
   EventType event_type = 8;
+  string run_id = 9;
+  string session_id = 10;
+  string invocation_id = 11;
+  string execution_binding_hash = 12;
+  string capability_grant_hash = 13;
 }
 
 message RefHandle {

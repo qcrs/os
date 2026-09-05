@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
+import statebus.control as control_plane
+from statebus.control import AckReceived, ErrorResult, Heartbeat, RunStart, SuccessResult
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
     CapabilityDescriptor,
@@ -23,6 +26,7 @@ from statebus.contracts import (
     TransformStep,
     WorkflowMode,
 )
+from statebus.runtime import adaptive_dispatcher as adaptive_dispatcher_module
 from statebus.refs import ExecutionArtifactRef
 from statebus.runtime.adaptive_dispatcher import StoredAdaptiveArtifact
 from statebus.runtime.adaptive_mainline import (
@@ -548,7 +552,10 @@ def test_mainline_normalizer_rejects_semantic_mutation(tmp_path: Path) -> None:
         )
 
 
-def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: Path) -> None:
+def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     registry = CapabilityRegistry()
     for descriptor in (
         CapabilityDescriptor(
@@ -649,6 +656,41 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: 
         required_tools=("finance",),
         arguments={"ticker": "ACME", "quarter": "2026Q1"},
     )
+    runtime_identity = RuntimeIdentity(
+        runtime_task_id=envelope.task_id,
+        run_id="run-adaptive-semantic",
+        session_id="session-adaptive-semantic",
+        trace_id="trace-adaptive-semantic",
+        task_contract=TaskContractIdentity.from_hash(
+            envelope.canonical_task_spec_hash
+        ),
+    )
+    observed_physical: dict[str, object] = {}
+    original_transport = control_plane.SubprocessExecutorTransport
+
+    class ObservingSubprocessExecutorTransport(original_transport):
+        def execute(self, request, **kwargs):
+            responses = self.exchange_sequence(request, **kwargs)
+            observed_physical["request"] = request
+            observed_physical["responses"] = tuple(responses)
+            observed_physical["audit"] = self.last_exchange_audit
+            observed_physical["admission_receipts"] = self.last_admission_receipts
+            return next(
+                response
+                for response in responses
+                if isinstance(response, (SuccessResult, ErrorResult))
+            )
+
+    monkeypatch.setattr(
+        control_plane,
+        "SubprocessExecutorTransport",
+        ObservingSubprocessExecutorTransport,
+    )
+    monkeypatch.setattr(
+        adaptive_dispatcher_module,
+        "uuid4",
+        lambda: UUID("12345678-1234-5678-1234-567812345678"),
+    )
 
     def retrieve_query(query: str, request: EvidenceRequest):
         return pipeline.run(
@@ -704,8 +746,65 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: 
                 },
             ),
             state_pool_mode="shared_memory",
+            runtime_identity=runtime_identity,
         ),
     )
+
+    physical_request = observed_physical["request"]
+    physical_responses = observed_physical["responses"]
+    physical_audit = observed_physical["audit"]
+    admission_receipts = observed_physical["admission_receipts"]
+    assert physical_audit is not None
+    assert physical_audit.carrier == "typed_protobuf"
+    assert physical_audit.backend == "uds_subprocess"
+    assert physical_audit.driver_pid != physical_audit.worker_pid
+    assert [type(message) for message in physical_responses] == [
+        AckReceived,
+        RunStart,
+        Heartbeat,
+        SuccessResult,
+    ]
+
+    def invocation_scope(header):
+        return {
+            "trace_id": header.trace_id,
+            "task_id": header.task_id,
+            "run_id": header.run_id,
+            "session_id": header.session_id,
+            "step_id": header.step_id,
+            "attempt_id": header.attempt_id,
+            "invocation_id": header.invocation_id,
+            "execution_binding_hash": header.execution_binding_hash,
+            "capability_grant_hash": header.capability_grant_hash,
+            "schema_version": header.schema_version,
+        }
+
+    expected_scope = invocation_scope(physical_request.header)
+    assert expected_scope["trace_id"] == runtime_identity.trace_id
+    assert expected_scope["task_id"] == runtime_identity.runtime_task_id
+    assert expected_scope["run_id"] == runtime_identity.run_id
+    assert expected_scope["session_id"] == runtime_identity.session_id
+    assert expected_scope["invocation_id"] == (
+        "invocation-12345678123456781234567812345678"
+    )
+    assert expected_scope["execution_binding_hash"] == (
+        result.runtime.execution_bindings[0].binding_hash
+    )
+    assert expected_scope["capability_grant_hash"] == (
+        result.runtime.bound_grants[0].grant.grant_hash
+    )
+    assert expected_scope["capability_grant_hash"] == (
+        physical_request.capability_grant_hash
+    )
+    assert all(
+        invocation_scope(message.header) == expected_scope
+        for message in physical_responses
+    )
+    assert len(admission_receipts) == len(physical_responses)
+    assert all(receipt.admitted for receipt in admission_receipts)
+    assert all(receipt.origin.value == "NATIVE_TYPED_WORKER" for receipt in admission_receipts)
+    assert [receipt.terminal_count for receipt in admission_receipts] == [0, 0, 0, 1]
+    assert admission_receipts[-1].output_contract_decision == "matched"
 
     event_types = [event.event_type for event in result.runtime.telemetry.events]
     assert result.completed
@@ -718,6 +817,8 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: 
     product_bundle = observed_retrieval["result"].retrieval_bundles[0]
     publication = next(iter(result.context.semantic_state_publications.values()))
     selection = next(iter(result.context.semantic_state_selections.values()))
+    recorded_admission = next(iter(result.context.control_response_admissions.values()))
+    assert recorded_admission == admission_receipts
     assert publication.contract.shape[0] == len(product_bundle.semantic_candidate_embeddings) + 1
     assert len(product_bundle.semantic_candidate_embeddings) > len(
         product_bundle.evidence_pack.semantic_contexts
@@ -742,6 +843,38 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(tmp_path: 
         "vector": (),
     }
     assert result.infrastructure.state_store.materializations == {}
+    (tmp_path / "real_subprocess_scope.txt").write_text(
+        json.dumps(
+            {
+                "mechanism": "UDS -> protobuf -> real subprocess_worker",
+                "carrier": physical_audit.carrier,
+                "backend": physical_audit.backend,
+                "driver_pid": physical_audit.driver_pid,
+                "worker_pid": physical_audit.worker_pid,
+                "driver_worker_pid_distinct": (
+                    physical_audit.driver_pid != physical_audit.worker_pid
+                ),
+                "request_scope": expected_scope,
+                "responses": [
+                    {
+                        "message_type": type(message).__name__,
+                        "event_type": message.header.event_type.name,
+                        "scope": invocation_scope(message.header),
+                    }
+                    for message in physical_responses
+                ],
+                "all_response_scopes_equal_request": all(
+                    invocation_scope(message.header) == expected_scope
+                    for message in physical_responses
+                ),
+                "canonical_semantic_execution_completed": result.completed,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_values(

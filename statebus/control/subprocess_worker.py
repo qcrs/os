@@ -49,6 +49,7 @@ from statebus.control.transport import (
     send_control_message,
     send_text_message,
 )
+from statebus.contracts import CONTROL_PLANE_SCHEMA_VERSION
 from statebus.state import (
     LogitStateValidationError,
     SemanticStateValidationError,
@@ -158,6 +159,35 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     logit_gate = message.operation == "logit_gate_v1"
 
     errors: list[str] = []
+    if not header.schema_version.strip():
+        errors.append("schema_version_missing")
+    elif header.schema_version != CONTROL_PLANE_SCHEMA_VERSION:
+        errors.append("schema_version_unsupported")
+
+    bound_invocation = (
+        semantic_selection
+        or bool(message.capability_grant_hash.strip())
+        or bool(header.capability_grant_hash.strip())
+    )
+    if bound_invocation:
+        for field_name in (
+            "trace_id",
+            "task_id",
+            "run_id",
+            "session_id",
+            "step_id",
+            "attempt_id",
+            "invocation_id",
+            "execution_binding_hash",
+            "capability_grant_hash",
+        ):
+            if not str(getattr(header, field_name)).strip():
+                errors.append(f"{field_name}_missing")
+        if not message.capability_grant_hash.strip():
+            errors.append("request_capability_grant_hash_missing")
+    if message.capability_grant_hash != header.capability_grant_hash:
+        errors.append("capability_grant_hash_mismatch")
+
     if not message.workspace_root.strip():
         errors.append("workspace_root_missing")
     if not message.input_manifest_hash.strip():
@@ -175,8 +205,6 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
             errors.append("hydrate_manifest_id_missing")
         if message.semantic_top_k <= 0:
             errors.append("semantic_top_k_missing")
-        if not message.capability_grant_hash.strip():
-            errors.append("capability_grant_hash_missing")
         if len(message.state_refs) != 1:
             errors.append("semantic_state_ref_count_invalid")
     if logit_gate:

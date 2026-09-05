@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from statebus.contracts import BoundCapabilityGrant, CapabilityGrant, Claim, ClaimSet, EvidenceCoverageStatus, EvidenceRequest, RefStatus, TransformProgram, TransformStep
+from statebus.contracts import BoundCapabilityGrant, CapabilityGrant, Claim, ClaimSet, EvidenceCoverageStatus, EvidenceRequest, RefStatus, RuntimeIdentity, TaskContractIdentity, TransformProgram, TransformStep
 from statebus.refs import CanonicalEvidencePack, EvidenceItem, ExecutionArtifactRef, TableCellLocator
 from statebus.runtime.adaptive_dispatcher import AdaptiveCapabilityDispatcher, AdaptiveDispatchContext, AdaptiveDispatchError, StoredAdaptiveArtifact
 from statebus.runtime.adaptive_runtime import AdaptiveRuntimeRequest, AdaptiveStepResult
@@ -48,6 +48,18 @@ def _bound_grant(
         execution_binding=create_execution_binding(
             projection=projection,
             provider=provider,
+        ),
+    )
+
+
+def _runtime_identity(envelope, *, session_id: str = "session") -> RuntimeIdentity:
+    return RuntimeIdentity(
+        runtime_task_id=envelope.task_id,
+        run_id="run-direct-dispatch",
+        session_id=session_id,
+        trace_id="trace-direct-dispatch",
+        task_contract=TaskContractIdentity.from_hash(
+            envelope.canonical_task_spec_hash
         ),
     )
 
@@ -261,6 +273,7 @@ def test_dispatcher_rejects_missing_runtime_builtin_before_handler_side_effect(t
         step=report_step,
         grant=_bound_grant(registry, capability_grant),
         attempt_workspace=tmp_path,
+        runtime_identity=_runtime_identity(envelope),
     )
     assert not outcome.success
     assert outcome.error_code == "runtime_builtin_handler_not_registered"
@@ -323,6 +336,7 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
         step=report_step,
         grant=_bound_grant(registry, grant),
         attempt_workspace=tmp_path / "report",
+        runtime_identity=_runtime_identity(envelope),
     )
     assert result.success
     assert len(context.claim_sets) == 1
@@ -349,6 +363,7 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
         step=report_step,
         grant=_bound_grant(registry, grant),
         attempt_workspace=tmp_path / "cross-session",
+        runtime_identity=_runtime_identity(envelope),
     )
     assert not cross_session.success
     assert cross_session.error_code == "summarizer_evidence_not_verified"
@@ -367,6 +382,7 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
         step=report_step,
         grant=_bound_grant(registry, grant),
         attempt_workspace=tmp_path / "rejected",
+        runtime_identity=_runtime_identity(envelope),
     )
     assert not rejected.success
     assert rejected.error_code == "summarizer_candidate_generation_failed:RuntimeError"

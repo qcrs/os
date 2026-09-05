@@ -1,0 +1,22 @@
+MRR-05B final focused test command
+==================================
+
+source ./deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q \
+  --basetemp=/tmp/mrr-05b-final \
+  tests/test_control_response_admission.py \
+  tests/test_subprocess_executor.py \
+  tests/test_invocation_wire_projection.py \
+  tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state \
+  tests/test_control_plane.py
+
+Result: 15 passed in 11.70s (final2 rerun after empty-sequence admission fix)
+
+Coverage: admission validator negatives, native typed UDS/subprocess admission,
+legacy protobuf compatibility, UTF-8 adapter-derived compatibility, MRR-05A
+wire/request-rejection compatibility, canonical semantic-select integration,
+and the directly adjacent control-plane/memfd regression.
+
+Mechanism note: Unix-domain socket tests ran outside the restricted command
+sandbox because the sandbox rejected bind with Operation not permitted. No
+Docker, vLLM, benchmark, full pytest, coverage, or broad lint run was used.

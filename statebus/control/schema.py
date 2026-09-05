@@ -85,6 +85,19 @@ def build_control_file_descriptor() -> descriptor_pb2.FileDescriptorProto:
                         field_type=FieldDescriptor.TYPE_ENUM,
                         type_name=f".{PACKAGE}.EventType",
                     ),
+                    _field(name="run_id", number=9, field_type=FieldDescriptor.TYPE_STRING),
+                    _field(name="session_id", number=10, field_type=FieldDescriptor.TYPE_STRING),
+                    _field(name="invocation_id", number=11, field_type=FieldDescriptor.TYPE_STRING),
+                    _field(
+                        name="execution_binding_hash",
+                        number=12,
+                        field_type=FieldDescriptor.TYPE_STRING,
+                    ),
+                    _field(
+                        name="capability_grant_hash",
+                        number=13,
+                        field_type=FieldDescriptor.TYPE_STRING,
+                    ),
                 ],
             ),
             _message(

@@ -15,6 +15,8 @@ from statebus.contracts import (
     PlanStepProposal,
     RefStatus,
     RiskClass,
+    RuntimeIdentity,
+    TaskContractIdentity,
     TransformProgram,
     TransformStep,
     WorkflowMode,
@@ -295,6 +297,15 @@ def test_python_executor_consumes_verified_retrieval_context_without_mounting_it
         step=step,
         grant=_bound_grant(registry, grant),
         attempt_workspace=tmp_path / "attempt",
+        runtime_identity=RuntimeIdentity(
+            runtime_task_id=envelope.task_id,
+            run_id="run-codeact-direct-dispatch",
+            session_id=grant.session_id,
+            trace_id="trace-codeact-direct-dispatch",
+            task_contract=TaskContractIdentity.from_hash(
+                envelope.canonical_task_spec_hash
+            ),
+        ),
     )
 
     assert not result.success

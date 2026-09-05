@@ -1,3 +1,9 @@
+from statebus.control.admission import (
+    ControlResponseAdmissionError,
+    ControlResponseAdmissionReceipt,
+    ControlResponseOrigin,
+    admit_control_response_sequence,
+)
 from statebus.control.messages import (
     AckReceived,
     CancelCommand,
@@ -33,6 +39,9 @@ from statebus.control.transport import (
 __all__ = [
     "AckReceived",
     "CancelCommand",
+    "ControlResponseAdmissionError",
+    "ControlResponseAdmissionReceipt",
+    "ControlResponseOrigin",
     "ControlPlaneLoopbackServer",
     "ControlHeader",
     "ErrorResult",
@@ -46,6 +55,7 @@ __all__ = [
     "SubprocessExecutorTransport",
     "SuccessResult",
     "TrapFatal",
+    "admit_control_response_sequence",
     "decode_control_message",
     "decode_text_control_message",
     "deframe_control_message",

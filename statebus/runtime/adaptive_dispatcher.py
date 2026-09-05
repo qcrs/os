@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import time
 from typing import Callable, TYPE_CHECKING
+from uuid import uuid4
 
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
@@ -17,6 +18,7 @@ from statebus.contracts import (
     CodeGenerationPolicy,
     CodeGenerationRequest,
     CompatibilityVerdict,
+    CONTROL_PLANE_SCHEMA_VERSION,
     EvidenceCoverageStatus,
     EvidenceProjectionRequest,
     ExecutionKind,
@@ -24,6 +26,7 @@ from statebus.contracts import (
     RefStatus,
     ReplayClass,
     RiskClass,
+    RuntimeIdentity,
     TransformProgram,
     TransformStep,
 )
@@ -129,6 +132,7 @@ class AdaptiveDispatchContext:
     socket_path: Path | None = None
     semantic_state_publications: dict[str, object] = field(default_factory=dict)
     semantic_state_selections: dict[str, object] = field(default_factory=dict)
+    control_response_admissions: dict[str, tuple[object, ...]] = field(default_factory=dict)
     memory_match_results: dict[str, object] = field(default_factory=dict)
     memory_queries_by_task: dict[str, object] = field(default_factory=dict)
     memory_role_inputs_by_step: dict[str, tuple[dict[str, object], ...]] = field(
@@ -177,6 +181,7 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: BoundCapabilityGrant | CapabilityGrant,
         attempt_workspace: Path,
+        runtime_identity: RuntimeIdentity,
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
@@ -191,7 +196,18 @@ class AdaptiveCapabilityDispatcher:
                 step,
                 plain_grant,
                 grant,
+                runtime_identity,
             )
+            if execution_kind == ExecutionKind.RETRIEVAL_ADAPTER:
+                return self._dispatch_retrieval(
+                    envelope,
+                    approved_plan,
+                    step,
+                    plain_grant,
+                    attempt_workspace,
+                    runtime_identity=runtime_identity,
+                    execution_binding_hash=grant.execution_binding_hash,
+                )
             handler = self._handlers[execution_kind]
             return handler(envelope, approved_plan, step, plain_grant, attempt_workspace)
         except (AdaptiveDispatchError, ValueError) as exc:
@@ -209,6 +225,9 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
         attempt_workspace: Path,
+        *,
+        runtime_identity: RuntimeIdentity,
+        execution_binding_hash: str,
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
@@ -237,6 +256,8 @@ class AdaptiveCapabilityDispatcher:
                 step=step,
                 grant=grant,
                 attempt_workspace=attempt_workspace,
+                runtime_identity=runtime_identity,
+                execution_binding_hash=execution_binding_hash,
             )
             coverage_report = EvidenceCoverageVerifier().evaluate(result.evidence_pack, request)
             result = replace(
@@ -300,6 +321,8 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
         attempt_workspace: Path,
+        runtime_identity: RuntimeIdentity,
+        execution_binding_hash: str,
     ) -> tuple[
         AdaptiveRetrievalResult,
         tuple[object, ...],
@@ -308,6 +331,7 @@ class AdaptiveCapabilityDispatcher:
     ]:
         from statebus.control import (
             ControlHeader,
+            ControlResponseAdmissionError,
             ErrorResult,
             EventType,
             ExecRequest,
@@ -390,15 +414,22 @@ class AdaptiveCapabilityDispatcher:
                 evidence_budget_bytes = sum(
                     max(int(entry.byte_hint), 0) for entry in entries
                 )
+            invocation_id = f"invocation-{uuid4().hex}"
             request = ExecRequest(
                 header=ControlHeader(
-                    trace_id=f"adaptive:{grant.task_id}",
-                    task_id=grant.task_id,
-                    step_id=step.step_id,
+                    trace_id=runtime_identity.trace_id,
+                    task_id=runtime_identity.runtime_task_id,
+                    step_id=grant.step_id,
                     attempt_id=grant.attempt_id,
                     target_role="executor",
                     timeout_ms=min(max(grant.max_runtime_ms, 5_000), 30_000),
                     event_type=EventType.REQ_EXEC,
+                    schema_version=CONTROL_PLANE_SCHEMA_VERSION,
+                    run_id=runtime_identity.run_id,
+                    session_id=runtime_identity.session_id,
+                    invocation_id=invocation_id,
+                    execution_binding_hash=execution_binding_hash,
+                    capability_grant_hash=grant.grant_hash,
                 ),
                 state_refs=(RefHandle(ref_id=state_id, ref_kind="semantic_state"),),
                 artifact_refs=(),
@@ -414,12 +445,22 @@ class AdaptiveCapabilityDispatcher:
                 expected_encoder_signature=publication.contract.encoder_signature,
                 capability_grant_hash=grant.grant_hash,
             )
-            response = SubprocessExecutorTransport(
+            transport = SubprocessExecutorTransport(
                 socket_path=self.context.socket_path.with_name(
                     f"{self.context.socket_path.stem}-semantic-{index}{self.context.socket_path.suffix}"
                 ),
                 timeout_s=max(request.header.timeout_ms / 1000.0, 5.0),
-            ).execute(request)
+            )
+            try:
+                response = transport.execute(request)
+            except ControlResponseAdmissionError as exc:
+                self.context.control_response_admissions[state_id] = exc.receipts
+                raise AdaptiveDispatchError(str(exc)) from exc
+            receipts = transport.last_admission_receipts
+            self.context.control_response_admissions[state_id] = receipts
+            terminal_receipts = tuple(receipt for receipt in receipts if receipt.terminal)
+            if len(terminal_receipts) != 1 or not terminal_receipts[0].admitted:
+                raise AdaptiveDispatchError("semantic_state_response_admission_missing")
             if isinstance(response, ErrorResult):
                 raise AdaptiveDispatchError(
                     f"semantic_state_consume_failed:{response.error_code}:{response.error_detail}"
@@ -1543,10 +1584,17 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
         bound_grant: BoundCapabilityGrant,
+        runtime_identity: RuntimeIdentity,
     ) -> ExecutionKind:
         descriptor = self.context.registry.get(step.capability_id)
         logical_capability = project_legacy_capability(descriptor)
         binding = bound_grant.execution_binding
+        runtime_identity.validate_legacy_projection(
+            task_id=grant.task_id,
+            canonical_task_spec_hash=envelope.canonical_task_spec_hash,
+        )
+        if runtime_identity.session_id != grant.session_id:
+            raise AdaptiveDispatchError("runtime_identity_grant_scope_mismatch")
         if step.capability_id != grant.capability_id or grant.approved_plan_hash != approved_plan.approved_plan_hash:
             raise AdaptiveDispatchError("capability_grant_mismatch")
         if grant.task_id != envelope.task_id or grant.step_id != step.step_id or grant.expires_at_ns <= __import__("time").time_ns():

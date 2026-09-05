@@ -1,0 +1,15 @@
+MRR-05A targeted test command
+=============================
+
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+  --basetemp=/tmp/mrr-05a-targeted \
+  tests/test_invocation_wire_projection.py \
+  tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state \
+  tests/test_subprocess_executor.py::test_subprocess_executor_valid_round_trip
+
+Result: 4 passed in 8.55s
+
+Mechanism note: the real UDS/subprocess test was rerun outside the restricted
+execution sandbox after the sandbox returned Operation not permitted for the
+Unix-domain socket. No Docker, vLLM, benchmark, or full-suite run was used.

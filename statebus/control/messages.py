@@ -34,6 +34,11 @@ class ControlHeader:
     timeout_ms: int
     event_type: EventType
     schema_version: str = CONTROL_PLANE_SCHEMA_VERSION
+    run_id: str = ""
+    session_id: str = ""
+    invocation_id: str = ""
+    execution_binding_hash: str = ""
+    capability_grant_hash: str = ""
 
 
 @dataclass(frozen=True)
@@ -187,6 +192,11 @@ def _header_to_pb(header: ControlHeader) -> Any:
     pb.timeout_ms = header.timeout_ms
     pb.schema_version = header.schema_version
     pb.event_type = int(header.event_type)
+    pb.run_id = header.run_id
+    pb.session_id = header.session_id
+    pb.invocation_id = header.invocation_id
+    pb.execution_binding_hash = header.execution_binding_hash
+    pb.capability_grant_hash = header.capability_grant_hash
     return pb
 
 
@@ -198,8 +208,13 @@ def _header_from_pb(pb: Any) -> ControlHeader:
         attempt_id=pb.attempt_id,
         target_role=pb.target_role,
         timeout_ms=int(pb.timeout_ms),
-        schema_version=pb.schema_version or CONTROL_PLANE_SCHEMA_VERSION,
+        schema_version=pb.schema_version,
         event_type=EventType(pb.event_type),
+        run_id=pb.run_id,
+        session_id=pb.session_id,
+        invocation_id=pb.invocation_id,
+        execution_binding_hash=pb.execution_binding_hash,
+        capability_grant_hash=pb.capability_grant_hash,
     )
 
 
@@ -437,7 +452,12 @@ def _text_header(payload: dict[str, Any]) -> ControlHeader:
         target_role=str(payload["target_role"]),
         timeout_ms=int(payload["timeout_ms"]),
         event_type=EventType(int(payload["event_type"])),
-        schema_version=str(payload.get("schema_version", CONTROL_PLANE_SCHEMA_VERSION)),
+        schema_version=str(payload["schema_version"]),
+        run_id=str(payload["run_id"]),
+        session_id=str(payload["session_id"]),
+        invocation_id=str(payload["invocation_id"]),
+        execution_binding_hash=str(payload["execution_binding_hash"]),
+        capability_grant_hash=str(payload["capability_grant_hash"]),
     )
 
 

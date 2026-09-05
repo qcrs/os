@@ -583,6 +583,7 @@ class AdaptiveRuntimeEngine:
                         step=step,
                         grant=bound_grant,
                         attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / attempt_id,
+                        runtime_identity=runtime_identity,
                     )
                 else:
                     assert request.execute_step is not None
@@ -682,6 +683,7 @@ class AdaptiveRuntimeEngine:
                             step=fallback_step,
                             grant=fallback_bound_grant,
                             attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / fallback_attempt_id,
+                            runtime_identity=runtime_identity,
                         )
                     else:
                         assert request.execute_step is not None

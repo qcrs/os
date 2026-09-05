@@ -458,6 +458,13 @@ def test_dispatcher_rejects_unbound_or_mismatched_provider_before_handler(
         allowed_capability_ids=(legacy.capability_id,),
         allowed_output_contracts=(legacy.output_contract_version,),
     )
+    runtime_identity = RuntimeIdentity(
+        runtime_task_id="task",
+        run_id="run-provider-binding-test",
+        session_id="session",
+        trace_id="trace-provider-binding-test",
+        task_contract=TaskContractIdentity.from_hash("spec"),
+    )
 
     unbound = dispatcher.dispatch(
         envelope=envelope,
@@ -465,6 +472,7 @@ def test_dispatcher_rejects_unbound_or_mismatched_provider_before_handler(
         step=step,
         grant=grant,
         attempt_workspace=tmp_path / "unbound",
+        runtime_identity=runtime_identity,
     )
     mismatched_binding = replace(
         binding,
@@ -479,6 +487,7 @@ def test_dispatcher_rejects_unbound_or_mismatched_provider_before_handler(
             execution_binding=mismatched_binding,
         ),
         attempt_workspace=tmp_path / "mismatched",
+        runtime_identity=runtime_identity,
     )
 
     assert not unbound.success

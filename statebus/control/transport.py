@@ -11,6 +11,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Union
 
+from statebus.control.admission import (
+    ControlResponseAdmissionError,
+    ControlResponseAdmissionReceipt,
+    ControlResponseOrigin,
+    admit_control_response_sequence,
+)
 from statebus.control.messages import (
     AckReceived,
     CancelCommand,
@@ -462,6 +468,10 @@ class SubprocessExecutorTransport:
         default=None,
         init=False,
     )
+    last_admission_receipts: tuple[ControlResponseAdmissionReceipt, ...] = field(
+        default=(),
+        init=False,
+    )
 
     def exchange_sequence(
         self,
@@ -474,6 +484,7 @@ class SubprocessExecutorTransport:
         """Start a worker subprocess and return the full response frame sequence."""
         import os as _os
 
+        self.last_admission_receipts = ()
         normalized_carrier = carrier.strip().lower()
         if normalized_carrier not in {"protobuf", "utf8_text"}:
             raise ValueError(f"unsupported subprocess carrier: {carrier}")
@@ -524,6 +535,7 @@ class SubprocessExecutorTransport:
                 server_ready.set()
                 conn, _ = server.accept()
                 try:
+                    conn.settimeout(self.timeout_s)
                     if normalized_carrier == "utf8_text":
                         send_text_message(conn, resolved_text_payload)
                     else:
@@ -547,8 +559,6 @@ class SubprocessExecutorTransport:
                         except (ConnectionError, ConnectionResetError, socket.timeout):
                             break
                         responses.append(msg)
-                        if isinstance(msg, (SuccessResult, ErrorResult)):
-                            break
                 except Exception:
                     pass
                 finally:
@@ -587,7 +597,7 @@ class SubprocessExecutorTransport:
             proc.kill()
 
         completed_responses = responses
-        if not any(isinstance(msg, (SuccessResult, ErrorResult)) for msg in responses):
+        if not any(isinstance(msg, (SuccessResult, ErrorResult, TrapFatal)) for msg in responses):
             completed_responses = responses + [ErrorResult(
                 header=replace(request.header, event_type=EventType.RES_ERR),
                 error_code="subprocess_timeout",
@@ -608,7 +618,31 @@ class SubprocessExecutorTransport:
             request_wire_bytes=request_wire_bytes,
             response_wire_bytes=sum(response_wire_bytes),
         )
-        return completed_responses
+        canonical_scope_fields = (
+            exec_request.header.run_id,
+            exec_request.header.session_id,
+            exec_request.header.invocation_id,
+            exec_request.header.execution_binding_hash,
+            exec_request.header.capability_grant_hash,
+        )
+        origin = (
+            ControlResponseOrigin.ADAPTER_DERIVED
+            if normalized_carrier == "utf8_text"
+            else (
+                ControlResponseOrigin.NATIVE_TYPED_WORKER
+                if all(str(value).strip() for value in canonical_scope_fields)
+                else ControlResponseOrigin.LEGACY_COMPATIBILITY
+            )
+        )
+        admitted, receipts = admit_control_response_sequence(
+            exec_request,
+            completed_responses,
+            origin=origin,
+        )
+        self.last_admission_receipts = receipts
+        if not admitted:
+            raise ControlResponseAdmissionError(receipts)
+        return list(admitted)
 
     def execute(
         self,
@@ -617,7 +651,7 @@ class SubprocessExecutorTransport:
         memfd_refs: dict[str, tuple[int, int]] | None = None,
         carrier: str = "protobuf",
         text_payload: str = "",
-    ) -> Union[SuccessResult, ErrorResult]:
+    ) -> Union[SuccessResult, ErrorResult, TrapFatal]:
         """Start worker subprocess, exchange one ExecRequest/result pair.
 
         Args:
@@ -633,11 +667,6 @@ class SubprocessExecutorTransport:
             carrier=carrier,
             text_payload=text_payload,
         ):
-            if isinstance(response, (SuccessResult, ErrorResult)):
+            if isinstance(response, (SuccessResult, ErrorResult, TrapFatal)):
                 return response
-        return ErrorResult(
-            header=replace(request.header, event_type=EventType.RES_ERR),
-            error_code="subprocess_timeout",
-            error_detail="worker subprocess did not return a result within timeout",
-            failed_at_ns=time.time_ns(),
-        )
+        raise RuntimeError("admitted_control_terminal_missing")

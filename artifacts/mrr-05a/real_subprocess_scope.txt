@@ -1,0 +1,88 @@
+{
+  "all_response_scopes_equal_request": true,
+  "backend": "uds_subprocess",
+  "canonical_semantic_execution_completed": true,
+  "carrier": "typed_protobuf",
+  "driver_pid": 1100931,
+  "driver_worker_pid_distinct": true,
+  "mechanism": "UDS -> protobuf -> real subprocess_worker",
+  "request_scope": {
+    "attempt_id": "adaptive-attempt-run-adaptive-semantic-1",
+    "capability_grant_hash": "26250462b27c3a7bfc4d8709b71ee2bbf9d1c57a7385251718ee659e594b2705",
+    "execution_binding_hash": "bc64552d49a277dd5485afa0b52096a29b5686f19621efb64a694434121b4372",
+    "invocation_id": "invocation-12345678123456781234567812345678",
+    "run_id": "run-adaptive-semantic",
+    "schema_version": "statebus.control.v1",
+    "session_id": "session-adaptive-semantic",
+    "step_id": "retrieve",
+    "task_id": "adaptive-semantic-task",
+    "trace_id": "trace-adaptive-semantic"
+  },
+  "responses": [
+    {
+      "event_type": "ACK_RECV",
+      "message_type": "AckReceived",
+      "scope": {
+        "attempt_id": "adaptive-attempt-run-adaptive-semantic-1",
+        "capability_grant_hash": "26250462b27c3a7bfc4d8709b71ee2bbf9d1c57a7385251718ee659e594b2705",
+        "execution_binding_hash": "bc64552d49a277dd5485afa0b52096a29b5686f19621efb64a694434121b4372",
+        "invocation_id": "invocation-12345678123456781234567812345678",
+        "run_id": "run-adaptive-semantic",
+        "schema_version": "statebus.control.v1",
+        "session_id": "session-adaptive-semantic",
+        "step_id": "retrieve",
+        "task_id": "adaptive-semantic-task",
+        "trace_id": "trace-adaptive-semantic"
+      }
+    },
+    {
+      "event_type": "RUN_START",
+      "message_type": "RunStart",
+      "scope": {
+        "attempt_id": "adaptive-attempt-run-adaptive-semantic-1",
+        "capability_grant_hash": "26250462b27c3a7bfc4d8709b71ee2bbf9d1c57a7385251718ee659e594b2705",
+        "execution_binding_hash": "bc64552d49a277dd5485afa0b52096a29b5686f19621efb64a694434121b4372",
+        "invocation_id": "invocation-12345678123456781234567812345678",
+        "run_id": "run-adaptive-semantic",
+        "schema_version": "statebus.control.v1",
+        "session_id": "session-adaptive-semantic",
+        "step_id": "retrieve",
+        "task_id": "adaptive-semantic-task",
+        "trace_id": "trace-adaptive-semantic"
+      }
+    },
+    {
+      "event_type": "HEARTBEAT",
+      "message_type": "Heartbeat",
+      "scope": {
+        "attempt_id": "adaptive-attempt-run-adaptive-semantic-1",
+        "capability_grant_hash": "26250462b27c3a7bfc4d8709b71ee2bbf9d1c57a7385251718ee659e594b2705",
+        "execution_binding_hash": "bc64552d49a277dd5485afa0b52096a29b5686f19621efb64a694434121b4372",
+        "invocation_id": "invocation-12345678123456781234567812345678",
+        "run_id": "run-adaptive-semantic",
+        "schema_version": "statebus.control.v1",
+        "session_id": "session-adaptive-semantic",
+        "step_id": "retrieve",
+        "task_id": "adaptive-semantic-task",
+        "trace_id": "trace-adaptive-semantic"
+      }
+    },
+    {
+      "event_type": "RES_SUCC",
+      "message_type": "SuccessResult",
+      "scope": {
+        "attempt_id": "adaptive-attempt-run-adaptive-semantic-1",
+        "capability_grant_hash": "26250462b27c3a7bfc4d8709b71ee2bbf9d1c57a7385251718ee659e594b2705",
+        "execution_binding_hash": "bc64552d49a277dd5485afa0b52096a29b5686f19621efb64a694434121b4372",
+        "invocation_id": "invocation-12345678123456781234567812345678",
+        "run_id": "run-adaptive-semantic",
+        "schema_version": "statebus.control.v1",
+        "session_id": "session-adaptive-semantic",
+        "step_id": "retrieve",
+        "task_id": "adaptive-semantic-task",
+        "trace_id": "trace-adaptive-semantic"
+      }
+    }
+  ],
+  "worker_pid": 1101820
+}

@@ -7,6 +7,7 @@ from pathlib import Path
 from statebus.control import (
     AckReceived,
     ControlHeader,
+    ControlResponseOrigin,
     ErrorResult,
     EventType,
     ExecRequest,
@@ -63,6 +64,11 @@ def test_subprocess_executor_valid_round_trip(tmp_path: Path) -> None:
     )
     assert result.output_contract_version == "output-v1"
     assert result.artifact_refs == request.artifact_refs
+    assert transport.last_admission_receipts
+    assert all(
+        receipt.origin == ControlResponseOrigin.LEGACY_COMPATIBILITY
+        for receipt in transport.last_admission_receipts
+    )
 
 
 def test_subprocess_executor_utf8_text_round_trip(tmp_path: Path) -> None:
@@ -80,6 +86,11 @@ def test_subprocess_executor_utf8_text_round_trip(tmp_path: Path) -> None:
     assert transport.last_exchange_audit.backend == "uds_subprocess"
     assert transport.last_exchange_audit.driver_pid != transport.last_exchange_audit.worker_pid
     assert transport.last_exchange_audit.request_wire_bytes > 0
+    assert transport.last_admission_receipts
+    assert all(
+        receipt.origin == ControlResponseOrigin.ADAPTER_DERIVED
+        for receipt in transport.last_admission_receipts
+    )
 
 
 def test_subprocess_executor_invalid_request_returns_error(tmp_path: Path) -> None:
