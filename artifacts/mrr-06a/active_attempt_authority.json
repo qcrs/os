@@ -1,0 +1,75 @@
+{
+  "session_active_attempt_after_settlement": [],
+  "session_attempt_history": [
+    {
+      "attempt_id": "attempt-a",
+      "lifecycle_origin": "LOCAL_RUNTIME",
+      "state": "FAILED"
+    },
+    {
+      "attempt_id": "attempt-b",
+      "lifecycle_origin": "LOCAL_RUNTIME",
+      "state": "COMPLETED"
+    }
+  ],
+  "supervisor_keys": [
+    ["evidence-session", "evidence-step", "attempt-a"],
+    ["evidence-session", "evidence-step", "attempt-b"]
+  ],
+  "supervisor_transition_trace": [
+    {
+      "attempt_id": "attempt-a",
+      "new_state": "DISPATCHED",
+      "old_state": "PENDING",
+      "origin": "LOCAL_RUNTIME",
+      "session_id": "evidence-session",
+      "step_id": "evidence-step",
+      "timestamp_ns": 1788590412873498029
+    },
+    {
+      "attempt_id": "attempt-a",
+      "new_state": "RUNNING",
+      "old_state": "DISPATCHED",
+      "origin": "LOCAL_RUNTIME",
+      "session_id": "evidence-session",
+      "step_id": "evidence-step",
+      "timestamp_ns": 1788590412873504071
+    },
+    {
+      "attempt_id": "attempt-a",
+      "new_state": "COMPLETED",
+      "old_state": "RUNNING",
+      "origin": "LOCAL_RUNTIME",
+      "session_id": "evidence-session",
+      "step_id": "evidence-step",
+      "timestamp_ns": 1788590412873508362
+    },
+    {
+      "attempt_id": "attempt-b",
+      "new_state": "DISPATCHED",
+      "old_state": "PENDING",
+      "origin": "LOCAL_RUNTIME",
+      "session_id": "evidence-session",
+      "step_id": "evidence-step",
+      "timestamp_ns": 1788590412873516071
+    },
+    {
+      "attempt_id": "attempt-b",
+      "new_state": "RUNNING",
+      "old_state": "DISPATCHED",
+      "origin": "LOCAL_RUNTIME",
+      "session_id": "evidence-session",
+      "step_id": "evidence-step",
+      "timestamp_ns": 1788590412873520158
+    },
+    {
+      "attempt_id": "attempt-b",
+      "new_state": "COMPLETED",
+      "old_state": "RUNNING",
+      "origin": "LOCAL_RUNTIME",
+      "session_id": "evidence-session",
+      "step_id": "evidence-step",
+      "timestamp_ns": 1788590412873524070
+    }
+  ]
+}

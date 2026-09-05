@@ -1,0 +1,12 @@
+MRR-06A physical worker lifecycle evidence
+
+Path: AdaptiveCapabilityDispatcher._consume_retrieval_semantic_state
+Carrier: typed_protobuf
+Backend: uds_subprocess
+Admission origin: NATIVE_TYPED_WORKER
+Runtime lifecycle origin: WORKER_OBSERVED
+Observed sequence: ACK_RECV -> RUN_START -> HEARTBEAT -> RES_SUCC
+
+The observations are retained in AdaptiveDispatchContext.physical_lifecycle_observations.
+Each observation records outer_semantic_step_mutated=false. The outer semantic
+retrieve Step remains LOCAL_RUNTIME and has no STEP_ACKED event.

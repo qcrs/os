@@ -133,6 +133,10 @@ class AdaptiveDispatchContext:
     semantic_state_publications: dict[str, object] = field(default_factory=dict)
     semantic_state_selections: dict[str, object] = field(default_factory=dict)
     control_response_admissions: dict[str, tuple[object, ...]] = field(default_factory=dict)
+    # Physical worker observations are retained for audit only.  They do not
+    # mutate the outer semantic Step lifecycle unless that worker is the
+    # explicitly bound execution boundary (which semantic-select is not).
+    physical_lifecycle_observations: list[dict[str, object]] = field(default_factory=list)
     memory_match_results: dict[str, object] = field(default_factory=dict)
     memory_queries_by_task: dict[str, object] = field(default_factory=dict)
     memory_role_inputs_by_step: dict[str, tuple[dict[str, object], ...]] = field(
@@ -458,6 +462,31 @@ class AdaptiveCapabilityDispatcher:
                 raise AdaptiveDispatchError(str(exc)) from exc
             receipts = transport.last_admission_receipts
             self.context.control_response_admissions[state_id] = receipts
+            from statebus.runtime.supervisor import LifecycleOrigin
+
+            origin_by_control_origin = {
+                "NATIVE_TYPED_WORKER": LifecycleOrigin.WORKER_OBSERVED.value,
+                "ADAPTER_DERIVED": LifecycleOrigin.ADAPTER_DERIVED.value,
+                "LEGACY_COMPATIBILITY": LifecycleOrigin.ADAPTER_DERIVED.value,
+            }
+            self.context.physical_lifecycle_observations.extend(
+                {
+                    **receipt.canonical_payload(),
+                    "physical_invocation_scope": {
+                        "task_id": grant.task_id,
+                        "session_id": grant.session_id,
+                        "step_id": grant.step_id,
+                        "attempt_id": grant.attempt_id,
+                        "invocation_id": receipt.invocation_id,
+                    },
+                    "runtime_origin": origin_by_control_origin.get(
+                        receipt.origin.value,
+                        LifecycleOrigin.ADAPTER_DERIVED.value,
+                    ),
+                    "outer_semantic_step_mutated": False,
+                }
+                for receipt in receipts
+            )
             terminal_receipts = tuple(receipt for receipt in receipts if receipt.terminal)
             if len(terminal_receipts) != 1 or not terminal_receipts[0].admitted:
                 raise AdaptiveDispatchError("semantic_state_response_admission_missing")

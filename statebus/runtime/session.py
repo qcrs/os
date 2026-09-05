@@ -32,6 +32,7 @@ class RuntimeWorkflowStep:
     max_retries: int = 0
     state: str = StepLifecycleState.PENDING.value
     attempt_id: str = ""
+    lifecycle_origin: str = ""
     last_error: str = ""
     started_at_ns: int = 0
     completed_at_ns: int = 0
@@ -51,6 +52,7 @@ class RuntimeWorkflowStep:
             "max_retries": self.max_retries,
             "state": self.state,
             "attempt_id": self.attempt_id,
+            "lifecycle_origin": self.lifecycle_origin,
             "metrics": dict(sorted(self.metrics.items())),
             }
         )
@@ -64,6 +66,7 @@ class StepAttemptRecord:
     owner_role: str
     state: str
     attempt_index: int = 0
+    lifecycle_origin: str = ""
     worker_id: str = ""
     dispatched_at_ns: int = 0
     acked_at_ns: int = 0
@@ -84,6 +87,7 @@ class StepAttemptRecord:
             "attempt_id": self.attempt_id,
             "owner_role": self.owner_role,
             "state": self.state,
+            "lifecycle_origin": self.lifecycle_origin,
             "cancel_reason": self.cancel_reason,
             "trap_reason": self.trap_reason,
             "fallback_action": self.fallback_action,
@@ -167,6 +171,9 @@ class RuntimeTaskSession:
     memory_ref_ids: tuple[str, ...] = ()
     workflow_steps: tuple[RuntimeWorkflowStep, ...] = ()
     attempt_records: tuple[StepAttemptRecord, ...] = ()
+    # A per-step pointer owned by the session.  Attempt history remains
+    # append-only; this map is the semantic commit authority for each step.
+    active_attempt_by_step: tuple[tuple[str, str], ...] = ()
     replan_history: tuple[RuntimeReplanRecord, ...] = ()
     replay_ledger_ids: tuple[str, ...] = ()
     current_step_id: str = ""
@@ -216,6 +223,10 @@ class RuntimeTaskSession:
             "memory_ref_ids": list(self.memory_ref_ids),
             "workflow_steps": [step.canonical_payload() for step in self.workflow_steps],
             "attempt_records": [record.canonical_payload() for record in self.attempt_records],
+            "active_attempt_by_step": {
+                step_id: attempt_id
+                for step_id, attempt_id in self.active_attempt_by_step
+            },
             "replan_history": [record.canonical_payload() for record in self.replan_history],
             "replay_ledger_ids": list(self.replay_ledger_ids),
             "current_step_id": self.current_step_id,
@@ -267,6 +278,17 @@ class RuntimeTaskSession:
     @property
     def attempt_count(self) -> int:
         return len(self.attempt_records)
+
+    def active_attempt_id(self, step_id: str) -> str | None:
+        normalized_step_id = str(step_id).strip()
+        for candidate_step_id, attempt_id in self.active_attempt_by_step:
+            if candidate_step_id == normalized_step_id:
+                return attempt_id
+        return None
+
+    def active_attempt(self, step_id: str) -> str | None:
+        """Return the semantic Attempt ID currently active for one Step."""
+        return self.active_attempt_id(step_id)
 
     @property
     def replan_count(self) -> int:
@@ -460,11 +482,102 @@ class RuntimeSessionManager:
         self.sessions[session_id] = updated
         return updated
 
+    def activate_attempt(
+        self,
+        session_id: str,
+        *,
+        step_id: str,
+        attempt_id: str,
+    ) -> RuntimeTaskSession:
+        """Make a registered Attempt the semantic active Attempt for a Step."""
+        normalized_step_id = str(step_id).strip()
+        normalized_attempt_id = str(attempt_id).strip()
+        if not normalized_step_id or not normalized_attempt_id:
+            raise ValueError("active_attempt_identity_required")
+        session = self.sessions[session_id]
+        if not any(
+            record.step_id == normalized_step_id
+            and record.attempt_id == normalized_attempt_id
+            for record in session.attempt_records
+        ):
+            raise ValueError("active_attempt_not_registered")
+        active = tuple(
+            (candidate_step_id, candidate_attempt_id)
+            for candidate_step_id, candidate_attempt_id in session.active_attempt_by_step
+            if candidate_step_id != normalized_step_id
+        ) + ((normalized_step_id, normalized_attempt_id),)
+        updated = replace(
+            session,
+            active_attempt_by_step=active,
+            current_step_id=normalized_step_id,
+            current_attempt_id=normalized_attempt_id,
+            updated_at_ns=time.time_ns(),
+        )
+        self.sessions[session_id] = updated
+        return updated
+
+    def active_attempt_id(self, session_id: str, step_id: str) -> str | None:
+        return self.sessions[session_id].active_attempt_id(step_id)
+
+    def settle_attempt(
+        self,
+        session_id: str,
+        *,
+        step_id: str,
+        attempt_id: str,
+        terminal_state: str,
+        completed_at_ns: int | None = None,
+        trap_reason: str | None = None,
+        cancel_reason: str | None = None,
+        fallback_action: str | None = None,
+        lifecycle_origin: str | None = None,
+    ) -> RuntimeTaskSession:
+        """Record terminal Attempt state and clear only its active pointer."""
+        if terminal_state not in {
+            StepLifecycleState.COMPLETED.value,
+            StepLifecycleState.FAILED.value,
+            StepLifecycleState.TRAPPED.value,
+            StepLifecycleState.CANCELLED.value,
+            StepLifecycleState.GC_DONE.value,
+        }:
+            raise ValueError("attempt_terminal_state_required")
+        session = self.update_attempt_record(
+            session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            state=terminal_state,
+            completed_at_ns=completed_at_ns,
+            trap_reason=trap_reason,
+            cancel_reason=cancel_reason,
+            fallback_action=fallback_action,
+            lifecycle_origin=lifecycle_origin,
+        )
+        active = tuple(
+            (candidate_step_id, candidate_attempt_id)
+            for candidate_step_id, candidate_attempt_id in session.active_attempt_by_step
+            if not (
+                candidate_step_id == step_id
+                and candidate_attempt_id == attempt_id
+            )
+        )
+        return self._store(
+            replace(
+                session,
+                active_attempt_by_step=active,
+                updated_at_ns=time.time_ns(),
+            )
+        )
+
+    def _store(self, session: RuntimeTaskSession) -> RuntimeTaskSession:
+        self.sessions[session.session_id] = session
+        return session
+
     def update_attempt_record(
         self,
         session_id: str,
         *,
         attempt_id: str,
+        step_id: str | None = None,
         state: str,
         dispatched_at_ns: int | None = None,
         acked_at_ns: int | None = None,
@@ -477,18 +590,39 @@ class RuntimeSessionManager:
         validator_report_hashes: tuple[str, ...] | None = None,
         resource_handles: tuple[str, ...] | None = None,
         workspace_dirs: tuple[str, ...] | None = None,
+        lifecycle_origin: str | None = None,
     ) -> RuntimeTaskSession:
         session = self.sessions[session_id]
         now = time.time_ns()
+        matching_step_ids = {
+            record.step_id
+            for record in session.attempt_records
+            if record.attempt_id == attempt_id
+            and (step_id is None or record.step_id == step_id)
+        }
+        target_step_id = (
+            step_id
+            if step_id is not None
+            else next(iter(matching_step_ids), None)
+            if len(matching_step_ids) == 1
+            else None
+        )
         updated_records: list[StepAttemptRecord] = []
         for record in session.attempt_records:
-            if record.attempt_id != attempt_id:
+            if record.attempt_id != attempt_id or (
+                step_id is not None and record.step_id != step_id
+            ):
                 updated_records.append(record)
                 continue
             updated_records.append(
                 replace(
                     record,
                     state=state,
+                    lifecycle_origin=(
+                        record.lifecycle_origin
+                        if lifecycle_origin is None
+                        else lifecycle_origin
+                    ),
                     dispatched_at_ns=(
                         record.dispatched_at_ns if dispatched_at_ns is None else dispatched_at_ns
                     ),
@@ -538,8 +672,24 @@ class RuntimeSessionManager:
         updated = replace(
             session,
             attempt_records=tuple(updated_records),
-            current_attempt_id=attempt_id,
-            session_state=state,
+            current_step_id=(
+                target_step_id
+                if target_step_id is not None
+                and session.active_attempt_id(target_step_id) in {None, attempt_id}
+                else session.current_step_id
+            ),
+            current_attempt_id=(
+                attempt_id
+                if target_step_id is None
+                or session.active_attempt_id(target_step_id) in {None, attempt_id}
+                else session.current_attempt_id
+            ),
+            session_state=(
+                state
+                if target_step_id is None
+                or session.active_attempt_id(target_step_id) in {None, attempt_id}
+                else session.session_state
+            ),
             last_fallback_action=(
                 session.last_fallback_action if fallback_action is None else fallback_action
             ),
@@ -558,8 +708,16 @@ class RuntimeSessionManager:
         output_refs: tuple[str, ...] | None = None,
         metrics: dict[str, float] | None = None,
         last_error: str | None = None,
+        lifecycle_origin: str | None = None,
     ) -> RuntimeTaskSession:
         session = self.sessions[session_id]
+        active_attempt_id = session.active_attempt_id(step_id)
+        if (
+            attempt_id is not None
+            and active_attempt_id is not None
+            and active_attempt_id != attempt_id
+        ):
+            raise ValueError("non_active_attempt_workflow_mutation")
         now = time.time_ns()
         updated_steps: list[RuntimeWorkflowStep] = []
         for step in session.workflow_steps:
@@ -595,6 +753,11 @@ class RuntimeSessionManager:
                     step,
                     state=state,
                     attempt_id=step.attempt_id if attempt_id is None else attempt_id,
+                    lifecycle_origin=(
+                        step.lifecycle_origin
+                        if lifecycle_origin is None
+                        else lifecycle_origin
+                    ),
                     output_refs=step.output_refs if output_refs is None else output_refs,
                     metrics=next_metrics,
                     last_error=step.last_error if last_error is None else last_error,
@@ -615,6 +778,9 @@ class RuntimeSessionManager:
 
     def update_state(self, session_id: str, snapshot: WorkerSessionSnapshot) -> RuntimeTaskSession:
         session = self.sessions[session_id]
+        active_attempt_id = session.active_attempt_id(snapshot.step_id)
+        if active_attempt_id is not None and active_attempt_id != snapshot.attempt_id:
+            raise ValueError("non_active_attempt_state_mutation")
         now = time.time_ns()
         updated_steps: list[RuntimeWorkflowStep] = []
         matched = False
@@ -628,6 +794,11 @@ class RuntimeSessionManager:
                     step,
                     state=snapshot.state,
                     attempt_id=snapshot.attempt_id,
+                    lifecycle_origin=(
+                        ""
+                        if snapshot.origin is None
+                        else getattr(snapshot.origin, "value", str(snapshot.origin))
+                    ),
                     last_error=snapshot.last_error,
                     started_at_ns=step.started_at_ns or snapshot.started_at_ns,
                     completed_at_ns=(

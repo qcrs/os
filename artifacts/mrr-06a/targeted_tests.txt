@@ -1,0 +1,20 @@
+Command:
+source ./deploy/activate_statebus_host.sh && \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:tests python -m pytest -q \
+  --basetemp=/tmp/mrr-06a-targeted \
+  tests/test_mrr_06a_attempt_lifecycle.py \
+  tests/test_adaptive_driver.py \
+  tests/test_runtime_session_and_ledger.py \
+  tests/test_runtime_and_benchmark.py::test_runtime_supervisor_enforces_lifecycle_transitions \
+  tests/test_runtime_and_benchmark.py::test_runtime_supervisor_traps_ack_timeout_and_lease_expiry \
+  tests/test_subprocess_executor.py \
+  tests/test_invocation_wire_projection.py \
+  tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state
+
+Result:
+22 passed in 10.14s
+
+Environment note:
+The semantic subprocess test first hit Operation not permitted from the
+restricted sandbox while binding a Unix-domain socket. The same targeted test
+passed in the approved local Conda environment outside that restriction.

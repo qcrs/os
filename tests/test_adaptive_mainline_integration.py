@@ -806,6 +806,34 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     assert [receipt.terminal_count for receipt in admission_receipts] == [0, 0, 0, 1]
     assert admission_receipts[-1].output_contract_decision == "matched"
 
+    physical_observations = result.context.physical_lifecycle_observations
+    assert [observation["event_type"] for observation in physical_observations] == [
+        "ACK_RECV",
+        "RUN_START",
+        "HEARTBEAT",
+        "RES_SUCC",
+    ]
+    assert all(
+        observation["origin"] == "NATIVE_TYPED_WORKER"
+        and observation["runtime_origin"] == "WORKER_OBSERVED"
+        and observation["outer_semantic_step_mutated"] is False
+        for observation in physical_observations
+    )
+    retrieve_step = next(
+        step for step in result.runtime.session.workflow_steps if step.step_id == "retrieve"
+    )
+    assert retrieve_step.lifecycle_origin == "LOCAL_RUNTIME"
+    outer_retrieve_events = [
+        event
+        for event in result.runtime.telemetry.events
+        if event.step_id == "retrieve"
+    ]
+    assert not any(event.event_type == "STEP_ACKED" for event in outer_retrieve_events)
+    assert all(
+        event.payload.get("origin") != "WORKER_OBSERVED"
+        for event in outer_retrieve_events
+    )
+
     event_types = [event.event_type for event in result.runtime.telemetry.events]
     assert result.completed
     assert event_types.count("STATE_PUBLISHED") == 1

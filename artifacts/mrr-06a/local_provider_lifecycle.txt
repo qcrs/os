@@ -1,0 +1,11 @@
+MRR-06A local provider lifecycle evidence
+
+AdaptiveRuntimeEngine local path:
+  PENDING -> DISPATCHED -> RUNNING -> COMPLETED
+  lifecycle origin: LOCAL_RUNTIME
+  worker ACK: absent
+
+Expired grant pre-dispatch path:
+  PENDING -> FAILED -> settled
+  error: capability_grant_expired_pre_dispatch
+  active Attempt pointer after settlement: absent

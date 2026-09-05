@@ -40,7 +40,7 @@ from statebus.runtime.session import (
     RuntimeWorkflowStep,
     StepAttemptRecord,
 )
-from statebus.runtime.supervisor import RuntimeSupervisor
+from statebus.runtime.supervisor import LifecycleOrigin, RuntimeSupervisor
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.identity import (
     RuntimeIdentityResolutionError,
@@ -519,6 +519,23 @@ class AdaptiveRuntimeEngine:
                         },
                     ))
                     continue
+                session = session_manager.append_attempt_record(
+                    session_id,
+                    record=StepAttemptRecord(
+                        task_id=runtime_identity.runtime_task_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        owner_role=step.role,
+                        state=StepLifecycleState.PENDING.value,
+                        attempt_index=attempt_count - 1,
+                        workspace_dirs=(request.workspace_root_id,),
+                    ),
+                )
+                session = session_manager.activate_attempt(
+                    session_id,
+                    step_id=step.step_id,
+                    attempt_id=attempt_id,
+                )
                 projection, provider, binding = self._bind_provider(
                     request=request,
                     plan=current_plan,
@@ -551,14 +568,41 @@ class AdaptiveRuntimeEngine:
                 grant = bound_grant.grant
                 if grant.expires_at_ns <= time.time_ns():
                     terminal_failed.add(step.step_id)
+                    expired_at_ns = time.time_ns()
+                    session = session_manager.update_attempt_record(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=expired_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
                     session = session_manager.update_workflow_step(
-                        session_id, step_id=step.step_id, state=StepLifecycleState.FAILED.value,
+                        session_id,
+                        step_id=step.step_id,
+                        state=StepLifecycleState.FAILED.value,
+                        attempt_id=attempt_id,
                         last_error="capability_grant_expired_pre_dispatch",
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    session = session_manager.settle_attempt(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        terminal_state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=expired_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
                     telemetry.emit(TelemetryEvent.create(
-                        trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
+                        trace_id=request.trace_id,
+                        task_id=request.task_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
                         event_type="STEP_REJECTED_PRE_DISPATCH", role="runtime_driver", severity="error",
-                        payload={"error_code": "capability_grant_expired_pre_dispatch"},
+                        payload={
+                            "error_code": "capability_grant_expired_pre_dispatch",
+                            "origin": LifecycleOrigin.LOCAL_RUNTIME.value,
+                        },
                     ))
                     continue
                 self._dispatch_lifecycle(
@@ -575,6 +619,15 @@ class AdaptiveRuntimeEngine:
                 session = session_manager.attach_adaptive_audit(
                     session_id, workflow_mode=request.envelope.workflow_mode.value,
                     capability_grant_hash=grant.grant_hash,
+                )
+                self._mark_local_running(
+                    request=request,
+                    session_manager=session_manager,
+                    session_id=session_id,
+                    supervisor=supervisor,
+                    telemetry=telemetry,
+                    step=step,
+                    attempt_id=attempt_id,
                 )
                 if request.dispatcher is not None:
                     result = request.dispatcher.dispatch(
@@ -597,7 +650,42 @@ class AdaptiveRuntimeEngine:
                     and step.on_failure == "fallback_deterministic"
                     and logical_capability.fallback_capability_id
                     and attempt_count < current_plan.total_attempt_budget
+                    and (not result.attempt_id or result.attempt_id == attempt_id)
                 ):
+                    if session_manager.active_attempt_id(session_id, step.step_id) != attempt_id:
+                        raise AdaptiveRuntimeError("active_attempt_mismatch_before_fallback")
+                    failed = supervisor.fail(
+                        step.step_id,
+                        result.error_code or "fallback_requested",
+                        session_id=session_id,
+                        attempt_id=attempt_id,
+                        origin=LifecycleOrigin.LOCAL_RUNTIME,
+                    )
+                    session = session_manager.update_attempt_record(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=failed.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        validator_report_hashes=result.validator_report_hashes,
+                    )
+                    session = session_manager.update_workflow_step(
+                        session_id,
+                        step_id=step.step_id,
+                        state=StepLifecycleState.FAILED.value,
+                        attempt_id=attempt_id,
+                        last_error=result.error_code or "fallback_requested",
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    session = session_manager.settle_attempt(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        terminal_state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=failed.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
                     fallback_descriptor = request.registry.get(
                         logical_capability.fallback_capability_id
                     )
@@ -612,6 +700,24 @@ class AdaptiveRuntimeEngine:
                     )
                     attempt_count += 1
                     fallback_attempt_id = self._attempt_id(request, attempt_count)
+                    session = session_manager.append_attempt_record(
+                        session_id,
+                        record=StepAttemptRecord(
+                            task_id=runtime_identity.runtime_task_id,
+                            step_id=fallback_step.step_id,
+                            attempt_id=fallback_attempt_id,
+                            owner_role=fallback_step.role,
+                            state=StepLifecycleState.PENDING.value,
+                            attempt_index=attempt_count - 1,
+                            fallback_action="fallback_deterministic",
+                            workspace_dirs=(request.workspace_root_id,),
+                        ),
+                    )
+                    session = session_manager.activate_attempt(
+                        session_id,
+                        step_id=fallback_step.step_id,
+                        attempt_id=fallback_attempt_id,
+                    )
                     fallback_projection, fallback_provider, fallback_binding = (
                         self._bind_provider(
                             request=request,
@@ -675,6 +781,15 @@ class AdaptiveRuntimeEngine:
                         attempt_id=fallback_attempt_id,
                         grant=fallback_grant,
                         binding=fallback_binding,
+                    )
+                    self._mark_local_running(
+                        request=request,
+                        session_manager=session_manager,
+                        session_id=session_id,
+                        supervisor=supervisor,
+                        telemetry=telemetry,
+                        step=fallback_step,
+                        attempt_id=fallback_attempt_id,
                     )
                     if request.dispatcher is not None:
                         fallback_result = request.dispatcher.dispatch(
@@ -785,29 +900,73 @@ class AdaptiveRuntimeEngine:
                             for key, value in dict(event_record.get("metrics", {})).items()
                         },
                     ))
+                if session_manager.active_attempt_id(session_id, step.step_id) != attempt_id:
+                    raise AdaptiveRuntimeError("active_attempt_mismatch_before_result")
                 if result.grant_hash != grant.grant_hash or (result.attempt_id and result.attempt_id != attempt_id):
                     terminal_failed.add(step.step_id)
-                    supervisor.fail(step.step_id, "grant_binding_mismatch")
+                    failed = supervisor.fail(
+                        step.step_id,
+                        "grant_binding_mismatch",
+                        session_id=session_id,
+                        attempt_id=attempt_id,
+                        origin=LifecycleOrigin.LOCAL_RUNTIME,
+                    )
                     session = session_manager.update_attempt_record(
-                        session_id, attempt_id=attempt_id, state=StepLifecycleState.FAILED.value,
+                        session_id, step_id=step.step_id, attempt_id=attempt_id,
+                        state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=failed.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                         validator_report_hashes=result.validator_report_hashes,
                     )
                     session = session_manager.update_workflow_step(
-                        session_id, step_id=step.step_id, state=StepLifecycleState.FAILED.value,
+                        session_id, step_id=step.step_id,
+                        state=StepLifecycleState.FAILED.value,
+                        attempt_id=attempt_id,
                         last_error="grant_binding_mismatch",
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    session = session_manager.settle_attempt(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        terminal_state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=failed.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
                     dispatches.append(AdaptiveDispatchRecord(step.step_id, attempt_id, grant.grant_hash, StepLifecycleState.FAILED.value, error_code="grant_binding_mismatch"))
                     continue
                 if result.timed_out:
                     terminal_failed.add(step.step_id)
-                    supervisor.trap(step.step_id, "step_timeout")
+                    trapped = supervisor.trap(
+                        step.step_id,
+                        "step_timeout",
+                        session_id=session_id,
+                        attempt_id=attempt_id,
+                        origin=LifecycleOrigin.LOCAL_RUNTIME,
+                    )
                     session = session_manager.update_attempt_record(
-                        session_id, attempt_id=attempt_id, state=StepLifecycleState.TRAPPED.value,
-                        trap_reason="step_timeout", validator_report_hashes=result.validator_report_hashes,
+                        session_id, step_id=step.step_id, attempt_id=attempt_id,
+                        state=StepLifecycleState.TRAPPED.value,
+                        trap_reason="step_timeout",
+                        completed_at_ns=trapped.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        validator_report_hashes=result.validator_report_hashes,
                     )
                     session = session_manager.update_workflow_step(
-                        session_id, step_id=step.step_id, state=StepLifecycleState.TRAPPED.value,
-                        attempt_id=attempt_id, last_error="step_timeout", metrics=result.metrics,
+                        session_id, step_id=step.step_id,
+                        state=StepLifecycleState.TRAPPED.value,
+                        attempt_id=attempt_id, last_error="step_timeout",
+                        metrics=result.metrics,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    session = session_manager.settle_attempt(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        terminal_state=StepLifecycleState.TRAPPED.value,
+                        completed_at_ns=trapped.completed_at_ns,
+                        trap_reason="step_timeout",
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
                     telemetry.emit(TelemetryEvent.create(
                         trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
@@ -825,17 +984,36 @@ class AdaptiveRuntimeEngine:
                         for kind in result.output_ref_kinds
                     )
                 ):
-                    supervisor.complete(step.step_id)
+                    completed_record = supervisor.complete(
+                        step.step_id,
+                        session_id=session_id,
+                        attempt_id=attempt_id,
+                        origin=LifecycleOrigin.LOCAL_RUNTIME,
+                    )
                     completed.add(step.step_id)
                     produced_refs.update(dict(zip(result.output_refs, result.output_ref_kinds, strict=True)))
                     produced_refs_by_step[step.step_id] = result.output_refs
                     session = session_manager.update_attempt_record(
-                        session_id, attempt_id=attempt_id, state=StepLifecycleState.COMPLETED.value,
+                        session_id, step_id=step.step_id, attempt_id=attempt_id,
+                        state=StepLifecycleState.COMPLETED.value,
+                        completed_at_ns=completed_record.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                         validator_report_hashes=result.validator_report_hashes,
                     )
                     session = session_manager.update_workflow_step(
-                        session_id, step_id=step.step_id, state=StepLifecycleState.COMPLETED.value,
-                        attempt_id=attempt_id, output_refs=result.output_refs, metrics=result.metrics,
+                        session_id, step_id=step.step_id,
+                        state=StepLifecycleState.COMPLETED.value,
+                        attempt_id=attempt_id, output_refs=result.output_refs,
+                        metrics=result.metrics,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    session = session_manager.settle_attempt(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        terminal_state=StepLifecycleState.COMPLETED.value,
+                        completed_at_ns=completed_record.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
                     telemetry.emit(TelemetryEvent.create(
                         trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
@@ -846,14 +1024,34 @@ class AdaptiveRuntimeEngine:
                     dispatches.append(AdaptiveDispatchRecord(step.step_id, attempt_id, grant.grant_hash, StepLifecycleState.COMPLETED.value, result.output_refs))
                     continue
                 error_code = result.error_code or "step_validator_failed"
-                supervisor.fail(step.step_id, error_code)
+                failed = supervisor.fail(
+                    step.step_id,
+                    error_code,
+                    session_id=session_id,
+                    attempt_id=attempt_id,
+                    origin=LifecycleOrigin.LOCAL_RUNTIME,
+                )
                 session = session_manager.update_attempt_record(
-                    session_id, attempt_id=attempt_id, state=StepLifecycleState.FAILED.value,
+                    session_id, step_id=step.step_id, attempt_id=attempt_id,
+                    state=StepLifecycleState.FAILED.value,
+                    completed_at_ns=failed.completed_at_ns,
+                    lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     validator_report_hashes=result.validator_report_hashes,
                 )
                 session = session_manager.update_workflow_step(
-                    session_id, step_id=step.step_id, state=StepLifecycleState.FAILED.value,
-                    attempt_id=attempt_id, last_error=error_code, metrics=result.metrics,
+                    session_id, step_id=step.step_id,
+                    state=StepLifecycleState.FAILED.value,
+                    attempt_id=attempt_id, last_error=error_code,
+                    metrics=result.metrics,
+                    lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                )
+                session = session_manager.settle_attempt(
+                    session_id,
+                    step_id=step.step_id,
+                    attempt_id=attempt_id,
+                    terminal_state=StepLifecycleState.FAILED.value,
+                    completed_at_ns=failed.completed_at_ns,
+                    lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                 )
                 telemetry.emit(TelemetryEvent.create(
                     trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
@@ -1073,15 +1271,39 @@ class AdaptiveRuntimeEngine:
         supervisor: RuntimeSupervisor, telemetry: TelemetryEmitter, step: PlanStepProposal,
         attempt_id: str, grant: CapabilityGrant, binding: ExecutionBindingReceipt,
     ) -> None:
-        supervisor.register(task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id, role=step.role)
-        dispatched = supervisor.dispatch(step.step_id)
-        session_manager.append_attempt_record(session_id, record=StepAttemptRecord(
-            task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id, owner_role=step.role,
-            state=StepLifecycleState.DISPATCHED.value, dispatched_at_ns=dispatched.dispatched_at_ns,
+        runtime_identity = request.runtime_identity
+        if runtime_identity is None:
+            raise AdaptiveRuntimeError("runtime_identity_required_for_lifecycle")
+        supervisor.register(
+            task_id=runtime_identity.runtime_task_id,
+            session_id=session_id,
+            step_id=step.step_id,
+            attempt_id=attempt_id,
+            role=step.role,
+        )
+        dispatched = supervisor.dispatch(
+            step.step_id,
+            session_id=session_id,
+            attempt_id=attempt_id,
+            origin=LifecycleOrigin.LOCAL_RUNTIME,
+        )
+        session_manager.update_attempt_record(
+            session_id,
+            step_id=step.step_id,
+            attempt_id=attempt_id,
+            state=StepLifecycleState.DISPATCHED.value,
+            dispatched_at_ns=dispatched.dispatched_at_ns,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
             resource_handles=(binding.binding_hash, grant.grant_hash),
             workspace_dirs=(request.workspace_root_id,),
-        ))
-        session_manager.update_workflow_step(session_id, step_id=step.step_id, state=StepLifecycleState.DISPATCHED.value, attempt_id=attempt_id)
+        )
+        session_manager.update_workflow_step(
+            session_id,
+            step_id=step.step_id,
+            state=StepLifecycleState.DISPATCHED.value,
+            attempt_id=attempt_id,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+        )
         telemetry.emit(TelemetryEvent.create(
             trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id,
             event_type="STEP_DISPATCHED", role="runtime_driver",
@@ -1091,16 +1313,56 @@ class AdaptiveRuntimeEngine:
                 "capability_id": grant.capability_id,
                 "execution_binding_hash": binding.binding_hash,
                 "provider_id": binding.selected_provider_id,
+                "origin": LifecycleOrigin.LOCAL_RUNTIME.value,
             },
             metrics={"capability_grant_issued": 1.0, "adaptive_capability_grant_count": 1.0},
         ))
-        acked = supervisor.ack(step.step_id)
-        session_manager.update_attempt_record(session_id, attempt_id=attempt_id, state=StepLifecycleState.ACKED.value, acked_at_ns=acked.acked_at_ns)
-        telemetry.emit(TelemetryEvent.create(trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id, event_type="STEP_ACKED", role=step.role, metrics={"ack_count": 1.0}))
-        running = supervisor.run_start(step.step_id)
-        session_manager.update_attempt_record(session_id, attempt_id=attempt_id, state=StepLifecycleState.RUNNING.value, running_at_ns=running.started_at_ns, heartbeat_at_ns=running.last_heartbeat_ns)
-        session_manager.update_workflow_step(session_id, step_id=step.step_id, state=StepLifecycleState.RUNNING.value, attempt_id=attempt_id)
-        telemetry.emit(TelemetryEvent.create(trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id, event_type="STEP_RUNNING", role=step.role, metrics={"run_start_count": 1.0}))
+
+    @staticmethod
+    def _mark_local_running(
+        *,
+        request: AdaptiveRuntimeRequest,
+        session_manager: RuntimeSessionManager,
+        session_id: str,
+        supervisor: RuntimeSupervisor,
+        telemetry: TelemetryEmitter,
+        step: PlanStepProposal,
+        attempt_id: str,
+    ) -> None:
+        running = supervisor.run_start(
+            step.step_id,
+            session_id=session_id,
+            attempt_id=attempt_id,
+            origin=LifecycleOrigin.LOCAL_RUNTIME,
+        )
+        session_manager.update_attempt_record(
+            session_id,
+            step_id=step.step_id,
+            attempt_id=attempt_id,
+            state=StepLifecycleState.RUNNING.value,
+            running_at_ns=running.started_at_ns,
+            heartbeat_at_ns=running.last_heartbeat_ns,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+        )
+        session_manager.update_workflow_step(
+            session_id,
+            step_id=step.step_id,
+            state=StepLifecycleState.RUNNING.value,
+            attempt_id=attempt_id,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+        )
+        telemetry.emit(
+            TelemetryEvent.create(
+                trace_id=request.trace_id,
+                task_id=request.task_id,
+                step_id=step.step_id,
+                attempt_id=attempt_id,
+                event_type="STEP_RUNNING",
+                role=step.role,
+                payload={"origin": LifecycleOrigin.LOCAL_RUNTIME.value},
+                metrics={"run_start_count": 1.0},
+            )
+        )
 
     def _validate_approved_plan(self, request: AdaptiveRuntimeRequest) -> None:
         proposal = PlanProposal(

@@ -54,7 +54,7 @@ from statebus.runtime.session import (
     RuntimeWorkflowStep,
     StepAttemptRecord,
 )
-from statebus.runtime.supervisor import RuntimeSupervisor, WorkerSessionSnapshot
+from statebus.runtime.supervisor import LifecycleOrigin, RuntimeSupervisor, WorkerSessionSnapshot
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.workspace import (
     ArtifactInvalidationRecord,
@@ -490,13 +490,40 @@ class RuntimeDriver:
         attempt_total = 2 if runtime_input.layer_profile.multi_attempt_enabled else 1
         for attempt_index in range(attempt_total):
             current_attempt_id = f"attempt-{attempt_index + 1}"
+            session = session_manager.append_attempt_record(
+                session.session_id,
+                record=StepAttemptRecord(
+                    task_id=runtime_identity.runtime_task_id,
+                    step_id=runtime_input.step_id,
+                    attempt_id=current_attempt_id,
+                    owner_role="executor",
+                    state=StepLifecycleState.PENDING.value,
+                    attempt_index=attempt_index,
+                    workspace_dirs=(str(runtime_input.layout.root / "steps" / runtime_input.step_id),),
+                    resource_handles=(
+                        "" if runtime_input.semantic_ref is None else runtime_input.semantic_ref.state_id,
+                        candidate_artifact.artifact_id,
+                    ),
+                ),
+            )
+            session = session_manager.activate_attempt(
+                session.session_id,
+                step_id=runtime_input.step_id,
+                attempt_id=current_attempt_id,
+            )
             supervisor.register(
-                task_id=runtime_input.task_id,
+                task_id=runtime_identity.runtime_task_id,
                 step_id=runtime_input.step_id,
                 attempt_id=current_attempt_id,
                 role="executor",
+                session_id=session.session_id,
             )
-            supervisor.dispatch(runtime_input.step_id)
+            dispatched = supervisor.dispatch(
+                runtime_input.step_id,
+                session_id=session.session_id,
+                attempt_id=current_attempt_id,
+                origin=LifecycleOrigin.LOCAL_RUNTIME,
+            )
             telemetry.emit(
                 TelemetryEvent.create(
                     trace_id=runtime_input.trace_id,
@@ -514,22 +541,13 @@ class RuntimeDriver:
                     metrics={"timeout_ms": 5000.0},
                 )
             )
-            session = session_manager.append_attempt_record(
+            session = session_manager.update_attempt_record(
                 session.session_id,
-                record=StepAttemptRecord(
-                    task_id=runtime_input.task_id,
-                    step_id=runtime_input.step_id,
-                    attempt_id=current_attempt_id,
-                    owner_role="executor",
-                    state=StepLifecycleState.DISPATCHED.value,
-                    attempt_index=attempt_index,
-                    dispatched_at_ns=supervisor.snapshot(runtime_input.step_id).dispatched_at_ns,
-                    workspace_dirs=(str(runtime_input.layout.root / "steps" / runtime_input.step_id),),
-                    resource_handles=(
-                        "" if runtime_input.semantic_ref is None else runtime_input.semantic_ref.state_id,
-                        candidate_artifact.artifact_id,
-                    ),
-                ),
+                step_id=runtime_input.step_id,
+                attempt_id=current_attempt_id,
+                state=StepLifecycleState.DISPATCHED.value,
+                dispatched_at_ns=dispatched.dispatched_at_ns,
+                lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
             )
             exchange_stage_start_ns = time.perf_counter_ns()
             (
@@ -558,13 +576,24 @@ class RuntimeDriver:
                 response_sequence.append(response.header.event_type.name)
                 if isinstance(response, AckReceived):
                     saw_ack = True
-                    supervisor.ack(runtime_input.step_id)
-                    snapshot = supervisor.snapshot(runtime_input.step_id)
+                    supervisor.ack(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                        origin=LifecycleOrigin.WORKER_OBSERVED,
+                    )
+                    snapshot = supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    )
                     session = session_manager.update_attempt_record(
                         session.session_id,
+                        step_id=runtime_input.step_id,
                         attempt_id=current_attempt_id,
                         state=StepLifecycleState.ACKED.value,
                         acked_at_ns=snapshot.acked_at_ns,
+                        lifecycle_origin=LifecycleOrigin.WORKER_OBSERVED.value,
                     )
                     telemetry.emit(
                         TelemetryEvent.create(
@@ -574,19 +603,31 @@ class RuntimeDriver:
                             attempt_id=current_attempt_id,
                             event_type="STEP_ACKED",
                             role="executor",
+                            payload={"origin": LifecycleOrigin.WORKER_OBSERVED.value},
                             metrics={"ack_count": 1.0},
                         )
                     )
                 elif isinstance(response, RunStart):
                     saw_run_start = True
-                    supervisor.run_start(runtime_input.step_id)
-                    snapshot = supervisor.snapshot(runtime_input.step_id)
+                    supervisor.run_start(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                        origin=LifecycleOrigin.WORKER_OBSERVED,
+                    )
+                    snapshot = supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    )
                     session = session_manager.update_attempt_record(
                         session.session_id,
+                        step_id=runtime_input.step_id,
                         attempt_id=current_attempt_id,
                         state=StepLifecycleState.RUNNING.value,
                         running_at_ns=snapshot.started_at_ns,
                         heartbeat_at_ns=snapshot.last_heartbeat_ns,
+                        lifecycle_origin=LifecycleOrigin.WORKER_OBSERVED.value,
                     )
                     telemetry.emit(
                         TelemetryEvent.create(
@@ -596,17 +637,29 @@ class RuntimeDriver:
                             attempt_id=current_attempt_id,
                             event_type="STEP_RUNNING",
                             role="executor",
+                            payload={"origin": LifecycleOrigin.WORKER_OBSERVED.value},
                             metrics={"run_start_count": 1.0},
                         )
                     )
                 elif isinstance(response, Heartbeat):
-                    supervisor.heartbeat(runtime_input.step_id)
-                    snapshot = supervisor.snapshot(runtime_input.step_id)
+                    supervisor.heartbeat(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                        origin=LifecycleOrigin.WORKER_OBSERVED,
+                    )
+                    snapshot = supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    )
                     session = session_manager.update_attempt_record(
                         session.session_id,
+                        step_id=runtime_input.step_id,
                         attempt_id=current_attempt_id,
-                        state=supervisor.steps[runtime_input.step_id].state.value,
+                        state=snapshot.state,
                         heartbeat_at_ns=snapshot.last_heartbeat_ns,
+                        lifecycle_origin=LifecycleOrigin.WORKER_OBSERVED.value,
                     )
                     telemetry.emit(
                         TelemetryEvent.create(
@@ -616,18 +669,29 @@ class RuntimeDriver:
                             attempt_id=current_attempt_id,
                             event_type="STEP_HEARTBEAT",
                             role="executor",
-                            payload={"worker_state": response.worker_state},
+                            payload={
+                                "worker_state": response.worker_state,
+                                "origin": LifecycleOrigin.WORKER_OBSERVED.value,
+                            },
                             metrics={"heartbeat_count": 1.0},
                         )
                     )
                 elif isinstance(response, TrapFatal):
-                    trapped = supervisor.trap(runtime_input.step_id, response.trap_reason)
+                    trapped = supervisor.trap(
+                        runtime_input.step_id,
+                        response.trap_reason,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                        origin=LifecycleOrigin.WORKER_OBSERVED,
+                    )
                     session = session_manager.update_attempt_record(
                         session.session_id,
+                        step_id=runtime_input.step_id,
                         attempt_id=current_attempt_id,
                         state=StepLifecycleState.TRAPPED.value,
                         trap_reason=response.trap_reason,
                         completed_at_ns=trapped.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.WORKER_OBSERVED.value,
                     )
                     telemetry.emit(
                         TelemetryEvent.create(
@@ -638,7 +702,10 @@ class RuntimeDriver:
                             event_type="STEP_TRAPPED",
                             role="executor",
                             severity="error",
-                            payload={"trap_reason": response.trap_reason},
+                            payload={
+                                "trap_reason": response.trap_reason,
+                                "origin": LifecycleOrigin.WORKER_OBSERVED.value,
+                            },
                             metrics={
                                 "trap_count": 1.0,
                                 "control_bytes": current_control_bytes,
@@ -647,12 +714,20 @@ class RuntimeDriver:
                         )
                     )
                 elif isinstance(response, ErrorResult):
-                    failed = supervisor.fail(runtime_input.step_id, response.error_code)
+                    failed = supervisor.fail(
+                        runtime_input.step_id,
+                        response.error_code,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                        origin=LifecycleOrigin.WORKER_OBSERVED,
+                    )
                     session = session_manager.update_attempt_record(
                         session.session_id,
+                        step_id=runtime_input.step_id,
                         attempt_id=current_attempt_id,
                         state=StepLifecycleState.FAILED.value,
                         completed_at_ns=failed.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.WORKER_OBSERVED.value,
                     )
                     telemetry.emit(
                         TelemetryEvent.create(
@@ -666,6 +741,7 @@ class RuntimeDriver:
                             payload={
                                 "error_code": response.error_code,
                                 "error_detail": response.error_detail,
+                                "origin": LifecycleOrigin.WORKER_OBSERVED.value,
                             },
                             metrics={
                                 "failed_count": 1.0,
@@ -681,16 +757,24 @@ class RuntimeDriver:
                 trapped = supervisor.trap_if_ack_timed_out(
                     runtime_input.step_id,
                     ack_timeout_ms=session.lease_config.ack_timeout_ms,
-                    now_ns=supervisor.snapshot(runtime_input.step_id).dispatched_at_ns
+                    now_ns=supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    ).dispatched_at_ns
                     + (session.lease_config.ack_timeout_ms + 1) * 1_000_000,
+                    session_id=session.session_id,
+                    attempt_id=current_attempt_id,
                 )
                 if trapped is not None:
                     session = session_manager.update_attempt_record(
                         session.session_id,
+                        step_id=runtime_input.step_id,
                         attempt_id=current_attempt_id,
                         state=StepLifecycleState.TRAPPED.value,
                         trap_reason="ack_timeout",
                         completed_at_ns=trapped.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
                     telemetry.emit(
                         TelemetryEvent.create(
@@ -701,7 +785,10 @@ class RuntimeDriver:
                             event_type="STEP_TRAPPED",
                             role="runtime_supervisor",
                             severity="error",
-                            payload={"trap_reason": "ack_timeout"},
+                            payload={
+                                "trap_reason": "ack_timeout",
+                                "origin": LifecycleOrigin.LOCAL_RUNTIME.value,
+                            },
                             metrics={
                                 "trap_count": 1.0,
                                 "control_bytes": current_control_bytes,
@@ -709,7 +796,24 @@ class RuntimeDriver:
                             },
                         )
                     )
-                session = session_manager.update_state(session.session_id, supervisor.snapshot(runtime_input.step_id))
+                session = session_manager.update_state(
+                    session.session_id,
+                    supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    ),
+                )
+                if trapped is not None:
+                    session = session_manager.settle_attempt(
+                        session.session_id,
+                        step_id=runtime_input.step_id,
+                        attempt_id=current_attempt_id,
+                        terminal_state=StepLifecycleState.TRAPPED.value,
+                        completed_at_ns=trapped.completed_at_ns,
+                        trap_reason="ack_timeout",
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
                 executor_state_machine_stage_ms += _elapsed_ms(executor_stage_start_ns)
                 continue
 
@@ -717,16 +821,24 @@ class RuntimeDriver:
                 trapped = supervisor.trap_if_lease_expired(
                     runtime_input.step_id,
                     lease_timeout_ms=session.lease_config.lease_timeout_ms,
-                    now_ns=supervisor.snapshot(runtime_input.step_id).started_at_ns
+                    now_ns=supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    ).started_at_ns
                     + (session.lease_config.lease_timeout_ms + 1) * 1_000_000,
+                    session_id=session.session_id,
+                    attempt_id=current_attempt_id,
                 )
                 if trapped is not None:
                     session = session_manager.update_attempt_record(
                         session.session_id,
+                        step_id=runtime_input.step_id,
                         attempt_id=current_attempt_id,
                         state=StepLifecycleState.TRAPPED.value,
                         trap_reason="heartbeat_timeout",
                         completed_at_ns=trapped.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
                     telemetry.emit(
                         TelemetryEvent.create(
@@ -737,7 +849,10 @@ class RuntimeDriver:
                             event_type="STEP_TRAPPED",
                             role="runtime_supervisor",
                             severity="error",
-                            payload={"trap_reason": "heartbeat_timeout"},
+                            payload={
+                                "trap_reason": "heartbeat_timeout",
+                                "origin": LifecycleOrigin.LOCAL_RUNTIME.value,
+                            },
                             metrics={
                                 "trap_count": 1.0,
                                 "control_bytes": current_control_bytes,
@@ -745,12 +860,63 @@ class RuntimeDriver:
                             },
                         )
                     )
-                session = session_manager.update_state(session.session_id, supervisor.snapshot(runtime_input.step_id))
+                session = session_manager.update_state(
+                    session.session_id,
+                    supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    ),
+                )
+                if trapped is not None:
+                    session = session_manager.settle_attempt(
+                        session.session_id,
+                        step_id=runtime_input.step_id,
+                        attempt_id=current_attempt_id,
+                        terminal_state=StepLifecycleState.TRAPPED.value,
+                        completed_at_ns=trapped.completed_at_ns,
+                        trap_reason="heartbeat_timeout",
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
                 executor_state_machine_stage_ms += _elapsed_ms(executor_stage_start_ns)
                 continue
 
             if not saw_success:
-                session = session_manager.update_state(session.session_id, supervisor.snapshot(runtime_input.step_id))
+                session = session_manager.update_state(
+                    session.session_id,
+                    supervisor.snapshot(
+                        runtime_input.step_id,
+                        session_id=session.session_id,
+                        attempt_id=current_attempt_id,
+                    ),
+                )
+                current_snapshot = supervisor.snapshot(
+                    runtime_input.step_id,
+                    session_id=session.session_id,
+                    attempt_id=current_attempt_id,
+                )
+                if current_snapshot.state in {
+                    StepLifecycleState.FAILED.value,
+                    StepLifecycleState.TRAPPED.value,
+                    StepLifecycleState.CANCELLED.value,
+                }:
+                    session = session_manager.settle_attempt(
+                        session.session_id,
+                        step_id=runtime_input.step_id,
+                        attempt_id=current_attempt_id,
+                        terminal_state=current_snapshot.state,
+                        completed_at_ns=current_snapshot.completed_at_ns,
+                        trap_reason=(
+                            current_snapshot.last_error
+                            if current_snapshot.state == StepLifecycleState.TRAPPED.value
+                            else None
+                        ),
+                        lifecycle_origin=(
+                            None
+                            if current_snapshot.origin is None
+                            else current_snapshot.origin.value
+                        ),
+                    )
                 fallback_action = _fallback_action_for_attempt(
                     layer_profile=runtime_input.layer_profile,
                     attempt_index=attempt_index,
@@ -887,13 +1053,24 @@ class RuntimeDriver:
                     ),
                 )
 
-            supervisor.complete(runtime_input.step_id)
-            completed_snapshot = supervisor.snapshot(runtime_input.step_id)
+            supervisor.complete(
+                runtime_input.step_id,
+                session_id=session.session_id,
+                attempt_id=current_attempt_id,
+                origin=LifecycleOrigin.LOCAL_RUNTIME,
+            )
+            completed_snapshot = supervisor.snapshot(
+                runtime_input.step_id,
+                session_id=session.session_id,
+                attempt_id=current_attempt_id,
+            )
             session = session_manager.update_attempt_record(
                 session.session_id,
+                step_id=runtime_input.step_id,
                 attempt_id=current_attempt_id,
                 state=StepLifecycleState.COMPLETED.value,
                 completed_at_ns=completed_snapshot.completed_at_ns,
+                lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
             )
             for report in runtime_input.validator_reports:
                 telemetry.emit(
@@ -919,8 +1096,9 @@ class RuntimeDriver:
                     step_id=runtime_input.step_id,
                     attempt_id=current_attempt_id,
                     event_type="STEP_COMPLETED",
-                    role="executor",
-                    metrics={
+                        role="executor",
+                        payload={"origin": LifecycleOrigin.LOCAL_RUNTIME.value},
+                        metrics={
                         "control_bytes": current_control_bytes,
                         "control_message_count": float(len(responses)),
                         "output_bytes": float(len(output_rendered)),
@@ -1095,7 +1273,12 @@ class RuntimeDriver:
                 )
             )
 
-        supervisor.gc_pending(runtime_input.step_id)
+        supervisor.gc_pending(
+            runtime_input.step_id,
+            session_id=session.session_id,
+            attempt_id=active_attempt_id,
+            origin=LifecycleOrigin.LOCAL_RUNTIME,
+        )
         telemetry.emit(
             TelemetryEvent.create(
                 trace_id=runtime_input.trace_id,
@@ -1111,11 +1294,18 @@ class RuntimeDriver:
                 metrics={"gc_issue_count": 1.0},
             )
         )
-        supervisor.gc_done(runtime_input.step_id)
+        supervisor.gc_done(
+            runtime_input.step_id,
+            session_id=session.session_id,
+            attempt_id=active_attempt_id,
+            origin=LifecycleOrigin.LOCAL_RUNTIME,
+        )
         session = session_manager.update_attempt_record(
             session.session_id,
+            step_id=runtime_input.step_id,
             attempt_id=active_attempt_id,
             state=StepLifecycleState.GC_DONE.value,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
             validator_report_hashes=tuple(report.report_hash for report in runtime_input.validator_reports),
         )
         session = session_manager.update_workflow_step(
@@ -1130,6 +1320,14 @@ class RuntimeDriver:
                 "artifact_reuse_count": effective_artifact_reuse_count,
                 "attempt_count": float(session.attempt_count),
             },
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+        )
+        session = session_manager.settle_attempt(
+            session.session_id,
+            step_id=runtime_input.step_id,
+            attempt_id=active_attempt_id,
+            terminal_state=StepLifecycleState.GC_DONE.value,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
         )
         runtime_post_executor_stage_ms = _elapsed_ms(post_executor_stage_start_ns)
         session, summarizer_runtime_stage_ms = self._run_non_executor_step(
@@ -1152,7 +1350,14 @@ class RuntimeDriver:
                 "memory_commit_count": 1.0,
             },
         )
-        session = session_manager.update_state(session.session_id, supervisor.snapshot(runtime_input.step_id))
+        session = session_manager.update_state(
+            session.session_id,
+            supervisor.snapshot(
+                runtime_input.step_id,
+                session_id=session.session_id,
+                attempt_id=active_attempt_id,
+            ),
+        )
 
         replay_ledger_stage_start_ns = time.perf_counter_ns()
         replay_ledger = ReplayLedger()
@@ -1490,7 +1695,11 @@ class RuntimeDriver:
             }
         )
         telemetry.close()
-        session_snapshot = supervisor.snapshot(runtime_input.step_id)
+        session_snapshot = supervisor.snapshot(
+            runtime_input.step_id,
+            session_id=session.session_id,
+            attempt_id=active_attempt_id,
+        )
         lineage_view = build_task_lineage_view(
             task_id=runtime_input.task_id,
             semantic_states=[] if runtime_input.semantic_ref is None else [runtime_input.semantic_ref],
@@ -1787,8 +1996,35 @@ class RuntimeDriver:
     ) -> tuple[RuntimeTaskSession, float]:
         stage_start_ns = time.perf_counter_ns()
         attempt_id = f"{step_id}-attempt-1"
-        supervisor.register(task_id=task_id, step_id=step_id, attempt_id=attempt_id, role=role)
-        supervisor.dispatch(step_id)
+        session = session_manager.append_attempt_record(
+            session_id,
+            record=StepAttemptRecord(
+                task_id=task_id,
+                step_id=step_id,
+                attempt_id=attempt_id,
+                owner_role=role,
+                state=StepLifecycleState.PENDING.value,
+                attempt_index=0,
+            ),
+        )
+        session = session_manager.activate_attempt(
+            session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+        )
+        supervisor.register(
+            task_id=task_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            role=role,
+            session_id=session_id,
+        )
+        dispatched = supervisor.dispatch(
+            step_id,
+            session_id=session_id,
+            attempt_id=attempt_id,
+            origin=LifecycleOrigin.LOCAL_RUNTIME,
+        )
         telemetry.emit(
             TelemetryEvent.create(
                 trace_id=trace_id,
@@ -1802,6 +2038,7 @@ class RuntimeDriver:
                     "runtime_reuse_contract": "benchmark_strict",
                     "state_ref_count": 0,
                     "artifact_ref_count": len(output_refs),
+                    "origin": LifecycleOrigin.LOCAL_RUNTIME.value,
                 },
                 metrics={"timeout_ms": 250.0},
             )
@@ -1811,26 +2048,38 @@ class RuntimeDriver:
             step_id=step_id,
             state=StepLifecycleState.DISPATCHED.value,
             attempt_id=attempt_id,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
         )
-        supervisor.ack(step_id)
-        telemetry.emit(
-            TelemetryEvent.create(
-                trace_id=trace_id,
-                task_id=task_id,
-                step_id=step_id,
-                attempt_id=attempt_id,
-                event_type="STEP_ACKED",
-                role=role,
-                metrics={"ack_count": 1.0},
-            )
+        session = session_manager.update_attempt_record(
+            session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            state=StepLifecycleState.DISPATCHED.value,
+            dispatched_at_ns=dispatched.dispatched_at_ns,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+        )
+        running = supervisor.run_start(
+            step_id,
+            session_id=session_id,
+            attempt_id=attempt_id,
+            origin=LifecycleOrigin.LOCAL_RUNTIME,
+        )
+        session = session_manager.update_attempt_record(
+            session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            state=StepLifecycleState.RUNNING.value,
+            running_at_ns=running.started_at_ns,
+            heartbeat_at_ns=running.last_heartbeat_ns,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
         )
         session = session_manager.update_workflow_step(
             session.session_id,
             step_id=step_id,
-            state=StepLifecycleState.ACKED.value,
+            state=StepLifecycleState.RUNNING.value,
             attempt_id=attempt_id,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
         )
-        supervisor.run_start(step_id)
         telemetry.emit(
             TelemetryEvent.create(
                 trace_id=trace_id,
@@ -1839,16 +2088,24 @@ class RuntimeDriver:
                 attempt_id=attempt_id,
                 event_type="STEP_RUNNING",
                 role=role,
+                payload={"origin": LifecycleOrigin.LOCAL_RUNTIME.value},
                 metrics={"run_start_count": 1.0},
             )
         )
-        session = session_manager.update_workflow_step(
-            session.session_id,
-            step_id=step_id,
-            state=StepLifecycleState.RUNNING.value,
+        completed = supervisor.complete(
+            step_id,
+            session_id=session_id,
             attempt_id=attempt_id,
+            origin=LifecycleOrigin.LOCAL_RUNTIME,
         )
-        supervisor.complete(step_id)
+        session = session_manager.update_attempt_record(
+            session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            state=StepLifecycleState.COMPLETED.value,
+            completed_at_ns=completed.completed_at_ns,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+        )
         telemetry.emit(
             TelemetryEvent.create(
                 trace_id=trace_id,
@@ -1869,6 +2126,15 @@ class RuntimeDriver:
             attempt_id=attempt_id,
             output_refs=output_refs,
             metrics=metrics,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+        )
+        session = session_manager.settle_attempt(
+            session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            terminal_state=StepLifecycleState.COMPLETED.value,
+            completed_at_ns=completed.completed_at_ns,
+            lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
         )
         return session, _elapsed_ms(stage_start_ns)
 

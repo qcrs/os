@@ -120,7 +120,12 @@ from statebus.runtime.identity import (
     validate_runtime_id_component,
 )
 from statebus.contracts import RuntimeIdentity, TaskContractIdentity
-from statebus.runtime.supervisor import RuntimeSupervisor, StepRuntimeRecord, WorkerSessionSnapshot
+from statebus.runtime.supervisor import (
+    LifecycleOrigin,
+    RuntimeSupervisor,
+    StepRuntimeRecord,
+    WorkerSessionSnapshot,
+)
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.workspace import (
     ArtifactCommitState,
@@ -215,6 +220,7 @@ __all__ = [
     "SummarizerRoleDecision",
     "TaskLineageView",
     "RuntimeSupervisor",
+    "LifecycleOrigin",
     "SignatureManifestEntry",
     "StepRuntimeRecord",
     "TaskCompiler",
