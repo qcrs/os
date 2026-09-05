@@ -99,6 +99,32 @@ class StepAttemptRecord:
 
 
 @dataclass(frozen=True)
+class AttemptResultAdmissionReceipt:
+    step_id: str
+    observed_attempt_id: str
+    active_attempt_id: str
+    invocation_id: str
+    decision: str
+    reason: str
+    recorded_at_ns: int = field(default_factory=time.time_ns)
+
+    @property
+    def commit_authorized(self) -> bool:
+        return self.decision == "ACTIVE_ATTEMPT_COMMIT_ALLOWED"
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "step_id": self.step_id,
+            "observed_attempt_id": self.observed_attempt_id,
+            "active_attempt_id": self.active_attempt_id,
+            "invocation_id": self.invocation_id,
+            "decision": self.decision,
+            "reason": self.reason,
+            "recorded_at_ns": self.recorded_at_ns,
+        }
+
+
+@dataclass(frozen=True)
 class RuntimeReplanRecord:
     replan_id: str
     task_id: str
@@ -298,6 +324,9 @@ class RuntimeTaskSession:
 @dataclass
 class RuntimeSessionManager:
     sessions: dict[str, RuntimeTaskSession] = field(default_factory=dict)
+    attempt_result_admissions: dict[
+        str, tuple[AttemptResultAdmissionReceipt, ...]
+    ] = field(default_factory=dict)
 
     def start(
         self,
@@ -518,6 +547,53 @@ class RuntimeSessionManager:
 
     def active_attempt_id(self, session_id: str, step_id: str) -> str | None:
         return self.sessions[session_id].active_attempt_id(step_id)
+
+    def admit_attempt_result(
+        self,
+        session_id: str,
+        *,
+        step_id: str,
+        observed_attempt_id: str,
+        invocation_id: str = "",
+    ) -> AttemptResultAdmissionReceipt:
+        """Authorize semantic commit only for the currently active Attempt."""
+        normalized_step_id = str(step_id).strip()
+        normalized_attempt_id = str(observed_attempt_id).strip()
+        if not normalized_step_id or not normalized_attempt_id:
+            raise ValueError("attempt_result_identity_required")
+
+        session = self.sessions[session_id]
+        active_attempt_id = session.active_attempt_id(normalized_step_id) or ""
+        registered = any(
+            record.step_id == normalized_step_id
+            and record.attempt_id == normalized_attempt_id
+            for record in session.attempt_records
+        )
+        if registered and active_attempt_id == normalized_attempt_id:
+            decision = "ACTIVE_ATTEMPT_COMMIT_ALLOWED"
+            reason = "observed_attempt_is_active"
+        else:
+            decision = "FENCED_STALE_ATTEMPT"
+            if not registered:
+                reason = "attempt_not_registered"
+            elif not active_attempt_id:
+                reason = "no_active_attempt"
+            else:
+                reason = "active_attempt_changed"
+
+        receipt = AttemptResultAdmissionReceipt(
+            step_id=normalized_step_id,
+            observed_attempt_id=normalized_attempt_id,
+            active_attempt_id=active_attempt_id,
+            invocation_id=str(invocation_id).strip(),
+            decision=decision,
+            reason=reason,
+        )
+        self.attempt_result_admissions[session_id] = (
+            *self.attempt_result_admissions.get(session_id, ()),
+            receipt,
+        )
+        return receipt
 
     def settle_attempt(
         self,

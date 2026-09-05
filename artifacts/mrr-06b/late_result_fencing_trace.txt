@@ -1,0 +1,35 @@
+MRR-06B late-result fencing mechanism trace
+
+Test:
+tests/test_mrr_06b_late_result_fencing.py::test_late_attempt_a_result_is_fenced_after_attempt_b_activation
+
+Physical path:
+UDS -> typed protobuf -> delayed subprocess worker -> 05B response admission -> Runtime attempt-result admission
+
+T0 A activated
+T1 A dispatched
+T2 A timeout decision (origin=LOCAL_TRANSPORT)
+T3 A terminal settlement (state=TRAPPED, active pointer cleared)
+   physical terminate attempted after T3; controlled worker remained alive
+T4 B activated
+T5 late A terminal observed
+   event=RES_SUCC
+   physical origin=NATIVE_TYPED_WORKER
+   request/response attempt=adaptive-attempt-1
+   request/response invocation=invocation-attempt-a-06b
+   response admission=admitted
+   terminal_count=1
+   output_contract_decision=matched
+T6 FENCED_STALE_ATTEMPT
+   observed_attempt_id=adaptive-attempt-1
+   active_attempt_id=attempt-b-06b
+   reason=active_attempt_changed
+T7 B still active
+   duplicate late A observation also fenced
+   workflow output remained empty
+T8 B commits
+   decision=ACTIVE_ATTEMPT_COMMIT_ALLOWED
+   committed_output_refs=[output-b]
+   active pointer cleared after B settlement
+
+Result: PASS

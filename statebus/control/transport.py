@@ -381,6 +381,102 @@ class ExecutorTransportAudit:
         }
 
 
+class SubprocessTransportTimeout(TimeoutError):
+    """A locally observed deadline with an independently running worker."""
+
+    origin = "LOCAL_TRANSPORT"
+
+    def __init__(
+        self,
+        *,
+        transport: "SubprocessExecutorTransport",
+        request: ExecRequest,
+        thread: threading.Thread,
+        process: subprocess.Popen[bytes],
+        responses: list[ControlMessage],
+        response_wire_bytes: list[int],
+        carrier: str,
+        request_wire_bytes: int,
+    ) -> None:
+        self.transport = transport
+        self.request = request
+        self.thread = thread
+        self.process = process
+        self._responses = responses
+        self._response_wire_bytes = response_wire_bytes
+        self.carrier = carrier
+        self.request_wire_bytes = request_wire_bytes
+        self.termination_attempted = False
+        self.termination_succeeded = False
+        self.termination_outcome = "not_attempted"
+        super().__init__(
+            "subprocess_transport_timeout:"
+            f"{request.header.step_id}:{request.header.attempt_id}:"
+            f"{request.header.invocation_id}"
+        )
+
+    def terminate(self, *, grace_s: float = 1.0) -> bool:
+        """Best-effort physical termination after Runtime semantic settlement."""
+        self.termination_attempted = True
+        try:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=max(float(grace_s), 0.0))
+                    self.termination_outcome = "terminated"
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=max(float(grace_s), 0.1))
+                    self.termination_outcome = "killed_after_grace"
+            else:
+                self.termination_outcome = "already_exited"
+            self.termination_succeeded = self.process.poll() is not None
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.termination_outcome = f"termination_failed:{type(exc).__name__}"
+            self.termination_succeeded = False
+        self.thread.join(timeout=max(float(grace_s), 0.0))
+        return self.termination_succeeded
+
+    def wait_for_admitted_sequence(
+        self,
+        *,
+        timeout_s: float = 5.0,
+    ) -> list[ControlMessage]:
+        """Wait for and admit a physical response that outlived the deadline."""
+        timeout_s = max(float(timeout_s), 0.0)
+        self.thread.join(timeout=timeout_s)
+        if self.thread.is_alive():
+            raise TimeoutError("late_subprocess_response_not_ready")
+        try:
+            self.process.wait(timeout=max(timeout_s, 0.1))
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError("late_subprocess_worker_not_reaped") from exc
+        return self.transport._admit_completed_responses(
+            request=self.request,
+            responses=self._responses,
+            response_wire_bytes=self._response_wire_bytes,
+            carrier=self.carrier,
+            request_wire_bytes=self.request_wire_bytes,
+            worker_pid=self.process.pid,
+        )
+
+    def canonical_payload(self) -> dict[str, object]:
+        header = self.request.header
+        return {
+            "origin": self.origin,
+            "step_id": header.step_id,
+            "attempt_id": header.attempt_id,
+            "invocation_id": header.invocation_id,
+            "worker_pid": self.process.pid,
+            "observed_response_types": [
+                type(response).__name__ for response in self._responses
+            ],
+            "termination_attempted": self.termination_attempted,
+            "termination_succeeded": self.termination_succeeded,
+            "termination_outcome": self.termination_outcome,
+        }
+
+
 def _text_response_to_control_message(
     payload: str,
     *,
@@ -473,6 +569,74 @@ class SubprocessExecutorTransport:
         init=False,
     )
 
+    def _record_exchange_audit(
+        self,
+        *,
+        carrier: str,
+        worker_pid: int,
+        request_wire_bytes: int,
+        responses: list[ControlMessage],
+        response_wire_bytes: list[int],
+    ) -> None:
+        self.last_exchange_audit = ExecutorTransportAudit(
+            carrier="utf8_text" if carrier == "utf8_text" else "typed_protobuf",
+            backend="uds_subprocess",
+            driver_pid=os.getpid(),
+            worker_pid=worker_pid,
+            request_frame_count=1,
+            response_frame_count=len(responses),
+            request_wire_bytes=request_wire_bytes,
+            response_wire_bytes=sum(response_wire_bytes),
+        )
+
+    def _admit_completed_responses(
+        self,
+        *,
+        request: ExecRequest,
+        responses: list[ControlMessage],
+        response_wire_bytes: list[int],
+        carrier: str,
+        request_wire_bytes: int,
+        worker_pid: int,
+    ) -> list[ControlMessage]:
+        self._record_exchange_audit(
+            carrier=carrier,
+            worker_pid=worker_pid,
+            request_wire_bytes=request_wire_bytes,
+            responses=responses,
+            response_wire_bytes=response_wire_bytes,
+        )
+        if not any(
+            isinstance(message, (SuccessResult, ErrorResult, TrapFatal))
+            for message in responses
+        ):
+            raise RuntimeError("subprocess_terminal_response_missing")
+        canonical_scope_fields = (
+            request.header.run_id,
+            request.header.session_id,
+            request.header.invocation_id,
+            request.header.execution_binding_hash,
+            request.header.capability_grant_hash,
+        )
+        origin = (
+            ControlResponseOrigin.ADAPTER_DERIVED
+            if carrier == "utf8_text"
+            else (
+                ControlResponseOrigin.NATIVE_TYPED_WORKER
+                if all(str(value).strip() for value in canonical_scope_fields)
+                else ControlResponseOrigin.LEGACY_COMPATIBILITY
+            )
+        )
+        admitted, receipts = admit_control_response_sequence(
+            request,
+            responses,
+            origin=origin,
+        )
+        self.last_admission_receipts = receipts
+        if not admitted:
+            raise ControlResponseAdmissionError(receipts)
+        return list(admitted)
+
     def exchange_sequence(
         self,
         request: ExecRequest,
@@ -519,6 +683,7 @@ class SubprocessExecutorTransport:
         responses: list[ControlMessage] = []
         response_wire_bytes: list[int] = []
         server_ready = threading.Event()
+        request_sent = threading.Event()
         resolved_text_payload = text_payload or _default_text_exec_handoff(exec_request)
         request_wire_bytes = len(
             frame_text_message(resolved_text_payload)
@@ -531,15 +696,19 @@ class SubprocessExecutorTransport:
             try:
                 server.bind(str(socket_path))
                 server.listen(1)
-                server.settimeout(self.timeout_s)
+                server.settimeout(max(self.timeout_s, 2.0))
                 server_ready.set()
                 conn, _ = server.accept()
                 try:
-                    conn.settimeout(self.timeout_s)
+                    # The Runtime deadline is owned by the waiting thread. Once
+                    # connected, keep receiving so a late physical result can
+                    # still be correlated and fenced after semantic timeout.
+                    conn.settimeout(None)
                     if normalized_carrier == "utf8_text":
                         send_text_message(conn, resolved_text_payload)
                     else:
                         send_control_message(conn, exec_request)
+                    request_sent.set()
                     while True:
                         try:
                             if normalized_carrier == "utf8_text":
@@ -590,59 +759,40 @@ class SubprocessExecutorTransport:
             close_fds=True,
             pass_fds=pass_fds,
         )
+        request_sent.wait(timeout=max(self.timeout_s, 2.0))
         t.join(timeout=self.timeout_s)
+        if t.is_alive():
+            self._record_exchange_audit(
+                carrier=normalized_carrier,
+                worker_pid=proc.pid,
+                request_wire_bytes=request_wire_bytes,
+                responses=responses,
+                response_wire_bytes=response_wire_bytes,
+            )
+            raise SubprocessTransportTimeout(
+                transport=self,
+                request=exec_request,
+                thread=t,
+                process=proc,
+                responses=responses,
+                response_wire_bytes=response_wire_bytes,
+                carrier=normalized_carrier,
+                request_wire_bytes=request_wire_bytes,
+            )
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait(timeout=5)
 
-        completed_responses = responses
-        if not any(isinstance(msg, (SuccessResult, ErrorResult, TrapFatal)) for msg in responses):
-            completed_responses = responses + [ErrorResult(
-                header=replace(request.header, event_type=EventType.RES_ERR),
-                error_code="subprocess_timeout",
-                error_detail="worker subprocess did not return a result within timeout",
-                failed_at_ns=time.time_ns(),
-            )]
-        self.last_exchange_audit = ExecutorTransportAudit(
-            carrier=(
-                "utf8_text"
-                if normalized_carrier == "utf8_text"
-                else "typed_protobuf"
-            ),
-            backend="uds_subprocess",
-            driver_pid=_os.getpid(),
-            worker_pid=proc.pid,
-            request_frame_count=1,
-            response_frame_count=len(completed_responses),
+        return self._admit_completed_responses(
+            request=exec_request,
+            responses=responses,
+            response_wire_bytes=response_wire_bytes,
+            carrier=normalized_carrier,
             request_wire_bytes=request_wire_bytes,
-            response_wire_bytes=sum(response_wire_bytes),
+            worker_pid=proc.pid,
         )
-        canonical_scope_fields = (
-            exec_request.header.run_id,
-            exec_request.header.session_id,
-            exec_request.header.invocation_id,
-            exec_request.header.execution_binding_hash,
-            exec_request.header.capability_grant_hash,
-        )
-        origin = (
-            ControlResponseOrigin.ADAPTER_DERIVED
-            if normalized_carrier == "utf8_text"
-            else (
-                ControlResponseOrigin.NATIVE_TYPED_WORKER
-                if all(str(value).strip() for value in canonical_scope_fields)
-                else ControlResponseOrigin.LEGACY_COMPATIBILITY
-            )
-        )
-        admitted, receipts = admit_control_response_sequence(
-            exec_request,
-            completed_responses,
-            origin=origin,
-        )
-        self.last_admission_receipts = receipts
-        if not admitted:
-            raise ControlResponseAdmissionError(receipts)
-        return list(admitted)
 
     def execute(
         self,

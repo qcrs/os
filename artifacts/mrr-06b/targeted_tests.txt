@@ -1,0 +1,28 @@
+MRR-06B targeted test record
+
+Environment:
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1
+PYTHONPATH=/home/qcrs/statebus/os
+
+Syntax check:
+python -m py_compile statebus/runtime/session.py statebus/control/transport.py statebus/runtime/adaptive_runtime.py tests/fixtures/mrr_06b_delayed_worker.py tests/test_mrr_06b_late_result_fencing.py
+Result: PASS
+
+Focused mechanism and support tests:
+python -m pytest -q tests/test_mrr_06b_late_result_fencing.py
+Result: 2 passed in 1.89s
+
+Single adjacent canonical mainline regression:
+python -m pytest -q tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state
+Result: 1 passed in 1.86s
+
+Final same-scope aggregate rerun after removing the broad timeout-handler catch:
+python -m pytest -q tests/test_mrr_06b_late_result_fencing.py tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state
+Result: 3 passed in 3.09s
+
+Environment note:
+The first focused run inside the restricted command sandbox could not bind a Unix domain socket (Operation not permitted). The identical focused test passed in the approved local Conda execution context. This was an environment restriction, not a product-test failure.
+
+Not run:
+container, vLLM, benchmark, full pytest, competition E2E

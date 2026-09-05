@@ -1,0 +1,29 @@
+{
+  "attempt_a": {
+    "active_after_settlement": false,
+    "semantic_state": "TRAPPED",
+    "timeout_error": "subprocess_transport_timeout"
+  },
+  "cancel_order": [
+    "runtime_timeout_decision",
+    "attempt_a_terminal_settlement",
+    "best_effort_physical_terminate"
+  ],
+  "late_physical_result": {
+    "admission_origin": "NATIVE_TYPED_WORKER",
+    "result_type": "SuccessResult",
+    "runtime_decision": "FENCED_STALE_ATTEMPT"
+  },
+  "runtime_timeout": {
+    "origin": "LOCAL_TRANSPORT",
+    "physical_termination_attempted": true,
+    "physical_termination_required_for_safety": false,
+    "synthetic_worker_error_result": false
+  },
+  "settlement_invariant": "semantic settlement precedes physical cancellation",
+  "supporting_cancel_case": {
+    "cancelled_attempt_a_late_result": "FENCED_STALE_ATTEMPT",
+    "repeat_attempt_a_settlement_cleared_attempt_b": false,
+    "repeat_late_result_mutated_workflow": false
+  }
+}

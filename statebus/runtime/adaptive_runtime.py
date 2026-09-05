@@ -46,6 +46,7 @@ from statebus.runtime.identity import (
     RuntimeIdentityResolutionError,
     resolve_runtime_identity,
 )
+from statebus.control.transport import SubprocessTransportTimeout
 from statebus.utils import sha256_digest
 
 if TYPE_CHECKING:
@@ -62,6 +63,7 @@ class AdaptiveStepResult:
     error_code: str = ""
     retryable: bool = False
     attempt_id: str = ""
+    invocation_id: str = ""
     timed_out: bool = False
     evidence_coverage_report_hashes: tuple[str, ...] = ()
     evidence_coverage_decision_records: tuple[dict[str, object], ...] = ()
@@ -400,9 +402,46 @@ class AdaptiveRuntimeEngine:
         produced_refs_by_step: dict[str, tuple[str, ...]] = {}
         completed: set[str] = set()
         terminal_failed: set[str] = set()
+        fenced: set[str] = set()
         replan_count = 0
         plan_replaced = False
         attempt_count = 0
+
+        def admit_result(
+            *,
+            step: PlanStepProposal,
+            attempt_id: str,
+            grant: CapabilityGrant,
+            result: AdaptiveStepResult,
+        ) -> bool:
+            receipt = session_manager.admit_attempt_result(
+                session_id,
+                step_id=step.step_id,
+                observed_attempt_id=result.attempt_id or attempt_id,
+                invocation_id=result.invocation_id,
+            )
+            if receipt.commit_authorized:
+                return True
+            fenced.add(step.step_id)
+            telemetry.emit(TelemetryEvent.create(
+                trace_id=request.trace_id,
+                task_id=request.task_id,
+                step_id=step.step_id,
+                attempt_id=result.attempt_id or attempt_id,
+                event_type="FENCED_STALE_ATTEMPT",
+                role="runtime_driver",
+                severity="warning",
+                payload=receipt.canonical_payload(),
+                metrics={"fenced_stale_attempt_count": 1.0},
+            ))
+            dispatches.append(AdaptiveDispatchRecord(
+                step.step_id,
+                result.attempt_id or attempt_id,
+                grant.grant_hash,
+                receipt.decision,
+                error_code=receipt.reason,
+            ))
+            return False
 
         telemetry.emit(
             TelemetryEvent.create(
@@ -451,7 +490,13 @@ class AdaptiveRuntimeEngine:
                 provider_registry_digest=provider_registry.digest,
             )
         while True:
-            remaining = [step for step in current_plan.steps if step.step_id not in completed and step.step_id not in terminal_failed]
+            remaining = [
+                step
+                for step in current_plan.steps
+                if step.step_id not in completed
+                and step.step_id not in terminal_failed
+                and step.step_id not in fenced
+            ]
             if not remaining:
                 break
             ready = [step for step in remaining if set(step.depends_on) <= completed]
@@ -629,31 +674,57 @@ class AdaptiveRuntimeEngine:
                     step=step,
                     attempt_id=attempt_id,
                 )
-                if request.dispatcher is not None:
-                    result = request.dispatcher.dispatch(
-                        envelope=request.envelope,
-                        approved_plan=current_plan,
-                        step=step,
-                        grant=bound_grant,
-                        attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / attempt_id,
-                        runtime_identity=runtime_identity,
+                transport_timeout: SubprocessTransportTimeout | None = None
+                try:
+                    if request.dispatcher is not None:
+                        result = request.dispatcher.dispatch(
+                            envelope=request.envelope,
+                            approved_plan=current_plan,
+                            step=step,
+                            grant=bound_grant,
+                            attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / attempt_id,
+                            runtime_identity=runtime_identity,
+                        )
+                    else:
+                        assert request.execute_step is not None
+                        result = request.execute_step(step, grant)
+                except SubprocessTransportTimeout as exc:
+                    transport_timeout = exc
+                    result = AdaptiveStepResult(
+                        grant_hash=grant.grant_hash,
+                        success=False,
+                        attempt_id=attempt_id,
+                        invocation_id=exc.request.header.invocation_id,
+                        error_code="subprocess_transport_timeout",
+                        timed_out=True,
                     )
-                else:
-                    assert request.execute_step is not None
-                    result = request.execute_step(step, grant)
+                result_admitted = False
+                if (
+                    not result.timed_out
+                    and result.grant_hash == grant.grant_hash
+                    and (not result.attempt_id or result.attempt_id == attempt_id)
+                ):
+                    if not admit_result(
+                        step=step,
+                        attempt_id=attempt_id,
+                        grant=grant,
+                        result=result,
+                    ):
+                        continue
+                    result_admitted = True
                 # A bounded-Python failure may only downgrade through the
                 # descriptor's registered fallback capability. The Controller
                 # issues a fresh Grant; the Python Grant is never reused.
                 if (
                     not result.success
+                    and not result.timed_out
+                    and result.grant_hash == grant.grant_hash
                     and binding.selected_implementation_kind == "llm_bounded_python"
                     and step.on_failure == "fallback_deterministic"
                     and logical_capability.fallback_capability_id
                     and attempt_count < current_plan.total_attempt_budget
                     and (not result.attempt_id or result.attempt_id == attempt_id)
                 ):
-                    if session_manager.active_attempt_id(session_id, step.step_id) != attempt_id:
-                        raise AdaptiveRuntimeError("active_attempt_mismatch_before_fallback")
                     failed = supervisor.fail(
                         step.step_id,
                         result.error_code or "fallback_requested",
@@ -791,18 +862,29 @@ class AdaptiveRuntimeEngine:
                         step=fallback_step,
                         attempt_id=fallback_attempt_id,
                     )
-                    if request.dispatcher is not None:
-                        fallback_result = request.dispatcher.dispatch(
-                            envelope=request.envelope,
-                            approved_plan=current_plan,
-                            step=fallback_step,
-                            grant=fallback_bound_grant,
-                            attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / fallback_attempt_id,
-                            runtime_identity=runtime_identity,
+                    try:
+                        if request.dispatcher is not None:
+                            fallback_result = request.dispatcher.dispatch(
+                                envelope=request.envelope,
+                                approved_plan=current_plan,
+                                step=fallback_step,
+                                grant=fallback_bound_grant,
+                                attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / fallback_attempt_id,
+                                runtime_identity=runtime_identity,
+                            )
+                        else:
+                            assert request.execute_step is not None
+                            fallback_result = request.execute_step(fallback_step, fallback_grant)
+                    except SubprocessTransportTimeout as exc:
+                        transport_timeout = exc
+                        fallback_result = AdaptiveStepResult(
+                            grant_hash=fallback_grant.grant_hash,
+                            success=False,
+                            attempt_id=fallback_attempt_id,
+                            invocation_id=exc.request.header.invocation_id,
+                            error_code="subprocess_transport_timeout",
+                            timed_out=True,
                         )
-                    else:
-                        assert request.execute_step is not None
-                        fallback_result = request.execute_step(fallback_step, fallback_grant)
                     prior_metrics = dict(result.metrics)
                     for key, value in fallback_result.metrics.items():
                         prior_metrics[key] = prior_metrics.get(key, 0.0) + value
@@ -826,6 +908,138 @@ class AdaptiveRuntimeEngine:
                     bound_grant = fallback_bound_grant
                     grant = fallback_grant
                     attempt_id = fallback_attempt_id
+                    result_admitted = False
+                if result.timed_out:
+                    terminal_failed.add(step.step_id)
+                    timeout_error = result.error_code or "step_timeout"
+                    trapped = supervisor.trap(
+                        step.step_id,
+                        timeout_error,
+                        session_id=session_id,
+                        attempt_id=attempt_id,
+                        origin=LifecycleOrigin.LOCAL_RUNTIME,
+                    )
+                    session = session_manager.update_attempt_record(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        state=StepLifecycleState.TRAPPED.value,
+                        trap_reason=timeout_error,
+                        completed_at_ns=trapped.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        validator_report_hashes=result.validator_report_hashes,
+                    )
+                    session = session_manager.update_workflow_step(
+                        session_id,
+                        step_id=step.step_id,
+                        state=StepLifecycleState.TRAPPED.value,
+                        attempt_id=attempt_id,
+                        last_error=timeout_error,
+                        metrics=result.metrics,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    session = session_manager.settle_attempt(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        terminal_state=StepLifecycleState.TRAPPED.value,
+                        completed_at_ns=trapped.completed_at_ns,
+                        trap_reason=timeout_error,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+
+                    termination_attempted = transport_timeout is not None
+                    termination_succeeded = False
+                    termination_outcome = "not_applicable"
+                    if transport_timeout is not None:
+                        termination_succeeded = transport_timeout.terminate(
+                            grace_s=session.lease_config.teardown_grace_ms / 1000.0
+                        )
+                        termination_outcome = transport_timeout.termination_outcome
+                    telemetry.emit(TelemetryEvent.create(
+                        trace_id=request.trace_id,
+                        task_id=request.task_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        event_type="STEP_TRAPPED",
+                        role=step.role,
+                        severity="error",
+                        payload={
+                            "grant_hash": grant.grant_hash,
+                            "reason": timeout_error,
+                            "origin": (
+                                SubprocessTransportTimeout.origin
+                                if transport_timeout is not None
+                                else LifecycleOrigin.LOCAL_RUNTIME.value
+                            ),
+                            "semantic_settlement_preceded_termination": True,
+                            "physical_termination_attempted": termination_attempted,
+                            "physical_termination_succeeded": termination_succeeded,
+                            "physical_termination_outcome": termination_outcome,
+                        },
+                        metrics={"adaptive_step_timeout": 1.0},
+                    ))
+                    dispatches.append(AdaptiveDispatchRecord(
+                        step.step_id,
+                        attempt_id,
+                        grant.grant_hash,
+                        StepLifecycleState.TRAPPED.value,
+                        error_code=timeout_error,
+                    ))
+                    continue
+                if result.grant_hash != grant.grant_hash or (
+                    result.attempt_id and result.attempt_id != attempt_id
+                ):
+                    terminal_failed.add(step.step_id)
+                    failed = supervisor.fail(
+                        step.step_id,
+                        "grant_binding_mismatch",
+                        session_id=session_id,
+                        attempt_id=attempt_id,
+                        origin=LifecycleOrigin.LOCAL_RUNTIME,
+                    )
+                    session = session_manager.update_attempt_record(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=failed.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        validator_report_hashes=result.validator_report_hashes,
+                    )
+                    session = session_manager.update_workflow_step(
+                        session_id,
+                        step_id=step.step_id,
+                        state=StepLifecycleState.FAILED.value,
+                        attempt_id=attempt_id,
+                        last_error="grant_binding_mismatch",
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    session = session_manager.settle_attempt(
+                        session_id,
+                        step_id=step.step_id,
+                        attempt_id=attempt_id,
+                        terminal_state=StepLifecycleState.FAILED.value,
+                        completed_at_ns=failed.completed_at_ns,
+                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    )
+                    dispatches.append(AdaptiveDispatchRecord(
+                        step.step_id,
+                        attempt_id,
+                        grant.grant_hash,
+                        StepLifecycleState.FAILED.value,
+                        error_code="grant_binding_mismatch",
+                    ))
+                    continue
+                if not result_admitted:
+                    if not admit_result(
+                        step=step,
+                        attempt_id=attempt_id,
+                        grant=grant,
+                        result=result,
+                    ):
+                        continue
+                    result_admitted = True
                 for report_hash in result.evidence_coverage_report_hashes:
                     session = session_manager.attach_adaptive_audit(
                         session_id,
@@ -900,82 +1114,6 @@ class AdaptiveRuntimeEngine:
                             for key, value in dict(event_record.get("metrics", {})).items()
                         },
                     ))
-                if session_manager.active_attempt_id(session_id, step.step_id) != attempt_id:
-                    raise AdaptiveRuntimeError("active_attempt_mismatch_before_result")
-                if result.grant_hash != grant.grant_hash or (result.attempt_id and result.attempt_id != attempt_id):
-                    terminal_failed.add(step.step_id)
-                    failed = supervisor.fail(
-                        step.step_id,
-                        "grant_binding_mismatch",
-                        session_id=session_id,
-                        attempt_id=attempt_id,
-                        origin=LifecycleOrigin.LOCAL_RUNTIME,
-                    )
-                    session = session_manager.update_attempt_record(
-                        session_id, step_id=step.step_id, attempt_id=attempt_id,
-                        state=StepLifecycleState.FAILED.value,
-                        completed_at_ns=failed.completed_at_ns,
-                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
-                        validator_report_hashes=result.validator_report_hashes,
-                    )
-                    session = session_manager.update_workflow_step(
-                        session_id, step_id=step.step_id,
-                        state=StepLifecycleState.FAILED.value,
-                        attempt_id=attempt_id,
-                        last_error="grant_binding_mismatch",
-                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
-                    )
-                    session = session_manager.settle_attempt(
-                        session_id,
-                        step_id=step.step_id,
-                        attempt_id=attempt_id,
-                        terminal_state=StepLifecycleState.FAILED.value,
-                        completed_at_ns=failed.completed_at_ns,
-                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
-                    )
-                    dispatches.append(AdaptiveDispatchRecord(step.step_id, attempt_id, grant.grant_hash, StepLifecycleState.FAILED.value, error_code="grant_binding_mismatch"))
-                    continue
-                if result.timed_out:
-                    terminal_failed.add(step.step_id)
-                    trapped = supervisor.trap(
-                        step.step_id,
-                        "step_timeout",
-                        session_id=session_id,
-                        attempt_id=attempt_id,
-                        origin=LifecycleOrigin.LOCAL_RUNTIME,
-                    )
-                    session = session_manager.update_attempt_record(
-                        session_id, step_id=step.step_id, attempt_id=attempt_id,
-                        state=StepLifecycleState.TRAPPED.value,
-                        trap_reason="step_timeout",
-                        completed_at_ns=trapped.completed_at_ns,
-                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
-                        validator_report_hashes=result.validator_report_hashes,
-                    )
-                    session = session_manager.update_workflow_step(
-                        session_id, step_id=step.step_id,
-                        state=StepLifecycleState.TRAPPED.value,
-                        attempt_id=attempt_id, last_error="step_timeout",
-                        metrics=result.metrics,
-                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
-                    )
-                    session = session_manager.settle_attempt(
-                        session_id,
-                        step_id=step.step_id,
-                        attempt_id=attempt_id,
-                        terminal_state=StepLifecycleState.TRAPPED.value,
-                        completed_at_ns=trapped.completed_at_ns,
-                        trap_reason="step_timeout",
-                        lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
-                    )
-                    telemetry.emit(TelemetryEvent.create(
-                        trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
-                        attempt_id=attempt_id, event_type="STEP_TRAPPED", role=step.role, severity="error",
-                        payload={"grant_hash": grant.grant_hash, "reason": "step_timeout"},
-                        metrics={"adaptive_step_timeout": 1.0},
-                    ))
-                    dispatches.append(AdaptiveDispatchRecord(step.step_id, attempt_id, grant.grant_hash, StepLifecycleState.TRAPPED.value, error_code="step_timeout"))
-                    continue
                 if (
                     result.success
                     and len(result.output_refs) == len(result.output_ref_kinds)
