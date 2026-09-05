@@ -6,7 +6,7 @@ StateBus 应用运行在单个 openEuler 容器中，模型推理可以选择两
 - 宿主机上的 Qwen3-32B vLLM，地址为 `http://127.0.0.1:53334/v1`。
 
 应用容器使用 host network，因此可以直接访问宿主机的 loopback 地址。容器
-本身不申请 GPU，Embedding 默认使用 CPU；宿主机 vLLM 默认只使用物理卡 1。
+本身不申请 GPU，Embedding 默认使用 CPU；宿主机 vLLM 默认只使用物理卡 2。
 
 ## 1. 文件分工
 
@@ -168,7 +168,7 @@ scripts/vllm/manage_qwen3_32b.sh print-config
 模型目录    /data/models/Qwen3-32B
 服务模型名  qwen3-32b
 API 地址    http://127.0.0.1:53334/v1
-物理 GPU    1
+物理 GPU    2
 Python 环境 ~/statebus/conda-envs/vllm-qwen-cu121
 ```
 

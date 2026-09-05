@@ -10,6 +10,7 @@ from typing import Callable, TYPE_CHECKING
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
+    BoundCapabilityGrant,
     CapabilityGrant,
     CanonicalTaskSpec,
     ClaimSet,
@@ -47,6 +48,7 @@ from statebus.runtime.retrieval_adapter import (
     AdaptiveRetrievalResult,
     stable_fan_in_evidence_packs,
 )
+from statebus.runtime.provider_registry import project_legacy_capability
 from statebus.runtime.transform_dsl import TransformDslInterpreter, TransformProgramError
 from statebus.runtime.claims import ClaimSetValidator
 from statebus.runtime.workspace import ArtifactLifecycleManager
@@ -173,21 +175,30 @@ class AdaptiveCapabilityDispatcher:
         envelope: AdaptiveTaskEnvelope,
         approved_plan: ApprovedPlan,
         step: PlanStepProposal,
-        grant: CapabilityGrant,
+        grant: BoundCapabilityGrant | CapabilityGrant,
         attempt_workspace: Path,
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
+        plain_grant = grant.grant if isinstance(grant, BoundCapabilityGrant) else grant
         try:
+            if not isinstance(grant, BoundCapabilityGrant):
+                raise AdaptiveDispatchError("execution_binding_required")
             descriptor = self.context.registry.get(step.capability_id)
-            self._validate_dispatch(envelope, approved_plan, step, grant, descriptor.execution_kind)
-            handler = self._handlers[descriptor.execution_kind]
-            return handler(envelope, approved_plan, step, grant, attempt_workspace)
+            execution_kind = self._validate_dispatch(
+                envelope,
+                approved_plan,
+                step,
+                plain_grant,
+                grant,
+            )
+            handler = self._handlers[execution_kind]
+            return handler(envelope, approved_plan, step, plain_grant, attempt_workspace)
         except (AdaptiveDispatchError, ValueError) as exc:
             return AdaptiveStepResult(
-                grant_hash=grant.grant_hash,
+                grant_hash=plain_grant.grant_hash,
                 success=False,
-                attempt_id=grant.attempt_id,
+                attempt_id=plain_grant.attempt_id,
                 error_code=str(exc) or type(exc).__name__,
             )
 
@@ -1531,20 +1542,40 @@ class AdaptiveCapabilityDispatcher:
         approved_plan: ApprovedPlan,
         step: PlanStepProposal,
         grant: CapabilityGrant,
-        execution_kind: ExecutionKind,
-    ) -> None:
+        bound_grant: BoundCapabilityGrant,
+    ) -> ExecutionKind:
         descriptor = self.context.registry.get(step.capability_id)
+        logical_capability = project_legacy_capability(descriptor)
+        binding = bound_grant.execution_binding
         if step.capability_id != grant.capability_id or grant.approved_plan_hash != approved_plan.approved_plan_hash:
             raise AdaptiveDispatchError("capability_grant_mismatch")
         if grant.task_id != envelope.task_id or grant.step_id != step.step_id or grant.expires_at_ns <= __import__("time").time_ns():
             raise AdaptiveDispatchError("capability_grant_scope_or_expiry_mismatch")
-        if descriptor.owner_role != step.role or descriptor.execution_kind != execution_kind:
+        if (
+            binding.task_id != grant.task_id
+            or binding.session_id != grant.session_id
+            or binding.step_id != step.step_id
+            or binding.attempt_id != grant.attempt_id
+            or binding.approved_plan_hash != approved_plan.approved_plan_hash
+            or binding.logical_capability_id != logical_capability.capability_id
+            or binding.logical_capability_version != logical_capability.version
+            or binding.semantic_contract_hash != logical_capability.semantic_contract_hash
+        ):
+            raise AdaptiveDispatchError("execution_binding_scope_mismatch")
+        try:
+            execution_kind = ExecutionKind(binding.selected_implementation_kind)
+        except ValueError as exc:
+            raise AdaptiveDispatchError("execution_binding_implementation_unknown") from exc
+        if descriptor.execution_kind != execution_kind:
+            raise AdaptiveDispatchError("execution_binding_implementation_mismatch")
+        if descriptor.owner_role != step.role:
             raise AdaptiveDispatchError("capability_descriptor_mismatch")
         if execution_kind == ExecutionKind.LLM_BOUNDED_PYTHON:
             if not envelope.allow_llm_python or envelope.risk_class != RiskClass.BOUNDED_CODE:
                 raise AdaptiveDispatchError("llm_python_not_program_enabled")
             if not self.context.validator_registry.contains(self._business_validator_id(step.capability_id)):
                 raise AdaptiveDispatchError("capability_quality_validator_unregistered")
+        return execution_kind
 
     def _business_validator_id(self, capability_id: str) -> str:
         descriptor = self.context.registry.get(capability_id)

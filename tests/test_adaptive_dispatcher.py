@@ -5,14 +5,51 @@ import time
 
 import pytest
 
-from statebus.contracts import CapabilityGrant, Claim, ClaimSet, EvidenceCoverageStatus, EvidenceRequest, RefStatus, TransformProgram, TransformStep
+from statebus.contracts import BoundCapabilityGrant, CapabilityGrant, Claim, ClaimSet, EvidenceCoverageStatus, EvidenceRequest, RefStatus, TransformProgram, TransformStep
 from statebus.refs import CanonicalEvidencePack, EvidenceItem, ExecutionArtifactRef, TableCellLocator
 from statebus.runtime.adaptive_dispatcher import AdaptiveCapabilityDispatcher, AdaptiveDispatchContext, AdaptiveDispatchError, StoredAdaptiveArtifact
 from statebus.runtime.adaptive_runtime import AdaptiveRuntimeRequest, AdaptiveStepResult
+from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.driver import RuntimeDriver
+from statebus.runtime.provider_registry import (
+    ExecutionProviderRegistry,
+    compute_provider_eligibility,
+    create_execution_binding,
+    default_provider_runtime_facts,
+    select_provider_deterministically,
+)
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
 from tests.test_adaptive_driver import _setup
 from statebus.utils import sha256_digest, stable_json_dumps
+
+
+def _bound_grant(
+    registry: CapabilityRegistry,
+    grant: CapabilityGrant,
+) -> BoundCapabilityGrant:
+    descriptor = registry.get(grant.capability_id)
+    logical = registry.logical_descriptor(grant.capability_id)
+    providers = ExecutionProviderRegistry.from_legacy_capability_registry(registry)
+    projection = compute_provider_eligibility(
+        task_id=grant.task_id,
+        session_id=grant.session_id,
+        step_id=grant.step_id,
+        attempt_id=grant.attempt_id,
+        approved_plan_hash=grant.approved_plan_hash,
+        logical_capability=logical,
+        provider_registry=providers,
+        runtime_facts=default_provider_runtime_facts(providers),
+        allowed_risk_class=descriptor.side_effect_class,
+        required_runtime_ms=descriptor.max_runtime_ms,
+    )
+    provider = select_provider_deterministically(projection, providers)
+    return BoundCapabilityGrant(
+        grant=grant,
+        execution_binding=create_execution_binding(
+            projection=projection,
+            provider=provider,
+        ),
+    )
 
 
 def test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_builtin(tmp_path) -> None:
@@ -222,7 +259,7 @@ def test_dispatcher_rejects_missing_runtime_builtin_before_handler_side_effect(t
         envelope=envelope,
         approved_plan=approved,
         step=report_step,
-        grant=capability_grant,
+        grant=_bound_grant(registry, capability_grant),
         attempt_workspace=tmp_path,
     )
     assert not outcome.success
@@ -281,7 +318,11 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
         claim_set_factory=valid_candidate,
     )
     result = AdaptiveCapabilityDispatcher(context=context).dispatch(
-        envelope=envelope, approved_plan=approved, step=report_step, grant=grant, attempt_workspace=tmp_path / "report",
+        envelope=envelope,
+        approved_plan=approved,
+        step=report_step,
+        grant=_bound_grant(registry, grant),
+        attempt_workspace=tmp_path / "report",
     )
     assert result.success
     assert len(context.claim_sets) == 1
@@ -306,7 +347,7 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
         envelope=envelope,
         approved_plan=approved,
         step=report_step,
-        grant=grant,
+        grant=_bound_grant(registry, grant),
         attempt_workspace=tmp_path / "cross-session",
     )
     assert not cross_session.success
@@ -321,7 +362,11 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
         claim_set_factory=lambda *args: (_ for _ in ()).throw(RuntimeError("model candidate unavailable")),
     )
     rejected = AdaptiveCapabilityDispatcher(context=rejected_context).dispatch(
-        envelope=envelope, approved_plan=approved, step=report_step, grant=grant, attempt_workspace=tmp_path / "rejected",
+        envelope=envelope,
+        approved_plan=approved,
+        step=report_step,
+        grant=_bound_grant(registry, grant),
+        attempt_workspace=tmp_path / "rejected",
     )
     assert not rejected.success
     assert rejected.error_code == "summarizer_candidate_generation_failed:RuntimeError"

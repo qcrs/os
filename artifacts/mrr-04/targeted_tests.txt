@@ -1,0 +1,12 @@
+MRR-04 targeted tests
+
+Environment:
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1
+PYTHONPATH=/home/qcrs/statebus/os
+
+Command:
+python -m pytest -q tests/test_provider_binding_reconciliation.py tests/test_fixed_canonical_mainline.py::test_fixed_mainline_completes_through_runtime_grants_without_legacy_paths tests/test_adaptive_driver.py::test_driver_executes_approved_nonfixed_dag_with_one_grant_per_step
+
+Result:
+8 passed in 0.97s

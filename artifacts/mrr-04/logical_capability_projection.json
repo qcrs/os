@@ -1,0 +1,142 @@
+{
+  "approved_plan_hash": "a3ca57d75aa26484a3b13dcf9fc91ac52073f1d18295dd259db9216b0a57038f",
+  "approved_plan_provider_fields_absent": true,
+  "forbidden_logical_fields": [
+    "endpoint",
+    "execution_kind",
+    "provider_id",
+    "transport"
+  ],
+  "forbidden_logical_fields_absent": true,
+  "logical_capabilities": [
+    {
+      "legacy_capability_id": "compose_cited_report_v1",
+      "logical_descriptor": {
+        "capability_id": "compose_cited_report_v1",
+        "completion_criteria_contract": {
+          "max_conflicts": {
+            "maximum": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_locator_count": {
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "required_evidence_types": {
+            "allowed_values": [
+              "semantic_context",
+              "table"
+            ],
+            "max_items": 2,
+            "min_items": 1,
+            "type": "string_list"
+          }
+        },
+        "description": "Deterministic Fixed compatibility summarizer handler.",
+        "fallback_capability_id": "",
+        "input_contract_version": "statebus.fixed_compatibility_input.v1",
+        "input_ref_kinds": [
+          "canonical_evidence_pack",
+          "execution_artifact"
+        ],
+        "output_contract_version": "statebus.cited_report.v1",
+        "output_ref_kinds": [
+          "execution_artifact"
+        ],
+        "owner_role": "summarizer",
+        "required_input_ref_kinds": [
+          "canonical_evidence_pack",
+          "execution_artifact"
+        ],
+        "schema_version": "statebus.logical_capability_descriptor.v1",
+        "side_effect_class": "read_only",
+        "validator_ids": [],
+        "version": "v1"
+      },
+      "semantic_contract_hash": "d7015fae84abf9c0bd8e645654ff3ee3a80470c1ed3e2a059a73415856291a14"
+    },
+    {
+      "legacy_capability_id": "extract_metric_series_v1",
+      "logical_descriptor": {
+        "capability_id": "extract_metric_series_v1",
+        "completion_criteria_contract": {
+          "min_rows": {
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "required_fields": {
+            "max_items": 64,
+            "min_items": 1,
+            "type": "string_list"
+          }
+        },
+        "description": "Deterministic Fixed compatibility executor handler.",
+        "fallback_capability_id": "",
+        "input_contract_version": "statebus.fixed_compatibility_input.v1",
+        "input_ref_kinds": [
+          "canonical_evidence_pack"
+        ],
+        "output_contract_version": "statebus.metric_series.v1",
+        "output_ref_kinds": [
+          "execution_artifact"
+        ],
+        "owner_role": "executor",
+        "required_input_ref_kinds": [
+          "canonical_evidence_pack"
+        ],
+        "schema_version": "statebus.logical_capability_descriptor.v1",
+        "side_effect_class": "read_only",
+        "validator_ids": [],
+        "version": "v1"
+      },
+      "semantic_contract_hash": "96245e3baf835e331e129a477652547bff5db7f4bd6954832897862d8bcd0e90"
+    },
+    {
+      "legacy_capability_id": "retrieve_semantic_evidence_v1",
+      "logical_descriptor": {
+        "capability_id": "retrieve_semantic_evidence_v1",
+        "completion_criteria_contract": {
+          "max_conflicts": {
+            "maximum": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_locator_count": {
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "required_evidence_types": {
+            "allowed_values": [
+              "semantic_context",
+              "table"
+            ],
+            "max_items": 2,
+            "min_items": 1,
+            "type": "string_list"
+          }
+        },
+        "description": "Deterministic Fixed compatibility retriever handler.",
+        "fallback_capability_id": "",
+        "input_contract_version": "statebus.fixed_compatibility_input.v1",
+        "input_ref_kinds": [],
+        "output_contract_version": "statebus.evidence_pack.v2",
+        "output_ref_kinds": [
+          "canonical_evidence_pack"
+        ],
+        "owner_role": "retriever",
+        "required_input_ref_kinds": [],
+        "schema_version": "statebus.logical_capability_descriptor.v1",
+        "side_effect_class": "read_only",
+        "validator_ids": [],
+        "version": "v1"
+      },
+      "semantic_contract_hash": "3222600f0eeecc2247798ddcc7b462d62cf1814b44d6e2ac48297fd68f34e462"
+    }
+  ],
+  "logical_registry_digest": "b03924b21476bd18d947bd9447269610df19caf92ab423911ce2e413e099a4f3",
+  "schema_version": "statebus.mrr04.logical_capability_projection.evidence.v1"
+}

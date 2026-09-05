@@ -1,0 +1,11 @@
+MRR-04 binding/grant order
+
+Targeted contract assertion: eligibility -> binding -> _issue_grant.
+Observed canonical Runtime events and bound-grant links:
+adaptive-attempt-mrr-04-evidence-run-1: ProviderEligibilityProjection[64875c871596aaef6d3d73d5132e5a7f88140a812247a7e76f18eaffd41b6e96] -> ExecutionBindingReceipt[442268a9f60d878c197b67f83a2ba867b6dd3b8ab4f1acd3e9acaac85518f2cc] -> CapabilityGrant[3c2398bebd64862fdfe73136c43d301543a435c795cb7c4fa172211b995a3b54] -> STEP_DISPATCHED[legacy-retrieve_semantic_evidence_v1-runtime_builtin]
+adaptive-attempt-mrr-04-evidence-run-2: ProviderEligibilityProjection[26b14912b6a123c972f0c12d3728e7d131383842300ab9ad654f042df33f4edc] -> ExecutionBindingReceipt[baae4194ed4899d1d241a0e2d66516af822d24eb2b20e06c37ef0b93412f3d9f] -> CapabilityGrant[3b71e57873f887e777ea5ec536c9e623a0e474dd46432002d1e6cbefd566064e] -> STEP_DISPATCHED[legacy-extract_metric_series_v1-runtime_builtin]
+adaptive-attempt-mrr-04-evidence-run-3: ProviderEligibilityProjection[0c1c2c741d7c011b4f7161bdd9f70ae513750f1e22eb04e6cc23e0b6bfa30cd0] -> ExecutionBindingReceipt[c4cdc8db61025fc9e2da48437b3915a9fbb2d1f2476cf1a3d9849a9e0ea62af3] -> CapabilityGrant[c4fc1e2d765700fe51cf1d6149d5425fce1b75a093337a3b0592bb8f5f504937] -> STEP_DISPATCHED[legacy-compose_cited_report_v1-runtime_builtin]
+
+Canonical fixed execution completed: true
+Attempts with exactly one projection/binding/bound grant: 3/3
+Dispatcher consumed the bound provider and invoked the existing handler: true

@@ -5,6 +5,7 @@ import time
 
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
+    BoundCapabilityGrant,
     CapabilityGrant,
     CodeExecutionRecord,
     CodeGenerationPolicy,
@@ -36,7 +37,43 @@ from statebus.runtime.llm_codeact import (
     code_generation_prompt_bundle_digest,
 )
 from statebus.runtime.plan_policy import PlanPolicyValidator
+from statebus.runtime.provider_registry import (
+    ExecutionProviderRegistry,
+    compute_provider_eligibility,
+    create_execution_binding,
+    default_provider_runtime_facts,
+    select_provider_deterministically,
+)
 from statebus.utils import sha256_digest, stable_json_dumps
+
+
+def _bound_grant(
+    registry: CapabilityRegistry,
+    grant: CapabilityGrant,
+) -> BoundCapabilityGrant:
+    descriptor = registry.get(grant.capability_id)
+    logical = registry.logical_descriptor(grant.capability_id)
+    providers = ExecutionProviderRegistry.from_legacy_capability_registry(registry)
+    projection = compute_provider_eligibility(
+        task_id=grant.task_id,
+        session_id=grant.session_id,
+        step_id=grant.step_id,
+        attempt_id=grant.attempt_id,
+        approved_plan_hash=grant.approved_plan_hash,
+        logical_capability=logical,
+        provider_registry=providers,
+        runtime_facts=default_provider_runtime_facts(providers),
+        allowed_risk_class=descriptor.side_effect_class,
+        required_runtime_ms=descriptor.max_runtime_ms,
+    )
+    provider = select_provider_deterministically(projection, providers)
+    return BoundCapabilityGrant(
+        grant=grant,
+        execution_binding=create_execution_binding(
+            projection=projection,
+            provider=provider,
+        ),
+    )
 
 
 def _approved_codeact_plan(*, fallback: bool = False):
@@ -256,7 +293,7 @@ def test_python_executor_consumes_verified_retrieval_context_without_mounting_it
         envelope=envelope,
         approved_plan=approved,
         step=step,
-        grant=grant,
+        grant=_bound_grant(registry, grant),
         attempt_workspace=tmp_path / "attempt",
     )
 

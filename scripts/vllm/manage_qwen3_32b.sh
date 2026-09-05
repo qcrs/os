@@ -82,7 +82,7 @@ print_config() {
   printf '模型=%s\n' "$MODEL_PATH"
   printf 'API地址=http://%s:%s/v1\n' "$HOST" "$PORT"
   printf '健康地址=%s\n' "$HEALTH_URL"
-  printf '物理GPU=%s\n' "${STATEBUS_VLLM_CUDA_VISIBLE_DEVICES:-1}"
+  printf '物理GPU=%s\n' "${STATEBUS_VLLM_CUDA_VISIBLE_DEVICES:-2}"
   printf '运行目录=%s\n' "$RUNTIME_DIR"
   printf '日志文件=%s\n' "$LOG_FILE"
 }

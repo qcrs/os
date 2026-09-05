@@ -8,10 +8,16 @@ from typing import Callable, TYPE_CHECKING
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
+    BoundCapabilityGrant,
     CapabilityGrant,
+    ExecutionBindingReceipt,
+    ExecutionProviderDescriptor,
+    LogicalCapabilityDescriptor,
     PlanPolicyReport,
     PlanStepProposal,
     PlanProposal,
+    ProviderEligibilityProjection,
+    ProviderRuntimeFacts,
     RuntimeIdentity,
     StateConsumptionRecord,
     StepLifecycleState,
@@ -19,6 +25,13 @@ from statebus.contracts import (
 )
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.plan_policy import PlanPolicyValidator
+from statebus.runtime.provider_registry import (
+    ExecutionProviderRegistry,
+    compute_provider_eligibility,
+    create_execution_binding,
+    default_provider_runtime_facts,
+    select_provider_deterministically,
+)
 from statebus.runtime.session import (
     RuntimeLeaseConfig,
     RuntimeReplanRecord,
@@ -88,6 +101,8 @@ class AdaptiveRuntimeRequest:
     replan: Callable[[ApprovedPlan, tuple[str, ...], str], ApprovedPlan | None] | None = None
     layer_name: str = "L3"
     runtime_identity: RuntimeIdentity | None = None
+    provider_registry: ExecutionProviderRegistry | None = None
+    provider_runtime_facts: dict[str, ProviderRuntimeFacts] = field(default_factory=dict)
     # Legacy callers keep the historical attempt labels while the resolved
     # identity still gives the run a first-class session and contract.
     identity_is_compatibility_projection: bool = False
@@ -170,6 +185,10 @@ class AdaptiveRuntimeResult:
     shadow_only: bool = False
     runtime_signature: "AdaptiveRuntimeSignature | None" = None
     runtime_identity: RuntimeIdentity | None = None
+    provider_registry_digest: str = ""
+    provider_eligibility_projections: tuple[ProviderEligibilityProjection, ...] = ()
+    execution_bindings: tuple[ExecutionBindingReceipt, ...] = ()
+    bound_grants: tuple[BoundCapabilityGrant, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -318,6 +337,15 @@ class AdaptiveRuntimeEngine:
         if request.execute_step is None and request.dispatcher is None:
             raise AdaptiveRuntimeError("dispatcher_or_execute_step_required")
         self._validate_approved_plan(request)
+        provider_registry = (
+            request.provider_registry
+            or ExecutionProviderRegistry.from_legacy_capability_registry(request.registry)
+        )
+        provider_runtime_facts = (
+            dict(request.provider_runtime_facts)
+            if request.provider_runtime_facts
+            else default_provider_runtime_facts(provider_registry)
+        )
 
         session_manager = RuntimeSessionManager()
         session_id = runtime_identity.session_id
@@ -365,6 +393,9 @@ class AdaptiveRuntimeEngine:
         )
         supervisor = RuntimeSupervisor()
         dispatches: list[AdaptiveDispatchRecord] = []
+        eligibility_projections: list[ProviderEligibilityProjection] = []
+        execution_bindings: list[ExecutionBindingReceipt] = []
+        bound_grants: list[BoundCapabilityGrant] = []
         produced_refs = dict(request.available_input_refs)
         produced_refs_by_step: dict[str, tuple[str, ...]] = {}
         completed: set[str] = set()
@@ -384,6 +415,7 @@ class AdaptiveRuntimeEngine:
                     "approved_plan_hash": current_plan.approved_plan_hash,
                     "policy_report_hash": current_plan.plan_policy_report_hash,
                     "registry_digest": request.registry.digest,
+                    "provider_registry_digest": provider_registry.digest,
                     "requested_memory_policy": current_plan.requested_memory_policy,
                     "adaptive_runtime_signature": runtime_signature.digest,
                     "runtime_identity_hash": runtime_identity.identity_hash,
@@ -416,6 +448,7 @@ class AdaptiveRuntimeEngine:
                 approved_plan_hash=current_plan.approved_plan_hash, completed=True, shadow_only=True,
                 runtime_signature=runtime_signature,
                 runtime_identity=runtime_identity,
+                provider_registry_digest=provider_registry.digest,
             )
         while True:
             remaining = [step for step in current_plan.steps if step.step_id not in completed and step.step_id not in terminal_failed]
@@ -447,8 +480,13 @@ class AdaptiveRuntimeEngine:
                 attempt_count += 1
                 attempt_id = self._attempt_id(request, attempt_count)
                 descriptor = request.registry.get(step.capability_id)
+                logical_capability = request.registry.logical_descriptor(step.capability_id)
                 input_refs = self._input_refs(step, produced_refs_by_step, produced_refs)
-                if any(produced_refs[ref_id] not in descriptor.input_ref_kinds for ref_id in input_refs if descriptor.input_ref_kinds):
+                if any(
+                    produced_refs[ref_id] not in logical_capability.input_ref_kinds
+                    for ref_id in input_refs
+                    if logical_capability.input_ref_kinds
+                ):
                     terminal_failed.add(step.step_id)
                     session = session_manager.update_workflow_step(
                         session_id, step_id=step.step_id, state=StepLifecycleState.FAILED.value,
@@ -463,7 +501,7 @@ class AdaptiveRuntimeEngine:
                 actual_input_kinds = {produced_refs[ref_id] for ref_id in input_refs}
                 missing_required_kinds = tuple(
                     kind
-                    for kind in descriptor.required_input_ref_kinds
+                    for kind in logical_capability.required_input_ref_kinds
                     if kind not in actual_input_kinds
                 )
                 if missing_required_kinds:
@@ -481,13 +519,36 @@ class AdaptiveRuntimeEngine:
                         },
                     ))
                     continue
-                grant = self._issue_grant(
+                projection, provider, binding = self._bind_provider(
+                    request=request,
+                    plan=current_plan,
+                    step=step,
+                    attempt_id=attempt_id,
+                    logical_capability=logical_capability,
+                    provider_registry=provider_registry,
+                    provider_runtime_facts=provider_runtime_facts,
+                    required_runtime_ms=descriptor.max_runtime_ms,
+                )
+                eligibility_projections.append(projection)
+                execution_bindings.append(binding)
+                self._emit_provider_binding(
+                    request=request,
+                    telemetry=telemetry,
+                    projection=projection,
+                    binding=binding,
+                )
+                bound_grant = self._issue_grant(
                     request=request,
                     plan=current_plan,
                     step=step,
                     attempt_id=attempt_id,
                     input_refs=input_refs,
+                    logical_capability=logical_capability,
+                    provider=provider,
+                    binding=binding,
                 )
+                bound_grants.append(bound_grant)
+                grant = bound_grant.grant
                 if grant.expires_at_ns <= time.time_ns():
                     terminal_failed.add(step.step_id)
                     session = session_manager.update_workflow_step(
@@ -509,6 +570,7 @@ class AdaptiveRuntimeEngine:
                     step=step,
                     attempt_id=attempt_id,
                     grant=grant,
+                    binding=binding,
                 )
                 session = session_manager.attach_adaptive_audit(
                     session_id, workflow_mode=request.envelope.workflow_mode.value,
@@ -519,7 +581,7 @@ class AdaptiveRuntimeEngine:
                         envelope=request.envelope,
                         approved_plan=current_plan,
                         step=step,
-                        grant=grant,
+                        grant=bound_grant,
                         attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / attempt_id,
                     )
                 else:
@@ -530,12 +592,17 @@ class AdaptiveRuntimeEngine:
                 # issues a fresh Grant; the Python Grant is never reused.
                 if (
                     not result.success
-                    and descriptor.execution_kind.value == "llm_bounded_python"
+                    and binding.selected_implementation_kind == "llm_bounded_python"
                     and step.on_failure == "fallback_deterministic"
-                    and descriptor.fallback_capability_id
+                    and logical_capability.fallback_capability_id
                     and attempt_count < current_plan.total_attempt_budget
                 ):
-                    fallback_descriptor = request.registry.get(descriptor.fallback_capability_id)
+                    fallback_descriptor = request.registry.get(
+                        logical_capability.fallback_capability_id
+                    )
+                    fallback_logical_capability = request.registry.logical_descriptor(
+                        fallback_descriptor.capability_id
+                    )
                     fallback_step = replace(
                         step,
                         capability_id=fallback_descriptor.capability_id,
@@ -544,13 +611,38 @@ class AdaptiveRuntimeEngine:
                     )
                     attempt_count += 1
                     fallback_attempt_id = self._attempt_id(request, attempt_count)
-                    fallback_grant = self._issue_grant(
+                    fallback_projection, fallback_provider, fallback_binding = (
+                        self._bind_provider(
+                            request=request,
+                            plan=current_plan,
+                            step=fallback_step,
+                            attempt_id=fallback_attempt_id,
+                            logical_capability=fallback_logical_capability,
+                            provider_registry=provider_registry,
+                            provider_runtime_facts=provider_runtime_facts,
+                            required_runtime_ms=fallback_descriptor.max_runtime_ms,
+                        )
+                    )
+                    eligibility_projections.append(fallback_projection)
+                    execution_bindings.append(fallback_binding)
+                    self._emit_provider_binding(
+                        request=request,
+                        telemetry=telemetry,
+                        projection=fallback_projection,
+                        binding=fallback_binding,
+                    )
+                    fallback_bound_grant = self._issue_grant(
                         request=request,
                         plan=current_plan,
                         step=fallback_step,
                         attempt_id=fallback_attempt_id,
                         input_refs=input_refs,
+                        logical_capability=fallback_logical_capability,
+                        provider=fallback_provider,
+                        binding=fallback_binding,
                     )
+                    bound_grants.append(fallback_bound_grant)
+                    fallback_grant = fallback_bound_grant.grant
                     session = session_manager.attach_adaptive_audit(
                         session_id,
                         workflow_mode=request.envelope.workflow_mode.value,
@@ -568,6 +660,7 @@ class AdaptiveRuntimeEngine:
                             "fallback_capability_id": fallback_descriptor.capability_id,
                             "failed_grant_hash": grant.grant_hash,
                             "fallback_grant_hash": fallback_grant.grant_hash,
+                            "fallback_execution_binding_hash": fallback_binding.binding_hash,
                         },
                         metrics={"model_fallback_count": 1.0, "adaptive_capability_grant_count": 1.0},
                     ))
@@ -580,13 +673,14 @@ class AdaptiveRuntimeEngine:
                         step=fallback_step,
                         attempt_id=fallback_attempt_id,
                         grant=fallback_grant,
+                        binding=fallback_binding,
                     )
                     if request.dispatcher is not None:
                         fallback_result = request.dispatcher.dispatch(
                             envelope=request.envelope,
                             approved_plan=current_plan,
                             step=fallback_step,
-                            grant=fallback_grant,
+                            grant=fallback_bound_grant,
                             attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / fallback_attempt_id,
                         )
                     else:
@@ -610,6 +704,9 @@ class AdaptiveRuntimeEngine:
                     )
                     step = fallback_step
                     descriptor = fallback_descriptor
+                    logical_capability = fallback_logical_capability
+                    binding = fallback_binding
+                    bound_grant = fallback_bound_grant
                     grant = fallback_grant
                     attempt_id = fallback_attempt_id
                 for report_hash in result.evidence_coverage_report_hashes:
@@ -721,7 +818,10 @@ class AdaptiveRuntimeEngine:
                 if (
                     result.success
                     and len(result.output_refs) == len(result.output_ref_kinds)
-                    and all(kind in descriptor.output_ref_kinds for kind in result.output_ref_kinds)
+                    and all(
+                        kind in logical_capability.output_ref_kinds
+                        for kind in result.output_ref_kinds
+                    )
                 ):
                     supervisor.complete(step.step_id)
                     completed.add(step.step_id)
@@ -813,6 +913,10 @@ class AdaptiveRuntimeEngine:
             plan_replaced=plan_replaced,
             runtime_signature=runtime_signature,
             runtime_identity=runtime_identity,
+            provider_registry_digest=provider_registry.digest,
+            provider_eligibility_projections=tuple(eligibility_projections),
+            execution_bindings=tuple(execution_bindings),
+            bound_grants=tuple(bound_grants),
         )
 
     @staticmethod
@@ -848,7 +952,10 @@ class AdaptiveRuntimeEngine:
     def _issue_grant(
         *, request: AdaptiveRuntimeRequest, plan: ApprovedPlan, step: PlanStepProposal,
         attempt_id: str, input_refs: tuple[str, ...],
-    ) -> CapabilityGrant:
+        logical_capability: LogicalCapabilityDescriptor,
+        provider: ExecutionProviderDescriptor,
+        binding: ExecutionBindingReceipt,
+    ) -> BoundCapabilityGrant:
         descriptor = request.registry.get(step.capability_id)
         runtime_identity = request.runtime_identity
         if runtime_identity is None:
@@ -859,18 +966,95 @@ class AdaptiveRuntimeEngine:
                 trace_id=request.trace_id,
                 canonical_task_spec_hash=request.canonical_task_spec_hash,
             )
-        return CapabilityGrant(
+        grant = CapabilityGrant(
             grant_id=f"grant-{runtime_identity.runtime_task_id}-{step.step_id}-{attempt_id}",
             task_id=runtime_identity.runtime_task_id,
             session_id=runtime_identity.session_id,
             step_id=step.step_id,
             attempt_id=attempt_id,
-            capability_id=descriptor.capability_id, capability_version=descriptor.version,
+            capability_id=logical_capability.capability_id,
+            capability_version=logical_capability.version,
             input_ref_ids=input_refs, output_contract_version=step.output_contract_version,
             workspace_root_id=request.workspace_root_id, max_runtime_ms=descriptor.max_runtime_ms,
             expires_at_ns=time.time_ns() + (descriptor.max_runtime_ms if request.grant_ttl_ms is None else request.grant_ttl_ms) * 1_000_000,
             approved_plan_hash=plan.approved_plan_hash,
         )
+        if (
+            provider.provider_id != binding.selected_provider_id
+            or provider.provider_version != binding.selected_provider_version
+        ):
+            raise AdaptiveRuntimeError("execution_binding_provider_mismatch")
+        return BoundCapabilityGrant(grant=grant, execution_binding=binding)
+
+    @staticmethod
+    def _bind_provider(
+        *,
+        request: AdaptiveRuntimeRequest,
+        plan: ApprovedPlan,
+        step: PlanStepProposal,
+        attempt_id: str,
+        logical_capability: LogicalCapabilityDescriptor,
+        provider_registry: ExecutionProviderRegistry,
+        provider_runtime_facts: dict[str, ProviderRuntimeFacts],
+        required_runtime_ms: int,
+    ) -> tuple[
+        ProviderEligibilityProjection,
+        ExecutionProviderDescriptor,
+        ExecutionBindingReceipt,
+    ]:
+        runtime_identity = request.runtime_identity
+        if runtime_identity is None:
+            raise AdaptiveRuntimeError("runtime_identity_required_before_provider_binding")
+        projection = compute_provider_eligibility(
+            task_id=runtime_identity.runtime_task_id,
+            session_id=runtime_identity.session_id,
+            step_id=step.step_id,
+            attempt_id=attempt_id,
+            approved_plan_hash=plan.approved_plan_hash,
+            logical_capability=logical_capability,
+            provider_registry=provider_registry,
+            runtime_facts=provider_runtime_facts,
+            allowed_risk_class=request.envelope.risk_class,
+            required_runtime_ms=required_runtime_ms,
+        )
+        provider = select_provider_deterministically(projection, provider_registry)
+        binding = create_execution_binding(projection=projection, provider=provider)
+        return projection, provider, binding
+
+    @staticmethod
+    def _emit_provider_binding(
+        *,
+        request: AdaptiveRuntimeRequest,
+        telemetry: TelemetryEmitter,
+        projection: ProviderEligibilityProjection,
+        binding: ExecutionBindingReceipt,
+    ) -> None:
+        telemetry.emit(TelemetryEvent.create(
+            trace_id=request.trace_id,
+            task_id=request.task_id,
+            step_id=projection.step_id,
+            attempt_id=projection.attempt_id,
+            event_type="PROVIDER_ELIGIBILITY_PROJECTED",
+            role="runtime_driver",
+            payload={
+                **projection.canonical_payload(),
+                "eligibility_projection_hash": projection.projection_hash,
+            },
+            metrics={"eligible_provider_count": float(len(projection.eligible_provider_ids))},
+        ))
+        telemetry.emit(TelemetryEvent.create(
+            trace_id=request.trace_id,
+            task_id=request.task_id,
+            step_id=binding.step_id,
+            attempt_id=binding.attempt_id,
+            event_type="EXECUTION_PROVIDER_BOUND",
+            role="runtime_driver",
+            payload={
+                **binding.canonical_payload(),
+                "execution_binding_hash": binding.binding_hash,
+            },
+            metrics={"execution_provider_binding_count": 1.0},
+        ))
 
     @staticmethod
     def _attempt_id(request: AdaptiveRuntimeRequest, attempt_count: int) -> str:
@@ -885,20 +1069,27 @@ class AdaptiveRuntimeEngine:
     def _dispatch_lifecycle(
         *, request: AdaptiveRuntimeRequest, session_manager: RuntimeSessionManager, session_id: str,
         supervisor: RuntimeSupervisor, telemetry: TelemetryEmitter, step: PlanStepProposal,
-        attempt_id: str, grant: CapabilityGrant,
+        attempt_id: str, grant: CapabilityGrant, binding: ExecutionBindingReceipt,
     ) -> None:
         supervisor.register(task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id, role=step.role)
         dispatched = supervisor.dispatch(step.step_id)
         session_manager.append_attempt_record(session_id, record=StepAttemptRecord(
             task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id, owner_role=step.role,
             state=StepLifecycleState.DISPATCHED.value, dispatched_at_ns=dispatched.dispatched_at_ns,
-            resource_handles=(grant.grant_hash,), workspace_dirs=(request.workspace_root_id,),
+            resource_handles=(binding.binding_hash, grant.grant_hash),
+            workspace_dirs=(request.workspace_root_id,),
         ))
         session_manager.update_workflow_step(session_id, step_id=step.step_id, state=StepLifecycleState.DISPATCHED.value, attempt_id=attempt_id)
         telemetry.emit(TelemetryEvent.create(
             trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id, attempt_id=attempt_id,
             event_type="STEP_DISPATCHED", role="runtime_driver",
-            payload={"workflow_mode": request.envelope.workflow_mode.value, "grant_hash": grant.grant_hash, "capability_id": grant.capability_id},
+            payload={
+                "workflow_mode": request.envelope.workflow_mode.value,
+                "grant_hash": grant.grant_hash,
+                "capability_id": grant.capability_id,
+                "execution_binding_hash": binding.binding_hash,
+                "provider_id": binding.selected_provider_id,
+            },
             metrics={"capability_grant_issued": 1.0, "adaptive_capability_grant_count": 1.0},
         ))
         acked = supervisor.ack(step.step_id)

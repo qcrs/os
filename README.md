@@ -140,7 +140,7 @@ scripts/vllm/manage_qwen3_32b.sh print-config
 scripts/vllm/manage_qwen3_32b.sh start
 ```
 
-vLLM 默认监听 `127.0.0.1:53334`，只使用物理卡 1。依赖安装与显式 KV 模式切换见
+vLLM 默认监听 `127.0.0.1:53334`，只使用物理卡 2。首次启动默认使用 4096 token 上下文，确认稳定后再提高到 8192。依赖安装与显式 KV 模式切换见
 [部署说明](docker/README.md#固定的推理环境)。
 
 ### 2. 准备应用容器
