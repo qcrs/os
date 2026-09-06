@@ -119,6 +119,10 @@ from statebus.runtime.identity import (
     validate_identity_projection,
     validate_runtime_id_component,
 )
+from statebus.runtime.artifact_verification import (
+    ArtifactVerificationError,
+    RuntimeArtifactVerificationAuthority,
+)
 from statebus.contracts import RuntimeIdentity, TaskContractIdentity
 from statebus.runtime.supervisor import (
     LifecycleOrigin,
@@ -153,6 +157,8 @@ __all__ = [
     "ArtifactOutputManifest",
     "ArtifactSettlementRecord",
     "ArtifactValidatorReport",
+    "ArtifactVerificationError",
+    "RuntimeArtifactVerificationAuthority",
     "best_visible_candidate",
     "compile_prefix_layout",
     "CompiledRolePrompt",

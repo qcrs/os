@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import time
 
 import pytest
 
-from statebus.contracts import BoundCapabilityGrant, CapabilityGrant, Claim, ClaimSet, EvidenceCoverageStatus, EvidenceRequest, RefStatus, RuntimeIdentity, TaskContractIdentity, TransformProgram, TransformStep
+from statebus.contracts import ArtifactVerificationDecision, ArtifactVerificationReceipt, BoundCapabilityGrant, CapabilityGrant, CapabilityQualityReport, Claim, ClaimSet, EvidenceCoverageStatus, EvidenceRequest, RefStatus, RuntimeIdentity, TaskContractIdentity, TransformProgram, TransformStep
 from statebus.refs import CanonicalEvidencePack, EvidenceItem, ExecutionArtifactRef, TableCellLocator
 from statebus.runtime.adaptive_dispatcher import AdaptiveCapabilityDispatcher, AdaptiveDispatchContext, AdaptiveDispatchError, StoredAdaptiveArtifact
 from statebus.runtime.adaptive_runtime import AdaptiveRuntimeRequest, AdaptiveStepResult
@@ -19,6 +20,7 @@ from statebus.runtime.provider_registry import (
     select_provider_deterministically,
 )
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
+from statebus.runtime.workspace import ArtifactLifecycleManager
 from tests.test_adaptive_driver import _setup
 from statebus.utils import sha256_digest, stable_json_dumps
 
@@ -62,6 +64,47 @@ def _runtime_identity(envelope, *, session_id: str = "session") -> RuntimeIdenti
             envelope.canonical_task_spec_hash
         ),
     )
+
+
+def _receipt_backed_verified_artifact(
+    artifact: ExecutionArtifactRef,
+    *,
+    runtime_task_id: str,
+    session_id: str,
+) -> tuple[ExecutionArtifactRef, ArtifactVerificationReceipt]:
+    producer_grant_hash = sha256_digest({
+        "artifact_id": artifact.artifact_id,
+        "producer_step_id": artifact.step_id,
+        "producer_attempt_id": artifact.metadata.get("attempt_id", ""),
+    })
+    receipt = ArtifactVerificationReceipt(
+        artifact_id=artifact.artifact_id,
+        runtime_task_id=runtime_task_id,
+        run_id="run-direct-dispatch-source",
+        session_id=session_id,
+        producer_step_id=artifact.step_id,
+        producer_attempt_id=str(artifact.metadata.get("attempt_id", "")),
+        execution_binding_hash=sha256_digest("test-execution-binding"),
+        capability_grant_hash=producer_grant_hash,
+        candidate_blob_hash=artifact.blob_hash,
+        candidate_size_bytes=artifact.size_bytes,
+        validator_ids=(),
+        validator_report_hashes=(),
+        decision=ArtifactVerificationDecision.VERIFIED,
+        reason="test_receipt_backed_input",
+    )
+    verified = replace(
+        artifact,
+        verification_state=RefStatus.VERIFIED,
+        replay_ready=False,
+        manifest_hash=artifact.manifest_hash or "test-input-manifest",
+        metadata={
+            **artifact.metadata,
+            "grant_hash": producer_grant_hash,
+            "artifact_verification_receipt_hash": receipt.receipt_hash,
+        },
+    )
+    return verified, receipt
 
 
 def test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_builtin(tmp_path) -> None:
@@ -110,13 +153,54 @@ def test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_bui
         )
 
     def report_handler(envelope, plan, step, grant, workspace) -> AdaptiveStepResult:
-        del envelope, plan, step, workspace
+        del envelope, plan
+        payload = stable_json_dumps({"summary": "complete"}).encode("utf-8")
+        output_path = workspace / "outputs" / "report.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(payload)
+        quality = CapabilityQualityReport(
+            capability_id=grant.capability_id,
+            validator_id="report-validator-v1",
+            input_artifact_hashes=(),
+            output_artifact_hash=sha256_digest(payload),
+            schema_passed=True,
+            recomputation_passed=True,
+            provenance_passed=True,
+            completion_criteria_passed=True,
+            verified=True,
+        )
+        candidate = ArtifactLifecycleManager().register_candidate(ExecutionArtifactRef(
+            artifact_id="report-ref",
+            task_id=grant.task_id,
+            step_id=step.step_id,
+            artifact_type="json",
+            root_id=str(workspace),
+            relpath="outputs/report.json",
+            blob_hash=sha256_digest(payload),
+            size_bytes=len(payload),
+            produced_by="summarizer",
+            workspace_relpath="outputs/report.json",
+            manifest_hash="report-manifest",
+            metadata={
+                "schema_version": "statebus.test_report.v1",
+                "session_id": grant.session_id,
+                "attempt_id": grant.attempt_id,
+                "grant_hash": grant.grant_hash,
+                "quality_report_hash": quality.report_hash,
+            },
+        ))
+        context.artifacts[candidate.artifact_id] = StoredAdaptiveArtifact(
+            artifact=candidate,
+            rows=({"summary": "complete"},),
+        )
+        context.quality_reports[quality.report_hash] = quality
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
             attempt_id=grant.attempt_id,
             success=True,
-            output_refs=("report-ref",),
+            output_refs=(candidate.artifact_id,),
             output_ref_kinds=("execution_artifact",),
+            validator_report_hashes=(quality.report_hash,),
         )
 
     context = AdaptiveDispatchContext(
@@ -150,6 +234,8 @@ def test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_bui
     assert result.session.transform_program_hashes
     artifact = next(stored.artifact for stored in context.artifacts.values() if stored.artifact.produced_by == "executor")
     assert artifact.verification_state == RefStatus.VERIFIED
+    assert artifact.replay_ready is False
+    assert context.artifact_verification_receipts[artifact.artifact_id].candidate_blob_hash == artifact.blob_hash
     assert context.projection_reports and context.quality_reports
     metrics = result.telemetry.summarize_task("task")
     assert metrics["evidence_projection_count"] == 1.0
@@ -288,8 +374,14 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
     artifact = ExecutionArtifactRef(
         artifact_id="analysis", task_id="task", step_id="extract", artifact_type="json",
         root_id=str(tmp_path), relpath=input_path.name, blob_hash=sha256_digest(payload),
-        size_bytes=len(payload), produced_by="executor", verification_state=RefStatus.VERIFIED,
+        size_bytes=len(payload), produced_by="executor", verification_state=RefStatus.CANDIDATE,
+        manifest_hash="analysis-manifest",
         metadata={"session_id": "session", "attempt_id": "analysis-attempt"},
+    )
+    artifact, artifact_receipt = _receipt_backed_verified_artifact(
+        artifact,
+        runtime_task_id="task",
+        session_id="session",
     )
     locator = TableCellLocator(source_doc_hash="doc", table_id="income", row_idx=1, col_idx=1)
     pack = CanonicalEvidencePack(
@@ -325,6 +417,7 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
             artifact=artifact, rows=({"quarter": "2026Q1", "revenue_musd": 120.0},),
             provenance_item_ids=("revenue-q1",),
         )},
+        artifact_verification_receipts={"analysis": artifact_receipt},
         evidence_packs={"evidence": pack},
         evidence_statuses={"evidence": EvidenceCoverageStatus.COMPLETE},
         evidence_ref_scopes={"evidence": ("session", "retrieval-attempt")},
@@ -343,13 +436,16 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
     assert len(context.claim_validation_reports) == 1
     claim_stored = next(stored for stored in context.artifacts.values() if stored.artifact.produced_by == "summarizer")
     claim_artifact = claim_stored.artifact
-    assert claim_artifact.verification_state == RefStatus.VERIFIED
+    assert claim_artifact.verification_state == RefStatus.CANDIDATE
+    assert claim_artifact.replay_ready is False
+    assert claim_artifact.artifact_id not in context.artifact_verification_receipts
     assert claim_artifact.metadata["attempt_id"] == "attempt"
     assert AdaptiveCapabilityDispatcher._read_verified_artifact_rows(claim_stored)[0]["claim_set_id"] == "claims"
 
     cross_session_context = AdaptiveDispatchContext(
         registry=registry,
         artifacts={"analysis": context.artifacts["analysis"]},
+        artifact_verification_receipts={"analysis": artifact_receipt},
         evidence_packs={"evidence": pack},
         evidence_statuses={"evidence": EvidenceCoverageStatus.COMPLETE},
         evidence_ref_scopes={"evidence": ("other-session", "retrieval-attempt")},
@@ -371,6 +467,7 @@ def test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_ar
     rejected_context = AdaptiveDispatchContext(
         registry=registry,
         artifacts={"analysis": context.artifacts["analysis"]},
+        artifact_verification_receipts={"analysis": artifact_receipt},
         evidence_packs={"evidence": pack},
         evidence_statuses={"evidence": EvidenceCoverageStatus.COMPLETE},
         evidence_ref_scopes={"evidence": ("session", "retrieval-attempt")},

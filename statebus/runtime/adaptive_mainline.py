@@ -9,6 +9,8 @@ from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
     ApprovedPlanBundle,
+    ArtifactVerificationDecision,
+    ArtifactVerificationReceipt,
     CanonicalTaskSpec,
     IdentityContractError,
     PlanNormalizationReceipt,
@@ -72,6 +74,9 @@ class AdaptiveMainlineBindings:
         default_factory=default_capability_validator_registry
     )
     artifacts: dict[str, StoredAdaptiveArtifact] = field(default_factory=dict)
+    artifact_verification_receipts: dict[str, ArtifactVerificationReceipt] = field(
+        default_factory=dict
+    )
     retrieval_adapter: AdaptiveRetrievalAdapter | None = None
     retrieval_request_factory: RetrievalRequestFactory | None = None
     retrieval_expansion_factory: RetrievalExpansionFactory | None = None
@@ -311,6 +316,7 @@ class AdaptiveMainlineRunner:
             registry=request.registry,
             validator_registry=bindings.validator_registry,
             artifacts=bindings.artifacts,
+            artifact_verification_receipts=bindings.artifact_verification_receipts,
             retrieval_adapter=bindings.retrieval_adapter,
             retrieval_request_factory=bindings.retrieval_request_factory,
             retrieval_expansion_factory=bindings.retrieval_expansion_factory,
@@ -761,6 +767,33 @@ class AdaptiveMainlineRunner:
                 artifact_ref_id=executor_artifact.artifact_id,
                 artifact_hash=executor_artifact.blob_hash,
             )
+        verification_receipt = context.artifact_verification_receipts.get(
+            executor_artifact.artifact_id
+        )
+        if (
+            verification_receipt is None
+            or verification_receipt.decision != ArtifactVerificationDecision.VERIFIED
+            or verification_receipt.artifact_id != executor_artifact.artifact_id
+            or verification_receipt.runtime_task_id != runtime_identity.runtime_task_id
+            or verification_receipt.run_id != runtime_identity.run_id
+            or verification_receipt.session_id != runtime_identity.session_id
+            or verification_receipt.producer_step_id != executor_artifact.step_id
+            or verification_receipt.producer_attempt_id
+            != executor_artifact.metadata.get("attempt_id")
+            or verification_receipt.capability_grant_hash
+            != executor_artifact.metadata.get("grant_hash")
+            or verification_receipt.candidate_blob_hash != executor_artifact.blob_hash
+            or verification_receipt.candidate_size_bytes != executor_artifact.size_bytes
+            or executor_artifact.metadata.get("artifact_verification_receipt_hash")
+            != verification_receipt.receipt_hash
+        ):
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_artifact_runtime_receipt_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+            )
 
         artifact_path = Path(executor_artifact.root_id) / executor_artifact.relpath
         if not artifact_path.is_file() or sha256_digest(artifact_path.read_bytes()) != executor_artifact.blob_hash:
@@ -961,6 +994,12 @@ class AdaptiveMainlineRunner:
             ],
             "memory_commit_decision": memory_commit_decision.canonical_payload(),
             "artifact_ref_ids": sorted(context.artifacts),
+            "artifact_verification_receipts": {
+                artifact_id: receipt.canonical_payload()
+                for artifact_id, receipt in sorted(
+                    context.artifact_verification_receipts.items()
+                )
+            },
             "evidence_ref_ids": sorted(context.evidence_packs),
             "created_at_ns": time.time_ns(),
         }

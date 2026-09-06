@@ -39,12 +39,17 @@ from statebus.runtime.provider_registry import (
     select_provider_deterministically,
 )
 from statebus.runtime.session import (
+    AttemptResultAdmissionReceipt,
     RuntimeLeaseConfig,
     RuntimeReplanRecord,
     RuntimeSessionManager,
     RuntimeTaskSession,
     RuntimeWorkflowStep,
     StepAttemptRecord,
+)
+from statebus.runtime.artifact_verification import (
+    ArtifactVerificationError,
+    RuntimeArtifactVerificationAuthority,
 )
 from statebus.runtime.supervisor import LifecycleOrigin, RuntimeSupervisor
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
@@ -659,7 +664,7 @@ class AdaptiveRuntimeEngine:
             attempt_id: str,
             grant: CapabilityGrant,
             result: AdaptiveStepResult,
-        ) -> bool:
+        ) -> AttemptResultAdmissionReceipt | None:
             receipt = session_manager.admit_attempt_result(
                 session_id,
                 step_id=step.step_id,
@@ -667,7 +672,7 @@ class AdaptiveRuntimeEngine:
                 invocation_id=result.invocation_id,
             )
             if receipt.commit_authorized:
-                return True
+                return receipt
             fenced.add(step.step_id)
             telemetry.emit(TelemetryEvent.create(
                 trace_id=request.trace_id,
@@ -687,7 +692,7 @@ class AdaptiveRuntimeEngine:
                 receipt.decision,
                 error_code=receipt.reason,
             ))
-            return False
+            return None
 
         telemetry.emit(
             TelemetryEvent.create(
@@ -954,20 +959,20 @@ class AdaptiveRuntimeEngine:
                         error_code="subprocess_transport_timeout",
                         timed_out=True,
                     )
-                result_admitted = False
+                result_admission: AttemptResultAdmissionReceipt | None = None
                 if (
                     not result.timed_out
                     and result.grant_hash == grant.grant_hash
                     and (not result.attempt_id or result.attempt_id == attempt_id)
                 ):
-                    if not admit_result(
+                    result_admission = admit_result(
                         step=step,
                         attempt_id=attempt_id,
                         grant=grant,
                         result=result,
-                    ):
+                    )
+                    if result_admission is None:
                         continue
-                    result_admitted = True
                 # A bounded-Python failure may only downgrade through the
                 # descriptor's registered fallback capability. The Controller
                 # issues a fresh Grant; the Python Grant is never reused.
@@ -1175,7 +1180,7 @@ class AdaptiveRuntimeEngine:
                     grant = fallback_grant
                     attempt_id = fallback_attempt_id
                     state_access_authority = fallback_state_access_authority
-                    result_admitted = False
+                    result_admission = None
                 if result.timed_out:
                     terminal_failed.add(step.step_id)
                     timeout_error = result.error_code or "step_timeout"
@@ -1304,15 +1309,36 @@ class AdaptiveRuntimeEngine:
                         error_code="grant_binding_mismatch",
                     ))
                     continue
-                if not result_admitted:
-                    if not admit_result(
+                if result_admission is None:
+                    result_admission = admit_result(
                         step=step,
                         attempt_id=attempt_id,
                         grant=grant,
                         result=result,
-                    ):
+                    )
+                    if result_admission is None:
                         continue
-                    result_admitted = True
+                if result.success and request.dispatcher is not None:
+                    try:
+                        self._verify_artifact_candidates(
+                            request=request,
+                            session_manager=session_manager,
+                            runtime_identity=runtime_identity,
+                            bound_grant=bound_grant,
+                            result=result,
+                            result_admission=result_admission,
+                            attempt_workspace=(
+                                Path(request.runtime_root) / "adaptive_attempts" / attempt_id
+                            ),
+                        )
+                    except ArtifactVerificationError as exc:
+                        result = replace(
+                            result,
+                            success=False,
+                            output_refs=(),
+                            output_ref_kinds=(),
+                            error_code=str(exc),
+                        )
                 for report_hash in result.evidence_coverage_report_hashes:
                     session = session_manager.attach_adaptive_audit(
                         session_id,
@@ -1535,6 +1561,60 @@ class AdaptiveRuntimeEngine:
             execution_bindings=tuple(execution_bindings),
             bound_grants=tuple(bound_grants),
         )
+
+    @staticmethod
+    def _verify_artifact_candidates(
+        *,
+        request: AdaptiveRuntimeRequest,
+        session_manager: RuntimeSessionManager,
+        runtime_identity: RuntimeIdentity,
+        bound_grant: BoundCapabilityGrant,
+        result: AdaptiveStepResult,
+        result_admission: AttemptResultAdmissionReceipt,
+        attempt_workspace: Path,
+    ) -> None:
+        if len(result.output_refs) != len(result.output_ref_kinds):
+            return
+        artifact_ids = tuple(
+            ref_id
+            for ref_id, ref_kind in zip(result.output_refs, result.output_ref_kinds)
+            if ref_kind == "execution_artifact"
+        )
+        if not artifact_ids:
+            return
+        assert request.dispatcher is not None
+        context = request.dispatcher.context
+        authority = RuntimeArtifactVerificationAuthority(
+            session_manager=session_manager,
+            runtime_identity=runtime_identity,
+        )
+        promoted = []
+        for artifact_id in artifact_ids:
+            stored = context.artifacts.get(artifact_id)
+            if stored is None:
+                raise ArtifactVerificationError("artifact_candidate_not_registered")
+            verified, receipt = authority.verify_candidate(
+                candidate=stored.artifact,
+                artifact_id=artifact_id,
+                bound_grant=bound_grant,
+                result_admission=result_admission,
+                attempt_workspace=attempt_workspace,
+                validator_report_hashes=result.validator_report_hashes,
+                quality_reports=context.quality_reports,
+                claim_validation_reports=context.claim_validation_reports,
+            )
+            promoted.append((artifact_id, stored, verified, receipt))
+        for artifact_id, stored, verified, receipt in promoted:
+            context.artifacts[artifact_id] = replace(stored, artifact=verified)
+            context.artifact_verification_receipts[artifact_id] = receipt
+            execution_record = context.code_execution_records.get(
+                bound_grant.grant.grant_hash
+            )
+            if execution_record is not None:
+                context.code_execution_records[bound_grant.grant.grant_hash] = replace(
+                    execution_record,
+                    verified_artifact_id=artifact_id,
+                )
 
     @staticmethod
     def _settle_attempt(

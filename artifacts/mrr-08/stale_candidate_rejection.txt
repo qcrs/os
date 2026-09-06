@@ -1,0 +1,23 @@
+MRR-08 stale candidate rejection
+================================
+
+Scenario:
+
+Attempt A active
+-> valid candidate bytes/hash/path/evidence created for A
+-> A result admission receipt issued while A was active
+-> Attempt A settled
+-> Attempt B registered and activated for the same Step
+-> Runtime verification requested for A's candidate
+
+Observed result:
+
+verification rejected: artifact_producer_attempt_not_active
+Artifact A verification_state: CANDIDATE
+active Attempt after rejection: B
+Attempt B authority: unchanged
+candidate bytes: retained
+
+Test:
+tests/test_mrr_08_artifact_truth.py::test_stale_producer_candidate_cannot_be_runtime_verified
+

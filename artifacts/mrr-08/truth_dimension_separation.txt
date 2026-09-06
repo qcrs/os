@@ -1,0 +1,21 @@
+MRR-08 truth dimension separation
+=================================
+
+Verified Artifact truth is represented by a Runtime-created
+ArtifactVerificationReceipt and a compatibility status projection.
+
+Observed after Runtime verification:
+
+verification_state: VERIFIED
+replay_ready: false
+receipt contains replay eligibility decision: no
+receipt contains Memory admission decision: no
+receipt contains final adoption decision: no
+
+ArtifactLifecycleManager.register_candidate also forces replay_ready=false,
+including when a caller supplies replay_ready=true on the input ref.
+
+Tests:
+tests/test_mrr_08_artifact_truth.py::test_verified_projection_keeps_other_truth_dimensions_separate
+tests/test_adaptive_dispatcher.py::test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_builtin
+

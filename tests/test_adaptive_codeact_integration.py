@@ -5,6 +5,8 @@ import time
 
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
+    ArtifactVerificationDecision,
+    ArtifactVerificationReceipt,
     BoundCapabilityGrant,
     CapabilityGrant,
     CodeExecutionRecord,
@@ -46,6 +48,7 @@ from statebus.runtime.provider_registry import (
     default_provider_runtime_facts,
     select_provider_deterministically,
 )
+from statebus.runtime.workspace import ArtifactLifecycleManager
 from statebus.utils import sha256_digest, stable_json_dumps
 
 
@@ -153,6 +156,44 @@ def _input_artifact(tmp_path) -> StoredAdaptiveArtifact:
         },
     )
     return StoredAdaptiveArtifact(artifact=artifact, rows=rows, provenance_item_ids=("evidence-row",))
+
+
+def _receipt_backed_input_artifact(tmp_path) -> tuple[StoredAdaptiveArtifact, ArtifactVerificationReceipt]:
+    stored = _input_artifact(tmp_path)
+    artifact = stored.artifact
+    producer_grant_hash = sha256_digest({
+        "artifact_id": artifact.artifact_id,
+        "producer_step_id": artifact.step_id,
+        "producer_attempt_id": artifact.metadata.get("attempt_id", ""),
+    })
+    receipt = ArtifactVerificationReceipt(
+        artifact_id=artifact.artifact_id,
+        runtime_task_id=artifact.task_id,
+        run_id="run-codeact-source",
+        session_id="adaptive-session-code-task",
+        producer_step_id=artifact.step_id,
+        producer_attempt_id=str(artifact.metadata.get("attempt_id", "")),
+        execution_binding_hash=sha256_digest("test-execution-binding"),
+        capability_grant_hash=producer_grant_hash,
+        candidate_blob_hash=artifact.blob_hash,
+        candidate_size_bytes=artifact.size_bytes,
+        validator_ids=(),
+        validator_report_hashes=(),
+        decision=ArtifactVerificationDecision.VERIFIED,
+        reason="test_receipt_backed_input",
+    )
+    verified = replace(
+        artifact,
+        verification_state=RefStatus.VERIFIED,
+        replay_ready=False,
+        manifest_hash=artifact.manifest_hash or "test-input-manifest",
+        metadata={
+            **artifact.metadata,
+            "grant_hash": producer_grant_hash,
+            "artifact_verification_receipt_hash": receipt.receipt_hash,
+        },
+    )
+    return replace(stored, artifact=verified), receipt
 
 
 def _report_handler(envelope, plan, step, grant, workspace) -> AdaptiveStepResult:
@@ -625,6 +666,7 @@ def test_runtime_dispatcher_repairs_python_runtime_error_in_fresh_bwrap_workspac
 def test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace(tmp_path) -> None:
     registry, envelope, approved = _approved_codeact_plan()
     repair_calls: list[tuple[str, ...]] = []
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
 
     def policy_factory(step) -> CodeGenerationPolicy:
         return CodeGenerationPolicy(
@@ -653,16 +695,62 @@ def test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace(t
         repair_calls.append(diagnostics)
         return source_with_value("rows[0]['revenue_musd']")
 
+    def report_handler(envelope, plan, step, grant, workspace) -> AdaptiveStepResult:
+        del envelope, plan
+        payload = stable_json_dumps({"summary": "quality repair complete"}).encode("utf-8")
+        output_path = workspace / "outputs" / "report.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(payload)
+        audit = {
+            "claim_set_hash": sha256_digest(payload),
+            "claim_validation": {"ok": True},
+        }
+        audit_hash = sha256_digest(audit)
+        candidate = ArtifactLifecycleManager().register_candidate(ExecutionArtifactRef(
+            artifact_id="cited-report",
+            task_id=grant.task_id,
+            step_id=step.step_id,
+            artifact_type="json",
+            root_id=str(workspace),
+            relpath="outputs/report.json",
+            blob_hash=sha256_digest(payload),
+            size_bytes=len(payload),
+            produced_by="summarizer",
+            workspace_relpath="outputs/report.json",
+            manifest_hash="report-manifest",
+            metadata={
+                "schema_version": "statebus.test_report.v1",
+                "grant_hash": grant.grant_hash,
+                "session_id": grant.session_id,
+                "attempt_id": grant.attempt_id,
+                "claim_validation_audit_hash": audit_hash,
+            },
+        ))
+        context.artifacts[candidate.artifact_id] = StoredAdaptiveArtifact(
+            artifact=candidate,
+            rows=({"summary": "quality repair complete"},),
+        )
+        context.claim_validation_reports[grant.grant_hash] = audit
+        return AdaptiveStepResult(
+            grant_hash=grant.grant_hash,
+            attempt_id=grant.attempt_id,
+            success=True,
+            output_refs=(candidate.artifact_id,),
+            output_ref_kinds=("execution_artifact",),
+            validator_report_hashes=(audit_hash,),
+        )
+
     context = AdaptiveDispatchContext(
         registry=registry,
-        artifacts={"input": _input_artifact(tmp_path)},
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=policy_factory,
         code_source_factory=lambda request, prompt: source_with_value("999.0"),
         code_repair_factory=repair_factory,
         output_schema_by_capability={
             "bounded_metric_python_v1": {"quarter": "string", "revenue_musd": "number"}
         },
-        builtin_handlers={"compose_cited_report_v1": _report_handler},
+        builtin_handlers={"compose_cited_report_v1": report_handler},
     )
     result = RuntimeDriver().run_adaptive(AdaptiveRuntimeRequest(
         trace_id="quality-repair-trace",

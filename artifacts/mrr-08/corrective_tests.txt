@@ -1,0 +1,37 @@
+MRR-08 corrective targeted test record
+=======================================
+
+Environment:
+
+source ./deploy/activate_statebus_host.sh
+STATEBUS_LLM_CONFIG_FILE=/home/qcrs/statebus/os/deploy/statebus_llm.yaml.local
+PYTHONPATH=/home/qcrs/statebus/os
+PYTHONDONTWRITEBYTECODE=1
+Conda env: /home/qcrs/statebus/conda-envs/statebus_host
+
+Blocker 1 — receipt-backed direct dispatcher:
+
+python -m pytest -q tests/test_adaptive_dispatcher.py::test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_artifact
+
+Result:
+1 passed in 0.86s
+
+Blocker 2 — CodeAct quality-repair workspace:
+
+python -m pytest -q tests/test_adaptive_codeact_integration.py::test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace
+
+Result:
+1 passed in 1.01s
+
+The CodeAct test was run with the approved host execution permission because
+the ordinary sandbox cannot perform the bwrap network-namespace preflight.
+
+Not run:
+full pytest
+Docker
+vLLM
+benchmark
+competition benchmark
+coverage
+mypy
+performance tests

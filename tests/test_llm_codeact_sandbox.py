@@ -5,11 +5,10 @@ from dataclasses import replace
 
 import pytest
 
-from statebus.contracts import CapabilityGrant, CodeGenerationPolicy, CodeGenerationRequest, GeneratedCodeCandidate, RefStatus
+from statebus.contracts import CapabilityGrant, CodeGenerationPolicy, CodeGenerationRequest, RefStatus
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.domain_packs import register_long_doc_analysis_capabilities
 from statebus.runtime.llm_codeact import CodePolicyError, LlmCodeActRunner
-from statebus.utils import sha256_digest
 
 
 def _request_and_grant() -> tuple[CodeGenerationRequest, CapabilityGrant]:
@@ -30,29 +29,6 @@ def _request_and_grant() -> tuple[CodeGenerationRequest, CapabilityGrant]:
         output_schema={"value": "number"}, model_signature="deterministic", prompt_signature="prompt", runtime_signature="runtime", policy=policy,
     )
     return request, grant
-
-
-def test_llm_codeact_runs_only_in_nonroot_bwrap_and_signs_verified_artifact(tmp_path) -> None:
-    registry = CapabilityRegistry()
-    register_long_doc_analysis_capabilities(registry)
-    request, grant = _request_and_grant()
-    source = (
-        "import json\n"
-        "from pathlib import Path\n"
-        "payload = json.loads(Path(\"inputs/task.json\").read_text(encoding=\"utf-8\"))\n"
-        "Path(\"outputs/result.json\").write_text(json.dumps({\"value\": float(payload[\"value\"])}), encoding=\"utf-8\")\n"
-    )
-    outcome = LlmCodeActRunner(registry=registry).execute(
-        request=request, grant=grant, raw_response=source, attempt_workspace=tmp_path,
-        input_files={"inputs/task.json": b'{"value": 12}'},
-    )
-    assert outcome.record.sandbox_actual_backend == "bwrap"
-    assert outcome.record.sandbox_uid != 0 and outcome.record.sandbox_gid != 0
-    assert outcome.record.output_schema_valid
-    assert outcome.artifact is not None
-    assert outcome.artifact.verification_state == RefStatus.VERIFIED
-    assert outcome.artifact.metadata["attempt_id"] == "attempt"
-    assert outcome.output_payload == {"value": 12.0}
 
 
 @pytest.mark.parametrize(
@@ -80,7 +56,7 @@ def test_llm_codeact_rejects_invalid_or_nonfinite_output_after_bwrap(tmp_path, p
     assert outcome.record.sandbox_actual_backend == "bwrap"
 
 
-def test_llm_codeact_cache_requires_new_authorized_grant_and_compatible_signature(tmp_path) -> None:
+def test_llm_codeact_producer_returns_candidate_and_does_not_reuse_legacy_verified_cache(tmp_path) -> None:
     registry = CapabilityRegistry()
     register_long_doc_analysis_capabilities(registry)
     request, grant = _request_and_grant()
@@ -95,6 +71,13 @@ def test_llm_codeact_cache_requires_new_authorized_grant_and_compatible_signatur
         input_files={"inputs/task.json": b'{"value": 12}'},
     )
     assert first.artifact is not None
+    assert first.record.sandbox_actual_backend == "bwrap"
+    assert first.record.sandbox_uid != 0 and first.record.sandbox_gid != 0
+    assert first.record.output_schema_valid
+    assert first.artifact.verification_state == RefStatus.CANDIDATE
+    assert first.record.verified_artifact_id == ""
+    assert first.artifact.metadata["attempt_id"] == "attempt"
+    assert first.output_payload == {"value": 12.0}
     second_grant = replace(grant, grant_id="grant-2", attempt_id="attempt-2", expires_at_ns=time.time_ns() + 5_000_000_000)
     second_request = replace(request, attempt_id="attempt-2", capability_grant_hash=second_grant.grant_hash)
     cached = runner.execute(
@@ -102,13 +85,10 @@ def test_llm_codeact_cache_requires_new_authorized_grant_and_compatible_signatur
         input_files={"inputs/task.json": b'{"value": 12}'},
     )
     assert cached.artifact is not None
-    assert cached.record.fallback_reason == "verified_cache_hit"
-    candidate = GeneratedCodeCandidate(
-        request_hash="request", source=source, source_hash=sha256_digest(source.encode("utf-8")), raw_response_hash="raw",
-    )
-    assert runner.cache.key(request, candidate) != runner.cache.key(
-        replace(request, policy=replace(request.policy, policy_version="changed")), candidate,
-    )
+    assert cached.artifact.verification_state == RefStatus.CANDIDATE
+    assert cached.record.fallback_reason == ""
+    assert cached.record.verified_artifact_id == ""
+    assert cached.output_payload == {"value": 12.0}
     with pytest.raises(CodePolicyError, match="already_consumed"):
         runner.execute(
             request=second_request, grant=second_grant, raw_response=source, attempt_workspace=tmp_path / "third",

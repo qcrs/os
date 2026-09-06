@@ -11,7 +11,6 @@ from statebus.contracts import (
     EvidenceCoverageStatus,
     EvidenceProjectionReport,
     EvidenceProjectionRequest,
-    RefStatus,
 )
 from statebus.refs import CanonicalEvidencePack, ExecutionArtifactRef, TableCellLocator
 from statebus.runtime.workspace import ArtifactLifecycleManager
@@ -143,7 +142,7 @@ class EvidenceProjectionAdapter:
         projection_dir.mkdir(parents=True, exist_ok=True)
         output_path = projection_dir / "typed_rows.json"
         output_path.write_bytes(payload)
-        artifact = self._verified_artifact(
+        artifact = self._candidate_artifact(
             request=request,
             grant=grant,
             attempt_workspace=attempt_workspace,
@@ -220,7 +219,7 @@ class EvidenceProjectionAdapter:
         }
 
     @staticmethod
-    def _verified_artifact(
+    def _candidate_artifact(
         *,
         request: EvidenceProjectionRequest,
         grant: CapabilityGrant,
@@ -252,7 +251,4 @@ class EvidenceProjectionAdapter:
                 },
             )
         )
-        artifact = lifecycle.mark_verified(candidate.artifact_id)
-        if artifact.verification_state != RefStatus.VERIFIED:
-            raise EvidenceProjectionError("projection_artifact_not_verified")
-        return artifact
+        return candidate

@@ -11,6 +11,8 @@ from uuid import uuid4
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
+    ArtifactVerificationDecision,
+    ArtifactVerificationReceipt,
     BoundCapabilityGrant,
     CapabilityGrant,
     CanonicalTaskSpec,
@@ -100,6 +102,9 @@ class AdaptiveDispatchContext:
     evidence_statuses: dict[str, EvidenceCoverageStatus] = field(default_factory=dict)
     evidence_ref_scopes: dict[str, tuple[str, str]] = field(default_factory=dict)
     artifacts: dict[str, StoredAdaptiveArtifact] = field(default_factory=dict)
+    artifact_verification_receipts: dict[str, ArtifactVerificationReceipt] = field(
+        default_factory=dict
+    )
     projection_reports: dict[str, object] = field(default_factory=dict)
     quality_reports: dict[str, object] = field(default_factory=dict)
     code_execution_records: dict[str, object] = field(default_factory=dict)
@@ -1340,7 +1345,7 @@ class AdaptiveCapabilityDispatcher:
                     not report.verified for report in quality_reports
                 )),
                 "llm_codeact_execution_count": 1.0,
-                "llm_codeact_verified_count": 1.0,
+                "llm_codeact_candidate_count": 1.0,
                 "llm_codeact_sandbox_fallback_count": 0.0,
                 **memory_metrics,
             },
@@ -1493,9 +1498,8 @@ class AdaptiveCapabilityDispatcher:
                 "claim_validation_audit_hash": audit_hash,
             },
         ))
-        artifact = lifecycle.mark_verified(candidate.artifact_id)
-        self.context.artifacts[artifact.artifact_id] = StoredAdaptiveArtifact(
-            artifact=artifact,
+        self.context.artifacts[candidate.artifact_id] = StoredAdaptiveArtifact(
+            artifact=candidate,
             rows=(claim_set.canonical_payload(),),
             provenance_item_ids=tuple(dict.fromkeys(
                 evidence_id
@@ -1503,18 +1507,18 @@ class AdaptiveCapabilityDispatcher:
                 for evidence_id in claim.supporting_evidence_item_ids
             )),
         )
-        self.context.claim_sets[artifact.artifact_id] = claim_set
+        self.context.claim_sets[candidate.artifact_id] = claim_set
         memory_metrics = self._record_memory_consumption(
             memory_inputs=memory_inputs,
             step=step,
-            downstream_ref_ids=(artifact.artifact_id,),
+            downstream_ref_ids=(candidate.artifact_id,),
             before_surface_hash=before_memory_surface_hash,
         )
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
             success=True,
             attempt_id=grant.attempt_id,
-            output_refs=(artifact.artifact_id,),
+            output_refs=(candidate.artifact_id,),
             output_ref_kinds=("execution_artifact",),
             validator_report_hashes=(audit_hash,),
             metrics=memory_metrics,
@@ -1605,16 +1609,29 @@ class AdaptiveCapabilityDispatcher:
             raise AdaptiveDispatchError("evidence_context_not_verified")
         return evidence_pack
 
-    @staticmethod
     def _artifact_in_grant_scope(
+        self,
         stored: StoredAdaptiveArtifact | None,
         grant: CapabilityGrant,
     ) -> bool:
         if stored is None:
             return False
         metadata = stored.artifact.metadata
+        receipt = self.context.artifact_verification_receipts.get(
+            stored.artifact.artifact_id
+        )
         return (
-            stored.artifact.verification_state == RefStatus.VERIFIED
+            receipt is not None
+            and receipt.decision == ArtifactVerificationDecision.VERIFIED
+            and receipt.artifact_id == stored.artifact.artifact_id
+            and receipt.runtime_task_id == grant.task_id
+            and receipt.session_id == grant.session_id
+            and receipt.producer_step_id == stored.artifact.step_id
+            and receipt.producer_attempt_id == metadata.get("attempt_id")
+            and receipt.capability_grant_hash == metadata.get("grant_hash")
+            and receipt.candidate_blob_hash == stored.artifact.blob_hash
+            and metadata.get("artifact_verification_receipt_hash") == receipt.receipt_hash
+            and stored.artifact.verification_state == RefStatus.VERIFIED
             and stored.artifact.task_id == grant.task_id
             and metadata.get("session_id") == grant.session_id
             and isinstance(metadata.get("attempt_id"), str)

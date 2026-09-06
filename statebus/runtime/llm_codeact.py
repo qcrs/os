@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import builtins
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 import re
@@ -21,7 +21,6 @@ from statebus.contracts import (
     CodeRepairRecord,
     ExecutionKind,
     GeneratedCodeCandidate,
-    RefStatus,
 )
 from statebus.refs import ExecutionArtifactRef
 from statebus.runtime.capability_registry import CapabilityRegistry
@@ -461,62 +460,16 @@ class LlmCodeActOutcome:
     quality_reports: tuple["CapabilityQualityReport", ...] = ()
 
 
-@dataclass
-class LlmCodeActCache:
-    _verified: dict[str, tuple[LlmCodeActOutcome, str, str]] = field(default_factory=dict)
-
-    @staticmethod
-    def key(request: CodeGenerationRequest, candidate: GeneratedCodeCandidate) -> str:
-        return sha256_digest({
-            "task_id": request.task_id,
-            "capability_id": request.capability_id,
-            "semantic_input_digest": request.input_manifest_digest,
-            "source_hash": candidate.source_hash,
-            "model_signature": request.model_signature,
-            "prompt_signature": request.prompt_signature,
-            "runtime_signature": request.runtime_signature,
-            "policy": request.policy.policy_digest,
-            "output_schema": dict(sorted(request.output_schema.items())),
-        })
-
-    def put(self, key: str, outcome: LlmCodeActOutcome, *, task_id: str = "", session_id: str = "") -> None:
-        if outcome.artifact is None or outcome.artifact.verification_state != RefStatus.VERIFIED:
-            raise ValueError("only_verified_codeact_results_are_cacheable")
-        self._verified[key] = (outcome, task_id or outcome.artifact.task_id, session_id)
-
-    def get(
-        self,
-        key: str,
-        *,
-        task_id: str,
-        session_id: str,
-        grant_hash: str,
-        authorize_grant: Callable[[str], bool],
-        artifact_readable: Callable[[ExecutionArtifactRef], bool],
-    ) -> LlmCodeActOutcome | None:
-        cached = self._verified.get(key)
-        if cached is None or not authorize_grant(grant_hash):
-            return None
-        outcome, cached_task_id, cached_session_id = cached
-        if cached_task_id != task_id or cached_session_id != session_id or outcome.artifact is None:
-            return None
-        if not artifact_readable(outcome.artifact):
-            return None
-        return outcome
-
-
 class LlmCodeActRunner:
     def __init__(
         self,
         *,
         registry: CapabilityRegistry,
         sandbox_runner: CodeActSandboxRunner | None = None,
-        cache: LlmCodeActCache | None = None,
         validator_registry: CapabilityValidatorRegistry | None = None,
     ) -> None:
         self.registry = registry
         self.sandbox_runner = sandbox_runner or CodeActSandboxRunner()
-        self.cache = cache or LlmCodeActCache()
         self.validator_registry = validator_registry or default_capability_validator_registry()
         self._consumed_grant_hashes: set[str] = set()
 
@@ -577,30 +530,6 @@ class LlmCodeActRunner:
         readiness = sandbox_runner.check_llm_bwrap_readiness(policy_version=request.policy.sandbox_policy_version)
         if not readiness.ready:
             return self._not_executed(request, grant, candidate, report, tuple(repairs), f"bwrap_not_ready:{readiness.reason}", readiness)
-        cache_key = self.cache.key(request, candidate)
-        cached = self.cache.get(
-            cache_key,
-            task_id=request.task_id,
-            session_id=grant.session_id,
-            grant_hash=grant.grant_hash,
-            authorize_grant=lambda grant_hash: grant_hash == grant.grant_hash and grant.expires_at_ns >= time.time_ns(),
-            artifact_readable=self._artifact_readable,
-        )
-        if cached is not None:
-            return replace(
-                cached,
-                record=replace(
-                    cached.record,
-                    request_hash=candidate.request_hash,
-                    source_hash=candidate.source_hash,
-                    raw_response_hash=candidate.raw_response_hash,
-                    policy_report_hash=report.report_hash,
-                    input_ref_ids=request.input_ref_ids,
-                    fallback_reason="verified_cache_hit",
-                ),
-                policy_report=report,
-                repairs=tuple(repairs),
-            )
         execution_workspace = attempt_workspace
         source_path, inputs_dir, outputs_dir = self._materialize_attempt(
             attempt_workspace=execution_workspace, policy=request.policy, source=candidate.source, input_files=input_files,
@@ -662,7 +591,7 @@ class LlmCodeActRunner:
                         runtime_error=runtime_error,
                     )
                     return replace(failure, quality_reports=tuple(quality_reports))
-                execution_workspace = attempt_workspace.parent / f"{attempt_workspace.name}-runtime-repair-{len(repairs)}"
+                execution_workspace = attempt_workspace / f"{attempt_workspace.name}-runtime-repair-{len(repairs)}"
                 source_path, inputs_dir, outputs_dir = self._materialize_attempt(
                     attempt_workspace=execution_workspace,
                     policy=request.policy,
@@ -739,7 +668,7 @@ class LlmCodeActRunner:
                     quality_report=quality_report,
                     quality_reports=tuple(quality_reports),
                 )
-            execution_workspace = attempt_workspace.parent / f"{attempt_workspace.name}-quality-repair-{len(repairs)}"
+            execution_workspace = attempt_workspace / f"{attempt_workspace.name}-quality-repair-{len(repairs)}"
             source_path, inputs_dir, outputs_dir = self._materialize_attempt(
                 attempt_workspace=execution_workspace,
                 policy=request.policy,
@@ -759,11 +688,11 @@ class LlmCodeActRunner:
                 "schema_version": "statebus.llm_codeact_artifact.v1",
                 "source_hash": candidate.source_hash,
                 "quality_report_hash": quality_report.report_hash,
+                "grant_hash": grant.grant_hash,
                 "session_id": grant.session_id,
                 "attempt_id": grant.attempt_id,
             },
         ))
-        artifact = lifecycle.mark_verified(candidate_artifact.artifact_id)
         record = CodeExecutionRecord(
             request_hash=candidate.request_hash, source_hash=candidate.source_hash, raw_response_hash=candidate.raw_response_hash, policy_report_hash=report.report_hash,
             sandbox_requested_backend="bwrap_required", sandbox_actual_backend="bwrap",
@@ -772,19 +701,18 @@ class LlmCodeActRunner:
             mount_policy_digest=self._mount_policy_digest(request.policy), input_ref_ids=request.input_ref_ids,
             output_hash=output_hash, output_schema_valid=True, output_quality_valid=True,
             exit_code=sandbox_result.completed.returncode,
-            verified_artifact_id=artifact.artifact_id,
+            verified_artifact_id="",
             quality_report_hash=quality_report.report_hash,
         )
         outcome = LlmCodeActOutcome(
             record=record,
             policy_report=report,
             repairs=tuple(repairs),
-            artifact=artifact,
+            artifact=candidate_artifact,
             output_payload=payload,
             quality_report=quality_report,
             quality_reports=tuple(quality_reports),
         )
-        self.cache.put(self.cache.key(request, candidate), outcome, task_id=request.task_id, session_id=grant.session_id)
         return outcome
 
     def _validate_request(self, request: CodeGenerationRequest, grant: CapabilityGrant) -> None:
@@ -963,16 +891,6 @@ class LlmCodeActRunner:
                 errors.append("required_output_fields_missing")
         accepted = payload if isinstance(payload, dict) or (isinstance(payload, list) and all(isinstance(row, dict) for row in payload)) else None
         return accepted, tuple(sorted(set(errors))), sha256_digest(raw)
-
-    @staticmethod
-    def _artifact_readable(artifact: ExecutionArtifactRef) -> bool:
-        if artifact.verification_state != RefStatus.VERIFIED:
-            return False
-        path = Path(artifact.root_id) / artifact.relpath
-        try:
-            return path.is_file() and not path.is_symlink() and sha256_digest(path.read_bytes()) == artifact.blob_hash
-        except OSError:
-            return False
 
     def _not_executed(
         self, request: CodeGenerationRequest, grant: CapabilityGrant, candidate: GeneratedCodeCandidate,

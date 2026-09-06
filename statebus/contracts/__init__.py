@@ -63,6 +63,11 @@ from statebus.contracts.identity import (
     RuntimeIdentity,
     TaskContractIdentity,
 )
+from statebus.contracts.artifact import (
+    ARTIFACT_VERIFICATION_RECEIPT_SCHEMA_VERSION,
+    ArtifactVerificationDecision,
+    ArtifactVerificationReceipt,
+)
 from statebus.contracts.state_access import (
     STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT,
     STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
@@ -237,6 +242,9 @@ __all__ = [
     "TASK_CONTRACT_IDENTITY_SCHEMA_VERSION",
     "RuntimeIdentity",
     "TaskContractIdentity",
+    "ARTIFACT_VERIFICATION_RECEIPT_SCHEMA_VERSION",
+    "ArtifactVerificationDecision",
+    "ArtifactVerificationReceipt",
     "AdaptiveTaskEnvelope",
     "ApprovedPlan",
     "CapabilityDescriptor",

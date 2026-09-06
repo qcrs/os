@@ -1,0 +1,57 @@
+MRR-08 corrective implementation pass 2 test record
+====================================================
+
+Environment:
+
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1
+PYTHONPATH=/home/qcrs/statebus/os
+Conda env: /home/qcrs/statebus/conda-envs/statebus_host
+
+Test A — CodeAct producer contract and legacy cache removal:
+
+python -m pytest -q tests/test_llm_codeact_sandbox.py::test_llm_codeact_producer_returns_candidate_and_does_not_reuse_legacy_verified_cache
+
+Result: 1 passed in 0.87s
+
+The approved host execution permission was used because the ordinary command
+sandbox cannot perform the bwrap network-namespace readiness probe.
+
+Test B — Existing Memory gate requires a Runtime receipt:
+
+python -m pytest -q tests/test_adaptive_mainline_integration.py::test_adaptive_memory_commit_gate_requires_runtime_verification_receipt
+
+Result: 1 passed
+
+The test covers both fail-closed manager-only `VERIFIED` and successful commit
+with the matching receipt-backed projection.
+
+Test C — Production receipt issuance through downstream canonical consumer:
+
+python -m pytest -q tests/test_mrr_08_artifact_truth.py::test_active_admitted_candidate_is_runtime_verified
+
+Result: 1 passed
+
+The producer candidate is verified by `AdaptiveRuntimeEngine`; a dependent
+Transform DSL consumer then admits and reads the same receipt-backed artifact.
+
+Adjacent regression — CodeAct quality repair workspace:
+
+python -m pytest -q tests/test_adaptive_codeact_integration.py::test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace
+
+Result: 1 passed in 0.97s
+
+Not run:
+
+full pytest
+Docker
+vLLM
+benchmark
+competition benchmark
+coverage
+mypy
+performance tests
+MRR-09 work
+
+No SHA or Git history commands were used. No production authority relaxation
+or defensive fallback was added.

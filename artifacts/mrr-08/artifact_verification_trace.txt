@@ -1,0 +1,28 @@
+MRR-08 active producer verification trace
+=========================================
+
+Path exercised:
+
+provider writes candidate bytes
+-> provider registers ExecutionArtifactRef(CANDIDATE, replay_ready=False)
+-> AdaptiveStepResult returns candidate ref and validator report hash
+-> RuntimeSessionManager.admit_attempt_result returns ACTIVE_ATTEMPT_COMMIT_ALLOWED
+-> RuntimeArtifactVerificationAuthority validates active Attempt
+-> Runtime validates task/session/Step/Attempt/Grant provenance
+-> Runtime resolves the candidate within the Attempt workspace
+-> Runtime recomputes byte length and blob hash
+-> Runtime binds the passing validator report to the exact blob hash
+-> Runtime creates ArtifactVerificationReceipt(VERIFIED)
+-> Runtime projects ExecutionArtifactRef.verification_state=VERIFIED
+
+Observed assertions:
+
+runtime completed: true
+receipt decision: VERIFIED
+receipt producer Attempt: admitted Runtime Attempt
+receipt candidate blob hash: exact promoted Artifact blob hash
+compatibility replay_ready projection: false
+
+Test:
+tests/test_mrr_08_artifact_truth.py::test_active_admitted_candidate_is_runtime_verified
+

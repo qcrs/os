@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 from typing import Any, Callable
 
-from statebus.contracts import CapabilityGrant, CapabilityQualityReport, RefStatus, TransformProgram, TransformStep
+from statebus.contracts import CapabilityGrant, CapabilityQualityReport, TransformProgram, TransformStep
 from statebus.refs import ExecutionArtifactRef
 from statebus.runtime.workspace import ArtifactLifecycleManager
 from statebus.utils import sha256_digest, stable_json_dumps
@@ -272,7 +272,7 @@ class TransformDslInterpreter:
         quality_validator: Callable[[list[dict[str, Any]]], bool] | None = None,
         quality_report: CapabilityQualityReport | None = None,
     ) -> TransformArtifactResult:
-        """Materialize the only permitted DSL output and sign it after validation."""
+        """Materialize the only permitted DSL output as a validated candidate."""
         if grant.expires_at_ns < time.time_ns():
             raise TransformProgramError("capability_grant_expired")
         if program.output_contract_version != grant.output_contract_version:
@@ -315,10 +315,7 @@ class TransformDslInterpreter:
                 "quality_report_hash": "" if quality_report is None else quality_report.report_hash,
             },
         ))
-        artifact = lifecycle.mark_verified(candidate.artifact_id)
-        if artifact.verification_state != RefStatus.VERIFIED:
-            raise TransformProgramError("artifact_not_verified")
-        return TransformArtifactResult(rows=tuple(rows), artifact=artifact, output_hash=output_hash)
+        return TransformArtifactResult(rows=tuple(rows), artifact=candidate, output_hash=output_hash)
 
     @staticmethod
     def _validate_output_rows(rows: list[dict[str, Any]], output_schema: dict[str, str]) -> None:

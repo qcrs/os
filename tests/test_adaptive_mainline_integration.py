@@ -11,6 +11,8 @@ import statebus.control as control_plane
 from statebus.control import AckReceived, ErrorResult, Heartbeat, RunStart, SuccessResult
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
+    ArtifactVerificationDecision,
+    ArtifactVerificationReceipt,
     CapabilityDescriptor,
     ExecutionKind,
     EvidenceRequest,
@@ -141,6 +143,18 @@ def _memory_loop_request(
     source_payload = stable_json_dumps([{"value": value}]).encode("utf-8")
     source_path = source_root / "input.json"
     source_path.write_bytes(source_payload)
+    runtime_identity = RuntimeIdentity(
+        runtime_task_id=task_id,
+        run_id=f"run-{task_id}",
+        session_id=f"adaptive-session-{task_id}",
+        trace_id=f"trace:{task_id}",
+        task_contract=TaskContractIdentity.from_hash(spec.spec_hash),
+    )
+    source_grant_hash = sha256_digest({
+        "artifact_id": source_ref_id,
+        "producer_step_id": "source",
+        "producer_attempt_id": "fixture-source",
+    })
     source_artifact = ExecutionArtifactRef(
         artifact_id=source_ref_id,
         task_id=task_id,
@@ -152,10 +166,34 @@ def _memory_loop_request(
         size_bytes=len(source_payload),
         produced_by="fixture",
         verification_state=RefStatus.VERIFIED,
-        replay_ready=True,
+        replay_ready=False,
         metadata={
-            "session_id": f"adaptive-session-{task_id}",
+            "session_id": runtime_identity.session_id,
             "attempt_id": "fixture-source",
+            "grant_hash": source_grant_hash,
+        },
+    )
+    source_receipt = ArtifactVerificationReceipt(
+        artifact_id=source_ref_id,
+        runtime_task_id=task_id,
+        run_id=runtime_identity.run_id,
+        session_id=runtime_identity.session_id,
+        producer_step_id="source",
+        producer_attempt_id="fixture-source",
+        execution_binding_hash=sha256_digest("fixture-source-binding"),
+        capability_grant_hash=source_grant_hash,
+        candidate_blob_hash=source_artifact.blob_hash,
+        candidate_size_bytes=source_artifact.size_bytes,
+        validator_ids=(),
+        validator_report_hashes=(),
+        decision=ArtifactVerificationDecision.VERIFIED,
+        reason="fixture_receipt_backed_source",
+    )
+    source_artifact = replace(
+        source_artifact,
+        metadata={
+            **source_artifact.metadata,
+            "artifact_verification_receipt_hash": source_receipt.receipt_hash,
         },
     )
     pipeline = RetrieverFanoutPipeline.with_embedding_mode("deterministic")
@@ -190,6 +228,7 @@ def _memory_loop_request(
         runtime_root=tmp_path / task_id / "runtime",
         workspace_root=tmp_path / task_id / "workspaces",
         memory_store_root=family_memory_root,
+        runtime_identity=runtime_identity,
         memory_commit_replay_class=commit_replay_class,
         propose_plan=lambda: proposal,
         bindings=AdaptiveMainlineBindings(
@@ -200,6 +239,7 @@ def _memory_loop_request(
                     provenance_item_ids=(f"source-value:{task_id}",),
                 ),
             },
+            artifact_verification_receipts={source_ref_id: source_receipt},
             retrieval_adapter=AdaptiveRetrievalAdapter(retrieve_query),
             retrieval_request_factory=lambda step, grant: EvidenceRequest(
                 request_id=f"request:{task_id}",
@@ -1111,6 +1151,54 @@ def test_adaptive_memory_commit_gate_rejects_quality_report_artifact_mismatch(
     assert decision.reason == "terminal_quality_report_artifact_hash_mismatch"
     assert decision.benchmark_gold_used is False
     assert rejected_store.commits == {}
+
+
+def test_adaptive_memory_commit_gate_requires_runtime_verification_receipt(
+    tmp_path: Path,
+) -> None:
+    request = _memory_loop_request(
+        tmp_path,
+        task_id="commit-gate-receipt",
+        value=17.0,
+        family_memory_root=tmp_path / "source-memory",
+        program_calls=[],
+    )
+    result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+    stored = next(
+        item
+        for item in result.context.artifacts.values()
+        if item.artifact.produced_by == "executor"
+        and item.artifact.step_id == "execute"
+    )
+    receipt = result.context.artifact_verification_receipts.pop(stored.artifact.artifact_id)
+    approved_plan = AdaptiveMainlineRunner._assemble_plan(request)[1]
+    from statebus.memory import MemoryIndexStore
+
+    rejected_store = MemoryIndexStore(store_root=tmp_path / "receipt-missing-memory")
+    rejected = AdaptiveMainlineRunner._commit_verified_memory(
+        request=request,
+        approved_plan=approved_plan,
+        runtime=result.runtime,
+        context=result.context,
+        memory_store=rejected_store,
+    )
+    assert rejected.attempted is True
+    assert rejected.committed is False
+    assert rejected.reason == "terminal_executor_artifact_runtime_receipt_mismatch"
+    assert rejected_store.commits == {}
+
+    result.context.artifact_verification_receipts[stored.artifact.artifact_id] = receipt
+    accepted_store = MemoryIndexStore(store_root=tmp_path / "receipt-backed-memory")
+    accepted = AdaptiveMainlineRunner._commit_verified_memory(
+        request=request,
+        approved_plan=approved_plan,
+        runtime=result.runtime,
+        context=result.context,
+        memory_store=accepted_store,
+    )
+    assert accepted.attempted is True
+    assert accepted.committed is True
+    assert accepted.reason == "runtime_quality_and_artifact_hash_verified"
 
 
 def test_adaptive_memory_runtime_incompatibility_stays_auditable_and_out_of_role_inputs(

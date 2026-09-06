@@ -466,16 +466,18 @@ class ArtifactLifecycleManager:
         candidate = replace(
             artifact,
             verification_state=RefStatus.CANDIDATE,
+            replay_ready=False,
         )
         self.artifacts[candidate.artifact_id] = candidate
         return candidate
 
     def mark_verified(self, artifact_id: str) -> ExecutionArtifactRef:
+        """Materialize the legacy status projection; this is not Runtime authority."""
         artifact = self.artifacts[artifact_id]
         verified = replace(
             artifact,
             verification_state=RefStatus.VERIFIED,
-            replay_ready=True,
+            replay_ready=False,
         )
         self.artifacts[artifact_id] = verified
         return verified

@@ -1,0 +1,35 @@
+MRR-08 targeted test record
+===========================
+
+Environment:
+
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+STATEBUS_LLM_CONFIG_FILE=/home/qcrs/statebus/os/deploy/statebus_llm.yaml.local
+PYTHONPATH=/home/qcrs/statebus/os
+PYTHONDONTWRITEBYTECODE=1
+Conda env: /home/qcrs/statebus/conda-envs/statebus_host
+
+Primary targeted run:
+
+python -m pytest -q tests/test_mrr_08_artifact_truth.py
+
+Result:
+3 passed in 0.69s
+
+Final targeted run with the one allowed adjacent regression:
+
+python -m pytest -q tests/test_mrr_08_artifact_truth.py tests/test_adaptive_dispatcher.py::test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_builtin
+
+Result:
+4 passed in 0.97s
+
+Not run:
+full pytest
+Docker
+vLLM
+benchmark
+competition benchmark
+coverage
+mypy
+performance tests
+
