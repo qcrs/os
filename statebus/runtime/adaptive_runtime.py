@@ -9,7 +9,9 @@ from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
     BoundCapabilityGrant,
+    CapabilityDescriptor,
     CapabilityGrant,
+    ExecutionKind,
     ExecutionBindingReceipt,
     ExecutionProviderDescriptor,
     LogicalCapabilityDescriptor,
@@ -19,6 +21,10 @@ from statebus.contracts import (
     ProviderEligibilityProjection,
     ProviderRuntimeFacts,
     RuntimeIdentity,
+    STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT,
+    STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
+    STATE_ACCESS_MODE_READ,
+    StateAccessGrant,
     StateConsumptionRecord,
     StepLifecycleState,
     WorkflowMode,
@@ -50,7 +56,10 @@ from statebus.control.transport import SubprocessTransportTimeout
 from statebus.utils import sha256_digest
 
 if TYPE_CHECKING:
+    from statebus.memory import StructuredEmbedding
+    from statebus.refs import HydrateManifest, SemanticStateRef
     from statebus.runtime.adaptive_dispatcher import AdaptiveCapabilityDispatcher
+    from statebus.state import DenseSemanticStatePublication, LayeredStateStore
 
 
 @dataclass(frozen=True)
@@ -219,6 +228,154 @@ class AdaptiveRuntimeSignature:
 
 class AdaptiveRuntimeError(RuntimeError):
     pass
+
+
+@dataclass
+class RuntimeStateAccessAuthority:
+    """Attempt-bound Runtime seam for immutable semantic State publication and READ."""
+
+    session_manager: RuntimeSessionManager
+    runtime_identity: RuntimeIdentity
+    bound_grant: BoundCapabilityGrant
+    allow_dense_semantic_intermediate: bool
+    _runtime_intermediate_identities: dict[str, str] = field(default_factory=dict)
+
+    def _require_active_attempt(self) -> None:
+        grant = self.bound_grant.grant
+        binding = self.bound_grant.execution_binding
+        session = self.session_manager.sessions[self.runtime_identity.session_id]
+        if (
+            session.task_id != self.runtime_identity.runtime_task_id
+            or session.session_id != grant.session_id
+            or grant.task_id != self.runtime_identity.runtime_task_id
+            or binding.binding_hash != self.bound_grant.execution_binding_hash
+        ):
+            raise AdaptiveRuntimeError("state_access_runtime_scope_mismatch")
+        if self.session_manager.active_attempt_id(grant.session_id, grant.step_id) != grant.attempt_id:
+            raise AdaptiveRuntimeError("state_access_attempt_not_active")
+        if grant.expires_at_ns <= time.time_ns():
+            raise AdaptiveRuntimeError("state_access_capability_grant_expired")
+
+    def publish_dense_semantic_state(
+        self,
+        *,
+        store: "LayeredStateStore",
+        state_id: str,
+        query_embedding: "StructuredEmbedding",
+        candidate_embeddings: tuple["StructuredEmbedding", ...],
+        hydrate_manifest: "HydrateManifest",
+        owner_session_id: str,
+        encoder_revision: str = "",
+        lease_ttl_ms: int = 60_000,
+    ) -> "DenseSemanticStatePublication":
+        self._require_active_attempt()
+        if not self.allow_dense_semantic_intermediate:
+            raise AdaptiveRuntimeError("runtime_intermediate_state_kind_not_authorized")
+        from statebus.state import publish_dense_semantic_state
+
+        publication = publish_dense_semantic_state(
+            store=store,
+            state_id=state_id,
+            query_embedding=query_embedding,
+            candidate_embeddings=candidate_embeddings,
+            hydrate_manifest=hydrate_manifest,
+            owner_session_id=owner_session_id,
+            encoder_revision=encoder_revision,
+            lease_ttl_ms=lease_ttl_ms,
+        )
+        self._runtime_intermediate_identities[publication.ref.state_id] = (
+            publication.ref.state_identity_hash
+        )
+        return publication
+
+    def issue_read(
+        self,
+        *,
+        ref: "SemanticStateRef",
+        authority_basis: str,
+        consumer_role: str,
+        physical_invocation_id: str = "",
+    ) -> StateAccessGrant:
+        self._require_active_attempt()
+        grant = self.bound_grant.grant
+        state_id = ref.state_id
+        state_identity_hash = ref.state_identity_hash
+        if authority_basis == STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT:
+            if state_id not in grant.input_ref_ids:
+                raise AdaptiveRuntimeError("state_access_ref_not_in_capability_inputs")
+        elif authority_basis == STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE:
+            if self._runtime_intermediate_identities.get(state_id) != state_identity_hash:
+                raise AdaptiveRuntimeError("state_access_intermediate_not_runtime_published")
+        else:
+            raise AdaptiveRuntimeError("state_access_authority_basis_invalid")
+        expires_at_ns = min(
+            grant.expires_at_ns,
+            int(ref.metadata["lease_expires_at_ns"]),
+        )
+        if expires_at_ns <= time.time_ns():
+            raise AdaptiveRuntimeError("state_access_expired")
+        grant_id_payload = {
+            "runtime_identity_hash": self.runtime_identity.identity_hash,
+            "attempt_id": grant.attempt_id,
+            "execution_binding_hash": self.bound_grant.execution_binding_hash,
+            "capability_grant_hash": grant.grant_hash,
+            "state_identity_hash": state_identity_hash,
+            "consumer_role": consumer_role,
+            "physical_invocation_id": physical_invocation_id,
+        }
+        return StateAccessGrant(
+            access_grant_id=f"state-access-{sha256_digest(grant_id_payload)}",
+            runtime_task_id=self.runtime_identity.runtime_task_id,
+            run_id=self.runtime_identity.run_id,
+            session_id=self.runtime_identity.session_id,
+            step_id=grant.step_id,
+            attempt_id=grant.attempt_id,
+            execution_binding_hash=self.bound_grant.execution_binding_hash,
+            capability_grant_hash=grant.grant_hash,
+            ref_id=state_id,
+            ref_kind=ref.channel,
+            state_identity_hash=state_identity_hash,
+            access_mode=STATE_ACCESS_MODE_READ,
+            authority_basis=authority_basis,
+            consumer_provider_id=self.bound_grant.provider_id,
+            consumer_role=consumer_role,
+            physical_invocation_id=physical_invocation_id,
+            expires_at_ns=expires_at_ns,
+        )
+
+    def read_query_embedding(
+        self,
+        *,
+        ref: "SemanticStateRef",
+        access_grant: StateAccessGrant,
+        embedding_id: str,
+        expected_encoder_signature: str,
+    ) -> "StructuredEmbedding":
+        self._require_active_attempt()
+        grant = self.bound_grant.grant
+        access_grant.validate_read_scope(
+            runtime_task_id=self.runtime_identity.runtime_task_id,
+            run_id=self.runtime_identity.run_id,
+            session_id=self.runtime_identity.session_id,
+            step_id=grant.step_id,
+            attempt_id=grant.attempt_id,
+            execution_binding_hash=self.bound_grant.execution_binding_hash,
+            capability_grant_hash=grant.grant_hash,
+            ref_id=ref.state_id,
+            ref_kind=ref.channel,
+            consumer_provider_id=self.bound_grant.provider_id,
+            consumer_role="runtime",
+            physical_invocation_id="",
+        )
+        access_grant.validate_state_identity(ref.state_identity_hash)
+        from statebus.state import query_embedding_from_dense_state
+
+        return query_embedding_from_dense_state(
+            state_root=Path(self.session_manager.sessions[grant.session_id].state_root),
+            ref=ref,
+            embedding_id=embedding_id,
+            expected_encoder_signature=expected_encoder_signature,
+        )
 
 
 class AdaptiveShadowController:
@@ -674,6 +831,12 @@ class AdaptiveRuntimeEngine:
                     step=step,
                     attempt_id=attempt_id,
                 )
+                state_access_authority = self._state_access_authority(
+                    session_manager=session_manager,
+                    runtime_identity=runtime_identity,
+                    bound_grant=bound_grant,
+                    descriptor=descriptor,
+                )
                 transport_timeout: SubprocessTransportTimeout | None = None
                 try:
                     if request.dispatcher is not None:
@@ -684,6 +847,7 @@ class AdaptiveRuntimeEngine:
                             grant=bound_grant,
                             attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / attempt_id,
                             runtime_identity=runtime_identity,
+                            state_access_authority=state_access_authority,
                         )
                     else:
                         assert request.execute_step is not None
@@ -862,6 +1026,12 @@ class AdaptiveRuntimeEngine:
                         step=fallback_step,
                         attempt_id=fallback_attempt_id,
                     )
+                    fallback_state_access_authority = self._state_access_authority(
+                        session_manager=session_manager,
+                        runtime_identity=runtime_identity,
+                        bound_grant=fallback_bound_grant,
+                        descriptor=fallback_descriptor,
+                    )
                     try:
                         if request.dispatcher is not None:
                             fallback_result = request.dispatcher.dispatch(
@@ -871,6 +1041,7 @@ class AdaptiveRuntimeEngine:
                                 grant=fallback_bound_grant,
                                 attempt_workspace=Path(request.runtime_root) / "adaptive_attempts" / fallback_attempt_id,
                                 runtime_identity=runtime_identity,
+                                state_access_authority=fallback_state_access_authority,
                             )
                         else:
                             assert request.execute_step is not None
@@ -1323,6 +1494,27 @@ class AdaptiveRuntimeEngine:
         ):
             raise AdaptiveRuntimeError("execution_binding_provider_mismatch")
         return BoundCapabilityGrant(grant=grant, execution_binding=binding)
+
+    @staticmethod
+    def _state_access_authority(
+        *,
+        session_manager: RuntimeSessionManager,
+        runtime_identity: RuntimeIdentity,
+        bound_grant: BoundCapabilityGrant,
+        descriptor: CapabilityDescriptor,
+    ) -> RuntimeStateAccessAuthority:
+        grant = bound_grant.grant
+        allow_dense_semantic_intermediate = (
+            descriptor.execution_kind == ExecutionKind.RETRIEVAL_ADAPTER
+            and descriptor.output_contract_version == grant.output_contract_version
+            and "canonical_evidence_pack" in descriptor.output_ref_kinds
+        )
+        return RuntimeStateAccessAuthority(
+            session_manager=session_manager,
+            runtime_identity=runtime_identity,
+            bound_grant=bound_grant,
+            allow_dense_semantic_intermediate=allow_dense_semantic_intermediate,
+        )
 
     @staticmethod
     def _bind_provider(

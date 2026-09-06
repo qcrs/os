@@ -796,6 +796,19 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     assert expected_scope["capability_grant_hash"] == (
         physical_request.capability_grant_hash
     )
+    assert physical_request.consumer_provider_id == (
+        result.runtime.execution_bindings[0].selected_provider_id
+    )
+    assert len(physical_request.state_access_grants) == 1
+    worker_access_grant = physical_request.state_access_grants[0]
+    assert worker_access_grant.attempt_id == expected_scope["attempt_id"]
+    assert worker_access_grant.execution_binding_hash == expected_scope["execution_binding_hash"]
+    assert worker_access_grant.capability_grant_hash == expected_scope["capability_grant_hash"]
+    assert worker_access_grant.physical_invocation_id == expected_scope["invocation_id"]
+    assert worker_access_grant.consumer_provider_id == physical_request.consumer_provider_id
+    assert worker_access_grant.consumer_role == physical_request.header.target_role
+    assert worker_access_grant.authority_basis == "RUNTIME_INTERMEDIATE"
+    assert worker_access_grant.access_mode == "READ"
     assert all(
         invocation_scope(message.header) == expected_scope
         for message in physical_responses
@@ -845,6 +858,16 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     product_bundle = observed_retrieval["result"].retrieval_bundles[0]
     publication = next(iter(result.context.semantic_state_publications.values()))
     selection = next(iter(result.context.semantic_state_selections.values()))
+    issued_access_grants = result.context.state_access_grants[publication.ref.state_id]
+    assert issued_access_grants[0] == worker_access_grant
+    assert issued_access_grants[0].state_identity_hash == publication.ref.state_identity_hash
+    assert issued_access_grants[1].state_identity_hash == publication.ref.state_identity_hash
+    assert issued_access_grants[1].consumer_role == "runtime"
+    assert issued_access_grants[1].physical_invocation_id == ""
+    assert all(
+        access.expires_at_ns <= result.runtime.bound_grants[0].grant.expires_at_ns
+        for access in issued_access_grants
+    )
     recorded_admission = next(iter(result.context.control_response_admissions.values()))
     assert recorded_admission == admission_receipts
     assert publication.contract.shape[0] == len(product_bundle.semantic_candidate_embeddings) + 1

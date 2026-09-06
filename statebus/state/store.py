@@ -12,6 +12,10 @@ from statebus.contracts import StorageKind
 from statebus.utils import sha256_digest, stable_json_dumps
 
 
+class StateRefReuseError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class StorageDecision:
     object_kind: str
@@ -230,6 +234,8 @@ class LayeredStateStore:
         payload: bytes,
         contract_metadata: dict[str, object] | None = None,
     ) -> MaterializedStateHandle:
+        if ref_id in self.materializations or (self.metadata_dir / f"{ref_id}.json").exists():
+            raise StateRefReuseError("state_ref_reuse_forbidden")
         decision = self.policy.decide(
             object_kind=object_kind,
             size_bytes=len(payload),

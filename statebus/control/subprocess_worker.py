@@ -49,7 +49,11 @@ from statebus.control.transport import (
     send_control_message,
     send_text_message,
 )
-from statebus.contracts import CONTROL_PLANE_SCHEMA_VERSION
+from statebus.contracts import (
+    CONTROL_PLANE_SCHEMA_VERSION,
+    StateAccessContractError,
+    StateAccessGrant,
+)
 from statebus.state import (
     LogitStateValidationError,
     SemanticStateValidationError,
@@ -159,6 +163,7 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     logit_gate = message.operation == "logit_gate_v1"
 
     errors: list[str] = []
+    semantic_access_grant: StateAccessGrant | None = None
     if not header.schema_version.strip():
         errors.append("schema_version_missing")
     elif header.schema_version != CONTROL_PLANE_SCHEMA_VERSION:
@@ -207,6 +212,29 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
             errors.append("semantic_top_k_missing")
         if len(message.state_refs) != 1:
             errors.append("semantic_state_ref_count_invalid")
+        if len(message.state_access_grants) != 1:
+            errors.append("state_access_grant_count_invalid")
+        if not message.consumer_provider_id.strip():
+            errors.append("consumer_provider_id_missing")
+        if len(message.state_refs) == 1 and len(message.state_access_grants) == 1:
+            semantic_access_grant = message.state_access_grants[0]
+            try:
+                semantic_access_grant.validate_read_scope(
+                    runtime_task_id=header.task_id,
+                    run_id=header.run_id,
+                    session_id=header.session_id,
+                    step_id=header.step_id,
+                    attempt_id=header.attempt_id,
+                    execution_binding_hash=header.execution_binding_hash,
+                    capability_grant_hash=header.capability_grant_hash,
+                    ref_id=message.state_refs[0].ref_id,
+                    ref_kind=message.state_refs[0].ref_kind,
+                    consumer_provider_id=message.consumer_provider_id,
+                    consumer_role=header.target_role,
+                    physical_invocation_id=header.invocation_id,
+                )
+            except StateAccessContractError as exc:
+                errors.append(str(exc))
     if logit_gate:
         if not message.state_root.strip():
             errors.append("state_root_missing")
@@ -267,6 +295,9 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
                 Path(message.state_root),
                 message.state_refs[0].ref_id,
             )
+            semantic_access_grant.validate_state_identity(
+                state_ref.state_identity_hash
+            )
             selection = select_dense_semantic_state(
                 state_root=Path(message.state_root),
                 ref=state_ref,
@@ -276,6 +307,18 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
                 expected_encoder_signature=message.expected_encoder_signature,
                 unregister_shared_memory_tracker=True,
             )
+        except StateAccessContractError as exc:
+            send_message(
+                sock,
+                ErrorResult(
+                    header=replace(header, event_type=EventType.RES_ERR),
+                    error_code="state_access_denied",
+                    error_detail=str(exc),
+                    failed_at_ns=time.time_ns(),
+                ),
+            )
+            sock.close()
+            return 1
         except (SemanticStateValidationError, ValueError, OSError) as exc:
             send_message(
                 sock,

@@ -36,6 +36,27 @@ message RefHandle {
   string ref_kind = 2;
 }
 
+message StateAccessGrant {
+  string access_grant_id = 1;
+  string runtime_task_id = 2;
+  string run_id = 3;
+  string session_id = 4;
+  string step_id = 5;
+  string attempt_id = 6;
+  string execution_binding_hash = 7;
+  string capability_grant_hash = 8;
+  string ref_id = 9;
+  string ref_kind = 10;
+  string state_identity_hash = 11;
+  string access_mode = 12;
+  string authority_basis = 13;
+  string consumer_provider_id = 14;
+  string consumer_role = 15;
+  string physical_invocation_id = 16;
+  int64 expires_at_ns = 17;
+  string schema_version = 18;
+}
+
 message ReusePolicy {
   bool allow_assist = 1;
   bool allow_validated_replay = 2;
@@ -59,6 +80,8 @@ message ExecRequest {
   uint64 evidence_budget_bytes = 14;
   string expected_encoder_signature = 15;
   string capability_grant_hash = 16;
+  repeated StateAccessGrant state_access_grants = 17;
+  string consumer_provider_id = 18;
 }
 
 message AckReceived {

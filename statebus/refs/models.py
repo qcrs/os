@@ -61,6 +61,21 @@ class SemanticStateRef:
     exact_replay_ready: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def state_identity_hash(self) -> str:
+        return sha256_digest(
+            {
+                "ref_id": self.state_id,
+                "ref_kind": self.channel,
+                "state_kind": self.state_kind,
+                "storage_kind": self.storage_kind.value,
+                "blob_hash": self.blob_hash,
+                "length": self.length,
+                "manifest_id": self.manifest_id,
+                "contract_hash": sha256_digest(self.metadata),
+            }
+        )
+
     def registry_entry(self) -> RefRegistryEntry:
         return RefRegistryEntry(
             ref_id=self.state_id,

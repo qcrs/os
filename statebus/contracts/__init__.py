@@ -63,6 +63,14 @@ from statebus.contracts.identity import (
     RuntimeIdentity,
     TaskContractIdentity,
 )
+from statebus.contracts.state_access import (
+    STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT,
+    STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
+    STATE_ACCESS_GRANT_SCHEMA_VERSION,
+    STATE_ACCESS_MODE_READ,
+    StateAccessContractError,
+    StateAccessGrant,
+)
 from statebus.contracts.adaptive import (
     AdaptiveTaskEnvelope,
     ApprovedPlan,
@@ -320,4 +328,10 @@ __all__ = [
     "LogitGateReceipt",
     "LogitProducerReceipt",
     "LogitProducerStatus",
+    "STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT",
+    "STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE",
+    "STATE_ACCESS_GRANT_SCHEMA_VERSION",
+    "STATE_ACCESS_MODE_READ",
+    "StateAccessContractError",
+    "StateAccessGrant",
 ]

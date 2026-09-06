@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
-from statebus.contracts import CONTROL_PLANE_SCHEMA_VERSION
+from statebus.contracts import CONTROL_PLANE_SCHEMA_VERSION, StateAccessGrant
 from statebus.control.schema import message_class
 
 
@@ -59,6 +59,7 @@ class ExecRequest:
     header: ControlHeader
     reuse_policy: ReusePolicy = field(default_factory=ReusePolicy)
     state_refs: tuple[RefHandle, ...] = ()
+    state_access_grants: tuple[StateAccessGrant, ...] = ()
     artifact_refs: tuple[RefHandle, ...] = ()
     memory_refs: tuple[RefHandle, ...] = ()
     runtime_reuse_contract: str = ""
@@ -72,6 +73,7 @@ class ExecRequest:
     evidence_budget_bytes: int = 0
     expected_encoder_signature: str = ""
     capability_grant_hash: str = ""
+    consumer_provider_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -229,6 +231,36 @@ def _ref_from_pb(pb: Any) -> RefHandle:
     return RefHandle(ref_id=pb.ref_id, ref_kind=pb.ref_kind)
 
 
+def _state_access_grant_to_pb(grant: StateAccessGrant) -> Any:
+    pb = message_class("StateAccessGrant")()
+    for field_name, value in grant.canonical_payload().items():
+        setattr(pb, field_name, value)
+    return pb
+
+
+def _state_access_grant_from_pb(pb: Any) -> StateAccessGrant:
+    return StateAccessGrant(
+        access_grant_id=pb.access_grant_id,
+        runtime_task_id=pb.runtime_task_id,
+        run_id=pb.run_id,
+        session_id=pb.session_id,
+        step_id=pb.step_id,
+        attempt_id=pb.attempt_id,
+        execution_binding_hash=pb.execution_binding_hash,
+        capability_grant_hash=pb.capability_grant_hash,
+        ref_id=pb.ref_id,
+        ref_kind=pb.ref_kind,
+        state_identity_hash=pb.state_identity_hash,
+        access_mode=pb.access_mode,
+        authority_basis=pb.authority_basis,
+        consumer_provider_id=pb.consumer_provider_id,
+        consumer_role=pb.consumer_role,
+        physical_invocation_id=pb.physical_invocation_id,
+        expires_at_ns=int(pb.expires_at_ns),
+        schema_version=pb.schema_version,
+    )
+
+
 def encode_control_message(message: ControlMessage) -> bytes:
     envelope = message_class("ControlEnvelope")()
     body_field = _BODY_FIELD_BY_TYPE[type(message)]
@@ -242,6 +274,9 @@ def encode_control_message(message: ControlMessage) -> bytes:
         reuse_pb.allow_exact_replay = message.reuse_policy.allow_exact_replay
         body_pb.reuse_policy.CopyFrom(reuse_pb)
         body_pb.state_refs.extend(_ref_to_pb(ref) for ref in message.state_refs)
+        body_pb.state_access_grants.extend(
+            _state_access_grant_to_pb(grant) for grant in message.state_access_grants
+        )
         body_pb.artifact_refs.extend(_ref_to_pb(ref) for ref in message.artifact_refs)
         body_pb.memory_refs.extend(_ref_to_pb(ref) for ref in message.memory_refs)
         body_pb.runtime_reuse_contract = message.runtime_reuse_contract
@@ -255,6 +290,7 @@ def encode_control_message(message: ControlMessage) -> bytes:
         body_pb.evidence_budget_bytes = message.evidence_budget_bytes
         body_pb.expected_encoder_signature = message.expected_encoder_signature
         body_pb.capability_grant_hash = message.capability_grant_hash
+        body_pb.consumer_provider_id = message.consumer_provider_id
     elif isinstance(message, AckReceived):
         body_pb.acked_at_ns = message.acked_at_ns
     elif isinstance(message, RunStart):
@@ -327,6 +363,10 @@ def decode_control_message(payload: bytes) -> ControlMessage:
                 allow_exact_replay=bool(reuse.allow_exact_replay),
             ),
             state_refs=tuple(_ref_from_pb(ref) for ref in body_pb.state_refs),
+            state_access_grants=tuple(
+                _state_access_grant_from_pb(grant)
+                for grant in body_pb.state_access_grants
+            ),
             artifact_refs=tuple(_ref_from_pb(ref) for ref in body_pb.artifact_refs),
             memory_refs=tuple(_ref_from_pb(ref) for ref in body_pb.memory_refs),
             runtime_reuse_contract=body_pb.runtime_reuse_contract,
@@ -340,6 +380,7 @@ def decode_control_message(payload: bytes) -> ControlMessage:
             evidence_budget_bytes=int(body_pb.evidence_budget_bytes),
             expected_encoder_signature=body_pb.expected_encoder_signature,
             capability_grant_hash=body_pb.capability_grant_hash,
+            consumer_provider_id=body_pb.consumer_provider_id,
         )
     if body_field == "ack_recv":
         return AckReceived(header=header, acked_at_ns=int(body_pb.acked_at_ns))
@@ -471,6 +512,35 @@ def _text_refs(payload: object) -> tuple[RefHandle, ...]:
     )
 
 
+def _text_state_access_grants(payload: object) -> tuple[StateAccessGrant, ...]:
+    if not isinstance(payload, list):
+        return ()
+    return tuple(
+        StateAccessGrant(
+            access_grant_id=str(item["access_grant_id"]),
+            runtime_task_id=str(item["runtime_task_id"]),
+            run_id=str(item["run_id"]),
+            session_id=str(item["session_id"]),
+            step_id=str(item["step_id"]),
+            attempt_id=str(item["attempt_id"]),
+            execution_binding_hash=str(item["execution_binding_hash"]),
+            capability_grant_hash=str(item["capability_grant_hash"]),
+            ref_id=str(item["ref_id"]),
+            ref_kind=str(item["ref_kind"]),
+            state_identity_hash=str(item["state_identity_hash"]),
+            access_mode=str(item["access_mode"]),
+            authority_basis=str(item["authority_basis"]),
+            consumer_provider_id=str(item["consumer_provider_id"]),
+            consumer_role=str(item["consumer_role"]),
+            physical_invocation_id=str(item["physical_invocation_id"]),
+            expires_at_ns=int(item["expires_at_ns"]),
+            schema_version=str(item["schema_version"]),
+        )
+        for item in payload
+        if isinstance(item, dict)
+    )
+
+
 def decode_text_control_message(payload: bytes) -> ControlMessage:
     """Decode a canonical UTF-8 JSON control message into the typed model."""
 
@@ -494,6 +564,9 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
                 allow_exact_replay=bool(reuse.get("allow_exact_replay", False)),
             ),
             state_refs=_text_refs(decoded.get("state_refs")),
+            state_access_grants=_text_state_access_grants(
+                decoded.get("state_access_grants")
+            ),
             artifact_refs=_text_refs(decoded.get("artifact_refs")),
             memory_refs=_text_refs(decoded.get("memory_refs")),
             runtime_reuse_contract=str(decoded.get("runtime_reuse_contract", "")),
@@ -507,6 +580,7 @@ def decode_text_control_message(payload: bytes) -> ControlMessage:
             evidence_budget_bytes=int(decoded.get("evidence_budget_bytes", 0)),
             expected_encoder_signature=str(decoded.get("expected_encoder_signature", "")),
             capability_grant_hash=str(decoded.get("capability_grant_hash", "")),
+            consumer_provider_id=str(decoded.get("consumer_provider_id", "")),
         )
     if message_type == "ack_recv":
         return AckReceived(header=header, acked_at_ns=int(decoded.get("acked_at_ns", 0)))

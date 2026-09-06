@@ -1,0 +1,20 @@
+MRR-07A authorized canonical State access
+
+Command:
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os \
+  python -m pytest -q \
+  tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state
+
+Result:
+1 passed in 1.74s
+
+Observed path:
+Runtime active Attempt -> BoundCapabilityGrant -> Runtime-owned immutable
+publication -> RUNTIME_INTERMEDIATE StateAccessGrant -> typed protobuf request ->
+worker admission -> cross-process physical acquisition.
+
+The same publication was then read in-process with a separate READ witness.
+The worker witness was bound to the physical invocation; the local Runtime
+witness intentionally had no physical invocation ID. Both witnesses matched
+the immutable State identity, Binding, CapabilityGrant, provider, and Attempt.

@@ -1,0 +1,10 @@
+MRR-07A immutable ref publication
+
+Test:
+tests/test_mrr_07a_state_access_authority.py::test_layered_state_store_forbids_immutable_ref_reuse
+
+Result (within the focused 8-pass run):
+- first publish(ref_id=immutable-state-07a) succeeded
+- second publish with the same ref_id raised state_ref_reuse_forbidden
+- the original materialization object, payload, and metadata remained unchanged
+- no generation, replacement ID, or automatic release was introduced

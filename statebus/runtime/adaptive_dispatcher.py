@@ -27,6 +27,8 @@ from statebus.contracts import (
     ReplayClass,
     RiskClass,
     RuntimeIdentity,
+    STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
+    StateAccessGrant,
     TransformProgram,
     TransformStep,
 )
@@ -62,6 +64,7 @@ if TYPE_CHECKING:
     from statebus.runtime.adaptive_runtime import AdaptiveStepResult
     from statebus.runtime.workspace import WorkspaceManager
     from statebus.state import LayeredStateStore
+    from statebus.runtime.adaptive_runtime import RuntimeStateAccessAuthority
 
 
 class AdaptiveDispatchError(RuntimeError):
@@ -132,6 +135,7 @@ class AdaptiveDispatchContext:
     socket_path: Path | None = None
     semantic_state_publications: dict[str, object] = field(default_factory=dict)
     semantic_state_selections: dict[str, object] = field(default_factory=dict)
+    state_access_grants: dict[str, tuple[StateAccessGrant, ...]] = field(default_factory=dict)
     control_response_admissions: dict[str, tuple[object, ...]] = field(default_factory=dict)
     # Physical worker observations are retained for audit only.  They do not
     # mutate the outer semantic Step lifecycle unless that worker is the
@@ -186,6 +190,7 @@ class AdaptiveCapabilityDispatcher:
         grant: BoundCapabilityGrant | CapabilityGrant,
         attempt_workspace: Path,
         runtime_identity: RuntimeIdentity,
+        state_access_authority: "RuntimeStateAccessAuthority | None" = None,
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
@@ -211,6 +216,8 @@ class AdaptiveCapabilityDispatcher:
                     attempt_workspace,
                     runtime_identity=runtime_identity,
                     execution_binding_hash=grant.execution_binding_hash,
+                    bound_grant=grant,
+                    state_access_authority=state_access_authority,
                 )
             handler = self._handlers[execution_kind]
             return handler(envelope, approved_plan, step, plain_grant, attempt_workspace)
@@ -232,6 +239,8 @@ class AdaptiveCapabilityDispatcher:
         *,
         runtime_identity: RuntimeIdentity,
         execution_binding_hash: str,
+        bound_grant: BoundCapabilityGrant,
+        state_access_authority: "RuntimeStateAccessAuthority | None",
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
@@ -262,6 +271,8 @@ class AdaptiveCapabilityDispatcher:
                 attempt_workspace=attempt_workspace,
                 runtime_identity=runtime_identity,
                 execution_binding_hash=execution_binding_hash,
+                bound_grant=bound_grant,
+                state_access_authority=state_access_authority,
             )
             coverage_report = EvidenceCoverageVerifier().evaluate(result.evidence_pack, request)
             result = replace(
@@ -327,6 +338,8 @@ class AdaptiveCapabilityDispatcher:
         attempt_workspace: Path,
         runtime_identity: RuntimeIdentity,
         execution_binding_hash: str,
+        bound_grant: BoundCapabilityGrant,
+        state_access_authority: "RuntimeStateAccessAuthority | None",
     ) -> tuple[
         AdaptiveRetrievalResult,
         tuple[object, ...],
@@ -345,13 +358,14 @@ class AdaptiveCapabilityDispatcher:
         )
         from statebus.memory import MemoryQuery
         from statebus.retrieval import apply_semantic_state_selection
-        from statebus.state import publish_dense_semantic_state, query_embedding_from_dense_state
         from statebus.runtime.state_consumption import build_state_consumption_record
 
         if self.context.state_store is None or self.context.memory_store is None:
             raise AdaptiveDispatchError("adaptive_product_state_infrastructure_missing")
         if self.context.socket_path is None:
             raise AdaptiveDispatchError("adaptive_product_control_socket_missing")
+        if state_access_authority is None:
+            raise AdaptiveDispatchError("state_access_authority_required")
 
         semantic_requested = bool(
             {str(value).strip() for value in result.request.evidence_types}
@@ -377,7 +391,7 @@ class AdaptiveCapabilityDispatcher:
                 .replace(":", "-")
                 .replace("/", "-")
             )
-            publication = publish_dense_semantic_state(
+            publication = state_access_authority.publish_dense_semantic_state(
                 store=self.context.state_store,
                 state_id=state_id,
                 query_embedding=bundle.query_embedding,
@@ -419,6 +433,12 @@ class AdaptiveCapabilityDispatcher:
                     max(int(entry.byte_hint), 0) for entry in entries
                 )
             invocation_id = f"invocation-{uuid4().hex}"
+            worker_access_grant = state_access_authority.issue_read(
+                ref=publication.ref,
+                authority_basis=STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
+                consumer_role="executor",
+                physical_invocation_id=invocation_id,
+            )
             request = ExecRequest(
                 header=ControlHeader(
                     trace_id=runtime_identity.trace_id,
@@ -436,6 +456,8 @@ class AdaptiveCapabilityDispatcher:
                     capability_grant_hash=grant.grant_hash,
                 ),
                 state_refs=(RefHandle(ref_id=state_id, ref_kind="semantic_state"),),
+                state_access_grants=(worker_access_grant,),
+                consumer_provider_id=bound_grant.provider_id,
                 artifact_refs=(),
                 runtime_reuse_contract="semantic_state_required",
                 output_contract_version="statebus.evidence_selection.v1",
@@ -506,11 +528,20 @@ class AdaptiveCapabilityDispatcher:
                 selected_scores=response.selected_scores,
                 consumer_pid=response.consumer_pid,
             )
-            query_embedding = query_embedding_from_dense_state(
-                state_root=self.context.state_store.root,
+            local_access_grant = state_access_authority.issue_read(
                 ref=publication.ref,
+                authority_basis=STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
+                consumer_role="runtime",
+            )
+            query_embedding = state_access_authority.read_query_embedding(
+                ref=publication.ref,
+                access_grant=local_access_grant,
                 embedding_id=bundle.query_embedding.embedding_id,
                 expected_encoder_signature=publication.contract.encoder_signature,
+            )
+            self.context.state_access_grants[state_id] = (
+                worker_access_grant,
+                local_access_grant,
             )
             selected = replace(
                 selected,

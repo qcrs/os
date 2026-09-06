@@ -10,6 +10,7 @@ from statebus.state.store import (
     LayeredStateStore,
     LayeredStoragePolicy,
     MaterializedStateHandle,
+    StateRefReuseError,
     StorageDecision,
 )
 from statebus.state.semantic_state import (
@@ -46,6 +47,7 @@ __all__ = [
     "LayeredStateStore",
     "LayeredStoragePolicy",
     "MaterializedStateHandle",
+    "StateRefReuseError",
     "MemorySidecarStore",
     "PersistedContractPaths",
     "RefManifestMissingError",

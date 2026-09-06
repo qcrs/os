@@ -1,0 +1,20 @@
+MRR-07A State access rejection
+
+Command:
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os \
+  python -m pytest -q tests/test_mrr_07a_state_access_authority.py
+
+Combined result for rejection and immutable publication tests:
+8 passed in 0.75s
+
+One parameterized test function covered:
+- settled/stale Attempt
+- wrong Attempt
+- wrong CapabilityGrant hash
+- wrong ExecutionBinding hash
+- wrong immutable State identity
+- expired StateAccessGrant
+- unauthorized RUNTIME_INTERMEDIATE publication kind
+
+Every case failed before the instrumented physical State resolver was called.

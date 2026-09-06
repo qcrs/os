@@ -1,0 +1,23 @@
+MRR-07A targeted tests
+
+Environment:
+source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1
+PYTHONPATH=/home/qcrs/statebus/os
+Conda prefix: /home/qcrs/statebus/conda-envs/statebus_host
+
+Primary rejection + immutable publication functions:
+python -m pytest -q tests/test_mrr_07a_state_access_authority.py
+Result: 8 passed in 0.75s (two test functions; one expands seven mismatch cases)
+
+Authorized canonical access / adjacent semantic integration function:
+python -m pytest -q \
+  tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state
+
+Restricted sandbox observation:
+AF_UNIX bind was denied with Operation not permitted.
+
+Approved local Conda rerun of the identical test:
+Result: 1 passed in 1.74s
+
+No Docker, vLLM, benchmark, full pytest, coverage, or performance test ran.
