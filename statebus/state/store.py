@@ -6,6 +6,8 @@ from multiprocessing.shared_memory import SharedMemory
 import os
 from pathlib import Path
 import platform
+import time
+from uuid import uuid4
 import weakref
 
 from statebus.contracts import StorageKind
@@ -13,6 +15,10 @@ from statebus.utils import sha256_digest, stable_json_dumps
 
 
 class StateRefReuseError(ValueError):
+    pass
+
+
+class StateLifetimeError(ValueError):
     pass
 
 
@@ -181,11 +187,42 @@ class MaterializedStateHandle:
         }
 
 
+@dataclass(frozen=True)
+class StatePin:
+    pin_id: str
+    ref_id: str
+    session_id: str
+    step_id: str
+    attempt_id: str
+    consumer_provider_id: str
+    consumer_role: str
+    state_access_grant_id: str
+    physical_invocation_id: str
+    acquired_at_ns: int
+
+
+@dataclass
+class StateLifetimeRecord:
+    ref_id: str
+    owner_session_id: str
+    producer_step_id: str
+    producer_attempt_id: str
+    owner_released: bool = False
+    live_pins: dict[str, StatePin] = field(default_factory=dict)
+    released_pins: dict[str, StatePin] = field(default_factory=dict)
+    physical_reclaimed: bool = False
+
+    @property
+    def live_pin_count(self) -> int:
+        return len(self.live_pins)
+
+
 @dataclass
 class LayeredStateStore:
     root: Path = Path("/tmp/statebus-state")
     policy: LayeredStoragePolicy = field(default_factory=LayeredStoragePolicy)
     materializations: dict[str, MaterializedStateHandle] = field(default_factory=dict)
+    lifetimes: dict[str, StateLifetimeRecord] = field(default_factory=dict)
     shared_memory_bytes_used: int = 0
     memfd_transfer_count: int = 0
     memfd_bytes_transferred: int = 0
@@ -233,6 +270,9 @@ class LayeredStateStore:
         object_kind: str,
         payload: bytes,
         contract_metadata: dict[str, object] | None = None,
+        owner_session_id: str = "",
+        producer_step_id: str = "",
+        producer_attempt_id: str = "",
     ) -> MaterializedStateHandle:
         if ref_id in self.materializations or (self.metadata_dir / f"{ref_id}.json").exists():
             raise StateRefReuseError("state_ref_reuse_forbidden")
@@ -267,6 +307,12 @@ class LayeredStateStore:
                 contract_metadata=contract_metadata,
             )
         self.materializations[ref_id] = handle
+        self.lifetimes[ref_id] = StateLifetimeRecord(
+            ref_id=ref_id,
+            owner_session_id=owner_session_id,
+            producer_step_id=producer_step_id,
+            producer_attempt_id=producer_attempt_id,
+        )
         self.storage_publish_counts[handle.storage_kind] = self.storage_publish_counts.get(handle.storage_kind, 0) + 1
         self.last_published_storage_kind = handle.storage_kind
         return handle
@@ -295,32 +341,151 @@ class LayeredStateStore:
     def get(self, ref_id: str) -> bytes:
         return self.load(ref_id)
 
-    def release(self, ref_id: str) -> None:
-        handle = self.materializations.pop(ref_id)
+    def acquire_pin(
+        self,
+        *,
+        ref_id: str,
+        session_id: str,
+        step_id: str,
+        attempt_id: str,
+        consumer_provider_id: str,
+        consumer_role: str,
+        state_access_grant_id: str,
+        physical_invocation_id: str,
+    ) -> StatePin:
+        """Record a dependency after Runtime has admitted READ authority."""
+        lifetime = self.lifetimes[ref_id]
+        if lifetime.owner_released:
+            raise StateLifetimeError("state_owner_already_released")
+        if lifetime.physical_reclaimed:
+            raise StateLifetimeError("state_already_reclaimed")
+        pin = StatePin(
+            pin_id=f"state-pin-{uuid4().hex}",
+            ref_id=ref_id,
+            session_id=session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            consumer_provider_id=consumer_provider_id,
+            consumer_role=consumer_role,
+            state_access_grant_id=state_access_grant_id,
+            physical_invocation_id=physical_invocation_id,
+            acquired_at_ns=time.time_ns(),
+        )
+        lifetime.live_pins[pin.pin_id] = pin
+        return pin
+
+    def unpin(
+        self,
+        pin_id: str,
+        *,
+        session_id: str,
+        step_id: str,
+        attempt_id: str,
+    ) -> bool:
+        lifetime, pin, live = self._find_pin(pin_id)
+        if (
+            pin.session_id != session_id
+            or pin.step_id != step_id
+            or pin.attempt_id != attempt_id
+        ):
+            raise StateLifetimeError("state_pin_scope_mismatch")
+        if not live:
+            return False
+        lifetime.live_pins.pop(pin_id)
+        lifetime.released_pins[pin_id] = pin
+        self._reclaim_if_eligible(lifetime)
+        return True
+
+    def unpin_attempt(
+        self,
+        *,
+        session_id: str,
+        step_id: str,
+        attempt_id: str,
+    ) -> tuple[str, ...]:
+        pin_ids = tuple(
+            pin_id
+            for lifetime in self.lifetimes.values()
+            for pin_id, pin in lifetime.live_pins.items()
+            if (
+                pin.session_id == session_id
+                and pin.step_id == step_id
+                and pin.attempt_id == attempt_id
+            )
+        )
+        for pin_id in pin_ids:
+            self.unpin(
+                pin_id,
+                session_id=session_id,
+                step_id=step_id,
+                attempt_id=attempt_id,
+            )
+        return pin_ids
+
+    def release_owner(self, ref_id: str, *, owner_session_id: str) -> bool:
+        lifetime = self.lifetimes[ref_id]
+        if lifetime.owner_session_id and lifetime.owner_session_id != owner_session_id:
+            raise StateLifetimeError("state_owner_session_mismatch")
+        changed = not lifetime.owner_released
+        lifetime.owner_released = True
+        self._reclaim_if_eligible(lifetime)
+        return changed
+
+    def release(self, ref_id: str) -> bool:
+        """Compatibility owner release for publications without scoped provenance."""
+        lifetime = self.lifetimes[ref_id]
+        if lifetime.producer_step_id or lifetime.producer_attempt_id:
+            raise StateLifetimeError("state_owner_release_scope_required")
+        return self.release_owner(ref_id, owner_session_id=lifetime.owner_session_id)
+
+    def _find_pin(self, pin_id: str) -> tuple[StateLifetimeRecord, StatePin, bool]:
+        for lifetime in self.lifetimes.values():
+            if pin_id in lifetime.live_pins:
+                return lifetime, lifetime.live_pins[pin_id], True
+            if pin_id in lifetime.released_pins:
+                return lifetime, lifetime.released_pins[pin_id], False
+        raise StateLifetimeError("state_pin_unknown")
+
+    def _reclaim_if_eligible(self, lifetime: StateLifetimeRecord) -> bool:
+        if (
+            not lifetime.owner_released
+            or lifetime.live_pins
+            or lifetime.physical_reclaimed
+        ):
+            return False
+        ref_id = lifetime.ref_id
+        handle = self.materializations[ref_id]
         if handle.storage_kind == StorageKind.SHARED_MEMORY:
-            shared = self._shared_segments.pop(ref_id, None)
+            shared = self._shared_segments.get(ref_id)
             if shared is None:
                 shared = SharedMemory(name=handle.shared_memory_name)
             try:
                 shared.close()
             finally:
                 shared.unlink()
-            self.shared_memory_bytes_used = max(0, self.shared_memory_bytes_used - handle.size_bytes)
+            self._shared_segments.pop(ref_id, None)
+            self.shared_memory_bytes_used -= handle.size_bytes
         elif handle.storage_kind == StorageKind.MEMFD:
-            fd = self._memfd_fds.pop(ref_id, None)
+            fd = self._memfd_fds.get(ref_id)
             if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
+                os.close(fd)
+                self._memfd_fds.pop(ref_id)
         elif handle.storage_kind == StorageKind.MMAP_FILE and handle.mmap_path is not None:
             if handle.mmap_path.exists():
                 handle.mmap_path.unlink()
+        self.materializations.pop(ref_id)
+        lifetime.physical_reclaimed = True
+        return True
 
     def teardown(self) -> None:
         for ref_id in tuple(self.materializations):
-            self.release(ref_id)
-        if self._finalizer is not None and self._finalizer.alive:
+            lifetime = self.lifetimes[ref_id]
+            self.release_owner(ref_id, owner_session_id=lifetime.owner_session_id)
+        if (
+            not self.materializations
+            and self._finalizer is not None
+            and self._finalizer.alive
+        ):
             self._finalizer()
 
     def count_by_storage(self, storage_kind: StorageKind) -> int:

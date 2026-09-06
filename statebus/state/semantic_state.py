@@ -166,6 +166,8 @@ def publish_dense_semantic_state(
     candidate_embeddings: tuple[StructuredEmbedding, ...],
     hydrate_manifest: HydrateManifest,
     owner_session_id: str,
+    producer_step_id: str = "",
+    producer_attempt_id: str = "",
     encoder_revision: str = "",
     lease_ttl_ms: int = 60_000,
 ) -> DenseSemanticStatePublication:
@@ -205,12 +207,15 @@ def publish_dense_semantic_state(
             object_kind="DENSE_SEMANTIC_STATE",
             payload=payload,
             contract_metadata={"dense_semantic_state": contract.canonical_payload()},
+            owner_session_id=owner_session_id,
+            producer_step_id=producer_step_id,
+            producer_attempt_id=producer_attempt_id,
         )
     except Exception:
         manifest_path.unlink(missing_ok=True)
         raise
     if handle.blob_hash != contract.blob_hash or handle.size_bytes != contract.size_bytes:
-        store.release(state_id)
+        store.release_owner(state_id, owner_session_id=owner_session_id)
         manifest_path.unlink(missing_ok=True)
         raise SemanticStateValidationError("dense_state_materialization_mismatch")
     contract = replace(contract, storage_kind=handle.storage_kind.value)

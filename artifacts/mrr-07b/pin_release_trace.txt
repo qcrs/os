@@ -1,0 +1,14 @@
+MRR-07B pin/release mechanism trace
+
+Test: test_authorized_pin_defers_shared_memory_reclaim_until_unpin
+Backend: SharedMemory (canonical DENSE_SEMANTIC_STATE policy)
+
+1. Runtime authority published immutable State with session owner and producer provenance.
+2. Active Attempt plus matching READ StateAccessGrant acquired one consumer pin.
+3. Runtime owner release set owner_released=true while live_pin_count remained 1.
+4. Store load succeeded and the SharedMemory name remained reopenable.
+5. Consumer unpin reduced live_pin_count to 0.
+6. The reclaim gate unlinked the SharedMemory object and removed the materialization.
+7. Reopening the SharedMemory name raised FileNotFoundError.
+
+Result: PASS

@@ -447,7 +447,10 @@ class AdaptiveMainlineRunner:
                         },
                     )
                 )
-                state_store.release(state_id)
+                state_store.release_owner(
+                    state_id,
+                    owner_session_id=runtime_identity.session_id,
+                )
                 released_state_ids.add(state_id)
             runtime_result.telemetry.close()
             manifest_path = self._persist_manifest(
@@ -462,7 +465,10 @@ class AdaptiveMainlineRunner:
         finally:
             for state_id in tuple(context.semantic_state_publications):
                 if state_id not in released_state_ids and state_id in state_store.materializations:
-                    state_store.release(state_id)
+                    state_store.release_owner(
+                        state_id,
+                        owner_session_id=runtime_identity.session_id,
+                    )
             if request.cleanup_state:
                 state_store.teardown()
                 state_cleanup_completed = True

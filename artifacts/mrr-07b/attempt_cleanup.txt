@@ -1,0 +1,21 @@
+MRR-07B Attempt settlement and multi-consumer evidence
+
+Test: test_attempt_settlement_cleans_own_pin_and_preserves_other_consumer
+
+Initial state:
+- producer provenance: consumer-a / attempt-a
+- live consumer pins: attempt-a and attempt-b
+- publication owner: Runtime session
+
+After attempt-a settlement:
+- attempt-a pin released by Runtime settlement cleanup
+- attempt-b pin remained live
+- owner_released remained false
+- physical State remained materialized
+- stale attempt-a could not acquire another pin
+
+After explicit owner release:
+- attempt-b pin kept the physical State materialized
+- attempt-b unpin triggered final physical reclaim
+
+Result: PASS

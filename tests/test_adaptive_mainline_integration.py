@@ -893,6 +893,16 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
         "tags": (),
         "vector": (),
     }
+    lifetime = result.infrastructure.state_store.lifetimes[publication.ref.state_id]
+    assert lifetime.owner_session_id == runtime_identity.session_id
+    assert lifetime.producer_step_id == "retrieve"
+    assert lifetime.producer_attempt_id == worker_access_grant.attempt_id
+    assert lifetime.owner_released
+    assert lifetime.live_pin_count == 0
+    assert lifetime.physical_reclaimed
+    assert {
+        pin.consumer_role for pin in lifetime.released_pins.values()
+    } == {"executor", "runtime"}
     assert result.infrastructure.state_store.materializations == {}
     (tmp_path / "real_subprocess_scope.txt").write_text(
         json.dumps(

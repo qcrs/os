@@ -477,11 +477,24 @@ class AdaptiveCapabilityDispatcher:
                 ),
                 timeout_s=max(request.header.timeout_ms / 1000.0, 5.0),
             )
+            worker_pin = state_access_authority.acquire_pin(
+                store=self.context.state_store,
+                ref=publication.ref,
+                access_grant=worker_access_grant,
+                consumer_role="executor",
+                physical_invocation_id=invocation_id,
+            )
             try:
-                response = transport.execute(request)
-            except ControlResponseAdmissionError as exc:
-                self.context.control_response_admissions[state_id] = exc.receipts
-                raise AdaptiveDispatchError(str(exc)) from exc
+                try:
+                    response = transport.execute(request)
+                except ControlResponseAdmissionError as exc:
+                    self.context.control_response_admissions[state_id] = exc.receipts
+                    raise AdaptiveDispatchError(str(exc)) from exc
+            finally:
+                state_access_authority.unpin(
+                    store=self.context.state_store,
+                    pin_id=worker_pin.pin_id,
+                )
             receipts = transport.last_admission_receipts
             self.context.control_response_admissions[state_id] = receipts
             from statebus.runtime.supervisor import LifecycleOrigin
@@ -538,6 +551,7 @@ class AdaptiveCapabilityDispatcher:
                 access_grant=local_access_grant,
                 embedding_id=bundle.query_embedding.embedding_id,
                 expected_encoder_signature=publication.contract.encoder_signature,
+                store=self.context.state_store,
             )
             self.context.state_access_grants[state_id] = (
                 worker_access_grant,

@@ -1,0 +1,14 @@
+MRR-07B idempotent cleanup evidence
+
+Test: test_owner_release_and_unpin_are_idempotent
+
+owner release #1: state changed
+owner release #2: no state change, no exception
+unpin #1: pin moved from live_pins to released_pins and reclaimed once
+unpin #2: no state change, no exception
+owner release after reclaim: no state change, no exception
+final live_pin_count: 0
+final shared_memory_bytes_used: 0
+physical_reclaimed: true
+
+Result: PASS

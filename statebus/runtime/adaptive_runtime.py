@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from statebus.refs import HydrateManifest, SemanticStateRef
     from statebus.runtime.adaptive_dispatcher import AdaptiveCapabilityDispatcher
     from statebus.state import DenseSemanticStatePublication, LayeredStateStore
+    from statebus.state.store import StatePin
 
 
 @dataclass(frozen=True)
@@ -271,6 +272,9 @@ class RuntimeStateAccessAuthority:
         self._require_active_attempt()
         if not self.allow_dense_semantic_intermediate:
             raise AdaptiveRuntimeError("runtime_intermediate_state_kind_not_authorized")
+        if owner_session_id != self.runtime_identity.session_id:
+            raise AdaptiveRuntimeError("state_owner_session_mismatch")
+        grant = self.bound_grant.grant
         from statebus.state import publish_dense_semantic_state
 
         publication = publish_dense_semantic_state(
@@ -280,6 +284,8 @@ class RuntimeStateAccessAuthority:
             candidate_embeddings=candidate_embeddings,
             hydrate_manifest=hydrate_manifest,
             owner_session_id=owner_session_id,
+            producer_step_id=grant.step_id,
+            producer_attempt_id=grant.attempt_id,
             encoder_revision=encoder_revision,
             lease_ttl_ms=lease_ttl_ms,
         )
@@ -343,15 +349,14 @@ class RuntimeStateAccessAuthority:
             expires_at_ns=expires_at_ns,
         )
 
-    def read_query_embedding(
+    def _validate_read_access(
         self,
         *,
         ref: "SemanticStateRef",
         access_grant: StateAccessGrant,
-        embedding_id: str,
-        expected_encoder_signature: str,
-    ) -> "StructuredEmbedding":
-        self._require_active_attempt()
+        consumer_role: str,
+        physical_invocation_id: str,
+    ) -> None:
         grant = self.bound_grant.grant
         access_grant.validate_read_scope(
             runtime_task_id=self.runtime_identity.runtime_task_id,
@@ -364,18 +369,97 @@ class RuntimeStateAccessAuthority:
             ref_id=ref.state_id,
             ref_kind=ref.channel,
             consumer_provider_id=self.bound_grant.provider_id,
+            consumer_role=consumer_role,
+            physical_invocation_id=physical_invocation_id,
+        )
+        access_grant.validate_state_identity(ref.state_identity_hash)
+
+    def acquire_pin(
+        self,
+        *,
+        store: "LayeredStateStore",
+        ref: "SemanticStateRef",
+        access_grant: StateAccessGrant,
+        consumer_role: str,
+        physical_invocation_id: str = "",
+    ) -> "StatePin":
+        self._require_active_attempt()
+        self._validate_read_access(
+            ref=ref,
+            access_grant=access_grant,
+            consumer_role=consumer_role,
+            physical_invocation_id=physical_invocation_id,
+        )
+        grant = self.bound_grant.grant
+        return store.acquire_pin(
+            ref_id=ref.state_id,
+            session_id=grant.session_id,
+            step_id=grant.step_id,
+            attempt_id=grant.attempt_id,
+            consumer_provider_id=self.bound_grant.provider_id,
+            consumer_role=consumer_role,
+            state_access_grant_id=access_grant.access_grant_id,
+            physical_invocation_id=physical_invocation_id,
+        )
+
+    def unpin(self, *, store: "LayeredStateStore", pin_id: str) -> bool:
+        grant = self.bound_grant.grant
+        return store.unpin(
+            pin_id,
+            session_id=grant.session_id,
+            step_id=grant.step_id,
+            attempt_id=grant.attempt_id,
+        )
+
+    def cleanup_attempt_pins(self, *, store: "LayeredStateStore") -> tuple[str, ...]:
+        grant = self.bound_grant.grant
+        return store.unpin_attempt(
+            session_id=grant.session_id,
+            step_id=grant.step_id,
+            attempt_id=grant.attempt_id,
+        )
+
+    def read_query_embedding(
+        self,
+        *,
+        ref: "SemanticStateRef",
+        access_grant: StateAccessGrant,
+        embedding_id: str,
+        expected_encoder_signature: str,
+        store: "LayeredStateStore | None" = None,
+    ) -> "StructuredEmbedding":
+        self._require_active_attempt()
+        self._validate_read_access(
+            ref=ref,
+            access_grant=access_grant,
             consumer_role="runtime",
             physical_invocation_id="",
         )
-        access_grant.validate_state_identity(ref.state_identity_hash)
+        if store is None:
+            raise AdaptiveRuntimeError("state_lifetime_store_required")
+        pin = store.acquire_pin(
+            ref_id=ref.state_id,
+            session_id=access_grant.session_id,
+            step_id=access_grant.step_id,
+            attempt_id=access_grant.attempt_id,
+            consumer_provider_id=access_grant.consumer_provider_id,
+            consumer_role=access_grant.consumer_role,
+            state_access_grant_id=access_grant.access_grant_id,
+            physical_invocation_id=access_grant.physical_invocation_id,
+        )
         from statebus.state import query_embedding_from_dense_state
 
-        return query_embedding_from_dense_state(
-            state_root=Path(self.session_manager.sessions[grant.session_id].state_root),
-            ref=ref,
-            embedding_id=embedding_id,
-            expected_encoder_signature=expected_encoder_signature,
-        )
+        try:
+            return query_embedding_from_dense_state(
+                state_root=Path(
+                    self.session_manager.sessions[access_grant.session_id].state_root
+                ),
+                ref=ref,
+                embedding_id=embedding_id,
+                expected_encoder_signature=expected_encoder_signature,
+            )
+        finally:
+            self.unpin(store=store, pin_id=pin.pin_id)
 
 
 class AdaptiveShadowController:
@@ -507,6 +591,11 @@ class AdaptiveRuntimeEngine:
         )
 
         session_manager = RuntimeSessionManager()
+        state_store = (
+            request.dispatcher.context.state_store
+            if request.dispatcher is not None
+            else None
+        )
         session_id = runtime_identity.session_id
         session = session_manager.start(
             session_id=session_id,
@@ -787,13 +876,16 @@ class AdaptiveRuntimeEngine:
                         last_error="capability_grant_expired_pre_dispatch",
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
-                    session = session_manager.settle_attempt(
-                        session_id,
+                    session = self._settle_attempt(
+                        session_manager=session_manager,
+                        session_id=session_id,
                         step_id=step.step_id,
                         attempt_id=attempt_id,
                         terminal_state=StepLifecycleState.FAILED.value,
                         completed_at_ns=expired_at_ns,
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        state_access_authority=None,
+                        state_store=state_store,
                     )
                     telemetry.emit(TelemetryEvent.create(
                         trace_id=request.trace_id,
@@ -913,13 +1005,16 @@ class AdaptiveRuntimeEngine:
                         last_error=result.error_code or "fallback_requested",
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
-                    session = session_manager.settle_attempt(
-                        session_id,
+                    session = self._settle_attempt(
+                        session_manager=session_manager,
+                        session_id=session_id,
                         step_id=step.step_id,
                         attempt_id=attempt_id,
                         terminal_state=StepLifecycleState.FAILED.value,
                         completed_at_ns=failed.completed_at_ns,
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        state_access_authority=state_access_authority,
+                        state_store=state_store,
                     )
                     fallback_descriptor = request.registry.get(
                         logical_capability.fallback_capability_id
@@ -1079,6 +1174,7 @@ class AdaptiveRuntimeEngine:
                     bound_grant = fallback_bound_grant
                     grant = fallback_grant
                     attempt_id = fallback_attempt_id
+                    state_access_authority = fallback_state_access_authority
                     result_admitted = False
                 if result.timed_out:
                     terminal_failed.add(step.step_id)
@@ -1109,14 +1205,17 @@ class AdaptiveRuntimeEngine:
                         metrics=result.metrics,
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
-                    session = session_manager.settle_attempt(
-                        session_id,
+                    session = self._settle_attempt(
+                        session_manager=session_manager,
+                        session_id=session_id,
                         step_id=step.step_id,
                         attempt_id=attempt_id,
                         terminal_state=StepLifecycleState.TRAPPED.value,
                         completed_at_ns=trapped.completed_at_ns,
                         trap_reason=timeout_error,
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        state_access_authority=state_access_authority,
+                        state_store=state_store,
                     )
 
                     termination_attempted = transport_timeout is not None
@@ -1186,13 +1285,16 @@ class AdaptiveRuntimeEngine:
                         last_error="grant_binding_mismatch",
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
-                    session = session_manager.settle_attempt(
-                        session_id,
+                    session = self._settle_attempt(
+                        session_manager=session_manager,
+                        session_id=session_id,
                         step_id=step.step_id,
                         attempt_id=attempt_id,
                         terminal_state=StepLifecycleState.FAILED.value,
                         completed_at_ns=failed.completed_at_ns,
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        state_access_authority=state_access_authority,
+                        state_store=state_store,
                     )
                     dispatches.append(AdaptiveDispatchRecord(
                         step.step_id,
@@ -1316,13 +1418,16 @@ class AdaptiveRuntimeEngine:
                         metrics=result.metrics,
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                     )
-                    session = session_manager.settle_attempt(
-                        session_id,
+                    session = self._settle_attempt(
+                        session_manager=session_manager,
+                        session_id=session_id,
                         step_id=step.step_id,
                         attempt_id=attempt_id,
                         terminal_state=StepLifecycleState.COMPLETED.value,
                         completed_at_ns=completed_record.completed_at_ns,
                         lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                        state_access_authority=state_access_authority,
+                        state_store=state_store,
                     )
                     telemetry.emit(TelemetryEvent.create(
                         trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
@@ -1354,13 +1459,16 @@ class AdaptiveRuntimeEngine:
                     metrics=result.metrics,
                     lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
                 )
-                session = session_manager.settle_attempt(
-                    session_id,
+                session = self._settle_attempt(
+                    session_manager=session_manager,
+                    session_id=session_id,
                     step_id=step.step_id,
                     attempt_id=attempt_id,
                     terminal_state=StepLifecycleState.FAILED.value,
                     completed_at_ns=failed.completed_at_ns,
                     lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
+                    state_access_authority=state_access_authority,
+                    state_store=state_store,
                 )
                 telemetry.emit(TelemetryEvent.create(
                     trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
@@ -1427,6 +1535,33 @@ class AdaptiveRuntimeEngine:
             execution_bindings=tuple(execution_bindings),
             bound_grants=tuple(bound_grants),
         )
+
+    @staticmethod
+    def _settle_attempt(
+        *,
+        session_manager: RuntimeSessionManager,
+        session_id: str,
+        step_id: str,
+        attempt_id: str,
+        terminal_state: str,
+        completed_at_ns: int | None,
+        lifecycle_origin: str,
+        state_access_authority: RuntimeStateAccessAuthority | None,
+        state_store: "LayeredStateStore | None",
+        trap_reason: str | None = None,
+    ) -> RuntimeTaskSession:
+        session = session_manager.settle_attempt(
+            session_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            terminal_state=terminal_state,
+            completed_at_ns=completed_at_ns,
+            trap_reason=trap_reason,
+            lifecycle_origin=lifecycle_origin,
+        )
+        if state_access_authority is not None and state_store is not None:
+            state_access_authority.cleanup_attempt_pins(store=state_store)
+        return session
 
     @staticmethod
     def _workflow(plan: ApprovedPlan, *, completed: set[str] | None = None, failed: set[str] | None = None) -> tuple[RuntimeWorkflowStep, ...]:
