@@ -1,0 +1,16 @@
+MRR-09A verified-not-admitted evidence
+Date: 2026-09-06
+
+Targeted test:
+test_mrr_09a_verified_artifact_does_not_imply_memory_admission
+
+Observed chain:
+- Adaptive Runtime produced and Runtime-verified an executor Artifact.
+- The ArtifactVerificationReceipt was present in the Runtime context.
+- Memory commit was explicitly disabled, so no Memory admission transition ran.
+- MemoryIndexStore.commits == {}
+- MemoryIndexStore.admission_receipts == {}
+
+Conclusion:
+ArtifactVerificationReceipt creation did not create Memory truth.
+Verified != Memory Admitted.

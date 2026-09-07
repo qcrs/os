@@ -1,0 +1,18 @@
+MRR-09A rejection evidence
+Date: 2026-09-06
+
+Targeted test:
+test_mrr_09a_fake_or_mismatched_verified_artifact_cannot_admit
+
+Cases:
+- missing Runtime ArtifactVerificationReceipt
+- mismatched projected ArtifactVerificationReceipt hash
+
+Observed result for both cases:
+- Runtime Memory commit gate returned terminal_executor_artifact_runtime_receipt_mismatch.
+- No MemoryCommit was persisted in the rejected store.
+- No MemoryAdmissionReceipt was persisted.
+- The Artifact verification truth was not synthesized or repaired.
+
+Conclusion:
+Legacy/fake VERIFIED projections cannot enter canonical Memory.

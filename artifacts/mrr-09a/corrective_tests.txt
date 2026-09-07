@@ -1,0 +1,46 @@
+MRR-09A corrective evidence
+Date: 2026-09-06
+
+Chosen Runtime witness:
+- Existing AttemptResultAdmissionReceipt issued by RuntimeSessionManager.admit_attempt_result()
+  while the producer Attempt is active.
+- AdaptiveRuntimeResult now preserves the exact authorized receipts after
+  Attempt settlement.
+
+Targeted tests:
+- test_mrr_09a_corrective_runtime_witness_survives_settlement
+- test_mrr_09a_corrective_verified_receipt_alone_cannot_admit
+- test_mrr_09a_corrective_mismatched_runtime_witness_cannot_admit
+- test_mrr_09a_runtime_admission_persists_exact_receipt_binding
+
+Command:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_corrective_runtime_witness_survives_settlement \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_corrective_verified_receipt_alone_cannot_admit \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_corrective_mismatched_runtime_witness_cannot_admit \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_runtime_admission_persists_exact_receipt_binding
+
+Result:
+4 passed in 1.13s
+
+Observed authority chain:
+- Runtime admitted the result while the Attempt was active.
+- The witness remained available on AdaptiveRuntimeResult after settlement;
+  the settled session has no active Attempt pointer.
+- Artifact verification projected the exact witness hash onto the verified
+  Artifact.
+- Mainline Memory admission required the matching witness, bound Grant,
+  dispatch, Runtime identity, and approved plan before persistence.
+- MemoryAdmissionReceipt and MemoryCommit both bind the witness hash.
+
+Negative results:
+- A valid VERIFIED Artifact and ArtifactVerificationReceipt without the
+  Runtime witness produced no MemoryCommit or MemoryAdmissionReceipt.
+- A witness from a different Runtime transition was rejected with
+  terminal_executor_runtime_commit_witness_mismatch.
+
+Settlement:
+- Attempt settlement architecture was unchanged.
+
+Replay:
+- replay_ready remained false; no Replay or CapabilityGrant plumbing changed.

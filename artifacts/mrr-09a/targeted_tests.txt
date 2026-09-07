@@ -1,0 +1,16 @@
+MRR-09A targeted test run
+Date: 2026-09-06
+
+Command:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_verified_artifact_does_not_imply_memory_admission \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_runtime_admission_persists_exact_receipt_binding \
+  'tests/test_adaptive_mainline_integration.py::test_mrr_09a_fake_or_mismatched_verified_artifact_cannot_admit' \
+  tests/test_adaptive_mainline_integration.py::test_adaptive_memory_commit_gate_requires_runtime_verification_receipt
+
+Result:
+5 passed in 1.13s
+
+Additional check:
+python -m compileall -q statebus/memory statebus/runtime/adaptive_mainline.py tests/test_adaptive_mainline_integration.py
+Result: passed

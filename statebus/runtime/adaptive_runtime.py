@@ -51,6 +51,11 @@ from statebus.runtime.artifact_verification import (
     ArtifactVerificationError,
     RuntimeArtifactVerificationAuthority,
 )
+from statebus.runtime.memory_projection import (
+    MemoryProjectionBinding,
+    MemoryProjectionSpec,
+    build_memory_commit,
+)
 from statebus.runtime.supervisor import LifecycleOrigin, RuntimeSupervisor
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.identity import (
@@ -120,6 +125,7 @@ class AdaptiveRuntimeRequest:
     runtime_identity: RuntimeIdentity | None = None
     provider_registry: ExecutionProviderRegistry | None = None
     provider_runtime_facts: dict[str, ProviderRuntimeFacts] = field(default_factory=dict)
+    memory_projection_spec: MemoryProjectionSpec | None = None
     # Legacy callers keep the historical attempt labels while the resolved
     # identity still gives the run a first-class session and contract.
     identity_is_compatibility_projection: bool = False
@@ -206,6 +212,8 @@ class AdaptiveRuntimeResult:
     provider_eligibility_projections: tuple[ProviderEligibilityProjection, ...] = ()
     execution_bindings: tuple[ExecutionBindingReceipt, ...] = ()
     bound_grants: tuple[BoundCapabilityGrant, ...] = ()
+    attempt_result_admissions: tuple[AttemptResultAdmissionReceipt, ...] = ()
+    memory_projection_bindings: tuple[MemoryProjectionBinding, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -646,6 +654,8 @@ class AdaptiveRuntimeEngine:
         )
         supervisor = RuntimeSupervisor()
         dispatches: list[AdaptiveDispatchRecord] = []
+        result_admissions: list[AttemptResultAdmissionReceipt] = []
+        memory_projection_bindings: list[MemoryProjectionBinding] = []
         eligibility_projections: list[ProviderEligibilityProjection] = []
         execution_bindings: list[ExecutionBindingReceipt] = []
         bound_grants: list[BoundCapabilityGrant] = []
@@ -672,6 +682,7 @@ class AdaptiveRuntimeEngine:
                 invocation_id=result.invocation_id,
             )
             if receipt.commit_authorized:
+                result_admissions.append(receipt)
                 return receipt
             fenced.add(step.step_id)
             telemetry.emit(TelemetryEvent.create(
@@ -739,6 +750,7 @@ class AdaptiveRuntimeEngine:
                 runtime_signature=runtime_signature,
                 runtime_identity=runtime_identity,
                 provider_registry_digest=provider_registry.digest,
+                attempt_result_admissions=(),
             )
         while True:
             remaining = [
@@ -1339,6 +1351,19 @@ class AdaptiveRuntimeEngine:
                             output_ref_kinds=(),
                             error_code=str(exc),
                         )
+                if (
+                    result.success
+                    and result_admission is not None
+                    and request.memory_projection_spec is not None
+                ):
+                    projection_binding = self._bind_memory_projection(
+                        request=request,
+                        step=step,
+                        result=result,
+                        result_admission=result_admission,
+                    )
+                    if projection_binding is not None:
+                        memory_projection_bindings.append(projection_binding)
                 for report_hash in result.evidence_coverage_report_hashes:
                     session = session_manager.attach_adaptive_audit(
                         session_id,
@@ -1560,6 +1585,8 @@ class AdaptiveRuntimeEngine:
             provider_eligibility_projections=tuple(eligibility_projections),
             execution_bindings=tuple(execution_bindings),
             bound_grants=tuple(bound_grants),
+            attempt_result_admissions=tuple(result_admissions),
+            memory_projection_bindings=tuple(memory_projection_bindings),
         )
 
     @staticmethod
@@ -1615,6 +1642,79 @@ class AdaptiveRuntimeEngine:
                     execution_record,
                     verified_artifact_id=artifact_id,
                 )
+
+    @staticmethod
+    def _bind_memory_projection(
+        *,
+        request: AdaptiveRuntimeRequest,
+        step: PlanStepProposal,
+        result: AdaptiveStepResult,
+        result_admission: AttemptResultAdmissionReceipt,
+    ) -> MemoryProjectionBinding | None:
+        spec = request.memory_projection_spec
+        dispatcher = request.dispatcher
+        if (
+            spec is None
+            or dispatcher is None
+            or step.step_id != spec.executor_step_id
+            or not result.output_refs
+            or len(result.output_refs) != len(result.output_ref_kinds)
+        ):
+            return None
+        context = dispatcher.context
+        artifact = None
+        for ref_id, ref_kind in reversed(tuple(zip(result.output_refs, result.output_ref_kinds))):
+            if ref_kind != "execution_artifact" or ref_id not in context.artifacts:
+                continue
+            candidate = context.artifacts[ref_id].artifact
+            if candidate.verification_state.value == "verified":
+                artifact = candidate
+                break
+        if artifact is None:
+            return None
+        verification_receipt = context.artifact_verification_receipts.get(artifact.artifact_id)
+        if verification_receipt is None:
+            return None
+        recipe = context.execution_recipes_by_artifact.get(artifact.artifact_id)
+        if not isinstance(recipe, dict) or not recipe:
+            return None
+        quality_report_hash = str(artifact.metadata.get("quality_report_hash", ""))
+        quality_report = next(
+            (
+                report
+                for report in context.quality_reports.values()
+                if getattr(report, "verified", False)
+                and getattr(report, "report_hash", "") == quality_report_hash
+                and getattr(report, "output_artifact_hash", "") == artifact.blob_hash
+            ),
+            None,
+        )
+        if quality_report is None:
+            return None
+        memory_query = context.memory_queries_by_task.get(spec.task_id)
+        if memory_query is None or memory_query.query_embedding is None:
+            return None
+        memory_commit = build_memory_commit(
+            spec=spec,
+            artifact=artifact,
+            output_contract_version=step.output_contract_version,
+            quality_report_hash=quality_report.report_hash,
+            execution_recipe=recipe,
+            semantic_state_ref_id=next(iter(context.semantic_state_publications), ""),
+            embedding_ref_id=memory_query.query_embedding.embedding_id,
+            artifact_verification_receipt_hash=verification_receipt.receipt_hash,
+            runtime_semantic_commit_receipt_hash=result_admission.receipt_hash,
+        )
+        return MemoryProjectionBinding(
+            projection_spec=spec,
+            expected_memory_commit_hash=memory_commit.commit_hash,
+            source_artifact_id=artifact.artifact_id,
+            source_artifact_blob_hash=artifact.blob_hash,
+            artifact_verification_receipt_hash=verification_receipt.receipt_hash,
+            runtime_semantic_commit_receipt_hash=result_admission.receipt_hash,
+            admission_policy_id=spec.admission_policy_id,
+            admission_policy_version=spec.admission_policy_version,
+        )
 
     @staticmethod
     def _settle_attempt(

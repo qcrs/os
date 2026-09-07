@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import time
 from typing import Callable
@@ -20,9 +20,15 @@ from statebus.contracts import (
     RefStatus,
     ReplayClass,
     RuntimeIdentity,
+    MEMORY_ADMISSION_POLICY_ID,
+    MEMORY_ADMISSION_POLICY_VERSION,
     WorkflowMode,
 )
-from statebus.memory import MemoryCommit, MemoryIndexStore, MemoryRef, MemoryType
+from statebus.memory import (
+    MemoryAdmissionDecision,
+    MemoryAdmissionReceipt,
+    MemoryIndexStore,
+)
 from statebus.refs import ExecutionArtifactRef
 from statebus.runtime.adaptive_dispatcher import (
     AdaptiveCapabilityDispatcher,
@@ -42,6 +48,10 @@ from statebus.runtime.adaptive_runtime import (
     AdaptiveRuntimeEngine,
     AdaptiveRuntimeRequest,
     AdaptiveRuntimeResult,
+)
+from statebus.runtime.memory_projection import (
+    MemoryProjectionSpec,
+    build_memory_commit,
 )
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.capability_validators import (
@@ -197,6 +207,7 @@ class AdaptiveMemoryCommitDecision:
     output_contract_version: str = ""
     validator_digest: str = ""
     benchmark_gold_used: bool = False
+    memory_admission_receipt_hash: str = ""
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -211,6 +222,7 @@ class AdaptiveMemoryCommitDecision:
             "output_contract_version": self.output_contract_version,
             "validator_digest": self.validator_digest,
             "benchmark_gold_used": self.benchmark_gold_used,
+            "memory_admission_receipt_hash": self.memory_admission_receipt_hash,
         }
 
 
@@ -367,6 +379,11 @@ class AdaptiveMainlineRunner:
             layer_name=request.layer_name,
             runtime_identity=runtime_identity,
             identity_is_compatibility_projection=request.runtime_identity is None,
+            memory_projection_spec=self._memory_projection_spec(
+                request=request,
+                approved_plan=approved_plan,
+                context=context,
+            ),
         )
 
         state_cleanup_completed = False
@@ -795,6 +812,64 @@ class AdaptiveMainlineRunner:
                 artifact_hash=executor_artifact.blob_hash,
             )
 
+        producer_attempt_id = str(executor_artifact.metadata.get("attempt_id", ""))
+        matching_result_admissions = tuple(
+            admission
+            for admission in runtime.attempt_result_admissions
+            if admission.commit_authorized
+            and admission.step_id == executor_artifact.step_id
+            and admission.observed_attempt_id == producer_attempt_id
+            and admission.active_attempt_id == producer_attempt_id
+        )
+        matching_grants = tuple(
+            bound_grant
+            for bound_grant in runtime.bound_grants
+            if bound_grant.grant.task_id == runtime_identity.runtime_task_id
+            and bound_grant.grant.session_id == runtime_identity.session_id
+            and bound_grant.grant.step_id == executor_artifact.step_id
+            and bound_grant.grant.attempt_id == producer_attempt_id
+            and bound_grant.grant.grant_hash == verification_receipt.capability_grant_hash
+        )
+        matching_dispatches = tuple(
+            dispatch
+            for dispatch in runtime.dispatches
+            if dispatch.step_id == executor_artifact.step_id
+            and dispatch.attempt_id == producer_attempt_id
+            and dispatch.grant_hash == verification_receipt.capability_grant_hash
+        )
+        if (
+            runtime.runtime_identity != runtime_identity
+            or runtime.approved_plan_hash != approved_plan.approved_plan_hash
+            or runtime.session.task_id != runtime_identity.runtime_task_id
+            or runtime.session.session_id != runtime_identity.session_id
+            or runtime.session.trace_id != runtime_identity.trace_id
+            or len(matching_result_admissions) != 1
+            or len(matching_grants) != 1
+            or len(matching_dispatches) != 1
+        ):
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_runtime_commit_witness_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+            )
+        result_admission = matching_result_admissions[0]
+        bound_grant = matching_grants[0]
+        if (
+            verification_receipt.execution_binding_hash
+            != bound_grant.execution_binding_hash
+            or executor_artifact.metadata.get("attempt_result_admission_receipt_hash")
+            != result_admission.receipt_hash
+        ):
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_runtime_commit_witness_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+            )
+
         artifact_path = Path(executor_artifact.root_id) / executor_artifact.relpath
         if not artifact_path.is_file() or sha256_digest(artifact_path.read_bytes()) != executor_artifact.blob_hash:
             return AdaptiveMemoryCommitDecision(
@@ -842,76 +917,93 @@ class AdaptiveMainlineRunner:
         executor_step = next(
             step for step in approved_plan.steps if step.step_id == executor_artifact.step_id
         )
-        replay_class = request.memory_commit_replay_class
-        memory_type = {
-            ReplayClass.EXACT_REPLAY: MemoryType.EXACT_REPLAY,
-            ReplayClass.VALIDATED_REPLAY: MemoryType.VALIDATED_REPLAY,
-        }.get(replay_class, MemoryType.STRATEGY)
-        memory_id = (
-            f"memory:{request.task_id}:"
-            f"{executor_artifact.blob_hash.removeprefix('sha256:')[:16]}"
+        matching_projection_bindings = tuple(
+            binding
+            for binding in runtime.memory_projection_bindings
+            if binding.source_artifact_id == executor_artifact.artifact_id
+            and binding.source_artifact_blob_hash == executor_artifact.blob_hash
+            and binding.artifact_verification_receipt_hash == verification_receipt.receipt_hash
+            and binding.runtime_semantic_commit_receipt_hash == result_admission.receipt_hash
         )
-        created_at_ns = time.time_ns()
-        tags = tuple(dict.fromkeys((
-            request.canonical_task_spec.task_family,
-            request.canonical_task_spec.intent_op,
-            *request.canonical_task_spec.target_entities,
-            *request.memory_tags,
-        )))
-        recipe_hash = sha256_digest(recipe)
-        summary = (
-            f"Verified {recipe.get('execution_kind', 'analysis')} recipe for "
-            f"{request.canonical_task_spec.task_family}/"
-            f"{request.canonical_task_spec.intent_op}; artifact lineage retained."
-        )
-        memory_store.put_embedding(memory_query.query_embedding)
-        commit = MemoryCommit(
-            memory_ref=MemoryRef(
-                memory_id=memory_id,
-                memory_type=memory_type,
-                replay_class=replay_class,
-                score=1.0,
-                source_task_id=request.task_id,
-                source_agent="executor",
-                created_at_ns=created_at_ns,
-                task_theme=request.memory_topic or request.canonical_task_spec.task_family,
-                tags=tags,
-                source_role_path=("planner", "retriever", "executor"),
-                # Keep the legacy memory provenance projection in Batch 1;
-                # RunID is recorded by the runtime identity/manifest without
-                # changing MemoryRef hashing or replay semantics.
-                producer_run_id=request.trace_id,
-                summary=summary,
-                canonical_task_spec_hash=request.canonical_task_spec_hash,
+        if len(matching_projection_bindings) != 1:
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_memory_projection_binding_mismatch",
                 artifact_ref_id=executor_artifact.artifact_id,
-                semantic_state_ref_id=next(iter(context.semantic_state_publications), ""),
-                embedding_ref_id=memory_query.query_embedding.embedding_id,
-                manifest_hash=executor_artifact.manifest_hash,
-                metadata={
-                    "runtime_signature_hash": context.runtime_compatibility_signature,
-                    "output_contract_version": executor_step.output_contract_version,
-                    "validator_digest": context.validator_digest,
-                    "quality_report_hash": quality_report.report_hash,
-                    "input_lineage_hashes": list(context.input_lineage_hashes),
-                    "input_schema_digest": context.input_schema_digest,
-                    "execution_recipe": dict(recipe),
-                    "execution_recipe_hash": recipe_hash,
-                    "replay_ready": executor_artifact.replay_ready,
-                    "artifact_root_id": executor_artifact.root_id,
-                    "artifact_relpath": executor_artifact.relpath,
-                    "artifact_blob_hash": executor_artifact.blob_hash,
-                    "benchmark_gold_used": False,
-                },
-            ),
-            canonical_task_spec=request.canonical_task_spec,
-            required_outputs=request.canonical_task_spec.required_outputs,
-            quality_floor_pass=True,
-            created_from_artifact_hash=executor_artifact.blob_hash,
+                artifact_hash=executor_artifact.blob_hash,
+                quality_report_hash=quality_report.report_hash,
+            )
+        projection_binding = matching_projection_bindings[0]
+        if (
+            projection_binding.admission_policy_id != MEMORY_ADMISSION_POLICY_ID
+            or projection_binding.admission_policy_version != MEMORY_ADMISSION_POLICY_VERSION
+            or projection_binding.projection_spec.task_id != runtime_identity.runtime_task_id
+            or projection_binding.projection_spec.trace_id != runtime_identity.trace_id
+            or projection_binding.projection_spec.canonical_task_spec_hash
+            != request.canonical_task_spec_hash
+            or projection_binding.projection_spec.executor_step_id != executor_artifact.step_id
+        ):
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_memory_projection_binding_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+                quality_report_hash=quality_report.report_hash,
+            )
+        if projection_binding.projection_spec.canonical_task_spec != request.canonical_task_spec:
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_memory_projection_binding_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+                quality_report_hash=quality_report.report_hash,
+            )
+        memory_store.put_embedding(memory_query.query_embedding)
+        committed = build_memory_commit(
+            spec=projection_binding.projection_spec,
+            artifact=executor_artifact,
+            output_contract_version=executor_step.output_contract_version,
+            quality_report_hash=quality_report.report_hash,
+            execution_recipe=recipe,
+            semantic_state_ref_id=next(iter(context.semantic_state_publications), ""),
+            embedding_ref_id=memory_query.query_embedding.embedding_id,
+            artifact_verification_receipt_hash=verification_receipt.receipt_hash,
+            runtime_semantic_commit_receipt_hash=result_admission.receipt_hash,
         )
-        committed = memory_store.commit_candidate(
-            commit=commit,
-            quality_floor_pass=True,
-            answer_adopted=True,
+        if committed.commit_hash != projection_binding.expected_memory_commit_hash:
+            return AdaptiveMemoryCommitDecision(
+                True,
+                False,
+                "terminal_executor_memory_projection_mismatch",
+                artifact_ref_id=executor_artifact.artifact_id,
+                artifact_hash=executor_artifact.blob_hash,
+                quality_report_hash=quality_report.report_hash,
+            )
+        admission_receipt = MemoryAdmissionReceipt(
+            memory_id=committed.memory_ref.memory_id,
+            memory_commit_hash=committed.commit_hash,
+            memory_type=committed.memory_ref.memory_type.value,
+            source_artifact_id=verification_receipt.artifact_id,
+            source_artifact_blob_hash=verification_receipt.candidate_blob_hash,
+            artifact_verification_receipt_hash=verification_receipt.receipt_hash,
+            admission_policy_id=MEMORY_ADMISSION_POLICY_ID,
+            admission_policy_version=MEMORY_ADMISSION_POLICY_VERSION,
+            decision=MemoryAdmissionDecision.ADMITTED,
+            reason="runtime_verified_artifact_admitted",
+            admitted_at_ns=time.time_ns(),
+            memory_admission_receipt_id=(
+                f"memory-admission:{committed.memory_ref.memory_id}:"
+                f"{committed.commit_hash[:16]}"
+            ),
+            runtime_semantic_commit_receipt_hash=result_admission.receipt_hash,
+            memory_projection_binding_hash=projection_binding.binding_hash,
+        )
+        committed, admission_receipt = memory_store.persist_admitted(
+            commit=committed,
+            admission_receipt=admission_receipt,
         )
         return AdaptiveMemoryCommitDecision(
             attempted=True,
@@ -925,6 +1017,35 @@ class AdaptiveMainlineRunner:
             output_contract_version=executor_step.output_contract_version,
             validator_digest=context.validator_digest,
             benchmark_gold_used=False,
+            memory_admission_receipt_hash=admission_receipt.receipt_hash,
+        )
+
+    @staticmethod
+    def _memory_projection_spec(
+        *,
+        request: AdaptiveMainlineRequest,
+        approved_plan: ApprovedPlan,
+        context: AdaptiveDispatchContext,
+    ) -> MemoryProjectionSpec | None:
+        if request.canonical_task_spec is None or not request.memory_commit_enabled:
+            return None
+        executor_steps = tuple(step for step in approved_plan.steps if step.role == "executor")
+        if not executor_steps:
+            return None
+        return MemoryProjectionSpec(
+            task_id=request.task_id,
+            trace_id=request.trace_id,
+            canonical_task_spec=request.canonical_task_spec,
+            canonical_task_spec_hash=request.canonical_task_spec_hash,
+            executor_step_id=executor_steps[-1].step_id,
+            memory_replay_class=request.memory_commit_replay_class,
+            memory_topic=request.memory_topic,
+            memory_tags=tuple(request.memory_tags),
+            input_lineage_hashes=tuple(context.input_lineage_hashes),
+            input_schema_digest=context.input_schema_digest,
+            validator_digest=context.validator_digest,
+            runtime_compatibility_signature=context.runtime_compatibility_signature,
+            created_at_ns=time.time_ns(),
         )
 
     @staticmethod
@@ -1000,6 +1121,16 @@ class AdaptiveMainlineRunner:
                     context.artifact_verification_receipts.items()
                 )
             },
+            "memory_admission_receipts": {
+                memory_id: receipt.canonical_payload()
+                for memory_id, receipt in sorted(
+                    infrastructure.memory_store.admission_receipts.items()
+                )
+            },
+            "memory_projection_bindings": [
+                binding.canonical_payload()
+                for binding in runtime.memory_projection_bindings
+            ],
             "evidence_ref_ids": sorted(context.evidence_packs),
             "created_at_ns": time.time_ns(),
         }

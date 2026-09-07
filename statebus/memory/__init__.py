@@ -11,6 +11,8 @@ from statebus.memory.embedding import (
 )
 from statebus.memory.models import (
     MemoryCommit,
+    MemoryAdmissionDecision,
+    MemoryAdmissionReceipt,
     MemoryCandidatePool,
     MemoryCommitStatus,
     MemoryCompatibilityDecision,
@@ -26,7 +28,7 @@ from statebus.memory.models import (
     MemoryValidationStatus,
     StructuredEmbedding,
 )
-from statebus.memory.store import MemoryIndexStore
+from statebus.memory.store import MemoryAdmissionError, MemoryIndexStore
 
 __all__ = [
     "DeterministicEmbeddingEncoder",
@@ -35,10 +37,13 @@ __all__ = [
     "build_embedding_encoder",
     "MemoryCandidatePool",
     "MemoryCommit",
+    "MemoryAdmissionDecision",
+    "MemoryAdmissionReceipt",
     "MemoryCommitStatus",
     "MemoryCompatibilityDecision",
     "MemoryConsumptionRecord",
     "MemoryIndexStore",
+    "MemoryAdmissionError",
     "MemoryMatch",
     "MemoryMatchResult",
     "MemoryQuery",

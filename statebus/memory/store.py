@@ -7,9 +7,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from statebus.contracts import CompatibilityVerdict, ReplayClass
+from statebus.contracts import (
+    CompatibilityVerdict,
+    ReplayClass,
+)
 from statebus.memory.embedding import cosine_similarity
 from statebus.memory.models import (
+    MemoryAdmissionDecision,
+    MemoryAdmissionReceipt,
     MemoryCommit,
     MemoryCandidatePool,
     MemoryCommitStatus,
@@ -26,10 +31,15 @@ from statebus.memory.models import (
 )
 
 
+class MemoryAdmissionError(ValueError):
+    """A Memory commit failed the Runtime-owned admission boundary."""
+
+
 @dataclass
 class MemoryIndexStore:
     embeddings: dict[str, StructuredEmbedding] = field(default_factory=dict)
     commits: dict[str, MemoryCommit] = field(default_factory=dict)
+    admission_receipts: dict[str, MemoryAdmissionReceipt] = field(default_factory=dict)
     store_root: Path | None = None
     _db: sqlite3.Connection | None = field(default=None, init=False, repr=False, compare=False)
     _fts5_enabled: bool = field(default=False, init=False, repr=False, compare=False)
@@ -61,6 +71,12 @@ class MemoryIndexStore:
         return self.store_root / "commit_registry.json"
 
     @property
+    def admission_receipt_registry_path(self) -> Path | None:
+        if self.store_root is None:
+            return None
+        return self.store_root / "admission_receipt_registry.json"
+
+    @property
     def sqlite_index_path(self) -> Path | None:
         if self.store_root is None:
             return None
@@ -73,9 +89,71 @@ class MemoryIndexStore:
         return embedding
 
     def put_commit(self, commit: MemoryCommit) -> MemoryCommit:
+        self._reject_admission_hash_conflict(commit)
         self.commits[commit.memory_ref.memory_id] = commit
         self._persist_commit(commit)
         return commit
+
+    def persist_admitted(
+        self,
+        *,
+        commit: MemoryCommit,
+        admission_receipt: MemoryAdmissionReceipt,
+    ) -> tuple[MemoryCommit, MemoryAdmissionReceipt]:
+        """Persist a Runtime-issued admission receipt and exact Memory commit."""
+        if not self._receipt_matches_commit(commit, admission_receipt):
+            raise MemoryAdmissionError("memory_admission_receipt_mismatch")
+        if (
+            not commit.quality_floor_pass
+            or commit.memory_ref.commit_status != MemoryCommitStatus.COMMITTED
+            or commit.memory_ref.validation_status != MemoryValidationStatus.PASSED
+            or commit.memory_ref.memory_type
+            not in {
+                MemoryType.STRATEGY,
+                MemoryType.VALIDATED_REPLAY,
+                MemoryType.EXACT_REPLAY,
+            }
+            or not commit.memory_ref.artifact_ref_id
+            or not commit.created_from_artifact_hash
+            or not admission_receipt.memory_admission_receipt_id.strip()
+            or not admission_receipt.runtime_semantic_commit_receipt_hash.strip()
+            or not admission_receipt.memory_projection_binding_hash.strip()
+            or not admission_receipt.admission_policy_id.strip()
+            or not admission_receipt.admission_policy_version.strip()
+            or commit.memory_ref.metadata.get("artifact_verification_receipt_hash")
+            != admission_receipt.artifact_verification_receipt_hash
+        ):
+            raise MemoryAdmissionError("memory_admission_commit_not_canonical")
+        memory_id = commit.memory_ref.memory_id
+        existing = self.commits.get(memory_id)
+        existing_receipt = self.admission_receipts.get(memory_id)
+        if existing is not None:
+            if existing.commit_hash != commit.commit_hash:
+                raise MemoryAdmissionError("memory_id_commit_hash_conflict")
+            if existing_receipt is None:
+                self.commits[memory_id] = commit
+                self.admission_receipts[memory_id] = admission_receipt
+                self._persist_commit(commit)
+                self._persist_admission_receipt(admission_receipt)
+                return commit, admission_receipt
+            if not self._receipt_matches_commit(existing, existing_receipt):
+                raise MemoryAdmissionError("memory_admission_receipt_mismatch")
+            if (
+                existing_receipt.artifact_verification_receipt_hash
+                != admission_receipt.artifact_verification_receipt_hash
+                or existing_receipt.runtime_semantic_commit_receipt_hash
+                != admission_receipt.runtime_semantic_commit_receipt_hash
+                or existing_receipt.admission_policy_id != admission_receipt.admission_policy_id
+                or existing_receipt.admission_policy_version
+                != admission_receipt.admission_policy_version
+            ):
+                raise MemoryAdmissionError("memory_admission_artifact_receipt_conflict")
+            return existing, existing_receipt
+        self.commits[memory_id] = commit
+        self.admission_receipts[memory_id] = admission_receipt
+        self._persist_commit(commit)
+        self._persist_admission_receipt(admission_receipt)
+        return commit, admission_receipt
 
     def commit_candidate(
         self,
@@ -97,6 +175,7 @@ class MemoryIndexStore:
             answer_adopted=answer_adopted,
         )
         committed = replace(commit, memory_ref=committed_ref, quality_floor_pass=quality_floor_pass)
+        self._reject_admission_hash_conflict(committed)
         self.commits[committed.memory_ref.memory_id] = committed
         self._persist_commit(committed)
         return committed
@@ -112,7 +191,9 @@ class MemoryIndexStore:
         )
         invalidated = replace(commit, memory_ref=invalidated_ref, quality_floor_pass=False)
         self.commits[memory_id] = invalidated
+        self.admission_receipts.pop(memory_id, None)
         self._persist_commit(invalidated)
+        self._persist_admission_receipts()
         return invalidated
 
     def _faiss_score_map(self, query_embedding: StructuredEmbedding) -> dict[str, float]:
@@ -182,7 +263,7 @@ class MemoryIndexStore:
             else:
                 score = cosine_similarity(query_embedding, self.embeddings[ref.embedding_ref_id])
             replay_class = ref.replay_class if allow_replay else ReplayClass.ASSIST
-            if ref.commit_status != MemoryCommitStatus.COMMITTED:
+            if ref.commit_status != MemoryCommitStatus.COMMITTED or not self._is_admitted(commit):
                 replay_class = ReplayClass.ASSIST
             matches.append(
                 MemoryMatch(
@@ -403,8 +484,8 @@ class MemoryIndexStore:
         scored.sort(key=lambda item: (-item[0], item[1]))
         return [commit for _score, _memory_id, commit in scored[:limit]]
 
-    @staticmethod
     def _compatibility_decision(
+        self,
         commit: MemoryCommit,
         query: MemoryQuery,
         *,
@@ -420,6 +501,16 @@ class MemoryIndexStore:
         if ref.validation_status != MemoryValidationStatus.PASSED:
             hard_incompatible = True
             reasons.append("memory_not_runtime_verified")
+        admission_receipt = self.admission_receipts.get(ref.memory_id)
+        if admission_receipt is None:
+            hard_incompatible = True
+            reasons.append("memory_admission_receipt_missing")
+        elif not self._receipt_matches_commit(commit, admission_receipt):
+            hard_incompatible = True
+            reasons.append("memory_admission_receipt_mismatch")
+        elif ref.metadata.get("artifact_verification_receipt_hash") != admission_receipt.artifact_verification_receipt_hash:
+            hard_incompatible = True
+            reasons.append("memory_admission_artifact_receipt_mismatch")
 
         stored_runtime_signature = str(ref.metadata.get("runtime_signature_hash", ""))
         if query.compatibility_signature and stored_runtime_signature != query.compatibility_signature:
@@ -528,6 +619,19 @@ class MemoryIndexStore:
             reasons=tuple(reasons),
         )
 
+    def _is_admitted(self, commit: MemoryCommit) -> bool:
+        receipt = self.admission_receipts.get(commit.memory_ref.memory_id)
+        if receipt is None:
+            return False
+        if not self._receipt_matches_commit(commit, receipt):
+            return False
+        return (
+            commit.memory_ref.commit_status == MemoryCommitStatus.COMMITTED
+            and commit.memory_ref.validation_status == MemoryValidationStatus.PASSED
+            and commit.memory_ref.metadata.get("artifact_verification_receipt_hash")
+            == receipt.artifact_verification_receipt_hash
+        )
+
     @staticmethod
     def _gated_replay_class(
         commit: MemoryCommit,
@@ -535,7 +639,7 @@ class MemoryIndexStore:
     ) -> ReplayClass | None:
         """Compatibility shim for callers that still exercise the old helper."""
 
-        decision = MemoryIndexStore._compatibility_decision(commit, query, raw_rank=1)
+        decision = self._compatibility_decision(commit, query, raw_rank=1)
         return decision.replay_class if decision.policy_approved else None
 
     def load_persisted_state(self) -> None:
@@ -548,6 +652,9 @@ class MemoryIndexStore:
             commit = self._commit_from_payload(payload)
             self.commits[commit.memory_ref.memory_id] = commit
             self._index_commit(commit)
+        for payload in self._read_registry(self.admission_receipt_registry_path).values():
+            receipt = self._admission_receipt_from_payload(payload)
+            self.admission_receipts[receipt.memory_id] = receipt
 
     def lookup_by_keyword(self, keyword: str, *, limit: int = 3) -> list[MemoryCommit]:
         needle = keyword.strip().lower()
@@ -707,6 +814,47 @@ class MemoryIndexStore:
         payload = self._read_registry(self.commit_registry_path)
         payload[commit.memory_ref.memory_id] = commit.canonical_payload()
         self._write_registry(self.commit_registry_path, payload)
+
+    def _persist_admission_receipt(self, receipt: MemoryAdmissionReceipt) -> None:
+        if self.store_root is None:
+            return
+        payload = self._read_registry(self.admission_receipt_registry_path)
+        payload[receipt.memory_id] = receipt.canonical_payload()
+        self._write_registry(self.admission_receipt_registry_path, payload)
+
+    def _persist_admission_receipts(self) -> None:
+        if self.store_root is None:
+            return
+        self._write_registry(
+            self.admission_receipt_registry_path,
+            {
+                memory_id: receipt.canonical_payload()
+                for memory_id, receipt in self.admission_receipts.items()
+            },
+        )
+
+    @staticmethod
+    def _receipt_matches_commit(
+        commit: MemoryCommit,
+        receipt: MemoryAdmissionReceipt,
+    ) -> bool:
+        return (
+            receipt.decision == MemoryAdmissionDecision.ADMITTED
+            and receipt.memory_id == commit.memory_ref.memory_id
+            and receipt.memory_commit_hash == commit.commit_hash
+            and receipt.memory_type == commit.memory_ref.memory_type.value
+            and receipt.source_artifact_id == commit.memory_ref.artifact_ref_id
+            and receipt.source_artifact_blob_hash == commit.created_from_artifact_hash
+            and receipt.runtime_semantic_commit_receipt_hash
+            == commit.memory_ref.metadata.get("runtime_semantic_commit_receipt_hash")
+            and bool(receipt.runtime_semantic_commit_receipt_hash.strip())
+            and bool(receipt.memory_projection_binding_hash.strip())
+        )
+
+    def _reject_admission_hash_conflict(self, commit: MemoryCommit) -> None:
+        receipt = self.admission_receipts.get(commit.memory_ref.memory_id)
+        if receipt is not None and receipt.memory_commit_hash != commit.commit_hash:
+            raise MemoryAdmissionError("memory_id_commit_hash_conflict")
 
     def _init_db(self) -> None:
         db_target = ":memory:" if self.sqlite_index_path is None else str(self.sqlite_index_path)
@@ -901,5 +1049,33 @@ class MemoryIndexStore:
             required_outputs=tuple(payload.get("required_outputs", [])),
             quality_floor_pass=bool(payload.get("quality_floor_pass", False)),
             created_from_artifact_hash=str(payload.get("created_from_artifact_hash", "")),
+            schema_version=str(payload.get("schema_version", "")),
+        )
+
+    def _admission_receipt_from_payload(
+        self,
+        payload: dict[str, object],
+    ) -> MemoryAdmissionReceipt:
+        return MemoryAdmissionReceipt(
+            memory_id=str(payload["memory_id"]),
+            memory_commit_hash=str(payload["memory_commit_hash"]),
+            memory_type=str(payload["memory_type"]),
+            source_artifact_id=str(payload["source_artifact_id"]),
+            source_artifact_blob_hash=str(payload["source_artifact_blob_hash"]),
+            artifact_verification_receipt_hash=str(
+                payload["artifact_verification_receipt_hash"]
+            ),
+            admission_policy_id=str(payload["admission_policy_id"]),
+            admission_policy_version=str(payload["admission_policy_version"]),
+            decision=MemoryAdmissionDecision(str(payload["decision"])),
+            reason=str(payload["reason"]),
+            admitted_at_ns=int(payload["admitted_at_ns"]),
+            memory_admission_receipt_id=str(payload.get("memory_admission_receipt_id", "")),
+            runtime_semantic_commit_receipt_hash=str(
+                payload.get("runtime_semantic_commit_receipt_hash", "")
+            ),
+            memory_projection_binding_hash=str(
+                payload.get("memory_projection_binding_hash", "")
+            ),
             schema_version=str(payload.get("schema_version", "")),
         )

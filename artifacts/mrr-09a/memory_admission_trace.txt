@@ -1,0 +1,23 @@
+MRR-09A memory admission trace
+Date: 2026-09-06
+
+Targeted test:
+test_mrr_09a_runtime_admission_persists_exact_receipt_binding
+
+Observed production chain:
+Runtime verified executor Artifact
+  -> AdaptiveMainlineRunner._commit_verified_memory()
+  -> committed MemoryCommit with COMMITTED/PASSED projection
+  -> MemoryAdmissionReceipt(decision=ADMITTED)
+  -> MemoryIndexStore.persist_admitted()
+  -> commit_registry.json + admission_receipt_registry.json
+  -> fresh MemoryIndexStore reload
+
+Receipt bindings verified:
+- memory_commit_hash == MemoryCommit.commit_hash
+- source_artifact_id == MemoryCommit.memory_ref.artifact_ref_id
+- source_artifact_blob_hash == MemoryCommit.created_from_artifact_hash
+- artifact_verification_receipt_hash == exact ArtifactVerificationReceipt.receipt_hash
+- admission policy == adaptive_runtime_verified_executor_artifact / v1
+- replay_ready remains false
+- repeated persistence of the same commit/receipt is idempotent

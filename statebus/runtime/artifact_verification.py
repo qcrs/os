@@ -79,6 +79,7 @@ class RuntimeArtifactVerificationAuthority:
             metadata={
                 **candidate.metadata,
                 "artifact_verification_receipt_hash": receipt.receipt_hash,
+                "attempt_result_admission_receipt_hash": result_admission.receipt_hash,
             },
         )
         return verified, receipt

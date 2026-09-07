@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from statebus.contracts import (
+    MEMORY_ADMISSION_RECEIPT_SCHEMA_VERSION,
     MEMORY_CANDIDATE_POOL_SCHEMA_VERSION,
     MEMORY_COMMIT_SCHEMA_VERSION,
     MEMORY_MATCH_RESULT_SCHEMA_VERSION,
@@ -56,6 +57,60 @@ class MemoryValidationStatus(StrEnum):
     UNCHECKED = "unchecked"
     PASSED = "passed"
     FAILED = "failed"
+
+
+class MemoryAdmissionDecision(StrEnum):
+    ADMITTED = "ADMITTED"
+    REJECTED = "REJECTED"
+
+
+@dataclass(frozen=True)
+class MemoryAdmissionReceipt:
+    """Runtime witness for one exact admitted Memory commit.
+
+    The upstream producer and validator provenance remains owned by the
+    linked ArtifactVerificationReceipt; this receipt only records the Memory
+    admission decision and its exact bindings.
+    """
+
+    memory_id: str
+    memory_commit_hash: str
+    memory_type: str
+    source_artifact_id: str
+    source_artifact_blob_hash: str
+    artifact_verification_receipt_hash: str
+    admission_policy_id: str
+    admission_policy_version: str
+    decision: MemoryAdmissionDecision
+    reason: str
+    admitted_at_ns: int
+    memory_admission_receipt_id: str = ""
+    runtime_semantic_commit_receipt_hash: str = ""
+    memory_projection_binding_hash: str = ""
+    schema_version: str = MEMORY_ADMISSION_RECEIPT_SCHEMA_VERSION
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "memory_id": self.memory_id,
+            "memory_commit_hash": self.memory_commit_hash,
+            "memory_type": self.memory_type,
+            "source_artifact_id": self.source_artifact_id,
+            "source_artifact_blob_hash": self.source_artifact_blob_hash,
+            "artifact_verification_receipt_hash": self.artifact_verification_receipt_hash,
+            "admission_policy_id": self.admission_policy_id,
+            "admission_policy_version": self.admission_policy_version,
+            "decision": self.decision.value,
+            "reason": self.reason,
+            "admitted_at_ns": self.admitted_at_ns,
+            "memory_admission_receipt_id": self.memory_admission_receipt_id,
+            "runtime_semantic_commit_receipt_hash": self.runtime_semantic_commit_receipt_hash,
+            "memory_projection_binding_hash": self.memory_projection_binding_hash,
+            "schema_version": self.schema_version,
+        }
+
+    @property
+    def receipt_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
 
 
 @dataclass(frozen=True)

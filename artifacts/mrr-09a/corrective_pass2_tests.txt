@@ -1,0 +1,52 @@
+MRR-09A Corrective Pass 2 evidence
+Date: 2026-09-07
+
+Chosen exact consequence binding:
+- Runtime-issued MemoryProjectionBinding created after executor Artifact
+  verification and before Attempt settlement.
+- Binding preserves an immutable MemoryProjectionSpec and the exact final
+  MemoryCommit identity.
+- AdaptiveRuntimeResult carries the binding after settlement.
+
+Targeted tests:
+- test_mrr_09a_corrective_pass2_runtime_binds_exact_memory_projection
+- test_mrr_09a_corrective_pass2_fresh_store_rejects_modified_projection
+- test_mrr_09a_corrective_pass2_exact_projection_is_idempotent
+- test_mrr_09a_corrective_verified_receipt_alone_cannot_admit
+
+Command:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_corrective_pass2_runtime_binds_exact_memory_projection \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_corrective_pass2_fresh_store_rejects_modified_projection \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_corrective_pass2_exact_projection_is_idempotent \
+  tests/test_adaptive_mainline_integration.py::test_mrr_09a_corrective_verified_receipt_alone_cannot_admit
+
+Result:
+4 passed in 1.19s
+
+Observed production chain:
+Attempt active
+  -> RuntimeSessionManager.admit_attempt_result()
+  -> ArtifactVerificationReceipt
+  -> Runtime MemoryProjectionBinding
+  -> Attempt settlement
+  -> AdaptiveRuntimeResult preserves binding
+  -> Mainline materializes the bound MemoryCommit
+  -> MemoryAdmissionReceipt
+
+Assertions:
+- Runtime binding commit_hash equals the admitted MemoryCommit commit_hash.
+- MemoryAdmissionReceipt retains the exact Runtime projection binding hash.
+- Binding was preserved after the producer Attempt had no active pointer.
+- A modified execution recipe was rejected in a fresh MemoryIndexStore before
+  any commit or admission receipt was persisted.
+- Repeated persistence of the exact bound commit/receipt remained idempotent.
+- The adjacent verified-receipt-only path still failed closed.
+
+Additional check:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m compileall -q \
+  statebus/runtime/memory_projection.py \
+  statebus/runtime/adaptive_runtime.py \
+  statebus/runtime/adaptive_mainline.py
+
+Result: passed.

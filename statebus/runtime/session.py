@@ -123,6 +123,10 @@ class AttemptResultAdmissionReceipt:
             "recorded_at_ns": self.recorded_at_ns,
         }
 
+    @property
+    def receipt_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
 
 @dataclass(frozen=True)
 class RuntimeReplanRecord:

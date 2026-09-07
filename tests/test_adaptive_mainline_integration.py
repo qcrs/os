@@ -1201,6 +1201,356 @@ def test_adaptive_memory_commit_gate_requires_runtime_verification_receipt(
     assert accepted.reason == "runtime_quality_and_artifact_hash_verified"
 
 
+def test_mrr_09a_verified_artifact_does_not_imply_memory_admission(tmp_path: Path) -> None:
+    request = replace(
+        _memory_loop_request(
+            tmp_path,
+            task_id="verified-only",
+            value=19.0,
+            family_memory_root=tmp_path / "verified-only-memory",
+            program_calls=[],
+        ),
+        memory_commit_enabled=False,
+    )
+    result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+
+    executor_artifact = next(
+        item.artifact
+        for item in result.context.artifacts.values()
+        if item.artifact.produced_by == "executor" and item.artifact.step_id == "execute"
+    )
+    assert executor_artifact.verification_state is RefStatus.VERIFIED
+    assert executor_artifact.artifact_id in result.context.artifact_verification_receipts
+    assert result.memory_commit_decision.reason == "memory_commit_disabled"
+    assert result.infrastructure.memory_store.commits == {}
+    assert result.infrastructure.memory_store.admission_receipts == {}
+
+
+def test_mrr_09a_runtime_admission_persists_exact_receipt_binding(tmp_path: Path) -> None:
+    from statebus.memory import MemoryIndexStore
+
+    memory_root = tmp_path / "admitted-memory"
+    result = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="admitted-task",
+            value=23.0,
+            family_memory_root=memory_root,
+            program_calls=[],
+        ),
+    )
+
+    memory_id = result.memory_commit_decision.memory_id
+    commit = result.infrastructure.memory_store.commits[memory_id]
+    admission = result.infrastructure.memory_store.admission_receipts[memory_id]
+    artifact_receipt = result.context.artifact_verification_receipts[admission.source_artifact_id]
+    executor_artifact = result.context.artifacts[admission.source_artifact_id].artifact
+    assert admission.memory_commit_hash == commit.commit_hash
+    assert admission.memory_type == commit.memory_ref.memory_type.value
+    assert admission.source_artifact_id == commit.memory_ref.artifact_ref_id
+    assert admission.source_artifact_blob_hash == commit.created_from_artifact_hash
+    assert admission.artifact_verification_receipt_hash == artifact_receipt.receipt_hash
+    assert admission.runtime_semantic_commit_receipt_hash
+    assert admission.runtime_semantic_commit_receipt_hash == (
+        next(
+            receipt
+            for receipt in result.runtime.attempt_result_admissions
+            if receipt.step_id == artifact_receipt.producer_step_id
+            and receipt.observed_attempt_id == artifact_receipt.producer_attempt_id
+        ).receipt_hash
+    )
+    assert executor_artifact.metadata["attempt_result_admission_receipt_hash"] == (
+        admission.runtime_semantic_commit_receipt_hash
+    )
+    assert commit.memory_ref.metadata["runtime_semantic_commit_receipt_hash"] == (
+        admission.runtime_semantic_commit_receipt_hash
+    )
+    assert admission.decision.value == "ADMITTED"
+    assert commit.memory_ref.metadata["replay_ready"] is False
+    assert result.memory_commit_decision.memory_admission_receipt_hash == admission.receipt_hash
+
+    restored = MemoryIndexStore(store_root=memory_root)
+    restored.load_persisted_state()
+    restored_commit = restored.commits[memory_id]
+    restored_admission = restored.admission_receipts[memory_id]
+    assert restored_commit.commit_hash == commit.commit_hash
+    assert restored_admission.canonical_payload() == admission.canonical_payload()
+    assert restored._is_admitted(restored_commit)
+    same_commit, same_receipt = restored.persist_admitted(
+        commit=restored_commit,
+        admission_receipt=restored_admission,
+    )
+    assert same_commit.commit_hash == restored_commit.commit_hash
+    assert same_receipt.receipt_hash == restored_admission.receipt_hash
+
+
+def test_mrr_09a_corrective_runtime_witness_survives_settlement(
+    tmp_path: Path,
+) -> None:
+    result = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="corrective-authorized",
+            value=31.0,
+            family_memory_root=tmp_path / "corrective-authorized-memory",
+            program_calls=[],
+        ),
+    )
+
+    assert result.runtime.completed is True
+    assert result.memory_commit_decision.committed is True
+    assert result.runtime.attempt_result_admissions
+    assert all(
+        receipt.commit_authorized
+        for receipt in result.runtime.attempt_result_admissions
+    )
+    assert all(
+        result.runtime.session.active_attempt_id(receipt.step_id) is None
+        for receipt in result.runtime.attempt_result_admissions
+    )
+
+
+def test_mrr_09a_corrective_verified_receipt_alone_cannot_admit(
+    tmp_path: Path,
+) -> None:
+    from statebus.memory import MemoryIndexStore
+
+    request = _memory_loop_request(
+        tmp_path,
+        task_id="corrective-missing-witness",
+        value=37.0,
+        family_memory_root=tmp_path / "source-corrective-missing-witness",
+        program_calls=[],
+    )
+    result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+    runtime_without_witness = replace(result.runtime, attempt_result_admissions=())
+    rejected_store = MemoryIndexStore(store_root=tmp_path / "rejected-corrective-missing-witness")
+
+    decision = AdaptiveMainlineRunner._commit_verified_memory(
+        request=request,
+        approved_plan=AdaptiveMainlineRunner._assemble_plan(request)[1],
+        runtime=runtime_without_witness,
+        context=result.context,
+        memory_store=rejected_store,
+    )
+
+    assert decision.attempted is True
+    assert decision.committed is False
+    assert decision.reason == "terminal_executor_runtime_commit_witness_mismatch"
+    assert rejected_store.commits == {}
+    assert rejected_store.admission_receipts == {}
+
+
+def test_mrr_09a_corrective_mismatched_runtime_witness_cannot_admit(
+    tmp_path: Path,
+) -> None:
+    from statebus.memory import MemoryIndexStore
+
+    source = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path / "source",
+            task_id="corrective-witness-source",
+            value=41.0,
+            family_memory_root=tmp_path / "source-memory",
+            program_calls=[],
+        ),
+    )
+    target_request = _memory_loop_request(
+        tmp_path / "target",
+        task_id="corrective-witness-target",
+        value=43.0,
+        family_memory_root=tmp_path / "target-memory",
+        program_calls=[],
+    )
+    target = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=target_request)
+    target_executor = next(
+        item.artifact
+        for item in target.context.artifacts.values()
+        if item.artifact.produced_by == "executor" and item.artifact.step_id == "execute"
+    )
+    source_witness = next(
+        receipt
+        for receipt in source.runtime.attempt_result_admissions
+        if receipt.step_id == "execute"
+    )
+    mismatched_runtime = replace(
+        target.runtime,
+        attempt_result_admissions=(source_witness,),
+    )
+    rejected_store = MemoryIndexStore(store_root=tmp_path / "rejected-corrective-mismatch")
+
+    decision = AdaptiveMainlineRunner._commit_verified_memory(
+        request=target_request,
+        approved_plan=AdaptiveMainlineRunner._assemble_plan(target_request)[1],
+        runtime=mismatched_runtime,
+        context=target.context,
+        memory_store=rejected_store,
+    )
+
+    assert target_executor.verification_state is RefStatus.VERIFIED
+    assert decision.attempted is True
+    assert decision.committed is False
+    assert decision.reason == "terminal_executor_runtime_commit_witness_mismatch"
+    assert rejected_store.commits == {}
+    assert rejected_store.admission_receipts == {}
+
+
+def test_mrr_09a_corrective_pass2_runtime_binds_exact_memory_projection(
+    tmp_path: Path,
+) -> None:
+    result = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="corrective-pass2-authorized",
+            value=47.0,
+            family_memory_root=tmp_path / "corrective-pass2-memory",
+            program_calls=[],
+        ),
+    )
+
+    memory_id = result.memory_commit_decision.memory_id
+    commit = result.infrastructure.memory_store.commits[memory_id]
+    admission = result.infrastructure.memory_store.admission_receipts[memory_id]
+    binding = next(
+        item
+        for item in result.runtime.memory_projection_bindings
+        if item.source_artifact_id == admission.source_artifact_id
+    )
+    assert result.runtime.session.active_attempt_id("execute") is None
+    assert binding.expected_memory_commit_hash == commit.commit_hash
+    assert binding.runtime_semantic_commit_receipt_hash == (
+        admission.runtime_semantic_commit_receipt_hash
+    )
+    assert binding.artifact_verification_receipt_hash == (
+        admission.artifact_verification_receipt_hash
+    )
+    assert admission.memory_projection_binding_hash == binding.binding_hash
+    assert binding.projection_spec.created_at_ns == commit.memory_ref.created_at_ns
+
+
+def test_mrr_09a_corrective_pass2_fresh_store_rejects_modified_projection(
+    tmp_path: Path,
+) -> None:
+    from statebus.memory import MemoryIndexStore
+
+    request = _memory_loop_request(
+        tmp_path,
+        task_id="corrective-pass2-tamper",
+        value=53.0,
+        family_memory_root=tmp_path / "corrective-pass2-source-memory",
+        program_calls=[],
+    )
+    result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+    artifact_id = result.memory_commit_decision.artifact_ref_id
+    original_recipe = result.context.execution_recipes_by_artifact[artifact_id]
+    result.context.execution_recipes_by_artifact[artifact_id] = {
+        **original_recipe,
+        "tampered_projection": True,
+    }
+    rejected_store = MemoryIndexStore(store_root=tmp_path / "corrective-pass2-fresh-store")
+
+    decision = AdaptiveMainlineRunner._commit_verified_memory(
+        request=request,
+        approved_plan=AdaptiveMainlineRunner._assemble_plan(request)[1],
+        runtime=result.runtime,
+        context=result.context,
+        memory_store=rejected_store,
+    )
+
+    assert decision.attempted is True
+    assert decision.committed is False
+    assert decision.reason == "terminal_executor_memory_projection_mismatch"
+    assert rejected_store.commits == {}
+    assert rejected_store.admission_receipts == {}
+
+
+def test_mrr_09a_corrective_pass2_exact_projection_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    from statebus.memory import MemoryIndexStore
+
+    memory_root = tmp_path / "corrective-pass2-idempotent-memory"
+    result = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="corrective-pass2-idempotent",
+            value=59.0,
+            family_memory_root=memory_root,
+            program_calls=[],
+        ),
+    )
+    memory_id = result.memory_commit_decision.memory_id
+    restored = MemoryIndexStore(store_root=memory_root)
+    restored.load_persisted_state()
+    commit = restored.commits[memory_id]
+    receipt = restored.admission_receipts[memory_id]
+
+    same_commit, same_receipt = restored.persist_admitted(
+        commit=commit,
+        admission_receipt=receipt,
+    )
+
+    assert same_commit.commit_hash == commit.commit_hash
+    assert same_receipt.receipt_hash == receipt.receipt_hash
+    assert tuple(restored.commits) == (memory_id,)
+    assert tuple(restored.admission_receipts) == (memory_id,)
+
+
+@pytest.mark.parametrize("tamper", ("missing_receipt", "wrong_receipt_hash"))
+def test_mrr_09a_fake_or_mismatched_verified_artifact_cannot_admit(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    from statebus.memory import MemoryIndexStore
+
+    request = _memory_loop_request(
+        tmp_path,
+        task_id=f"admission-{tamper}",
+        value=29.0,
+        family_memory_root=tmp_path / f"source-{tamper}",
+        program_calls=[],
+    )
+    result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+    stored = next(
+        item
+        for item in result.context.artifacts.values()
+        if item.artifact.produced_by == "executor" and item.artifact.step_id == "execute"
+    )
+    if tamper == "missing_receipt":
+        result.context.artifact_verification_receipts.pop(stored.artifact.artifact_id)
+    else:
+        result.context.artifacts[stored.artifact.artifact_id] = replace(
+            stored,
+            artifact=replace(
+                stored.artifact,
+                metadata={
+                    **stored.artifact.metadata,
+                    "artifact_verification_receipt_hash": "sha256:wrong-receipt",
+                },
+            ),
+        )
+
+    approved_plan = AdaptiveMainlineRunner._assemble_plan(request)[1]
+    rejected_store = MemoryIndexStore(store_root=tmp_path / f"rejected-{tamper}")
+    decision = AdaptiveMainlineRunner._commit_verified_memory(
+        request=request,
+        approved_plan=approved_plan,
+        runtime=result.runtime,
+        context=result.context,
+        memory_store=rejected_store,
+    )
+    assert decision.attempted is True
+    assert decision.committed is False
+    assert decision.reason == "terminal_executor_artifact_runtime_receipt_mismatch"
+    assert rejected_store.commits == {}
+    assert rejected_store.admission_receipts == {}
+
+
 def test_adaptive_memory_runtime_incompatibility_stays_auditable_and_out_of_role_inputs(
     tmp_path: Path,
 ) -> None:
