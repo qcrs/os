@@ -94,6 +94,17 @@ class MemoryIndexStore:
         self._persist_commit(commit)
         return commit
 
+    def get_admitted(
+        self,
+        memory_id: str,
+    ) -> tuple[MemoryCommit, MemoryAdmissionReceipt] | None:
+        """Return an exact receipt-backed pair, without creating authority."""
+        commit = self.commits.get(memory_id)
+        receipt = self.admission_receipts.get(memory_id)
+        if commit is None or receipt is None or not self._is_admitted(commit):
+            return None
+        return commit, receipt
+
     def persist_admitted(
         self,
         *,
@@ -593,7 +604,6 @@ class MemoryIndexStore:
             and query.allow_validated_replay
             and contract_compatible
             and not schema_drift
-            and replay_ready
             and isinstance(recipe, dict)
         ):
             replay_class = ReplayClass.VALIDATED_REPLAY

@@ -553,6 +553,7 @@ class CapabilityGrant:
     expires_at_ns: int
     approved_plan_hash: str
     schema_version: str = CAPABILITY_GRANT_SCHEMA_VERSION
+    memory_ref_ids: tuple[str, ...] = ()
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -569,6 +570,7 @@ class CapabilityGrant:
             "max_runtime_ms": self.max_runtime_ms,
             "expires_at_ns": self.expires_at_ns,
             "approved_plan_hash": self.approved_plan_hash,
+            "memory_ref_ids": list(self.memory_ref_ids),
             "schema_version": self.schema_version,
         }
 

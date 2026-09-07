@@ -1,0 +1,25 @@
+MRR-09B targeted verification
+=============================
+
+Primary tests:
+
+- test_mrr_09b_memory_lookup_hit_is_not_current_grant_authority
+- test_mrr_09b_current_runtime_selection_enters_immutable_grant_and_receipt
+- test_mrr_09b_incompatible_current_runtime_fails_closed_before_grant_memory_binding
+
+Result: 3 passed.
+
+Coverage notes:
+
+- A persisted admitted Memory remains visible in the lookup candidate pool, but
+  a query with no allowed Memory policy produces no current Grant memory refs
+  and no consumer Memory inputs.
+- A compatible admitted procedure Memory is selected by Runtime before Grant
+  mint; its identity is present in the immutable Grant and its
+  ReplayEligibilityReceipt binds the current Attempt, execution binding, and
+  Grant hash.
+- A current Runtime compatibility mismatch leaves the historical Memory as a
+  lookup candidate but fails closed before current Grant Memory binding.
+
+No replay execution, historical output restoration, provider skip, or final
+adoption was exercised or added.

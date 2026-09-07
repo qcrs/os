@@ -34,7 +34,7 @@ from statebus.contracts import (
     TransformProgram,
     TransformStep,
 )
-from statebus.memory import MemoryConsumptionRecord
+from statebus.memory import MemoryConsumptionRecord, ReplayEligibilityDecision, ReplayEligibilityReceipt
 from statebus.refs import CanonicalEvidencePack, ExecutionArtifactRef
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.capability_recompute import CapabilityRecomputeError, recompute_transform_program
@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from statebus.runtime.workspace import WorkspaceManager
     from statebus.state import LayeredStateStore
     from statebus.runtime.adaptive_runtime import RuntimeStateAccessAuthority
+    from statebus.runtime.session import RuntimeSessionManager
 
 
 class AdaptiveDispatchError(RuntimeError):
@@ -136,6 +137,7 @@ class AdaptiveDispatchContext:
     # context assembled by AdaptiveMainlineRunner, never by diagnostics code.
     state_store: "LayeredStateStore | None" = None
     memory_store: "MemoryIndexStore | None" = None
+    session_manager: "RuntimeSessionManager | None" = None
     workspace_manager: "WorkspaceManager | None" = None
     socket_path: Path | None = None
     semantic_state_publications: dict[str, object] = field(default_factory=dict)
@@ -148,6 +150,12 @@ class AdaptiveDispatchContext:
     physical_lifecycle_observations: list[dict[str, object]] = field(default_factory=list)
     memory_match_results: dict[str, object] = field(default_factory=dict)
     memory_queries_by_task: dict[str, object] = field(default_factory=dict)
+    replay_eligibility_receipts_by_step: dict[str, tuple[ReplayEligibilityReceipt, ...]] = field(
+        default_factory=dict
+    )
+    memory_selection_modes_by_step: dict[str, dict[str, ReplayClass]] = field(
+        default_factory=dict
+    )
     memory_role_inputs_by_step: dict[str, tuple[dict[str, object], ...]] = field(
         default_factory=dict
     )
@@ -724,10 +732,11 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
     ) -> tuple[dict[str, object], ...]:
-        if self.context.memory_store is None:
+        if self.context.memory_store is None or not grant.memory_ref_ids:
             return ()
         role_inputs: list[dict[str, object]] = []
         seen: set[str] = set()
+        matches_by_id: dict[str, tuple[object, str, object]] = {}
         for retrieval_step_id, result in sorted(self.context.memory_match_results.items()):
             decisions = {
                 decision.memory_id: decision
@@ -735,44 +744,81 @@ class AdaptiveCapabilityDispatcher:
             }
             for match in getattr(result, "matches", ()):
                 memory_id = match.memory_ref.memory_id
-                if memory_id in seen:
-                    continue
-                commit = self.context.memory_store.commits.get(memory_id)
                 decision = decisions.get(memory_id)
-                if commit is None or decision is None or not decision.policy_approved:
+                if decision is None:
                     continue
-                recipe = commit.memory_ref.metadata.get("execution_recipe")
-                recipe_payload = dict(recipe) if isinstance(recipe, dict) else {}
-                payload = {
-                    "ref_id": memory_id,
-                    "ref_kind": "memory",
-                    "source_task_id": commit.memory_ref.source_task_id,
-                    "source_agent": commit.memory_ref.source_agent,
-                    "summary": commit.memory_ref.summary,
-                    "tags": list(commit.memory_ref.tags),
-                    "replay_class": match.replay_class.value,
-                    "compatibility_verdict": decision.verdict.value,
-                    "compatibility_reasons": list(decision.reasons),
-                    "artifact_lineage": {
-                        "artifact_ref_id": commit.memory_ref.artifact_ref_id,
-                        "artifact_hash": commit.created_from_artifact_hash,
-                        "manifest_hash": commit.memory_ref.manifest_hash,
-                        "input_lineage_hashes": list(
-                            commit.memory_ref.metadata.get("input_lineage_hashes", ())
-                        ),
-                    },
-                    "execution_recipe": recipe_payload,
-                    "execution_recipe_hash": str(
-                        commit.memory_ref.metadata.get("execution_recipe_hash", "")
+                matches_by_id.setdefault(memory_id, (match, retrieval_step_id, decision))
+        eligibility_by_id = {
+            receipt.memory_id: receipt
+            for receipt in self.context.replay_eligibility_receipts_by_step.get(
+                step.step_id, ()
+            )
+        }
+        for memory_id in grant.memory_ref_ids:
+            if memory_id in seen:
+                continue
+            match_data = matches_by_id.get(memory_id)
+            if match_data is None:
+                continue
+            match, retrieval_step_id, decision = match_data
+            if not decision.policy_approved:
+                continue
+            admitted = self.context.memory_store.get_admitted(memory_id)
+            if admitted is None:
+                continue
+            commit, admission_receipt = admitted
+            mode = self.context.memory_selection_modes_by_step.get(step.step_id, {}).get(
+                memory_id,
+                match.replay_class,
+            )
+            if mode == ReplayClass.VALIDATED_REPLAY:
+                eligibility = eligibility_by_id.get(memory_id)
+                if (
+                    eligibility is None
+                    or eligibility.decision != ReplayEligibilityDecision.ELIGIBLE
+                    or eligibility.memory_admission_receipt_hash
+                    != admission_receipt.receipt_hash
+                    or eligibility.consumer_capability_grant_hash != grant.grant_hash
+                    or eligibility.consumer_attempt_id != grant.attempt_id
+                    or eligibility.consumer_step_id != step.step_id
+                ):
+                    continue
+            elif mode == ReplayClass.EXACT_REPLAY:
+                mode = ReplayClass.ASSIST
+            if mode not in {ReplayClass.ASSIST, ReplayClass.VALIDATED_REPLAY}:
+                continue
+            recipe = commit.memory_ref.metadata.get("execution_recipe")
+            recipe_payload = dict(recipe) if isinstance(recipe, dict) else {}
+            payload = {
+                "ref_id": memory_id,
+                "ref_kind": "memory",
+                "source_task_id": commit.memory_ref.source_task_id,
+                "source_agent": commit.memory_ref.source_agent,
+                "summary": commit.memory_ref.summary,
+                "tags": list(commit.memory_ref.tags),
+                "replay_class": mode.value,
+                "compatibility_verdict": decision.verdict.value,
+                "compatibility_reasons": list(decision.reasons),
+                "artifact_lineage": {
+                    "artifact_ref_id": commit.memory_ref.artifact_ref_id,
+                    "artifact_hash": commit.created_from_artifact_hash,
+                    "manifest_hash": commit.memory_ref.manifest_hash,
+                    "input_lineage_hashes": list(
+                        commit.memory_ref.metadata.get("input_lineage_hashes", ())
                     ),
-                    "query_source_step_id": retrieval_step_id,
-                    "consumer_role": step.role,
-                    "consumer_step_id": step.step_id,
-                    "grant_hash": grant.grant_hash,
-                }
-                payload["input_payload_hash"] = sha256_digest(payload)
-                role_inputs.append(payload)
-                seen.add(memory_id)
+                },
+                "execution_recipe": recipe_payload,
+                "execution_recipe_hash": str(
+                    commit.memory_ref.metadata.get("execution_recipe_hash", "")
+                ),
+                "query_source_step_id": retrieval_step_id,
+                "consumer_role": step.role,
+                "consumer_step_id": step.step_id,
+                "grant_hash": grant.grant_hash,
+            }
+            payload["input_payload_hash"] = sha256_digest(payload)
+            role_inputs.append(payload)
+            seen.add(memory_id)
         inputs = tuple(role_inputs)
         if inputs:
             self.context.memory_role_inputs_by_step[step.step_id] = inputs
@@ -789,7 +835,6 @@ class AdaptiveCapabilityDispatcher:
         for memory_input in memory_inputs:
             if memory_input.get("replay_class") not in {
                 ReplayClass.VALIDATED_REPLAY.value,
-                ReplayClass.EXACT_REPLAY.value,
             }:
                 continue
             recipe = memory_input.get("execution_recipe")
@@ -1686,6 +1731,14 @@ class AdaptiveCapabilityDispatcher:
         )
         if runtime_identity.session_id != grant.session_id:
             raise AdaptiveDispatchError("runtime_identity_grant_scope_mismatch")
+        if (
+            self.context.session_manager is not None
+            and self.context.session_manager.active_attempt_id(
+                grant.session_id, grant.step_id
+            )
+            != grant.attempt_id
+        ):
+            raise AdaptiveDispatchError("stale_attempt_before_dispatch")
         if step.capability_id != grant.capability_id or grant.approved_plan_hash != approved_plan.approved_plan_hash:
             raise AdaptiveDispatchError("capability_grant_mismatch")
         if grant.task_id != envelope.task_id or grant.step_id != step.step_id or grant.expires_at_ns <= __import__("time").time_ns():

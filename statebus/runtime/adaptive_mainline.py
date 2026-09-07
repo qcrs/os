@@ -1131,6 +1131,10 @@ class AdaptiveMainlineRunner:
                 binding.canonical_payload()
                 for binding in runtime.memory_projection_bindings
             ],
+            "replay_eligibility_receipts": [
+                receipt.canonical_payload()
+                for receipt in runtime.replay_eligibility_receipts
+            ],
             "evidence_ref_ids": sorted(context.evidence_packs),
             "created_at_ns": time.time_ns(),
         }

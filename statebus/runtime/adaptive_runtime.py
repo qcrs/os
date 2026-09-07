@@ -20,6 +20,7 @@ from statebus.contracts import (
     PlanProposal,
     ProviderEligibilityProjection,
     ProviderRuntimeFacts,
+    ReplayClass,
     RuntimeIdentity,
     STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT,
     STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
@@ -28,6 +29,8 @@ from statebus.contracts import (
     StateConsumptionRecord,
     StepLifecycleState,
     WorkflowMode,
+    REPLAY_ELIGIBILITY_POLICY_ID,
+    REPLAY_ELIGIBILITY_POLICY_VERSION,
 )
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.plan_policy import PlanPolicyValidator
@@ -56,6 +59,7 @@ from statebus.runtime.memory_projection import (
     MemoryProjectionSpec,
     build_memory_commit,
 )
+from statebus.memory.models import ReplayEligibilityDecision, ReplayEligibilityReceipt
 from statebus.runtime.supervisor import LifecycleOrigin, RuntimeSupervisor
 from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.identity import (
@@ -214,6 +218,7 @@ class AdaptiveRuntimeResult:
     bound_grants: tuple[BoundCapabilityGrant, ...] = ()
     attempt_result_admissions: tuple[AttemptResultAdmissionReceipt, ...] = ()
     memory_projection_bindings: tuple[MemoryProjectionBinding, ...] = ()
+    replay_eligibility_receipts: tuple[ReplayEligibilityReceipt, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -604,6 +609,8 @@ class AdaptiveRuntimeEngine:
         )
 
         session_manager = RuntimeSessionManager()
+        if request.dispatcher is not None:
+            request.dispatcher.context.session_manager = session_manager
         state_store = (
             request.dispatcher.context.state_store
             if request.dispatcher is not None
@@ -656,6 +663,7 @@ class AdaptiveRuntimeEngine:
         dispatches: list[AdaptiveDispatchRecord] = []
         result_admissions: list[AttemptResultAdmissionReceipt] = []
         memory_projection_bindings: list[MemoryProjectionBinding] = []
+        replay_eligibility_receipts: list[ReplayEligibilityReceipt] = []
         eligibility_projections: list[ProviderEligibilityProjection] = []
         execution_bindings: list[ExecutionBindingReceipt] = []
         bound_grants: list[BoundCapabilityGrant] = []
@@ -862,6 +870,14 @@ class AdaptiveRuntimeEngine:
                     projection=projection,
                     binding=binding,
                 )
+                selected_memory = self._select_memory_for_attempt(
+                    request=request,
+                    session_manager=session_manager,
+                    session_id=session_id,
+                    step=step,
+                    attempt_id=attempt_id,
+                    logical_capability=logical_capability,
+                )
                 bound_grant = self._issue_grant(
                     request=request,
                     plan=current_plan,
@@ -871,8 +887,21 @@ class AdaptiveRuntimeEngine:
                     logical_capability=logical_capability,
                     provider=provider,
                     binding=binding,
+                    memory_ref_ids=tuple(memory_id for memory_id, _mode in selected_memory),
                 )
                 bound_grants.append(bound_grant)
+                current_eligibility = self._issue_replay_eligibility_receipts(
+                    request=request,
+                    session_manager=session_manager,
+                    session_id=session_id,
+                    step=step,
+                    attempt_id=attempt_id,
+                    logical_capability=logical_capability,
+                    binding=binding,
+                    bound_grant=bound_grant,
+                    selected_memory=selected_memory,
+                )
+                replay_eligibility_receipts.extend(current_eligibility)
                 grant = bound_grant.grant
                 if grant.expires_at_ns <= time.time_ns():
                     terminal_failed.add(step.step_id)
@@ -1085,6 +1114,14 @@ class AdaptiveRuntimeEngine:
                         projection=fallback_projection,
                         binding=fallback_binding,
                     )
+                    fallback_selected_memory = self._select_memory_for_attempt(
+                        request=request,
+                        session_manager=session_manager,
+                        session_id=session_id,
+                        step=fallback_step,
+                        attempt_id=fallback_attempt_id,
+                        logical_capability=fallback_logical_capability,
+                    )
                     fallback_bound_grant = self._issue_grant(
                         request=request,
                         plan=current_plan,
@@ -1094,8 +1131,23 @@ class AdaptiveRuntimeEngine:
                         logical_capability=fallback_logical_capability,
                         provider=fallback_provider,
                         binding=fallback_binding,
+                        memory_ref_ids=tuple(
+                            memory_id for memory_id, _mode in fallback_selected_memory
+                        ),
                     )
                     bound_grants.append(fallback_bound_grant)
+                    fallback_eligibility = self._issue_replay_eligibility_receipts(
+                        request=request,
+                        session_manager=session_manager,
+                        session_id=session_id,
+                        step=fallback_step,
+                        attempt_id=fallback_attempt_id,
+                        logical_capability=fallback_logical_capability,
+                        binding=fallback_binding,
+                        bound_grant=fallback_bound_grant,
+                        selected_memory=fallback_selected_memory,
+                    )
+                    replay_eligibility_receipts.extend(fallback_eligibility)
                     fallback_grant = fallback_bound_grant.grant
                     session = session_manager.attach_adaptive_audit(
                         session_id,
@@ -1587,6 +1639,7 @@ class AdaptiveRuntimeEngine:
             bound_grants=tuple(bound_grants),
             attempt_result_admissions=tuple(result_admissions),
             memory_projection_bindings=tuple(memory_projection_bindings),
+            replay_eligibility_receipts=tuple(replay_eligibility_receipts),
         )
 
     @staticmethod
@@ -1717,6 +1770,183 @@ class AdaptiveRuntimeEngine:
         )
 
     @staticmethod
+    def _select_memory_for_attempt(
+        *,
+        request: AdaptiveRuntimeRequest,
+        session_manager: RuntimeSessionManager,
+        session_id: str,
+        step: PlanStepProposal,
+        attempt_id: str,
+        logical_capability: LogicalCapabilityDescriptor,
+    ) -> tuple[tuple[str, ReplayClass], ...]:
+        """Select only receipt-backed Memory for the current active Attempt."""
+        dispatcher = request.dispatcher
+        if dispatcher is None:
+            return ()
+        context = dispatcher.context
+        modes: dict[str, ReplayClass] = {}
+        context.memory_selection_modes_by_step[step.step_id] = modes
+        if context.memory_store is None:
+            return ()
+        if session_manager.active_attempt_id(session_id, step.step_id) != attempt_id:
+            raise AdaptiveRuntimeError("stale_attempt_before_memory_selection")
+        query = context.memory_queries_by_task.get(request.task_id)
+        if query is None:
+            return ()
+
+        descriptor = request.registry.get(step.capability_id)
+        selected: list[tuple[str, ReplayClass]] = []
+        seen: set[str] = set()
+        for result in context.memory_match_results.values():
+            decisions = {
+                decision.memory_id: decision
+                for decision in getattr(result, "compatibility_decisions", ())
+            }
+            for match in getattr(result, "matches", ()):
+                memory_id = str(match.memory_ref.memory_id)
+                if memory_id in seen:
+                    continue
+                decision = decisions.get(memory_id)
+                admitted = context.memory_store.get_admitted(memory_id)
+                if decision is None or not decision.policy_approved or admitted is None:
+                    continue
+                commit, _admission_receipt = admitted
+                mode = match.replay_class
+                if mode == ReplayClass.VALIDATED_REPLAY:
+                    if (
+                        not descriptor.supports_replay
+                        or not bool(getattr(query, "allow_validated_replay", False))
+                        or not AdaptiveRuntimeEngine._procedure_memory_compatible(
+                            commit=commit,
+                            context=context,
+                            step=step,
+                            logical_capability=logical_capability,
+                            execution_kind=descriptor.execution_kind.value,
+                        )
+                    ):
+                        continue
+                elif mode == ReplayClass.EXACT_REPLAY:
+                    # Exact artifact restoration is outside 09B.  A legacy
+                    # exact match may still be used as ordinary context when
+                    # the current query explicitly permits assist inputs.
+                    if not bool(getattr(query, "allow_assist", False)):
+                        continue
+                    mode = ReplayClass.ASSIST
+                elif mode != ReplayClass.ASSIST:
+                    continue
+                elif not bool(getattr(query, "allow_assist", False)):
+                    continue
+                selected.append((memory_id, mode))
+                modes[memory_id] = mode
+                seen.add(memory_id)
+        return tuple(selected)
+
+    @staticmethod
+    def _procedure_memory_compatible(
+        *,
+        commit: object,
+        context: object,
+        step: PlanStepProposal,
+        logical_capability: LogicalCapabilityDescriptor,
+        execution_kind: str,
+    ) -> bool:
+        ref = commit.memory_ref
+        metadata = ref.metadata
+        recipe = metadata.get("execution_recipe")
+        current_spec = getattr(context, "canonical_task_spec", None)
+        stored_spec = getattr(commit, "canonical_task_spec", None)
+        if not isinstance(recipe, dict) or not recipe or current_spec is None:
+            return False
+        if (
+            stored_spec is None
+            or stored_spec.task_family != current_spec.task_family
+            or stored_spec.intent_op != current_spec.intent_op
+            or stored_spec.required_outputs != current_spec.required_outputs
+            or stored_spec.required_tools != current_spec.required_tools
+        ):
+            return False
+        if str(recipe.get("execution_kind", "")) != execution_kind:
+            return False
+        if str(recipe.get("capability_id", "")) != logical_capability.capability_id:
+            return False
+        if str(recipe.get("output_contract_version", "")) != step.output_contract_version:
+            return False
+        for metadata_key, current_value in (
+            ("input_schema_digest", getattr(context, "input_schema_digest", "")),
+            ("runtime_signature_hash", getattr(context, "runtime_compatibility_signature", "")),
+            ("validator_digest", getattr(context, "validator_digest", "")),
+        ):
+            stored_value = str(metadata.get(metadata_key, ""))
+            if current_value and stored_value and stored_value != str(current_value):
+                return False
+        return True
+
+    @staticmethod
+    def _issue_replay_eligibility_receipts(
+        *,
+        request: AdaptiveRuntimeRequest,
+        session_manager: RuntimeSessionManager,
+        session_id: str,
+        step: PlanStepProposal,
+        attempt_id: str,
+        logical_capability: LogicalCapabilityDescriptor,
+        binding: ExecutionBindingReceipt,
+        bound_grant: BoundCapabilityGrant,
+        selected_memory: tuple[tuple[str, ReplayClass], ...],
+    ) -> tuple[ReplayEligibilityReceipt, ...]:
+        dispatcher = request.dispatcher
+        if dispatcher is None or dispatcher.context.memory_store is None:
+            return ()
+        if session_manager.active_attempt_id(session_id, step.step_id) != attempt_id:
+            raise AdaptiveRuntimeError("stale_attempt_before_memory_eligibility")
+        context = dispatcher.context
+        receipts: list[ReplayEligibilityReceipt] = []
+        for memory_id, mode in selected_memory:
+            if mode != ReplayClass.VALIDATED_REPLAY:
+                continue
+            admitted = context.memory_store.get_admitted(memory_id)
+            if admitted is None:
+                continue
+            commit, admission_receipt = admitted
+            recipe_hash = str(commit.memory_ref.metadata.get("execution_recipe_hash", ""))
+            if not recipe_hash:
+                continue
+            receipt = ReplayEligibilityReceipt(
+                memory_id=memory_id,
+                memory_admission_receipt_hash=admission_receipt.receipt_hash,
+                consumer_runtime_task_id=request.runtime_identity.runtime_task_id if request.runtime_identity else request.task_id,
+                consumer_run_id=request.runtime_identity.run_id if request.runtime_identity else "",
+                consumer_session_id=session_id,
+                consumer_step_id=step.step_id,
+                consumer_attempt_id=attempt_id,
+                consumer_execution_binding_hash=binding.binding_hash,
+                consumer_capability_grant_hash=bound_grant.grant.grant_hash,
+                consumer_capability_id=logical_capability.capability_id,
+                consumer_capability_version=logical_capability.version,
+                current_task_contract_hash=(
+                    request.runtime_identity.task_contract.contract_hash
+                    if request.runtime_identity is not None
+                    else request.canonical_task_spec_hash
+                ),
+                current_input_schema_digest=context.input_schema_digest,
+                current_runtime_signature_hash=(
+                    context.runtime_compatibility_signature or request.registry.digest
+                ),
+                current_validator_digest=context.validator_digest,
+                current_output_contract_version=step.output_contract_version,
+                execution_recipe_hash=recipe_hash,
+                reuse_mode="VERIFIED_PROCEDURE_REUSE",
+                decision=ReplayEligibilityDecision.ELIGIBLE,
+                reason="admitted_memory_compatible_with_current_attempt",
+                policy_id=REPLAY_ELIGIBILITY_POLICY_ID,
+                policy_version=REPLAY_ELIGIBILITY_POLICY_VERSION,
+                issued_at_ns=time.time_ns(),
+            )
+            receipts.append(receipt)
+        context.replay_eligibility_receipts_by_step[step.step_id] = tuple(receipts)
+        return tuple(receipts)
+
+    @staticmethod
     def _settle_attempt(
         *,
         session_manager: RuntimeSessionManager,
@@ -1779,6 +2009,7 @@ class AdaptiveRuntimeEngine:
         logical_capability: LogicalCapabilityDescriptor,
         provider: ExecutionProviderDescriptor,
         binding: ExecutionBindingReceipt,
+        memory_ref_ids: tuple[str, ...] = (),
     ) -> BoundCapabilityGrant:
         descriptor = request.registry.get(step.capability_id)
         runtime_identity = request.runtime_identity
@@ -1802,6 +2033,7 @@ class AdaptiveRuntimeEngine:
             workspace_root_id=request.workspace_root_id, max_runtime_ms=descriptor.max_runtime_ms,
             expires_at_ns=time.time_ns() + (descriptor.max_runtime_ms if request.grant_ttl_ms is None else request.grant_ttl_ms) * 1_000_000,
             approved_plan_hash=plan.approved_plan_hash,
+            memory_ref_ids=memory_ref_ids,
         )
         if (
             provider.provider_id != binding.selected_provider_id

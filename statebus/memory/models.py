@@ -12,6 +12,7 @@ from statebus.contracts import (
     MEMORY_RERANK_RESULT_SCHEMA_VERSION,
     MEMORY_REF_SCHEMA_VERSION,
     STRUCTURED_EMBEDDING_SCHEMA_VERSION,
+    REPLAY_ELIGIBILITY_RECEIPT_SCHEMA_VERSION,
     CanonicalTaskSpec,
     CompatibilityVerdict,
     RefKind,
@@ -105,6 +106,73 @@ class MemoryAdmissionReceipt:
             "memory_admission_receipt_id": self.memory_admission_receipt_id,
             "runtime_semantic_commit_receipt_hash": self.runtime_semantic_commit_receipt_hash,
             "memory_projection_binding_hash": self.memory_projection_binding_hash,
+            "schema_version": self.schema_version,
+        }
+
+    @property
+    def receipt_hash(self) -> str:
+        return sha256_digest(self.canonical_payload())
+
+
+class ReplayEligibilityDecision(StrEnum):
+    ELIGIBLE = "ELIGIBLE"
+    INELIGIBLE = "INELIGIBLE"
+
+
+@dataclass(frozen=True)
+class ReplayEligibilityReceipt:
+    """Current-Attempt eligibility truth for one admitted Memory entry."""
+
+    memory_id: str
+    memory_admission_receipt_hash: str
+    consumer_runtime_task_id: str
+    consumer_run_id: str
+    consumer_session_id: str
+    consumer_step_id: str
+    consumer_attempt_id: str
+    consumer_execution_binding_hash: str
+    consumer_capability_grant_hash: str
+    consumer_capability_id: str
+    consumer_capability_version: str
+    current_task_contract_hash: str
+    current_input_schema_digest: str
+    current_runtime_signature_hash: str
+    current_validator_digest: str
+    current_output_contract_version: str
+    execution_recipe_hash: str
+    reuse_mode: str
+    decision: ReplayEligibilityDecision
+    reason: str
+    policy_id: str
+    policy_version: str
+    issued_at_ns: int
+    schema_version: str = REPLAY_ELIGIBILITY_RECEIPT_SCHEMA_VERSION
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "memory_id": self.memory_id,
+            "memory_admission_receipt_hash": self.memory_admission_receipt_hash,
+            "consumer_runtime_task_id": self.consumer_runtime_task_id,
+            "consumer_run_id": self.consumer_run_id,
+            "consumer_session_id": self.consumer_session_id,
+            "consumer_step_id": self.consumer_step_id,
+            "consumer_attempt_id": self.consumer_attempt_id,
+            "consumer_execution_binding_hash": self.consumer_execution_binding_hash,
+            "consumer_capability_grant_hash": self.consumer_capability_grant_hash,
+            "consumer_capability_id": self.consumer_capability_id,
+            "consumer_capability_version": self.consumer_capability_version,
+            "current_task_contract_hash": self.current_task_contract_hash,
+            "current_input_schema_digest": self.current_input_schema_digest,
+            "current_runtime_signature_hash": self.current_runtime_signature_hash,
+            "current_validator_digest": self.current_validator_digest,
+            "current_output_contract_version": self.current_output_contract_version,
+            "execution_recipe_hash": self.execution_recipe_hash,
+            "reuse_mode": self.reuse_mode,
+            "decision": self.decision.value,
+            "reason": self.reason,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "issued_at_ns": self.issued_at_ns,
             "schema_version": self.schema_version,
         }
 

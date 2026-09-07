@@ -1624,3 +1624,127 @@ def test_adaptive_memory_runtime_incompatibility_stays_auditable_and_out_of_role
     metrics = current.runtime.telemetry.summarize_task("memory-current")
     assert metrics["memory_candidate_count"] >= 1.0
     assert metrics["memory_rejected_incompatible_count"] >= 1.0
+
+
+def test_mrr_09b_memory_lookup_hit_is_not_current_grant_authority(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "lookup-only-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="lookup-producer",
+            value=7.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+            memory_policy="assist",
+            commit_replay_class=ReplayClass.ASSIST,
+        ),
+    )
+    observed_inputs: list[tuple[dict[str, object], ...]] = []
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="lookup-consumer",
+            value=8.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+            memory_policy="none",
+            commit_replay_class=ReplayClass.ASSIST,
+            observed_memory_inputs=observed_inputs,
+        ),
+    )
+
+    memory_id = producer.memory_commit_decision.memory_id
+    memory_result = consumer.context.memory_match_results["retrieve"]
+    assert memory_id in memory_result.candidate_pool.candidate_memory_ids
+    execute_grant = next(
+        bound for bound in consumer.runtime.bound_grants if bound.grant.step_id == "execute"
+    )
+    assert execute_grant.grant.memory_ref_ids == ()
+    assert observed_inputs == [()]
+
+
+def test_mrr_09b_current_runtime_selection_enters_immutable_grant_and_receipt(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "grant-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="grant-producer",
+            value=17.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="grant-consumer",
+            value=18.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+
+    memory_id = producer.memory_commit_decision.memory_id
+    execute_grant = next(
+        bound for bound in consumer.runtime.bound_grants if bound.grant.step_id == "execute"
+    )
+    assert execute_grant.grant.memory_ref_ids == (memory_id,)
+    receipt = next(
+        item
+        for item in consumer.runtime.replay_eligibility_receipts
+        if item.memory_id == memory_id
+    )
+    assert receipt.decision.value == "ELIGIBLE"
+    assert receipt.consumer_runtime_task_id == "grant-consumer"
+    assert receipt.consumer_attempt_id == execute_grant.grant.attempt_id
+    assert receipt.consumer_execution_binding_hash == execute_grant.execution_binding_hash
+    assert receipt.consumer_capability_grant_hash == execute_grant.grant.grant_hash
+    assert receipt.reuse_mode == "VERIFIED_PROCEDURE_REUSE"
+
+
+def test_mrr_09b_incompatible_current_runtime_fails_closed_before_grant_memory_binding(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "incompatible-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="incompatible-producer",
+            value=27.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    consumer_request = _memory_loop_request(
+        tmp_path,
+        task_id="incompatible-consumer",
+        value=28.0,
+        family_memory_root=family_memory_root,
+        program_calls=[],
+    )
+    consumer_request = replace(
+        consumer_request,
+        runtime_compatibility_signature="runtime-signature-mismatch",
+    )
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=consumer_request,
+    )
+
+    memory_id = producer.memory_commit_decision.memory_id
+    memory_result = consumer.context.memory_match_results["retrieve"]
+    assert memory_id in memory_result.candidate_pool.candidate_memory_ids
+    execute_grant = next(
+        bound for bound in consumer.runtime.bound_grants if bound.grant.step_id == "execute"
+    )
+    assert execute_grant.grant.memory_ref_ids == ()
+    assert consumer.runtime.replay_eligibility_receipts == ()
