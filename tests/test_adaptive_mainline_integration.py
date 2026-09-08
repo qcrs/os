@@ -37,7 +37,7 @@ from statebus.runtime.adaptive_mainline import (
     AdaptiveMainlineRequest,
     AdaptiveMainlineRunner,
 )
-from statebus.runtime.adaptive_runtime import AdaptiveStepResult
+from statebus.runtime.adaptive_runtime import AdaptiveRuntimeEngine, AdaptiveStepResult
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.driver import RuntimeDriver
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
@@ -1748,3 +1748,165 @@ def test_mrr_09b_incompatible_current_runtime_fails_closed_before_grant_memory_b
     )
     assert execute_grant.grant.memory_ref_ids == ()
     assert consumer.runtime.replay_eligibility_receipts == ()
+
+
+def test_mrr_09c_assist_consumption_binds_current_attempt_result_admission(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "assist-consumption-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="assist-consumption-producer",
+            value=31.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+            memory_policy="assist",
+            commit_replay_class=ReplayClass.ASSIST,
+        ),
+    )
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="assist-consumption-consumer",
+            value=42.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+            memory_policy="assist",
+            commit_replay_class=ReplayClass.ASSIST,
+        ),
+    )
+
+    memory_id = producer.memory_commit_decision.memory_id
+    record = next(
+        item
+        for item in consumer.context.memory_consumption_records
+        if item.memory_id == memory_id and item.consumer_step_id == "execute"
+    )
+    execute_grant = next(
+        bound for bound in consumer.runtime.bound_grants if bound.grant.step_id == "execute"
+    )
+    execute_admission = next(
+        receipt
+        for receipt in consumer.runtime.attempt_result_admissions
+        if receipt.step_id == "execute"
+    )
+    source_receipt = producer.infrastructure.memory_store.admission_receipts[memory_id]
+    source_commit = producer.infrastructure.memory_store.commits[memory_id]
+
+    assert consumer.completed
+    assert record.consumer_runtime_task_id == "assist-consumption-consumer"
+    assert record.consumer_run_id == consumer.runtime_identity.run_id
+    assert record.consumer_session_id == execute_grant.grant.session_id
+    assert record.consumer_attempt_id == execute_grant.grant.attempt_id
+    assert record.capability_grant_hash == execute_grant.grant.grant_hash
+    assert record.memory_commit_hash == source_commit.commit_hash
+    assert record.memory_admission_receipt_hash == source_receipt.receipt_hash
+    assert record.replay_eligibility_receipt_hash == ""
+    assert record.attempt_result_admission_receipt_hash == execute_admission.receipt_hash
+    assert record.recipe_recomputed is False
+
+
+def test_mrr_09c_validated_procedure_consumption_binds_current_attempt_result(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "validated-consumption-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="validated-consumption-producer",
+            value=11.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="validated-consumption-consumer",
+            value=22.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+
+    memory_id = producer.memory_commit_decision.memory_id
+    record = next(
+        item
+        for item in consumer.context.memory_consumption_records
+        if item.memory_id == memory_id and item.consumer_step_id == "execute"
+    )
+    eligibility = next(
+        receipt
+        for receipt in consumer.runtime.replay_eligibility_receipts
+        if receipt.memory_id == memory_id
+    )
+    execute_grant = next(
+        bound for bound in consumer.runtime.bound_grants if bound.grant.step_id == "execute"
+    )
+    execute_admission = next(
+        receipt
+        for receipt in consumer.runtime.attempt_result_admissions
+        if receipt.step_id == "execute"
+    )
+
+    assert consumer.completed
+    assert record.replay_class == ReplayClass.VALIDATED_REPLAY
+    assert record.recipe_recomputed is True
+    assert record.capability_grant_hash == execute_grant.grant.grant_hash
+    assert record.replay_eligibility_receipt_hash == eligibility.receipt_hash
+    assert record.attempt_result_admission_receipt_hash == execute_admission.receipt_hash
+    assert record.consumer_attempt_id == eligibility.consumer_attempt_id
+    assert record.downstream_ref_ids
+    assert record.downstream_ref_ids[0] in consumer.context.artifacts
+    output = consumer.context.artifacts[record.downstream_ref_ids[0]]
+    assert output.rows == ({"value": 22.0},)
+
+
+def test_mrr_09c_validated_consumption_without_eligibility_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        AdaptiveRuntimeEngine,
+        "_issue_replay_eligibility_receipts",
+        staticmethod(lambda **_kwargs: ()),
+    )
+    family_memory_root = tmp_path / "missing-eligibility-memory"
+    RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="missing-eligibility-producer",
+            value=7.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="missing-eligibility-consumer",
+            value=8.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+
+    assert consumer.completed is False
+    assert consumer.context.memory_consumption_records == []
+    assert not any(
+        stored.artifact.produced_by == "executor"
+        and stored.artifact.step_id == "execute"
+        for stored in consumer.context.artifacts.values()
+    )
+    assert any(
+        dispatch.step_id == "execute"
+        and dispatch.error_code == "validated_replay_eligibility_mismatch"
+        for dispatch in consumer.runtime.dispatches
+    )

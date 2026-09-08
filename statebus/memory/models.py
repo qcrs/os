@@ -370,7 +370,19 @@ class MemoryConsumptionRecord:
     skipped_llm_call_count: int = 0
     recipe_recomputed: bool = False
     consumed_at_ns: int = 0
-    schema_version: str = "statebus.memory_consumption_record.v1"
+    schema_version: str = "statebus.memory_consumption_record.v2"
+    # Consumption is an observation of a current execution, not a new
+    # authority root.  These references make that observation auditable
+    # against the current Grant and the upstream admission truths.
+    consumer_runtime_task_id: str = ""
+    consumer_run_id: str = ""
+    consumer_session_id: str = ""
+    consumer_attempt_id: str = ""
+    capability_grant_hash: str = ""
+    memory_commit_hash: str = ""
+    memory_admission_receipt_hash: str = ""
+    replay_eligibility_receipt_hash: str = ""
+    attempt_result_admission_receipt_hash: str = ""
 
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -392,6 +404,15 @@ class MemoryConsumptionRecord:
             "recipe_recomputed": self.recipe_recomputed,
             "consumed_at_ns": self.consumed_at_ns,
             "schema_version": self.schema_version,
+            "consumer_runtime_task_id": self.consumer_runtime_task_id,
+            "consumer_run_id": self.consumer_run_id,
+            "consumer_session_id": self.consumer_session_id,
+            "consumer_attempt_id": self.consumer_attempt_id,
+            "capability_grant_hash": self.capability_grant_hash,
+            "memory_commit_hash": self.memory_commit_hash,
+            "memory_admission_receipt_hash": self.memory_admission_receipt_hash,
+            "replay_eligibility_receipt_hash": self.replay_eligibility_receipt_hash,
+            "attempt_result_admission_receipt_hash": self.attempt_result_admission_receipt_hash,
         }
 
     @property

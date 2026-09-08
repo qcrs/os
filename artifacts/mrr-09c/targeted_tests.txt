@@ -1,0 +1,31 @@
+MRR-09C targeted verification
+=============================
+
+Primary tests:
+
+- test_mrr_09c_assist_consumption_binds_current_attempt_result_admission
+- test_mrr_09c_validated_procedure_consumption_binds_current_attempt_result
+- test_mrr_09c_validated_consumption_without_eligibility_fails_closed
+
+Result: 3 passed.
+
+Adjacent regression:
+
+- test_mrr_09b_memory_lookup_hit_is_not_current_grant_authority
+
+Result: 1 passed.
+
+Evidence:
+
+- ASSIST consumption remains current execution and records the consumer task,
+  run, session, Attempt, final CapabilityGrant hash, admitted Memory commit,
+  and MemoryAdmissionReceipt; no ReplayEligibilityReceipt is synthesized.
+- VERIFIED_PROCEDURE_REUSE consumes the admitted historical recipe with current
+  inputs, records the matching current ReplayEligibilityReceipt and Grant, and
+  binds the observation to the current AttemptResultAdmissionReceipt.
+- Removing the Runtime-issued validated eligibility receipt causes Dispatcher
+  consumption to fail closed before handler execution; no Memory consumption
+  record or executor output is produced.
+
+No exact Artifact restore, provider bypass, replay result commit, or final
+adoption behavior was exercised or added.

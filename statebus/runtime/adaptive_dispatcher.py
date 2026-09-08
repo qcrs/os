@@ -138,6 +138,7 @@ class AdaptiveDispatchContext:
     state_store: "LayeredStateStore | None" = None
     memory_store: "MemoryIndexStore | None" = None
     session_manager: "RuntimeSessionManager | None" = None
+    runtime_identity: RuntimeIdentity | None = None
     workspace_manager: "WorkspaceManager | None" = None
     socket_path: Path | None = None
     semantic_state_publications: dict[str, object] = field(default_factory=dict)
@@ -208,6 +209,7 @@ class AdaptiveCapabilityDispatcher:
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
         plain_grant = grant.grant if isinstance(grant, BoundCapabilityGrant) else grant
+        self.context.runtime_identity = runtime_identity
         try:
             if not isinstance(grant, BoundCapabilityGrant):
                 raise AdaptiveDispatchError("execution_binding_required")
@@ -732,8 +734,10 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
     ) -> tuple[dict[str, object], ...]:
-        if self.context.memory_store is None or not grant.memory_ref_ids:
+        if not grant.memory_ref_ids:
             return ()
+        if self.context.memory_store is None:
+            raise AdaptiveDispatchError("memory_store_required_for_grant_memory")
         role_inputs: list[dict[str, object]] = []
         seen: set[str] = set()
         matches_by_id: dict[str, tuple[object, str, object]] = {}
@@ -759,13 +763,13 @@ class AdaptiveCapabilityDispatcher:
                 continue
             match_data = matches_by_id.get(memory_id)
             if match_data is None:
-                continue
+                raise AdaptiveDispatchError("grant_memory_match_missing")
             match, retrieval_step_id, decision = match_data
             if not decision.policy_approved:
-                continue
+                raise AdaptiveDispatchError("grant_memory_policy_rejected")
             admitted = self.context.memory_store.get_admitted(memory_id)
             if admitted is None:
-                continue
+                raise AdaptiveDispatchError("grant_memory_admission_missing")
             commit, admission_receipt = admitted
             mode = self.context.memory_selection_modes_by_step.get(step.step_id, {}).get(
                 memory_id,
@@ -779,14 +783,21 @@ class AdaptiveCapabilityDispatcher:
                     or eligibility.memory_admission_receipt_hash
                     != admission_receipt.receipt_hash
                     or eligibility.consumer_capability_grant_hash != grant.grant_hash
+                    or eligibility.consumer_runtime_task_id
+                    != (
+                        self.context.runtime_identity.runtime_task_id
+                        if self.context.runtime_identity is not None
+                        else grant.task_id
+                    )
+                    or eligibility.consumer_session_id != grant.session_id
                     or eligibility.consumer_attempt_id != grant.attempt_id
                     or eligibility.consumer_step_id != step.step_id
                 ):
-                    continue
+                    raise AdaptiveDispatchError("validated_replay_eligibility_mismatch")
             elif mode == ReplayClass.EXACT_REPLAY:
                 mode = ReplayClass.ASSIST
             if mode not in {ReplayClass.ASSIST, ReplayClass.VALIDATED_REPLAY}:
-                continue
+                raise AdaptiveDispatchError("grant_memory_reuse_mode_invalid")
             recipe = commit.memory_ref.metadata.get("execution_recipe")
             recipe_payload = dict(recipe) if isinstance(recipe, dict) else {}
             payload = {
@@ -815,6 +826,11 @@ class AdaptiveCapabilityDispatcher:
                 "consumer_role": step.role,
                 "consumer_step_id": step.step_id,
                 "grant_hash": grant.grant_hash,
+                "memory_commit_hash": commit.commit_hash,
+                "memory_admission_receipt_hash": admission_receipt.receipt_hash,
+                "replay_eligibility_receipt_hash": (
+                    "" if mode != ReplayClass.VALIDATED_REPLAY else eligibility.receipt_hash
+                ),
             }
             payload["input_payload_hash"] = sha256_digest(payload)
             role_inputs.append(payload)
@@ -870,6 +886,7 @@ class AdaptiveCapabilityDispatcher:
         *,
         memory_inputs: tuple[dict[str, object], ...],
         step: PlanStepProposal,
+        grant: CapabilityGrant,
         downstream_ref_ids: tuple[str, ...],
         before_surface_hash: str,
         replay_memory_id: str = "",
@@ -934,6 +951,26 @@ class AdaptiveCapabilityDispatcher:
                 skipped_llm_call_count=int(recipe_recomputed),
                 recipe_recomputed=recipe_recomputed,
                 consumed_at_ns=time.time_ns(),
+                consumer_runtime_task_id=(
+                    self.context.runtime_identity.runtime_task_id
+                    if self.context.runtime_identity is not None
+                    else grant.task_id
+                ),
+                consumer_run_id=(
+                    self.context.runtime_identity.run_id
+                    if self.context.runtime_identity is not None
+                    else ""
+                ),
+                consumer_session_id=grant.session_id,
+                consumer_attempt_id=grant.attempt_id,
+                capability_grant_hash=grant.grant_hash,
+                memory_commit_hash=str(memory_input.get("memory_commit_hash", "")),
+                memory_admission_receipt_hash=str(
+                    memory_input.get("memory_admission_receipt_hash", "")
+                ),
+                replay_eligibility_receipt_hash=str(
+                    memory_input.get("replay_eligibility_receipt_hash", "")
+                ),
             )
             self.context.memory_consumption_records.append(record)
         task_records = [
@@ -1128,6 +1165,7 @@ class AdaptiveCapabilityDispatcher:
         memory_metrics = self._record_memory_consumption(
             memory_inputs=memory_inputs,
             step=step,
+            grant=grant,
             downstream_ref_ids=(artifact.artifact_id,),
             before_surface_hash=before_memory_surface_hash,
             replay_memory_id=(replay_memory_id if dsl_repair_count == 0 else ""),
@@ -1364,6 +1402,7 @@ class AdaptiveCapabilityDispatcher:
         memory_metrics = self._record_memory_consumption(
             memory_inputs=memory_inputs,
             step=step,
+            grant=grant,
             downstream_ref_ids=(artifact.artifact_id,),
             before_surface_hash=before_memory_surface_hash,
             replay_memory_id=(replay_memory_id if not outcome.repairs else ""),
@@ -1556,6 +1595,7 @@ class AdaptiveCapabilityDispatcher:
         memory_metrics = self._record_memory_consumption(
             memory_inputs=memory_inputs,
             step=step,
+            grant=grant,
             downstream_ref_ids=(candidate.artifact_id,),
             before_surface_hash=before_memory_surface_hash,
         )

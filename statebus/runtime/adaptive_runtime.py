@@ -691,6 +691,14 @@ class AdaptiveRuntimeEngine:
             )
             if receipt.commit_authorized:
                 result_admissions.append(receipt)
+                if request.dispatcher is not None:
+                    self._bind_memory_consumption_to_result_admission(
+                        context=request.dispatcher.context,
+                        step_id=step.step_id,
+                        attempt_id=result.attempt_id or attempt_id,
+                        grant_hash=grant.grant_hash,
+                        receipt=receipt,
+                    )
                 return receipt
             fenced.add(step.step_id)
             telemetry.emit(TelemetryEvent.create(
@@ -1641,6 +1649,33 @@ class AdaptiveRuntimeEngine:
             memory_projection_bindings=tuple(memory_projection_bindings),
             replay_eligibility_receipts=tuple(replay_eligibility_receipts),
         )
+
+    @staticmethod
+    def _bind_memory_consumption_to_result_admission(
+        *,
+        context: object,
+        step_id: str,
+        attempt_id: str,
+        grant_hash: str,
+        receipt: AttemptResultAdmissionReceipt,
+    ) -> None:
+        records = getattr(context, "memory_consumption_records", None)
+        if not records:
+            return
+        for index, record in enumerate(tuple(records)):
+            if (
+                record.consumer_step_id != step_id
+                or record.consumer_attempt_id != attempt_id
+                or record.capability_grant_hash != grant_hash
+            ):
+                continue
+            existing_hash = record.attempt_result_admission_receipt_hash
+            if existing_hash and existing_hash != receipt.receipt_hash:
+                raise AdaptiveRuntimeError("memory_consumption_result_admission_mismatch")
+            records[index] = replace(
+                record,
+                attempt_result_admission_receipt_hash=receipt.receipt_hash,
+            )
 
     @staticmethod
     def _verify_artifact_candidates(
