@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from statebus.contracts import (
     CapabilityDescriptor,
@@ -17,6 +18,61 @@ from statebus.utils import sha256_digest
 
 class ProviderBindingError(ValueError):
     pass
+
+
+DETERMINISTIC_FIXTURE_RUNTIME_FACTS_SOURCE = "deterministic_fixture"
+
+
+@dataclass(frozen=True)
+class PhysicalProviderImplementation:
+    """Session-frozen implementation snapshot for one bound provider key."""
+
+    provider_id: str
+    provider_version: str
+    implementation_kind: str
+    model_id: str = ""
+    model_revision: str = ""
+    endpoint_origin: str = ""
+    endpoint_fingerprint: str = ""
+    request_schema_version: str = ""
+    client_config_digest: str = ""
+    implementation_snapshot_digest: str = ""
+    client_factory_key: str = ""
+
+    @property
+    def snapshot_digest(self) -> str:
+        return self.implementation_snapshot_digest or sha256_digest(self.canonical_payload())
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "provider_id": self.provider_id,
+            "provider_version": self.provider_version,
+            "implementation_kind": self.implementation_kind,
+            "model_id": self.model_id,
+            "model_revision": self.model_revision,
+            "endpoint_origin": self.endpoint_origin,
+            "endpoint_fingerprint": self.endpoint_fingerprint,
+            "request_schema_version": self.request_schema_version,
+            "client_config_digest": self.client_config_digest,
+            "implementation_snapshot_digest": self.implementation_snapshot_digest,
+            "client_factory_key": self.client_factory_key,
+        }
+
+    @classmethod
+    def from_descriptor(cls, provider: ExecutionProviderDescriptor) -> "PhysicalProviderImplementation":
+        return cls(
+            provider_id=provider.provider_id,
+            provider_version=provider.provider_version,
+            implementation_kind=provider.implementation_kind,
+            request_schema_version=provider.schema_version,
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedPhysicalProvider:
+    descriptor: ExecutionProviderDescriptor
+    implementation: PhysicalProviderImplementation
+    client: Any = None
 
 
 _RISK_RANK = {
@@ -75,6 +131,9 @@ def project_legacy_provider(
 @dataclass
 class ExecutionProviderRegistry:
     _providers: dict[str, ExecutionProviderDescriptor] = field(default_factory=dict)
+    _implementations: dict[tuple[str, str], PhysicalProviderImplementation] = field(
+        default_factory=dict
+    )
 
     def register(self, provider: ExecutionProviderDescriptor) -> None:
         if provider.provider_id in self._providers:
@@ -90,9 +149,73 @@ class ExecutionProviderRegistry:
     def providers(self) -> tuple[ExecutionProviderDescriptor, ...]:
         return tuple(self._providers[key] for key in sorted(self._providers))
 
+    def register_implementation(self, implementation: PhysicalProviderImplementation) -> None:
+        key = (implementation.provider_id, implementation.provider_version)
+        if key in self._implementations:
+            raise ProviderBindingError(
+                f"duplicate_provider_implementation:{implementation.provider_id}:{implementation.provider_version}"
+            )
+        provider = self._providers.get(implementation.provider_id)
+        if provider is None:
+            raise ProviderBindingError("bound_provider_not_registered")
+        if provider.provider_version != implementation.provider_version:
+            raise ProviderBindingError("bound_provider_version_mismatch")
+        if provider.implementation_kind != implementation.implementation_kind:
+            raise ProviderBindingError("bound_provider_snapshot_mismatch")
+        self._implementations[key] = implementation
+
+    def implementation(self, provider_id: str, provider_version: str) -> PhysicalProviderImplementation:
+        try:
+            return self._implementations[(provider_id, provider_version)]
+        except KeyError as exc:
+            raise ProviderBindingError("bound_provider_snapshot_missing") from exc
+
+    def resolve_bound(
+        self,
+        *,
+        binding: ExecutionBindingReceipt,
+        expected_request_schema_version: str = "",
+        expected_model_fingerprint: str = "",
+        expected_endpoint_fingerprint: str = "",
+        expected_snapshot_digest: str = "",
+        role_config_provider_id: str = "",
+    ) -> ResolvedPhysicalProvider:
+        if binding.provider_registry_digest != self.digest:
+            raise ProviderBindingError("bound_provider_registry_digest_mismatch")
+        if role_config_provider_id and role_config_provider_id != binding.selected_provider_id:
+            raise ProviderBindingError("role_config_provider_override")
+        try:
+            provider = self.get(binding.selected_provider_id)
+        except ProviderBindingError as exc:
+            raise ProviderBindingError("bound_provider_not_registered") from exc
+        if provider.provider_version != binding.selected_provider_version:
+            raise ProviderBindingError("bound_provider_version_mismatch")
+        if provider.implementation_kind != binding.selected_implementation_kind:
+            raise ProviderBindingError("bound_provider_snapshot_mismatch")
+        implementation = self._implementations.get(
+            (binding.selected_provider_id, binding.selected_provider_version)
+        )
+        if implementation is None:
+            raise ProviderBindingError("bound_provider_snapshot_missing")
+        if implementation.implementation_kind != binding.selected_implementation_kind:
+            raise ProviderBindingError("bound_provider_snapshot_mismatch")
+        if expected_request_schema_version and implementation.request_schema_version != expected_request_schema_version:
+            raise ProviderBindingError("bound_provider_request_schema_mismatch")
+        if expected_model_fingerprint and implementation.model_revision != expected_model_fingerprint:
+            raise ProviderBindingError("bound_provider_model_fingerprint_mismatch")
+        if expected_endpoint_fingerprint and implementation.endpoint_fingerprint != expected_endpoint_fingerprint:
+            raise ProviderBindingError("bound_provider_endpoint_fingerprint_mismatch")
+        if expected_snapshot_digest and implementation.snapshot_digest != expected_snapshot_digest:
+            raise ProviderBindingError("bound_provider_snapshot_mismatch")
+        return ResolvedPhysicalProvider(provider, implementation)
+
     def canonical_payload(self) -> dict[str, object]:
         return {
             "providers": [provider.canonical_payload() for provider in self.providers()],
+            "implementations": [
+                implementation.canonical_payload()
+                for _key, implementation in sorted(self._implementations.items())
+            ],
         }
 
     @property
@@ -122,6 +245,29 @@ def default_provider_runtime_facts(
             observed_at_ns=0,
         )
         for provider in registry.providers()
+    }
+
+
+def provider_runtime_facts_metadata(
+    runtime_facts: dict[str, ProviderRuntimeFacts],
+    *,
+    source: str,
+) -> dict[str, object]:
+    """Return explicit provenance for runtime facts without changing frozen contracts."""
+    if source == DETERMINISTIC_FIXTURE_RUNTIME_FACTS_SOURCE:
+        return {
+            "runtime_facts_source": DETERMINISTIC_FIXTURE_RUNTIME_FACTS_SOURCE,
+            "observed_at_ns": 0,
+            "live_health_verified": False,
+            "provider_ids": tuple(sorted(runtime_facts)),
+        }
+    if any(facts.observed_at_ns <= 0 for facts in runtime_facts.values()):
+        raise ProviderBindingError("bound_provider_runtime_facts_invalid")
+    return {
+        "runtime_facts_source": source,
+        "observed_at_ns": max(facts.observed_at_ns for facts in runtime_facts.values()),
+        "live_health_verified": True,
+        "provider_ids": tuple(sorted(runtime_facts)),
     }
 
 
@@ -250,10 +396,14 @@ def create_execution_binding(
 
 __all__ = [
     "ExecutionProviderRegistry",
+    "DETERMINISTIC_FIXTURE_RUNTIME_FACTS_SOURCE",
+    "PhysicalProviderImplementation",
     "ProviderBindingError",
+    "ResolvedPhysicalProvider",
     "compute_provider_eligibility",
     "create_execution_binding",
     "default_provider_runtime_facts",
+    "provider_runtime_facts_metadata",
     "project_legacy_capability",
     "project_legacy_provider",
     "select_provider_deterministically",

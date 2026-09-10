@@ -31,6 +31,7 @@ from statebus.control.transport import (
 )
 from statebus.runtime import LifecycleOrigin, RuntimeSessionManager
 from statebus.runtime.adaptive_runtime import AdaptiveRuntimeRequest
+from statebus.runtime.adaptive_dispatcher import AdaptiveDispatchContext
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.domain_packs import register_long_doc_analysis_capabilities
 from statebus.runtime.driver import RuntimeDriver
@@ -93,9 +94,10 @@ def _adaptive_setup() -> tuple[CapabilityRegistry, AdaptiveTaskEnvelope, object]
 
 
 class _DelayedPhysicalDispatcher:
-    def __init__(self, *, socket_path: Path, trace: list[str]) -> None:
+    def __init__(self, *, socket_path: Path, trace: list[str], registry: CapabilityRegistry) -> None:
         self.socket_path = socket_path
         self.trace = trace
+        self.context = AdaptiveDispatchContext(registry=registry)
         self.timeout: SubprocessTransportTimeout | None = None
         self.transport: SubprocessExecutorTransport | None = None
 
@@ -229,6 +231,7 @@ def test_late_attempt_a_result_is_fenced_after_attempt_b_activation(
     dispatcher = _DelayedPhysicalDispatcher(
         socket_path=tmp_path / "late-attempt-a.sock",
         trace=trace,
+        registry=registry,
     )
     runtime_result = RuntimeDriver().run_adaptive(
         AdaptiveRuntimeRequest(

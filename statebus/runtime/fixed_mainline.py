@@ -7,18 +7,36 @@ from statebus.contracts import (
     AdaptiveTaskEnvelope,
     ApprovedPlanBundle,
     CapabilityDescriptor,
+    Claim,
+    ClaimSet,
     CanonicalTaskSpec,
+    EvidenceRequest,
     ExecutionKind,
     RiskClass,
     RuntimeIdentity,
+    TransformProgram,
+    TransformStep,
     WorkflowMode,
 )
+from statebus.refs import CanonicalEvidencePack, EvidenceItem, TableCellLocator
 from statebus.runtime.adaptive_mainline import (
     AdaptiveMainlineBindings,
     AdaptiveMainlineRequest,
 )
 from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 from statebus.runtime.capability_registry import CapabilityRegistry
+from statebus.runtime.provider_registry import (
+    ExecutionProviderRegistry,
+    PhysicalProviderImplementation,
+    project_legacy_provider,
+)
+from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
+from statebus.runtime.role_providers import (
+    ProviderRequest,
+    RolePathExecutorProvider,
+    RolePathRetrieverProvider,
+    RolePathSummarizerProvider,
+)
 from statebus.runtime.static_role_recipe import (
     StaticRoleRecipe,
     StaticRoleRecipeStep,
@@ -99,10 +117,87 @@ def deterministic_summarize_handler(
     return _compatibility_result(step, grant, "execution_artifact")
 
 
-_HANDLER_BY_ROLE = {
-    "retriever": deterministic_retrieve_handler,
-    "executor": deterministic_execute_handler,
-    "summarizer": deterministic_summarize_handler,
+def _fixed_retrieve_query(
+    _query: str,
+    request: EvidenceRequest,
+) -> CanonicalEvidencePack:
+    return CanonicalEvidencePack(
+        pack_id=f"fixed-pack-{request.task_id}",
+        task_id=request.task_id,
+        source_doc_hashes=("fixed-doc",),
+        structured_evidence=(
+            EvidenceItem(
+                item_id="fixed-revenue-q1",
+                bucket="structured_evidence",
+                locator=TableCellLocator(
+                    source_doc_hash="fixed-doc",
+                    table_id="income",
+                    row_idx=1,
+                    col_idx=1,
+                ),
+                metadata={
+                    "structured_row": {
+                        "quarter": "2026Q1",
+                        "revenue_musd": 120.0,
+                    }
+                },
+            ),
+        ),
+    )
+
+
+def _fixed_retrieval_candidate(request: ProviderRequest) -> EvidenceRequest:
+    return EvidenceRequest(
+        request_id=f"fixed-retrieval-{request.bound_grant.grant.attempt_id}",
+        task_id=request.envelope.task_id,
+        step_id=request.step.step_id,
+        queries=("revenue",),
+        evidence_types=("table",),
+        corpus_scope_ids=("fixed-local",),
+        memory_policy="none",
+        required_locator=True,
+        source_plan_step_id=request.step.step_id,
+    )
+
+
+def _fixed_executor_candidate(request: ProviderRequest) -> TransformProgram:
+    return TransformProgram(
+        program_id=f"fixed-executor-{request.bound_grant.grant.attempt_id}",
+        input_artifact_refs=(request.provider_input_refs[0],),
+        operations=(
+            TransformStep("select", {"columns": ["quarter", "revenue_musd"]}),
+        ),
+        output_contract_version=request.step.output_contract_version,
+    )
+
+
+def _fixed_summarizer_candidate(request: ProviderRequest) -> ClaimSet:
+    # Dependency order is Runtime-owned. The final input is the verified
+    # executor artifact once the dispatcher reaches this provider.
+    if not request.provider_input_refs:
+        raise ValueError("fixed_summarizer_requires_executor_input")
+    artifact_ref = request.provider_input_refs[-1]
+    return ClaimSet(
+        claim_set_id=f"fixed-claims-{request.bound_grant.grant.attempt_id}",
+        task_id=request.envelope.task_id,
+        claims=(
+            Claim(
+                claim_id="fixed-revenue-q1",
+                claim_text="Revenue was 120.0 million USD in 2026Q1.",
+                claim_type="fact",
+                supporting_evidence_item_ids=("fixed-revenue-q1",),
+                supporting_artifact_ref_ids=(artifact_ref,),
+                citation_locators=("income:1:1",),
+                numeric_fields={"revenue_musd": 120.0},
+            ),
+        ),
+    )
+
+
+_FIXED_BOUND_PROVIDER_BY_ROLE = {
+    "retriever": RolePathRetrieverProvider(_fixed_retrieval_candidate),
+    "executor": RolePathExecutorProvider(_fixed_executor_candidate),
+    "summarizer": RolePathSummarizerProvider(_fixed_summarizer_candidate),
 }
 
 
@@ -167,17 +262,49 @@ def _compatibility_registry(recipe: StaticRoleRecipe) -> CapabilityRegistry:
             CapabilityDescriptor(
                 capability_id=step.capability_id,
                 owner_role=step.role,
-                description=f"Deterministic Fixed compatibility {step.role} handler.",
+                description=f"Fixed typed {step.role} provider capability.",
                 input_ref_kinds=accepted_input_kinds,
                 required_input_ref_kinds=dependency_kinds,
                 input_contract_version="statebus.fixed_compatibility_input.v1",
                 output_ref_kinds=(output_kind_by_step[step.step_id],),
                 output_contract_version=step.output_contract_version,
-                execution_kind=ExecutionKind.RUNTIME_BUILTIN,
+                execution_kind={
+                    "retriever": ExecutionKind.RETRIEVAL_ADAPTER,
+                    "executor": ExecutionKind.TRANSFORM_DSL,
+                    # The bound provider seam dispatches the typed ClaimSet
+                    # through the existing summarizer mechanism.
+                    "summarizer": ExecutionKind.RUNTIME_BUILTIN,
+                }[step.role],
                 side_effect_class=RiskClass.READ_ONLY,
                 max_runtime_ms=1_000,
                 supports_replay=False,
+                validator_ids=("metric_series",) if step.role == "executor" else (),
                 completion_criteria_contract=_COMPLETION_CRITERIA_BY_ROLE[step.role],
+            )
+        )
+    return registry
+
+
+def _fixed_provider_registry(
+    *,
+    recipe: StaticRoleRecipe,
+    capability_registry: CapabilityRegistry,
+) -> ExecutionProviderRegistry:
+    """Build the session-frozen physical snapshots for the fixed providers."""
+    registry = ExecutionProviderRegistry()
+    for step in recipe.steps:
+        provider = project_legacy_provider(capability_registry.get(step.capability_id))
+        registry.register(provider)
+        handler = _FIXED_BOUND_PROVIDER_BY_ROLE[step.role]
+        registry.register_implementation(
+            PhysicalProviderImplementation(
+                provider_id=provider.provider_id,
+                provider_version=provider.provider_version,
+                implementation_kind=provider.implementation_kind,
+                request_schema_version=provider.schema_version,
+                client_factory_key=(
+                    f"fixed_mainline:{step.role}:{type(handler).__qualname__}"
+                ),
             )
         )
     return registry
@@ -191,7 +318,7 @@ def _strict_envelope(
 ) -> AdaptiveTaskEnvelope:
     role_counts = {
         role: sum(step.role == role for step in recipe.steps)
-        for role in _HANDLER_BY_ROLE
+        for role in ("retriever", "executor", "summarizer")
     }
     return AdaptiveTaskEnvelope(
         task_id=runtime_identity.runtime_task_id,
@@ -223,6 +350,10 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
     if recipe.requested_memory_policy != "none":
         raise FixedMainlineError("fixed_compatibility_memory_policy_must_be_none")
     registry = _compatibility_registry(recipe)
+    provider_registry = _fixed_provider_registry(
+        recipe=recipe,
+        capability_registry=registry,
+    )
     envelope = _strict_envelope(
         runtime_identity=request.runtime_identity,
         canonical_task_spec=request.canonical_task_spec,
@@ -255,8 +386,16 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
         propose_plan=None,
         approved_plan_bundle=bundle,
         bindings=AdaptiveMainlineBindings(
-            builtin_handlers={
-                step.capability_id: _HANDLER_BY_ROLE[step.role]
+            retrieval_adapter=AdaptiveRetrievalAdapter(_fixed_retrieve_query),
+            allowed_corpus_scope_ids=("fixed-local",),
+            output_schema_by_step={
+                "execute": {
+                    "quarter": "string",
+                    "revenue_musd": "number",
+                },
+            },
+            bound_provider_handlers={
+                step.capability_id: _FIXED_BOUND_PROVIDER_BY_ROLE[step.role]
                 for step in recipe.steps
             }
         ),
@@ -265,6 +404,7 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
         memory_commit_enabled=False,
         runtime_compatibility_signature=registry.digest,
         runtime_identity=request.runtime_identity,
+        provider_registry=provider_registry,
     )
 
 

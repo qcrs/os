@@ -23,7 +23,9 @@ from statebus.contracts import (
     CONTROL_PLANE_SCHEMA_VERSION,
     EvidenceCoverageStatus,
     EvidenceProjectionRequest,
+    EvidenceRequest,
     ExecutionKind,
+    GeneratedCodeCandidate,
     PlanStepProposal,
     RefStatus,
     ReplayClass,
@@ -56,6 +58,17 @@ from statebus.runtime.retrieval_adapter import (
     stable_fan_in_evidence_packs,
 )
 from statebus.runtime.provider_registry import project_legacy_capability
+from statebus.runtime.provider_registry import (
+    ExecutionProviderRegistry,
+    ProviderBindingError,
+)
+from statebus.runtime.role_providers import (
+    ProviderCandidate,
+    ProviderRequest,
+    ProviderStateReadFacade,
+    RoleProviderContext,
+    detach_provider_candidate,
+)
 from statebus.runtime.transform_dsl import TransformDslInterpreter, TransformProgramError
 from statebus.runtime.claims import ClaimSetValidator
 from statebus.runtime.workspace import ArtifactLifecycleManager
@@ -93,6 +106,7 @@ CodeSourceFactory = Callable[[CodeGenerationRequest, str], str]
 CodeRepairFactory = Callable[[CodeGenerationRequest, str, str, tuple[str, ...]], str]
 BuiltinHandler = Callable[[AdaptiveTaskEnvelope, ApprovedPlan, PlanStepProposal, CapabilityGrant, Path], "AdaptiveStepResult"]
 ClaimSetFactory = Callable[..., ClaimSet]
+BoundProviderHandler = Callable[[ProviderRequest], ProviderCandidate]
 
 
 @dataclass
@@ -133,6 +147,14 @@ class AdaptiveDispatchContext:
     # issue the final cited-report ArtifactRef.
     claim_set_factory: ClaimSetFactory | None = None
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
+    # Disjoint from legacy BuiltinHandler: bound providers receive the full
+    # BoundCapabilityGrant through ProviderRequest and return a candidate.
+    bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
+    provider_registry: ExecutionProviderRegistry | None = None
+    provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
+    # Dispatcher/transport-owned evidence keyed by the current grant.  A
+    # provider cannot self-assert CodeAct response hashes.
+    provider_invocation_evidence: dict[str, dict[str, str]] = field(default_factory=dict)
     # Product-runtime infrastructure. Handlers receive authority through the
     # context assembled by AdaptiveMainlineRunner, never by diagnostics code.
     state_store: "LayeredStateStore | None" = None
@@ -214,6 +236,7 @@ class AdaptiveCapabilityDispatcher:
             if not isinstance(grant, BoundCapabilityGrant):
                 raise AdaptiveDispatchError("execution_binding_required")
             descriptor = self.context.registry.get(step.capability_id)
+            bound_handler = self.context.bound_provider_handlers.get(step.capability_id)
             execution_kind = self._validate_dispatch(
                 envelope,
                 approved_plan,
@@ -222,6 +245,17 @@ class AdaptiveCapabilityDispatcher:
                 grant,
                 runtime_identity,
             )
+            if bound_handler is not None:
+                return self._dispatch_bound_provider(
+                    handler=bound_handler,
+                    envelope=envelope,
+                    approved_plan=approved_plan,
+                    step=step,
+                    bound_grant=grant,
+                    attempt_workspace=attempt_workspace,
+                    runtime_identity=runtime_identity,
+                    state_access_authority=state_access_authority,
+                )
             if execution_kind == ExecutionKind.RETRIEVAL_ADAPTER:
                 return self._dispatch_retrieval(
                     envelope,
@@ -244,6 +278,141 @@ class AdaptiveCapabilityDispatcher:
                 error_code=str(exc) or type(exc).__name__,
             )
 
+    def _dispatch_bound_provider(
+        self,
+        *,
+        handler: BoundProviderHandler,
+        envelope: AdaptiveTaskEnvelope,
+        approved_plan: ApprovedPlan,
+        step: PlanStepProposal,
+        bound_grant: BoundCapabilityGrant,
+        attempt_workspace: Path,
+        runtime_identity: RuntimeIdentity,
+        state_access_authority: "RuntimeStateAccessAuthority | None",
+    ) -> "AdaptiveStepResult":
+        from statebus.runtime.adaptive_runtime import AdaptiveStepResult
+
+        binding = bound_grant.execution_binding
+        descriptor = self.context.registry.get(step.capability_id)
+        provider_registry = self.context.provider_registry
+        if provider_registry is None:
+            provider_registry = ExecutionProviderRegistry.from_legacy_capability_registry(
+                self.context.registry
+            )
+        try:
+            provider_registry.resolve_bound(binding=binding)
+        except ProviderBindingError as exc:
+            raise AdaptiveDispatchError(str(exc)) from exc
+        role = step.role
+        if role not in {"retriever", "executor", "summarizer"}:
+            raise AdaptiveDispatchError("provider_role_not_supported")
+        role_context = RoleProviderContext(
+            role=role,
+            input_contract_version=descriptor.input_contract_version,
+            output_contract_version=descriptor.output_contract_version,
+            mechanism_kind=binding.selected_implementation_kind,
+            verified_input_refs=tuple(bound_grant.grant.input_ref_ids),
+        )
+        request = ProviderRequest(
+            envelope=envelope,
+            approved_plan=approved_plan,
+            step=step,
+            bound_grant=bound_grant,
+            runtime_identity=runtime_identity,
+            attempt_workspace=attempt_workspace,
+            provider_input_refs=tuple(bound_grant.grant.input_ref_ids),
+            role_context=role_context,
+            state_reader=None,
+        )
+        if self.context.provider_state_reader_factory is not None:
+            request = replace(
+                request,
+                state_reader=self.context.provider_state_reader_factory(request),
+            )
+        raw_candidate = handler(request)
+        if not isinstance(raw_candidate, ProviderCandidate):
+            raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
+        candidate = detach_provider_candidate(raw_candidate)
+        expected_kind = {
+            "retriever": "retrieval_request",
+            "executor": "executor_program",
+            "summarizer": "summary_claim_set",
+        }[role]
+        if candidate.candidate_kind not in {expected_kind, "failure", "diagnostic"}:
+            raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
+        if candidate.candidate_kind == "failure":
+            return AdaptiveStepResult(
+                grant_hash=bound_grant.grant.grant_hash,
+                success=False,
+                attempt_id=bound_grant.grant.attempt_id,
+                error_code=candidate.error_code,
+                retryable=candidate.retryable,
+            )
+        if candidate.candidate_kind == "diagnostic":
+            return AdaptiveStepResult(
+                grant_hash=bound_grant.grant.grant_hash,
+                success=False,
+                attempt_id=bound_grant.grant.attempt_id,
+                error_code="provider_diagnostic_only",
+            )
+        payload = candidate.payload
+        if candidate.candidate_kind == "retrieval_request":
+            assert isinstance(payload, EvidenceRequest)
+            if payload.task_id != bound_grant.grant.task_id or payload.step_id != step.step_id:
+                raise AdaptiveDispatchError("provider_candidate_scope_mismatch")
+            return self._dispatch_retrieval(
+                envelope,
+                approved_plan,
+                step,
+                bound_grant.grant,
+                attempt_workspace,
+                runtime_identity=runtime_identity,
+                execution_binding_hash=bound_grant.execution_binding_hash,
+                bound_grant=bound_grant,
+                state_access_authority=state_access_authority,
+                candidate_request=payload,
+            )
+        if candidate.candidate_kind == "executor_program":
+            if isinstance(payload, TransformProgram):
+                return self._dispatch_transform_dsl(
+                    envelope,
+                    approved_plan,
+                    step,
+                    bound_grant.grant,
+                    attempt_workspace,
+                    candidate_program=payload,
+                )
+            if isinstance(payload, GeneratedCodeCandidate):
+                evidence = self.context.provider_invocation_evidence.get(
+                    bound_grant.grant.grant_hash
+                )
+                if evidence is None:
+                    raise AdaptiveDispatchError("provider_candidate_hash_mismatch")
+                if (
+                    evidence.get("request_hash") != payload.request_hash
+                    or evidence.get("source_hash") != payload.source_hash
+                    or evidence.get("raw_response_hash") != payload.raw_response_hash
+                    or sha256_digest(payload.source.encode("utf-8")) != payload.source_hash
+                ):
+                    raise AdaptiveDispatchError("provider_candidate_hash_mismatch")
+                # CodeAct execution requires the dispatcher-prepared request
+                # and captured raw response.  Without that evidence the
+                # candidate remains non-authoritative and is rejected above;
+                # execution is intentionally not re-generated here.
+                raise AdaptiveDispatchError("provider_candidate_codeact_execution_unavailable")
+            raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
+        if candidate.candidate_kind == "summary_claim_set":
+            assert isinstance(payload, ClaimSet)
+            if payload.task_id != bound_grant.grant.task_id:
+                raise AdaptiveDispatchError("provider_candidate_scope_mismatch")
+            return self._dispatch_summarizer(
+                step,
+                bound_grant.grant,
+                attempt_workspace,
+                candidate_claim_set=payload,
+            )
+        raise AdaptiveDispatchError("provider_candidate_kind_invalid")
+
     def _dispatch_retrieval(
         self,
         envelope: AdaptiveTaskEnvelope,
@@ -256,12 +425,15 @@ class AdaptiveCapabilityDispatcher:
         execution_binding_hash: str,
         bound_grant: BoundCapabilityGrant,
         state_access_authority: "RuntimeStateAccessAuthority | None",
+        candidate_request: "EvidenceRequest | None" = None,
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
-        if self.context.retrieval_adapter is None or self.context.retrieval_request_factory is None:
+        if self.context.retrieval_adapter is None or (
+            candidate_request is None and self.context.retrieval_request_factory is None
+        ):
             raise AdaptiveDispatchError("retrieval_handler_not_registered")
-        request = self.context.retrieval_request_factory(step, grant)
+        request = candidate_request or self.context.retrieval_request_factory(step, grant)
         def propose_expansion(report: "EvidenceCoverageReport") -> "EvidenceRequest | None":
             if self.context.retrieval_expansion_factory is None:
                 return None
@@ -1015,6 +1187,7 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
         attempt_workspace: Path,
+        candidate_program: TransformProgram | None = None,
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
@@ -1029,7 +1202,7 @@ class AdaptiveCapabilityDispatcher:
             "input_ref_id": input_ref_id,
             "input_hashes": list(input_hashes),
         })
-        if self.context.transform_program_factory is None:
+        if candidate_program is None and self.context.transform_program_factory is None:
             raise AdaptiveDispatchError("transform_program_handler_not_registered")
         replay_recipe, replay_memory_id = self._validated_recipe(
             memory_inputs,
@@ -1037,7 +1210,14 @@ class AdaptiveCapabilityDispatcher:
             capability_id=step.capability_id,
             output_contract_version=grant.output_contract_version,
         )
-        if replay_recipe is not None:
+        if candidate_program is not None:
+            program = candidate_program
+            if tuple(program.input_artifact_refs) not in {
+                (input_ref_id,),
+                tuple(grant.input_ref_ids),
+            }:
+                raise AdaptiveDispatchError("provider_candidate_input_scope_mismatch")
+        elif replay_recipe is not None:
             operations = tuple(
                 TransformStep(
                     op=str(item["op"]),
@@ -1456,6 +1636,7 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
         attempt_workspace: Path,
+        candidate_claim_set: ClaimSet | None = None,
     ) -> "AdaptiveStepResult":
         """Materialize only a validated ClaimSet from the verified input refs."""
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
@@ -1496,35 +1677,38 @@ class AdaptiveCapabilityDispatcher:
             "artifact_hash": stored.artifact.blob_hash,
             "evidence_pack_hash": evidence_pack.pack_hash,
         })
-        assert self.context.claim_set_factory is not None
-        try:
-            if self._factory_accepts_memory_inputs(
-                self.context.claim_set_factory,
-                minimum_positional=6,
-            ):
-                claim_set = self.context.claim_set_factory(
-                    step,
-                    grant,
-                    stored.artifact,
-                    rows,
-                    evidence_pack,
-                    memory_inputs,
-                )
-            else:
-                claim_set = self.context.claim_set_factory(
-                    step,
-                    grant,
-                    stored.artifact,
-                    rows,
-                    evidence_pack,
-                )
-        except Exception as exc:
-            # A candidate-generation error is not an authorization to issue a
-            # fallback report.  Surface it as a normal failed Runtime step so
-            # the session and telemetry remain auditable and fail closed.
-            raise AdaptiveDispatchError(
-                f"summarizer_candidate_generation_failed:{type(exc).__name__}"
-            ) from exc
+        if candidate_claim_set is not None:
+            claim_set = candidate_claim_set
+        else:
+            assert self.context.claim_set_factory is not None
+            try:
+                if self._factory_accepts_memory_inputs(
+                    self.context.claim_set_factory,
+                    minimum_positional=6,
+                ):
+                    claim_set = self.context.claim_set_factory(
+                        step,
+                        grant,
+                        stored.artifact,
+                        rows,
+                        evidence_pack,
+                        memory_inputs,
+                    )
+                else:
+                    claim_set = self.context.claim_set_factory(
+                        step,
+                        grant,
+                        stored.artifact,
+                        rows,
+                        evidence_pack,
+                    )
+            except Exception as exc:
+                # A candidate-generation error is not an authorization to issue a
+                # fallback report.  Surface it as a normal failed Runtime step so
+                # the session and telemetry remain auditable and fail closed.
+                raise AdaptiveDispatchError(
+                    f"summarizer_candidate_generation_failed:{type(exc).__name__}"
+                ) from exc
         claim_report = ClaimSetValidator().validate(
             claim_set,
             evidence_pack=evidence_pack,
@@ -1794,6 +1978,19 @@ class AdaptiveCapabilityDispatcher:
             or binding.semantic_contract_hash != logical_capability.semantic_contract_hash
         ):
             raise AdaptiveDispatchError("execution_binding_scope_mismatch")
+        if step.capability_id in self.context.bound_provider_handlers:
+            provider_registry = self.context.provider_registry
+            if provider_registry is None:
+                provider_registry = ExecutionProviderRegistry.from_legacy_capability_registry(
+                    self.context.registry
+                )
+            try:
+                provider_registry.resolve_bound(binding=binding)
+            except ProviderBindingError as exc:
+                raise AdaptiveDispatchError(str(exc)) from exc
+            if descriptor.owner_role != step.role:
+                raise AdaptiveDispatchError("capability_descriptor_mismatch")
+            return descriptor.execution_kind
         try:
             execution_kind = ExecutionKind(binding.selected_implementation_kind)
         except ValueError as exc:

@@ -49,6 +49,9 @@ from statebus.runtime.adaptive_runtime import (
     AdaptiveRuntimeRequest,
     AdaptiveRuntimeResult,
 )
+from statebus.runtime.provider_registry import ExecutionProviderRegistry
+from statebus.contracts import ProviderRuntimeFacts
+from statebus.runtime.role_providers import BoundProviderHandler, ProviderStateReadFacade, ProviderRequest
 from statebus.runtime.memory_projection import (
     MemoryProjectionSpec,
     build_memory_commit,
@@ -103,6 +106,9 @@ class AdaptiveMainlineBindings:
     output_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
     claim_set_factory: ClaimSetFactory | None = None
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
+    bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
+    provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
+    provider_invocation_evidence: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -183,6 +189,8 @@ class AdaptiveMainlineRequest:
     input_schema_digest: str = ""
     validator_digest: str = ""
     runtime_identity: RuntimeIdentity | None = None
+    provider_registry: ExecutionProviderRegistry | None = None
+    provider_runtime_facts: dict[str, ProviderRuntimeFacts] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -345,6 +353,13 @@ class AdaptiveMainlineRunner:
             output_schema_by_step=bindings.output_schema_by_step,
             claim_set_factory=bindings.claim_set_factory,
             builtin_handlers=bindings.builtin_handlers,
+            bound_provider_handlers=bindings.bound_provider_handlers,
+            provider_state_reader_factory=bindings.provider_state_reader_factory,
+            provider_invocation_evidence=bindings.provider_invocation_evidence,
+            provider_registry=(
+                request.provider_registry
+                or ExecutionProviderRegistry.from_legacy_capability_registry(request.registry)
+            ),
             state_store=state_store,
             memory_store=memory_store,
             workspace_manager=workspace_manager,
@@ -378,6 +393,8 @@ class AdaptiveMainlineRunner:
             dispatcher=AdaptiveCapabilityDispatcher(context=context),
             layer_name=request.layer_name,
             runtime_identity=runtime_identity,
+            provider_registry=request.provider_registry,
+            provider_runtime_facts=dict(request.provider_runtime_facts),
             identity_is_compatibility_projection=request.runtime_identity is None,
             memory_projection_spec=self._memory_projection_spec(
                 request=request,

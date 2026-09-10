@@ -607,10 +607,19 @@ class AdaptiveRuntimeEngine:
             if request.provider_runtime_facts
             else default_provider_runtime_facts(provider_registry)
         )
+        runtime_facts_source = (
+            "observed_runtime"
+            if request.provider_runtime_facts
+            else "deterministic_fixture"
+        )
 
         session_manager = RuntimeSessionManager()
         if request.dispatcher is not None:
             request.dispatcher.context.session_manager = session_manager
+            # The dispatcher must resolve the same registry snapshot that
+            # produced the current binding; it must not reconstruct a second
+            # provider-selection authority from role configuration.
+            request.dispatcher.context.provider_registry = provider_registry
         state_store = (
             request.dispatcher.context.state_store
             if request.dispatcher is not None
@@ -877,6 +886,7 @@ class AdaptiveRuntimeEngine:
                     telemetry=telemetry,
                     projection=projection,
                     binding=binding,
+                    runtime_facts_source=runtime_facts_source,
                 )
                 selected_memory = self._select_memory_for_attempt(
                     request=request,
@@ -1121,6 +1131,7 @@ class AdaptiveRuntimeEngine:
                         telemetry=telemetry,
                         projection=fallback_projection,
                         binding=fallback_binding,
+                        runtime_facts_source=runtime_facts_source,
                     )
                     fallback_selected_memory = self._select_memory_for_attempt(
                         request=request,
@@ -2140,6 +2151,7 @@ class AdaptiveRuntimeEngine:
         telemetry: TelemetryEmitter,
         projection: ProviderEligibilityProjection,
         binding: ExecutionBindingReceipt,
+        runtime_facts_source: str = "observed_runtime",
     ) -> None:
         telemetry.emit(TelemetryEvent.create(
             trace_id=request.trace_id,
@@ -2151,6 +2163,8 @@ class AdaptiveRuntimeEngine:
             payload={
                 **projection.canonical_payload(),
                 "eligibility_projection_hash": projection.projection_hash,
+                "runtime_facts_source": runtime_facts_source,
+                "live_health_verified": runtime_facts_source == "observed_runtime",
             },
             metrics={"eligible_provider_count": float(len(projection.eligible_provider_ids))},
         ))
@@ -2164,6 +2178,8 @@ class AdaptiveRuntimeEngine:
             payload={
                 **binding.canonical_payload(),
                 "execution_binding_hash": binding.binding_hash,
+                "runtime_facts_source": runtime_facts_source,
+                "live_health_verified": runtime_facts_source == "observed_runtime",
             },
             metrics={"execution_provider_binding_count": 1.0},
         ))
