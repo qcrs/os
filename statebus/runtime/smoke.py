@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -38,23 +39,37 @@ from statebus.control import (
     TrapFatal,
     frame_control_message,
 )
+from statebus.control.transport import SubprocessTransportTimeout, effective_unix_socket_path
 from statebus.contracts import (
+    AdaptiveTaskEnvelope,
+    BoundCapabilityGrant,
     CanonicalPrefixEntry,
     CanonicalTaskSpec,
+    CapabilityDescriptor,
+    CapabilityGrant,
     CompatibilityVerdict,
+    CONTROL_PLANE_SCHEMA_VERSION,
+    ExecutionKind,
     HydrationAccountingAudit,
     HydrationRoleAccounting,
     PlannerHandoff,
+    PlanProposal,
+    PlanStepProposal,
+    ProviderRuntimeFacts,
     RefKind,
     RefStatus,
     ReplayClass,
+    RiskClass,
+    RuntimeIdentity,
     ROLE_PROMPT_SLICE_SCHEMA_VERSION,
     RuntimeSignatureManifestBundle,
     RuntimeCompatibilitySignature,
     StepLifecycleState,
     StorageKind,
+    STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT,
     TaskCompilerInput,
     TaskMode,
+    WorkflowMode,
     LOGIT_GATE_MARGIN_THRESHOLD,
 )
 from statebus.memory import (
@@ -137,6 +152,19 @@ from statebus.runtime import (
     select_history_replay_candidate,
 )
 from statebus.runtime.preflight import runtime_preflight
+from statebus.runtime.adaptive_runtime import RuntimeStateAccessAuthority
+from statebus.runtime.capability_registry import CapabilityRegistry
+from statebus.runtime.identity import new_run_id, resolve_runtime_identity
+from statebus.runtime.plan_policy import PlanPolicyValidator
+from statebus.runtime.provider_registry import (
+    ExecutionProviderRegistry,
+    PhysicalProviderImplementation,
+    compute_provider_eligibility,
+    create_execution_binding,
+    project_legacy_capability,
+    project_legacy_provider,
+    select_provider_deterministically,
+)
 from statebus.runtime.logit_gate import (
     LogitGateAttempt,
     LogitGateMode,
@@ -149,13 +177,14 @@ from statebus.runtime.semantic_plan import resolve_semantic_task_plan
 from statebus.runtime.session import RuntimeTaskSession, RuntimeWorkflowStep
 from statebus.runtime.driver import RuntimeDriver, RuntimeDriverInput, RuntimeDriverProfile
 from statebus.state import (
+    DENSE_SEMANTIC_STATE_SCHEMA_VERSION,
+    DenseSemanticStatePublication,
     JsonContractStore,
     LayeredStateStore,
     LayeredStoragePolicy,
     MaterializedStateHandle,
     RefRegistryQuery,
     publish_dense_semantic_state,
-    query_embedding_from_dense_state,
 )
 from statebus.state import MemorySidecarStore, RetrievalSidecarStore
 from statebus.utils import sha256_digest, stable_json_dumps
@@ -2169,6 +2198,268 @@ def _write_logit_gate_audit(
     )
 
 
+def _build_legacy_semantic_consumer_request(
+    *,
+    comparator_identity: RuntimeIdentity,
+    publication: DenseSemanticStatePublication,
+    state_store: LayeredStateStore,
+    runtime_root: Path,
+    semantic_top_k: int,
+    evidence_budget_bytes: int,
+    transport: SubprocessExecutorTransport,
+) -> tuple[RuntimeStateAccessAuthority, ExecRequest]:
+    step_id = "semantic.consume"
+    attempt_id = new_run_id(prefix="legacy-semantic-attempt")
+    consumer_identity = resolve_runtime_identity(
+        task_id=comparator_identity.runtime_task_id,
+        trace_id=comparator_identity.trace_id,
+        canonical_task_spec_hash=comparator_identity.task_contract_hash,
+        run_id=comparator_identity.run_id,
+        session_id=new_run_id(prefix="legacy-semantic-session"),
+        task_contract=comparator_identity.task_contract,
+    )
+    consumer_workspace = runtime_root / "legacy-semantic-consumer"
+    session_manager = RuntimeSessionManager()
+    session_manager.start(
+        session_id=consumer_identity.session_id,
+        trace_id=consumer_identity.trace_id,
+        task_id=consumer_identity.runtime_task_id,
+        layer_name="legacy_comparator_semantic_consumer",
+        canonical_task_spec_hash=consumer_identity.task_contract_hash,
+        workspace_root=str(consumer_workspace),
+        state_root=str(state_store.root),
+    )
+    session_manager.attach_workflow(
+        consumer_identity.session_id,
+        workflow_steps=(
+            RuntimeWorkflowStep(
+                step_id=step_id,
+                role="executor",
+                capability="legacy.semantic_select_v1",
+                input_refs=(publication.ref.state_id,),
+                output_refs=(publication.ref.state_id,),
+            ),
+        ),
+    )
+    session_manager.append_attempt_record(
+        consumer_identity.session_id,
+        record=StepAttemptRecord(
+            task_id=consumer_identity.runtime_task_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            owner_role="executor",
+            state=StepLifecycleState.DISPATCHED.value,
+            attempt_index=1,
+            lifecycle_origin="LOCAL_RUNTIME",
+            dispatched_at_ns=time.time_ns(),
+        ),
+    )
+    session_manager.activate_attempt(
+        consumer_identity.session_id,
+        step_id=step_id,
+        attempt_id=attempt_id,
+    )
+
+    capability = CapabilityDescriptor(
+        capability_id="legacy.semantic_select_v1",
+        owner_role="executor",
+        description="Read one published dense semantic state and select evidence.",
+        input_ref_kinds=("semantic_state",),
+        required_input_ref_kinds=("semantic_state",),
+        input_contract_version=DENSE_SEMANTIC_STATE_SCHEMA_VERSION,
+        output_ref_kinds=("semantic_state",),
+        output_contract_version="statebus.evidence_selection.v1",
+        execution_kind=ExecutionKind.RUNTIME_BUILTIN,
+        side_effect_class=RiskClass.READ_ONLY,
+        max_runtime_ms=20_000,
+        supports_replay=False,
+    )
+    capability_registry = CapabilityRegistry()
+    capability_registry.register(capability)
+    proposal = PlanProposal(
+        proposal_id=f"proposal-{attempt_id}",
+        task_id=consumer_identity.runtime_task_id,
+        steps=(
+            PlanStepProposal(
+                step_id=step_id,
+                role="executor",
+                capability_id=capability.capability_id,
+                goal="Select semantic evidence from the published input state.",
+                input_ref_ids=(publication.ref.state_id,),
+                input_ref_kinds=("semantic_state",),
+                output_contract_version=capability.output_contract_version,
+                on_failure="fail",
+            ),
+        ),
+        final_output_contract_version=capability.output_contract_version,
+        requested_memory_policy="none",
+    )
+    envelope = AdaptiveTaskEnvelope(
+        task_id=consumer_identity.runtime_task_id,
+        canonical_task_spec_hash=consumer_identity.task_contract_hash,
+        workflow_mode=WorkflowMode.STRICT_FIXED,
+        domain_pack_id="legacy.semantic_consumer",
+        allowed_capability_ids=(capability.capability_id,),
+        allowed_output_contracts=(capability.output_contract_version,),
+        allowed_memory_policies=("none",),
+        role_cardinality={"executor": (1, 1)},
+        max_plan_steps=1,
+        max_dependency_depth=1,
+        max_retrieval_steps=0,
+        max_execution_runtime_ms=20_000,
+        max_replans=0,
+        max_retrieval_expansions=0,
+        max_total_attempts=1,
+        risk_class=RiskClass.READ_ONLY,
+        allow_llm_python=False,
+    )
+    policy_outcome = PlanPolicyValidator(capability_registry).validate(
+        proposal,
+        envelope,
+        available_input_refs={publication.ref.state_id: "semantic_state"},
+    )
+    if policy_outcome.approved_plan is None:
+        reasons = ",".join(issue.error_code for issue in policy_outcome.report.issues)
+        raise RuntimeError(f"legacy_semantic_consumer_plan_rejected:{reasons}")
+    approved_plan = policy_outcome.approved_plan
+
+    logical_capability = project_legacy_capability(capability)
+    provider = project_legacy_provider(
+        capability,
+        provider_id="legacy-semantic-select-uds",
+    )
+    provider_registry = ExecutionProviderRegistry()
+    provider_registry.register(provider)
+    worker_module = "statebus.control.subprocess_worker"
+    endpoint_payload = {
+        "python_executable": transport.python_executable,
+        "worker_module": worker_module,
+        "socket_path": str(transport.socket_path.resolve()),
+        "carrier": "protobuf",
+        "operation": "semantic_select_v1",
+        "control_schema_version": CONTROL_PLANE_SCHEMA_VERSION,
+    }
+    endpoint_fingerprint = sha256_digest(endpoint_payload)
+    implementation = PhysicalProviderImplementation(
+        provider_id=provider.provider_id,
+        provider_version=provider.provider_version,
+        implementation_kind=provider.implementation_kind,
+        endpoint_origin=f"unix://{transport.socket_path.resolve()}",
+        endpoint_fingerprint=endpoint_fingerprint,
+        request_schema_version=CONTROL_PLANE_SCHEMA_VERSION,
+        client_config_digest=sha256_digest({
+            "python_executable": transport.python_executable,
+            "timeout_s": transport.timeout_s,
+        }),
+        implementation_snapshot_digest=sha256_digest(endpoint_payload),
+        client_factory_key=worker_module,
+    )
+    provider_registry.register_implementation(implementation)
+    python_path = Path(transport.python_executable)
+    prerequisites_satisfied = (
+        python_path.is_file()
+        and os.access(python_path, os.X_OK)
+        and importlib.util.find_spec(worker_module) is not None
+        and transport.timeout_s > 0
+    )
+    runtime_facts = {
+        provider.provider_id: ProviderRuntimeFacts(
+            provider_id=provider.provider_id,
+            ready=prerequisites_satisfied,
+            healthy=prerequisites_satisfied,
+            prerequisites_satisfied=prerequisites_satisfied,
+            observed_at_ns=time.time_ns(),
+        )
+    }
+    projection = compute_provider_eligibility(
+        task_id=consumer_identity.runtime_task_id,
+        session_id=consumer_identity.session_id,
+        step_id=step_id,
+        attempt_id=attempt_id,
+        approved_plan_hash=approved_plan.approved_plan_hash,
+        logical_capability=logical_capability,
+        provider_registry=provider_registry,
+        runtime_facts=runtime_facts,
+        allowed_risk_class=RiskClass.READ_ONLY,
+        required_runtime_ms=20_000,
+    )
+    selected_provider = select_provider_deterministically(projection, provider_registry)
+    binding = create_execution_binding(projection=projection, provider=selected_provider)
+    provider_registry.resolve_bound(
+        binding=binding,
+        expected_request_schema_version=CONTROL_PLANE_SCHEMA_VERSION,
+        expected_endpoint_fingerprint=endpoint_fingerprint,
+        expected_snapshot_digest=implementation.snapshot_digest,
+    )
+    now_ns = time.time_ns()
+    grant = CapabilityGrant(
+        grant_id=f"grant-{attempt_id}",
+        task_id=consumer_identity.runtime_task_id,
+        session_id=consumer_identity.session_id,
+        step_id=step_id,
+        attempt_id=attempt_id,
+        capability_id=logical_capability.capability_id,
+        capability_version=logical_capability.version,
+        input_ref_ids=(publication.ref.state_id,),
+        output_contract_version=capability.output_contract_version,
+        workspace_root_id=str(consumer_workspace),
+        max_runtime_ms=capability.max_runtime_ms,
+        expires_at_ns=min(
+            now_ns + capability.max_runtime_ms * 1_000_000,
+            publication.contract.lease_expires_at_ns,
+        ),
+        approved_plan_hash=approved_plan.approved_plan_hash,
+        memory_ref_ids=(),
+    )
+    bound_grant = BoundCapabilityGrant(grant=grant, execution_binding=binding)
+    authority = RuntimeStateAccessAuthority(
+        session_manager=session_manager,
+        runtime_identity=consumer_identity,
+        bound_grant=bound_grant,
+        allow_dense_semantic_intermediate=False,
+    )
+    invocation_id = f"invocation-{_uuid.uuid4().hex}"
+    worker_access_grant = authority.issue_read(
+        ref=publication.ref,
+        authority_basis=STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT,
+        consumer_role="executor",
+        physical_invocation_id=invocation_id,
+    )
+    request = ExecRequest(
+        header=ControlHeader(
+            trace_id=consumer_identity.trace_id,
+            task_id=consumer_identity.runtime_task_id,
+            step_id=step_id,
+            attempt_id=attempt_id,
+            target_role="executor",
+            timeout_ms=capability.max_runtime_ms,
+            event_type=EventType.REQ_EXEC,
+            schema_version=CONTROL_PLANE_SCHEMA_VERSION,
+            run_id=consumer_identity.run_id,
+            session_id=consumer_identity.session_id,
+            invocation_id=invocation_id,
+            execution_binding_hash=bound_grant.execution_binding_hash,
+            capability_grant_hash=bound_grant.grant.grant_hash,
+        ),
+        state_refs=(RefHandle(ref_id=publication.ref.state_id, ref_kind="semantic_state"),),
+        state_access_grants=(worker_access_grant,),
+        consumer_provider_id=bound_grant.provider_id,
+        artifact_refs=(),
+        runtime_reuse_contract="semantic_state_required",
+        output_contract_version=capability.output_contract_version,
+        workspace_root=str(consumer_workspace),
+        input_manifest_hash=publication.contract.hydrate_manifest_hash,
+        operation="semantic_select_v1",
+        state_root=str(state_store.root),
+        hydrate_manifest_id=publication.contract.hydrate_manifest_id,
+        semantic_top_k=semantic_top_k,
+        evidence_budget_bytes=evidence_budget_bytes,
+        expected_encoder_signature=publication.contract.encoder_signature,
+        capability_grant_hash=bound_grant.grant.grant_hash,
+    )
+    return authority, request
+
+
 def run_smoke(
     *,
     workspace_root: Path,
@@ -2256,6 +2547,13 @@ def run_smoke(
     )
     if compiler_result.canonical_task_spec is None:
         raise RuntimeError("smoke path requires compiled canonical task spec")
+    comparator_identity = resolve_runtime_identity(
+        task_id=task_id,
+        trace_id=trace_id,
+        canonical_task_spec_hash=compiler_result.canonical_task_spec.spec_hash,
+        run_id=new_run_id(prefix="legacy-comparator-run"),
+        session_id=new_run_id(prefix="legacy-comparator-session"),
+    )
 
     llm_config = LLMConfig.from_runtime()
     role_clients = {
@@ -2425,7 +2723,7 @@ def run_smoke(
             query_embedding=retrieval.query_embedding,
             candidate_embeddings=candidate_embeddings,
             hydrate_manifest=retrieval.semantic_state_manifest,
-            owner_session_id=f"session-{task_id}",
+            owner_session_id=comparator_identity.session_id,
             encoder_revision="retriever-fanout-v1",
         )
         semantic_state_handle = publication.handle
@@ -2438,73 +2736,143 @@ def run_smoke(
         semantic_top_k = max(1, min(len(semantic_entries), max(
             len(retrieval.evidence_pack.semantic_contexts), 1
         )))
-        semantic_request = ExecRequest(
-            header=ControlHeader(
-                trace_id=trace_id,
-                task_id=task_id,
-                step_id="semantic.consume",
-                attempt_id="attempt-1",
-                target_role="executor",
-                timeout_ms=20_000,
-                event_type=EventType.REQ_EXEC,
+        semantic_transport = SubprocessExecutorTransport(
+            socket_path=effective_unix_socket_path(
+                (runtime_root / "semantic-consumer.sock").absolute()
             ),
-            state_refs=(RefHandle(ref_id=semantic_ref.state_id, ref_kind="semantic_state"),),
-            artifact_refs=(),
-            runtime_reuse_contract="semantic_state_required",
-            output_contract_version="statebus.evidence_selection.v1",
-            workspace_root=str(runtime_root),
-            input_manifest_hash=publication.contract.hydrate_manifest_hash,
-            operation="semantic_select_v1",
-            state_root=str(state_store.root),
-            hydrate_manifest_id=publication.contract.hydrate_manifest_id,
-            semantic_top_k=semantic_top_k,
-            evidence_budget_bytes=semantic_budget,
-            expected_encoder_signature=publication.contract.encoder_signature,
-            capability_grant_hash=sha256_digest({
-                "task_id": task_id,
-                "operation": "semantic_select_v1",
-                "state_id": semantic_ref.state_id,
-                "manifest_id": publication.contract.hydrate_manifest_id,
-            }),
-        )
-        semantic_consumer_result = SubprocessExecutorTransport(
-            socket_path=runtime_root / "semantic-consumer.sock",
             timeout_s=20.0,
-        ).execute(semantic_request)
-        if not isinstance(semantic_consumer_result, SuccessResult):
-            state_store.release(semantic_ref.state_id)
-            raise RuntimeError(
-                "semantic_state_consume_failed:"
-                + getattr(semantic_consumer_result, "error_detail", "unknown")
+        )
+        semantic_authority: RuntimeStateAccessAuthority | None = None
+        semantic_pin_id = ""
+        semantic_attempt_settled = False
+        semantic_consume_succeeded = False
+        preserve_timeout_pin = False
+        try:
+            semantic_authority, semantic_request = _build_legacy_semantic_consumer_request(
+                comparator_identity=comparator_identity,
+                publication=publication,
+                state_store=state_store,
+                runtime_root=runtime_root,
+                semantic_top_k=semantic_top_k,
+                evidence_budget_bytes=semantic_budget,
+                transport=semantic_transport,
             )
-        if semantic_consumer_result.consumed_state_ref_id != semantic_ref.state_id:
-            state_store.release(semantic_ref.state_id)
-            raise RuntimeError("semantic_state_consumer_ref_mismatch")
-        if semantic_consumer_result.producer_pid == semantic_consumer_result.consumer_pid:
-            state_store.release(semantic_ref.state_id)
-            raise RuntimeError("semantic_state_consumer_not_cross_process")
-        semantic_consumer_pid = semantic_consumer_result.consumer_pid
-        semantic_producer_pid = semantic_consumer_result.producer_pid
-        semantic_selection_count = len(semantic_consumer_result.selected_candidate_ids)
-        retrieval = apply_semantic_state_selection(
-            retrieval,
-            selected_candidate_ids=semantic_consumer_result.selected_candidate_ids,
-            selected_scores=semantic_consumer_result.selected_scores,
-            consumer_pid=semantic_consumer_pid,
-        )
-        # MemoryProxy reads the same row-0 vector from the published state;
-        # no second semantic encoding of the task query is permitted.
-        state_query_embedding = query_embedding_from_dense_state(
-            state_root=state_store.root,
-            ref=semantic_ref,
-            embedding_id=retrieval.query_embedding.embedding_id,
-            expected_encoder_signature=publication.contract.encoder_signature,
-        )
-        retrieval = replace(
-            retrieval,
-            query_embedding=state_query_embedding,
-            memory_query_embedding=state_query_embedding,
-        )
+            worker_access_grant = semantic_request.state_access_grants[0]
+            semantic_pin = semantic_authority.acquire_pin(
+                store=state_store,
+                ref=semantic_ref,
+                access_grant=worker_access_grant,
+                consumer_role="executor",
+                physical_invocation_id=semantic_request.header.invocation_id,
+            )
+            semantic_pin_id = semantic_pin.pin_id
+            try:
+                semantic_consumer_result = semantic_transport.execute(semantic_request)
+            except SubprocessTransportTimeout as exc:
+                semantic_authority.session_manager.settle_attempt(
+                    semantic_request.header.session_id,
+                    step_id=semantic_request.header.step_id,
+                    attempt_id=semantic_request.header.attempt_id,
+                    terminal_state=StepLifecycleState.FAILED.value,
+                    lifecycle_origin="LOCAL_RUNTIME",
+                )
+                semantic_attempt_settled = True
+                if not exc.terminate():
+                    preserve_timeout_pin = True
+                    raise RuntimeError(
+                        "semantic_state_timeout_worker_termination_unconfirmed"
+                    ) from exc
+                semantic_authority.unpin(store=state_store, pin_id=semantic_pin_id)
+                semantic_pin_id = ""
+                raise
+
+            terminal_receipts = tuple(
+                receipt
+                for receipt in semantic_transport.last_admission_receipts
+                if receipt.terminal
+            )
+            if len(terminal_receipts) != 1 or not terminal_receipts[0].admitted:
+                raise RuntimeError("semantic_state_response_admission_missing")
+            attempt_receipt = semantic_authority.session_manager.admit_attempt_result(
+                semantic_request.header.session_id,
+                step_id=semantic_request.header.step_id,
+                observed_attempt_id=semantic_consumer_result.header.attempt_id,
+                invocation_id=semantic_consumer_result.header.invocation_id,
+            )
+            if not attempt_receipt.commit_authorized:
+                raise RuntimeError("semantic_state_attempt_result_fenced")
+            if not isinstance(semantic_consumer_result, SuccessResult):
+                raise RuntimeError(
+                    "semantic_state_consume_failed:"
+                    + getattr(semantic_consumer_result, "error_detail", "unknown")
+                )
+            if semantic_consumer_result.consumed_state_ref_id != semantic_ref.state_id:
+                raise RuntimeError("semantic_state_consumer_ref_mismatch")
+            exchange_audit = semantic_transport.last_exchange_audit
+            if (
+                semantic_consumer_result.consumer_pid <= 0
+                or exchange_audit is None
+                or semantic_consumer_result.consumer_pid != exchange_audit.worker_pid
+                or semantic_consumer_result.producer_pid != publication.contract.producer_pid
+                or semantic_consumer_result.producer_pid != os.getpid()
+                or semantic_consumer_result.producer_pid == semantic_consumer_result.consumer_pid
+            ):
+                raise RuntimeError("semantic_state_consumer_process_identity_mismatch")
+            semantic_consumer_pid = semantic_consumer_result.consumer_pid
+            semantic_producer_pid = semantic_consumer_result.producer_pid
+            semantic_selection_count = len(semantic_consumer_result.selected_candidate_ids)
+            retrieval = apply_semantic_state_selection(
+                retrieval,
+                selected_candidate_ids=semantic_consumer_result.selected_candidate_ids,
+                selected_scores=semantic_consumer_result.selected_scores,
+                consumer_pid=semantic_consumer_pid,
+            )
+            semantic_authority.unpin(store=state_store, pin_id=semantic_pin_id)
+            semantic_pin_id = ""
+
+            local_access_grant = semantic_authority.issue_read(
+                ref=semantic_ref,
+                authority_basis=STATE_ACCESS_AUTHORITY_CAPABILITY_INPUT,
+                consumer_role="runtime",
+            )
+            state_query_embedding = semantic_authority.read_query_embedding(
+                ref=semantic_ref,
+                access_grant=local_access_grant,
+                embedding_id=retrieval.query_embedding.embedding_id,
+                expected_encoder_signature=publication.contract.encoder_signature,
+                store=state_store,
+            )
+            retrieval = replace(
+                retrieval,
+                query_embedding=state_query_embedding,
+                memory_query_embedding=state_query_embedding,
+            )
+            semantic_authority.session_manager.settle_attempt(
+                semantic_request.header.session_id,
+                step_id=semantic_request.header.step_id,
+                attempt_id=semantic_request.header.attempt_id,
+                terminal_state=StepLifecycleState.COMPLETED.value,
+                lifecycle_origin="LOCAL_RUNTIME",
+            )
+            semantic_attempt_settled = True
+            semantic_consume_succeeded = True
+        finally:
+            if not semantic_consume_succeeded and not preserve_timeout_pin:
+                if semantic_authority is not None and semantic_pin_id:
+                    semantic_authority.unpin(store=state_store, pin_id=semantic_pin_id)
+                if semantic_authority is not None and not semantic_attempt_settled:
+                    grant = semantic_authority.bound_grant.grant
+                    semantic_authority.session_manager.settle_attempt(
+                        grant.session_id,
+                        step_id=grant.step_id,
+                        attempt_id=grant.attempt_id,
+                        terminal_state=StepLifecycleState.FAILED.value,
+                        lifecycle_origin="LOCAL_RUNTIME",
+                    )
+                state_store.release_owner(
+                    semantic_ref.state_id,
+                    owner_session_id=comparator_identity.session_id,
+                )
 
     # The bounded semantic Planner sees request semantics and output IDs only.
     # Evidence hydration starts at Retriever fan-out, so Planner cannot copy facts
@@ -2838,6 +3206,15 @@ def run_smoke(
         )
         if replay_candidate_selection is not None:
             replay_candidate = replay_candidate_selection.candidate
+    admitted_replay_candidate = (
+        replay_candidate
+        if replay_candidate is not None
+        and any(
+            match.memory_ref.memory_id == replay_candidate.candidate_id
+            for match in memory_match_result.matches
+        )
+        else None
+    )
     exact_replay_candidate_count = count_exact_replay_candidates(
         compiler_result=compiler_result,
         runtime_signature=runtime_signature,
@@ -2845,14 +3222,14 @@ def run_smoke(
         output_contract_version="output-v1",
         history_records=history_records,
         memory_match_memory_ids=tuple(match.memory_ref.memory_id for match in memory_match_result.matches),
-        replay_candidate=replay_candidate,
+        replay_candidate=admitted_replay_candidate,
         allow_exact_replay=allow_exact_replay,
     )
 
     replay = ReplayAdmissibilityGate().decide(
         compiler_result=compiler_result,
         policy=ReplayPolicy(True, allow_validated_replay, allow_exact_replay),
-        candidate=replay_candidate if replay_candidate is not None and memory_match_result.matches else None,
+        candidate=admitted_replay_candidate,
         runtime_signature=runtime_signature,
         input_artifact_hashes=replay_input_artifact_hashes,
         output_contract_version="output-v1",
@@ -3444,6 +3821,7 @@ def run_smoke(
     runtime_driver_stage_start_ns = time.perf_counter_ns()
     driver_result = RuntimeDriver().run(
         RuntimeDriverInput(
+            runtime_identity=comparator_identity,
             trace_id=trace_id,
             task_id=task_id,
             step_id=step_id,
@@ -4569,7 +4947,7 @@ def run_smoke(
         lineage_view=lineage_view,
         workflow_step_count=driver_result.session.workflow_step_count,
         completed_workflow_step_count=driver_result.session.completed_workflow_step_count,
-        attempt_count=driver_result.session.attempt_count,
+        attempt_count=int(driver_result.task_metrics["attempt_count"]),
         runtime_replan_count=driver_result.session.runtime_replan_count,
         runtime_fallback_count=driver_result.session.runtime_fallback_count,
         replan_history_count=driver_result.session.replan_count,

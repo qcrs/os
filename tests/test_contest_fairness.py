@@ -5,9 +5,18 @@ from dataclasses import replace
 from pathlib import Path
 
 from statebus.benchmark.contest_fairness import (
+    CANONICAL_LANES,
+    FAIRNESS_LANES,
     EXPECTED_LAYER_FEATURE_FLAGS,
     audit_role_request_gold_visibility,
+    audit_oracle_visibility,
+    build_benchmark_manifest,
+    build_failure_denominator,
+    build_five_case_fairness_smoke,
     build_continuous_fairness_manifest,
+    capture_source_identity,
+    validate_benchmark_manifest,
+    validate_root_isolation,
 )
 from statebus.benchmark.contest_evidence_closure import (
     _AUDIT_DIRS,
@@ -15,6 +24,7 @@ from statebus.benchmark.contest_evidence_closure import (
     _stage_acceptance,
     _stage_command,
 )
+from statebus.benchmark.comparator_runner import canonical_aggregate_records
 from statebus.benchmark.models import (
     BenchmarkCaseReport,
     BenchmarkFamilyReport,
@@ -85,6 +95,137 @@ def test_fairness_manifest_accepts_only_declared_lane_differences() -> None:
     lanes = manifest["cases"]["fairness-task"]
     for field in manifest["invariant_fields"]:
         assert len({lane[field] for lane in lanes.values()}) == 1
+
+
+def test_c0_manifest_captures_source_and_validates_required_contract() -> None:
+    source = capture_source_identity(Path("."))
+    manifest = build_benchmark_manifest(
+        lane="fixed_structured",
+        dataset_id="dataset",
+        dataset_version="v1",
+        dataset_split="smoke",
+        dataset_hash="sha256:dataset",
+        task_contract_hash="sha256:task",
+        provider_id="provider",
+        provider_version="v1",
+        model_id="model",
+        model_revision="rev",
+        source_identity=source,
+        role_graph={"roles": ["planner", "retriever"], "edges": [["planner", "retriever"]]},
+        agent_count=2,
+        implementation_snapshot={"snapshot_id": "snap", "digest": "sha256:snap", "endpoint_fingerprint": "fp"},
+        runtime_root=Path("/tmp/c0/runtime"),
+        workspace_root=Path("/tmp/c0/workspace"),
+        memory_root=Path("/tmp/c0/memory"),
+        cache_epoch="cold:c0",
+        validator_digest="sha256:validator",
+        terminal_status="success",
+    )
+    assert manifest["schema_version"] == "statebus.fair_benchmark_manifest.v1"
+    assert manifest["source_identity"]["commit"]
+    assert validate_benchmark_manifest(manifest)["canonical_eligible"] is True
+
+
+def test_c0_missing_identity_or_root_fields_are_diagnostic_only() -> None:
+    manifest = build_benchmark_manifest(
+        lane="adaptive_routed",
+        dataset_id="dataset",
+        dataset_version="v1",
+        dataset_split="smoke",
+        dataset_hash="sha256:dataset",
+        task_contract_hash="sha256:task",
+        provider_id="provider",
+        provider_version="v1",
+        model_id="model",
+        model_revision="rev",
+        source_identity={"commit": "", "branch_or_ref": ""},
+        runtime_root="relative-runtime",
+        workspace_root="relative-workspace",
+        memory_root="relative-memory",
+        validator_digest="",
+        terminal_status="success",
+    )
+    result = validate_benchmark_manifest(manifest)
+    assert result["canonical_eligible"] is False
+    assert result["diagnostic_only"] is True
+    assert "source_identity" in result["missing_fields"]
+    assert any(error["field"] == "roots" for error in result["errors"])
+
+
+def test_c0_oracle_visibility_gate_rejects_provider_visible_gold() -> None:
+    clean = audit_oracle_visibility(
+        provider_request={"messages": [{"role": "user", "content": "public input"}]},
+        role_visible_input={"candidate_key": "route::tool"},
+    )
+    assert clean["ok"] is True
+    leaked = audit_oracle_visibility(
+        provider_request={"expected_route": "secret-route", "messages": []},
+        role_visible_input={"future_rounds": [{"gold_answer": "secret"}]},
+    )
+    assert leaked["ok"] is False
+    assert len(leaked["violations"]) >= 2
+    assert leaked["gold_visible"] is False
+    assert leaked["expected_route_visible"] is False
+    assert leaked["expected_tool_visible"] is False
+    assert leaked["future_rounds_visible"] is False
+
+
+def test_c1_five_case_harness_keeps_common_inputs_and_excludes_legacy(tmp_path: Path) -> None:
+    harness = build_five_case_fairness_smoke(
+        root=tmp_path,
+        terminal_status_by_lane={
+            "direct_single_agent": "success",
+            "pure_text_mas": "quality_fail",
+            "fixed_structured": "timeout",
+            "adaptive_routed": "unsupported",
+            "legacy_comparator": "success",
+        },
+    )
+    assert tuple(harness["lanes"]) == FAIRNESS_LANES
+    assert len(harness["manifests"]) == 5
+    assert {item["dataset_hash"] for item in harness["manifests"]} == {"sha256:c1-fixture"}
+    assert {item["task_contract_hash"] for item in harness["manifests"]} == {"sha256:c1-task"}
+    assert len(harness["invariant_digests"]) == 1
+    assert harness["root_isolation"]["ok"] is True
+    assert harness["canonical_aggregate"]["included_lanes"] == list(CANONICAL_LANES)
+    assert harness["canonical_aggregate"]["excluded_lanes"] == ["legacy_comparator"]
+    assert harness["canonical_aggregate"]["eligible"] is False
+    assert all(item["manifest"]["lane"] != "legacy_comparator" for item in harness["canonical_records"])
+    aggregate_records = canonical_aggregate_records(harness["terminal_records"])
+    assert [record["lane"] for record in aggregate_records] == list(CANONICAL_LANES)
+    assert all(record["lane"] != "legacy_comparator" for record in aggregate_records)
+    assert len(harness["legacy_records"]) == 1
+    assert harness["legacy_records"][0]["terminal_status"] == "success"
+    fixed = next(item for item in harness["manifests"] if item["lane"] == "fixed_structured")
+    legacy = next(item for item in harness["manifests"] if item["lane"] == "legacy_comparator")
+    assert fixed["fixed_entrypoint"] == "FixedMainlineRequest->AdaptiveMainlineRunner->AdaptiveRuntimeEngine"
+    assert fixed["uses_run_smoke"] is False
+    assert legacy["uses_run_smoke"] is True
+    assert harness["superiority_claim"] is False
+
+
+def test_c1_terminal_failures_share_one_attempted_denominator() -> None:
+    denominator = build_failure_denominator(
+        {"terminal_status": status}
+        for status in ("success", "quality_fail", "timeout", "unsupported", "runtime_fail", "policy_reject")
+    )
+    assert denominator["attempted_count"] == 6
+    assert denominator["success_count"] == 1
+    assert denominator["quality_fail_count"] == 1
+    assert denominator["timeout_count"] == 1
+    assert denominator["unsupported_count"] == 1
+    assert denominator["runtime_fail_count"] == 1
+    assert denominator["policy_reject_count"] == 1
+    assert denominator["failure_count"] == 5
+
+
+def test_c1_root_isolation_rejects_shared_mutable_roots() -> None:
+    harness = build_five_case_fairness_smoke(root=Path("/tmp/c1-root-test"))
+    manifests = list(harness["manifests"])
+    manifests[1]["runtime_root"] = manifests[0]["runtime_root"]
+    result = validate_root_isolation(manifests)
+    assert result["ok"] is False
+    assert "runtime_root" in result["collisions"]
 
 
 def test_fairness_manifest_rejects_unexpected_extra_feature_difference() -> None:

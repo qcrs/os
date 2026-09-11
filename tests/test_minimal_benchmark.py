@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from statebus.control import SubprocessExecutorTransport
+from statebus.control.transport import effective_unix_socket_path
 from statebus.integrations.llm import LLMResult, LLMUsage
 from statebus.benchmark.models import BenchmarkLayer
 from statebus.benchmark import (
@@ -13,6 +15,10 @@ from statebus.benchmark import (
     run_minimal_benchmark_family,
     run_minimal_benchmark_suite,
 )
+from statebus.benchmark.minimal_runner import run_five_case_fairness_smoke
+from statebus.runtime.adaptive_runtime import RuntimeStateAccessAuthority
+from statebus.runtime.plan_policy import PlanPolicyValidator
+from statebus.runtime.provider_registry import ExecutionProviderRegistry
 
 
 def test_minimal_benchmark_sample_loads_from_fixture() -> None:
@@ -30,21 +36,105 @@ def test_minimal_benchmark_sample_loads_from_fixture() -> None:
     }
 
 
-def test_minimal_benchmark_runs_formal_sample(tmp_path: Path) -> None:
+def test_minimal_sample_projects_into_c1_five_case_harness(tmp_path: Path) -> None:
+    sample = MinimalBenchmarkSample.from_path(
+        Path("statebus/benchmark/samples/minimal_financial_report_sample.json")
+    )
+    harness = run_five_case_fairness_smoke(sample=sample, root=tmp_path)
+    assert len(harness["manifests"]) == 5
+    assert {manifest["dataset_id"] for manifest in harness["manifests"]} == {sample.dataset_id}
+    assert harness["failure_denominator"]["attempted_count"] == 5
+    assert harness["canonical_aggregate"]["excluded_lanes"] == ["legacy_comparator"]
+
+
+def test_minimal_benchmark_runs_formal_sample(tmp_path: Path, monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    original_validate = PlanPolicyValidator.validate
+    original_resolve_bound = ExecutionProviderRegistry.resolve_bound
+    original_acquire_pin = RuntimeStateAccessAuthority.acquire_pin
+    original_execute = SubprocessExecutorTransport.execute
+
+    def observed_validate(self, proposal, envelope, **kwargs):
+        outcome = original_validate(self, proposal, envelope, **kwargs)
+        if proposal.steps[0].capability_id == "legacy.semantic_select_v1":
+            observed["policy_outcome"] = outcome
+        return outcome
+
+    def observed_resolve(self, **kwargs):
+        resolved = original_resolve_bound(self, **kwargs)
+        if resolved.descriptor.provider_id == "legacy-semantic-select-uds":
+            observed["resolved_provider"] = resolved
+        return resolved
+
+    def observed_acquire(self, **kwargs):
+        pin = original_acquire_pin(self, **kwargs)
+        if kwargs["consumer_role"] == "executor" and kwargs["physical_invocation_id"]:
+            observed.update(
+                authority=self,
+                state_store=kwargs["store"],
+                semantic_ref=kwargs["ref"],
+                semantic_pin=pin,
+            )
+        return pin
+
+    def observed_execute(self, request, **kwargs):
+        if request.operation == "semantic_select_v1":
+            store = observed["state_store"]
+            ref = observed["semantic_ref"]
+            lifetime = store.lifetimes[ref.state_id]
+            assert observed["semantic_pin"].pin_id in lifetime.live_pins
+            observed["semantic_request"] = request
+            observed["semantic_socket_path"] = self.socket_path
+        return original_execute(self, request, **kwargs)
+
+    monkeypatch.setattr(PlanPolicyValidator, "validate", observed_validate)
+    monkeypatch.setattr(ExecutionProviderRegistry, "resolve_bound", observed_resolve)
+    monkeypatch.setattr(RuntimeStateAccessAuthority, "acquire_pin", observed_acquire)
+    monkeypatch.setattr(SubprocessExecutorTransport, "execute", observed_execute)
+
+    runtime_root = tmp_path / ("nested-runtime-segment-" * 7)
+    expected_semantic_socket = effective_unix_socket_path(
+        (runtime_root / "semantic-consumer.sock").absolute()
+    )
     smoke, report = run_minimal_benchmark(
         sample=MinimalBenchmarkSample.from_path(
             Path("statebus/benchmark/samples/minimal_financial_report_sample.json")
         ),
         workspace_root=tmp_path / "workspaces",
-        runtime_root=tmp_path / "runtime",
+        runtime_root=runtime_root,
         socket_path=tmp_path / "control.sock",
     )
+    policy_outcome = observed["policy_outcome"]
+    resolved_provider = observed["resolved_provider"]
+    semantic_request = observed["semantic_request"]
+    semantic_authority = observed["authority"]
+    state_store = observed["state_store"]
+    semantic_ref = observed["semantic_ref"]
+    lifetime = state_store.lifetimes[semantic_ref.state_id]
+    assert policy_outcome.approved_plan is not None
+    assert resolved_provider.descriptor.provider_id == semantic_authority.bound_grant.provider_id
+    assert resolved_provider.implementation.provider_version == semantic_authority.bound_grant.provider_version
+    assert resolved_provider.implementation.endpoint_origin == f"unix://{expected_semantic_socket.resolve()}"
+    assert observed["semantic_socket_path"] == expected_semantic_socket
+    assert semantic_request.header.session_id != lifetime.owner_session_id
+    assert semantic_request.header.execution_binding_hash == semantic_authority.bound_grant.execution_binding_hash
+    assert semantic_request.header.capability_grant_hash == semantic_request.capability_grant_hash
+    assert semantic_request.header.capability_grant_hash == semantic_request.state_access_grants[0].capability_grant_hash
+    assert semantic_request.header.invocation_id == semantic_request.state_access_grants[0].physical_invocation_id
+    assert lifetime.live_pin_count == 0
+    assert lifetime.owner_released
+    assert lifetime.physical_reclaimed
     assert smoke.compiler_status == "compiled"
     assert report.layer.value == "L3"
     assert report.quality_floor.quality_floor_pass is True
     assert report.eligible_for_headline is True
     assert report.metrics["workflow_step_count"] == 4.0
-    assert report.metrics["attempt_count"] == 1.0
+    assert report.metrics["attempt_count"] == 4.0
+    assert report.metrics["executor_attempt_count"] == 1.0
+    assert smoke.task_metrics["attempt_count"] == report.metrics["attempt_count"]
+    assert smoke.task_metrics["executor_attempt_count"] == report.metrics[
+        "executor_attempt_count"
+    ]
     assert smoke.replay_class == "disallowed"
     assert Path(smoke.replay_audit_path).exists()
     assert Path(smoke.hydration_audit_path).exists()
@@ -99,7 +189,8 @@ def test_minimal_benchmark_family_runs_and_persists_report(tmp_path: Path) -> No
     assert family_report.cases[0].session_state == "GC_DONE"
     assert family_report.cases[0].output_artifact_hash != family_report.cases[1].output_artifact_hash
     assert family_report.cases[0].metrics["workflow_step_count"] == 4.0
-    assert family_report.cases[0].metrics["attempt_count"] == 1.0
+    assert family_report.cases[0].metrics["attempt_count"] == 4.0
+    assert family_report.cases[0].metrics["executor_attempt_count"] == 1.0
     assert family_report.cases[0].metrics["memory_candidate_count"] == 0.0
     assert family_report.cases[0].metrics["memory_rerank_selected_count"] == 0.0
     assert family_report.cases[0].metrics["codeact_plan_stage_count"] > 0.0
@@ -114,6 +205,8 @@ def test_minimal_benchmark_family_runs_and_persists_report(tmp_path: Path) -> No
     assert payload["aggregated_metrics"]["case_count"] == 2.0
     assert payload["telemetry_summary"]["artifact_count"] == 2.0
     assert payload["replay_class_distribution"]["disallowed"] == 2.0
+    assert payload["cases"][0]["metrics"]["attempt_count"] == 4.0
+    assert payload["cases"][0]["metrics"]["executor_attempt_count"] == 1.0
     assert len(payload["cases"]) == 2
     assert set(payload["cases"][0]["audit_paths"]) == {"replay", "hydration", "hydration_debug", "artifact"}
 
@@ -145,7 +238,8 @@ def test_minimal_benchmark_suite_writes_l0_l3_scaffold_reports(tmp_path: Path) -
     assert suite_report.comparison_summary["artifact_reuse_delta_l2_to_l3"] == 0.0
     assert suite_report.comparison_summary["codeact_action_delta_l0_to_l3"] == 0.0
     assert suite_report.layer_reports[3].cases[0].metrics["completed_workflow_step_count"] == 4.0
-    assert suite_report.layer_reports[3].cases[0].metrics["attempt_count"] == 1.0
+    assert suite_report.layer_reports[3].cases[0].metrics["attempt_count"] == 4.0
+    assert suite_report.layer_reports[3].cases[0].metrics["executor_attempt_count"] == 1.0
     assert suite_report.layer_reports[3].cases[0].metrics["memory_candidate_count"] == 0.0
     assert suite_report.layer_reports[3].cases[0].comparison_tags
     assert suite_report.metadata["benchmark_tier"] == "formal"

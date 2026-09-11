@@ -17,10 +17,11 @@ from statebus.benchmark.models import (
 )
 from statebus.benchmark.metric_aggregation import finalize_case_telemetry_summary
 from statebus.benchmark.reporting import family_report_to_dict, suite_report_to_dict, write_json_report
+from statebus.benchmark.contest_fairness import build_five_case_fairness_smoke
 from statebus.contracts import CanonicalTaskSpec
 from statebus.runtime import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
-from statebus.utils import stable_json_dumps
+from statebus.utils import sha256_digest, stable_json_dumps
 
 
 LAYER_PROFILES: dict[BenchmarkLayer, BenchmarkLayerProfile] = {
@@ -131,6 +132,10 @@ class MinimalBenchmarkSample:
     task_family: str = "financial_report_analysis"
     expected_facts: dict[str, object] | None = None
     scenario_tags: tuple[str, ...] = ()
+    dataset_id: str = "minimal_fixture"
+    dataset_version: str = "v1"
+    dataset_split: str = "smoke"
+    dataset_hash: str = ""
 
     @classmethod
     def from_path(cls, path: Path) -> "MinimalBenchmarkSample":
@@ -150,6 +155,10 @@ class MinimalBenchmarkSample:
             task_family=str(payload.get("task_family", "financial_report_analysis")),
             expected_facts=dict(payload.get("expected_facts", {})) or None,
             scenario_tags=tuple(str(tag) for tag in payload.get("scenario_tags", [])),
+            dataset_id=str(payload.get("dataset_id", payload.get("task_family", "minimal_fixture"))),
+            dataset_version=str(payload.get("dataset_version", "v1")),
+            dataset_split=str(payload.get("dataset_split", "smoke")),
+            dataset_hash=str(payload.get("dataset_hash", "")) or sha256_digest(payload),
         )
 
 
@@ -160,8 +169,53 @@ def load_sample_family(directory: Path) -> list[MinimalBenchmarkSample]:
     ]
 
 
+def run_five_case_fairness_smoke(
+    *,
+    sample: MinimalBenchmarkSample,
+    root: Path,
+    provider_id: str = "deterministic-provider",
+    provider_version: str = "source-only-v1",
+    model_id: str = "deterministic-model",
+    model_revision: str = "source-only-v1",
+    seed: int = 0,
+    temperature: float = 0.0,
+    timeout_ms: int = 30_000,
+    retry_budget: int = 0,
+    terminal_status_by_lane: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Build the deterministic C1 lane harness without invoking live runtime services."""
+
+    task_payload = (
+        sample.canonical_task_spec.canonical_payload()
+        if sample.canonical_task_spec is not None
+        else {"task_id": sample.task_id, "request_text": sample.request_text}
+    )
+    return build_five_case_fairness_smoke(
+        dataset_id=sample.dataset_id,
+        dataset_version=sample.dataset_version,
+        dataset_split=sample.dataset_split,
+        dataset_hash=sample.dataset_hash or sha256_digest({"request_text": sample.request_text}),
+        task_contract_hash=sha256_digest(task_payload),
+        provider_id=provider_id,
+        provider_version=provider_version,
+        model_id=model_id,
+        model_revision=model_revision,
+        seed=seed,
+        temperature=temperature,
+        timeout={"case_ms": timeout_ms, "step_ms": timeout_ms},
+        retry_budget=retry_budget,
+        quality_threshold={"contract": "statebus_smoke_quality_floor_v1", "minimum_pass": 1.0},
+        root=root,
+        terminal_status_by_lane=terminal_status_by_lane,
+    )
+
+
 def _quality_floor_from_smoke(smoke: SmokeResult) -> QualityFloorResult:
     return smoke.quality_floor
+
+
+def _terminal_status_from_quality(quality_floor: QualityFloorResult) -> str:
+    return "success" if quality_floor.quality_floor_pass else "quality_fail"
 
 
 def _report_from_smoke(
@@ -176,6 +230,7 @@ def _report_from_smoke(
         "output_artifact_path_length": float(len(smoke.output_artifact_path)),
         "workflow_step_count": float(smoke.workflow_step_count),
         "attempt_count": float(smoke.attempt_count),
+        "executor_attempt_count": float(smoke.task_metrics["executor_attempt_count"]),
         "runtime_replan_count": float(smoke.runtime_replan_count),
     }
     if task_ms is not None:
@@ -194,6 +249,7 @@ def _case_from_smoke(
     *,
     task_ms: float,
 ) -> BenchmarkCaseReport:
+    terminal_status = _terminal_status_from_quality(smoke.quality_floor)
     return BenchmarkCaseReport(
         task_id=sample.task_id,
         task_family=sample.task_family,
@@ -211,7 +267,14 @@ def _case_from_smoke(
             "hydration_debug": smoke.hydration_debug_audit_path,
             "artifact": smoke.artifact_audit_path,
         },
-        audit_summary=smoke.audit_summary,
+        audit_summary={
+            **smoke.audit_summary,
+            "benchmark_case": {
+                "schema_version": "statebus.benchmark_case_terminal.v1",
+                "terminal_status": terminal_status,
+                "attempted": True,
+            },
+        },
         metrics={
             **dict(sorted(smoke.task_metrics.items())),
             "response_count": float(len(smoke.response_sequence)),

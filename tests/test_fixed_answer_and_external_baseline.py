@@ -646,7 +646,7 @@ def test_fixed_answer_internal_carrier_compare_suite_runs(tmp_path: Path) -> Non
     assert payload["mode_reports"][0]["comparison_valid"] is True
 
 
-def test_fixed_answer_replay_ready_defaults_to_history_backed_replay(tmp_path: Path) -> None:
+def test_fixed_answer_replay_ready_history_succeeds_without_admitted_replay(tmp_path: Path) -> None:
     family = load_fixed_answer_family(Path("statebus/benchmark/samples/fixed_answer_family"))
     report = run_fixed_answer_benchmark_family(
         samples=family,
@@ -661,11 +661,27 @@ def test_fixed_answer_replay_ready_defaults_to_history_backed_replay(tmp_path: P
     assert report.metadata["synthetic_replay_seed_enabled"] is False
     assert report.metadata["history_backed_replay_enabled"] is True
     assert report.metadata["replay_history_source"] == "history_bootstrap"
-    assert report.replay_class_distribution["exact_replay"] == 3.0
-    assert report.telemetry_summary["artifact_reuse_count"] == 3.0
-    assert report.telemetry_summary["retriever_call_count"] == 0.0
-    assert report.telemetry_summary["executor_call_count"] == 0.0
-    assert report.telemetry_summary["summarizer_call_count"] == 0.0
+    assert report.metadata["formal_comparator_eligible"] is True
+    assert report.metadata["canonical_aggregate_eligible"] is False
+    assert report.missing_reason == ""
+    assert report.eligible_for_headline is True
+    assert report.replay_class_distribution["disallowed"] == 3.0
+    assert report.telemetry_summary["artifact_reuse_count"] == 0.0
+    assert report.telemetry_summary["memory_exact_replay_candidate_count"] == 0.0
+    assert report.telemetry_summary["retriever_call_count"] == 3.0
+    assert report.telemetry_summary["executor_call_count"] == 3.0
+    assert report.telemetry_summary["summarizer_call_count"] == 3.0
+    assert "attempted_count" not in report.aggregated_metrics
+    assert "unsupported_count" not in report.aggregated_metrics
+    assert report.aggregated_metrics["quality_floor_pass_count"] == 3.0
+    assert all(
+        case.audit_summary["benchmark_case"]["terminal_status"] == "success"
+        for case in report.cases
+    )
+    assert all(
+        case.audit_summary["memory_consumption"]["candidate_memory_ids"] == []
+        for case in report.cases
+    )
 
 
 def test_fixed_answer_cold_start_rejects_synthetic_seed(tmp_path: Path) -> None:
@@ -682,7 +698,7 @@ def test_fixed_answer_cold_start_rejects_synthetic_seed(tmp_path: Path) -> None:
         )
 
 
-def test_fixed_answer_replay_ready_dev_probe_requires_explicit_opt_in_and_still_runs(tmp_path: Path) -> None:
+def test_fixed_answer_replay_ready_seed_succeeds_without_admitted_replay(tmp_path: Path) -> None:
     family = load_fixed_answer_family(Path("statebus/benchmark/samples/fixed_answer_family"))
     report = run_fixed_answer_benchmark_family(
         samples=family,
@@ -698,8 +714,25 @@ def test_fixed_answer_replay_ready_dev_probe_requires_explicit_opt_in_and_still_
     assert report.metadata["synthetic_replay_seed_enabled"] is True
     assert report.metadata["history_backed_replay_enabled"] is False
     assert report.metadata["replay_history_source"] == "synthetic_seed"
-    assert report.replay_class_distribution["exact_replay"] == 3.0
-    assert report.telemetry_summary["artifact_reuse_count"] == 3.0
+    assert report.metadata["canonical_aggregate_eligible"] is False
+    assert report.missing_reason == ""
+    assert report.eligible_for_headline is True
+    assert report.replay_class_distribution["disallowed"] == 3.0
+    assert report.telemetry_summary["artifact_reuse_count"] == 0.0
+    assert report.telemetry_summary["memory_exact_replay_candidate_count"] == 0.0
+    assert "attempted_count" not in report.aggregated_metrics
+    assert "unsupported_count" not in report.aggregated_metrics
+    assert all(
+        case.audit_summary["benchmark_case"]["terminal_status"] == "success"
+        for case in report.cases
+    )
+    assert all(
+        any(
+            decision["reasons"] == ["memory_admission_receipt_missing"]
+            for decision in case.audit_summary["memory_consumption"]["compatibility_decisions"]
+        )
+        for case in report.cases
+    )
 
 
 def test_fixed_answer_suite_keeps_history_backed_and_synthetic_reports_separate(tmp_path: Path) -> None:
@@ -729,6 +762,14 @@ def test_fixed_answer_suite_keeps_history_backed_and_synthetic_reports_separate(
     assert Path(synthetic_report.report_path).name == "statebus-benchmark-synthetic-seed-statebus.json"
     assert Path(history_report.report_path).exists()
     assert Path(synthetic_report.report_path).exists()
+    assert history_report.metadata["effective_replay_history_source"] == "history_bootstrap"
+    assert synthetic_report.metadata["effective_replay_history_source"] == "synthetic_seed"
+    assert history_report.layer_reports[3].missing_reason == ""
+    assert synthetic_report.layer_reports[3].missing_reason == ""
+    assert history_report.layer_reports[3].eligible_for_headline is True
+    assert synthetic_report.layer_reports[3].eligible_for_headline is True
+    assert history_report.layer_reports[3].metadata["canonical_aggregate_eligible"] is False
+    assert synthetic_report.layer_reports[3].metadata["canonical_aggregate_eligible"] is False
 
 
 def test_fixed_answer_family_api_mode_skips_when_api_not_configured(
@@ -1323,6 +1364,7 @@ def test_fixed_answer_external_comparator_replay_ready_is_invalid_due_to_history
     mode_report = report.mode_reports[0]
     assert mode_report.comparison_valid is False
     assert mode_report.invalid_reason == "fairness_gate_failed"
+    assert mode_report.missing_reason == ""
     assert mode_report.fairness_manifest["same_history_policy"] is False
     assert mode_report.headline_metrics == {}
 

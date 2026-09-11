@@ -1308,6 +1308,10 @@ class RuntimeDriver:
             lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
             validator_report_hashes=tuple(report.report_hash for report in runtime_input.validator_reports),
         )
+        executor_attempt_count = sum(
+            record.step_id == runtime_input.step_id
+            for record in session.attempt_records
+        )
         session = session_manager.update_workflow_step(
             session.session_id,
             step_id=runtime_input.step_id,
@@ -1319,6 +1323,7 @@ class RuntimeDriver:
                 "output_bytes": float(len(output_rendered)),
                 "artifact_reuse_count": effective_artifact_reuse_count,
                 "attempt_count": float(session.attempt_count),
+                "executor_attempt_count": float(executor_attempt_count),
             },
             lifecycle_origin=LifecycleOrigin.LOCAL_RUNTIME.value,
         )
@@ -1537,6 +1542,7 @@ class RuntimeDriver:
                     "workflow_step_count": float(session.workflow_step_count),
                     "completed_workflow_step_count": float(session.completed_workflow_step_count),
                     "attempt_count": float(session.attempt_count),
+                    "executor_attempt_count": float(executor_attempt_count),
                     "runtime_fallback_count": float(session.runtime_fallback_count),
                     "replan_history_count": float(session.replan_count),
                     "validator_report_count": float(len(runtime_input.validator_reports)),
@@ -2431,9 +2437,9 @@ class RuntimeDriver:
         reloaded_session = store.read_runtime_session(session.session_id)
         reloaded_ledger = store.read_replay_ledger_entry(ledger_entry.ledger_id)
         reloaded_execution_step = store.read_execution_step_record(
-            task_id=runtime_input.task_id,
-            step_id=runtime_input.step_id,
-            attempt_id=session.current_attempt_id or "attempt-1",
+            task_id=execution_step_record.task_id,
+            step_id=execution_step_record.step_id,
+            attempt_id=execution_step_record.attempt_id,
         )
         reloaded_fallback_dag = None if fallback_dag is None else store.read_fallback_dag(fallback_dag.dag_id)
         breakdown["persist_session_ledger_reload_stage_ms"] = _elapsed_ms(stage_start_ns)
@@ -2476,7 +2482,19 @@ class RuntimeDriver:
             raise RuntimeError("runtime session attempts missing after disk reload")
         if reloaded_ledger.replay_class != runtime_input.replay_decision.replay_class:
             raise RuntimeError("replay ledger mismatch after disk reload")
-        if reloaded_execution_step.execution_goal != execution_step_record.execution_goal:
+        if (
+            (
+                reloaded_execution_step.task_id,
+                reloaded_execution_step.step_id,
+                reloaded_execution_step.attempt_id,
+            )
+            != (
+                execution_step_record.task_id,
+                execution_step_record.step_id,
+                execution_step_record.attempt_id,
+            )
+            or reloaded_execution_step.execution_goal != execution_step_record.execution_goal
+        ):
             raise RuntimeError("execution step record mismatch after disk reload")
         if runtime_input.codeact_plan is not None and reloaded_execution_step.codeact_plan is None:
             raise RuntimeError("codeact plan missing after disk reload")

@@ -24,6 +24,21 @@ from statebus.benchmark.reporting import (
 from statebus.benchmark.task_registry import formal_family_specs
 
 
+def canonical_aggregate_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Exclude legacy comparator records from canonical aggregation."""
+
+    selected: list[dict[str, object]] = []
+    for record in records:
+        manifest = record.get("manifest")
+        payload = manifest if isinstance(manifest, dict) else record
+        if (
+            str(payload.get("execution_path", "")) == "canonical"
+            and str(payload.get("lane", "")) != "legacy_comparator"
+        ):
+            selected.append(record)
+    return selected
+
+
 def _metric(report: BenchmarkFamilyReport, key: str) -> float:
     if key in report.telemetry_summary:
         return float(report.telemetry_summary[key])
@@ -740,6 +755,10 @@ def run_fixed_answer_external_comparator_suite(
         metadata={
             **formal_compare_scope_metadata,
             "legacy_comparison_valid_semantics": "strict_equal_quality_comparison_valid",
+            "execution_path": "legacy_comparator",
+            "lane": "legacy_comparator",
+            "canonical_aggregate_eligible": False,
+            "canonical_aggregate_exclusion_reason": "legacy_comparator_isolation",
             "comparator_token_split_schema": "statebus.comparator.token_split.v1",
             "timing_execution_contract": timing_execution_contract,
             "timing_delta_direction": "statebus_minus_external",

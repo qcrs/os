@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 from statebus.benchmark.models import BenchmarkFamilyReport, BenchmarkLayer
 from statebus.utils import sha256_digest, stable_json_dumps
@@ -63,6 +64,494 @@ EXPECTED_SUBPROCESS_CARRIERS: dict[BenchmarkLayer, str] = {
     BenchmarkLayer.L3: "protobuf",
 }
 
+
+# Slice C uses a deliberately small, source-only contract.  The existing L0-L3
+# ladder remains available for historical/attribution reports; these lane names
+# describe the five execution boundaries used by the fairness smoke harness.
+CANONICAL_LANES = (
+    "direct_single_agent",
+    "pure_text_mas",
+    "fixed_structured",
+    "adaptive_routed",
+)
+FAIRNESS_LANES = CANONICAL_LANES + ("legacy_comparator",)
+TERMINAL_STATUSES = (
+    "success",
+    "quality_fail",
+    "timeout",
+    "unsupported",
+    "runtime_fail",
+    "policy_reject",
+    "environment_fail",
+)
+_FAIRNESS_REQUIRED_FIELDS = (
+    "schema_version",
+    "source_identity",
+    "execution_path",
+    "runtime_authority",
+    "lane",
+    "dataset_id",
+    "dataset_version",
+    "dataset_split",
+    "dataset_hash",
+    "task_contract_hash",
+    "role_graph",
+    "agent_count",
+    "provider_id",
+    "provider_version",
+    "model_id",
+    "model_revision",
+    "implementation_snapshot",
+    "seed",
+    "temperature",
+    "timeout",
+    "retry_budget",
+    "quality_threshold",
+    "memory_policy",
+    "cache_epoch",
+    "runtime_root",
+    "workspace_root",
+    "memory_root",
+    "oracle_visibility",
+    "validator_digest",
+    "terminal_status",
+)
+_ORACLE_KEYS = {
+    "gold",
+    "gold_answer",
+    "expected_facts",
+    "quality_checks",
+    "expected_route",
+    "expected_tool",
+    "expected_tool_name",
+    "future_round",
+    "future_rounds",
+    "hidden_label",
+    "benchmark_only_hidden_label",
+}
+
+
+def _git_value(repo_root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def capture_source_identity(repo_root: Path | None = None) -> dict[str, object]:
+    """Capture the actual checkout identity without creating provenance files."""
+
+    root = (repo_root or Path(__file__).resolve().parents[2]).resolve()
+    commit = _git_value(root, "rev-parse", "--verify", "HEAD")
+    branch = _git_value(root, "branch", "--show-current")
+    status = _git_value(root, "status", "--short")
+    repository = _git_value(root, "config", "--get", "remote.origin.url")
+    return {
+        "repository": repository,
+        "commit": commit,
+        "branch_or_ref": branch,
+        "working_tree_status_digest": sha256_digest(status.encode("utf-8")),
+        "working_tree_clean": not bool(status),
+    }
+
+
+def audit_oracle_visibility(
+    *,
+    provider_request: object = None,
+    role_visible_input: object = None,
+    future_rounds: object = None,
+) -> dict[str, object]:
+    """Reject benchmark-only oracle fields in provider/role-visible payloads."""
+
+    violations: list[dict[str, object]] = []
+
+    def walk(value: object, path: str) -> None:
+        if isinstance(value, Mapping):
+            for key, nested in value.items():
+                normalized = str(key).strip().lower()
+                if normalized in _ORACLE_KEYS or normalized.startswith("expected_"):
+                    violations.append({"path": f"{path}.{key}", "kind": "oracle_key_visible"})
+                walk(nested, f"{path}.{key}")
+        elif isinstance(value, (list, tuple, set)):
+            for index, nested in enumerate(value):
+                walk(nested, f"{path}[{index}]")
+
+    walk(provider_request, "provider_request")
+    walk(role_visible_input, "role_visible_input")
+    walk(future_rounds, "future_rounds")
+    return {
+        "gold_visible": False,
+        "expected_route_visible": False,
+        "expected_tool_visible": False,
+        "future_rounds_visible": False,
+        "ok": not violations,
+        "violations": violations,
+        "audit_method": "recursive_visible_payload_key_scan",
+    }
+
+
+def _role_graph_payload(role_graph: object) -> dict[str, object]:
+    if isinstance(role_graph, Mapping):
+        payload = dict(role_graph)
+        payload.setdefault("roles", [])
+        payload.setdefault("edges", [])
+        payload.setdefault("hash", sha256_digest({"roles": payload["roles"], "edges": payload["edges"]}))
+        return payload
+    roles = [str(role).strip() for role in str(role_graph).split("->") if str(role).strip()]
+    edges = [[left, right] for left, right in zip(roles, roles[1:])]
+    return {"roles": roles, "edges": edges, "hash": sha256_digest({"roles": roles, "edges": edges})}
+
+
+def build_benchmark_manifest(
+    *,
+    lane: str,
+    dataset_id: str,
+    dataset_version: str,
+    dataset_split: str,
+    dataset_hash: str,
+    task_contract_hash: str,
+    provider_id: str,
+    provider_version: str,
+    model_id: str,
+    model_revision: str,
+    implementation_snapshot: Mapping[str, object] | None = None,
+    role_graph: object = "planner->retriever->executor->summarizer",
+    agent_count: int | None = None,
+    seed: int = 0,
+    temperature: float = 0.0,
+    timeout: Mapping[str, object] | None = None,
+    retry_budget: int = 0,
+    quality_threshold: Mapping[str, object] | None = None,
+    memory_policy: str = "off",
+    cache_epoch: str = "none",
+    runtime_root: str | Path = "",
+    workspace_root: str | Path = "",
+    memory_root: str | Path = "",
+    oracle_visibility: Mapping[str, object] | None = None,
+    validator_digest: str = "",
+    terminal_status: str = "unsupported",
+    source_identity: Mapping[str, object] | None = None,
+    execution_path: str | None = None,
+    runtime_authority: str | None = None,
+    feature_flags: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Build the single Slice C manifest schema used by all five lanes."""
+
+    if lane not in FAIRNESS_LANES:
+        raise ValueError(f"unsupported benchmark lane: {lane}")
+    if terminal_status not in TERMINAL_STATUSES:
+        raise ValueError(f"unsupported terminal status: {terminal_status}")
+    canonical = lane in CANONICAL_LANES
+    graph = _role_graph_payload(role_graph)
+    if agent_count is None:
+        agent_count = 1 if lane == "direct_single_agent" else len(graph.get("roles", []))
+    default_authority = "legacy_runtime_driver" if lane == "legacy_comparator" else "adaptive_mainline_runtime"
+    default_path = "legacy_comparator" if lane == "legacy_comparator" else "canonical"
+    visibility = dict(oracle_visibility or {
+        "roles": False,
+        "runtime_scorer": True,
+        "future_rounds": False,
+    })
+    visibility.setdefault("roles", False)
+    visibility.setdefault("runtime_scorer", True)
+    visibility.setdefault("future_rounds", False)
+    snapshot = dict(implementation_snapshot or {})
+    snapshot.setdefault("snapshot_id", "source-only-fixture")
+    snapshot.setdefault("digest", sha256_digest(snapshot))
+    snapshot.setdefault("endpoint_fingerprint", "source-only-fixture")
+    return {
+        "schema_version": "statebus.fair_benchmark_manifest.v1",
+        "source_identity": dict(source_identity or capture_source_identity()),
+        "execution_path": execution_path or default_path,
+        "runtime_authority": runtime_authority or default_authority,
+        "lane": lane,
+        "dataset_id": dataset_id,
+        "dataset_version": dataset_version,
+        "dataset_split": dataset_split,
+        "dataset_hash": dataset_hash,
+        "task_contract_hash": task_contract_hash,
+        "role_graph": graph,
+        "agent_count": agent_count,
+        "provider_id": provider_id,
+        "provider_version": provider_version,
+        "model_id": model_id,
+        "model_revision": model_revision,
+        "implementation_snapshot": snapshot,
+        "seed": seed,
+        "temperature": temperature,
+        "timeout": dict(timeout or {"case_ms": 0, "step_ms": 0}),
+        "retry_budget": retry_budget,
+        "quality_threshold": dict(quality_threshold or {"contract": "", "minimum_pass": 1.0}),
+        "memory_policy": memory_policy,
+        "cache_epoch": cache_epoch,
+        "runtime_root": str(runtime_root),
+        "workspace_root": str(workspace_root),
+        "memory_root": str(memory_root),
+        "oracle_visibility": visibility,
+        "gold_visible": False,
+        "expected_route_visible": False,
+        "expected_tool_visible": False,
+        "future_rounds_visible": False,
+        "validator_digest": validator_digest,
+        "terminal_status": terminal_status,
+        "feature_flags": dict(feature_flags or {}),
+        "canonical_lane": canonical,
+        "claim_scope": "contract_only_no_superiority_claim",
+    }
+
+
+def validate_benchmark_manifest(manifest: Mapping[str, object]) -> dict[str, object]:
+    """Validate required identity/isolation fields; missing data is diagnostic-only."""
+
+    missing = [
+        field
+        for field in _FAIRNESS_REQUIRED_FIELDS
+        if manifest.get(field) is None or (isinstance(manifest.get(field), str) and not manifest.get(field))
+    ]
+    errors: list[dict[str, object]] = []
+    lane = str(manifest.get("lane", ""))
+    if lane not in FAIRNESS_LANES:
+        errors.append({"field": "lane", "reason": "unsupported_lane"})
+    if manifest.get("execution_path") not in {"canonical", "legacy_comparator"}:
+        errors.append({"field": "execution_path", "reason": "unsupported_execution_path"})
+    if lane in CANONICAL_LANES and manifest.get("execution_path") != "canonical":
+        errors.append({"field": "execution_path", "reason": "canonical_lane_must_use_canonical_path"})
+    if lane == "legacy_comparator" and manifest.get("execution_path") != "legacy_comparator":
+        errors.append({"field": "execution_path", "reason": "legacy_lane_must_use_legacy_path"})
+    if manifest.get("terminal_status") not in TERMINAL_STATUSES:
+        errors.append({"field": "terminal_status", "reason": "unsupported_terminal_status"})
+    source = manifest.get("source_identity")
+    if not isinstance(source, Mapping) or any(
+        key not in source or source.get(key) in (None, "")
+        for key in ("repository", "commit", "branch_or_ref", "working_tree_status_digest")
+    ):
+        missing.append("source_identity")
+    roots = [manifest.get("runtime_root"), manifest.get("workspace_root"), manifest.get("memory_root")]
+    if any(not isinstance(root, str) or not Path(root).is_absolute() for root in roots):
+        errors.append({"field": "roots", "reason": "roots_must_be_absolute"})
+    oracle = manifest.get("oracle_visibility")
+    if not isinstance(oracle, Mapping) or any(oracle.get(key) is not value for key, value in {
+        "roles": False,
+        "runtime_scorer": True,
+        "future_rounds": False,
+    }.items()):
+        errors.append({"field": "oracle_visibility", "reason": "oracle_visible_to_roles_or_future_rounds"})
+    for key in ("gold_visible", "expected_route_visible", "expected_tool_visible", "future_rounds_visible"):
+        if manifest.get(key) is not False:
+            errors.append({"field": key, "reason": "oracle_visibility_flag_not_false"})
+    canonical = (
+        not missing
+        and not errors
+        and lane in CANONICAL_LANES
+        and manifest.get("execution_path") == "canonical"
+    )
+    return {
+        "ok": not missing and not errors,
+        "canonical_eligible": canonical,
+        "diagnostic_only": not canonical,
+        "missing_fields": sorted(set(missing)),
+        "errors": errors,
+    }
+
+
+def build_failure_denominator(records: Iterable[Mapping[str, object]]) -> dict[str, int | float]:
+    """Count every attempted terminal record, including failures and unsupported cases."""
+
+    counts = {status: 0 for status in TERMINAL_STATUSES}
+    attempted = 0
+    for record in records:
+        status = str(record.get("terminal_status", "")).strip()
+        attempted += 1
+        if status not in counts:
+            raise ValueError(f"unsupported terminal status: {status}")
+        counts[status] += 1
+    success = counts["success"]
+    return {
+        "attempted_count": attempted,
+        "success_count": success,
+        "quality_fail_count": counts["quality_fail"],
+        "timeout_count": counts["timeout"],
+        "unsupported_count": counts["unsupported"],
+        "runtime_fail_count": counts["runtime_fail"],
+        "policy_reject_count": counts["policy_reject"],
+        "environment_fail_count": counts["environment_fail"],
+        "failure_count": attempted - success,
+        "quality_pass_rate": success / attempted if attempted else 0.0,
+    }
+
+
+def validate_root_isolation(manifests: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    """Ensure every lane has independent mutable roots and cache epoch."""
+
+    rows = list(manifests)
+    fields = (
+        "runtime_root",
+        "workspace_root",
+        "memory_root",
+        "cache_epoch",
+        "artifact_ids",
+        "memory_ids",
+    )
+    duplicates = {
+        field: sorted({str(value) for value in [row.get(field) for row in rows] if value})
+        for field in fields
+    }
+    collisions: dict[str, object] = {}
+    for field, values in duplicates.items():
+        if field in {"artifact_ids", "memory_ids"}:
+            flattened = [item for row in rows for item in row.get(field, ()) or ()]
+            if len(flattened) != len(set(flattened)):
+                collisions[field] = sorted({str(item) for item in flattened})
+        elif len(values) != len(rows):
+            collisions[field] = values
+    return {"ok": not collisions, "collisions": collisions, "checked_count": len(rows)}
+
+
+def build_five_case_fairness_smoke(
+    *,
+    dataset_id: str = "c1-fixture",
+    dataset_version: str = "v1",
+    dataset_split: str = "smoke",
+    dataset_hash: str = "sha256:c1-fixture",
+    task_contract_hash: str = "sha256:c1-task",
+    provider_id: str = "fixture-provider",
+    provider_version: str = "fixture-v1",
+    model_id: str = "fixture-model",
+    model_revision: str = "fixture-revision",
+    seed: int = 0,
+    temperature: float = 0.0,
+    timeout: Mapping[str, object] | None = None,
+    retry_budget: int = 0,
+    quality_threshold: Mapping[str, object] | None = None,
+    source_identity: Mapping[str, object] | None = None,
+    root: Path | None = None,
+    terminal_status_by_lane: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Create the C1 five-lane fixture without starting any external service."""
+
+    base_root = (root or Path("/tmp/statebus-c1-fairness")).resolve()
+    source = dict(source_identity or capture_source_identity())
+    statuses = dict(terminal_status_by_lane or {})
+    graph = {
+        "roles": ["planner", "retriever", "executor", "summarizer"],
+        "edges": [["planner", "retriever"], ["retriever", "executor"], ["executor", "summarizer"]],
+    }
+    manifests: list[dict[str, object]] = []
+    invariant_fields = [
+        "dataset_id",
+        "dataset_version",
+        "dataset_split",
+        "dataset_hash",
+        "task_contract_hash",
+        "provider_id",
+        "provider_version",
+        "model_id",
+        "model_revision",
+        "seed",
+        "temperature",
+        "timeout",
+        "retry_budget",
+        "quality_threshold",
+        "validator_digest",
+    ]
+    for lane in FAIRNESS_LANES:
+        lane_root = base_root / lane
+        lane_graph: object = "direct" if lane == "direct_single_agent" else graph
+        lane_agent_count = 1 if lane == "direct_single_agent" else 4
+        lane_flags = {
+            "structured_control": lane in {"fixed_structured", "adaptive_routed"},
+            "text_handoff_only": lane == "pure_text_mas",
+            "bounded_route_policy": lane == "adaptive_routed",
+            "legacy_storage": lane == "legacy_comparator",
+        }
+        manifest = build_benchmark_manifest(
+            lane=lane,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            dataset_split=dataset_split,
+            dataset_hash=dataset_hash,
+            task_contract_hash=task_contract_hash,
+            provider_id=provider_id,
+            provider_version=provider_version,
+            model_id=model_id,
+            model_revision=model_revision,
+            implementation_snapshot={
+                "snapshot_id": "c1-source-only",
+                "digest": sha256_digest({"provider_id": provider_id, "model_id": model_id}),
+                "endpoint_fingerprint": "fixture-endpoint",
+            },
+            role_graph=lane_graph,
+            agent_count=lane_agent_count,
+            seed=seed,
+            temperature=temperature,
+            timeout=timeout,
+            retry_budget=retry_budget,
+            quality_threshold=quality_threshold,
+            memory_policy="off",
+            cache_epoch=f"cold:{lane}",
+            runtime_root=lane_root / "runtime",
+            workspace_root=lane_root / "workspace",
+            memory_root=lane_root / "memory",
+            oracle_visibility={"roles": False, "runtime_scorer": True, "future_rounds": False},
+            validator_digest="sha256:c1-validator",
+            terminal_status=statuses.get(lane, "unsupported"),
+            source_identity=source,
+            feature_flags=lane_flags,
+        )
+        manifest["fixed_entrypoint"] = (
+            "FixedMainlineRequest->AdaptiveMainlineRunner->AdaptiveRuntimeEngine"
+            if lane == "fixed_structured" else ""
+        )
+        manifest["uses_run_smoke"] = lane == "legacy_comparator"
+        manifest["invariant_fields"] = list(invariant_fields)
+        manifest["invariant_digest"] = sha256_digest(
+            {field: manifest[field] for field in invariant_fields}
+        )
+        manifests.append(manifest)
+
+    terminal_records = [
+        {
+            "task_id": dataset_id,
+            "dataset_case": dataset_id,
+            "lane": manifest["lane"],
+            "terminal_status": manifest["terminal_status"],
+            "manifest": manifest,
+        }
+        for manifest in manifests
+    ]
+    denominator = build_failure_denominator(terminal_records)
+    validation = [validate_benchmark_manifest(manifest) for manifest in manifests]
+    isolation = validate_root_isolation(manifests)
+    canonical_records = [record for record in terminal_records if record["manifest"]["execution_path"] == "canonical"]
+    return {
+        "schema_version": "statebus.c1_five_case_fairness_smoke.v1",
+        "claim_scope": "contract_only_no_superiority_claim",
+        "superiority_claim": False,
+        "lanes": list(FAIRNESS_LANES),
+        "canonical_lanes": list(CANONICAL_LANES),
+        "invariant_fields": invariant_fields,
+        "invariant_digests": sorted({str(manifest["invariant_digest"]) for manifest in manifests}),
+        "manifests": manifests,
+        "terminal_records": terminal_records,
+        "failure_denominator": denominator,
+        "canonical_failure_denominator": build_failure_denominator(canonical_records),
+        "legacy_records": [record for record in terminal_records if record["lane"] == "legacy_comparator"],
+        "canonical_records": canonical_records,
+        "manifest_validation": validation,
+        "root_isolation": isolation,
+        "canonical_aggregate": {
+            "included_lanes": list(CANONICAL_LANES),
+            "excluded_lanes": ["legacy_comparator"],
+            "eligible": (
+                all(result["canonical_eligible"] for result in validation[:4])
+                and all(record["terminal_status"] == "success" for record in canonical_records)
+                and isolation["ok"]
+            ),
+        },
+    }
 
 def _flatten_scalars(value: object) -> tuple[str, ...]:
     values: list[str] = []

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import platform
 from pathlib import Path
@@ -17,7 +18,57 @@ from statebus.runtime.role_path import (
     SummarizerRoleDecision,
 )
 from statebus.runtime.smoke import _driver_profile_from_layer_config
-from statebus.state import JsonContractStore
+from statebus.state import JsonContractStore, RefManifestMissingError
+
+
+def _assert_execution_record_identity(
+    result,
+    *,
+    expected_attempt_id: str,
+    expected_lifecycle_attempt_count: int,
+) -> None:
+    execution_payload = json.loads(
+        Path(result.execution_step_path).read_text(encoding="utf-8")
+    )
+    execution_identity = (
+        execution_payload["task_id"],
+        execution_payload["step_id"],
+        execution_payload["attempt_id"],
+    )
+    assert execution_identity == (result.task_id, "step-execute", expected_attempt_id)
+
+    store = JsonContractStore(Path(result.runtime_root))
+    execution_record = store.read_execution_step_record(
+        task_id=execution_identity[0],
+        step_id=execution_identity[1],
+        attempt_id=execution_identity[2],
+    )
+    assert (
+        execution_record.task_id,
+        execution_record.step_id,
+        execution_record.attempt_id,
+    ) == execution_identity
+    assert execution_record.execution_goal == result.reloaded_execution_goal
+
+    session = store.read_runtime_session(Path(result.session_path).stem)
+    executor_attempts = tuple(
+        record for record in session.attempt_records
+        if record.step_id == "step-execute"
+    )
+    assert session.attempt_count == expected_lifecycle_attempt_count
+    assert result.attempt_count == session.attempt_count
+    assert result.task_metrics["attempt_count"] == float(session.attempt_count)
+    assert result.task_metrics["executor_attempt_count"] == float(len(executor_attempts))
+    assert session.current_attempt_id == "summarizer.commit-attempt-1"
+    attempt_state_by_identity = {
+        (record.step_id, record.attempt_id): record.state
+        for record in session.attempt_records
+    }
+    assert attempt_state_by_identity[("step-execute", expected_attempt_id)] == "GC_DONE"
+    assert attempt_state_by_identity[
+        ("summarizer.commit", "summarizer.commit-attempt-1")
+    ] == "COMPLETED"
+    assert session.active_attempt_by_step == ()
 
 
 def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
@@ -26,6 +77,11 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
         runtime_root=tmp_path / "runtime",
         socket_path=tmp_path / "control.sock",
         seed_replay_memory=True,
+    )
+    _assert_execution_record_identity(
+        result,
+        expected_attempt_id="attempt-2",
+        expected_lifecycle_attempt_count=5,
     )
     assert result.compiler_status == "compiled"
     assert result.supervisor_state == "GC_DONE"
@@ -39,14 +95,15 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
         "HEARTBEAT",
         "RES_SUCC",
     )
-    assert result.replay_class == "exact_replay"
+    assert result.replay_class == "disallowed"
     assert result.artifact_state == "verified"
     assert result.reloaded_manifest_id == "manifest-smoke-task"
     assert result.reloaded_pack_id == "pack-smoke-task"
     assert result.reloaded_input_manifest_hash
     assert result.canonical_task_spec_path
     assert result.output_artifact_hash
-    assert result.telemetry_event_count == 40
+    telemetry_payload = json.loads(Path(result.telemetry_path).read_text(encoding="utf-8"))
+    assert len(telemetry_payload) == result.telemetry_event_count
     assert Path(result.canonical_task_spec_path).exists()
     assert Path(result.input_manifest_path).exists()
     assert Path(result.artifact_manifest_path).exists()
@@ -85,19 +142,20 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert result.task_metrics["workflow_step_count"] == 4.0
     assert result.task_metrics["runtime_replan_count"] == 1.0
     assert result.task_metrics["runtime_fallback_count"] == 1.0
-    assert result.task_metrics["attempt_count"] == 2.0
+    assert result.task_metrics["attempt_count"] == 5.0
+    assert result.task_metrics["executor_attempt_count"] == 2.0
     assert result.task_metrics["replan_history_count"] == 1.0
     assert result.task_metrics["planner_generated_retrieval_objective_count"] == 1.0
     assert result.task_metrics["memory_candidate_count"] == 1.0
-    assert result.task_metrics["memory_rerank_selected_count"] == 1.0
-    assert result.task_metrics["memory_exact_replay_candidate_count"] == 1.0
-    assert result.task_metrics["codeact_plan_stage_count"] == 0.0
-    assert result.task_metrics["codeact_plan_action_count"] == 0.0
+    assert result.task_metrics["memory_rerank_selected_count"] == 0.0
+    assert result.task_metrics["memory_exact_replay_candidate_count"] == 0.0
+    assert result.task_metrics["codeact_plan_stage_count"] > 0.0
+    assert result.task_metrics["codeact_plan_action_count"] > 0.0
     assert result.task_metrics["planner_call_count"] == 1.0
-    assert result.task_metrics["retriever_call_count"] == 0.0
-    assert result.task_metrics["executor_call_count"] == 0.0
-    assert result.task_metrics["summarizer_call_count"] == 0.0
-    assert result.task_metrics["llm_call_count"] == 1.0
+    assert result.task_metrics["retriever_call_count"] == 1.0
+    assert result.task_metrics["executor_call_count"] == 1.0
+    assert result.task_metrics["summarizer_call_count"] == 1.0
+    assert result.task_metrics["llm_call_count"] == 4.0
     assert result.task_metrics["answer_restoration_replay_count"] == 0.0
     assert result.task_metrics["llm_total_tokens"] == 0.0
     assert result.task_metrics["stdout_log_count"] == 1.0
@@ -105,17 +163,17 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert result.task_metrics["downgrade_execution_goal_count"] == 1.0
     assert result.workflow_step_count == 4
     assert result.completed_workflow_step_count == 4
-    assert result.attempt_count == 2
+    assert result.attempt_count == 5
     assert result.runtime_replan_count == 1
     assert result.runtime_fallback_count == 1
     assert result.replan_history_count == 1
-    assert result.memory_replay_class == "exact_replay"
-    assert result.memory_match_count == 1
-    assert result.codeact_script_path == ""
-    assert result.codeact_request_path == ""
-    assert result.codeact_plan_path == ""
-    assert result.audit_summary["replay"]["replay_class"] == "exact_replay"
-    assert result.audit_summary["artifact"]["replay_ready"] is True
+    assert result.memory_replay_class == "assist"
+    assert result.memory_match_count == 0
+    assert Path(result.codeact_script_path).exists()
+    assert Path(result.codeact_request_path).exists()
+    assert result.codeact_plan_path == result.codeact_request_path
+    assert result.audit_summary["replay"]["replay_class"] == "disallowed"
+    assert result.audit_summary["artifact"]["replay_ready"] is False
     assert result.runtime_stage_metrics["workspace_input_stage_ms"] >= 0.0
     assert result.runtime_stage_metrics["runtime_signature_capture_stage_ms"] >= 0.0
     assert result.runtime_stage_metrics["runtime_signature_materialize_stage_ms"] >= 0.0
@@ -160,7 +218,7 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert output_payload["task_id"] == "smoke-task"
     assert "summary ready" in output_payload["summary_text"]
     assert output_payload["execution_goal"] == "full_execution_goal"
-    assert output_payload["action_contract"] == "restore_verified_artifact"
+    assert output_payload["action_contract"] == "materialize_validated_artifact"
     memory_commit_payload = json.loads(Path(result.memory_commit_path).read_text(encoding="utf-8"))
     metadata = memory_commit_payload["memory_ref"]["metadata"]
     assert metadata["runtime_signature_hash"]
@@ -181,10 +239,21 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert replay_ledger_payload["code_template_version"]
     assert replay_ledger_payload["extractor_version"]
     replay_audit_payload = json.loads(Path(result.replay_audit_path).read_text(encoding="utf-8"))
-    assert replay_audit_payload["replay_class"] == "exact_replay"
-    assert replay_audit_payload["candidate_id"]
+    assert replay_audit_payload["replay_class"] == "disallowed"
+    assert replay_audit_payload["candidate_id"] == ""
+    assert replay_audit_payload["replay_candidate"]["candidate_id"] == "mem-history-smoke-task"
+    assert replay_audit_payload["exact_replay_candidate_count"] == 0
     assert replay_audit_payload["history_runtime_root_count"] == 0
     assert replay_audit_payload["runtime_signature"]["combined_digest"]
+    memory_match_payload = json.loads(
+        Path(result.memory_match_result_path).read_text(encoding="utf-8")
+    )
+    assert memory_match_payload["matches"] == []
+    assert memory_match_payload["rerank_result"]["selected_memory_ids"] == []
+    assert memory_match_payload["compatibility_decisions"][0]["memory_id"] == "mem-history-smoke-task"
+    assert memory_match_payload["compatibility_decisions"][0]["reasons"] == [
+        "memory_admission_receipt_missing"
+    ]
     observation_hashes = replay_audit_payload["retrieval_observation_hashes"]
     assert observation_hashes["planner_handoff_replay_hash"]
     assert observation_hashes["evidence_pack_replay_hash"]
@@ -203,9 +272,12 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     role_accounting_by_name = {item["role"]: item for item in hydration_audit_payload["roles"]}
     assert role_accounting_by_name["planner"]["prompt_bytes"] >= role_accounting_by_name["planner"]["total_prompt_visible_bytes"]
     assert hydration_audit_payload["raw_evidence_bytes_seen_by_llm"] == (
-        role_accounting_by_name["planner"]["external_evidence_bytes"]
+        sum(
+            role_accounting_by_name[role]["external_evidence_bytes"]
+            for role in ("planner", "retriever", "executor", "summarizer")
+        )
     )
-    assert role_accounting_by_name["summarizer"]["artifact_bytes"] == 0
+    assert role_accounting_by_name["summarizer"]["artifact_bytes"] > 0
     assert (
         role_accounting_by_name["planner"]["non_external_prompt_visible_bytes"]
         <= role_accounting_by_name["planner"]["total_prompt_visible_bytes"]
@@ -234,7 +306,7 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     )
     assert hydration_debug_payload["roles"]["planner"]["prompt_slice_ref_id"] == "prompt-slice-smoke-task-planner"
     artifact_audit_payload = json.loads(Path(result.artifact_audit_path).read_text(encoding="utf-8"))
-    assert artifact_audit_payload["replay_ready"] is True
+    assert artifact_audit_payload["replay_ready"] is False
     assert artifact_audit_payload["verification_state"] == "verified"
     assert artifact_audit_payload["output_artifact_hash"] == result.output_artifact_hash
     session_payload = json.loads(Path(result.session_path).read_text(encoding="utf-8"))
@@ -250,11 +322,16 @@ def test_statebus_smoke_runs_vertical_slice(tmp_path: Path) -> None:
     assert "output_ref_sample_count" not in session_payload["workflow_steps"][0]
     assert "output_ref_sample" not in session_payload["workflow_steps"][0]
     assert "input_refs" not in session_payload["workflow_steps"][2]
-    assert session_payload["attempt_records"][0]["workspace_dir_hash"]
-    assert "workspace_dir_sample_count" not in session_payload["attempt_records"][0]
-    assert "workspace_dir_sample" not in session_payload["attempt_records"][0]
-    assert "workspace_dirs" not in session_payload["attempt_records"][0]
-    assert "task_id" not in session_payload["attempt_records"][0]
+    executor_attempt_payload = next(
+        record
+        for record in session_payload["attempt_records"]
+        if record["step_id"] == "step-execute"
+    )
+    assert executor_attempt_payload["workspace_dir_hash"]
+    assert "workspace_dir_sample_count" not in executor_attempt_payload
+    assert "workspace_dir_sample" not in executor_attempt_payload
+    assert "workspace_dirs" not in executor_attempt_payload
+    assert "task_id" not in executor_attempt_payload
     runtime_fact_lines = Path(result.runtime_fact_log_path).read_text(encoding="utf-8").strip().splitlines()
     assert any('"event_type":"STEP_DISPATCHED"' in line for line in runtime_fact_lines)
     assert any('"event_type":"REPLAY_DECIDED"' in line for line in runtime_fact_lines)
@@ -411,8 +488,14 @@ def test_statebus_smoke_formal_single_attempt_profile_is_distinct_from_resilienc
             force_first_attempt_trap=False,
         ),
     )
+    _assert_execution_record_identity(
+        result,
+        expected_attempt_id="attempt-1",
+        expected_lifecycle_attempt_count=4,
+    )
     assert result.response_sequence == ("ACK_RECV", "RUN_START", "HEARTBEAT", "RES_SUCC")
-    assert result.attempt_count == 1
+    assert result.attempt_count == 4
+    assert result.task_metrics["executor_attempt_count"] == 1.0
     assert result.runtime_replan_count == 0
     assert result.runtime_fallback_count == 0
     assert result.replan_history_count == 0
@@ -420,6 +503,73 @@ def test_statebus_smoke_formal_single_attempt_profile_is_distinct_from_resilienc
     assert result.quality_floor.quality_floor_pass is True
     assert result.task_metrics["handoff_mode_text_collaboration"] == 0.0
     assert result.task_metrics["handoff_mode_structured_collaboration"] == 1.0
+
+
+@pytest.mark.parametrize("mutation", ("missing", "identity_mismatch"))
+def test_execution_step_reload_rejects_missing_or_mismatched_record(
+    tmp_path: Path,
+    monkeypatch,
+    mutation: str,
+) -> None:
+    original_persist = JsonContractStore.persist_contract_bundle
+
+    def _persist_then_mutate(self, **kwargs):
+        persisted = original_persist(self, **kwargs)
+        execution_step_record = kwargs["execution_step_record"]
+        assert execution_step_record is not None
+        assert persisted.execution_step_path is not None
+        if mutation == "missing":
+            self.write_execution_step_record(
+                replace(execution_step_record, attempt_id="decoy-attempt")
+            )
+            persisted.execution_step_path.unlink()
+        else:
+            payload = json.loads(
+                persisted.execution_step_path.read_text(encoding="utf-8")
+            )
+            payload["attempt_id"] = "mismatched-attempt"
+            persisted.execution_step_path.write_text(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+        return persisted
+
+    monkeypatch.setattr(
+        JsonContractStore,
+        "persist_contract_bundle",
+        _persist_then_mutate,
+    )
+    layer_config = SmokeLayerConfig(
+        layer_name="execution-record-reload-negative",
+        structured_control_enabled=True,
+        semantic_pruning_enabled=False,
+        replay_enabled=False,
+        multi_attempt_enabled=False,
+        force_first_attempt_trap=False,
+    )
+
+    if mutation == "missing":
+        with pytest.raises(
+            RefManifestMissingError,
+            match=r"execution step record missing: smoke-task\.step-execute\.attempt-1",
+        ):
+            run_smoke(
+                workspace_root=tmp_path / "workspaces",
+                runtime_root=tmp_path / "runtime",
+                socket_path=tmp_path / "control.sock",
+                layer_config=layer_config,
+            )
+    else:
+        with pytest.raises(
+            RuntimeError,
+            match="execution step record mismatch after disk reload",
+        ):
+            run_smoke(
+                workspace_root=tmp_path / "workspaces",
+                runtime_root=tmp_path / "runtime",
+                socket_path=tmp_path / "control.sock",
+                layer_config=layer_config,
+            )
 
 
 def test_statebus_smoke_no_route_hints_is_auditable(tmp_path: Path, monkeypatch) -> None:
@@ -817,7 +967,7 @@ def test_statebus_smoke_cold_start_mode_executes_role_path_without_seeded_replay
     assert Path(result.codeact_script_path).exists()
 
 
-def test_statebus_smoke_history_backed_exact_replay_restores_prior_output(tmp_path: Path) -> None:
+def test_statebus_smoke_unadmitted_history_is_rejected(tmp_path: Path) -> None:
     bootstrap_runtime_root = tmp_path / "runtime-bootstrap"
     bootstrap_workspace_root = tmp_path / "workspaces-bootstrap"
     bootstrap = run_smoke(
@@ -853,21 +1003,23 @@ def test_statebus_smoke_history_backed_exact_replay_restores_prior_output(tmp_pa
     )
 
     assert bootstrap.replay_class == "disallowed"
-    assert replay.replay_class == "exact_replay"
+    assert not (bootstrap_runtime_root / "memory_index" / "admission_receipt_registry.json").exists()
+    assert replay.replay_class == "disallowed"
     assert replay.task_metrics["planner_call_count"] == 1.0
-    assert replay.task_metrics["retriever_call_count"] == 0.0
-    assert replay.task_metrics["executor_call_count"] == 0.0
-    assert replay.task_metrics["summarizer_call_count"] == 0.0
-    assert replay.task_metrics["llm_call_count"] == 1.0
-    assert replay.task_metrics["answer_restoration_replay_count"] == 1.0
-    assert replay.task_metrics["artifact_reuse_count"] == 1.0
-    assert replay.task_metrics["memory_candidate_count"] == 1.0
-    assert replay.task_metrics["memory_exact_replay_candidate_count"] == 1.0
+    assert replay.task_metrics["retriever_call_count"] == 1.0
+    assert replay.task_metrics["executor_call_count"] == 1.0
+    assert replay.task_metrics["summarizer_call_count"] == 1.0
+    assert replay.task_metrics["llm_call_count"] == 4.0
+    assert replay.task_metrics["answer_restoration_replay_count"] == 0.0
+    assert replay.task_metrics["artifact_reuse_count"] == 0.0
+    assert replay.task_metrics["memory_candidate_count"] == 0.0
+    assert replay.task_metrics["memory_exact_replay_candidate_count"] == 0.0
+    assert replay.memory_match_count == 0
+    assert Path(replay.codeact_script_path).exists()
     bootstrap_output = json.loads(Path(bootstrap.output_artifact_path).read_text(encoding="utf-8"))
     replay_output = json.loads(Path(replay.output_artifact_path).read_text(encoding="utf-8"))
     assert replay_output["task_id"] == "smoke-task"
-    assert replay_output["restored_replay_class"] == "exact_replay"
-    assert replay_output["summary_text"] == bootstrap_output["summary_text"]
+    assert "restored_replay_class" not in replay_output
     assert replay_output["revenue_value"] == bootstrap_output["revenue_value"]
     replay_commit_payload = json.loads(Path(replay.memory_commit_path).read_text(encoding="utf-8"))
     assert replay_commit_payload["memory_ref"]["metadata"]["runtime_signature_hash"]
@@ -881,7 +1033,7 @@ def test_statebus_smoke_history_backed_exact_replay_restores_prior_output(tmp_pa
     assert "input_artifact_hashes" not in replay_commit_payload["memory_ref"]["metadata"]
 
 
-def test_statebus_smoke_memory_slice_is_visible_to_retriever_and_executor(tmp_path: Path) -> None:
+def test_statebus_smoke_unadmitted_history_is_not_role_input(tmp_path: Path) -> None:
     bootstrap_runtime_root = tmp_path / "runtime-bootstrap"
     bootstrap_workspace_root = tmp_path / "workspaces-bootstrap"
     run_smoke(
@@ -930,23 +1082,23 @@ def test_statebus_smoke_memory_slice_is_visible_to_retriever_and_executor(tmp_pa
     )
 
     assert result.replay_class == "disallowed"
-    assert result.task_metrics["memory_candidate_count"] == 1.0
-    assert result.task_metrics["memory_compatible_match_count"] == 1.0
-    assert result.task_metrics["memory_consumed_count"] == 1.0
-    assert result.task_metrics["memory_assist_count"] == 1.0
+    assert result.task_metrics["memory_candidate_count"] == 0.0
+    assert result.task_metrics["memory_compatible_match_count"] == 0.0
+    assert result.task_metrics["memory_consumed_count"] == 0.0
+    assert result.task_metrics["memory_assist_count"] == 0.0
     assert result.task_metrics["skipped_step_count"] == 0.0
-    assert result.task_metrics["retriever_memory_bytes"] > 0.0
-    assert result.task_metrics["executor_memory_bytes"] > 0.0
-    assert result.task_metrics["summarizer_memory_bytes"] > 0.0
-    assert result.task_metrics["retriever_memory_item_count"] > 0.0
-    assert result.task_metrics["executor_memory_item_count"] > 0.0
-    assert result.task_metrics["summarizer_memory_item_count"] > 0.0
+    assert result.task_metrics["retriever_memory_bytes"] == 0.0
+    assert result.task_metrics["executor_memory_bytes"] == 0.0
+    assert result.task_metrics["summarizer_memory_bytes"] == 0.0
+    assert result.task_metrics["retriever_memory_item_count"] == 0.0
+    assert result.task_metrics["executor_memory_item_count"] == 0.0
+    assert result.task_metrics["summarizer_memory_item_count"] == 0.0
     hydration_audit_payload = json.loads(Path(result.hydration_audit_path).read_text(encoding="utf-8"))
     role_accounting_by_name = {item["role"]: item for item in hydration_audit_payload["roles"]}
     assert hydration_audit_payload["raw_evidence_bytes_seen_by_llm"] == result.task_metrics["raw_evidence_bytes_seen_by_llm"]
-    assert role_accounting_by_name["retriever"]["memory_bytes"] > 0
-    assert role_accounting_by_name["executor"]["memory_bytes"] > 0
-    assert role_accounting_by_name["summarizer"]["memory_bytes"] > 0
+    assert role_accounting_by_name["retriever"]["memory_bytes"] == 0
+    assert role_accounting_by_name["executor"]["memory_bytes"] == 0
+    assert role_accounting_by_name["summarizer"]["memory_bytes"] == 0
     assert hydration_audit_payload["non_external_prompt_visible_bytes"] >= (
         role_accounting_by_name["retriever"]["memory_bytes"]
         + role_accounting_by_name["executor"]["memory_bytes"]

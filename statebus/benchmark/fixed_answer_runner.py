@@ -225,6 +225,12 @@ def _fixed_answer_metadata(
         "baseline_kind": (
             "statebus_formal_registry_adapter" if formal_registry else "statebus_fixed_answer_dev"
         ),
+        # This runner still uses the historical smoke/Driver path.  Keep it
+        # explicitly diagnostic until the accepted fixed Mainline seam is wired.
+        "execution_path": "legacy_comparator",
+        "lane": "legacy_comparator",
+        "canonical_aggregate_eligible": False,
+        "canonical_aggregate_exclusion_reason": "fixed_answer_runner_uses_legacy_smoke_path",
         "benchmark_tier": benchmark_tier,
         "carrier_kind": "typed_statebus" if handoff_mode == "structured_collaboration" else "text_collaboration",
         "claim_level": claim_level,
@@ -696,6 +702,7 @@ def run_fixed_answer_benchmark_family(
                 metric_projection_key=sample.metric_projection_key,
             ),
         )
+        terminal_status = "success" if shared_score.quality_floor.quality_floor_pass else "quality_fail"
         smoke_metrics = dict(sorted(smoke.task_metrics.items()))
         smoke_metrics["message_count"] = float(
             smoke.task_metrics.get("control_message_count", smoke.task_metrics.get("response_count", 0.0))
@@ -722,7 +729,14 @@ def run_fixed_answer_benchmark_family(
                     "hydration_debug": smoke.hydration_debug_audit_path,
                     "artifact": smoke.artifact_audit_path,
                 },
-                audit_summary=smoke.audit_summary,
+                audit_summary={
+                    **smoke.audit_summary,
+                    "benchmark_case": {
+                        "schema_version": "statebus.benchmark_case_terminal.v1",
+                        "terminal_status": terminal_status,
+                        "attempted": True,
+                    },
+                },
                 metrics={
                     **smoke_metrics,
                     "metric_projection_used": 1.0 if sample.metric_projection_key else 0.0,
@@ -789,6 +803,7 @@ def run_fixed_answer_benchmark_family(
             quality_floor_breakdown=quality_floor_breakdown,
             metadata=metadata,
             report_path=str(report_path),
+            missing_reason="",
         )
     write_json_report(report_path, family_report_to_dict(report))
     return report
