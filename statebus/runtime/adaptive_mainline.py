@@ -529,6 +529,9 @@ class AdaptiveMainlineRunner:
     def _assemble_plan(
         request: AdaptiveMainlineRequest,
     ) -> tuple[PlanProposal, ApprovedPlan, AdaptivePlannerAssemblyRecord]:
+        c2a = request.envelope.domain_pack_id == "c2a_four_role_v1"
+        if c2a:
+            _validate_c2a_envelope(request)
         if request.approved_plan_bundle is not None:
             bundle = request.approved_plan_bundle
             if (
@@ -545,6 +548,8 @@ class AdaptiveMainlineRunner:
                 raise AdaptiveMainlineError("approved_plan_bundle_invalid")
             if request.validate_approved_plan is not None:
                 request.validate_approved_plan(bundle.approved_plan)
+            if c2a:
+                _validate_c2a_proposal(bundle.effective_proposal, request)
             planner_record = AdaptivePlannerAssemblyRecord(
                 initial_proposal_hash=bundle.source_proposal_hash,
                 effective_proposal_hash=bundle.effective_proposal_hash,
@@ -564,11 +569,15 @@ class AdaptiveMainlineRunner:
             return bundle.effective_proposal, bundle.approved_plan, planner_record
         if request.propose_plan is None:
             raise AdaptiveMainlineError("plan_source_or_approved_bundle_required")
+        if c2a and request.fallback_proposal is not None:
+            raise AdaptiveMainlineError("c2a.adaptive.proposal_rejected:c2a_fallback_forbidden")
         raw_proposal = request.propose_plan()
         if not isinstance(raw_proposal, PlanProposal):
             raise AdaptiveMainlineError("planner_must_return_plan_proposal")
         if raw_proposal.task_id != request.task_id:
             raise AdaptiveMainlineError("planner_proposal_task_id_mismatch")
+        if c2a:
+            _validate_c2a_proposal(raw_proposal, request)
         validator = PlanPolicyValidator(
             request.registry,
             allow_llm_python=request.envelope.allow_llm_python,
@@ -636,6 +645,8 @@ class AdaptiveMainlineRunner:
             request.envelope,
             available_input_refs=request.available_input_refs,
         )
+        if c2a:
+            _validate_c2a_proposal(effective, request)
         policy_repair_used = False
         semantic_replan_required = False
         fallback_used = False
@@ -667,6 +678,8 @@ class AdaptiveMainlineRunner:
                         semantic_replan_required = True
                     else:
                         effective = repaired_effective
+                        if c2a:
+                            _validate_c2a_proposal(effective, request)
                         normalization_fields = tuple(dict.fromkeys((*normalization_fields, *repair_fields)))
                         outcome = validator.validate(
                             effective,
@@ -723,6 +736,8 @@ class AdaptiveMainlineRunner:
                 plan_policy_report=outcome.report,
                 approved_plan=outcome.approved_plan,
                 logical_capability_registry_digest=request.registry.digest,
+                recipe_id=("c2a-four-role" if c2a else ""),
+                recipe_version=("v1" if c2a else ""),
                 fallback_used=fallback_used,
                 fallback_proposal_hash=fallback_proposal_hash,
             )
@@ -1168,3 +1183,61 @@ def _planner_rejection_category(report: PlanPolicyReport) -> str:
     if any("risk" in code or "authority" in code or "scope" in code for code in codes):
         return "unsafe_or_out_of_scope"
     return "policy_false_reject"
+
+
+def _validate_c2a_envelope(request: AdaptiveMainlineRequest) -> None:
+    envelope = request.envelope
+    expected_roles = {
+        "planner": (1, 1),
+        "retriever": (1, 1),
+        "executor": (1, 1),
+        "summarizer": (1, 1),
+    }
+    checks = (
+        (envelope.role_cardinality == expected_roles, "role_cardinality_mismatch"),
+        (envelope.max_plan_steps == 4, "plan_steps_mismatch"),
+        (envelope.max_dependency_depth == 4, "dependency_depth_mismatch"),
+        (envelope.max_total_attempts == 4, "attempt_budget_mismatch"),
+        (envelope.max_replans == 0, "replan_budget_mismatch"),
+        (envelope.max_retrieval_expansions == 0, "retrieval_expansion_budget_mismatch"),
+    )
+    for valid, code in checks:
+        if not valid:
+            raise AdaptiveMainlineError(f"c2a.adaptive.proposal_rejected:c2a.{code}")
+    from statebus.runtime.domain_packs import c2a_four_role_pack
+
+    pack = c2a_four_role_pack()
+    if tuple(envelope.allowed_capability_ids) != pack.capability_ids:
+        raise AdaptiveMainlineError("c2a.adaptive.proposal_rejected:c2a.capability_surface_mismatch")
+
+
+def _validate_c2a_proposal(
+    proposal: PlanProposal | None,
+    request: AdaptiveMainlineRequest,
+) -> None:
+    if proposal is None:
+        raise AdaptiveMainlineError("c2a.adaptive.proposal_rejected:c2a.proposal_missing")
+    steps = tuple(proposal.steps)
+    expected = (
+        ("plan", "planner", "plan_retrieval_and_execution_v1", ()),
+        ("retrieve", "retriever", "retrieve_table_evidence_v1", ("plan",)),
+        ("execute", "executor", "extract_metric_series_v1", ("retrieve",)),
+        ("summarize", "summarizer", "compose_cited_report_v1", ("execute",)),
+    )
+    if len(steps) != len(expected):
+        raise AdaptiveMainlineError("c2a.adaptive.proposal_rejected:adaptive_canonical_requires_four_role_proposal")
+    for step, (step_id, role, capability_id, dependencies) in zip(steps, expected, strict=True):
+        if (
+            step.step_id != step_id
+            or step.role != role
+            or step.capability_id != capability_id
+            or tuple(step.depends_on) != dependencies
+        ):
+            code = "planner_capability_unregistered" if role == "planner" and step.capability_id != capability_id else "role_graph_mismatch"
+            raise AdaptiveMainlineError(f"c2a.adaptive.proposal_rejected:c2a.{code}")
+    if proposal.final_output_contract_version != "statebus.cited_report.v1":
+        raise AdaptiveMainlineError("c2a.adaptive.proposal_rejected:c2a.recipe_identity_mismatch")
+    if request.approved_plan_bundle is not None:
+        bundle = request.approved_plan_bundle
+        if bundle.recipe_id != "c2a-four-role" or bundle.recipe_version != "v1":
+            raise AdaptiveMainlineError("c2a.adaptive.proposal_rejected:c2a.recipe_identity_mismatch")

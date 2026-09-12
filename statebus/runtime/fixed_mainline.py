@@ -16,6 +16,7 @@ from statebus.contracts import (
     RuntimeIdentity,
     TransformProgram,
     TransformStep,
+    PlannerHandoff,
     WorkflowMode,
 )
 from statebus.refs import CanonicalEvidencePack, EvidenceItem, TableCellLocator
@@ -36,6 +37,7 @@ from statebus.runtime.role_providers import (
     RolePathExecutorProvider,
     RolePathRetrieverProvider,
     RolePathSummarizerProvider,
+    RolePathPlannerProvider,
 )
 from statebus.runtime.static_role_recipe import (
     StaticRoleRecipe,
@@ -49,12 +51,15 @@ class FixedMainlineError(ValueError):
 
 
 _OUTPUT_REF_KIND_BY_ROLE = {
+    "planner": "planner_handoff",
     "retriever": "canonical_evidence_pack",
     "executor": "execution_artifact",
     "summarizer": "execution_artifact",
 }
 
 _COMPLETION_CRITERIA_BY_ROLE = {
+    "planner": {
+    },
     "retriever": {
         "min_locator_count": {"type": "integer", "minimum": 1, "maximum": 3},
         "required_evidence_types": {
@@ -105,6 +110,18 @@ def deterministic_retrieve_handler(
     return _compatibility_result(step, grant, "canonical_evidence_pack")
 
 
+def _fixed_planner_candidate(request: ProviderRequest) -> PlannerHandoff:
+    return PlannerHandoff(
+        task_id=request.envelope.task_id,
+        canonical_task_spec_hash=request.envelope.canonical_task_spec_hash,
+        retrieval_objective={"query": "revenue", "evidence_types": ["table"]},
+        planner_plan_payload={"steps": ["retrieve", "execute", "summarize"]},
+        planner_scope_payload={"corpus_scope_ids": ["fixed-local"]},
+        summary_hint="cite the verified metric",
+        planner_raw_output_hash="fixed-planner-v1",
+    )
+
+
 def deterministic_execute_handler(
     _envelope, _approved_plan, step, grant, _attempt_workspace
 ) -> AdaptiveStepResult:
@@ -121,24 +138,36 @@ def _fixed_retrieve_query(
     _query: str,
     request: EvidenceRequest,
 ) -> CanonicalEvidencePack:
+    parts = _query.split(":", 2)
+    ticker = parts[1] if len(parts) > 1 else "ACME"
+    quarter = parts[2] if len(parts) > 2 else "2026Q1"
+    values = {
+        ("ACME", "2026Q1"): 120.0,
+        ("ACME", "2026Q2"): 132.0,
+        ("ACME", "2026Q3"): 145.0,
+        ("ACME", "2025Q4"): 109.0,
+        ("BETA", "2026Q1"): 87.0,
+    }
+    value = values.get((ticker, quarter), 120.0)
+    item_id = f"fixed-{ticker.lower()}-{quarter.lower()}"
     return CanonicalEvidencePack(
         pack_id=f"fixed-pack-{request.task_id}",
         task_id=request.task_id,
-        source_doc_hashes=("fixed-doc",),
+        source_doc_hashes=(f"fixed-doc-{ticker.lower()}-{quarter.lower()}",),
         structured_evidence=(
             EvidenceItem(
-                item_id="fixed-revenue-q1",
+                item_id=item_id,
                 bucket="structured_evidence",
                 locator=TableCellLocator(
-                    source_doc_hash="fixed-doc",
+                    source_doc_hash=f"fixed-doc-{ticker.lower()}-{quarter.lower()}",
                     table_id="income",
                     row_idx=1,
                     col_idx=1,
                 ),
                 metadata={
                     "structured_row": {
-                        "quarter": "2026Q1",
-                        "revenue_musd": 120.0,
+                        "quarter": quarter,
+                        "revenue_musd": value,
                     }
                 },
             ),
@@ -147,11 +176,16 @@ def _fixed_retrieve_query(
 
 
 def _fixed_retrieval_candidate(request: ProviderRequest) -> EvidenceRequest:
+    spec = request.role_context.canonical_task_spec
+    arguments = getattr(spec, "arguments", {}) if spec is not None else {}
+    ticker = str(arguments.get("ticker", "ACME"))
+    quarter = str(arguments.get("quarter", "2026Q1"))
+    metric = str(arguments.get("metric", "revenue"))
     return EvidenceRequest(
         request_id=f"fixed-retrieval-{request.bound_grant.grant.attempt_id}",
         task_id=request.envelope.task_id,
         step_id=request.step.step_id,
-        queries=("revenue",),
+        queries=(f"{metric}:{ticker}:{quarter}",),
         evidence_types=("table",),
         corpus_scope_ids=("fixed-local",),
         memory_policy="none",
@@ -176,25 +210,45 @@ def _fixed_summarizer_candidate(request: ProviderRequest) -> ClaimSet:
     # executor artifact once the dispatcher reaches this provider.
     if not request.provider_input_refs:
         raise ValueError("fixed_summarizer_requires_executor_input")
-    artifact_ref = request.provider_input_refs[-1]
+    artifact_ref = next(
+        str(item["ref_id"])
+        for item in reversed(request.role_context.verified_input_payloads)
+        if item.get("kind") == "execution_artifact"
+    )
+    rows = next(
+        (item["payload"].get("rows", ()) for item in request.role_context.verified_input_payloads
+         if item.get("kind") == "execution_artifact"),
+        (),
+    )
+    row = dict(rows[0]) if rows else {"quarter": "2026Q1", "revenue_musd": 120.0}
+    evidence_payload = next(
+        (item.get("payload", {}) for item in request.role_context.verified_input_payloads
+         if item.get("kind") == "canonical_evidence_pack"),
+        {},
+    )
+    evidence_items = evidence_payload.get("structured_evidence", ()) if isinstance(evidence_payload, dict) else ()
+    evidence_item_id = str(evidence_items[0].get("item_id", "fixed-revenue-q1")) if evidence_items else "fixed-revenue-q1"
+    quarter = str(row.get("quarter", "2026Q1"))
+    value = float(row.get("revenue_musd", 0.0))
     return ClaimSet(
         claim_set_id=f"fixed-claims-{request.bound_grant.grant.attempt_id}",
         task_id=request.envelope.task_id,
         claims=(
             Claim(
-                claim_id="fixed-revenue-q1",
-                claim_text="Revenue was 120.0 million USD in 2026Q1.",
+                claim_id=evidence_item_id,
+                claim_text=f"Revenue was {value:g} million USD in {quarter}.",
                 claim_type="fact",
-                supporting_evidence_item_ids=("fixed-revenue-q1",),
+                supporting_evidence_item_ids=(evidence_item_id,),
                 supporting_artifact_ref_ids=(artifact_ref,),
-                citation_locators=("income:1:1",),
-                numeric_fields={"revenue_musd": 120.0},
+                citation_locators=(f"income:1:1",),
+                numeric_fields={"revenue_musd": value},
             ),
         ),
     )
 
 
 _FIXED_BOUND_PROVIDER_BY_ROLE = {
+    "planner": RolePathPlannerProvider(_fixed_planner_candidate),
     "retriever": RolePathRetrieverProvider(_fixed_retrieval_candidate),
     "executor": RolePathExecutorProvider(_fixed_executor_candidate),
     "summarizer": RolePathSummarizerProvider(_fixed_summarizer_candidate),
@@ -211,6 +265,8 @@ class FixedMainlineRequest:
     approved_plan_bundle: ApprovedPlanBundle | None = None
     state_pool_mode: str = "mmap"
     cleanup_state: bool = True
+    provider_registry: ExecutionProviderRegistry | None = None
+    bindings: AdaptiveMainlineBindings | None = None
 
     def __post_init__(self) -> None:
         if (self.recipe is None) == (self.approved_plan_bundle is None):
@@ -246,14 +302,22 @@ def _recipe_from_bundle(bundle: ApprovedPlanBundle) -> StaticRoleRecipe:
 
 
 def _compatibility_registry(recipe: StaticRoleRecipe) -> CapabilityRegistry:
-    output_kind_by_step = {
-        step.step_id: _OUTPUT_REF_KIND_BY_ROLE[step.role]
+    output_kinds_by_step = {
+        step.step_id: (
+            ("execution_artifact", "canonical_evidence_pack")
+            if step.role == "executor"
+            else (_OUTPUT_REF_KIND_BY_ROLE[step.role],)
+        )
         for step in recipe.steps
     }
     registry = CapabilityRegistry()
     for step in recipe.steps:
         dependency_kinds = tuple(
-            dict.fromkeys(output_kind_by_step[dependency] for dependency in step.depends_on)
+            dict.fromkeys(
+                kind
+                for dependency in step.depends_on
+                for kind in output_kinds_by_step[dependency]
+            )
         )
         accepted_input_kinds = tuple(
             dict.fromkeys((*step.input_ref_kinds, *dependency_kinds))
@@ -266,9 +330,10 @@ def _compatibility_registry(recipe: StaticRoleRecipe) -> CapabilityRegistry:
                 input_ref_kinds=accepted_input_kinds,
                 required_input_ref_kinds=dependency_kinds,
                 input_contract_version="statebus.fixed_compatibility_input.v1",
-                output_ref_kinds=(output_kind_by_step[step.step_id],),
+                output_ref_kinds=output_kinds_by_step[step.step_id],
                 output_contract_version=step.output_contract_version,
                 execution_kind={
+                    "planner": ExecutionKind.RUNTIME_BUILTIN,
                     "retriever": ExecutionKind.RETRIEVAL_ADAPTER,
                     "executor": ExecutionKind.TRANSFORM_DSL,
                     # The bound provider seam dispatches the typed ClaimSet
@@ -318,7 +383,7 @@ def _strict_envelope(
 ) -> AdaptiveTaskEnvelope:
     role_counts = {
         role: sum(step.role == role for step in recipe.steps)
-        for role in ("retriever", "executor", "summarizer")
+        for role in ("planner", "retriever", "executor", "summarizer")
     }
     return AdaptiveTaskEnvelope(
         task_id=runtime_identity.runtime_task_id,
@@ -335,7 +400,7 @@ def _strict_envelope(
         max_dependency_depth=len(recipe.steps),
         max_retrieval_steps=role_counts["retriever"],
         max_execution_runtime_ms=1_000 * len(recipe.steps),
-        max_replans=1,
+        max_replans=0,
         max_retrieval_expansions=0,
         max_total_attempts=len(recipe.steps),
         risk_class=RiskClass.READ_ONLY,
@@ -350,9 +415,8 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
     if recipe.requested_memory_policy != "none":
         raise FixedMainlineError("fixed_compatibility_memory_policy_must_be_none")
     registry = _compatibility_registry(recipe)
-    provider_registry = _fixed_provider_registry(
-        recipe=recipe,
-        capability_registry=registry,
+    provider_registry = request.provider_registry or _fixed_provider_registry(
+        recipe=recipe, capability_registry=registry
     )
     envelope = _strict_envelope(
         runtime_identity=request.runtime_identity,
@@ -385,7 +449,7 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
         workspace_root=Path(request.workspace_root),
         propose_plan=None,
         approved_plan_bundle=bundle,
-        bindings=AdaptiveMainlineBindings(
+        bindings=(request.bindings or AdaptiveMainlineBindings(
             retrieval_adapter=AdaptiveRetrievalAdapter(_fixed_retrieve_query),
             allowed_corpus_scope_ids=("fixed-local",),
             output_schema_by_step={
@@ -398,7 +462,7 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
                 step.capability_id: _FIXED_BOUND_PROVIDER_BY_ROLE[step.role]
                 for step in recipe.steps
             }
-        ),
+        )),
         state_pool_mode=request.state_pool_mode,
         cleanup_state=request.cleanup_state,
         memory_commit_enabled=False,

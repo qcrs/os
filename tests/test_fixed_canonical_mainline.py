@@ -120,6 +120,7 @@ def test_fixed_mainline_completes_through_runtime_grants_without_legacy_paths(
     assert result.runtime.session.workflow_mode == WorkflowMode.STRICT_FIXED.value
     assert result.runtime.session.session_id == request.runtime_identity.session_id
     assert [step_id for step_id, _grant in observed] == [
+        "plan",
         "retrieve",
         "execute",
         "summarize",
@@ -133,13 +134,13 @@ def test_fixed_mainline_completes_through_runtime_grants_without_legacy_paths(
         grant.grant.session_id == request.runtime_identity.session_id
         for _step_id, grant in observed
     )
-    assert len(result.runtime.session.workflow_steps) == 3
+    assert len(result.runtime.session.workflow_steps) == 4
     assert all(
         isinstance(step, RuntimeWorkflowStep)
         and step.state == StepLifecycleState.COMPLETED.value
         for step in result.runtime.session.workflow_steps
     )
-    assert len(result.runtime.session.attempt_records) == 3
+    assert len(result.runtime.session.attempt_records) == 4
     assert all(
         isinstance(record, StepAttemptRecord)
         and record.state == StepLifecycleState.COMPLETED.value
@@ -239,7 +240,11 @@ def test_fixed_mainline_rejects_unbound_provider_candidates(
     mutation: str,
 ) -> None:
     mainline_request = _fixed_request(tmp_path).to_adaptive_mainline_request()
-    retrieve_capability = mainline_request.approved_plan_bundle.approved_plan.steps[0].capability_id
+    retrieve_capability = next(
+        step.capability_id
+        for step in mainline_request.approved_plan_bundle.approved_plan.steps
+        if step.role == "retriever"
+    )
     def invalid_handler(request: ProviderRequest):
         candidate = EvidenceRequest(
             request_id="invalid-fixed-request",
@@ -255,9 +260,9 @@ def test_fixed_mainline_rejects_unbound_provider_candidates(
     result = AdaptiveMainlineRunner().run(mainline_request)
 
     assert not result.completed
-    assert len(result.runtime.session.attempt_records) == 1
-    assert result.runtime.dispatches[0].state == StepLifecycleState.FAILED.value
-    assert result.runtime.dispatches[0].error_code in {
+    assert len(result.runtime.session.attempt_records) == 2
+    assert result.runtime.dispatches[-1].state == StepLifecycleState.FAILED.value
+    assert result.runtime.dispatches[-1].error_code in {
         "provider_candidate_scope_mismatch",
         "unknown_corpus_scope",
     }

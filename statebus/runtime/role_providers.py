@@ -24,11 +24,13 @@ from statebus.contracts import (
     TransformProgram,
     TransformStep,
     BoundCapabilityGrant,
+    PlannerHandoff,
 )
 
 
 DiagnosticScalar = str | int | float | bool | None
 ProviderCandidateKind = Literal[
+    "planner_handoff",
     "retrieval_request",
     "executor_program",
     "summary_claim_set",
@@ -106,7 +108,7 @@ class AttemptBoundProviderStateReadFacade:
 
 @dataclass(frozen=True)
 class RoleProviderContext:
-    role: Literal["retriever", "executor", "summarizer"]
+    role: Literal["planner", "retriever", "executor", "summarizer"]
     prompt_slice: Any = None
     visible_candidate_keys: tuple[str, ...] = ()
     allowed_tool_names: tuple[str, ...] = ()
@@ -115,6 +117,9 @@ class RoleProviderContext:
     mechanism_kind: str = ""
     verified_input_refs: tuple[str, ...] = ()
     code_generation_request: Any = None
+    planner_handoff: PlannerHandoff | None = None
+    canonical_task_spec: Any = None
+    verified_input_payloads: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,7 +177,7 @@ class ProviderDiagnostic:
         return {"code": self.code, "attributes": [[key, value] for key, value in self.attributes]}
 
 
-ProviderPayload = EvidenceRequest | TransformProgram | GeneratedCodeCandidate | ClaimSet | ProviderDiagnostic
+ProviderPayload = PlannerHandoff | EvidenceRequest | TransformProgram | GeneratedCodeCandidate | ClaimSet | ProviderDiagnostic
 
 
 @dataclass(frozen=True)
@@ -192,7 +197,9 @@ class ProviderCandidate:
         if not self.success or self.retryable:
             raise ProviderAuthorityError("provider_candidate_payload_type_mismatch")
         expected: tuple[type[object], ...]
-        if self.candidate_kind == "retrieval_request":
+        if self.candidate_kind == "planner_handoff":
+            expected = (PlannerHandoff,)
+        elif self.candidate_kind == "retrieval_request":
             expected = (EvidenceRequest,)
         elif self.candidate_kind == "executor_program":
             expected = (TransformProgram, GeneratedCodeCandidate)
@@ -219,6 +226,14 @@ class RolePathRetrieverProvider:
 
     def __call__(self, request: ProviderRequest) -> ProviderCandidate:
         return ProviderCandidate(True, "retrieval_request", self.build_candidate(request))
+
+
+@dataclass(frozen=True)
+class RolePathPlannerProvider:
+    build_candidate: Callable[[ProviderRequest], PlannerHandoff]
+
+    def __call__(self, request: ProviderRequest) -> ProviderCandidate:
+        return ProviderCandidate(True, "planner_handoff", self.build_candidate(request))
 
 
 @dataclass(frozen=True)
@@ -271,6 +286,7 @@ __all__ = [
     "ProviderRequest",
     "ProviderStateReadFacade",
     "RolePathExecutorProvider",
+    "RolePathPlannerProvider",
     "RolePathRetrieverProvider",
     "RolePathSummarizerProvider",
     "RoleProviderContext",

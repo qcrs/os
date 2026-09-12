@@ -266,42 +266,54 @@ class StaticRoleRecipe:
     def validate_fixed_topology(self) -> None:
         """Enforce the first MRR-02 fixed topology without approving it."""
 
-        if len(self.steps) != 3:
-            raise PlanProvenanceError("fixed_recipe_requires_three_steps")
+        if len(self.steps) != 4:
+            raise PlanProvenanceError("fixed_recipe_requires_four_steps")
         step_ids = tuple(step.step_id for step in self.steps)
         if len(set(step_ids)) != len(step_ids):
             raise PlanProvenanceError("fixed_recipe_duplicate_step_id")
         roles = tuple(step.role for step in self.steps)
-        if roles != ("retriever", "executor", "summarizer"):
+        if roles != ("planner", "retriever", "executor", "summarizer"):
             raise PlanProvenanceError("fixed_recipe_role_topology_mismatch")
-        if self.steps[0].depends_on:
-            raise PlanProvenanceError("fixed_recipe_retriever_must_be_root")
-        if self.steps[1].depends_on != (self.steps[0].step_id,):
+        if self.steps[0].step_id != "plan" or self.steps[0].depends_on:
+            raise PlanProvenanceError("fixed_recipe_planner_must_be_root")
+        if self.steps[1].step_id != "retrieve" or self.steps[1].depends_on != (self.steps[0].step_id,):
             raise PlanProvenanceError("fixed_recipe_executor_dependency_mismatch")
-        if set(self.steps[2].depends_on) != {self.steps[0].step_id, self.steps[1].step_id}:
+        if self.steps[2].step_id != "execute" or self.steps[2].depends_on != (self.steps[1].step_id,):
+            raise PlanProvenanceError("fixed_recipe_executor_dependency_mismatch")
+        if self.steps[3].step_id != "summarize" or self.steps[3].depends_on != (self.steps[2].step_id,):
             raise PlanProvenanceError("fixed_recipe_summarizer_dependency_mismatch")
-        if self.steps[1].role != "executor" or self.steps[2].role != "summarizer":
+        if tuple(step.role for step in self.steps) != ("planner", "retriever", "executor", "summarizer"):
             raise PlanProvenanceError("fixed_recipe_role_topology_mismatch")
 
 
 def default_fixed_role_recipe(
     *,
-    recipe_id: str = "fixed-retriever-executor-summarizer",
+    recipe_id: str = "c2a-four-role",
     recipe_version: str = "v1",
     retriever_capability_id: str = "retrieve_semantic_evidence_v1",
     executor_capability_id: str = "extract_metric_series_v1",
     summarizer_capability_id: str = "compose_cited_report_v1",
+    planner_capability_id: str = "plan_retrieval_and_execution_v1",
     evidence_contract: str = "statebus.evidence_pack.v2",
     executor_contract: str = "statebus.metric_series.v1",
     final_output_contract: str = "statebus.cited_report.v1",
     requested_memory_policy: str = "none",
 ) -> StaticRoleRecipe:
-    """Build the representative deterministic three-role recipe."""
+    """Build the representative deterministic four-role recipe."""
 
     return StaticRoleRecipe(
         recipe_id=recipe_id,
         recipe_version=recipe_version,
         steps=(
+            StaticRoleRecipeStep(
+                step_id="plan",
+                role="planner",
+                capability_id=planner_capability_id,
+                goal="bound retrieval and execution objective",
+                output_contract_version="statebus.planner_handoff.v2",
+                completion_criteria={},
+                on_failure="fail",
+            ),
             StaticRoleRecipeStep(
                 step_id="retrieve",
                 role="retriever",
@@ -309,7 +321,10 @@ def default_fixed_role_recipe(
                 goal="retrieve registered evidence",
                 output_contract_version=evidence_contract,
                 completion_criteria={"min_locator_count": 1},
-                on_failure="request_replan",
+                depends_on=("plan",),
+                input_ref_ids=("plan-output",),
+                input_ref_kinds=("planner_handoff",),
+                on_failure="fail",
             ),
             StaticRoleRecipeStep(
                 step_id="execute",
@@ -321,16 +336,16 @@ def default_fixed_role_recipe(
                 input_ref_kinds=("canonical_evidence_pack",),
                 output_contract_version=executor_contract,
                 completion_criteria={"min_rows": 1},
-                on_failure="fallback_deterministic",
+                on_failure="fail",
             ),
             StaticRoleRecipeStep(
                 step_id="summarize",
                 role="summarizer",
                 capability_id=summarizer_capability_id,
                 goal="compose the final cited report",
-                depends_on=("retrieve", "execute"),
-                input_ref_ids=("retrieve-output", "execute-output"),
-                input_ref_kinds=("canonical_evidence_pack", "execution_artifact"),
+                depends_on=("execute",),
+                input_ref_ids=("execute-output",),
+                input_ref_kinds=("execution_artifact",),
                 output_contract_version=final_output_contract,
                 completion_criteria={"min_locator_count": 1},
             ),

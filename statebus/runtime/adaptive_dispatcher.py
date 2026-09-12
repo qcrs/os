@@ -35,6 +35,7 @@ from statebus.contracts import (
     StateAccessGrant,
     TransformProgram,
     TransformStep,
+    PlannerHandoff,
 )
 from statebus.memory import MemoryConsumptionRecord, ReplayEligibilityDecision, ReplayEligibilityReceipt
 from statebus.refs import CanonicalEvidencePack, ExecutionArtifactRef
@@ -150,6 +151,7 @@ class AdaptiveDispatchContext:
     # Disjoint from legacy BuiltinHandler: bound providers receive the full
     # BoundCapabilityGrant through ProviderRequest and return a candidate.
     bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
+    planner_handoffs: dict[str, PlannerHandoff] = field(default_factory=dict)
     provider_registry: ExecutionProviderRegistry | None = None
     provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
     # Dispatcher/transport-owned evidence keyed by the current grant.  A
@@ -302,16 +304,53 @@ class AdaptiveCapabilityDispatcher:
         try:
             provider_registry.resolve_bound(binding=binding)
         except ProviderBindingError as exc:
-            raise AdaptiveDispatchError(str(exc)) from exc
+            code = str(exc)
+            if step.role == "planner" and code in {
+                "bound_provider_snapshot_missing",
+                "provider_binding_not_registered",
+            }:
+                code = "planner_binding_mismatch"
+            raise AdaptiveDispatchError(code) from exc
         role = step.role
-        if role not in {"retriever", "executor", "summarizer"}:
+        if role not in {"planner", "retriever", "executor", "summarizer"}:
             raise AdaptiveDispatchError("provider_role_not_supported")
+        planner_handoff = None
+        if role == "retriever":
+            planner_refs = tuple(
+                ref_id for ref_id in bound_grant.grant.input_ref_ids
+                if ref_id.startswith("plan-output:")
+            )
+            if len(planner_refs) != 1 or planner_refs[0] not in self.context.planner_handoffs:
+                raise AdaptiveDispatchError("planner_handoff_ref_missing")
+            planner_handoff = self.context.planner_handoffs[planner_refs[0]]
+        verified_input_payloads: list[dict[str, object]] = []
+        for ref_id in bound_grant.grant.input_ref_ids:
+            if ref_id in self.context.evidence_packs:
+                evidence = self._verified_evidence_pack(ref_id, bound_grant.grant)
+                if evidence is not None:
+                    verified_input_payloads.append({
+                        "ref_id": ref_id,
+                        "kind": "canonical_evidence_pack",
+                        "payload": evidence.canonical_payload(),
+                    })
+            elif ref_id in self.context.artifacts:
+                stored = self.context.artifacts[ref_id]
+                if not self._artifact_in_grant_scope(stored, bound_grant.grant):
+                    raise AdaptiveDispatchError("provider_input_artifact_not_verified")
+                verified_input_payloads.append({
+                    "ref_id": ref_id,
+                    "kind": "execution_artifact",
+                    "payload": {"rows": [dict(row) for row in self._read_verified_artifact_rows(stored)]},
+                })
         role_context = RoleProviderContext(
             role=role,
             input_contract_version=descriptor.input_contract_version,
             output_contract_version=descriptor.output_contract_version,
             mechanism_kind=binding.selected_implementation_kind,
             verified_input_refs=tuple(bound_grant.grant.input_ref_ids),
+            planner_handoff=planner_handoff,
+            canonical_task_spec=self.context.canonical_task_spec,
+            verified_input_payloads=tuple(verified_input_payloads),
         )
         request = ProviderRequest(
             envelope=envelope,
@@ -334,6 +373,7 @@ class AdaptiveCapabilityDispatcher:
             raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
         candidate = detach_provider_candidate(raw_candidate)
         expected_kind = {
+            "planner": "planner_handoff",
             "retriever": "retrieval_request",
             "executor": "executor_program",
             "summarizer": "summary_claim_set",
@@ -341,12 +381,19 @@ class AdaptiveCapabilityDispatcher:
         if candidate.candidate_kind not in {expected_kind, "failure", "diagnostic"}:
             raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
         if candidate.candidate_kind == "failure":
+            timed_out = candidate.error_code in {
+                "planner_timeout",
+                "retriever_timeout",
+                "executor_timeout",
+                "summarizer_timeout",
+            }
             return AdaptiveStepResult(
                 grant_hash=bound_grant.grant.grant_hash,
                 success=False,
                 attempt_id=bound_grant.grant.attempt_id,
                 error_code=candidate.error_code,
                 retryable=candidate.retryable,
+                timed_out=timed_out,
             )
         if candidate.candidate_kind == "diagnostic":
             return AdaptiveStepResult(
@@ -354,6 +401,27 @@ class AdaptiveCapabilityDispatcher:
                 success=False,
                 attempt_id=bound_grant.grant.attempt_id,
                 error_code="provider_diagnostic_only",
+            )
+        if candidate.candidate_kind == "planner_handoff":
+            assert isinstance(candidate.payload, PlannerHandoff)
+            handoff = candidate.payload
+            if (
+                handoff.task_id != bound_grant.grant.task_id
+                or handoff.canonical_task_spec_hash != envelope.canonical_task_spec_hash
+                or not handoff.retrieval_objective
+                or any(str(key).lower().startswith("expected_") for key in handoff.planner_scope_payload)
+                or any(token in str(handoff.canonical_payload()).lower() for token in ("gold", "future_round"))
+            ):
+                raise AdaptiveDispatchError("planner_candidate_invalid")
+            ref_id = f"plan-output:{handoff.task_id}:{bound_grant.grant.attempt_id}"
+            self.context.planner_handoffs[ref_id] = handoff
+            return AdaptiveStepResult(
+                grant_hash=bound_grant.grant.grant_hash,
+                success=True,
+                attempt_id=bound_grant.grant.attempt_id,
+                output_refs=(ref_id,),
+                output_ref_kinds=("planner_handoff",),
+                metrics={"planner_provider_invocation_count": 1.0},
             )
         payload = candidate.payload
         if candidate.candidate_kind == "retrieval_request":
@@ -1354,8 +1422,18 @@ class AdaptiveCapabilityDispatcher:
             grant_hash=grant.grant_hash,
             success=True,
             attempt_id=grant.attempt_id,
-            output_refs=(artifact.artifact_id,),
-            output_ref_kinds=("execution_artifact",),
+            output_refs=(
+                (artifact.artifact_id, input_ref_id)
+                if "canonical_evidence_pack"
+                in self.context.registry.get(step.capability_id).output_ref_kinds
+                else (artifact.artifact_id,)
+            ),
+            output_ref_kinds=(
+                ("execution_artifact", "canonical_evidence_pack")
+                if "canonical_evidence_pack"
+                in self.context.registry.get(step.capability_id).output_ref_kinds
+                else ("execution_artifact",)
+            ),
             validator_report_hashes=tuple(quality_hashes),
             quality_report_hashes=tuple(quality_hashes),
             projection_report_hashes=projection_hashes,
@@ -1649,7 +1727,9 @@ class AdaptiveCapabilityDispatcher:
         evidence_ref_ids = [
             ref_id for ref_id in grant.input_ref_ids if ref_id in self.context.evidence_packs
         ]
-        if not artifacts or len(evidence_ref_ids) != 1:
+        if not artifacts:
+            raise AdaptiveDispatchError("summarizer_verified_input_set_invalid")
+        if len(evidence_ref_ids) != 1:
             raise AdaptiveDispatchError("summarizer_verified_input_set_invalid")
         for candidate in artifacts:
             if not self._artifact_in_grant_scope(candidate, grant):
@@ -1987,7 +2067,13 @@ class AdaptiveCapabilityDispatcher:
             try:
                 provider_registry.resolve_bound(binding=binding)
             except ProviderBindingError as exc:
-                raise AdaptiveDispatchError(str(exc)) from exc
+                code = str(exc)
+                if step.role == "planner" and code in {
+                    "bound_provider_snapshot_missing",
+                    "provider_binding_not_registered",
+                }:
+                    code = "planner_binding_mismatch"
+                raise AdaptiveDispatchError(code) from exc
             if descriptor.owner_role != step.role:
                 raise AdaptiveDispatchError("capability_descriptor_mismatch")
             return descriptor.execution_kind

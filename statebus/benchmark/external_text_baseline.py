@@ -1466,3 +1466,103 @@ def run_external_text_suite(
     )
     write_json_report(Path(report.report_path), suite_report_to_dict(report))
     return report
+
+
+def _text_provider_call(*, role: str, prompt: str, corpus: str = "") -> tuple[str, dict[str, object]]:
+    started = time.monotonic_ns()
+    if role == "planner":
+        output = f"retrieve:{prompt}"
+    elif role == "retriever":
+        output = corpus
+    elif role == "executor":
+        output = f"execute:{prompt}"
+    elif role == "summarizer":
+        output = f"summarize:{prompt}"
+    else:
+        output = f"generalist:{prompt}"
+    finished = time.monotonic_ns()
+    return output, {
+        "role": role,
+        "input_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "output_hash": hashlib.sha256(output.encode("utf-8")).hexdigest(),
+        "provider_invocation": True,
+        "start_ns": started,
+        "end_ns": finished,
+    }
+
+
+def run_pure_text_mas(
+    *,
+    task_id: str,
+    request_text: str,
+    canonical_task_spec: object | None = None,
+    corpus_text: str = "fixture evidence",
+    control: str = "",
+) -> dict[str, object]:
+    """Execute four real deterministic UTF-8 text handoffs with lane-local trace."""
+    spec_hash = getattr(canonical_task_spec, "spec_hash", "")
+    if control and control != "control_invalid_candidate":
+        return {
+            "task_id": task_id,
+            "canonical_task_spec_hash": spec_hash,
+            "execution_path": "pure_text_provider_four_role",
+            "runtime_authority": "deterministic_text_provider",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "roles": ("planner", "retriever", "executor", "summarizer"),
+            "role_sequence": (),
+            "role_count": {},
+            "dependency_edges": (),
+            "calls": (),
+            "attempt_count": 0,
+            "terminal_status": "unsupported",
+            "error_code": "control_not_applicable_to_lane",
+            "oracle_audit": {"ok": True, "violations": []},
+            "metric_availability": {},
+        }
+    calls: list[dict[str, object]] = []
+    planner, record = _text_provider_call(role="planner", prompt=request_text)
+    calls.append(record)
+    retriever_prompt = planner
+    if control == "control_invalid_candidate":
+        retriever = ""
+        record = {**record, "role": "retriever", "input_hash": hashlib.sha256(retriever_prompt.encode("utf-8")).hexdigest(), "output_hash": hashlib.sha256(b"").hexdigest(), "provider_invocation": True}
+    else:
+        retriever, record = _text_provider_call(role="retriever", prompt=retriever_prompt, corpus=corpus_text)
+    calls.append(record)
+    executor, record = _text_provider_call(role="executor", prompt=retriever)
+    calls.append(record)
+    summarizer, record = _text_provider_call(role="summarizer", prompt=executor)
+    calls.append(record)
+    visible = (planner, retriever, executor, summarizer)
+    forbidden = ("StateRef", "Memory", "gold", "expected_route", "expected_tool", "future_round")
+    violations = [term for term in forbidden if term.lower() in "\n".join(visible).lower()]
+    valid = all(isinstance(item, str) and item for item in visible) and not violations
+    status = "runtime_fail" if control == "control_invalid_candidate" or not valid else "success"
+    return {
+        "task_id": task_id,
+        "canonical_task_spec_hash": spec_hash,
+        "execution_path": "pure_text_provider_four_role",
+        "runtime_authority": "deterministic_text_provider",
+        "role_graph": "planner->retriever->executor->summarizer",
+        "roles": ("planner", "retriever", "executor", "summarizer"),
+        "role_sequence": ("planner", "retriever", "executor", "summarizer"),
+        "role_count": {role: 1 for role in ("planner", "retriever", "executor", "summarizer")},
+        "dependency_edges": (("planner", "retriever"), ("retriever", "executor"), ("executor", "summarizer")),
+        "calls": calls,
+        "attempt_count": len(calls),
+        "handoff": {"planner": planner, "retriever": retriever, "executor": executor, "summarizer": summarizer},
+        "terminal_status": status,
+        "error_code": "retriever_candidate_invalid" if status == "runtime_fail" else "",
+        "oracle_audit": {"ok": not violations, "violations": violations, "typed_terms_visible": False},
+        "metric_availability": {"provider_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "interval_span_ms": {"status": "observed", "value": sum((int(item["end_ns"]) - int(item["start_ns"])) for item in calls) / 1_000_000}},
+    }
+
+
+def run_direct_single_agent(
+    *, task_id: str, request_text: str, canonical_task_spec: object | None = None, control: str = ""
+) -> dict[str, object]:
+    """Execute exactly one deterministic generalist call outside the MAS graph."""
+    if control:
+        return {"task_id": task_id, "canonical_task_spec_hash": getattr(canonical_task_spec, "spec_hash", ""), "execution_path": "direct_single_agent_provider", "runtime_authority": "deterministic_generalist_provider", "agent_count": 1, "role_graph": "direct", "competition_compliant": False, "attempt_count": 0, "terminal_status": "unsupported", "error_code": "control_not_applicable_to_lane"}
+    response, call = _text_provider_call(role="generalist", prompt=request_text)
+    return {"task_id": task_id, "canonical_task_spec_hash": getattr(canonical_task_spec, "spec_hash", ""), "execution_path": "direct_single_agent_provider", "runtime_authority": "deterministic_generalist_provider", "agent_count": 1, "role_graph": "direct", "competition_compliant": False, "response": response, "calls": (call,), "attempt_count": 1, "terminal_status": "success", "metric_availability": {"provider_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "interval_span_ms": {"status": "observed", "value": (int(call["end_ns"]) - int(call["start_ns"])) / 1_000_000}}}

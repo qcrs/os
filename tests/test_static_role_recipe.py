@@ -12,8 +12,7 @@ from statebus.contracts import (
     semantic_plan_hash,
 )
 from statebus.runtime.capability_registry import CapabilityRegistry
-from statebus.runtime.domain_packs import register_long_doc_analysis_capabilities
-from statebus.runtime.driver import build_default_workflow
+from statebus.runtime.domain_packs import register_c2a_four_role_capabilities
 from statebus.runtime.static_role_recipe import (
     StaticRoleRecipe,
     StaticRoleRecipeCompiler,
@@ -24,7 +23,7 @@ from statebus.runtime.static_role_recipe import (
 
 def _context() -> tuple[CapabilityRegistry, AdaptiveTaskEnvelope]:
     registry = CapabilityRegistry()
-    pack = register_long_doc_analysis_capabilities(registry)
+    pack = register_c2a_four_role_capabilities(registry)
     output_contracts = tuple(
         sorted({registry.get(capability_id).output_contract_version for capability_id in pack.capability_ids})
     )
@@ -36,11 +35,12 @@ def _context() -> tuple[CapabilityRegistry, AdaptiveTaskEnvelope]:
         allowed_capability_ids=pack.capability_ids,
         allowed_output_contracts=output_contracts,
         role_cardinality={
+            "planner": (1, 1),
             "retriever": (1, 1),
             "executor": (1, 1),
             "summarizer": (1, 1),
         },
-        max_plan_steps=3,
+        max_plan_steps=4,
         max_execution_runtime_ms=100_000,
     )
     return registry, envelope
@@ -48,7 +48,7 @@ def _context() -> tuple[CapabilityRegistry, AdaptiveTaskEnvelope]:
 
 def test_static_recipe_compiles_stable_plan_proposal() -> None:
     registry, envelope = _context()
-    recipe = default_fixed_role_recipe()
+    recipe = default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1")
     compiler = StaticRoleRecipeCompiler()
 
     first = compiler.compile(envelope.task_id, envelope, recipe)
@@ -56,15 +56,13 @@ def test_static_recipe_compiles_stable_plan_proposal() -> None:
 
     assert first.canonical_payload() == second.canonical_payload()
     assert first.proposal_hash == second.proposal_hash
-    assert tuple(step.role for step in first.steps) == (
-        "retriever",
-        "executor",
-        "summarizer",
-    )
+    assert tuple(step.role for step in first.steps) == ("planner", "retriever", "executor", "summarizer")
     assert tuple(step.depends_on for step in first.steps) == tuple(
         step.depends_on for step in second.steps
     )
-    assert first.steps[2].depends_on == ("retrieve", "execute")
+    assert first.steps[1].depends_on == ("plan",)
+    assert first.steps[2].depends_on == ("retrieve",)
+    assert first.steps[3].depends_on == ("execute",)
     assert registry.contains(first.steps[0].capability_id)
 
 
@@ -73,10 +71,10 @@ def test_static_recipe_contains_no_provider_identity_or_execution_kind() -> None
     proposal = StaticRoleRecipeCompiler().compile(
         envelope.task_id,
         envelope,
-        default_fixed_role_recipe(),
+        default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1"),
     )
     payload_text = str(proposal.canonical_payload()).lower()
-    recipe_text = str(default_fixed_role_recipe().canonical_payload()).lower()
+    recipe_text = str(default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1").canonical_payload()).lower()
 
     assert "execution_kind" not in payload_text
     assert "provider" not in payload_text
@@ -88,7 +86,7 @@ def test_static_recipe_contains_no_provider_identity_or_execution_kind() -> None
 
 def test_static_recipe_rejects_physical_fields() -> None:
     _, envelope = _context()
-    recipe_payload = default_fixed_role_recipe().canonical_payload()
+    recipe_payload = default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1").canonical_payload()
     recipe_payload["provider_id"] = "physical-provider-1"
 
     with pytest.raises(PlanProvenanceError, match="physical_provider_field_forbidden"):
@@ -106,7 +104,7 @@ def test_static_recipe_rejects_physical_fields() -> None:
     proposal = StaticRoleRecipeCompiler().compile(
         envelope.task_id,
         envelope,
-        default_fixed_role_recipe(),
+        default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1"),
         available_input_refs={"ignored": "ignored"},
     )
     assert proposal.task_id == envelope.task_id
@@ -114,7 +112,7 @@ def test_static_recipe_rejects_physical_fields() -> None:
 
 def test_same_recipe_and_contract_produce_stable_semantic_hash() -> None:
     registry, envelope = _context()
-    recipe = default_fixed_role_recipe()
+    recipe = default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1")
     first = StaticRoleRecipeCompiler().compile(envelope.task_id, envelope, recipe)
     second = StaticRoleRecipeCompiler().compile(envelope.task_id, envelope, recipe)
 
@@ -141,7 +139,7 @@ def test_planner_telemetry_is_not_part_of_semantic_plan_hash() -> None:
     proposal = StaticRoleRecipeCompiler().compile(
         envelope.task_id,
         envelope,
-        default_fixed_role_recipe(),
+        default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1"),
     )
     telemetry_variant = replace(
         proposal,
@@ -166,46 +164,13 @@ def test_planner_telemetry_is_not_part_of_semantic_plan_hash() -> None:
     )
 
 
-def test_static_recipe_matches_legacy_post_plan_role_topology() -> None:
+def test_static_recipe_matches_c2a_four_role_topology() -> None:
     registry, _ = _context()
-    legacy_steps = tuple(
-        step
-        for step in build_default_workflow(step_id="execute", artifact_id="artifact")
-        if step.role != "planner"
-    )
-    recipe_steps = default_fixed_role_recipe().steps
-    legacy_roles = tuple(step.role for step in legacy_steps)
-    recipe_roles = tuple(step.role for step in recipe_steps)
-
-    def transitive_role_dependencies(steps: tuple[object, ...]) -> dict[str, tuple[str, ...]]:
-        by_id = {str(getattr(step, "step_id")): step for step in steps}
-
-        def ancestors(step_id: str) -> set[str]:
-            result: set[str] = set()
-            step = by_id[step_id]
-            for dependency in getattr(step, "depends_on"):
-                if dependency not in by_id:
-                    continue
-                result.add(str(getattr(by_id[dependency], "role")))
-                result.update(ancestors(dependency))
-            return result
-
-        return {
-            str(getattr(step, "role")): tuple(sorted(ancestors(str(getattr(step, "step_id")))))
-            for step in steps
-        }
-
-    assert legacy_roles == ("retriever", "executor", "summarizer")
-    assert recipe_roles == legacy_roles
-    assert transitive_role_dependencies(legacy_steps) == transitive_role_dependencies(recipe_steps)
-    assert transitive_role_dependencies(recipe_steps) == {
-        "retriever": (),
-        "executor": ("retriever",),
-        "summarizer": ("executor", "retriever"),
-    }
-    assert tuple(registry.get(step.capability_id).owner_role for step in recipe_steps) == recipe_roles
+    recipe_steps = default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1").steps
+    assert tuple(step.role for step in recipe_steps) == ("planner", "retriever", "executor", "summarizer")
+    assert tuple(step.step_id for step in recipe_steps) == ("plan", "retrieve", "execute", "summarize")
+    assert tuple(step.depends_on for step in recipe_steps) == ((), ("plan",), ("retrieve",), ("execute",))
+    assert tuple(registry.get(step.capability_id).owner_role for step in recipe_steps) == tuple(step.role for step in recipe_steps)
     assert tuple(step.output_contract_version for step in recipe_steps) == (
-        "statebus.evidence_pack.v2",
-        "statebus.metric_series.v1",
-        "statebus.cited_report.v1",
+        "statebus.planner_handoff.v2", "statebus.evidence_pack.v2", "statebus.metric_series.v1", "statebus.cited_report.v1",
     )

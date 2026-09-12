@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from statebus.benchmark.minimal_runner import MinimalBenchmarkSample
+from statebus.contracts import CanonicalTaskSpec
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,44 @@ def load_registered_formal_samples() -> list[MinimalBenchmarkSample]:
                 f"found {len(family_samples)} in {family.sample_dir}"
             )
         samples.extend(family_samples)
+    return samples
+
+
+def c2a_pilot_samples() -> list[MinimalBenchmarkSample]:
+    """Return the fixed 5-positive/3-control C2A pilot registration."""
+    root = _repo_root() / "statebus" / "benchmark" / "samples" / "formal_financial_family"
+    positive_ids = (
+        "compare_metric_acme_q1.json",
+        "compare_metric_acme_q2.json",
+        "compare_metric_acme_q3.json",
+        "compare_metric_acme_q4_2025.json",
+        "compare_metric_beta_q1_revenue.json",
+    )
+    samples = [MinimalBenchmarkSample.from_path(root / name) for name in positive_ids]
+    controls = (
+        ("control_planner_binding_mismatch", "planner binding mismatch"),
+        ("control_retriever_deadline", "retriever deadline control"),
+        ("control_invalid_candidate", "invalid candidate control"),
+    )
+    samples.extend(
+        MinimalBenchmarkSample(
+            task_id=case_id,
+            request_text=request,
+            canonical_task_spec=CanonicalTaskSpec(
+                task_family="c2a_control",
+                intent_op="control",
+                required_outputs=("summary_text",),
+                arguments={"control": case_id},
+            ),
+            task_family="c2a_control",
+            dataset_id="c2a_internal_fixture",
+            dataset_version="c2a-v1",
+            dataset_split="c2a_control",
+            scenario_tags=("control", case_id),
+            dataset_hash=f"sha256:{case_id}",
+        )
+        for case_id, request in controls
+    )
     return samples
 
 

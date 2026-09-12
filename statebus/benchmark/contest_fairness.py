@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -407,6 +408,30 @@ def validate_root_isolation(manifests: Iterable[Mapping[str, object]]) -> dict[s
                 collisions[field] = sorted({str(item) for item in flattened})
         elif len(values) != len(rows):
             collisions[field] = values
+    resolved_paths: dict[str, list[str]] = {field: [] for field in ("runtime_root", "workspace_root", "memory_root")}
+    inode_paths: dict[str, list[tuple[int, int]]] = {field: [] for field in resolved_paths}
+    for row in rows:
+        for field in resolved_paths:
+            raw = row.get(field)
+            if not raw:
+                continue
+            path = Path(str(raw))
+            resolved_paths[field].append(str(path.resolve()))
+            if path.exists():
+                stat = path.stat()
+                inode_paths[field].append((stat.st_dev, stat.st_ino))
+    for field, paths in resolved_paths.items():
+        if len(paths) != len(set(paths)):
+            collisions[f"{field}_resolved"] = paths
+        inodes = inode_paths[field]
+        if len(inodes) != len(set(inodes)):
+            collisions[f"{field}_inode"] = inodes
+    all_root_paths = [path for paths in resolved_paths.values() for path in paths]
+    for index, left in enumerate(all_root_paths):
+        for right in all_root_paths[index + 1:]:
+            if left != right and (left.startswith(right + os.sep) or right.startswith(left + os.sep)):
+                collisions["nested_mutable_root"] = [left, right]
+                break
     return {"ok": not collisions, "collisions": collisions, "checked_count": len(rows)}
 
 
@@ -551,6 +576,167 @@ def build_five_case_fairness_smoke(
                 and isolation["ok"]
             ),
         },
+    }
+
+
+def build_c2a_pilot_records(
+    *,
+    case_ids: Iterable[str],
+    root: Path,
+    source_identity: Mapping[str, object] | None = None,
+    case_metadata: Mapping[str, Mapping[str, object]] | None = None,
+) -> dict[str, object]:
+    """Register the deterministic 8 x 4 C2A rows without inventing outcomes."""
+    source = dict(source_identity or capture_source_identity())
+    manifests: list[dict[str, object]] = []
+    metadata_by_case = dict(case_metadata or {})
+    for case_id in tuple(case_ids):
+        for lane in CANONICAL_LANES:
+            lane_root = (root / "cases" / case_id / lane / "0").resolve()
+            for child in ("runtime_root", "workspace_root", "memory_root", "cache/cold"):
+                (lane_root / child).mkdir(parents=True, exist_ok=True)
+            manifest = build_benchmark_manifest(
+                lane=lane,
+                dataset_id=str(metadata_by_case.get(case_id, {}).get("dataset_id", "c2a_internal_fixture")),
+                dataset_version=str(metadata_by_case.get(case_id, {}).get("dataset_version", "c2a-v1")),
+                dataset_split=str(metadata_by_case.get(case_id, {}).get("dataset_split", "c2a_internal_fixture")),
+                dataset_hash=str(metadata_by_case.get(case_id, {}).get("dataset_hash", sha256_digest(case_id))),
+                task_contract_hash=str(metadata_by_case.get(case_id, {}).get("task_contract_hash", sha256_digest({"case_id": case_id}))),
+                provider_id="deterministic-host-provider",
+                provider_version="c2a-v1",
+                model_id="deterministic-host-model",
+                model_revision="internal-fixture-v1",
+                role_graph="planner->retriever->executor->summarizer" if lane != "direct_single_agent" else "direct",
+                agent_count=1 if lane == "direct_single_agent" else 4,
+                memory_policy="off",
+                cache_epoch=f"c2a/{case_id}/{lane}/0/cold",
+                runtime_root=lane_root / "runtime_root",
+                workspace_root=lane_root / "workspace_root",
+                memory_root=lane_root / "memory_root",
+                source_identity=source,
+                # ``execution_path=canonical`` is the aggregate membership
+                # marker; the observed caller path is recorded separately.
+                execution_path="canonical",
+                runtime_authority=(
+                    "AdaptiveRuntimeEngine"
+                    if lane in {"fixed_structured", "adaptive_routed"}
+                    else ("deterministic_text_provider" if lane == "pure_text_mas" else "deterministic_generalist_provider")
+                ),
+                terminal_status="unsupported",
+                feature_flags={"text_handoff_only": lane == "pure_text_mas", "bounded_route_policy": lane == "adaptive_routed"},
+            )
+            manifest.update({
+                "case_id": case_id,
+                "repeat_id": 0,
+                "run_id": "c2a-pilot",
+                "terminal_record_path": str(lane_root / "terminal.json"),
+                "caller_path": (
+                    "RuntimeDriver.run_mode(strict_fixed)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"
+                    if lane == "fixed_structured"
+                    else (
+                        "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"
+                        if lane == "adaptive_routed"
+                        else ("pure_text_provider_four_role" if lane == "pure_text_mas" else "direct_single_agent_provider")
+                    )
+                ),
+            })
+            (lane_root / "manifest.json").write_text(stable_json_dumps(manifest), encoding="utf-8")
+            (lane_root / "stdout.log").write_text("", encoding="utf-8")
+            (lane_root / "stderr.log").write_text("", encoding="utf-8")
+            (lane_root / "root_listing.json").write_text(
+                stable_json_dumps({"runtime_root": str(lane_root / "runtime_root"), "workspace_root": str(lane_root / "workspace_root"), "memory_root": str(lane_root / "memory_root")}),
+                encoding="utf-8",
+            )
+            (lane_root / "terminal.json").write_text(
+                stable_json_dumps({"case_id": case_id, "lane": lane, "terminal_status": "unsupported", "registration_only": True, "evidence_scope": "contract/collector evidence only"}),
+                encoding="utf-8",
+            )
+            manifest.update({"registration_only": True, "evidence_scope": "contract/collector evidence only", "pilot_eligible": False})
+            (lane_root / "manifest.json").write_text(stable_json_dumps(manifest), encoding="utf-8")
+            manifests.append(manifest)
+    terminal_records = [{"case_id": m["case_id"], "lane": m["lane"], "terminal_status": m["terminal_status"], "manifest": m} for m in manifests]
+    return {
+        "schema_version": "statebus.c2a_pilot.v1",
+        "manifests": manifests,
+        "terminal_records": terminal_records,
+        "failure_denominator": build_failure_denominator(terminal_records),
+        "root_isolation": validate_root_isolation(manifests),
+        "canonical_records": terminal_records,
+        "legacy_records": [],
+        "evidence_scope": "contract/collector evidence only",
+        "pilot_eligible": False,
+    }
+
+
+def collect_c2a_terminal_record(
+    *,
+    manifest: Mapping[str, object],
+    outcome: Mapping[str, object],
+    trace: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Persist one observed C2A outcome and project Runtime-owned trace facts."""
+    lane_root = Path(str(manifest["runtime_root"])).parent
+    status = str(outcome.get("terminal_status", "runtime_fail"))
+    if status not in TERMINAL_STATUSES:
+        status = "environment_fail"
+    projected = dict(manifest)
+    projected.update({
+        "terminal_status": status,
+        "registration_only": False,
+        "evidence_scope": "execution trace",
+        "pilot_eligible": True,
+        "failure_stage": str(outcome.get("failure_stage", "")),
+        "error_code": str(outcome.get("error_code", "")),
+        "error_message": str(outcome.get("error_message", outcome.get("error_code", ""))),
+        "trace": dict(trace or {}),
+        "metric_availability": dict(outcome.get("metric_availability", {})),
+        "artifact_ids": tuple(dict.fromkeys(
+            str(ref_id)
+            for dispatch in dict(trace or {}).get("dispatches", ())
+            if isinstance(dispatch, Mapping)
+            for ref_id in dispatch.get("output_refs", ())
+        )) if trace else (),
+        "memory_ids": (),
+    })
+    observed_trace = dict(trace or {})
+    projected["attempt_count"] = len(observed_trace.get("attempts", observed_trace.get("calls", ())))
+    (lane_root / "manifest.json").write_text(stable_json_dumps(projected), encoding="utf-8")
+    (lane_root / "terminal.json").write_text(
+        stable_json_dumps({
+            "case_id": projected.get("case_id"),
+            "lane": projected.get("lane"),
+            "terminal_status": status,
+            "failure_stage": projected["failure_stage"],
+            "error_code": projected["error_code"],
+            "error_message": projected["error_message"],
+            "metric_availability": projected["metric_availability"],
+            "trace_present": bool(trace),
+        }),
+        encoding="utf-8",
+    )
+    listing = {
+        name: sorted(
+            str(path.relative_to(Path(str(manifest["runtime_root"])).parent))
+            for path in Path(str(manifest[name])).parent.glob("**/*")
+            if path.is_file()
+        )
+        for name in ("runtime_root", "workspace_root", "memory_root")
+    }
+    (lane_root / "root_listing.json").write_text(stable_json_dumps(listing), encoding="utf-8")
+    if trace:
+        (lane_root / "runtime_trace.json").write_text(stable_json_dumps(trace), encoding="utf-8")
+    if status != "success":
+        (lane_root / "stderr.log").write_text(
+            str(projected["error_code"] or projected["failure_stage"] or status), encoding="utf-8"
+        )
+    return {
+        "case_id": projected.get("case_id"),
+        "lane": projected.get("lane"),
+        "terminal_status": status,
+        "failure_stage": projected["failure_stage"],
+        "error_code": projected["error_code"],
+        "trace": dict(trace or {}),
+        "manifest": projected,
     }
 
 def _flatten_scalars(value: object) -> tuple[str, ...]:

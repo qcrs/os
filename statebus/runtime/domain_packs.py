@@ -20,8 +20,8 @@ class DomainPack:
     final_output_contract: str
 
     def fallback_proposal(self, envelope: AdaptiveTaskEnvelope) -> PlanProposal:
-        if self.pack_id == "generic_adaptive_analysis_v2":
-            raise ValueError("generic_adaptive_analysis_has_no_hidden_fixed_fallback")
+        if self.pack_id in {"generic_adaptive_analysis_v2", "c2a_four_role_v1"}:
+            raise ValueError("domain_pack_has_no_hidden_fixed_fallback")
         steps = (
             PlanStepProposal(
                 step_id="retrieve-evidence",
@@ -580,3 +580,113 @@ def register_generic_adaptive_analysis_capabilities(
         if not registry.contains(descriptor.capability_id):
             registry.register(descriptor)
     return generic_adaptive_analysis_pack()
+
+
+def c2a_four_role_pack() -> DomainPack:
+    """The isolated canonical C2A capability surface."""
+    return DomainPack(
+        pack_id="c2a_four_role_v1",
+        capability_ids=(
+            "plan_retrieval_and_execution_v1",
+            "retrieve_table_evidence_v1",
+            "extract_metric_series_v1",
+            "compose_cited_report_v1",
+        ),
+        final_output_contract="statebus.cited_report.v1",
+    )
+
+
+def register_c2a_four_role_capabilities(registry: CapabilityRegistry) -> DomainPack:
+    """Register only the four capabilities accepted by the C2A canonical lane."""
+    descriptors = (
+        CapabilityDescriptor(
+            capability_id="plan_retrieval_and_execution_v1",
+            owner_role="planner",
+            description="Bound a bounded retrieval and execution objective.",
+            input_ref_kinds=(),
+            input_contract_version="statebus.canonical_task_spec.v1",
+            output_ref_kinds=("planner_handoff",),
+            output_contract_version="statebus.planner_handoff.v2",
+            execution_kind=ExecutionKind.RUNTIME_BUILTIN,
+            side_effect_class=RiskClass.READ_ONLY,
+            max_runtime_ms=8_000,
+            supports_replay=False,
+            completion_criteria_contract={},
+        ),
+        CapabilityDescriptor(
+            capability_id="retrieve_table_evidence_v1",
+            owner_role="retriever",
+            description="Retrieve table evidence after consuming the planner handoff.",
+            input_ref_kinds=("planner_handoff",),
+            required_input_ref_kinds=("planner_handoff",),
+            input_contract_version="statebus.evidence_request.v1",
+            output_ref_kinds=("canonical_evidence_pack",),
+            output_contract_version="statebus.evidence_pack.v2",
+            execution_kind=ExecutionKind.RETRIEVAL_ADAPTER,
+            side_effect_class=RiskClass.READ_ONLY,
+            max_runtime_ms=8_000,
+            supports_replay=False,
+            validator_ids=("evidence_coverage",),
+            completion_criteria_contract={
+                "min_locator_count": {"type": "integer", "minimum": 1, "maximum": 20},
+                "required_evidence_types": {
+                    "type": "string_list",
+                    "allowed_values": ["table"],
+                    "min_items": 1,
+                    "max_items": 1,
+                },
+            },
+        ),
+        CapabilityDescriptor(
+            capability_id="extract_metric_series_v1",
+            owner_role="executor",
+            description="Extract a metric series from verified evidence.",
+            input_ref_kinds=("canonical_evidence_pack",),
+            required_input_ref_kinds=("canonical_evidence_pack",),
+            input_contract_version="statebus.transform_input.v1",
+            output_ref_kinds=("execution_artifact", "canonical_evidence_pack"),
+            output_contract_version="statebus.metric_series.v1",
+            execution_kind=ExecutionKind.TRANSFORM_DSL,
+            side_effect_class=RiskClass.WORKSPACE_WRITE,
+            max_runtime_ms=30_000,
+            supports_replay=False,
+            validator_ids=("metric_series",),
+            completion_criteria_contract={
+                "min_rows": {"type": "integer", "minimum": 1, "maximum": 10_000},
+                "required_fields": {"type": "string_list", "min_items": 1, "max_items": 64},
+            },
+        ),
+        CapabilityDescriptor(
+            capability_id="compose_cited_report_v1",
+            owner_role="summarizer",
+            description="Compose a cited report from verified evidence and artifact refs.",
+            input_ref_kinds=("canonical_evidence_pack", "execution_artifact"),
+            required_input_ref_kinds=("canonical_evidence_pack", "execution_artifact"),
+            input_contract_version="statebus.claim_input.v1",
+            output_ref_kinds=("execution_artifact",),
+            output_contract_version="statebus.cited_report.v1",
+            execution_kind=ExecutionKind.RUNTIME_BUILTIN,
+            side_effect_class=RiskClass.WORKSPACE_WRITE,
+            max_runtime_ms=30_000,
+            supports_replay=False,
+            validator_ids=("claim_citation", "claim_numeric"),
+            completion_criteria_contract={
+                "min_locator_count": {"type": "integer", "minimum": 1, "maximum": 20},
+                "required_evidence_types": {"type": "string_list", "min_items": 1, "max_items": 1},
+            },
+        ),
+    )
+    for descriptor in descriptors:
+        registry.register(descriptor)
+    return c2a_four_role_pack()
+
+
+__all__ = [
+    "DomainPack",
+    "c2a_four_role_pack",
+    "generic_adaptive_analysis_pack",
+    "long_doc_analysis_pack",
+    "register_c2a_four_role_capabilities",
+    "register_generic_adaptive_analysis_capabilities",
+    "register_long_doc_analysis_capabilities",
+]

@@ -54,3 +54,19 @@ def finalize_case_telemetry_summary(
         )
 
     return result
+
+
+def project_metric_availability(*, observed: Mapping[str, object] | None = None) -> dict[str, object]:
+    """Project only directly observed metrics; unavailable values stay explicit."""
+    observed = dict(observed or {})
+    result: dict[str, object] = {}
+    for name, reason in (
+        ("wire_bytes", "wire_bytes_not_observed"),
+        ("provider_tokens", "provider_usage_not_observed"),
+        ("interval_span_ms", "interval_span_not_observed"),
+    ):
+        if name in observed and observed[name] is not None:
+            result[name] = {"status": "observed", "value": observed[name]}
+        else:
+            result[name] = {"status": "unsupported", "reason": reason}
+    return result

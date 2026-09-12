@@ -15,6 +15,7 @@ from statebus.contracts import (
     ExecutionKind,
     EvidenceRequest,
     PlanStepProposal,
+    PlannerHandoff,
     RiskClass,
     RuntimeIdentity,
     TaskContractIdentity,
@@ -39,6 +40,7 @@ from statebus.runtime.role_providers import (
     ProviderCandidate,
     ProviderRequest,
     RolePathExecutorProvider,
+    RolePathPlannerProvider,
     RolePathRetrieverProvider,
     RolePathSummarizerProvider,
     RoleProviderContext,
@@ -198,6 +200,34 @@ def test_three_role_adapters_receive_exact_bound_grant_once() -> None:
             "executor_program",
             "summary_claim_set",
         }
+
+
+def test_planner_adapter_returns_detached_handoff_under_bound_attempt() -> None:
+    _envelope, plan, step, bound_grant, identity, _registry, _providers = _fixture("planner")
+    spec_hash = identity.task_contract.contract_hash
+    adapter = RolePathPlannerProvider(
+        lambda request: PlannerHandoff(
+            task_id=request.envelope.task_id,
+            canonical_task_spec_hash=spec_hash,
+            retrieval_objective={"query": "revenue"},
+        )
+    )
+    request = ProviderRequest(
+        envelope=_envelope,
+        approved_plan=plan,
+        step=step,
+        bound_grant=bound_grant,
+        runtime_identity=identity,
+        attempt_workspace=Path("/tmp/mrr10a-planner-provider"),
+        provider_input_refs=(),
+        role_context=RoleProviderContext(role="planner", canonical_task_spec={"detached": True}),
+    )
+    candidate = adapter(request)
+    assert candidate.success
+    assert candidate.candidate_kind == "planner_handoff"
+    assert isinstance(candidate.payload, PlannerHandoff)
+    assert candidate.payload.task_id == "task"
+    assert not hasattr(candidate.payload, "grant_hash")
 
 
 def test_bound_dispatcher_projects_provider_failure_without_provider_retry() -> None:

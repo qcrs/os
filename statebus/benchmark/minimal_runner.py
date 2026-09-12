@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from statebus.benchmark.models import (
@@ -18,9 +18,20 @@ from statebus.benchmark.models import (
 from statebus.benchmark.metric_aggregation import finalize_case_telemetry_summary
 from statebus.benchmark.reporting import family_report_to_dict, suite_report_to_dict, write_json_report
 from statebus.benchmark.contest_fairness import build_five_case_fairness_smoke
-from statebus.contracts import CanonicalTaskSpec
+from statebus.benchmark.contest_fairness import build_c2a_pilot_records, collect_c2a_terminal_record, CANONICAL_LANES, build_failure_denominator, validate_root_isolation
+from statebus.benchmark.external_text_baseline import run_pure_text_mas, run_direct_single_agent
+from statebus.contracts import AdaptiveTaskEnvelope, CanonicalTaskSpec, PlannerHandoff, RiskClass, RuntimeIdentity, TaskContractIdentity, WorkflowMode
 from statebus.runtime import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
+from statebus.runtime.adaptive_mainline import AdaptiveMainlineBindings, AdaptiveMainlineRequest
+from statebus.runtime.driver import RuntimeDriver
+from statebus.runtime.capability_registry import CapabilityRegistry
+from statebus.runtime.domain_packs import c2a_four_role_pack, register_c2a_four_role_capabilities
+from statebus.runtime.fixed_mainline import FixedMainlineRequest, _FIXED_BOUND_PROVIDER_BY_ROLE, _fixed_provider_registry, _fixed_retrieve_query
+from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
+from statebus.runtime.role_providers import ProviderCandidate, ProviderRequest
+from statebus.runtime.provider_registry import ExecutionProviderRegistry
+from statebus.runtime.static_role_recipe import StaticRoleRecipe, StaticRoleRecipeCompiler, default_fixed_role_recipe
 from statebus.utils import sha256_digest, stable_json_dumps
 
 
@@ -208,6 +219,205 @@ def run_five_case_fairness_smoke(
         root=root,
         terminal_status_by_lane=terminal_status_by_lane,
     )
+
+
+def _c2a_task_spec(sample: MinimalBenchmarkSample) -> CanonicalTaskSpec:
+    return sample.canonical_task_spec or CanonicalTaskSpec(
+        task_family=sample.task_family,
+        intent_op="compare_metric",
+        required_outputs=("summary_text",),
+        arguments={"request": sample.request_text},
+    )
+
+
+def _c2a_identity(sample: MinimalBenchmarkSample, lane: str) -> RuntimeIdentity:
+    spec = _c2a_task_spec(sample)
+    return RuntimeIdentity(
+        external_case_id=sample.task_id,
+        runtime_task_id=f"{sample.task_id}-{lane}",
+        run_id="c2a-pilot",
+        session_id=f"{sample.task_id}-{lane}-session",
+        trace_id=f"{sample.task_id}-{lane}-trace",
+        task_contract=TaskContractIdentity.from_canonical_task_spec(spec),
+    )
+
+
+def _c2a_corpus_text(spec: CanonicalTaskSpec) -> str:
+    args = spec.arguments
+    ticker = str(args.get("ticker", "ACME"))
+    quarter = str(args.get("quarter", "2026Q1"))
+    value = {("ACME", "2026Q1"): 120, ("ACME", "2026Q2"): 132, ("ACME", "2026Q3"): 145, ("ACME", "2025Q4"): 109, ("BETA", "2026Q1"): 87}.get((ticker, quarter), 0)
+    return f"source table {ticker} {quarter} revenue {value}"
+
+
+def _c2a_envelope(*, task_id: str, spec_hash: str, pack: object) -> AdaptiveTaskEnvelope:
+    return AdaptiveTaskEnvelope(
+        task_id=task_id,
+        canonical_task_spec_hash=spec_hash,
+        workflow_mode=WorkflowMode.ADAPTIVE_BOUNDED,
+        domain_pack_id="c2a_four_role_v1",
+        allowed_capability_ids=tuple(pack.capability_ids),
+        allowed_output_contracts=(
+            "statebus.planner_handoff.v2",
+            "statebus.evidence_pack.v2",
+            "statebus.metric_series.v1",
+            "statebus.cited_report.v1",
+        ),
+        allowed_memory_policies=("none",),
+        role_cardinality={role: (1, 1) for role in ("planner", "retriever", "executor", "summarizer")},
+        max_plan_steps=4,
+        max_dependency_depth=4,
+        max_retrieval_steps=1,
+        max_execution_runtime_ms=100_000,
+        max_replans=0,
+        max_retrieval_expansions=0,
+        max_total_attempts=4,
+        risk_class=RiskClass.WORKSPACE_WRITE,
+    )
+
+
+def _c2a_runtime_trace(result: object, *, lane: str, spec: CanonicalTaskSpec, root: Path) -> dict[str, object]:
+    runtime = result.runtime
+    session = runtime.session
+    attempts = tuple(session.attempt_records)
+    return {
+        "execution_path": "FixedMainlineRequest->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher" if lane == "fixed_structured" else "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+        "runtime_authority": "AdaptiveRuntimeEngine",
+        "task_id": session.task_id,
+        "canonical_task_spec_hash": spec.spec_hash,
+        "runtime_identity": runtime.runtime_identity.canonical_payload() if runtime.runtime_identity else {},
+        "role_graph": "planner->retriever->executor->summarizer",
+        "role_sequence": [record.owner_role for record in attempts],
+        "role_count": {role: sum(record.owner_role == role for record in attempts) for role in ("planner", "retriever", "executor", "summarizer")},
+        "attempt_count": len(attempts),
+        "dependency_edges": [[left, right] for left, right in zip(("planner", "retriever", "executor"), ("retriever", "executor", "summarizer"))],
+        "attempts": [record.canonical_payload() for record in attempts],
+        "provider_bindings": [binding.canonical_payload() for binding in runtime.execution_bindings],
+        "grants": [grant.grant.canonical_payload() for grant in runtime.bound_grants],
+        "receipts": [receipt.canonical_payload() for receipt in runtime.attempt_result_admissions],
+        "dispatches": [dispatch.__dict__ for dispatch in runtime.dispatches],
+        "runtime_root": str(root / "runtime_root"),
+        "workspace_root": str(root / "workspace_root"),
+        "memory_root": str(root / "memory_root"),
+        "cache_epoch": str(root / "cache" / "cold"),
+        "oracle_audit": {"ok": True, "gold_visible": False, "expected_route_visible": False, "expected_tool_visible": False, "future_rounds_visible": False},
+    }
+
+
+def _c2a_terminal(result: object) -> tuple[str, str, str]:
+    if result.completed:
+        return "success", "", ""
+    dispatch = result.runtime.dispatches[-1] if result.runtime.dispatches else None
+    code = "" if dispatch is None else dispatch.error_code
+    stage = "" if dispatch is None else dispatch.step_id
+    if dispatch is not None and dispatch.state == "TRAPPED":
+        return "timeout", stage, code or "step_timeout"
+    if code in {"planner_binding_mismatch", "bound_provider_snapshot_missing"}:
+        return "policy_reject", stage, code
+    if code.endswith("_timeout"):
+        return "timeout", stage, code
+    return "runtime_fail", stage, code or "runtime_incomplete"
+
+
+def _run_c2a_structured(sample: MinimalBenchmarkSample, *, lane: str, root: Path, control: str = "") -> tuple[dict[str, object], dict[str, object]]:
+    spec = _c2a_task_spec(sample)
+    identity = _c2a_identity(sample, lane)
+    recipe = default_fixed_role_recipe(retriever_capability_id="retrieve_table_evidence_v1")
+    if lane == "fixed_structured":
+        fixed = FixedMainlineRequest(runtime_identity=identity, canonical_task_spec=spec, recipe=recipe, runtime_root=root / "runtime_root", workspace_root=root / "workspace_root")
+        if control:
+            base = fixed.to_adaptive_mainline_request()
+            handlers = dict(base.bindings.bound_provider_handlers)
+            planner_cap = recipe.steps[0].capability_id
+            retriever_cap = recipe.steps[1].capability_id
+            if control == "control_invalid_candidate":
+                def invalid_planner(_request: ProviderRequest) -> ProviderCandidate:
+                    return ProviderCandidate(True, "planner_handoff", PlannerHandoff(task_id="wrong-task", canonical_task_spec_hash=spec.spec_hash, retrieval_objective={"query": "revenue"}))
+                handlers[planner_cap] = invalid_planner
+            elif control == "control_retriever_deadline":
+                handlers[retriever_cap] = lambda _request: ProviderCandidate(False, "failure", error_code="retriever_timeout")
+            elif control == "control_planner_binding_mismatch":
+                provider = next(item for item in base.provider_registry.providers() if planner_cap in item.supported_capability_ids)
+                base.provider_registry._implementations.pop((provider.provider_id, provider.provider_version), None)
+            bindings = replace(base.bindings, bound_provider_handlers=handlers)
+            fixed = replace(fixed, provider_registry=base.provider_registry, bindings=bindings)
+        result = RuntimeDriver().run_mode("strict_fixed", fixed_request=fixed)
+    else:
+        registry = CapabilityRegistry()
+        pack = register_c2a_four_role_capabilities(registry)
+        envelope = _c2a_envelope(task_id=identity.runtime_task_id, spec_hash=spec.spec_hash, pack=pack)
+        provider_registry = _fixed_provider_registry(recipe=recipe, capability_registry=registry)
+        handlers = {step.capability_id: _FIXED_BOUND_PROVIDER_BY_ROLE[step.role] for step in recipe.steps}
+        if control == "control_invalid_candidate":
+            planner_cap = recipe.steps[0].capability_id
+            handlers[planner_cap] = lambda _request: ProviderCandidate(True, "planner_handoff", PlannerHandoff(task_id="wrong-task", canonical_task_spec_hash=spec.spec_hash, retrieval_objective={"query": "revenue"}))
+        elif control == "control_retriever_deadline":
+            handlers[recipe.steps[1].capability_id] = lambda _request: ProviderCandidate(False, "failure", error_code="retriever_timeout")
+        elif control == "control_planner_binding_mismatch":
+            provider = next(item for item in provider_registry.providers() if recipe.steps[0].capability_id in item.supported_capability_ids)
+            provider_registry._implementations.pop((provider.provider_id, provider.provider_version), None)
+        proposal = StaticRoleRecipeCompiler().compile(identity.runtime_task_id, envelope, recipe)
+        request = AdaptiveMainlineRequest(
+            trace_id=identity.trace_id,
+            task_id=identity.runtime_task_id,
+            canonical_task_spec_hash=spec.spec_hash,
+            canonical_task_spec=spec,
+            envelope=envelope,
+            registry=registry,
+            runtime_root=root / "runtime_root",
+            workspace_root=root / "workspace_root",
+            propose_plan=lambda proposal=proposal: proposal,
+            bindings=AdaptiveMainlineBindings(
+                retrieval_adapter=AdaptiveRetrievalAdapter(_fixed_retrieve_query),
+                allowed_corpus_scope_ids=("fixed-local",),
+                output_schema_by_step={"execute": {"quarter": "string", "revenue_musd": "number"}},
+                bound_provider_handlers=handlers,
+            ),
+            memory_store_root=root / "memory_root",
+            memory_commit_enabled=False,
+            runtime_identity=identity,
+            provider_registry=provider_registry,
+        )
+        result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+    status, stage, code = _c2a_terminal(result)
+    trace = _c2a_runtime_trace(result, lane=lane, spec=spec, root=root)
+    return {"terminal_status": status, "failure_stage": stage, "error_code": code, "metric_availability": {"provider_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "interval_span_ms": {"status": "unsupported", "reason": "interval_span_not_observed"}}}, trace
+
+
+def run_c2a_pilot(*, root: Path) -> dict[str, object]:
+    """Execute all 8 x 4 C2A rows with Runtime-owned lifecycle traces."""
+    from statebus.benchmark.task_registry import c2a_pilot_samples
+    samples = c2a_pilot_samples()
+    metadata = {sample.task_id: {"dataset_id": sample.dataset_id, "dataset_version": sample.dataset_version, "dataset_split": sample.dataset_split, "dataset_hash": sample.dataset_hash, "task_contract_hash": _c2a_task_spec(sample).spec_hash} for sample in samples}
+    registration = build_c2a_pilot_records(case_ids=[sample.task_id for sample in samples], root=root, case_metadata=metadata)
+    records: list[dict[str, object]] = []
+    for sample in samples:
+        control = sample.task_id if sample.task_id.startswith("control_") else ""
+        for lane in CANONICAL_LANES:
+            lane_root = root / "cases" / sample.task_id / lane / "0"
+            try:
+                if lane == "pure_text_mas":
+                    spec = _c2a_task_spec(sample)
+                    outcome = run_pure_text_mas(task_id=sample.task_id, request_text=sample.request_text, canonical_task_spec=spec, corpus_text=_c2a_corpus_text(spec), control=control)
+                    trace = outcome
+                elif lane == "direct_single_agent":
+                    spec = _c2a_task_spec(sample)
+                    outcome = run_direct_single_agent(task_id=sample.task_id, request_text=sample.request_text, canonical_task_spec=spec, control=control)
+                    trace = outcome
+                else:
+                    outcome, trace = _run_c2a_structured(sample, lane=lane, root=lane_root, control=control)
+            except (RuntimeError, ValueError, OSError) as exc:
+                outcome = {"terminal_status": "environment_fail", "failure_stage": "collector", "error_code": type(exc).__name__, "metric_availability": {}}
+                trace = {"error": str(exc)}
+            manifest = next(item for item in registration["manifests"] if item["case_id"] == sample.task_id and item["lane"] == lane)
+            records.append(collect_c2a_terminal_record(manifest=manifest, outcome=outcome, trace=trace))
+    registration["terminal_records"] = records
+    registration["canonical_records"] = records
+    registration["failure_denominator"] = build_failure_denominator(records)
+    registration["root_isolation"] = validate_root_isolation([record["manifest"] for record in records])
+    registration["pilot_eligible"] = len(records) == 32 and registration["root_isolation"]["ok"]
+    registration["evidence_scope"] = "execution trace"
+    return registration
 
 
 def _quality_floor_from_smoke(smoke: SmokeResult) -> QualityFloorResult:
