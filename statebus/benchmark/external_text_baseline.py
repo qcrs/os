@@ -1555,6 +1555,14 @@ def run_pure_text_mas(
         "error_code": "retriever_candidate_invalid" if status == "runtime_fail" else "",
         "oracle_audit": {"ok": not violations, "violations": violations, "typed_terms_visible": False},
         "metric_availability": {"provider_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "interval_span_ms": {"status": "observed", "value": sum((int(item["end_ns"]) - int(item["start_ns"])) for item in calls) / 1_000_000}},
+        "runtime_attempts": {"status": "unsupported", "items": [], "count": 0},
+        "recipe_identity": "pure-text-mas@v1",
+        "capability_identity": "text_role_call_v1",
+        "canonical_marker": {
+            "observed": True,
+            "execution_path": "pure_text_provider_four_role",
+            "runtime_authority": "deterministic_text_provider",
+        },
     }
 
 
@@ -1565,4 +1573,4 @@ def run_direct_single_agent(
     if control:
         return {"task_id": task_id, "canonical_task_spec_hash": getattr(canonical_task_spec, "spec_hash", ""), "execution_path": "direct_single_agent_provider", "runtime_authority": "deterministic_generalist_provider", "agent_count": 1, "role_graph": "direct", "competition_compliant": False, "attempt_count": 0, "terminal_status": "unsupported", "error_code": "control_not_applicable_to_lane"}
     response, call = _text_provider_call(role="generalist", prompt=request_text)
-    return {"task_id": task_id, "canonical_task_spec_hash": getattr(canonical_task_spec, "spec_hash", ""), "execution_path": "direct_single_agent_provider", "runtime_authority": "deterministic_generalist_provider", "agent_count": 1, "role_graph": "direct", "competition_compliant": False, "response": response, "calls": (call,), "attempt_count": 1, "terminal_status": "success", "metric_availability": {"provider_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "interval_span_ms": {"status": "observed", "value": (int(call["end_ns"]) - int(call["start_ns"])) / 1_000_000}}}
+    return {"task_id": task_id, "canonical_task_spec_hash": getattr(canonical_task_spec, "spec_hash", ""), "execution_path": "direct_single_agent_provider", "runtime_authority": "deterministic_generalist_provider", "agent_count": 1, "role_graph": "direct", "competition_compliant": False, "response": response, "calls": (call,), "attempt_count": 1, "terminal_status": "success", "metric_availability": {"provider_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "interval_span_ms": {"status": "observed", "value": (int(call["end_ns"]) - int(call["start_ns"])) / 1_000_000}}, "runtime_attempts": {"status": "unsupported", "items": [], "count": 0}, "role_sequence": ("generalist",), "role_count": {"generalist": 1}, "dependency_edges": (), "recipe_identity": "direct-single-agent@v1", "capability_identity": "direct_generalist_v1", "canonical_marker": {"observed": True, "execution_path": "direct_single_agent_provider", "runtime_authority": "deterministic_generalist_provider"}}

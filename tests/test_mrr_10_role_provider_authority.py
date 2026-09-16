@@ -14,6 +14,7 @@ from statebus.contracts import (
     ClaimSet,
     ExecutionKind,
     EvidenceRequest,
+    GeneratedCodeCandidate,
     PlanStepProposal,
     PlannerHandoff,
     RiskClass,
@@ -45,6 +46,8 @@ from statebus.runtime.role_providers import (
     RolePathSummarizerProvider,
     RoleProviderContext,
 )
+from statebus.runtime.adaptive_runtime import AdaptiveStepResult
+from statebus.utils import sha256_digest
 
 
 def _fixture(
@@ -265,6 +268,65 @@ def test_bound_dispatcher_projects_provider_failure_without_provider_retry() -> 
     assert not result.success
     assert result.error_code == "provider_parse_failed"
     assert result.retryable
+
+
+def test_bound_generated_code_candidate_is_executed_once_by_dispatcher() -> None:
+    envelope, plan, step, bound_grant, identity, registry, providers = _fixture(
+        "executor",
+        with_snapshot=True,
+    )
+    envelope = replace(
+        envelope,
+        allow_llm_python=True,
+        risk_class=RiskClass.BOUNDED_CODE,
+    )
+    source = "result = 1\n"
+    candidate = GeneratedCodeCandidate(
+        request_hash="provider-request-hash",
+        source=source,
+        source_hash=sha256_digest(source.encode("utf-8")),
+        raw_response_hash=sha256_digest(source.encode("utf-8")),
+        model_id="fixture-executor",
+    )
+    calls: list[str] = []
+
+    class CapturingDispatcher(AdaptiveCapabilityDispatcher):
+        def _dispatch_llm_python(self, envelope, approved_plan, step, grant, attempt_workspace, *, source_override=None):
+            calls.append(str(source_override))
+            return AdaptiveStepResult(
+                grant_hash=grant.grant_hash,
+                attempt_id=grant.attempt_id,
+                success=False,
+                error_code="captured_before_sandbox",
+            )
+
+    context = AdaptiveDispatchContext(
+        registry=registry,
+        provider_registry=providers,
+        bound_provider_handlers={
+            step.capability_id: lambda _request: ProviderCandidate(
+                success=True,
+                candidate_kind="executor_program",
+                payload=candidate,
+            )
+        },
+    )
+    result = CapturingDispatcher(context=context).dispatch(
+        envelope=envelope,
+        approved_plan=plan,
+        step=step,
+        grant=bound_grant,
+        attempt_workspace=Path("/tmp/mrr10a-codeact-dispatch"),
+        runtime_identity=identity,
+    )
+
+    assert calls == [source]
+    assert result.error_code == "captured_before_sandbox"
+    assert context.provider_invocation_evidence[bound_grant.grant.grant_hash] == {
+        "request_hash": candidate.request_hash,
+        "source_hash": candidate.source_hash,
+        "raw_response_hash": candidate.raw_response_hash,
+    }
 
 
 def test_provider_state_facade_is_scoped_detached_and_closes() -> None:

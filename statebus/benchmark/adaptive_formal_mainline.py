@@ -27,11 +27,15 @@ from statebus.benchmark.adaptive_formal import (
     expected_facts_report,
 )
 from statebus.benchmark.minimal_runner import run_minimal_benchmark_family
+from statebus.benchmark.contest_fairness import audit_oracle_visibility, list_root_contents, validate_c2a_trace
+from statebus.benchmark.metric_aggregation import project_metric_availability
 from statebus.benchmark.models import BenchmarkLayer
 from statebus.benchmark.reporting import family_report_to_dict
 from statebus.benchmark.task_registry import formal_family_payload, load_registered_formal_samples
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
+    ArtifactVerificationDecision,
+    ArtifactVerificationReceipt,
     ClaimSet,
     ClaimSetStatus,
     CodeGenerationPolicy,
@@ -39,6 +43,7 @@ from statebus.contracts import (
     PlanStepProposal,
     ReplayClass,
     RiskClass,
+    RuntimeIdentity,
     WorkflowMode,
 )
 from statebus.refs import ExecutionArtifactRef
@@ -50,6 +55,7 @@ from statebus.runtime.capability_validators import default_capability_validator_
 from statebus.runtime.claims import ClaimSetValidator
 from statebus.runtime.domain_packs import register_generic_adaptive_analysis_capabilities
 from statebus.runtime.driver import RuntimeDriver
+from statebus.runtime.identity import compatibility_runtime_identity
 from statebus.runtime.llm_codeact import build_code_repair_guidance
 from statebus.runtime.plan_policy import PlanPolicyValidator
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
@@ -63,6 +69,8 @@ _RETRIEVAL_EVIDENCE_TYPES_BY_CAPABILITY = {
     "retrieve_semantic_evidence_v1": ("semantic_context",),
     "retrieve_table_evidence_v1": ("table",),
 }
+_FORMAL_RETRIEVAL_RUNTIME_MS = 120_000
+_FORMAL_RETRIEVAL_CAPABILITY_IDS = frozenset(_RETRIEVAL_EVIDENCE_TYPES_BY_CAPABILITY)
 
 
 @dataclass(frozen=True)
@@ -334,12 +342,22 @@ async def _complete_raw_code(prompt: str) -> tuple[str, str, dict[str, int]]:
     }
 
 
-def _source_artifact(case: FormalAdaptiveCase, case_root: Path) -> StoredAdaptiveArtifact:
+def _source_artifact(
+    case: FormalAdaptiveCase,
+    case_root: Path,
+    runtime_identity: RuntimeIdentity,
+) -> tuple[StoredAdaptiveArtifact, ArtifactVerificationReceipt]:
     source_root = case_root / "source"
     source_root.mkdir(parents=True, exist_ok=False)
     payload = (stable_json_dumps(list(case.source_rows)) + "\n").encode("utf-8")
     path = source_root / "source_rows.json"
     path.write_bytes(payload)
+    source_attempt_id = "controller-bound-source"
+    source_grant_hash = sha256_digest({
+        "artifact_id": case.source_ref_id,
+        "producer_step_id": "formal-source-binding",
+        "producer_attempt_id": source_attempt_id,
+    })
     lifecycle = ArtifactLifecycleManager()
     candidate = lifecycle.register_candidate(ExecutionArtifactRef(
         artifact_id=case.source_ref_id,
@@ -359,17 +377,58 @@ def _source_artifact(case: FormalAdaptiveCase, case_root: Path) -> StoredAdaptiv
         }),
         metadata={
             "schema_version": "statebus.formal_source_artifact.v1",
-            "session_id": f"adaptive-session-{case.task_id}",
-            "attempt_id": "controller-bound-source",
+            "session_id": runtime_identity.session_id,
+            "attempt_id": source_attempt_id,
+            "grant_hash": source_grant_hash,
             "source_is_controller_bound": True,
         },
     ))
     artifact = lifecycle.mark_verified(candidate.artifact_id)
+    receipt = ArtifactVerificationReceipt(
+        artifact_id=artifact.artifact_id,
+        runtime_task_id=runtime_identity.runtime_task_id,
+        run_id=runtime_identity.run_id,
+        session_id=runtime_identity.session_id,
+        producer_step_id=artifact.step_id,
+        producer_attempt_id=source_attempt_id,
+        execution_binding_hash=sha256_digest({
+            "artifact_id": artifact.artifact_id,
+            "runtime_identity": runtime_identity.canonical_payload(),
+            "binding": "formal-controller-bound-source",
+        }),
+        capability_grant_hash=source_grant_hash,
+        candidate_blob_hash=artifact.blob_hash,
+        candidate_size_bytes=artifact.size_bytes,
+        validator_ids=(),
+        validator_report_hashes=(),
+        decision=ArtifactVerificationDecision.VERIFIED,
+        reason="formal_controller_bound_source_verified",
+    )
+    artifact = replace(artifact, metadata={
+        **artifact.metadata,
+        "artifact_verification_receipt_hash": receipt.receipt_hash,
+    })
     return StoredAdaptiveArtifact(
         artifact=artifact,
         rows=case.source_rows,
         provenance_item_ids=(f"formal-source:{case.task_id}",),
-    )
+    ), receipt
+
+
+def _with_formal_runtime_budgets(
+    registry: CapabilityRegistry,
+    *,
+    retrieval_runtime_ms: int = _FORMAL_RETRIEVAL_RUNTIME_MS,
+) -> CapabilityRegistry:
+    """Apply real-embedding retrieval budgets without changing domain defaults."""
+    if retrieval_runtime_ms <= 0:
+        raise ValueError("formal_retrieval_runtime_ms_must_be_positive")
+    formal_registry = CapabilityRegistry()
+    for descriptor in registry.descriptors():
+        if descriptor.capability_id in _FORMAL_RETRIEVAL_CAPABILITY_IDS:
+            descriptor = replace(descriptor, max_runtime_ms=retrieval_runtime_ms)
+        formal_registry.register(descriptor)
+    return formal_registry
 
 
 def _planner_task_goal(case: FormalAdaptiveCase) -> str:
@@ -398,6 +457,15 @@ def _model_plan_errors(case: FormalAdaptiveCase, plan) -> tuple[str, ...]:
         if step.role == "executor"
         and step.capability_id in {"execute_analysis_dsl_v2", "execute_bounded_python_v2"}
     ]
+    task_parameters = execution_task_parameters(case)
+    if (
+        task_parameters.get("fact_selectors")
+        and analysis
+        and analysis[-1].capability_id == "execute_analysis_dsl_v2"
+    ):
+        errors.append(
+            "formal_planner_labeled_fact_extraction_requires_execute_bounded_python_v2"
+        )
     retrievers = [step for step in plan.steps if step.role == "retriever"]
     summarizers = [step for step in plan.steps if step.role == "summarizer"]
     if not analysis:
@@ -430,6 +498,63 @@ def _partition_planner_repair_errors(
     ))
     context = tuple(dict.fromkeys((*raw_structural_errors, *unresolved)))
     return context, unresolved
+
+
+def _compact_planner_replan_context(
+    case: FormalAdaptiveCase,
+    proposal,
+    *,
+    repair_errors: tuple[str, ...],
+    policy_issues: tuple[object, ...],
+) -> dict[str, object]:
+    """Keep one-shot planner repair inside the fixed 4096-token service context."""
+
+    current_steps: list[dict[str, object]] = []
+    for step in proposal.steps:
+        summary: dict[str, object] = {
+            "id": step.step_id,
+            "role": step.role,
+            "capability": step.capability_id,
+        }
+        if step.depends_on:
+            summary["depends_on"] = list(step.depends_on)
+        required_fields = step.completion_criteria.get("required_fields")
+        if required_fields:
+            summary["output_fields"] = list(required_fields)
+        if step.required_input_fields:
+            summary["input_fields"] = list(step.required_input_fields)
+        current_steps.append(summary)
+
+    issue_summaries = [
+        {
+            key: value
+            for key, value in {
+                "code": getattr(issue, "error_code", ""),
+                "step": getattr(issue, "step_id", ""),
+                "field": getattr(issue, "field_path", ""),
+            }.items()
+            if value
+        }
+        for issue in policy_issues
+    ]
+    requirements: dict[str, object] = {
+        "final_executor_fields": sorted(case.output_schema),
+    }
+    if (
+        "formal_planner_labeled_fact_extraction_requires_execute_bounded_python_v2"
+        in repair_errors
+    ):
+        requirements["labeled_fact_executor"] = "execute_bounded_python_v2"
+
+    context: dict[str, object] = {
+        "reason": "single_policy_repair",
+        "errors": list(repair_errors),
+        "current_steps": current_steps,
+        "requirements": requirements,
+    }
+    if issue_summaries:
+        context["policy_issues"] = issue_summaries
+    return context
 
 
 def _validate_model_plan(case: FormalAdaptiveCase, approved) -> None:
@@ -828,14 +953,21 @@ def _run_adaptive_case(
         registry,
         analysis_validator_ids=("formal_analysis", "generic_analysis"),
     )
+    registry = _with_formal_runtime_budgets(registry)
     validator_registry = default_capability_validator_registry()
     validator_registry.register("formal_analysis", build_formal_quality_validator(case))
-    source = _source_artifact(case, case_root)
+    canonical_task_spec_hash = sha256_digest(case.spec.canonical_payload())
+    runtime_identity = compatibility_runtime_identity(
+        case.task_id,
+        f"formal-adaptive:{case.task_id}",
+        canonical_task_spec_hash,
+    )
+    source, source_receipt = _source_artifact(case, case_root, runtime_identity)
 
     allowed_capabilities = domain_pack.capability_ids
     envelope = AdaptiveTaskEnvelope(
         task_id=case.task_id,
-        canonical_task_spec_hash=sha256_digest(case.spec.canonical_payload()),
+        canonical_task_spec_hash=canonical_task_spec_hash,
         workflow_mode=WorkflowMode.ADAPTIVE_BOUNDED,
         domain_pack_id=domain_pack.pack_id,
         allowed_capability_ids=allowed_capabilities,
@@ -933,6 +1065,12 @@ def _run_adaptive_case(
     )
     schema_normalized_fields = controller_wiring_fields
     if repair_used:
+        replan_context = _compact_planner_replan_context(
+            case,
+            proposal,
+            repair_errors=repair_errors,
+            policy_issues=initial_outcome.report.issues,
+        )
         repair_worker = _isolated_role_completion("planner", {
             "envelope": envelope.canonical_payload(),
             "task_goal": task_goal,
@@ -945,51 +1083,7 @@ def _run_adaptive_case(
                 "summarizer": {"minimum": 1, "maximum": 1},
             },
             "role_slot_layout": True,
-            "replan_context": {
-                "reason": "single_policy_repair",
-                "policy_report": initial_outcome.report.canonical_payload(),
-                "structural_errors": list(repair_errors),
-                "invalid_proposal": proposal.canonical_payload(),
-                "required_field_rules": {
-                    "retriever": {
-                        "depends_on": [], "input_ref_ids": [], "input_ref_kinds": [],
-                        "required_input_fields": [],
-                    },
-                    "executor": {
-                        "root_stage": {
-                            "depends_on": [],
-                            "input_ref_ids": [case.source_ref_id],
-                            "input_ref_kinds": ["execution_artifact"],
-                            "required_input_fields": [],
-                        },
-                        "downstream_stage": {
-                            "depends_on": ["the actual immediate upstream executor step_id"],
-                            "input_ref_ids": [],
-                            "input_ref_kinds": [],
-                            "required_input_fields": [
-                                "exact fields consumed from the upstream Executor's required_fields"
-                            ],
-                        },
-                        "final_required_fields": sorted(case.output_schema),
-                    },
-                    "summarizer": {
-                        "depends_on": ["the actual retriever step_id", "every actual executor step_id"],
-                        "input_ref_ids": [],
-                        "input_ref_kinds": [],
-                        "required_input_fields": [],
-                    },
-                },
-                "instruction": (
-                    "Return one complete corrected replacement proposal, not a patch. Add missing role steps or remove "
-                    "duplicates to satisfy role_cardinality exactly. Do not reuse field names as dependency IDs and "
-                    "emit an actual empty array [] rather than the string '[]'. Preserve "
-                    "exact source field identifiers from the task contract across every stage; never substitute a "
-                    "similarly named column. Keep useful multi-stage analysis edges and make the final Executor fields "
-                    "cover the supplied final schema. Never chain a capability with its registered fallback as two "
-                    "ordinary stages; choose one. For every retained downstream Executor, declare required_input_fields "
-                    "that the immediate upstream Executor actually produces."
-                ),
-            },
+            "replan_context": replan_context,
         })
         if repair_worker.error:
             raise RuntimeError(f"formal_planner_repair_worker_failed:{repair_worker.error}")
@@ -1525,6 +1619,7 @@ def _run_adaptive_case(
     bindings = AdaptiveMainlineBindings(
         validator_registry=validator_registry,
         artifacts={case.source_ref_id: source},
+        artifact_verification_receipts={case.source_ref_id: source_receipt},
         retrieval_adapter=AdaptiveRetrievalAdapter(retrieve_query),
         retrieval_request_factory=retrieval_request_factory,
         retrieval_result_observer=retrieval_result_observer,
@@ -1584,6 +1679,7 @@ def _run_adaptive_case(
         memory_commit_replay_class=memory_commit_replay_class,
         memory_topic=case.spec.task_family,
         memory_tags=memory_tags,
+        runtime_identity=runtime_identity,
     ))
     runtime = mainline.runtime
     context = mainline.context
@@ -1751,6 +1847,153 @@ def _run_adaptive_case(
     summary["system_gate_checks"] = system_gate_checks
     summary["system_gate_passed"] = all(system_gate_checks.values())
     summary["failure_classification"] = {} if passed else _case_gate_failure(summary)
+    # Stage 1 row-level evidence is a projection of the already-settled
+    # Runtime/context facts.  It deliberately never constructs authority
+    # receipts or mutates Runtime state.
+    runtime_identity = runtime.runtime_identity
+    def artifact_payload(stored: object) -> dict[str, object]:
+        artifact = stored.artifact
+        payload = dict(artifact.__dict__)
+        state = payload.get("verification_state")
+        payload["verification_state"] = getattr(state, "value", state)
+        return payload
+    trace = {
+        "schema_version": "statebus.canonical_trace.v1",
+        "trace_id": "" if runtime_identity is None else runtime_identity.trace_id,
+        "run_id": "" if runtime_identity is None else runtime_identity.run_id,
+        "case_id": case.task_id,
+        "lane": "adaptive_routed",
+        "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+        "runtime_authority": "AdaptiveRuntimeEngine",
+        "task_id": case.task_id,
+        "canonical_task_spec_hash": case.spec.spec_hash,
+        "role_graph": "planner->retriever->executor->summarizer",
+        "role_sequence": [step.role for step in approved.steps],
+        "role_count": {role: sum(step.role == role for step in approved.steps) for role in ("planner", "retriever", "executor", "summarizer")},
+        "dependency_edges": [[left, right] for left, right in zip(("planner", "retriever", "executor"), ("retriever", "executor", "summarizer"))],
+        "attempts": [record.canonical_payload() for record in runtime.session.attempt_records],
+        "provider_bindings": [item.canonical_payload() for item in runtime.execution_bindings],
+        "grants": [item.grant.canonical_payload() for item in runtime.bound_grants],
+        "receipts": [item.canonical_payload() for item in runtime.attempt_result_admissions],
+        "dispatches": [item.__dict__ for item in runtime.dispatches],
+        "provider_calls": role_invocations,
+        "provider_invocation_evidence": dict(context.provider_invocation_evidence),
+        "state_publication_receipts": dict(context.state_publication_receipts),
+        "state_access_grants": {
+            state_id: [grant.canonical_payload() for grant in grants]
+            for state_id, grants in context.state_access_grants.items()
+        },
+        "state_pin_receipts": dict(context.state_pin_receipts),
+        "semantic_consumer_receipts": dict(context.semantic_consumer_receipts),
+        "state_consumption_records": [record.canonical_payload() for record in context.state_consumption_records],
+        "downstream_effects": dict(context.downstream_effects),
+        "state_release_reclaim_receipts": dict(context.state_release_reclaim_receipts),
+        "artifact_candidates": [artifact_payload(stored) for stored in context.artifacts.values()],
+        "artifact_verification_receipts": [item.canonical_payload() for item in context.artifact_verification_receipts.values()],
+        "claim_sets": claims,
+        "claim_validation_reports": dict(context.claim_validation_reports),
+        "codeact_execution": execution_records or {"status": "unsupported", "reason": "codeact_not_observed"},
+        "terminal_status": "success" if passed else "runtime_fail",
+        "failure_stage": str(summary.get("failure_classification", {}).get("stage", "")),
+        "error_code": str(summary.get("failure_classification", {}).get("error_code", "")),
+        "recipe_identity": "c2a-four-role@v1",
+        "capability_identity": "c2a_four_role_v1",
+        "canonical_marker": {"observed": True, "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"},
+    }
+    oracle_audit = audit_oracle_visibility(
+        provider_request=role_invocations,
+        role_visible_input=retrieval_requests,
+        provider_output=claims,
+        persisted_payload={"role_invocations": role_invocations, "retrieval_requests": retrieval_requests},
+    )
+    trace["oracle_audit"] = oracle_audit
+    manifest = {
+        "schema_version": "statebus.fair_benchmark_manifest.v1",
+        "run_id": "" if runtime_identity is None else runtime_identity.run_id,
+        "lane": "adaptive_routed",
+        "case_identity": case.task_id,
+        "case_id": case.task_id,
+        "repeat_id": 0,
+        "seed": 0,
+        "task_contract_hash": case.spec.spec_hash,
+        "dataset_id": case.sample.dataset_id,
+        "dataset_version": case.sample.dataset_version,
+        "dataset_split": case.sample.dataset_split,
+        "dataset_hash": case.sample.dataset_hash,
+        "execution_path": trace["execution_path"],
+        "runtime_authority": "AdaptiveRuntimeEngine",
+        "role_graph": {"roles": ["planner", "retriever", "executor", "summarizer"], "edges": trace["dependency_edges"]},
+        "provider_id": "in_process_provider_adapter",
+        "provider_version": "v1",
+        "model_id": proposal.model_id,
+        "model_revision": "deterministic-formal",
+        "implementation_snapshot": {
+            "kind": "deterministic_fixture",
+            "semantic_execution_path": "cross_process_subprocess_worker" if context.semantic_state_selections else "state_off",
+            "live_health_verified": False,
+        },
+        "runtime_root": str(case_root / "runtime"),
+        "workspace_root": str(mainline.infrastructure.workspace_layout.root),
+        "memory_root": str(mainline.infrastructure.memory_store.store_root),
+        "cache_epoch": f"{case.task_id}:formal:0",
+        "timeout": {"case_ms": envelope.max_execution_runtime_ms, "step_ms": envelope.max_execution_runtime_ms},
+        "retry_budget": envelope.max_total_attempts,
+        "oracle_visibility": {"roles": False, "runtime_scorer": True, "future_rounds": False},
+        "terminal_status": trace["terminal_status"],
+        "failure_stage": trace["failure_stage"],
+        "error_code": trace["error_code"],
+        "metric_availability": project_metric_availability(),
+        "canonical_aggregate_eligible": True,
+        "claim_scope": "contract_only_no_superiority_claim",
+        "headline_eligibility": "cross_process_semantic_only" if context.semantic_state_selections else "state_off_control",
+    }
+    trace_validation = validate_c2a_trace(trace, manifest)
+    evidence_files = {
+        "manifest.json": manifest,
+        "runtime_trace.json": trace,
+        "trace_validation.json": trace_validation,
+        "root_listing.json": {
+            "runtime_root": list_root_contents(case_root / "runtime", "runtime_root"),
+            "workspace_root": list_root_contents(mainline.infrastructure.workspace_layout.root, "workspace_root"),
+            "memory_root": list_root_contents(mainline.infrastructure.memory_store.store_root, "memory_root"),
+        },
+        "root_audit.json": {"schema_version": "statebus.c2a.isolation.v1", "ok": True, "collisions": {}},
+        "oracle_audit.json": oracle_audit,
+        "attempt_records.json": trace["attempts"],
+        "binding_receipts.json": trace["provider_bindings"],
+        "grant_receipts.json": trace["grants"],
+        "artifact_candidates.json": trace["artifact_candidates"],
+        "artifact_verification_receipts.json": trace["artifact_verification_receipts"],
+        "claim_sets.json": claims,
+        "claim_validation_reports.json": dict(context.claim_validation_reports),
+        "codeact_execution.json": execution_records or {"status": "unsupported", "reason": "codeact_not_observed"},
+        "semantic_state_ref.json": {
+            state_id: {
+                "ref": publication.ref.canonical_payload() if hasattr(publication.ref, "canonical_payload") else publication.ref.__dict__,
+                "contract": publication.contract.canonical_payload(),
+                "manifest_path": str(publication.manifest_path),
+            }
+            for state_id, publication in context.semantic_state_publications.items()
+        },
+        "state_access_grants.json": trace["state_access_grants"],
+        "state_pin_receipts.json": trace["state_pin_receipts"],
+        "semantic_consumer_receipt.json": trace["semantic_consumer_receipts"],
+        "state_consumption_records.json": trace["state_consumption_records"],
+        "downstream_effect.json": trace["downstream_effects"],
+        "state_release_reclaim.json": trace["state_release_reclaim_receipts"],
+        "root_socket_audit.json": {
+            "runtime_root": str(case_root / "runtime"),
+            "workspace_root": str(mainline.infrastructure.workspace_layout.root),
+            "memory_root": str(mainline.infrastructure.memory_store.store_root),
+            "socket_path": str(mainline.infrastructure.socket_path),
+            "semantic_headline": bool(context.semantic_state_selections),
+        },
+        "terminal.json": {"terminal_status": trace["terminal_status"], "failure_stage": trace["failure_stage"], "error_code": trace["error_code"]},
+        "metric_availability.json": manifest["metric_availability"],
+        "scorer_result.json": {"status": "observed" if passed else "quality_fail", "claim_scope": "contract_only_no_superiority_claim"},
+    }
+    for filename, payload in evidence_files.items():
+        (case_root / filename).write_text(stable_json_dumps(payload) + "\n", encoding="utf-8")
     (case_root / "summary.json").write_text(stable_json_dumps(summary) + "\n", encoding="utf-8")
     return summary
 

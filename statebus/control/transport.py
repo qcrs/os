@@ -33,6 +33,8 @@ from statebus.control.messages import (
     deframe_control_message,
     frame_control_message,
     frame_text_control_message,
+    control_frame_metadata,
+    MAX_CONTROL_FRAME_PAYLOAD_BYTES,
 )
 
 
@@ -57,6 +59,8 @@ def effective_unix_socket_path(socket_path: Path) -> Path:
 
 
 def _recv_exact(sock: socket.socket, length: int) -> bytes:
+    if length < 0:
+        raise ValueError("frame_length_invalid")
     chunks: list[bytes] = []
     remaining = length
     while remaining > 0:
@@ -68,19 +72,44 @@ def _recv_exact(sock: socket.socket, length: int) -> bytes:
     return b"".join(chunks)
 
 
+def _recv_framed(sock: socket.socket) -> bytes:
+    """Receive one bounded frame and retain the exact bytes observed."""
+    try:
+        header = _recv_exact(sock, 4)
+    except ConnectionError as exc:
+        raise ConnectionError("frame_header_truncated") from exc
+    payload_len = int.from_bytes(header, byteorder="big", signed=False)
+    if payload_len <= 0:
+        raise ValueError("frame_length_invalid")
+    if payload_len > MAX_CONTROL_FRAME_PAYLOAD_BYTES:
+        raise ValueError("frame_oversized")
+    try:
+        payload = _recv_exact(sock, payload_len)
+    except ConnectionError as exc:
+        raise ConnectionError("frame_payload_truncated") from exc
+    return header + payload
+
+
+def _ensure_socket_available(path: Path) -> None:
+    """Never unlink an existing row/foreign socket implicitly."""
+    if path.exists() or path.is_symlink():
+        raise FileExistsError(f"socket_path_occupied:{path}")
+
+
 def send_control_message(sock: socket.socket, message: ControlMessage) -> None:
     sock.sendall(frame_control_message(message))
 
 
 def recv_control_message(sock: socket.socket) -> ControlMessage:
-    header = _recv_exact(sock, 4)
-    payload_len = int.from_bytes(header, byteorder="big", signed=False)
-    payload = _recv_exact(sock, payload_len)
-    return deframe_control_message(header + payload)
+    return deframe_control_message(_recv_framed(sock))
 
 
 def frame_text_message(message: str) -> bytes:
     payload = message.encode("utf-8")
+    if not payload:
+        raise ValueError("frame_length_invalid")
+    if len(payload) > MAX_CONTROL_FRAME_PAYLOAD_BYTES:
+        raise ValueError("frame_oversized")
     return len(payload).to_bytes(4, byteorder="big", signed=False) + payload
 
 
@@ -91,6 +120,10 @@ def send_text_message(sock: socket.socket, message: str) -> None:
 def recv_text_message(sock: socket.socket) -> str:
     header = _recv_exact(sock, 4)
     payload_len = int.from_bytes(header, byteorder="big", signed=False)
+    if payload_len <= 0:
+        raise ValueError("frame_length_invalid")
+    if payload_len > MAX_CONTROL_FRAME_PAYLOAD_BYTES:
+        raise ValueError("frame_oversized")
     payload = _recv_exact(sock, payload_len)
     return payload.decode("utf-8")
 
@@ -113,11 +146,12 @@ class ControlPlaneLoopbackServer:
     def round_trip(self, message: ControlMessage) -> ControlMessage:
         socket_path = effective_unix_socket_path(self.socket_path)
         socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if socket_path.exists():
-            socket_path.unlink()
+        _ensure_socket_available(socket_path)
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        bound_inode: int | None = None
         try:
             server.bind(str(socket_path))
+            bound_inode = socket_path.stat().st_ino
             server.listen(1)
             client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
@@ -134,23 +168,28 @@ class ControlPlaneLoopbackServer:
                 client.close()
         finally:
             server.close()
-            if socket_path.exists():
-                socket_path.unlink()
+            if socket_path.exists() and bound_inode is not None:
+                try:
+                    if socket_path.stat().st_ino == bound_inode:
+                        socket_path.unlink()
+                except OSError:
+                    pass
         return echoed
 
     def exchange_sequence(self, message: ControlMessage) -> list[ControlMessage]:
         socket_path = effective_unix_socket_path(self.socket_path)
         socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if socket_path.exists():
-            socket_path.unlink()
+        _ensure_socket_available(socket_path)
 
         responses: list[ControlMessage] = []
         ready = threading.Event()
 
         def _serve() -> None:
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            bound_inode: int | None = None
             try:
                 server.bind(str(socket_path))
+                bound_inode = socket_path.stat().st_ino
                 server.listen(1)
                 ready.set()
                 conn, _ = server.accept()
@@ -162,8 +201,12 @@ class ControlPlaneLoopbackServer:
                     conn.close()
             finally:
                 server.close()
-                if socket_path.exists():
-                    socket_path.unlink()
+                if socket_path.exists() and bound_inode is not None:
+                    try:
+                        if socket_path.stat().st_ino == bound_inode:
+                            socket_path.unlink()
+                    except OSError:
+                        pass
 
         thread = threading.Thread(target=_serve, daemon=True)
         thread.start()
@@ -365,8 +408,32 @@ class ExecutorTransportAudit:
     request_wire_bytes: int
     response_wire_bytes: int
     topology: str = "driver_uds_executor_subprocess"
+    socket_path_requested: str = ""
+    socket_path_effective: str = ""
+    socket_inode: int | None = None
+    session_id: str = ""
+    request_frame_metadata: tuple[dict[str, object], ...] = ()
+    response_frame_metadata: tuple[dict[str, object], ...] = ()
+    failure_stage: str = ""
+    error_code: str = ""
+    task_id: str = ""
+    step_id: str = ""
+    attempt_id: str = ""
+    invocation_id: str = ""
+    execution_binding_hash: str = ""
+    capability_grant_hash: str = ""
 
     def canonical_payload(self) -> dict[str, object]:
+        diagnostic = {
+            "request_total": self.request_wire_bytes,
+            "response_total": self.response_wire_bytes,
+            "per_frame": [
+                int(item.get("framed_length_observed", 0))
+                for item in (*self.request_frame_metadata, *self.response_frame_metadata)
+                if isinstance(item, dict) and item.get("framed_length_observed") is not None
+            ],
+            "source": "raw_send_or_recv_frame_observation",
+        }
         return {
             "carrier": self.carrier,
             "backend": self.backend,
@@ -377,7 +444,22 @@ class ExecutorTransportAudit:
             "request_wire_bytes": self.request_wire_bytes,
             "response_wire_bytes": self.response_wire_bytes,
             "total_wire_bytes": self.request_wire_bytes + self.response_wire_bytes,
+            "diagnostic_control_frame_bytes": diagnostic,
             "topology": self.topology,
+            "socket_path_requested": self.socket_path_requested,
+            "socket_path_effective": self.socket_path_effective,
+            "socket_inode": self.socket_inode,
+            "session_id": self.session_id,
+            "request_frame_metadata": list(self.request_frame_metadata),
+            "response_frame_metadata": list(self.response_frame_metadata),
+            "failure_stage": self.failure_stage,
+            "error_code": self.error_code,
+            "task_id": self.task_id,
+            "step_id": self.step_id,
+            "attempt_id": self.attempt_id,
+            "invocation_id": self.invocation_id,
+            "execution_binding_hash": self.execution_binding_hash,
+            "capability_grant_hash": self.capability_grant_hash,
         }
 
 
@@ -568,6 +650,9 @@ class SubprocessExecutorTransport:
         default=(),
         init=False,
     )
+    last_control_frames: tuple[dict[str, object], ...] = field(default=(), init=False)
+    last_response_messages: tuple[ControlMessage, ...] = field(default=(), init=False)
+    last_failure_propagation: dict[str, object] = field(default_factory=dict, init=False)
 
     def _record_exchange_audit(
         self,
@@ -577,7 +662,16 @@ class SubprocessExecutorTransport:
         request_wire_bytes: int,
         responses: list[ControlMessage],
         response_wire_bytes: list[int],
+        socket_path_requested: Path | None = None,
+        socket_path_effective: Path | None = None,
+        socket_inode: int | None = None,
+        request_frame_metadata: tuple[dict[str, object], ...] = (),
+        response_frame_metadata: tuple[dict[str, object], ...] = (),
+        failure_stage: str = "",
+        error_code: str = "",
     ) -> None:
+        request_header = getattr(getattr(self, "_last_request", None), "header", None)
+        observed_header = responses[0].header if responses else request_header
         self.last_exchange_audit = ExecutorTransportAudit(
             carrier="utf8_text" if carrier == "utf8_text" else "typed_protobuf",
             backend="uds_subprocess",
@@ -587,7 +681,22 @@ class SubprocessExecutorTransport:
             response_frame_count=len(responses),
             request_wire_bytes=request_wire_bytes,
             response_wire_bytes=sum(response_wire_bytes),
+            socket_path_requested=str(self.socket_path),
+            socket_path_effective=str(socket_path_effective or self.socket_path),
+            socket_inode=socket_inode,
+            session_id=responses[0].header.session_id if responses else "",
+            request_frame_metadata=request_frame_metadata,
+            response_frame_metadata=response_frame_metadata,
+            failure_stage=failure_stage,
+            error_code=error_code,
+            task_id=getattr(observed_header, "task_id", ""),
+            step_id=getattr(observed_header, "step_id", ""),
+            attempt_id=getattr(observed_header, "attempt_id", ""),
+            invocation_id=getattr(observed_header, "invocation_id", ""),
+            execution_binding_hash=getattr(observed_header, "execution_binding_hash", ""),
+            capability_grant_hash=getattr(observed_header, "capability_grant_hash", ""),
         )
+        self.last_control_frames = request_frame_metadata + response_frame_metadata
 
     def _admit_completed_responses(
         self,
@@ -605,12 +714,40 @@ class SubprocessExecutorTransport:
             request_wire_bytes=request_wire_bytes,
             responses=responses,
             response_wire_bytes=response_wire_bytes,
+            socket_path_effective=getattr(self, "_last_effective_socket_path", None),
+            socket_inode=getattr(self, "_last_socket_inode", None),
+            request_frame_metadata=getattr(self, "_request_frame_metadata", ()),
+            response_frame_metadata=getattr(self, "_response_frame_metadata", ()),
         )
         if not any(
             isinstance(message, (SuccessResult, ErrorResult, TrapFatal))
             for message in responses
         ):
-            raise RuntimeError("subprocess_terminal_response_missing")
+            error = getattr(self, "_transport_error", None)
+            error_code, failure_stage, terminal_status = self._stable_transport_failure(error)
+            error_detail = "worker_closed_without_terminal"
+            if error is not None:
+                error_detail = str(error) or type(error).__name__
+            responses.append(
+                ErrorResult(
+                    header=replace(request.header, event_type=EventType.RES_ERR),
+                    error_code=error_code,
+                    error_detail=error_detail,
+                    failed_at_ns=time.time_ns(),
+                )
+            )
+            self.last_failure_propagation = {
+                "stage": failure_stage,
+                "error_code": error_code,
+                "terminal_status": terminal_status,
+                "evidence": {
+                    "exception_type": type(error).__name__ if error is not None else "",
+                    "socket_path_requested": str(self.socket_path),
+                    "socket_path_effective": str(getattr(self, "_last_effective_socket_path", self.socket_path)),
+                    "socket_inode": getattr(self, "_last_socket_inode", None),
+                },
+            }
+
         canonical_scope_fields = (
             request.header.run_id,
             request.header.session_id,
@@ -633,9 +770,98 @@ class SubprocessExecutorTransport:
             origin=origin,
         )
         self.last_admission_receipts = receipts
+        self.last_response_messages = tuple(responses)
+
+        # The legacy admission helper intentionally tolerates a bare
+        # ErrorResult for compatibility.  A physical typed sequence is
+        # stricter: ACK -> RUN -> HEARTBEAT* -> exactly one terminal.
+        phase = "initial"
+        strict_reason: str | None = None
+        terminal_seen = False
+        for response in responses:
+            if terminal_seen:
+                if isinstance(response, (SuccessResult, ErrorResult, TrapFatal)):
+                    strict_reason = (
+                        "late_result_fenced"
+                        if response.header.attempt_id != request.header.attempt_id
+                        else "duplicate_terminal"
+                    )
+                else:
+                    strict_reason = "event_after_terminal"
+                break
+            if isinstance(response, AckReceived):
+                if phase != "initial":
+                    strict_reason = "illegal_event_order"
+                    break
+                phase = "acked"
+            elif isinstance(response, RunStart):
+                if phase != "acked":
+                    strict_reason = "illegal_event_order"
+                    break
+                phase = "running"
+            elif isinstance(response, Heartbeat):
+                if phase != "running":
+                    strict_reason = "illegal_event_order"
+                    break
+            elif isinstance(response, (SuccessResult, ErrorResult, TrapFatal)):
+                if not isinstance(response, ErrorResult) and phase != "running":
+                    strict_reason = "illegal_event_order"
+                    break
+                if isinstance(response, ErrorResult) and phase == "terminal":
+                    strict_reason = "illegal_event_order"
+                    break
+                terminal_seen = True
+                phase = "terminal"
+        if strict_reason is not None:
+            self.last_failure_propagation = {
+                "stage": "response_order",
+                "error_code": strict_reason,
+                "terminal_status": "runtime_fail",
+                "evidence": {
+                    "terminal_count": sum(isinstance(item, (SuccessResult, ErrorResult, TrapFatal)) for item in responses),
+                    "response_types": [type(item).__name__ for item in responses],
+                },
+            }
+            raise ControlResponseAdmissionError(
+                tuple(
+                    replace(receipt, admitted=False, reason_code=strict_reason)
+                    if index == len(receipts) - 1
+                    else receipt
+                    for index, receipt in enumerate(receipts)
+                )
+            )
         if not admitted:
+            reason = self.last_admission_receipts[-1].reason_code if self.last_admission_receipts else "response_not_admitted"
+            self.last_failure_propagation = {
+                "stage": "response_admission",
+                "error_code": reason,
+                "terminal_status": "policy_reject" if reason.startswith(("scope_mismatch:", "expected_scope_missing:", "capability_grant", "execution_binding", "attempt_scope")) else "runtime_fail",
+            }
             raise ControlResponseAdmissionError(receipts)
         return list(admitted)
+
+    def _stable_transport_failure(
+        self,
+        error: BaseException | None,
+    ) -> tuple[str, str, str]:
+        """Map physical transport failures to the frozen stage/code vocabulary."""
+        stage = str(getattr(self, "_transport_error_stage", "transport_receive"))
+        if isinstance(error, PermissionError):
+            return "socket_permission_denied", stage or "transport_bind", "environment_fail"
+        if isinstance(error, FileNotFoundError):
+            return "socket_missing", stage or "transport_connect", "environment_fail"
+        if isinstance(error, ConnectionRefusedError):
+            return "socket_connection_refused", stage or "transport_connect", "environment_fail"
+        if isinstance(error, socket.timeout):
+            return "socket_accept_timeout", stage or "transport_accept", "environment_fail"
+        if isinstance(error, ValueError):
+            detail = str(error)
+            if detail in {"frame_oversized", "frame_payload_truncated", "frame_header_truncated", "frame_length_invalid"}:
+                return detail, stage or "framing", "runtime_fail"
+            return "transport_decode_failed", stage or "transport_receive", "runtime_fail"
+        if error is None:
+            return "subprocess_terminal_response_missing", stage or "transport_receive", "runtime_fail"
+        return "transport_exception", stage or "transport_receive", "environment_fail"
 
     def exchange_sequence(
         self,
@@ -649,6 +875,9 @@ class SubprocessExecutorTransport:
         import os as _os
 
         self.last_admission_receipts = ()
+        self.last_response_messages = ()
+        self.last_failure_propagation = {}
+        self._last_request = request
         normalized_carrier = carrier.strip().lower()
         if normalized_carrier not in {"protobuf", "utf8_text"}:
             raise ValueError(f"unsupported subprocess carrier: {carrier}")
@@ -677,69 +906,129 @@ class SubprocessExecutorTransport:
 
         socket_path = effective_unix_socket_path(self.socket_path)
         socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if socket_path.exists():
-            socket_path.unlink()
+        _ensure_socket_available(socket_path)
+        self._last_effective_socket_path = socket_path
+        self._last_socket_inode = None
+        self._request_frame_metadata = ()
+        self._response_frame_metadata = ()
+        self._transport_error = None
+        self._transport_error_stage = ""
 
         responses: list[ControlMessage] = []
         response_wire_bytes: list[int] = []
         server_ready = threading.Event()
         request_sent = threading.Event()
         resolved_text_payload = text_payload or _default_text_exec_handoff(exec_request)
-        request_wire_bytes = len(
+        request_frame = (
             frame_text_message(resolved_text_payload)
             if normalized_carrier == "utf8_text"
             else frame_control_message(exec_request)
         )
+        request_wire_bytes = len(request_frame)
+        request_metadata = control_frame_metadata(request_frame, ordinal=0, direction="send") if normalized_carrier != "utf8_text" else {"frame_ordinal": 0, "direction": "send", "framed_length_observed": len(request_frame), "payload_length_observed": len(request_frame) - 4, "frame_digest": hashlib.sha256(request_frame).hexdigest()}
+        request_metadata.update({
+            "message_type": type(exec_request).__name__,
+            "event_type": exec_request.header.event_type.name,
+            "schema_version": exec_request.header.schema_version,
+            "task_id": exec_request.header.task_id,
+            "session_id": exec_request.header.session_id,
+            "step_id": exec_request.header.step_id,
+            "attempt_id": exec_request.header.attempt_id,
+            "invocation_id": exec_request.header.invocation_id,
+            "execution_binding_hash": exec_request.header.execution_binding_hash,
+            "capability_grant_hash": exec_request.header.capability_grant_hash,
+        })
+        self._request_frame_metadata = (request_metadata,)
 
         def _serve() -> None:
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            bound_inode: int | None = None
             try:
-                server.bind(str(socket_path))
+                try:
+                    server.bind(str(socket_path))
+                except Exception as exc:
+                    self._transport_error = exc
+                    self._transport_error_stage = "transport_bind"
+                    return
+                bound_inode = socket_path.stat().st_ino
+                self._last_socket_inode = bound_inode
                 server.listen(1)
                 server.settimeout(max(self.timeout_s, 2.0))
                 server_ready.set()
-                conn, _ = server.accept()
+                try:
+                    conn, _ = server.accept()
+                except Exception as exc:
+                    self._transport_error = exc
+                    self._transport_error_stage = "transport_accept"
+                    return
                 try:
                     # The Runtime deadline is owned by the waiting thread. Once
                     # connected, keep receiving so a late physical result can
                     # still be correlated and fenced after semantic timeout.
                     conn.settimeout(None)
-                    if normalized_carrier == "utf8_text":
-                        send_text_message(conn, resolved_text_payload)
-                    else:
-                        send_control_message(conn, exec_request)
+                    conn.sendall(request_frame)
                     request_sent.set()
                     while True:
                         try:
                             if normalized_carrier == "utf8_text":
-                                text_response = recv_text_message(conn)
-                                response_wire_bytes.append(
-                                    len(frame_text_message(text_response))
-                                )
+                                raw_response = _recv_framed(conn)
+                                response_wire_bytes.append(len(raw_response))
+                                metadata = {"frame_ordinal": len(self._response_frame_metadata), "direction": "recv", "framed_length_observed": len(raw_response), "payload_length_observed": len(raw_response) - 4, "frame_digest": hashlib.sha256(raw_response).hexdigest()}
+                                text_response = raw_response[4:].decode("utf-8")
                                 msg = _text_response_to_control_message(
                                     text_response,
                                     request=exec_request,
                                 )
                             else:
-                                msg = recv_control_message(conn)
-                                response_wire_bytes.append(
-                                    len(frame_control_message(msg))
-                                )
+                                raw_response = _recv_framed(conn)
+                                response_wire_bytes.append(len(raw_response))
+                                metadata = control_frame_metadata(raw_response, ordinal=len(self._response_frame_metadata), direction="recv")
+                                msg = deframe_control_message(raw_response)
+                            metadata.update({
+                                "message_type": type(msg).__name__,
+                                "event_type": msg.header.event_type.name,
+                                "schema_version": msg.header.schema_version,
+                                "task_id": msg.header.task_id,
+                                "session_id": msg.header.session_id,
+                                "step_id": msg.header.step_id,
+                                "attempt_id": msg.header.attempt_id,
+                                "invocation_id": msg.header.invocation_id,
+                                "execution_binding_hash": msg.header.execution_binding_hash,
+                                "capability_grant_hash": msg.header.capability_grant_hash,
+                            })
+                            self._response_frame_metadata += (metadata,)
                         except (ConnectionError, ConnectionResetError, socket.timeout):
                             break
                         responses.append(msg)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._transport_error = exc
+                    self._transport_error_stage = "transport_receive"
                 finally:
                     conn.close()
             finally:
                 server.close()
-                if socket_path.exists():
-                    socket_path.unlink()
+                if socket_path.exists() and bound_inode is not None:
+                    try:
+                        if socket_path.stat().st_ino == bound_inode:
+                            socket_path.unlink()
+                    except OSError:
+                        pass
 
         t = threading.Thread(target=_serve, daemon=True)
         t.start()
         server_ready.wait(timeout=2.0)
+
+        # A bind/accept failure is already a terminal environment observation;
+        # do not launch a worker that could connect to a foreign residue.
+        if not server_ready.is_set() and not t.is_alive():
+            return [self._admit_completed_responses(
+                request=exec_request,
+                responses=responses,
+                response_wire_bytes=response_wire_bytes,
+                carrier=normalized_carrier,
+                request_wire_bytes=request_wire_bytes,
+                worker_pid=0,
+            )[0]]
 
         worker_root = Path(__file__).resolve().parent.parent.parent
         proc = subprocess.Popen(
@@ -768,6 +1057,12 @@ class SubprocessExecutorTransport:
                 request_wire_bytes=request_wire_bytes,
                 responses=responses,
                 response_wire_bytes=response_wire_bytes,
+                socket_path_effective=socket_path,
+                socket_inode=self._last_socket_inode,
+                request_frame_metadata=self._request_frame_metadata,
+                response_frame_metadata=self._response_frame_metadata,
+                failure_stage="transport_timeout",
+                error_code="subprocess_transport_timeout",
             )
             raise SubprocessTransportTimeout(
                 transport=self,

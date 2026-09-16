@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+import time
 from uuid import UUID
 
 import pytest
@@ -11,10 +12,14 @@ import statebus.control as control_plane
 from statebus.control import AckReceived, ErrorResult, Heartbeat, RunStart, SuccessResult
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
+    ApprovedPlan,
     ArtifactVerificationDecision,
     ArtifactVerificationReceipt,
+    BoundCapabilityGrant,
     CapabilityDescriptor,
+    CapabilityGrant,
     ExecutionKind,
+    ExecutionBindingReceipt,
     EvidenceRequest,
     CanonicalTaskSpec,
     PlanProposal,
@@ -30,7 +35,12 @@ from statebus.contracts import (
 )
 from statebus.runtime import adaptive_dispatcher as adaptive_dispatcher_module
 from statebus.refs import ExecutionArtifactRef
-from statebus.runtime.adaptive_dispatcher import StoredAdaptiveArtifact
+from statebus.runtime.adaptive_dispatcher import (
+    AdaptiveCapabilityDispatcher,
+    AdaptiveDispatchContext,
+    AdaptiveDispatchError,
+    StoredAdaptiveArtifact,
+)
 from statebus.runtime.adaptive_mainline import (
     AdaptiveMainlineBindings,
     AdaptiveMainlineError,
@@ -39,8 +49,14 @@ from statebus.runtime.adaptive_mainline import (
 )
 from statebus.runtime.adaptive_runtime import AdaptiveRuntimeEngine, AdaptiveStepResult
 from statebus.runtime.capability_registry import CapabilityRegistry
+from statebus.runtime.provider_registry import (
+    ExecutionProviderRegistry,
+    PhysicalProviderImplementation,
+    project_legacy_provider,
+)
 from statebus.runtime.driver import RuntimeDriver
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
+from statebus.runtime.role_providers import ProviderCandidate
 from statebus.retrieval import RetrieverFanoutPipeline
 from statebus.utils import sha256_digest, stable_json_dumps
 
@@ -55,6 +71,7 @@ def _memory_loop_request(
     memory_policy: str = "validated_replay",
     commit_replay_class: ReplayClass = ReplayClass.VALIDATED_REPLAY,
     observed_memory_inputs: list[tuple[dict[str, object], ...]] | None = None,
+    memory_after_surface_hash_by_memory_id: dict[str, str] | None = None,
 ) -> AdaptiveMainlineRequest:
     registry = CapabilityRegistry()
     registry.register(CapabilityDescriptor(
@@ -253,6 +270,10 @@ def _memory_loop_request(
             allowed_corpus_scope_ids=("local-financial",),
             transform_program_factory=program_factory,
             output_schema_by_step={"execute": {"value": "number"}},
+            memory_after_surface_hash_by_memory_id=(
+                {} if memory_after_surface_hash_by_memory_id is None
+                else dict(memory_after_surface_hash_by_memory_id)
+            ),
         ),
         available_input_refs={source_ref_id: "execution_artifact"},
         state_pool_mode="mmap",
@@ -910,6 +931,15 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     )
     recorded_admission = next(iter(result.context.control_response_admissions.values()))
     assert recorded_admission == admission_receipts
+    publication_receipt = result.context.state_publication_receipts[publication.ref.state_id]
+    retrieve_binding = next(
+        binding
+        for binding in result.runtime.execution_bindings
+        if binding.step_id == worker_access_grant.step_id
+        and binding.attempt_id == worker_access_grant.attempt_id
+    )
+    assert publication_receipt["producer_binding_id"] == retrieve_binding.binding_id
+    assert publication_receipt["execution_binding_hash"] == retrieve_binding.binding_hash
     assert publication.contract.shape[0] == len(product_bundle.semantic_candidate_embeddings) + 1
     assert len(product_bundle.semantic_candidate_embeddings) > len(
         product_bundle.evidence_pack.semantic_contexts
@@ -943,6 +973,51 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     assert {
         pin.consumer_role for pin in lifetime.released_pins.values()
     } == {"executor", "runtime"}
+    release_receipt = result.context.state_release_reclaim_receipts[publication.ref.state_id]
+    consumer_receipt = result.context.semantic_consumer_receipts[publication.ref.state_id]
+    assert consumer_receipt["task_id"] == runtime_identity.runtime_task_id
+    assert consumer_receipt["session_id"] == runtime_identity.session_id
+    assert consumer_receipt["step_id"] == worker_access_grant.step_id
+    assert consumer_receipt["attempt_id"] == worker_access_grant.attempt_id
+    assert consumer_receipt["grant_id"] == result.runtime.bound_grants[0].grant.grant_id
+    assert consumer_receipt["binding_hash"] == retrieve_binding.binding_hash
+    assert consumer_receipt["invocation_id"] == expected_scope["invocation_id"]
+    assert consumer_receipt["state_ref_id"] == publication.ref.state_id
+    assert consumer_receipt["state_identity_hash"] == publication.ref.state_identity_hash
+    assert consumer_receipt["blob_hash"] == publication.contract.blob_hash
+    assert consumer_receipt["manifest_hash"] == publication.contract.hydrate_manifest_hash
+    assert consumer_receipt["encoder_hash"] == publication.contract.encoder_signature
+    assert consumer_receipt["cache_epoch"] == f"{runtime_identity.run_id}:{worker_access_grant.attempt_id}"
+    assert consumer_receipt["producer_pid"] == publication.contract.producer_pid
+    assert consumer_receipt["consumer_pid"] == selection.consumer_pid
+    assert consumer_receipt["consumer_pid"] != consumer_receipt["producer_pid"]
+    assert consumer_receipt["read_started_at_ns"] > 0
+    assert consumer_receipt["read_completed_at_ns"] >= consumer_receipt["read_started_at_ns"]
+    assert consumer_receipt["observed_size_bytes"] == publication.contract.size_bytes
+    assert consumer_receipt["observed_shape"] == list(publication.contract.shape)
+    assert consumer_receipt["observed_dtype"] == publication.contract.dtype
+    assert consumer_receipt["observed_blob_hash"] == publication.contract.blob_hash
+    assert consumer_receipt["selected_ids"] == list(selection.selected_candidate_ids)
+    assert consumer_receipt["selected_rows"] == list(selection.selected_row_indices)
+    assert consumer_receipt["selected_bytes"] == selection.selected_evidence_bytes
+    assert consumer_receipt["response_admission_hash"] == sha256_digest(admission_receipts[-1].canonical_payload())
+    assert consumer_receipt["downstream_ref"] in consumer_receipt["downstream_ref_ids"]
+    assert not release_receipt["lease_id"]
+    assert release_receipt["lease_id"] not in release_receipt["released_pin_ids"]
+    lifecycle_times = tuple(
+        release_receipt[field]
+        for field in (
+            "response_admitted_at_ns",
+            "downstream_effect_completed_at_ns",
+            "worker_pin_released_at_ns",
+            "runtime_pin_released_at_ns",
+            "owner_released_at_ns",
+            "physical_reclaimed_at_ns",
+        )
+    )
+    assert all(lifecycle_times)
+    assert lifecycle_times[0] < lifecycle_times[1] <= lifecycle_times[2] <= lifecycle_times[3] <= lifecycle_times[4] <= lifecycle_times[5]
+    assert release_receipt["release_after_response_admission"] is True
     assert result.infrastructure.state_store.materializations == {}
     (tmp_path / "real_subprocess_scope.txt").write_text(
         json.dumps(
@@ -1027,8 +1102,8 @@ def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_va
     )
     assert consumption.memory_id == first.memory_commit_decision.memory_id
     assert consumption.recipe_recomputed is True
-    assert consumption.skipped_generation_step_count == 1
-    assert consumption.skipped_llm_call_count == 1
+    assert consumption.skipped_generation_step_count == 0
+    assert consumption.skipped_llm_call_count == 0
     output = next(
         stored
         for stored in second.context.artifacts.values()
@@ -1049,8 +1124,9 @@ def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_va
     assert metrics["memory_consumed_count"] >= 1.0
     assert metrics["memory_behavioral_effect_count"] >= 1.0
     assert metrics["validated_replay_count"] == 1.0
-    assert metrics["skipped_step_count"] == 1.0
-    assert metrics["skipped_llm_call_count"] == 1.0
+    assert metrics["exact_replay_count"] == 0.0
+    assert metrics["skipped_step_count"] == 0.0
+    assert metrics["skipped_llm_call_count"] == 0.0
 
 
 def test_adaptive_memory_assist_is_an_actual_executor_input_without_skipping_validation(
@@ -1090,14 +1166,8 @@ def test_adaptive_memory_assist_is_an_actual_executor_input_without_skipping_val
     assert observed_inputs and observed_inputs[0]
     assert observed_inputs[0][0]["ref_kind"] == "memory"
     assert observed_inputs[0][0]["replay_class"] == ReplayClass.ASSIST.value
-    record = next(
-        item
-        for item in second.context.memory_consumption_records
-        if item.consumer_step_id == "execute"
-    )
-    assert record.behavioral_effect == "role_input_augmented"
-    assert record.recipe_recomputed is False
-    assert record.skipped_generation_step_count == 0
+    assert second.context.memory_consumption_records == []
+    assert second.context.memory_approved_unused_by_step["execute"]
     output = next(
         stored
         for stored in second.context.artifacts.values()
@@ -1750,7 +1820,7 @@ def test_mrr_09b_incompatible_current_runtime_fails_closed_before_grant_memory_b
     assert consumer.runtime.replay_eligibility_receipts == ()
 
 
-def test_mrr_09c_assist_consumption_binds_current_attempt_result_admission(
+def test_g5a_assist_approval_without_explicit_read_is_approved_unused(
     tmp_path: Path,
 ) -> None:
     family_memory_root = tmp_path / "assist-consumption-memory"
@@ -1780,33 +1850,15 @@ def test_mrr_09c_assist_consumption_binds_current_attempt_result_admission(
     )
 
     memory_id = producer.memory_commit_decision.memory_id
-    record = next(
-        item
-        for item in consumer.context.memory_consumption_records
-        if item.memory_id == memory_id and item.consumer_step_id == "execute"
-    )
-    execute_grant = next(
-        bound for bound in consumer.runtime.bound_grants if bound.grant.step_id == "execute"
-    )
     execute_admission = next(
         receipt
         for receipt in consumer.runtime.attempt_result_admissions
         if receipt.step_id == "execute"
     )
-    source_receipt = producer.infrastructure.memory_store.admission_receipts[memory_id]
-    source_commit = producer.infrastructure.memory_store.commits[memory_id]
-
     assert consumer.completed
-    assert record.consumer_runtime_task_id == "assist-consumption-consumer"
-    assert record.consumer_run_id == consumer.runtime_identity.run_id
-    assert record.consumer_session_id == execute_grant.grant.session_id
-    assert record.consumer_attempt_id == execute_grant.grant.attempt_id
-    assert record.capability_grant_hash == execute_grant.grant.grant_hash
-    assert record.memory_commit_hash == source_commit.commit_hash
-    assert record.memory_admission_receipt_hash == source_receipt.receipt_hash
-    assert record.replay_eligibility_receipt_hash == ""
-    assert record.attempt_result_admission_receipt_hash == execute_admission.receipt_hash
-    assert record.recipe_recomputed is False
+    assert consumer.context.memory_consumption_records == []
+    assert consumer.context.memory_approved_unused_by_step["execute"] == (memory_id,)
+    assert execute_admission.receipt_hash
 
 
 def test_mrr_09c_validated_procedure_consumption_binds_current_attempt_result(
@@ -1857,6 +1909,9 @@ def test_mrr_09c_validated_procedure_consumption_binds_current_attempt_result(
     assert consumer.completed
     assert record.replay_class == ReplayClass.VALIDATED_REPLAY
     assert record.recipe_recomputed is True
+    assert record.behavioral_effect == "changed"
+    assert record.query_hash == consumer.context.memory_queries_by_task["validated-consumption-consumer"].query_hash
+    assert consumer.context.memory_read_evidence_by_id[memory_id]["status"] == "observed"
     assert record.capability_grant_hash == execute_grant.grant.grant_hash
     assert record.replay_eligibility_receipt_hash == eligibility.receipt_hash
     assert record.attempt_result_admission_receipt_hash == execute_admission.receipt_hash
@@ -1865,6 +1920,442 @@ def test_mrr_09c_validated_procedure_consumption_binds_current_attempt_result(
     assert record.downstream_ref_ids[0] in consumer.context.artifacts
     output = consumer.context.artifacts[record.downstream_ref_ids[0]]
     assert output.rows == ({"value": 22.0},)
+
+
+def test_g5c_c1_runtime_bypasses_bound_provider_before_call_boundary(tmp_path: Path) -> None:
+    registry = CapabilityRegistry()
+    capability = CapabilityDescriptor(
+        capability_id="c1-executor",
+        owner_role="executor",
+        description="C1 provider bypass fixture",
+        input_ref_kinds=(),
+        required_input_ref_kinds=(),
+        input_contract_version="input-v1",
+        output_ref_kinds=("execution_artifact",),
+        output_contract_version="artifact-v1",
+        execution_kind=ExecutionKind.TRANSFORM_DSL,
+        side_effect_class=RiskClass.WORKSPACE_WRITE,
+        max_runtime_ms=1_000,
+        supports_replay=True,
+    )
+    registry.register(capability)
+    step = PlanStepProposal(
+        "execute", "executor", capability.capability_id, "execute", output_contract_version="artifact-v1"
+    )
+    approved = ApprovedPlan(
+        approved_plan_id="approved-c1",
+        task_id="c1-task",
+        source_proposal_id="proposal-c1",
+        steps=(step,),
+        final_output_contract_version="artifact-v1",
+        plan_policy_report_hash="policy-c1",
+        capability_registry_digest=registry.digest,
+        total_attempt_budget=1,
+    )
+    grant = CapabilityGrant(
+        grant_id="grant-c1",
+        task_id="c1-task",
+        session_id="session-c1",
+        step_id="execute",
+        attempt_id="attempt-c1",
+        capability_id=capability.capability_id,
+        capability_version=capability.version,
+        input_ref_ids=(),
+        output_contract_version="artifact-v1",
+        workspace_root_id=str(tmp_path),
+        max_runtime_ms=1_000,
+        expires_at_ns=time.time_ns() + 10_000_000_000,
+        approved_plan_hash=approved.approved_plan_hash,
+        memory_ref_ids=("memory-c1",),
+    )
+    binding = ExecutionBindingReceipt(
+        binding_id="binding-c1",
+        task_id=grant.task_id,
+        session_id=grant.session_id,
+        step_id=grant.step_id,
+        attempt_id=grant.attempt_id,
+        approved_plan_hash=grant.approved_plan_hash,
+        logical_capability_id=capability.capability_id,
+        logical_capability_version=capability.version,
+        semantic_contract_hash=registry.logical_descriptor(capability.capability_id).semantic_contract_hash,
+        provider_registry_digest="provider-registry-c1",
+        provider_runtime_facts_digest="provider-facts-c1",
+        eligibility_projection_hash="eligibility-c1",
+        selected_provider_id="provider-c1",
+        selected_provider_version="v1",
+        selected_provider_kind="deterministic",
+        selected_implementation_kind=ExecutionKind.TRANSFORM_DSL.value,
+    )
+    bound = BoundCapabilityGrant(grant=grant, execution_binding=binding)
+    envelope = AdaptiveTaskEnvelope(
+        task_id=grant.task_id,
+        canonical_task_spec_hash="spec-c1",
+        workflow_mode=WorkflowMode.ADAPTIVE_BOUNDED,
+        domain_pack_id="c1",
+        allowed_capability_ids=(capability.capability_id,),
+        allowed_output_contracts=("artifact-v1",),
+    )
+    identity = RuntimeIdentity(
+        runtime_task_id=grant.task_id,
+        run_id="run-c1",
+        session_id=grant.session_id,
+        trace_id="trace-c1",
+        task_contract=TaskContractIdentity.from_hash("spec-c1"),
+    )
+    calls: list[str] = []
+
+    class C1FixtureDispatcher(AdaptiveCapabilityDispatcher):
+        def _validate_dispatch(self, *args, **kwargs):
+            return ExecutionKind.TRANSFORM_DSL
+
+        def _memory_inputs_for_step(self, *, step, grant):
+            return ({
+                "ref_id": "memory-c1",
+                "replay_class": ReplayClass.VALIDATED_REPLAY.value,
+                "memory_commit_hash": "commit-c1",
+                "memory_admission_receipt_hash": "admission-c1",
+                "replay_eligibility_receipt_hash": "eligibility-receipt-c1",
+                "execution_recipe": {"execution_kind": ExecutionKind.TRANSFORM_DSL.value, "capability_id": step.capability_id, "output_contract_version": grant.output_contract_version},
+                "execution_recipe_hash": "recipe-c1",
+                "artifact_lineage": {},
+            },)
+
+        @staticmethod
+        def _validated_recipe(memory_inputs, *, execution_kind, capability_id, output_contract_version):
+            del memory_inputs, execution_kind, capability_id, output_contract_version
+            return ({"operations": [{"op": "select", "arguments": {"columns": ["value"]}}]}, "memory-c1")
+
+        def _dispatch_transform_dsl(self, *args, **kwargs):
+            del args, kwargs
+            return AdaptiveStepResult(
+                grant_hash=bound.grant.grant_hash,
+                success=True,
+                attempt_id=bound.grant.attempt_id,
+                output_refs=("artifact-c1",),
+                output_ref_kinds=("execution_artifact",),
+            )
+
+    dispatcher = C1FixtureDispatcher(
+        context=AdaptiveDispatchContext(
+            registry=registry,
+            bound_provider_handlers={
+                capability.capability_id: lambda _request: calls.append("provider") or None,
+            },
+        )
+    )
+    result = dispatcher.dispatch(
+        envelope=envelope,
+        approved_plan=approved,
+        step=step,
+        grant=bound,
+        attempt_workspace=tmp_path,
+        runtime_identity=identity,
+    )
+    assert result.success
+    assert calls == []
+    assert dispatcher.context.replay_observations[0]["provider_invocation_status"] == "not_started"
+    assert dispatcher.context.replay_observations[0]["recipe_step_status"] == "unknown"
+
+
+def test_g5c_c1_mainline_persists_provider_not_started_observation(tmp_path: Path) -> None:
+    family_memory_root = tmp_path / "c1-provider-memory"
+    provider_calls: list[str] = []
+
+    def provider(request):
+        provider_calls.append(request.bound_grant.grant.attempt_id)
+        return ProviderCandidate(
+            success=True,
+            candidate_kind="executor_program",
+            payload=TransformProgram(
+                program_id=f"provider-program:{request.bound_grant.grant.attempt_id}",
+                input_artifact_refs=(request.bound_grant.grant.input_ref_ids[0],),
+                operations=(TransformStep("select", {"columns": ["value"]}),),
+                output_contract_version=request.bound_grant.grant.output_contract_version,
+            ),
+        )
+
+    producer_request = _memory_loop_request(
+        tmp_path,
+        task_id="c1-provider-producer",
+        value=11.0,
+        family_memory_root=family_memory_root,
+        program_calls=[],
+    )
+    provider_registry = ExecutionProviderRegistry()
+    retrieve_descriptor = project_legacy_provider(
+        producer_request.registry.get("retrieve-memory-evidence"),
+        provider_id="provider-retrieve-memory-evidence",
+    )
+    provider_registry.register(retrieve_descriptor)
+    provider_registry.register_implementation(
+        PhysicalProviderImplementation.from_descriptor(retrieve_descriptor)
+    )
+    provider_descriptor = project_legacy_provider(
+        producer_request.registry.get("execute-memory-recipe"),
+        provider_id="provider-execute-memory-recipe",
+    )
+    provider_registry.register(provider_descriptor)
+    provider_registry.register_implementation(
+        PhysicalProviderImplementation.from_descriptor(provider_descriptor)
+    )
+    producer_request = replace(
+        producer_request,
+        provider_registry=provider_registry,
+        bindings=replace(
+            producer_request.bindings,
+            bound_provider_handlers={"execute-memory-recipe": provider},
+        ),
+    )
+    producer = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=producer_request)
+    assert producer.completed
+    assert len(provider_calls) == 1
+
+    consumer_request = _memory_loop_request(
+        tmp_path,
+        task_id="c1-provider-consumer",
+        value=22.0,
+        family_memory_root=family_memory_root,
+        program_calls=[],
+    )
+    consumer_request = replace(
+        consumer_request,
+        provider_registry=provider_registry,
+        bindings=replace(
+            consumer_request.bindings,
+            bound_provider_handlers={"execute-memory-recipe": provider},
+        ),
+    )
+    consumer = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=consumer_request)
+    assert consumer.completed
+    assert len(provider_calls) == 1
+    observed = consumer.context.replay_observations
+    assert len(observed) == 1
+    assert observed[0]["provider_invocation_status"] == "not_started"
+    assert observed[0]["attempt_result_admission_receipt_hash"]
+    metric = json.loads((consumer.context.g5c_c1_artifact_root / "metric_availability.json").read_text())
+    assert metric["metrics"]["provider_skip_observed_count"]["value"] == 1
+    assert metric["metrics"]["provider_work_avoided"]["status"] == "unsupported"
+    root = consumer.context.g5c_c1_artifact_root
+    manifest = json.loads((root / "manifest.json").read_text())
+    acceptance = json.loads((root / "g5c_acceptance.json").read_text())
+    scorer = json.loads((root / "scorer_result.json").read_text())
+    trace = json.loads((root / "runtime_trace.json").read_text())
+    skip = json.loads((root / "provider_skip_receipts.json").read_text())
+    assert manifest["exact_replay"] == {
+        "status": "unsupported",
+        "value": None,
+        "reason": "c2_exact_restore_not_implemented",
+    }
+    assert manifest["exact_replay_status"] == manifest["exact_replay"]
+    assert acceptance["exact_replay"] == manifest["exact_replay"]
+    assert acceptance["exact_replay_status"] == manifest["exact_replay"]
+    assert scorer["exact_replay"] == manifest["exact_replay"]
+    assert metric["metrics"]["exact_replay_count"] == manifest["exact_replay"]
+    assert trace["replay_observations"] == [observed[0]]
+    assert skip["receipts"][0]["quality_result_admission_hash"] == observed[0]["attempt_result_admission_receipt_hash"]
+    assert skip["receipts"][0]["quality_report_hash"]
+    assert skip["receipts"][0]["recipe_step_status"] == "unknown"
+
+
+def test_g5a_memory_artifact_checksum_mismatch_fails_closed(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "checksum-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="checksum-producer",
+            value=11.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    memory_id = producer.memory_commit_decision.memory_id
+    commit = producer.infrastructure.memory_store.commits[memory_id]
+    artifact_path = Path(commit.memory_ref.metadata["artifact_root_id"]) / commit.memory_ref.metadata["artifact_relpath"]
+    artifact_path.write_bytes(b"tampered-memory-artifact")
+
+    consumer_calls: list[str] = []
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="checksum-consumer",
+            value=22.0,
+            family_memory_root=family_memory_root,
+            program_calls=consumer_calls,
+        ),
+    )
+
+    assert consumer.completed is False
+    assert consumer.context.memory_consumption_records == []
+    assert consumer_calls == []
+    assert any(
+        dispatch.step_id == "execute"
+        and dispatch.error_code == "memory_read_artifact_checksum_mismatch"
+        for dispatch in consumer.runtime.dispatches
+    )
+
+
+def test_g5c_invalidation_before_read_fails_closed_without_replay_consumption(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "invalidation-before-read-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="invalidation-before-read-producer",
+            value=11.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    memory_id = producer.memory_commit_decision.memory_id
+    producer.infrastructure.memory_store.invalidate(memory_id)
+
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="invalidation-before-read-consumer",
+            value=22.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+
+    assert consumer.context.memory_consumption_records == []
+    assert consumer.context.replay_observations == []
+    assert all(
+        row.get("memory_id") != memory_id
+        for row in json.loads(
+            (consumer.context.g5c_c0_artifact_root / "replay_consumption_receipts.json").read_text()
+        ).get("receipts", ())
+    )
+    denominator = json.loads(
+        (consumer.context.g5c_c0_artifact_root / "failure_denominator.json").read_text()
+    )
+    negatives = json.loads(
+        (consumer.context.g5c_c0_artifact_root / "negative_row_index.json").read_text()
+    )["rows"]
+    assert denominator["scope"] == "runtime_terminal_plus_fixture_control"
+    assert denominator["fixture_control_row_ids"] == [row["row_id"] for row in negatives]
+    assert all(row["provenance_scope"] == "fixture_control" for row in negatives)
+    assert all(not row["runtime_attempt_evidence"] for row in negatives)
+
+
+def test_g5a_explicit_read_can_record_no_effect_separately_from_unused(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "no-effect-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="no-effect-producer",
+            value=11.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    memory_id = producer.memory_commit_decision.memory_id
+    consumer_request = _memory_loop_request(
+        tmp_path,
+        task_id="no-effect-consumer",
+        value=22.0,
+        family_memory_root=family_memory_root,
+        program_calls=[],
+    )
+    execute_step = next(step for step in consumer_request.propose_plan().steps if step.step_id == "execute")
+    source_artifact = consumer_request.bindings.artifacts["source:no-effect-consumer"]
+    before = sha256_digest({
+        "step": execute_step.canonical_payload(),
+        "input_ref_id": "source:no-effect-consumer",
+        "input_hashes": [source_artifact.artifact.blob_hash],
+    })
+    consumer_request = replace(
+        consumer_request,
+        bindings=replace(
+            consumer_request.bindings,
+            memory_after_surface_hash_by_memory_id={memory_id: before},
+        ),
+    )
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=consumer_request,
+    )
+    record = consumer.context.memory_consumption_records[0]
+    assert record.memory_id == memory_id
+    assert record.behavioral_effect == "no_effect"
+    assert record.before_decision_surface_hash == before
+    assert record.after_decision_surface_hash == before
+    assert record.memory_admission_receipt_hash
+    assert record.memory_commit_hash
+    assert record.capability_grant_hash
+    assert record.attempt_result_admission_receipt_hash
+    assert consumer.context.memory_read_evidence_by_id[memory_id]["status"] == "observed"
+    assert any(
+        receipt.receipt_hash == record.attempt_result_admission_receipt_hash
+        and receipt.step_id == "execute"
+        for receipt in consumer.runtime.attempt_result_admissions
+    )
+    assert record.downstream_ref_ids
+    metrics = consumer.runtime.telemetry.summarize_task("no-effect-consumer")
+    assert metrics["memory_actual_use_count"] == 1.0
+    assert metrics["memory_behavioral_effect_count"] == 0.0
+
+
+def test_g5a_current_grant_stale_foreign_and_missing_admission_fail_closed(
+    tmp_path: Path,
+) -> None:
+    family_memory_root = tmp_path / "grant-negative-memory"
+    producer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="grant-negative-producer",
+            value=11.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    consumer = RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=_memory_loop_request(
+            tmp_path,
+            task_id="grant-negative-consumer",
+            value=22.0,
+            family_memory_root=family_memory_root,
+            program_calls=[],
+        ),
+    )
+    memory_id = producer.memory_commit_decision.memory_id
+    execute_step = next(
+        step for step in consumer.planner.approved_plan_bundle.approved_plan.steps
+        if step.step_id == "execute"
+    )
+    current_grant = next(
+        bound for bound in consumer.runtime.bound_grants if bound.grant.step_id == "execute"
+    ).grant
+    consumer.context.session_manager = None
+    dispatcher = adaptive_dispatcher_module.AdaptiveCapabilityDispatcher(context=consumer.context)
+
+    with pytest.raises(AdaptiveDispatchError, match="grant_memory_expired"):
+        dispatcher._memory_inputs_for_step(
+            step=execute_step,
+            grant=replace(current_grant, expires_at_ns=time.time_ns() - 1),
+        )
+    with pytest.raises(AdaptiveDispatchError, match="grant_memory_runtime_identity_mismatch"):
+        dispatcher._memory_inputs_for_step(
+            step=execute_step,
+            grant=replace(current_grant, task_id="foreign-task"),
+        )
+
+    del consumer.infrastructure.memory_store.admission_receipts[memory_id]
+    with pytest.raises(AdaptiveDispatchError, match="grant_memory_admission_missing"):
+        dispatcher._memory_inputs_for_step(step=execute_step, grant=current_grant)
 
 
 def test_mrr_09c_validated_consumption_without_eligibility_fails_closed(

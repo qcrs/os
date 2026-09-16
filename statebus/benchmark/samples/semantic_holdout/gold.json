@@ -25,6 +25,31 @@
       "throughput_units": 760,
       "shipment_qualifier": "capacity-capped pending rail-slot approval",
       "qualifier_locator": "Operating constraint"
+    },
+    "semantic-holdout-s5": {
+      "operating_region": "Inland Arc",
+      "region_locator": "Operating signal",
+      "binding_constraint": "limited overnight loading coverage",
+      "constraint_locator": "Operating signal"
+    },
+    "semantic-holdout-s6": {
+      "facility": "Port East",
+      "period": "2026Q2",
+      "backlog_units": 1775,
+      "sla_hours": 34
+    },
+    "semantic-holdout-s7": {
+      "facility": "Port Central",
+      "period": "2026Q2",
+      "backlog_units": 1330,
+      "sla_hours": 30
+    },
+    "semantic-holdout-s8": {
+      "region": "Atlas Hub",
+      "period": "2026Q2",
+      "throughput_units": 845,
+      "shipment_qualifier": "volume-capped pending carrier approval",
+      "qualifier_locator": "Operating constraint"
     }
   }
 }

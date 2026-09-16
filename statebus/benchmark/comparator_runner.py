@@ -22,21 +22,49 @@ from statebus.benchmark.reporting import (
     write_markdown_report,
 )
 from statebus.benchmark.task_registry import formal_family_specs
+from statebus.benchmark.contest_fairness import CANONICAL_LANES, validate_c2a_trace
 
 
 def canonical_aggregate_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Exclude legacy comparator records from canonical aggregation."""
+    """Fail closed on observed trace identity; legacy rows remain diagnostic."""
 
     selected: list[dict[str, object]] = []
     for record in records:
         manifest = record.get("manifest")
         payload = manifest if isinstance(manifest, dict) else record
-        if (
-            str(payload.get("execution_path", "")) == "canonical"
-            and str(payload.get("lane", "")) != "legacy_comparator"
-        ):
+        trace = record.get("trace")
+        if not isinstance(trace, dict) and isinstance(payload, dict):
+            trace = payload.get("trace")
+        lane = str(payload.get("lane", ""))
+        if lane in CANONICAL_LANES and isinstance(trace, dict):
+            validation = record.get("trace_validation") or payload.get("trace_validation")
+            if not isinstance(validation, dict):
+                validation = validate_c2a_trace(trace, payload)
+            marker = trace.get("canonical_marker")
+            if validation.get("valid") is True and isinstance(marker, dict) and marker.get("observed") is True and str(trace.get("execution_path", "")) == str(marker.get("execution_path", "")):
+                selected.append(record)
+        elif lane in CANONICAL_LANES and "case_id" not in payload:
+            # Preserve the pre-C2A C1 fairness projection, which has no
+            # per-row observed trace and is never used by the C2A aggregator.
             selected.append(record)
+        elif lane in CANONICAL_LANES:
+            continue
     return selected
+
+
+def validate_canonical_aggregate(records: list[dict[str, object]]) -> dict[str, object]:
+    included = canonical_aggregate_records(records)
+    included_ids = [f"{r.get('case_id', r.get('manifest', {}).get('case_id',''))}::{r.get('lane', r.get('manifest', {}).get('lane',''))}" for r in included]
+    all_ids = [f"{r.get('case_id', r.get('manifest', {}).get('case_id',''))}::{r.get('lane', r.get('manifest', {}).get('lane',''))}" for r in records]
+    excluded = [item for item in all_ids if item not in included_ids]
+    return {
+        "schema_version": "statebus.c2a.canonical_aggregate_audit.v1",
+        "eligible": bool(included) and not excluded,
+        "included_record_ids": included_ids,
+        "excluded_record_ids": excluded,
+        "rejected_record_ids": [],
+        "reason": "observed_trace_identity_or_schema_invalid" if excluded else "",
+    }
 
 
 def _metric(report: BenchmarkFamilyReport, key: str) -> float:

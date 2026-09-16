@@ -159,6 +159,97 @@
           ]
         }
       }
+    },
+    {
+      "task_id": "semantic-holdout-s5",
+      "input_shape": "narrative_only",
+      "request_text": "From the complete Northstar capacity review, identify the operating region and staffing constraint with their section headings.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "extract_narrative_facts",
+        "target_entities": ["Northstar"],
+        "time_scope": "spring planning cycle",
+        "required_outputs": ["operating_region", "region_locator", "binding_constraint", "constraint_locator"],
+        "required_tools": [],
+        "arguments": {
+          "dataset_id": "northstar-capacity-review",
+          "document_path": "statebus/benchmark/samples/semantic_holdout/northstar_capacity_review.md",
+          "source_path": "statebus/benchmark/samples/semantic_holdout/northstar_capacity_review.md",
+          "source_kind": "narrative_markdown",
+          "output_schema": {"operating_region": "string", "region_locator": "string", "binding_constraint": "string", "constraint_locator": "string"},
+          "fact_selectors": [
+            {"output_field": "operating_region", "locator_field": "region_locator", "section": "Operating signal", "label": "The operating region"},
+            {"output_field": "binding_constraint", "locator_field": "constraint_locator", "section": "Operating signal", "label": "The staffing constraint"}
+          ]
+        }
+      }
+    },
+    {
+      "task_id": "semantic-holdout-s6",
+      "input_shape": "table_only",
+      "request_text": "In the authorized port service table, look up Port East for 2026Q2 and return its facility, period, backlog units, and SLA hours.",
+      "canonical_task_spec": {
+        "task_family": "continuous_csv_table_analysis",
+        "intent_op": "lookup_table_record",
+        "target_entities": ["Port East"],
+        "time_scope": "2026Q2",
+        "required_outputs": ["facility", "period", "backlog_units", "sla_hours"],
+        "required_tools": [],
+        "arguments": {
+          "dataset_id": "port-service-levels",
+          "csv_path": "statebus/benchmark/samples/semantic_holdout/port_service_levels.csv",
+          "source_path": "statebus/benchmark/samples/semantic_holdout/port_service_levels.csv",
+          "source_kind": "csv_table",
+          "filters": {"facility": "Port East", "period": "2026Q2"},
+          "value_fields": ["facility", "period", "backlog_units", "sla_hours"],
+          "output_schema": {"facility": "string", "period": "string", "backlog_units": "integer", "sla_hours": "integer"}
+        }
+      }
+    },
+    {
+      "task_id": "semantic-holdout-s7",
+      "input_shape": "table_only",
+      "request_text": "In the authorized port service table, look up Port Central for 2026Q2 and return its facility, period, backlog units, and SLA hours.",
+      "canonical_task_spec": {
+        "task_family": "continuous_csv_table_analysis",
+        "intent_op": "lookup_table_record",
+        "target_entities": ["Port Central"],
+        "time_scope": "2026Q2",
+        "required_outputs": ["facility", "period", "backlog_units", "sla_hours"],
+        "required_tools": [],
+        "arguments": {
+          "dataset_id": "port-service-levels",
+          "csv_path": "statebus/benchmark/samples/semantic_holdout/port_service_levels.csv",
+          "source_path": "statebus/benchmark/samples/semantic_holdout/port_service_levels.csv",
+          "source_kind": "csv_table",
+          "filters": {"facility": "Port Central", "period": "2026Q2"},
+          "value_fields": ["facility", "period", "backlog_units", "sla_hours"],
+          "output_schema": {"facility": "string", "period": "string", "backlog_units": "integer", "sla_hours": "integer"}
+        }
+      }
+    },
+    {
+      "task_id": "semantic-holdout-s8",
+      "input_shape": "mixed_narrative_table",
+      "request_text": "For Atlas Hub in 2026Q2, combine the throughput row with the shipment qualification stated in the review and include its section heading.",
+      "canonical_task_spec": {
+        "task_family": "continuous_long_doc_table_analysis",
+        "intent_op": "lookup_table_with_qualifier",
+        "target_entities": ["Atlas Hub"],
+        "time_scope": "2026Q2",
+        "required_outputs": ["region", "period", "throughput_units", "shipment_qualifier", "qualifier_locator"],
+        "required_tools": [],
+        "arguments": {
+          "dataset_id": "atlas-hub-review",
+          "document_path": "statebus/benchmark/samples/semantic_holdout/atlas_hub_review.md",
+          "source_path": "statebus/benchmark/samples/semantic_holdout/atlas_hub_review.md",
+          "source_kind": "mixed_markdown",
+          "filters": {"region": "Atlas Hub", "period": "2026Q2"},
+          "value_fields": ["region", "period", "throughput_units"],
+          "output_schema": {"region": "string", "period": "string", "throughput_units": "integer", "shipment_qualifier": "string", "qualifier_locator": "string"},
+          "fact_selectors": [{"output_field": "shipment_qualifier", "locator_field": "qualifier_locator", "section": "Operating constraint", "label": "The shipment qualifier"}]
+        }
+      }
     }
   ]
 }

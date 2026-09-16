@@ -19,6 +19,7 @@ from statebus.control import (
     SuccessResult,
     admit_control_response_sequence,
 )
+from statebus.control.admission import ControlResponseAdmissionError
 
 
 def _semantic_request(tmp_path: Path) -> ExecRequest:
@@ -304,6 +305,63 @@ def test_control_response_admission_rejects_illegal_order_and_duplicate_terminal
         + "\n",
         encoding="utf-8",
     )
+
+
+def test_control_response_admission_fences_heartbeat_after_terminal(tmp_path: Path) -> None:
+    request = _semantic_request(tmp_path)
+    terminal = _success(request)
+    late_heartbeat = Heartbeat(
+        header=replace(request.header, event_type=EventType.HEARTBEAT),
+        sent_at_ns=5,
+        worker_state="late",
+    )
+    admitted, receipts = admit_control_response_sequence(
+        request,
+        (*_valid_sequence(request), late_heartbeat),
+        origin=ControlResponseOrigin.NATIVE_TYPED_WORKER,
+    )
+    assert admitted == ()
+    assert receipts[-1].reason_code == "event_after_terminal"
+    assert receipts[-1].terminal is False
+
+
+def test_control_response_admission_fences_late_terminal_from_superseded_attempt(
+    tmp_path: Path,
+) -> None:
+    request = _semantic_request(tmp_path)
+    late = replace(
+        _success(request),
+        header=replace(request.header, attempt_id="attempt-05b-2"),
+    )
+    transport = SubprocessExecutorTransport(socket_path=tmp_path / "late.sock")
+    try:
+        transport._admit_completed_responses(
+            request=request,
+            responses=list((*_valid_sequence(request), late)),
+            response_wire_bytes=[],
+            carrier="protobuf",
+            request_wire_bytes=0,
+            worker_pid=0,
+        )
+    except ControlResponseAdmissionError as exc:
+        assert exc.receipts[-1].reason_code == "late_result_fenced"
+        assert exc.receipts[-1].terminal is True
+    else:
+        raise AssertionError("superseded terminal was admitted")
+
+
+def test_control_response_admission_preserves_duplicate_vs_late_reason(
+    tmp_path: Path,
+) -> None:
+    request = _semantic_request(tmp_path)
+    duplicate = replace(_success(request), completed_at_ns=5)
+    admitted, receipts = admit_control_response_sequence(
+        request,
+        (*_valid_sequence(request), duplicate),
+        origin=ControlResponseOrigin.NATIVE_TYPED_WORKER,
+    )
+    assert admitted == ()
+    assert receipts[-1].reason_code == "duplicate_terminal"
 
 
 def test_real_subprocess_success_is_natively_admitted(tmp_path: Path) -> None:

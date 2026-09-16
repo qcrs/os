@@ -1,0 +1,56 @@
+name: statebus-g6b2-os
+
+services:
+  statebus-b2:
+    image: ${STATEBUS_B2_IMAGE:-statebus-dev-openeuler:24.03-lts-sp3-embed}
+    container_name: ${STATEBUS_B2_CONTAINER_NAME:-statebus-b2-qwen3-8b}
+    init: true
+    stdin_open: true
+    tty: true
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    shm_size: 1g
+    user: "${STATEBUS_UID:-1000}:${STATEBUS_GID:-1000}"
+    working_dir: /workspace/statebus/os
+    entrypoint: ["/bin/bash"]
+    command: ["-lc", "exec sleep infinity"]
+    volumes:
+      - ${STATEBUS_OS_CHECKOUT:-/home/qcrs/statebus/os}:/workspace/statebus/os
+      - ${STATEBUS_B2_HOME_HOST:-/home/qcrs/statebus/work/g6b2-qwen3-8b-container}:/statebus
+      - ${STATEBUS_VLLM_MODELS_ROOT:-/data/models}:/data/models:ro
+      - ${STATEBUS_HOST_ENV:-/home/qcrs/statebus/conda-envs/statebus_host}:/home/qcrs/statebus/conda-envs/statebus_host:ro
+      - ${STATEBUS_EMBED_MODEL_ROOT:-/home/qcrs/statebus/models}:/statebus/models:ro
+    environment:
+      HOME: /statebus/home
+      PROJECT_ROOT: /workspace/statebus/os
+      PYTHONPATH: /workspace/statebus/os
+      STATEBUS_HOME: /statebus
+      STATEBUS_ENV_PREFIX: container-python
+      STATEBUS_MODELS_DIR: /statebus/models
+      STATEBUS_CACHES_DIR: /statebus/caches
+      STATEBUS_LOGS_DIR: /statebus/logs
+      STATEBUS_RUNS_DIR: /statebus/runs
+      STATEBUS_WORK_DIR: /statebus/work
+      STATEBUS_WORKSPACES_DIR: /statebus/work/workspaces
+      STATEBUS_STATEPOOL_DIR: /statebus/work/statepool
+      STATEBUS_EMBED_DEVICE: cuda:0
+      STATEBUS_STUDIO_EMBED_DEVICE: cuda:0
+      STATEBUS_LLM_CONFIG_FILE: /workspace/statebus/os/deploy/statebus_llm.g6b2-qwen3-8b.example
+      STATEBUS_LLM_ENV_FILE: /dev/null
+      STATEBUS_LOCAL_VLLM_BASE_URL: ${STATEBUS_LOCAL_VLLM_BASE_URL:-http://127.0.0.1:53334/v1}
+      STATEBUS_LOCAL_VLLM_HEALTH_URL: ${STATEBUS_LOCAL_VLLM_HEALTH_URL:-http://127.0.0.1:53334/health}
+      STATEBUS_VLLM_METRICS_URL: ${STATEBUS_VLLM_METRICS_URL:-http://127.0.0.1:53334/metrics}
+      STATEBUS_VLLM_MODEL_PATH: ${STATEBUS_VLLM_MODEL_PATH:-/data/models/Qwen3-8B}
+      STATEBUS_VLLM_TOKENIZER_PATH: ${STATEBUS_VLLM_TOKENIZER_PATH:-/data/models/Qwen3-8B}
+      STATEBUS_ENGINE_LOCAL_KV_MODEL: qwen3-8b
+      STATEBUS_PREFIX_ALIGNMENT_MODE: independent
+      STATEBUS_PREFIX_POLICY: off
+      STATEBUS_LOGIT_GATE_MODE: off
+      STATEBUS_ENGINE_LOCAL_KV_MODE: off
+      PATH: /home/qcrs/statebus/conda-envs/statebus_host/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

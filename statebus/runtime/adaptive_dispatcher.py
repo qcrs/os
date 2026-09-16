@@ -33,6 +33,7 @@ from statebus.contracts import (
     RuntimeIdentity,
     STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
     StateAccessGrant,
+    StorageKind,
     TransformProgram,
     TransformStep,
     PlannerHandoff,
@@ -185,6 +186,12 @@ class AdaptiveDispatchContext:
         default_factory=dict
     )
     memory_consumption_records: list[MemoryConsumptionRecord] = field(default_factory=list)
+    # Runtime consumer observations are deliberately separate from role input
+    # construction.  A role input is an approved descriptor; only an explicit
+    # read observation can promote it to a MemoryConsumptionRecord.
+    memory_read_observations_by_step: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    memory_approved_unused_by_step: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    memory_read_evidence_by_id: dict[str, dict[str, object]] = field(default_factory=dict)
     execution_recipes_by_artifact: dict[str, dict[str, object]] = field(default_factory=dict)
     canonical_task_spec: CanonicalTaskSpec | None = None
     input_lineage_hashes: tuple[str, ...] = ()
@@ -192,6 +199,23 @@ class AdaptiveDispatchContext:
     validator_digest: str = ""
     runtime_compatibility_signature: str = ""
     state_consumption_records: list[object] = field(default_factory=list)
+    state_publication_receipts: dict[str, dict[str, object]] = field(default_factory=dict)
+    state_pin_receipts: dict[str, tuple[dict[str, object], ...]] = field(default_factory=dict)
+    semantic_consumer_receipts: dict[str, dict[str, object]] = field(default_factory=dict)
+    state_release_reclaim_receipts: dict[str, dict[str, object]] = field(default_factory=dict)
+    state_lifecycle_timestamps: dict[str, dict[str, int]] = field(default_factory=dict)
+    downstream_effects: dict[str, dict[str, object]] = field(default_factory=dict)
+    # Deterministic acceptance fixtures may provide an observed before/after
+    # surface pair for a specific verified Memory ref. Runtime still owns the
+    # read, Grant validation and result-admission join.
+    memory_after_surface_hash_by_memory_id: dict[str, str] = field(default_factory=dict)
+    g5a_artifact_root: Path | None = None
+    # G5-C staged evidence is a Runtime projection only.  These roots are
+    # allocated by the mainline writer and never participate in authority or
+    # admission decisions.
+    g5c_c0_artifact_root: Path | None = None
+    g5c_c1_artifact_root: Path | None = None
+    replay_observations: list[dict[str, object]] = field(default_factory=list)
 
 
 class AdaptiveCapabilityDispatcher:
@@ -248,6 +272,64 @@ class AdaptiveCapabilityDispatcher:
                 runtime_identity,
             )
             if bound_handler is not None:
+                # C1 is deliberately a Runtime-owned branch before the
+                # provider candidate call.  Only a fully validated procedure
+                # selection may take it; ordinary ASSIST inputs continue to
+                # the provider handler unchanged.
+                memory_inputs = self._memory_inputs_for_step(
+                    step=step,
+                    grant=plain_grant,
+                )
+                replay_recipe, replay_memory_id = self._validated_recipe(
+                    memory_inputs,
+                    execution_kind=execution_kind.value,
+                    capability_id=step.capability_id,
+                    output_contract_version=plain_grant.output_contract_version,
+                )
+                if replay_recipe is not None and replay_memory_id:
+                    self._record_replay_observation(
+                        bound_grant=grant,
+                        step=step,
+                        memory_input=next(
+                            item for item in memory_inputs
+                            if str(item.get("ref_id", "")) == replay_memory_id
+                        ),
+                        observation_kind="provider_invocation",
+                        provider_invocation_status="not_started",
+                        recipe_step_status="unknown",
+                        artifact_restore_status="not_applicable",
+                        reason="validated_procedure_reuse_provider_bypass",
+                    )
+                    if execution_kind == ExecutionKind.TRANSFORM_DSL:
+                        result = self._dispatch_transform_dsl(
+                            envelope,
+                            approved_plan,
+                            step,
+                            plain_grant,
+                            attempt_workspace,
+                        )
+                        return replace(
+                            result,
+                            metrics={
+                                **result.metrics,
+                                "provider_invocation_not_started_count": 1.0,
+                            },
+                        )
+                    if execution_kind == ExecutionKind.LLM_BOUNDED_PYTHON:
+                        result = self._dispatch_llm_python(
+                            envelope,
+                            approved_plan,
+                            step,
+                            plain_grant,
+                            attempt_workspace,
+                        )
+                        return replace(
+                            result,
+                            metrics={
+                                **result.metrics,
+                                "provider_invocation_not_started_count": 1.0,
+                            },
+                        )
                 return self._dispatch_bound_provider(
                     handler=bound_handler,
                     envelope=envelope,
@@ -279,6 +361,64 @@ class AdaptiveCapabilityDispatcher:
                 attempt_id=plain_grant.attempt_id,
                 error_code=str(exc) or type(exc).__name__,
             )
+
+    def _record_replay_observation(
+        self,
+        *,
+        bound_grant: BoundCapabilityGrant,
+        step: PlanStepProposal,
+        memory_input: dict[str, object],
+        observation_kind: str,
+        provider_invocation_status: str,
+        recipe_step_status: str,
+        artifact_restore_status: str,
+        reason: str,
+    ) -> dict[str, object]:
+        """Record a Runtime-owned, row-local execution observation.
+
+        This projection is intentionally written at the dispatch boundary,
+        before any provider handler is callable.  It carries existing
+        identity/receipt hashes but owns no policy, admission, or settlement
+        authority.
+        """
+        grant = bound_grant.grant
+        memory_id = str(memory_input.get("ref_id", ""))
+        observation = {
+            "schema_version": "statebus.g5c.replay_observation.v1",
+            "observation_id": f"replay-observation:{grant.attempt_id}:{memory_id}:{observation_kind}",
+            "status": "observed",
+            "observation_kind": observation_kind,
+            "provider_invocation_status": provider_invocation_status,
+            "recipe_step_status": recipe_step_status,
+            "artifact_restore_status": artifact_restore_status,
+            "runtime_task_id": grant.task_id,
+            "run_id": self.context.runtime_identity.run_id if self.context.runtime_identity else "",
+            "session_id": grant.session_id,
+            "step_id": step.step_id,
+            "attempt_id": grant.attempt_id,
+            "execution_binding_hash": bound_grant.execution_binding_hash,
+            "capability_grant_hash": grant.grant_hash,
+            "memory_id": memory_id,
+            "memory_commit_hash": str(memory_input.get("memory_commit_hash", "")),
+            "memory_admission_receipt_hash": str(memory_input.get("memory_admission_receipt_hash", "")),
+            "replay_eligibility_receipt_hash": str(memory_input.get("replay_eligibility_receipt_hash", "")),
+            "source_artifact_id": str(
+                dict(memory_input.get("artifact_lineage", {})).get("artifact_ref_id", "")
+            ),
+            "source_artifact_blob_hash": str(
+                dict(memory_input.get("artifact_lineage", {})).get("artifact_hash", "")
+            ),
+            "recipe_hash": str(memory_input.get("execution_recipe_hash", "")),
+            "provider_id": bound_grant.provider_id,
+            "provider_version": bound_grant.provider_version,
+            "invocation_id": "",
+            "attempt_result_admission_receipt_hash": "",
+            "baseline_pair_key": "",
+            "created_at_ns": time.time_ns(),
+            "reason": reason,
+        }
+        self.context.replay_observations.append(observation)
+        return observation
 
     def _dispatch_bound_provider(
         self,
@@ -372,6 +512,21 @@ class AdaptiveCapabilityDispatcher:
         if not isinstance(raw_candidate, ProviderCandidate):
             raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
         candidate = detach_provider_candidate(raw_candidate)
+        # Invocation evidence is a Runtime projection of the detached return
+        # value.  Tests/adapters may pre-seed it to assert provenance; a
+        # missing projection is filled once, never overwritten by the provider.
+        if (
+            candidate.candidate_kind == "executor_program"
+            and isinstance(candidate.payload, GeneratedCodeCandidate)
+        ):
+            self.context.provider_invocation_evidence.setdefault(
+                bound_grant.grant.grant_hash,
+                {
+                    "request_hash": candidate.payload.request_hash,
+                    "source_hash": candidate.payload.source_hash,
+                    "raw_response_hash": candidate.payload.raw_response_hash,
+                },
+            )
         expected_kind = {
             "planner": "planner_handoff",
             "retriever": "retrieval_request",
@@ -463,11 +618,20 @@ class AdaptiveCapabilityDispatcher:
                     or sha256_digest(payload.source.encode("utf-8")) != payload.source_hash
                 ):
                     raise AdaptiveDispatchError("provider_candidate_hash_mismatch")
-                # CodeAct execution requires the dispatcher-prepared request
-                # and captured raw response.  Without that evidence the
-                # candidate remains non-authoritative and is rejected above;
-                # execution is intentionally not re-generated here.
-                raise AdaptiveDispatchError("provider_candidate_codeact_execution_unavailable")
+                # The provider candidate is already the generated program.  The
+                # dispatcher owns the one CodeAct execution, so pass the
+                # detached source directly into the existing CodeAct seam rather
+                # than invoking the provider/model a second time.
+                if not envelope.allow_llm_python or envelope.risk_class != RiskClass.BOUNDED_CODE:
+                    raise AdaptiveDispatchError("llm_python_not_program_enabled")
+                return self._dispatch_llm_python(
+                    envelope,
+                    approved_plan,
+                    step,
+                    bound_grant.grant,
+                    attempt_workspace,
+                    source_override=payload.source,
+                )
             raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
         if candidate.candidate_kind == "summary_claim_set":
             assert isinstance(payload, ClaimSet)
@@ -614,6 +778,11 @@ class AdaptiveCapabilityDispatcher:
         from statebus.memory import MemoryQuery
         from statebus.retrieval import apply_semantic_state_selection
         from statebus.runtime.state_consumption import build_state_consumption_record
+        from statebus.runtime.state_consumption import (
+            build_semantic_consumer_receipt,
+            build_state_pin_receipt,
+            build_state_publication_receipt,
+        )
 
         if self.context.state_store is None or self.context.memory_store is None:
             raise AdaptiveDispatchError("adaptive_product_state_infrastructure_missing")
@@ -658,6 +827,14 @@ class AdaptiveCapabilityDispatcher:
                 encoder_revision="retriever-fanout-v1",
             )
             self.context.semantic_state_publications[state_id] = publication
+            self.context.state_publication_receipts[state_id] = build_state_publication_receipt(
+                publication=publication,
+                runtime_identity=runtime_identity,
+                producer_grant=bound_grant,
+                producer_binding_id=bound_grant.execution_binding.binding_id,
+                execution_binding_hash=execution_binding_hash,
+                cache_epoch=f"{runtime_identity.run_id}:{grant.attempt_id}",
+            )
             data_plane_events.append({
                 "event_type": "STATE_PUBLISHED",
                 "role": "retriever",
@@ -739,19 +916,38 @@ class AdaptiveCapabilityDispatcher:
                 consumer_role="executor",
                 physical_invocation_id=invocation_id,
             )
+            pin_receipts = [build_state_pin_receipt(pin=worker_pin, phase="downstream_use", status="acquired")]
             try:
-                try:
-                    response = transport.execute(request)
-                except ControlResponseAdmissionError as exc:
-                    self.context.control_response_admissions[state_id] = exc.receipts
-                    raise AdaptiveDispatchError(str(exc)) from exc
-            finally:
+                memfd_refs = None
+                if (
+                    publication.handle.storage_kind == StorageKind.MEMFD
+                    and publication.handle.memfd_fd is not None
+                ):
+                    memfd_refs = {
+                        state_id: (
+                            publication.handle.memfd_fd,
+                            publication.handle.size_bytes,
+                        )
+                    }
+                response = transport.execute(request, memfd_refs=memfd_refs)
+            except ControlResponseAdmissionError as exc:
+                self.context.control_response_admissions[state_id] = exc.receipts
                 state_access_authority.unpin(
                     store=self.context.state_store,
                     pin_id=worker_pin.pin_id,
                 )
+                pin_receipts.append(build_state_pin_receipt(
+                    pin=worker_pin,
+                    phase="response_admission",
+                    status="released_on_admission_error",
+                    released_at_ns=time.time_ns(),
+                ))
+                self.context.state_pin_receipts[state_id] = tuple(pin_receipts)
+                raise AdaptiveDispatchError(str(exc)) from exc
             receipts = transport.last_admission_receipts
             self.context.control_response_admissions[state_id] = receipts
+            lifecycle_timestamps = self.context.state_lifecycle_timestamps.setdefault(state_id, {})
+            lifecycle_timestamps["response_admitted_at_ns"] = time.time_ns()
             from statebus.runtime.supervisor import LifecycleOrigin
 
             origin_by_control_origin = {
@@ -779,16 +975,36 @@ class AdaptiveCapabilityDispatcher:
             )
             terminal_receipts = tuple(receipt for receipt in receipts if receipt.terminal)
             if len(terminal_receipts) != 1 or not terminal_receipts[0].admitted:
+                state_access_authority.unpin(store=self.context.state_store, pin_id=worker_pin.pin_id)
+                pin_receipts.append(build_state_pin_receipt(
+                    pin=worker_pin, phase="response_admission", status="released_on_admission_failure", released_at_ns=time.time_ns()
+                ))
                 raise AdaptiveDispatchError("semantic_state_response_admission_missing")
             if isinstance(response, ErrorResult):
+                state_access_authority.unpin(store=self.context.state_store, pin_id=worker_pin.pin_id)
+                pin_receipts.append(build_state_pin_receipt(
+                    pin=worker_pin, phase="response_admission", status="released_on_worker_error", released_at_ns=time.time_ns()
+                ))
                 raise AdaptiveDispatchError(
                     f"semantic_state_consume_failed:{response.error_code}:{response.error_detail}"
                 )
             if not isinstance(response, SuccessResult):
+                state_access_authority.unpin(store=self.context.state_store, pin_id=worker_pin.pin_id)
+                pin_receipts.append(build_state_pin_receipt(
+                    pin=worker_pin, phase="response_admission", status="released_on_invalid_result", released_at_ns=time.time_ns()
+                ))
                 raise AdaptiveDispatchError("semantic_state_consumer_result_invalid")
             if response.consumed_state_ref_id != state_id:
+                state_access_authority.unpin(store=self.context.state_store, pin_id=worker_pin.pin_id)
+                pin_receipts.append(build_state_pin_receipt(
+                    pin=worker_pin, phase="response_admission", status="released_on_ref_mismatch", released_at_ns=time.time_ns()
+                ))
                 raise AdaptiveDispatchError("semantic_state_consumer_ref_mismatch")
             if response.consumer_pid <= 0 or response.consumer_pid == response.producer_pid:
+                state_access_authority.unpin(store=self.context.state_store, pin_id=worker_pin.pin_id)
+                pin_receipts.append(build_state_pin_receipt(
+                    pin=worker_pin, phase="response_admission", status="released_on_topology_failure", released_at_ns=time.time_ns()
+                ))
                 raise AdaptiveDispatchError("semantic_state_consumer_not_cross_process")
             selected = apply_semantic_state_selection(
                 bundle,
@@ -796,26 +1012,31 @@ class AdaptiveCapabilityDispatcher:
                 selected_scores=response.selected_scores,
                 consumer_pid=response.consumer_pid,
             )
+            # Keep a Runtime-owned read grant for the downstream input
+            # projection. The worker already performed the canonical matrix
+            # read; Runtime reuses the producer's immutable query embedding
+            # rather than hydrating the state a second time.
             local_access_grant = state_access_authority.issue_read(
                 ref=publication.ref,
                 authority_basis=STATE_ACCESS_AUTHORITY_RUNTIME_INTERMEDIATE,
                 consumer_role="runtime",
             )
-            query_embedding = state_access_authority.read_query_embedding(
+            runtime_pin = state_access_authority.acquire_pin(
+                store=self.context.state_store,
                 ref=publication.ref,
                 access_grant=local_access_grant,
-                embedding_id=bundle.query_embedding.embedding_id,
-                expected_encoder_signature=publication.contract.encoder_signature,
-                store=self.context.state_store,
+                consumer_role="runtime",
             )
+            pin_receipts.append(build_state_pin_receipt(
+                pin=runtime_pin, phase="downstream_projection", status="acquired"
+            ))
             self.context.state_access_grants[state_id] = (
                 worker_access_grant,
                 local_access_grant,
             )
             selected = replace(
                 selected,
-                query_embedding=query_embedding,
-                memory_query_embedding=query_embedding,
+                memory_query_embedding=bundle.query_embedding,
             )
             selected_bundles.append(selected)
             self.context.semantic_state_selections[state_id] = response
@@ -865,6 +1086,83 @@ class AdaptiveCapabilityDispatcher:
                 selected_ids=response.selected_candidate_ids,
                 downstream_ref_ids=(downstream_ref_id,),
             ))
+            output_surface_hash = sha256_digest({
+                "selected_candidate_ids": response.selected_candidate_ids,
+                "selected_row_indices": response.selected_row_indices,
+                "downstream_ref_ids": (downstream_ref_id,),
+                "downstream_input": selected.evidence_pack.canonical_payload(),
+            })
+            run_start = next(
+                (message for message in transport.last_response_messages if type(message).__name__ == "RunStart"),
+                None,
+            )
+            terminal_admission = terminal_receipts[0]
+            descriptor_identity = {
+                "ref_id": publication.ref.state_id,
+                "state_ref_id": publication.ref.state_id,
+                "state_identity_hash": publication.ref.state_identity_hash,
+                "storage_kind": publication.handle.storage_kind.value,
+                "size_bytes": publication.handle.size_bytes,
+                "shape": list(publication.contract.shape),
+                "dtype": publication.contract.dtype,
+                "blob_hash": publication.contract.blob_hash,
+                "manifest_id": publication.contract.hydrate_manifest_id,
+                "manifest_hash": publication.contract.hydrate_manifest_hash,
+                "encoder_hash": publication.contract.encoder_signature,
+                "encoder_signature": publication.contract.encoder_signature,
+                "cache_epoch": f"{runtime_identity.run_id}:{grant.attempt_id}",
+                "binding_id": bound_grant.execution_binding.binding_id,
+                "handle_identity": publication.handle.metadata_payload(),
+                "socket_session_identity": {
+                    "socket_path": str(transport.last_exchange_audit.socket_path_effective)
+                    if transport.last_exchange_audit else "",
+                    "session_id": runtime_identity.session_id,
+                },
+            }
+            self.context.semantic_consumer_receipts[state_id] = build_semantic_consumer_receipt(
+                publication=publication,
+                response=response,
+                runtime_identity=runtime_identity,
+                grant=grant,
+                state_access_grant_hash=worker_access_grant.access_grant_hash,
+                execution_binding_hash=execution_binding_hash,
+                pin_id=worker_pin.pin_id,
+                downstream_ref_ids=(downstream_ref_id,),
+                input_decision_surface_hash=bundle.candidate_pool.candidate_surface_hash,
+                output_decision_surface_hash=output_surface_hash,
+                response_admission_hash=sha256_digest(terminal_admission.canonical_payload()),
+                descriptor_identity=descriptor_identity,
+                read_started_at_ns=int(getattr(run_start, "started_at_ns", 0)),
+                read_completed_at_ns=int(getattr(response, "completed_at_ns", 0)),
+            )
+            downstream_effect_completed_at_ns = time.time_ns()
+            lifecycle_timestamps["downstream_effect_completed_at_ns"] = downstream_effect_completed_at_ns
+            self.context.downstream_effects[state_id] = {
+                "state_ref_id": state_id,
+                "downstream_ref_ids": [downstream_ref_id],
+                "before_decision_surface_hash": bundle.candidate_pool.candidate_surface_hash,
+                "after_decision_surface_hash": output_surface_hash,
+                "behavioral_effect": self.context.semantic_consumer_receipts[state_id]["behavioral_effect"],
+                "response_admitted": True,
+                "completed_at_ns": downstream_effect_completed_at_ns,
+            }
+            state_access_authority.unpin(store=self.context.state_store, pin_id=worker_pin.pin_id)
+            lifecycle_timestamps["worker_pin_released_at_ns"] = time.time_ns()
+            pin_receipts.append(build_state_pin_receipt(
+                pin=worker_pin,
+                phase="downstream_use",
+                status="released_after_downstream_effect",
+                released_at_ns=lifecycle_timestamps["worker_pin_released_at_ns"],
+            ))
+            state_access_authority.unpin(store=self.context.state_store, pin_id=runtime_pin.pin_id)
+            lifecycle_timestamps["runtime_pin_released_at_ns"] = time.time_ns()
+            pin_receipts.append(build_state_pin_receipt(
+                pin=runtime_pin,
+                phase="downstream_projection",
+                status="released_after_input_projection",
+                released_at_ns=lifecycle_timestamps["runtime_pin_released_at_ns"],
+            ))
+            self.context.state_pin_receipts[state_id] = tuple(pin_receipts)
             publish_count += 1
             transfer_count += int(response.consumer_pid != response.producer_pid)
             selected_count += len(response.selected_candidate_ids)
@@ -978,6 +1276,17 @@ class AdaptiveCapabilityDispatcher:
             return ()
         if self.context.memory_store is None:
             raise AdaptiveDispatchError("memory_store_required_for_grant_memory")
+        if self.context.runtime_identity is not None and (
+            grant.task_id != self.context.runtime_identity.runtime_task_id
+            or grant.session_id != self.context.runtime_identity.session_id
+        ):
+            raise AdaptiveDispatchError("grant_memory_runtime_identity_mismatch")
+        if grant.expires_at_ns and time.time_ns() >= grant.expires_at_ns:
+            raise AdaptiveDispatchError("grant_memory_expired")
+        if self.context.session_manager is not None and self.context.session_manager.active_attempt_id(
+            grant.session_id, step.step_id
+        ) != grant.attempt_id:
+            raise AdaptiveDispatchError("grant_memory_attempt_not_active")
         role_inputs: list[dict[str, object]] = []
         seen: set[str] = set()
         matches_by_id: dict[str, tuple[object, str, object]] = {}
@@ -1011,6 +1320,13 @@ class AdaptiveCapabilityDispatcher:
             if admitted is None:
                 raise AdaptiveDispatchError("grant_memory_admission_missing")
             commit, admission_receipt = admitted
+            if (
+                admission_receipt.memory_id != memory_id
+                or admission_receipt.memory_commit_hash != commit.commit_hash
+                or str(getattr(admission_receipt.decision, "value", admission_receipt.decision))
+                != "ADMITTED"
+            ):
+                raise AdaptiveDispatchError("grant_memory_admission_mismatch")
             mode = self.context.memory_selection_modes_by_step.get(step.step_id, {}).get(
                 memory_id,
                 match.replay_class,
@@ -1040,6 +1356,10 @@ class AdaptiveCapabilityDispatcher:
                 raise AdaptiveDispatchError("grant_memory_reuse_mode_invalid")
             recipe = commit.memory_ref.metadata.get("execution_recipe")
             recipe_payload = dict(recipe) if isinstance(recipe, dict) else {}
+            recipe_hash = str(commit.memory_ref.metadata.get("execution_recipe_hash", ""))
+            artifact_verification_receipt_hash = str(
+                commit.memory_ref.metadata.get("artifact_verification_receipt_hash", "")
+            )
             payload = {
                 "ref_id": memory_id,
                 "ref_kind": "memory",
@@ -1054,14 +1374,19 @@ class AdaptiveCapabilityDispatcher:
                     "artifact_ref_id": commit.memory_ref.artifact_ref_id,
                     "artifact_hash": commit.created_from_artifact_hash,
                     "manifest_hash": commit.memory_ref.manifest_hash,
+                    "artifact_root_id": str(commit.memory_ref.metadata.get("artifact_root_id", "")),
+                    "artifact_relpath": str(commit.memory_ref.metadata.get("artifact_relpath", "")),
                     "input_lineage_hashes": list(
                         commit.memory_ref.metadata.get("input_lineage_hashes", ())
                     ),
                 },
                 "execution_recipe": recipe_payload,
-                "execution_recipe_hash": str(
-                    commit.memory_ref.metadata.get("execution_recipe_hash", "")
-                ),
+                "execution_recipe_hash": recipe_hash,
+                "input_schema_digest": str(commit.memory_ref.metadata.get("input_schema_digest", "")),
+                "runtime_signature_hash": str(commit.memory_ref.metadata.get("runtime_signature_hash", "")),
+                "validator_digest": str(commit.memory_ref.metadata.get("validator_digest", "")),
+                "output_contract_version": str(commit.memory_ref.metadata.get("output_contract_version", "")),
+                "artifact_verification_receipt_hash": artifact_verification_receipt_hash,
                 "query_source_step_id": retrieval_step_id,
                 "consumer_role": step.role,
                 "consumer_step_id": step.step_id,
@@ -1071,7 +1396,30 @@ class AdaptiveCapabilityDispatcher:
                 "replay_eligibility_receipt_hash": (
                     "" if mode != ReplayClass.VALIDATED_REPLAY else eligibility.receipt_hash
                 ),
+                "query_hash": next(
+                    (
+                        query.query_hash
+                        for query in self.context.memory_queries_by_task.values()
+                        if query.query_task_id == grant.task_id
+                    ),
+                    "",
+                ),
             }
+            if mode == ReplayClass.VALIDATED_REPLAY:
+                if not recipe_payload or not recipe_hash:
+                    raise AdaptiveDispatchError("validated_replay_recipe_integrity_missing")
+                if sha256_digest(recipe_payload) != recipe_hash:
+                    raise AdaptiveDispatchError("validated_replay_recipe_checksum_mismatch")
+                if payload["input_schema_digest"] and self.context.input_schema_digest and payload["input_schema_digest"] != self.context.input_schema_digest:
+                    raise AdaptiveDispatchError("validated_replay_input_schema_mismatch")
+                if payload["runtime_signature_hash"] and self.context.runtime_compatibility_signature and payload["runtime_signature_hash"] != self.context.runtime_compatibility_signature:
+                    raise AdaptiveDispatchError("validated_replay_runtime_signature_mismatch")
+                if payload["validator_digest"] and self.context.validator_digest and payload["validator_digest"] != self.context.validator_digest:
+                    raise AdaptiveDispatchError("validated_replay_validator_digest_mismatch")
+                if payload["output_contract_version"] and payload["output_contract_version"] != grant.output_contract_version:
+                    raise AdaptiveDispatchError("validated_replay_output_contract_mismatch")
+            if not payload["query_hash"]:
+                raise AdaptiveDispatchError("grant_memory_query_binding_missing")
             payload["input_payload_hash"] = sha256_digest(payload)
             role_inputs.append(payload)
             seen.add(memory_id)
@@ -1102,6 +1450,9 @@ class AdaptiveCapabilityDispatcher:
                 continue
             if str(recipe.get("output_contract_version", "")) != output_contract_version:
                 continue
+            recipe_hash = str(memory_input.get("execution_recipe_hash", ""))
+            if not recipe_hash or sha256_digest(recipe) != recipe_hash:
+                raise AdaptiveDispatchError("validated_replay_recipe_checksum_mismatch")
             return dict(recipe), str(memory_input["ref_id"])
         return None, ""
 
@@ -1130,6 +1481,8 @@ class AdaptiveCapabilityDispatcher:
         downstream_ref_ids: tuple[str, ...],
         before_surface_hash: str,
         replay_memory_id: str = "",
+        consumed_memory_ids: tuple[str, ...] | None = None,
+        after_surface_hash: str = "",
     ) -> dict[str, float]:
         if not memory_inputs:
             return {
@@ -1141,11 +1494,37 @@ class AdaptiveCapabilityDispatcher:
                 "skipped_step_count": 0.0,
                 "skipped_llm_call_count": 0.0,
             }
-        after_surface_hash = sha256_digest({
-            "before_surface_hash": before_surface_hash,
-            "memory_input_hashes": [item["input_payload_hash"] for item in memory_inputs],
-            "downstream_ref_ids": list(downstream_ref_ids),
-        })
+        if consumed_memory_ids is None:
+            consumed_memory_ids = self.context.memory_read_observations_by_step.get(
+                step.step_id, ()
+            )
+        consumed_memory_ids = tuple(dict.fromkeys(str(item) for item in consumed_memory_ids))
+        input_ids = {str(item.get("ref_id", "")) for item in memory_inputs}
+        if not set(consumed_memory_ids).issubset(input_ids):
+            raise AdaptiveDispatchError("memory_read_observation_scope_mismatch")
+        approved_unused_ids = tuple(sorted(input_ids.difference(consumed_memory_ids)))
+        self.context.memory_approved_unused_by_step[step.step_id] = approved_unused_ids
+        if not consumed_memory_ids:
+            return {
+                "memory_consumed_count": 0.0,
+                "memory_actual_use_count": 0.0,
+                "memory_approved_but_unused_count": float(len(approved_unused_ids)),
+                "memory_behavioral_effect_count": 0.0,
+                "memory_assist_count": 0.0,
+                "validated_replay_count": 0.0,
+                "exact_replay_count": 0.0,
+                "skipped_step_count": 0.0,
+                "skipped_llm_call_count": 0.0,
+            }
+        if self.context.session_manager is not None:
+            for memory_input in memory_inputs:
+                memory_id = str(memory_input.get("ref_id", ""))
+                if memory_id not in consumed_memory_ids:
+                    continue
+                if self.context.session_manager.active_attempt_id(
+                    grant.session_id, step.step_id
+                ) != grant.attempt_id:
+                    raise AdaptiveDispatchError("stale_attempt_during_memory_read")
         consumed_ids = {
             record.memory_id
             for record in self.context.memory_consumption_records
@@ -1153,27 +1532,53 @@ class AdaptiveCapabilityDispatcher:
         }
         for memory_input in memory_inputs:
             memory_id = str(memory_input["ref_id"])
+            if memory_id not in consumed_memory_ids:
+                continue
             if memory_id in consumed_ids:
                 continue
+            record_after_surface_hash = self.context.memory_after_surface_hash_by_memory_id.get(
+                memory_id,
+                after_surface_hash,
+            )
+            if not record_after_surface_hash:
+                record_after_surface_hash = sha256_digest({
+                    "before_surface_hash": before_surface_hash,
+                    "memory_input_hashes": [
+                        item["input_payload_hash"]
+                        for item in memory_inputs
+                        if str(item.get("ref_id", "")) in consumed_memory_ids
+                    ],
+                    "downstream_ref_ids": list(downstream_ref_ids),
+                })
             replay_class = ReplayClass(str(memory_input["replay_class"]))
             recipe_recomputed = memory_id == replay_memory_id
             behavioral_effect = (
-                "recipe_reused_current_input_recomputed"
-                if recipe_recomputed
-                else "role_input_augmented"
+                "no_effect" if record_after_surface_hash == before_surface_hash else "changed"
             )
+            consumer_runtime_task_id = (
+                self.context.runtime_identity.runtime_task_id
+                if self.context.runtime_identity is not None
+                else grant.task_id
+            )
+            consumer_run_id = (
+                self.context.runtime_identity.run_id
+                if self.context.runtime_identity is not None
+                else ""
+            )
+            query_hash = str(memory_input.get("query_hash", ""))
+            occurrence_identity = sha256_digest({
+                "consumer_runtime_task_id": consumer_runtime_task_id,
+                "consumer_run_id": consumer_run_id,
+                "consumer_session_id": grant.session_id,
+                "consumer_step_id": step.step_id,
+                "consumer_attempt_id": grant.attempt_id,
+                "memory_id": memory_id,
+                "query_hash": query_hash,
+                "input_payload_hash": str(memory_input.get("input_payload_hash", "")),
+            })
             record = MemoryConsumptionRecord(
-                consumption_id=(
-                    f"memory-consumption:{step.step_id}:{memory_id}:"
-                    f"{len(self.context.memory_consumption_records) + 1}"
-                ),
-                query_hash=next(
-                    (
-                        query.query_hash
-                        for query in self.context.memory_queries_by_task.values()
-                    ),
-                    "",
-                ),
+                consumption_id=f"memory-consumption:{occurrence_identity}",
+                query_hash=query_hash,
                 memory_id=memory_id,
                 consumer_role=step.role,
                 consumer_step_id=step.step_id,
@@ -1184,23 +1589,18 @@ class AdaptiveCapabilityDispatcher:
                 ),
                 input_payload_hash=str(memory_input["input_payload_hash"]),
                 before_decision_surface_hash=before_surface_hash,
-                after_decision_surface_hash=after_surface_hash,
+                after_decision_surface_hash=record_after_surface_hash,
                 behavioral_effect=behavioral_effect,
                 downstream_ref_ids=downstream_ref_ids,
-                skipped_generation_step_count=int(recipe_recomputed),
-                skipped_llm_call_count=int(recipe_recomputed),
+                # Recomputing a recipe is a diagnostic fact only.  G5-A has
+                # no Runtime-owned skip receipt or matched baseline, so it
+                # must not be projected as skipped work or replay evidence.
+                skipped_generation_step_count=0,
+                skipped_llm_call_count=0,
                 recipe_recomputed=recipe_recomputed,
                 consumed_at_ns=time.time_ns(),
-                consumer_runtime_task_id=(
-                    self.context.runtime_identity.runtime_task_id
-                    if self.context.runtime_identity is not None
-                    else grant.task_id
-                ),
-                consumer_run_id=(
-                    self.context.runtime_identity.run_id
-                    if self.context.runtime_identity is not None
-                    else ""
-                ),
+                consumer_runtime_task_id=consumer_runtime_task_id,
+                consumer_run_id=consumer_run_id,
                 consumer_session_id=grant.session_id,
                 consumer_attempt_id=grant.attempt_id,
                 capability_grant_hash=grant.grant_hash,
@@ -1220,25 +1620,24 @@ class AdaptiveCapabilityDispatcher:
         ]
         return {
             "memory_consumed_count": float(len(task_records)),
+            "memory_actual_use_count": float(
+                sum(
+                    bool(record.attempt_result_admission_receipt_hash)
+                    for record in task_records
+                )
+            ),
+            "memory_approved_but_unused_count": float(len(approved_unused_ids)),
             "memory_behavioral_effect_count": float(
-                sum(record.behavioral_effect != "unchanged" for record in task_records)
+                sum(record.behavioral_effect == "changed" for record in task_records)
             ),
             "memory_assist_count": float(
                 sum(record.replay_class == ReplayClass.ASSIST for record in task_records)
             ),
             "validated_replay_count": float(
-                sum(
-                    record.replay_class == ReplayClass.VALIDATED_REPLAY
-                    and record.recipe_recomputed
-                    for record in task_records
-                )
+                0
             ),
             "exact_replay_count": float(
-                sum(
-                    record.replay_class == ReplayClass.EXACT_REPLAY
-                    and record.recipe_recomputed
-                    for record in task_records
-                )
+                0
             ),
             "skipped_step_count": float(
                 sum(record.skipped_generation_step_count for record in task_records)
@@ -1247,6 +1646,98 @@ class AdaptiveCapabilityDispatcher:
                 sum(record.skipped_llm_call_count for record in task_records)
             ),
         }
+
+    def _observe_memory_read(
+        self,
+        memory_input: dict[str, object],
+        *,
+        grant: CapabilityGrant,
+        step: PlanStepProposal,
+    ) -> None:
+        """Perform and record the bounded, verified Memory-side read.
+
+        This is intentionally Runtime-owned.  Metadata/descriptor creation is
+        not a read; a consumption observation verifies the persisted recipe and
+        artifact bytes (when an artifact path is available) before recording
+        the downstream handoff.
+        """
+        if str(memory_input.get("grant_hash", "")) != grant.grant_hash:
+            raise AdaptiveDispatchError("memory_read_grant_mismatch")
+        if str(memory_input.get("consumer_step_id", "")) != step.step_id:
+            raise AdaptiveDispatchError("memory_read_step_mismatch")
+        if self.context.memory_store is not None:
+            admitted = self.context.memory_store.get_admitted(str(memory_input.get("ref_id", "")))
+            if admitted is None:
+                raise AdaptiveDispatchError("memory_read_invalidation_or_admission_missing")
+            commit, admission_receipt = admitted
+            if (
+                commit.commit_hash != str(memory_input.get("memory_commit_hash", ""))
+                or admission_receipt.receipt_hash != str(memory_input.get("memory_admission_receipt_hash", ""))
+            ):
+                raise AdaptiveDispatchError("memory_read_admission_changed_before_read")
+        recipe = memory_input.get("execution_recipe")
+        recipe_hash = str(memory_input.get("execution_recipe_hash", ""))
+        if str(memory_input.get("replay_class", "")) == ReplayClass.VALIDATED_REPLAY.value and (
+            not isinstance(recipe, dict) or not recipe_hash
+        ):
+            raise AdaptiveDispatchError("memory_read_recipe_integrity_missing")
+        if recipe_hash and isinstance(recipe, dict) and sha256_digest(recipe) != recipe_hash:
+            raise AdaptiveDispatchError("memory_read_recipe_checksum_mismatch")
+        expected_recipe_hash = str(memory_input.get("replay_eligibility_receipt_hash", ""))
+        if expected_recipe_hash:
+            eligibility = next(
+                (
+                    receipt
+                    for receipt in self.context.replay_eligibility_receipts_by_step.get(step.step_id, ())
+                    if receipt.memory_id == str(memory_input.get("ref_id", ""))
+                ),
+                None,
+            )
+            if eligibility is None or eligibility.receipt_hash != expected_recipe_hash:
+                raise AdaptiveDispatchError("memory_read_eligibility_receipt_mismatch")
+        lineage = memory_input.get("artifact_lineage")
+        artifact_read = "not_applicable"
+        artifact_hash = ""
+        artifact_ref_id = ""
+        if isinstance(lineage, dict):
+            artifact_ref_id = str(lineage.get("artifact_ref_id", ""))
+            root_id = str(lineage.get("artifact_root_id", ""))
+            relpath = str(lineage.get("artifact_relpath", ""))
+            expected_hash = str(lineage.get("artifact_hash", ""))
+            if root_id and relpath:
+                artifact_path = Path(root_id) / relpath
+                if not artifact_path.is_file():
+                    raise AdaptiveDispatchError("memory_read_artifact_missing")
+                artifact_bytes = artifact_path.read_bytes()
+                artifact_hash = sha256_digest(artifact_bytes)
+                if expected_hash and artifact_hash != expected_hash:
+                    raise AdaptiveDispatchError("memory_read_artifact_checksum_mismatch")
+                artifact_read = "observed"
+            expected_manifest_hash = str(lineage.get("manifest_hash", ""))
+            if expected_manifest_hash and str(memory_input.get("artifact_verification_receipt_hash", "")):
+                if self.context.memory_store is not None:
+                    admitted = self.context.memory_store.get_admitted(str(memory_input.get("ref_id", "")))
+                    if admitted is not None:
+                        _commit, admission_receipt = admitted
+                        if admission_receipt.artifact_verification_receipt_hash != str(memory_input.get("artifact_verification_receipt_hash", "")):
+                            raise AdaptiveDispatchError("memory_read_artifact_verification_receipt_mismatch")
+        self.context.memory_read_evidence_by_id[str(memory_input["ref_id"])] = {
+            "status": "observed",
+            "memory_id": str(memory_input["ref_id"]),
+            "step_id": step.step_id,
+            "attempt_id": grant.attempt_id,
+            "grant_hash": grant.grant_hash,
+            "artifact_read": artifact_read,
+            "artifact_ref_id": artifact_ref_id,
+            "artifact_hash": artifact_hash,
+            "recipe_hash": recipe_hash,
+            "artifact_verification_receipt_hash": str(memory_input.get("artifact_verification_receipt_hash", "")),
+            "manifest_hash": str(lineage.get("manifest_hash", "")) if isinstance(lineage, dict) else "",
+            "read_at_ns": time.time_ns(),
+        }
+        prior = self.context.memory_read_observations_by_step.get(step.step_id, ())
+        if str(memory_input["ref_id"]) not in prior:
+            self.context.memory_read_observations_by_step[step.step_id] = (*prior, str(memory_input["ref_id"]))
 
     def _dispatch_transform_dsl(
         self,
@@ -1270,14 +1761,17 @@ class AdaptiveCapabilityDispatcher:
             "input_ref_id": input_ref_id,
             "input_hashes": list(input_hashes),
         })
-        if candidate_program is None and self.context.transform_program_factory is None:
-            raise AdaptiveDispatchError("transform_program_handler_not_registered")
         replay_recipe, replay_memory_id = self._validated_recipe(
             memory_inputs,
             execution_kind=ExecutionKind.TRANSFORM_DSL.value,
             capability_id=step.capability_id,
             output_contract_version=grant.output_contract_version,
         )
+        if replay_recipe is not None and replay_memory_id:
+            replay_input = next(
+                item for item in memory_inputs if str(item.get("ref_id", "")) == replay_memory_id
+            )
+            self._observe_memory_read(replay_input, grant=grant, step=step)
         if candidate_program is not None:
             program = candidate_program
             if tuple(program.input_artifact_refs) not in {
@@ -1302,6 +1796,8 @@ class AdaptiveCapabilityDispatcher:
                 operations=operations,
                 output_contract_version=grant.output_contract_version,
             )
+        elif self.context.transform_program_factory is None:
+            raise AdaptiveDispatchError("transform_program_handler_not_registered")
         elif self._factory_accepts_memory_inputs(self.context.transform_program_factory):
             program = self.context.transform_program_factory(
                 step,
@@ -1417,6 +1913,11 @@ class AdaptiveCapabilityDispatcher:
             downstream_ref_ids=(artifact.artifact_id,),
             before_surface_hash=before_memory_surface_hash,
             replay_memory_id=(replay_memory_id if dsl_repair_count == 0 else ""),
+            consumed_memory_ids=(
+                (replay_memory_id,)
+                if replay_memory_id and dsl_repair_count == 0
+                else ()
+            ),
         )
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
@@ -1455,6 +1956,8 @@ class AdaptiveCapabilityDispatcher:
         step: PlanStepProposal,
         grant: CapabilityGrant,
         attempt_workspace: Path,
+        *,
+        source_override: str | None = None,
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
@@ -1508,6 +2011,11 @@ class AdaptiveCapabilityDispatcher:
             capability_id=step.capability_id,
             output_contract_version=grant.output_contract_version,
         )
+        if replay_recipe is not None and replay_memory_id:
+            replay_input = next(
+                item for item in memory_inputs if str(item.get("ref_id", "")) == replay_memory_id
+            )
+            self._observe_memory_read(replay_input, grant=grant, step=step)
         validator_id = self._business_validator_id(step.capability_id)
         policy = self.context.code_policy_factory(step)
         if not policy.enabled or not policy.require_bwrap:
@@ -1584,7 +2092,9 @@ class AdaptiveCapabilityDispatcher:
                 rendered_prompt=prompt,
             ),
         )
-        if replay_recipe is not None:
+        if source_override is not None:
+            source = source_override
+        elif replay_recipe is not None:
             source = str(replay_recipe.get("source", ""))
             if not source.strip():
                 raise AdaptiveDispatchError("validated_replay_python_source_missing")
@@ -1664,6 +2174,11 @@ class AdaptiveCapabilityDispatcher:
             downstream_ref_ids=(artifact.artifact_id,),
             before_surface_hash=before_memory_surface_hash,
             replay_memory_id=(replay_memory_id if not outcome.repairs else ""),
+            consumed_memory_ids=(
+                (replay_memory_id,)
+                if replay_memory_id and not outcome.repairs
+                else ()
+            ),
         )
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,

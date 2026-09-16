@@ -2,10 +2,10 @@ from pathlib import Path
 import pytest
 
 from statebus.benchmark.contest_fairness import build_c2a_pilot_records, audit_oracle_visibility
-from statebus.benchmark.minimal_runner import run_c2a_pilot, _c2a_envelope, _c2a_identity, _c2a_task_spec
+from statebus.benchmark.minimal_runner import run_c2a_pilot, run_c2b_formal_suite, _c2a_envelope, _c2a_identity, _c2a_task_spec
 from statebus.benchmark.external_text_baseline import run_pure_text_mas, run_direct_single_agent
 from statebus.benchmark.metric_aggregation import project_metric_availability
-from statebus.benchmark.task_registry import c2a_pilot_samples
+from statebus.benchmark.task_registry import c2a_pilot_samples, load_c2b_positive_samples, c2b_control_specs
 from statebus.contracts import AdaptiveTaskEnvelope, CanonicalTaskSpec, PlanProposal, PlanStepProposal, RuntimeIdentity, TaskContractIdentity, WorkflowMode
 from statebus.runtime.adaptive_mainline import AdaptiveMainlineBindings, AdaptiveMainlineError, AdaptiveMainlineRequest
 from statebus.runtime.capability_registry import CapabilityRegistry
@@ -66,7 +66,10 @@ def test_oracle_and_metric_availability() -> None:
 def test_c2a_pilot_has_real_four_role_and_denominator_closure(tmp_path: Path) -> None:
     report = run_c2a_pilot(root=tmp_path)
     assert len(report["terminal_records"]) == 32
-    assert report["pilot_eligible"] is True
+    # A pilot without persisted targeted-test and compile evidence is not
+    # acceptance-eligible, even when all 32 execution rows are terminal.
+    assert report["pilot_eligible"] is False
+    assert report["c2a_eligibility"]["pilot_eligible"] is False
     assert report["failure_denominator"] == {
         "attempted_count": 32,
         "success_count": 20,
@@ -90,6 +93,20 @@ def test_c2a_pilot_has_real_four_role_and_denominator_closure(tmp_path: Path) ->
             assert len(manifest["trace"]["calls"]) == 4
         if manifest["lane"] == "direct_single_agent" and not manifest["case_id"].startswith("control_"):
             assert len(manifest["trace"]["calls"]) == 1
+
+
+def test_c2b_registry_and_formal_matrix_close_pair_denominators(tmp_path: Path) -> None:
+    assert len(load_c2b_positive_samples()) == 48
+    assert len(c2b_control_specs()) == 12
+    report = run_c2b_formal_suite(root=tmp_path / "c2b")
+    assert report["positive_rows"] == 576
+    assert report["control_rows"] == 48
+    assert report["holdout_rows"] == 96
+    assert len(report["rows"]) == 720
+    assert report["benchmark_superiority"] == "NOT_ESTABLISHED"
+    assert report["live_vllm_gpu_validation"] == "NOT_RUN"
+    assert (tmp_path / "c2b" / "pair_repeat_seed_index.json").is_file()
+    assert (tmp_path / "c2b" / "failed_rows.json").is_file()
 
 
 def test_canonical_adaptive_rejects_three_role_proposal(tmp_path: Path) -> None:

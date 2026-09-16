@@ -15,6 +15,10 @@ from statebus.benchmark.contest_fairness import (
     build_five_case_fairness_smoke,
     build_continuous_fairness_manifest,
     capture_source_identity,
+    persist_test_evidence,
+    validate_compile_evidence_projection,
+    validate_test_evidence_projection,
+    run_g6a2_correctness_fixture,
     validate_benchmark_manifest,
     validate_root_isolation,
 )
@@ -25,6 +29,7 @@ from statebus.benchmark.contest_evidence_closure import (
     _stage_command,
 )
 from statebus.benchmark.comparator_runner import canonical_aggregate_records
+from statebus.benchmark.continuous_runner import run_g5b_actual_use_acceptance_pilot
 from statebus.benchmark.models import (
     BenchmarkCaseReport,
     BenchmarkFamilyReport,
@@ -95,6 +100,106 @@ def test_fairness_manifest_accepts_only_declared_lane_differences() -> None:
     lanes = manifest["cases"]["fairness-task"]
     for field in manifest["invariant_fields"]:
         assert len({lane[field] for lane in lanes.values()}) == 1
+
+
+def test_g5b_actual_use_acceptance_pilot_is_ordered_and_fail_closed(tmp_path: Path) -> None:
+    root = run_g5b_actual_use_acceptance_pilot(root=tmp_path / "g5b")
+    acceptance = json.loads((root / "g5b_acceptance.json").read_text(encoding="utf-8"))
+    assert acceptance["status"] == "G5B_R4_REMEDIATION_COMPLETE_PENDING_ASTRA_REAUDIT"
+    assert all(item["status"] == "PASS" for item in acceptance["gates"].values())
+    assert acceptance["gate_values"]["G5-B2 ordered multi-round lifecycle"] is True
+    assert acceptance["gate_values"]["G5-B8 negative rows and fail-closed behavior"] is True
+    assert all(
+        item["load_bearing_artifact"] and "recomputed_counts" in item and "failure_ids" in item
+        for item in acceptance["gates"].values()
+    )
+    terminal = json.loads((root / "terminal_rows.json").read_text(encoding="utf-8"))["rows"]
+    actual = [item for item in terminal if item.get("memory_actual_use")]
+    assert len(terminal) == 72
+    assert actual and {item["behavioral_effect"] for item in actual} == {"changed", "no_effect"}
+    assert all(item["source_round"] < item["consumer_round"] for item in actual)
+    assert len({item["attempt_id"] for item in terminal if item["row_scope"] == "attempt"}) == 60
+    join_projection = json.loads((root / "receipt_join_projection.json").read_text(encoding="utf-8"))
+    joins = join_projection["rows"]
+    assert len({item["join_identity"] for item in joins}) == len(joins)
+    observed_consumptions = [item["memory_consumption_id"] for item in joins if item.get("memory_consumption_id") not in {None, "", "not_applicable"}]
+    assert len(set(observed_consumptions)) == len(observed_consumptions)
+    required_join_dims = {
+        "family_id", "repeat_id", "session_id", "source_round", "consumer_round",
+        "cache_epoch", "memory_id", "memory_consumption_id", "memory_consumption_identity",
+        "attempt_id", "capability_grant_hash", "memory_admission_receipt_hash",
+        "execution_binding_hash", "attempt_result_admission_receipt_hash", "join_identity",
+    }
+    assert all(required_join_dims <= set(item) for item in joins)
+    assert len(join_projection["control_rows"]) == 12
+    denominator = json.loads((root / "failure_denominator.json").read_text(encoding="utf-8"))
+    assert denominator["arithmetic_closed"] is True
+    assert denominator["attempted_count"] == len(set(denominator["row_ids"]))
+    metrics = json.loads((root / "metric_availability.json").read_text(encoding="utf-8"))["metrics"]
+    assert metrics["provider_work_avoided"]["status"] == "unsupported"
+    assert metrics["verified_recipe_work_avoided"]["status"] == "unsupported"
+    oracle = json.loads((root / "future_round_isolation.json").read_text(encoding="utf-8"))["rows"]
+    assert all(item["ok"] and not item["future_round_entry_ids_indexed"] for item in oracle)
+    assert all(item["recursive_audit"]["audited_surfaces"] for item in oracle)
+    assert all(
+        item["expected_future_marker_set_hash"]
+        == item["recursive_audit"]["expected_marker_set_hash"]
+        and all(
+            surface["future_marker_checks"]["expected_marker_set_hash"]
+            == item["expected_future_marker_set_hash"]
+            for surface in item["recursive_audit"]["audited_surfaces"]
+        )
+        for item in oracle
+    )
+    transition_projection = json.loads((root / "round_transition.json").read_text(encoding="utf-8"))
+    transitions = transition_projection["rows"]
+    assert len(transitions) == 72
+    assert len(transition_projection["main_rows"]) == 60
+    assert len(transition_projection["control_rows"]) == 12
+    control_transitions = transition_projection["control_rows"]
+    assert all(
+        item["row_scope"] == "control_fixture"
+        and item["terminal_status"]
+        and "failure_stage" in item
+        and "error_code" in item
+        and item["control_identity"]
+        and item["transition_evidence"]["status"] == "not_applicable"
+        and item["transition_evidence"]["reason"] == "control_fixture_has_no_runtime_execution"
+        and item["denominator_linkage"]["status"] == "observed"
+        and item["next_round_start"]["status"] == "not_applicable"
+        for item in control_transitions
+    )
+    assert all(
+        item["memory_actual_use"] is False
+        and item["denominator_linkage"]["status"] == "observed"
+        and all(
+            value["status"] == "not_applicable"
+            and value["reason"] == "control_fixture_has_no_runtime_execution"
+            for value in item["lifecycle_evidence"].values()
+        )
+        for item in terminal
+        if item["row_scope"] == "control_fixture"
+    )
+    assert all(
+        "lifecycle_evidence" in item
+        and all(item["lifecycle_evidence"][name]["status"] in {"observed", "not_applicable", "failed"} for name in ("state_cleanup", "memory_cleanup", "root_cleanup", "socket_cleanup"))
+        and "transition_timestamp_ns" not in item
+        and "cleanup_observed_at_ns" not in item
+        and item["lifecycle_evidence"]["terminal_settlement"]["status"] == "observed"
+        and item["lifecycle_evidence"]["terminal_settlement"]["source_event_id"]
+        and item["lifecycle_evidence"]["terminal_settlement"]["attempt_completed_at_ns_used_as_settlement"] is False
+        and item["lifecycle_evidence"]["runtime_event_order"]["terminal_settlement_at_ns"] >= item["lifecycle_evidence"]["runtime_event_order"]["memory_commit_at_ns"]
+        and item["lifecycle_evidence"]["runtime_event_order"]["terminal_settlement_at_ns"] >= item["lifecycle_evidence"]["runtime_event_order"]["downstream_completed_at_ns"]
+        and item["terminal_settlement_source"]["settlement_identity"]
+        and item["transition_identity"]
+        for item in transition_projection["main_rows"]
+    )
+    assert sum(item["next_round_start"]["status"] == "not_applicable" for item in transition_projection["main_rows"]) == 6
+    assert all(
+        item["next_round_start"]["status"] == "not_applicable"
+        or item["next_round_start"]["first_attempt_dispatched_at_ns"] >= item["lifecycle_evidence"]["runtime_event_order"]["terminal_settlement_at_ns"]
+        for item in transition_projection["main_rows"]
+    )
 
 
 def test_c0_manifest_captures_source_and_validates_required_contract() -> None:
@@ -226,6 +331,121 @@ def test_c1_root_isolation_rejects_shared_mutable_roots() -> None:
     result = validate_root_isolation(manifests)
     assert result["ok"] is False
     assert "runtime_root" in result["collisions"]
+
+
+def test_test_evidence_persists_independent_invocations_and_rejects_group_conflict(
+    tmp_path: Path,
+) -> None:
+    first = persist_test_evidence(
+        root=tmp_path,
+        group="c1-c1b-regression",
+        invocation_id="first",
+        command=["python", "-m", "pytest", "tests/test_memory_runtime.py"],
+        cwd=tmp_path,
+        return_code=0,
+        stdout="..\n2 passed in 0.10s\n",
+        stderr="",
+        test_nodes=["tests/test_memory_runtime.py::test_one", "tests/test_memory_runtime.py::test_two"],
+    )
+    assert validate_test_evidence_projection(first)["valid"] is True
+
+    second = persist_test_evidence(
+        root=tmp_path,
+        group="c1-c1b-regression",
+        invocation_id="second",
+        command=["python", "-m", "pytest", "tests/test_memory_runtime.py"],
+        cwd=tmp_path,
+        return_code=124,
+        stdout="FFFFFFF\n",
+        stderr="",
+        counts={"collected": 7, "failed": 7},
+        test_nodes=[f"tests/test_memory_runtime.py::test_{i}" for i in range(7)],
+        timeout=True,
+        timeout_reason="command_timeout",
+    )
+    assert first["projection_path"] != second["projection_path"]
+    assert Path(str(first["raw_stdout_path"])).read_text(encoding="utf-8") == "..\n2 passed in 0.10s\n"
+    assert validate_test_evidence_projection(first)["valid"] is False
+    second_validation = validate_test_evidence_projection(second)
+    assert second_validation["valid"] is False
+    assert "timeout" in second_validation["failed_checks"]
+    index = json.loads(Path(str(second["index_path"])).read_text(encoding="utf-8"))
+    assert index["conflict"] is True
+    assert len(index["invocations"]) == 2
+
+
+def test_test_evidence_requires_complete_nodes_and_pytest_summary(tmp_path: Path) -> None:
+    projection = persist_test_evidence(
+        root=tmp_path,
+        group="targeted",
+        invocation_id="missing-nodes",
+        command=["python", "-m", "pytest"],
+        cwd=tmp_path,
+        return_code=0,
+        stdout="2 passed in 0.10s\n",
+        stderr="",
+        test_nodes=[],
+    )
+    result = validate_test_evidence_projection(projection)
+    assert result["valid"] is False
+    assert "test_nodes_present" in result["failed_checks"]
+
+    projection["raw_stdout_path"] = str(tmp_path / "missing.txt")
+    result = validate_test_evidence_projection(projection)
+    assert "raw_stdout_path" in result["failed_checks"]
+
+
+def test_test_evidence_rejects_summary_count_mismatch(tmp_path: Path) -> None:
+    projection = persist_test_evidence(
+        root=tmp_path,
+        group="targeted",
+        invocation_id="summary-mismatch",
+        command=["python", "-m", "pytest"],
+        cwd=tmp_path,
+        return_code=0,
+        stdout="2 passed in 0.10s\n",
+        stderr="",
+        counts={"collected": 2, "passed": 1, "failed": 1},
+        test_nodes=["tests/test_one.py::test_one", "tests/test_two.py::test_two"],
+    )
+    result = validate_test_evidence_projection(projection)
+    assert result["valid"] is False
+    assert "summary_count:passed" in result["failed_checks"]
+
+
+def test_compile_evidence_validator_rejects_timeout_and_missing_output(tmp_path: Path) -> None:
+    projection = {
+        "schema_version": "statebus.c2a.pycompile.v1",
+        "command": ["python", "-m", "py_compile", "module.py"],
+        "cwd": str(tmp_path),
+        "current_checkout": True,
+        "return_code": 124,
+        "compile_result": "PASS",
+        "module_file_list": ["module.py"],
+        "raw_stdout_path": str(tmp_path / "stdout.txt"),
+        "raw_stderr_path": str(tmp_path / "stderr.txt"),
+        "timeout": True,
+    }
+    assert validate_compile_evidence_projection(projection)["valid"] is False
+
+
+def test_g6a2_remediation_fixture_closes_identity_collision_lifecycle_and_metrics(tmp_path: Path) -> None:
+    result = run_g6a2_correctness_fixture(root=tmp_path / "g6a2-remediation")
+    assert result["overall_pass"] is True
+    assert all(result["remediation_gates"].values())
+    collision = json.loads((tmp_path / "g6a2-remediation" / "rows" / "control_g6a2_isolation_collision" / "isolation_audit.json").read_text())
+    assert collision["ok"] is False
+    assert collision["collision_detected"] is True
+    assert collision["foreign_residue_unlinked"] is False
+    lifecycle = json.loads((tmp_path / "g6a2-remediation" / "rows" / "control_g6a2_lifecycle_success" / "state_release_reclaim.json").read_text())
+    assert lifecycle["reclaim_attempt_while_live_pin"]["blocked"] is True
+    assert lifecycle["reclaim_attempt_while_live_pin"]["physical_reclaimed_before_unpin"] is False
+    assert lifecycle["release_count"] == lifecycle["reclaim_count"] == 1
+    assert lifecycle["stale_handle_readable"] is False
+    for row in (tmp_path / "g6a2-remediation" / "rows").iterdir():
+        envelope = json.loads((row / "manifest.json").read_text())["identity_envelope"]
+        assert envelope["task_id"] and envelope["session_id"]
+        assert "identity_status_by_field" in envelope
 
 
 def test_fairness_manifest_rejects_unexpected_extra_feature_difference() -> None:

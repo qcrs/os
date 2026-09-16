@@ -32,6 +32,8 @@ import sys
 import time
 from dataclasses import replace
 
+import numpy as np
+
 from statebus.control.messages import (
     AckReceived,
     ErrorResult,
@@ -55,14 +57,17 @@ from statebus.contracts import (
     StateAccessGrant,
 )
 from statebus.state import (
+    DenseSemanticSelection,
     LogitStateValidationError,
     SemanticStateValidationError,
     evaluate_logit_state,
+    load_hydrate_manifest,
     logit_ref_from_sidecar,
     resolve_logit_state,
     select_dense_semantic_state,
     semantic_ref_from_sidecar,
 )
+from statebus.utils import sha256_digest
 
 
 def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
@@ -77,6 +82,8 @@ def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
         if parsed is None:
             continue
         fd, length, state_id = parsed
+        if fd < 0 or length < 0:
+            raise ValueError("memfd_descriptor_invalid")
         try:
             os.lseek(fd, 0, os.SEEK_SET)
             data = os.read(fd, length)
@@ -85,9 +92,93 @@ def _read_memfd_refs(state_refs: tuple[RefHandle, ...]) -> dict[str, bytes]:
                 f"subprocess_worker: failed to read memfd fd={fd} state_id={state_id}: {exc}",
                 file=sys.stderr,
             )
-            continue
+            raise RuntimeError("memfd_read_failed") from exc
+        if len(data) != length:
+            raise RuntimeError("memfd_payload_truncated")
         result[state_id] = data
     return result
+
+
+def _select_memfd_semantic_state(
+    *,
+    state_root: Path,
+    ref_handle: RefHandle,
+    payload: bytes,
+    manifest_id: str,
+    top_k: int,
+    evidence_budget_bytes: int,
+    expected_encoder_signature: str,
+) -> DenseSemanticSelection:
+    """Validate and select a semantic matrix carried by an inherited memfd.
+
+    ``resolve_dense_semantic_state`` intentionally resolves filesystem-backed
+    SHM/mmap materializations.  A memfd has no sidecar path to open, so the
+    worker validates the same sidecar contract against the bytes read from the
+    inherited descriptor before applying the canonical selection rule.
+    """
+    parsed = decode_memfd_ref(ref_handle)
+    if parsed is None:
+        raise SemanticStateValidationError("memfd_semantic_ref_missing")
+    _fd, declared_length, logical_state_id = parsed
+    ref = semantic_ref_from_sidecar(state_root, logical_state_id)
+    metadata = ref.metadata
+    if ref_handle.ref_kind != "semantic_state":
+        raise SemanticStateValidationError("semantic_ref_kind_invalid")
+    if declared_length != ref.length or len(payload) != ref.length:
+        raise SemanticStateValidationError("dense_state_size_shape_mismatch")
+    if sha256_digest(payload) != ref.blob_hash:
+        raise SemanticStateValidationError("dense_state_blob_hash_mismatch")
+    if expected_encoder_signature and metadata.get("encoder_signature") != expected_encoder_signature:
+        raise SemanticStateValidationError("dense_state_encoder_signature_mismatch")
+    if int(metadata.get("lease_expires_at_ns", 0)) <= time.time_ns():
+        raise SemanticStateValidationError("dense_state_expired")
+    shape = tuple(int(value) for value in metadata.get("shape", ()))
+    if len(shape) != 2 or shape[0] < 2 or shape[1] <= 0 or shape[0] * shape[1] * 4 != len(payload):
+        raise SemanticStateValidationError("dense_state_size_shape_mismatch")
+    if metadata.get("dtype") != "float32" or metadata.get("byte_order") != "little":
+        raise SemanticStateValidationError("dense_state_dtype_or_byte_order_mismatch")
+    matrix = np.frombuffer(payload, dtype="<f4").reshape(shape)
+    if not np.isfinite(matrix).all():
+        raise SemanticStateValidationError("dense_state_non_finite")
+    if bool(metadata.get("normalized", False)):
+        norms = np.linalg.norm(matrix, axis=1)
+        if np.any(np.abs(norms - 1.0) > 1e-4):
+            raise SemanticStateValidationError("dense_state_not_normalized")
+    manifest = load_hydrate_manifest(state_root, manifest_id)
+    if manifest.manifest_hash != str(metadata.get("hydrate_manifest_hash", "")):
+        raise SemanticStateValidationError("hydrate_manifest_hash_mismatch")
+    if len(manifest.entries) != shape[0] - 1:
+        raise SemanticStateValidationError("hydrate_manifest_matrix_row_mismatch")
+    entries_by_row = {entry.row_idx: entry for entry in manifest.entries}
+    if set(entries_by_row) != set(range(1, shape[0])):
+        raise SemanticStateValidationError("hydrate_manifest_row_index_mismatch")
+    scores = matrix[1:] @ matrix[0]
+    ranked = sorted(
+        ((float(scores[row_idx - 1]), row_idx, entries_by_row[row_idx]) for row_idx in range(1, shape[0])),
+        key=lambda item: (-item[0], item[2].candidate_id),
+    )
+    selected: list[tuple[float, int, object]] = []
+    used_bytes = 0
+    for score, row_idx, entry in ranked:
+        if len(selected) >= top_k:
+            break
+        protected = entry.bucket in {"hard_fact", "structured_evidence"}
+        if evidence_budget_bytes > 0 and not protected and used_bytes + entry.byte_hint > evidence_budget_bytes:
+            continue
+        selected.append((score, row_idx, entry))
+        used_bytes += max(entry.byte_hint, 0)
+    if not selected:
+        raise SemanticStateValidationError("semantic_selection_empty")
+    return DenseSemanticSelection(
+        state_id=logical_state_id,
+        selected_candidate_ids=tuple(item[2].candidate_id for item in selected),
+        selected_scores=tuple(round(item[0], 6) for item in selected),
+        selected_row_indices=tuple(item[1] for item in selected),
+        selected_evidence_bytes=used_bytes,
+        consumer_pid=os.getpid(),
+        producer_pid=int(metadata.get("producer_pid", 0)),
+        encoder_signature=str(metadata.get("encoder_signature", "")),
+    )
 
 
 def run(socket_path: str, *, carrier: str = "protobuf") -> int:
@@ -219,6 +310,10 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         if len(message.state_refs) == 1 and len(message.state_access_grants) == 1:
             semantic_access_grant = message.state_access_grants[0]
             try:
+                grant_ref_id = message.state_refs[0].ref_id
+                parsed_grant_ref = decode_memfd_ref(message.state_refs[0])
+                if parsed_grant_ref is not None:
+                    grant_ref_id = parsed_grant_ref[2]
                 semantic_access_grant.validate_read_scope(
                     runtime_task_id=header.task_id,
                     run_id=header.run_id,
@@ -227,7 +322,7 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
                     attempt_id=header.attempt_id,
                     execution_binding_hash=header.execution_binding_hash,
                     capability_grant_hash=header.capability_grant_hash,
-                    ref_id=message.state_refs[0].ref_id,
+                    ref_id=grant_ref_id,
                     ref_kind=message.state_refs[0].ref_kind,
                     consumer_provider_id=message.consumer_provider_id,
                     consumer_role=header.target_role,
@@ -255,7 +350,22 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
         return 1
 
     # Read any memfd state refs passed by the main process.
-    memfd_payloads = _read_memfd_refs(message.state_refs)
+    read_started_at_ns = time.time_ns()
+    try:
+        memfd_payloads = _read_memfd_refs(message.state_refs)
+    except (OSError, RuntimeError, ValueError) as exc:
+        send_message(
+            sock,
+            ErrorResult(
+                header=replace(header, event_type=EventType.RES_ERR),
+                error_code="memfd_read_failed",
+                error_detail=str(exc) or type(exc).__name__,
+                failed_at_ns=time.time_ns(),
+            ),
+        )
+        sock.close()
+        return 1
+    read_completed_at_ns = time.time_ns()
     if memfd_payloads:
         total_bytes = sum(len(v) for v in memfd_payloads.values())
         print(
@@ -291,22 +401,37 @@ def run(socket_path: str, *, carrier: str = "protobuf") -> int:
     )
     if semantic_selection:
         try:
-            state_ref = semantic_ref_from_sidecar(
-                Path(message.state_root),
-                message.state_refs[0].ref_id,
-            )
-            semantic_access_grant.validate_state_identity(
-                state_ref.state_identity_hash
-            )
-            selection = select_dense_semantic_state(
-                state_root=Path(message.state_root),
-                ref=state_ref,
-                manifest_id=message.hydrate_manifest_id,
-                top_k=message.semantic_top_k,
-                evidence_budget_bytes=message.evidence_budget_bytes,
-                expected_encoder_signature=message.expected_encoder_signature,
-                unregister_shared_memory_tracker=True,
-            )
+            ref_handle = message.state_refs[0]
+            parsed_memfd = decode_memfd_ref(ref_handle)
+            if parsed_memfd is not None:
+                _fd, _length, logical_state_id = parsed_memfd
+                state_ref = semantic_ref_from_sidecar(
+                    Path(message.state_root), logical_state_id
+                )
+                semantic_access_grant.validate_state_identity(state_ref.state_identity_hash)
+                selection = _select_memfd_semantic_state(
+                    state_root=Path(message.state_root),
+                    ref_handle=ref_handle,
+                    payload=memfd_payloads.get(logical_state_id, b""),
+                    manifest_id=message.hydrate_manifest_id,
+                    top_k=message.semantic_top_k,
+                    evidence_budget_bytes=message.evidence_budget_bytes,
+                    expected_encoder_signature=message.expected_encoder_signature,
+                )
+            else:
+                state_ref = semantic_ref_from_sidecar(
+                    Path(message.state_root), ref_handle.ref_id
+                )
+                semantic_access_grant.validate_state_identity(state_ref.state_identity_hash)
+                selection = select_dense_semantic_state(
+                    state_root=Path(message.state_root),
+                    ref=state_ref,
+                    manifest_id=message.hydrate_manifest_id,
+                    top_k=message.semantic_top_k,
+                    evidence_budget_bytes=message.evidence_budget_bytes,
+                    expected_encoder_signature=message.expected_encoder_signature,
+                    unregister_shared_memory_tracker=True,
+                )
         except StateAccessContractError as exc:
             send_message(
                 sock,

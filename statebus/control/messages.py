@@ -11,6 +11,12 @@ from statebus.contracts import CONTROL_PLANE_SCHEMA_VERSION, StateAccessGrant
 from statebus.control.schema import message_class
 
 
+# The carrier is intentionally bounded.  Large state/evidence payloads stay
+# behind refs/descriptors; they must not be smuggled into a control frame.
+MAX_CONTROL_FRAME_PAYLOAD_BYTES = 1 << 20
+MAX_CONTROL_FRAME_BYTES = 4 + MAX_CONTROL_FRAME_PAYLOAD_BYTES
+
+
 class EventType(IntEnum):
     EVENT_TYPE_UNSPECIFIED = 0
     REQ_EXEC = 1
@@ -203,6 +209,19 @@ def _header_to_pb(header: ControlHeader) -> Any:
 
 
 def _header_from_pb(pb: Any) -> ControlHeader:
+    if not pb.schema_version.strip():
+        raise ValueError("schema_version_missing")
+    if pb.schema_version != CONTROL_PLANE_SCHEMA_VERSION:
+        raise ValueError("schema_version_unsupported")
+    if int(pb.event_type) == int(EventType.EVENT_TYPE_UNSPECIFIED):
+        raise ValueError("event_type_missing")
+    try:
+        event_type = EventType(pb.event_type)
+    except ValueError as exc:
+        raise ValueError("event_type_unsupported") from exc
+    for field_name in ("trace_id", "task_id", "step_id", "attempt_id", "target_role"):
+        if not str(getattr(pb, field_name)).strip():
+            raise ValueError(f"header_{field_name}_missing")
     return ControlHeader(
         trace_id=pb.trace_id,
         task_id=pb.task_id,
@@ -211,7 +230,7 @@ def _header_from_pb(pb: Any) -> ControlHeader:
         target_role=pb.target_role,
         timeout_ms=int(pb.timeout_ms),
         schema_version=pb.schema_version,
-        event_type=EventType(pb.event_type),
+        event_type=event_type,
         run_id=pb.run_id,
         session_id=pb.session_id,
         invocation_id=pb.invocation_id,
@@ -262,6 +281,7 @@ def _state_access_grant_from_pb(pb: Any) -> StateAccessGrant:
 
 
 def encode_control_message(message: ControlMessage) -> bytes:
+    _validate_control_message(message)
     envelope = message_class("ControlEnvelope")()
     body_field = _BODY_FIELD_BY_TYPE[type(message)]
     body_pb = getattr(envelope, body_field)
@@ -345,13 +365,38 @@ def encode_control_message(message: ControlMessage) -> bytes:
 
 
 def decode_control_message(payload: bytes) -> ControlMessage:
+    if not payload:
+        raise ValueError("control_payload_empty")
+    if len(payload) > MAX_CONTROL_FRAME_PAYLOAD_BYTES:
+        raise ValueError("frame_oversized")
     envelope = message_class("ControlEnvelope")()
-    envelope.ParseFromString(payload)
+    try:
+        envelope.ParseFromString(payload)
+    except Exception as exc:
+        raise ValueError("protobuf_decode_failed") from exc
     body_field = envelope.WhichOneof("body")
     if not body_field:
-        raise ValueError("control envelope body is missing")
+        raise ValueError("control_body_missing")
     body_pb = getattr(envelope, body_field)
+    if not body_pb.HasField("header"):
+        raise ValueError("control_header_missing")
     header = _header_from_pb(body_pb.header)
+    expected_type = _TYPE_BY_BODY_FIELD.get(body_field)
+    if expected_type is None:
+        raise ValueError("control_body_unsupported")
+    expected_event = {
+        ExecRequest: EventType.REQ_EXEC,
+        AckReceived: EventType.ACK_RECV,
+        RunStart: EventType.RUN_START,
+        Heartbeat: EventType.HEARTBEAT,
+        SuccessResult: EventType.RES_SUCC,
+        ErrorResult: EventType.RES_ERR,
+        CancelCommand: EventType.CMD_CANCEL,
+        TrapFatal: EventType.TRAP_FATAL,
+        GarbageCollectCommand: EventType.CMD_GC,
+    }[expected_type]
+    if header.event_type != expected_event:
+        raise ValueError("event_type_mismatch")
 
     if body_field == "req_exec":
         reuse = body_pb.reuse_policy
@@ -456,19 +501,77 @@ def decode_control_message(payload: bytes) -> ControlMessage:
 
 def frame_control_message(message: ControlMessage) -> bytes:
     payload = encode_control_message(message)
+    if len(payload) > MAX_CONTROL_FRAME_PAYLOAD_BYTES:
+        raise ValueError("frame_oversized")
     return struct.pack(">I", len(payload)) + payload
 
 
 def deframe_control_message(frame: bytes) -> ControlMessage:
     if len(frame) < 4:
-        raise ValueError("control frame missing length prefix")
+        raise ValueError("frame_header_truncated")
     (payload_len,) = struct.unpack(">I", frame[:4])
+    if payload_len <= 0:
+        raise ValueError("frame_length_invalid")
+    if payload_len > MAX_CONTROL_FRAME_PAYLOAD_BYTES:
+        raise ValueError("frame_oversized")
     payload = frame[4:]
     if len(payload) != payload_len:
-        raise ValueError(
-            f"control frame payload length mismatch: expected {payload_len}, got {len(payload)}"
-        )
+        if len(payload) < payload_len:
+            raise ValueError("frame_payload_truncated")
+        raise ValueError("frame_length_mismatch")
     return decode_control_message(payload)
+
+
+def control_frame_metadata(frame: bytes, *, ordinal: int, direction: str) -> dict[str, object]:
+    """Describe one observed framed byte sequence without re-encoding it."""
+    if len(frame) < 4:
+        raise ValueError("frame_header_truncated")
+    payload_len = int.from_bytes(frame[:4], "big", signed=False)
+    return {
+        "frame_ordinal": int(ordinal),
+        "direction": direction,
+        "framed_length_observed": len(frame),
+        "payload_length_observed": payload_len,
+        "frame_digest": __import__("hashlib").sha256(frame).hexdigest(),
+    }
+
+
+def _validate_control_message(message: ControlMessage) -> None:
+    message_type = type(message)
+    if message_type not in _BODY_FIELD_BY_TYPE:
+        raise TypeError(f"unsupported control message type: {message_type!r}")
+    header = message.header
+    if not header.schema_version.strip():
+        raise ValueError("schema_version_missing")
+    if header.schema_version != CONTROL_PLANE_SCHEMA_VERSION:
+        raise ValueError("schema_version_unsupported")
+    for field_name in ("trace_id", "task_id", "step_id", "attempt_id", "target_role"):
+        if not str(getattr(header, field_name)).strip():
+            raise ValueError(f"header_{field_name}_missing")
+    if header.timeout_ms < 0:
+        raise ValueError("header_timeout_invalid")
+    expected_event = {
+        ExecRequest: EventType.REQ_EXEC,
+        AckReceived: EventType.ACK_RECV,
+        RunStart: EventType.RUN_START,
+        Heartbeat: EventType.HEARTBEAT,
+        SuccessResult: EventType.RES_SUCC,
+        ErrorResult: EventType.RES_ERR,
+        CancelCommand: EventType.CMD_CANCEL,
+        TrapFatal: EventType.TRAP_FATAL,
+        GarbageCollectCommand: EventType.CMD_GC,
+    }[message_type]
+    if header.event_type != expected_event:
+        raise ValueError("event_type_mismatch")
+    if isinstance(message, SuccessResult):
+        if len(message.selected_candidate_ids) != len(message.selected_scores) and (
+            message.selected_candidate_ids or message.selected_scores
+        ):
+            raise ValueError("body_cardinality_invalid")
+        if len(message.selected_candidate_ids) != len(message.selected_row_indices) and (
+            message.selected_candidate_ids or message.selected_row_indices
+        ):
+            raise ValueError("body_cardinality_invalid")
 
 
 def encode_text_control_message(message: ControlMessage) -> bytes:

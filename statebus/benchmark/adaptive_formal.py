@@ -406,10 +406,11 @@ def _output_schema(operation: str, arguments: dict[str, object]) -> tuple[dict[s
             "gap_value": "number",
         }, "object"
     if operation == "profile_table":
-        return {
-            "percentage_cases_min": "number",
-            "percentage_deaths_max": "number",
-        }, "object"
+        columns = tuple(str(item) for item in arguments.get("columns", ()))
+        schema = {"percentage_cases_min": "number"}
+        if len(columns) > 1:
+            schema["percentage_deaths_max"] = "number"
+        return schema, "object"
     if operation == "aggregate_and_extreme":
         return {
             "mean_cases": "number",
@@ -657,6 +658,13 @@ def adapt_formal_sample(sample: MinimalBenchmarkSample) -> FormalAdaptiveCase:
     )
 
 
+def load_c2b_formal_cases() -> tuple[FormalAdaptiveCase, ...]:
+    """Adapt the registered 48 positive cases through the existing validator seam."""
+    from statebus.benchmark.task_registry import load_c2b_positive_samples
+
+    return tuple(adapt_formal_sample(sample) for sample in load_c2b_positive_samples())
+
+
 def _extract_labeled_fact(
     rows: tuple[dict[str, object], ...],
     selector: dict[str, object],
@@ -879,10 +887,10 @@ def recompute_formal_rows(
             round(sum(1 for row in rows if not str(row.get(column, "")).strip()) / len(rows) * 100.0, 2)
             for column in columns
         ]
-        return ({
-            "percentage_cases_min": percentages[0],
-            "percentage_deaths_max": percentages[1],
-        },)
+        output = {"percentage_cases_min": percentages[0]}
+        if len(percentages) > 1:
+            output["percentage_deaths_max"] = percentages[1]
+        return (output,)
     if operation == "aggregate_and_extreme":
         mean_column = str(arguments["mean_column"])
         max_column = str(arguments["max_column"])

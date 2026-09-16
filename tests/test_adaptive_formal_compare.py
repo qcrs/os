@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import time
 
 from scripts.diagnostics.run_adaptive_agent_smoke import _envelope_from_payload
 from scripts.diagnostics.run_adaptive_formal_compare import (
@@ -17,10 +19,13 @@ from statebus.benchmark.adaptive_formal_mainline import (
     _adaptive_metrics,
     _build_formal_analysis_context,
     _case_system_gate_checks,
+    _compact_planner_replan_context,
     _evidence_types_for_retrieval_capability,
     _formal_recomputation_repair_guidance,
     _model_role_gate_passed,
+    _source_artifact,
     _terminal_quality_reports,
+    _with_formal_runtime_budgets,
 )
 from statebus.benchmark.adaptive_memory import (
     _negative_fixture_gate,
@@ -34,24 +39,219 @@ from statebus.benchmark.adaptive_formal import (
     expected_facts_report,
     recompute_formal_rows,
 )
+from statebus.benchmark.continuous_runner import _c2c_baseline_pairing, _c2c_pair_key
 from statebus.benchmark.task_registry import load_registered_formal_samples
+from statebus.benchmark.semantic_holdout import load_semantic_holdout_cases
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
+    ArtifactVerificationDecision,
+    CapabilityGrant,
     PlanProposal,
     PlanStepProposal,
+    RefStatus,
     RiskClass,
     WorkflowMode,
 )
 from statebus.runtime.capability_validators import CapabilityQualityContext
 from statebus.runtime.capability_validators import default_capability_validator_registry
+from statebus.runtime.adaptive_dispatcher import (
+    AdaptiveCapabilityDispatcher,
+    AdaptiveDispatchContext,
+)
 from statebus.runtime.domain_packs import register_generic_adaptive_analysis_capabilities
 from statebus.runtime.capability_registry import CapabilityRegistry
+from statebus.runtime.identity import compatibility_runtime_identity
 from statebus.runtime.plan_policy import PlanPolicyValidator
 from statebus.utils import sha256_digest, stable_json_dumps
 
 
+def _c2c_test_rows() -> tuple[dict[str, object], dict[str, object]]:
+    baseline = {
+        "row_id": "baseline-row",
+        "family_id": "family",
+        "round_number": 1,
+        "repeat_id": 1,
+        "task_contract_hash": "task-contract",
+        "input_lineage_hashes": ["input-lineage"],
+        "quality_contract_hash": "quality-contract",
+        "deterministic_seed": 7,
+        "memory_policy": "off",
+        "runtime_memory_policy": "none",
+        "runtime_root": "/baseline/runtime",
+        "workspace_root": "/baseline/workspace",
+        "memory_root": "/baseline/memory",
+        "session_id": "baseline-session",
+        "attempt_id": "baseline-attempt",
+        "cache_epoch": "baseline-epoch",
+        "provider_invocation_evidence": {
+            "status": "observed", "invocation_status": "completed",
+            "provider_id": "provider", "invocation_id": "invocation-baseline",
+            "evidence_hash": "provider-evidence",
+        },
+        "quality_evidence": {"status": "observed", "passed": True, "report_hash": "quality-baseline"},
+        "result_admission": {"status": "observed", "receipt_hash": "admission-baseline"},
+    }
+    replay = {
+        **{key: value for key, value in baseline.items() if key not in {
+            "row_id", "memory_policy", "runtime_memory_policy", "runtime_root",
+            "workspace_root", "memory_root", "session_id", "attempt_id", "cache_epoch",
+            "provider_invocation_evidence", "quality_evidence", "result_admission",
+        }},
+        "row_id": "c1-row",
+        "memory_policy": "validated_replay",
+        "runtime_root": "/c1/runtime",
+        "workspace_root": "/c1/workspace",
+        "memory_root": "/c1/memory",
+        "session_id": "c1-session",
+        "attempt_id": "c1-attempt",
+        "cache_epoch": "c1-epoch",
+        "runtime_authority": "AdaptiveRuntimeEngine",
+        "provider_not_started_observation": {
+            "status": "observed", "provider_invocation_status": "not_started",
+            "observation_id": "skip-observation", "created_at_ns": 1,
+            "execution_binding_hash": "binding-c1", "capability_grant_hash": "grant-c1",
+            "attempt_result_admission_receipt_hash": "admission-c1",
+            "memory_admission_receipt_hash": "memory-admission-c1",
+            "replay_eligibility_receipt_hash": "replay-eligibility-c1",
+            "quality_report_hash": "quality-c1",
+        },
+        "quality_evidence": {"status": "observed", "passed": True, "report_hash": "quality-c1"},
+        "result_admission": {"status": "observed", "receipt_hash": "admission-c1"},
+    }
+    return baseline, replay
+
+
 def _cases():
     return [adapt_formal_sample(sample) for sample in load_registered_formal_samples()]
+
+
+def test_formal_source_artifact_is_backed_by_identity_bound_verification_receipt(
+    tmp_path: Path,
+) -> None:
+    case = _cases()[0]
+    task_spec_hash = sha256_digest(case.spec.canonical_payload())
+    identity = compatibility_runtime_identity(
+        case.task_id,
+        f"formal-adaptive:{case.task_id}",
+        task_spec_hash,
+        run_id="formal-source-test-run",
+    )
+
+    stored, receipt = _source_artifact(case, tmp_path / "case", identity)
+    artifact = stored.artifact
+
+    assert receipt.decision == ArtifactVerificationDecision.VERIFIED
+    assert receipt.runtime_task_id == identity.runtime_task_id
+    assert receipt.run_id == identity.run_id
+    assert receipt.session_id == identity.session_id
+    assert receipt.producer_step_id == artifact.step_id
+    assert receipt.producer_attempt_id == artifact.metadata["attempt_id"]
+    assert receipt.capability_grant_hash == artifact.metadata["grant_hash"]
+    assert receipt.candidate_blob_hash == artifact.blob_hash
+    assert artifact.metadata["artifact_verification_receipt_hash"] == receipt.receipt_hash
+    assert artifact.metadata["session_id"] == identity.session_id
+    assert artifact.verification_state == RefStatus.VERIFIED
+
+    registry = CapabilityRegistry()
+    register_generic_adaptive_analysis_capabilities(registry)
+    grant = CapabilityGrant(
+        grant_id="formal-source-test-grant",
+        task_id=case.task_id,
+        session_id=identity.session_id,
+        step_id="execute-analysis",
+        attempt_id="formal-source-test-attempt",
+        capability_id="execute_analysis_dsl_v2",
+        capability_version="v2",
+        input_ref_ids=(case.source_ref_id,),
+        output_contract_version="statebus.analysis_result.v2",
+        workspace_root_id="formal-source-test-workspace",
+        max_runtime_ms=120_000,
+        expires_at_ns=time.time_ns() + 120_000_000_000,
+        approved_plan_hash="formal-source-test-plan",
+    )
+    dispatcher = AdaptiveCapabilityDispatcher(context=AdaptiveDispatchContext(
+        registry=registry,
+        artifacts={case.source_ref_id: stored},
+        artifact_verification_receipts={case.source_ref_id: receipt},
+    ))
+    assert dispatcher._artifact_in_grant_scope(stored, grant)
+
+
+def test_formal_runtime_budget_override_is_request_local() -> None:
+    default_registry = CapabilityRegistry()
+    register_generic_adaptive_analysis_capabilities(default_registry)
+
+    formal_registry = _with_formal_runtime_budgets(default_registry)
+
+    for capability_id in (
+        "retrieve_semantic_evidence_v1",
+        "retrieve_table_evidence_v1",
+    ):
+        assert default_registry.get(capability_id).max_runtime_ms == 8_000
+        assert formal_registry.get(capability_id).max_runtime_ms == 120_000
+    assert formal_registry.get("execute_bounded_python_v2").max_runtime_ms == (
+        default_registry.get("execute_bounded_python_v2").max_runtime_ms
+    )
+
+
+def test_c2c_pair_key_is_lane_and_epoch_independent() -> None:
+    baseline, replay = _c2c_test_rows()
+    assert _c2c_pair_key(baseline) == _c2c_pair_key({
+        **replay,
+        "family_id": "other-family",
+        "round_number": 99,
+        "repeat_id": 42,
+        "cache_epoch": "other-epoch",
+        "lane": "memory-off",
+    })
+
+
+def test_c2c_quality_non_regression_and_denominator_close() -> None:
+    baseline, replay = _c2c_test_rows()
+    projection = _c2c_baseline_pairing([baseline], [replay])
+    assert projection["eligible_matched_pair_count"] == 1
+    assert projection["provider_work_avoided"]["status"] == "observed"
+    assert projection["metrics"]["quality_non_regression"]["status"] == "observed"
+    assert projection["denominator"]["arithmetic_closed"] is True
+    pair = projection["pairings"][0]
+    assert pair["task_contract_hash"] == baseline["task_contract_hash"]
+    assert pair["input_lineage_hashes"] == baseline["input_lineage_hashes"]
+    assert pair["quality_contract_hash"] == baseline["quality_contract_hash"]
+    assert pair["replay_memory_policy"] == replay["memory_policy"]
+
+
+def test_c2c_artifact_projection_closes_provider_skip_receipt_schema(tmp_path: Path) -> None:
+    baseline, replay = _c2c_test_rows()
+    root = tmp_path / "c2c-artifact"
+    _c2c_baseline_pairing([baseline], [replay], artifact_root=root)
+
+    pairing = json.loads((root / "baseline_pairing.json").read_text(encoding="utf-8"))
+    pair = pairing["pairings"][0]
+    assert {
+        "task_contract_hash",
+        "input_lineage_hashes",
+        "quality_contract_hash",
+        "replay_memory_policy",
+    } <= pair.keys()
+
+    receipts = json.loads((root / "provider_skip_receipts.json").read_text(encoding="utf-8"))
+    receipt = receipts["rows"][0]
+    assert receipt["skip_receipt_id"] == replay["provider_not_started_observation"]["observation_id"]
+    assert receipt["skip_kind"] == "provider_invocation"
+    assert receipt["baseline_row_id"] == baseline["row_id"]
+    assert receipt["baseline_provider_invocation_id"] == baseline["provider_invocation_evidence"]["invocation_id"]
+    assert receipt["baseline_pair_key"] == pair["pair_key"]
+    assert receipt["denominator_status"] == "observed"
+
+
+def test_c2c_unmatched_row_is_retained_and_not_zero_filled() -> None:
+    baseline, replay = _c2c_test_rows()
+    replay["input_lineage_hashes"] = ["different-input"]
+    projection = _c2c_baseline_pairing([baseline], [replay])
+    assert projection["eligible_matched_pair_count"] == 0
+    assert projection["provider_work_avoided"]["status"] == "unsupported"
+    assert projection["denominator"]["arithmetic_closed"] is True
+    assert len(projection["negative_rows"]) == 2
 
 
 def test_all_25_registered_formal_cases_have_real_adaptive_adapters() -> None:
@@ -753,6 +953,146 @@ def test_formal_planner_reports_duplicate_summarizer_as_repairable_contract_erro
     errors = _model_plan_errors(case, legal)
 
     assert "formal_planner_requires_one_summarizer" in errors
+
+
+def test_formal_planner_rejects_dsl_for_public_labeled_fact_extraction() -> None:
+    case = next(
+        case for case in load_semantic_holdout_cases()
+        if case.task_id == "semantic-holdout-s1"
+    )
+    proposal = PlanProposal(
+        proposal_id="narrative-dsl",
+        task_id=case.task_id,
+        final_output_contract_version="statebus.cited_report.v1",
+        steps=(
+            PlanStepProposal(
+                "retrieve", "retriever", "retrieve_semantic_evidence_v1", "retrieve facts",
+            ),
+            PlanStepProposal(
+                "execute", "executor", "execute_analysis_dsl_v2", "extract labeled facts",
+            ),
+            PlanStepProposal(
+                "report", "summarizer", "compose_claim_set_v2", "report facts",
+                depends_on=("retrieve", "execute"),
+            ),
+        ),
+    )
+
+    assert (
+        "formal_planner_labeled_fact_extraction_requires_execute_bounded_python_v2"
+        in _model_plan_errors(case, proposal)
+    )
+
+
+def test_formal_planner_repair_context_is_compact_and_preserves_required_fix() -> None:
+    case = next(
+        case for case in load_semantic_holdout_cases()
+        if case.task_id == "semantic-holdout-s1"
+    )
+    proposal = PlanProposal(
+        proposal_id="narrative-dsl",
+        task_id=case.task_id,
+        final_output_contract_version="statebus.cited_report.v1",
+        planner_notes="this verbose field must not be copied into repair context",
+        raw_output_hash="raw-output-must-not-be-copied",
+        steps=(
+            PlanStepProposal(
+                "retrieve", "retriever", "retrieve_semantic_evidence_v1", "retrieve facts",
+            ),
+            PlanStepProposal(
+                "execute", "executor", "execute_analysis_dsl_v2", "extract labeled facts",
+                completion_criteria={
+                    "min_rows": 1,
+                    "required_fields": list(case.output_schema),
+                },
+            ),
+            PlanStepProposal(
+                "report", "summarizer", "compose_claim_set_v2", "report facts",
+                depends_on=("retrieve", "execute"),
+            ),
+        ),
+    )
+    error = "formal_planner_labeled_fact_extraction_requires_execute_bounded_python_v2"
+
+    context = _compact_planner_replan_context(
+        case,
+        proposal,
+        repair_errors=(error,),
+        policy_issues=(),
+    )
+    serialized = stable_json_dumps(context)
+
+    assert context["errors"] == [error]
+    assert context["requirements"]["labeled_fact_executor"] == "execute_bounded_python_v2"
+    assert context["requirements"]["final_executor_fields"] == sorted(case.output_schema)
+    assert context["current_steps"][1]["capability"] == "execute_analysis_dsl_v2"
+    assert "invalid_proposal" not in context
+    assert "policy_report" not in context
+    assert "planner_notes" not in serialized
+    assert "raw-output-must-not-be-copied" not in serialized
+    assert len(serialized.encode("utf-8")) < 1_500
+
+
+def test_formal_planner_accepts_bounded_python_for_public_labeled_fact_extraction() -> None:
+    case = next(
+        case for case in load_semantic_holdout_cases()
+        if case.task_id == "semantic-holdout-s4"
+    )
+    proposal = PlanProposal(
+        proposal_id="mixed-python",
+        task_id=case.task_id,
+        final_output_contract_version="statebus.cited_report.v1",
+        steps=(
+            PlanStepProposal(
+                "retrieve", "retriever", "retrieve_semantic_evidence_v1", "retrieve facts",
+            ),
+            PlanStepProposal(
+                "execute", "executor", "execute_bounded_python_v2", "merge table and labeled fact",
+            ),
+            PlanStepProposal(
+                "report", "summarizer", "compose_claim_set_v2", "report facts",
+                depends_on=("retrieve", "execute"),
+            ),
+        ),
+    )
+
+    assert not any(
+        error.startswith("formal_planner_labeled_fact_extraction_requires")
+        for error in _model_plan_errors(case, proposal)
+    )
+
+
+def test_formal_planner_allows_dsl_preprocessing_before_labeled_fact_python_stage() -> None:
+    case = next(
+        case for case in load_semantic_holdout_cases()
+        if case.task_id == "semantic-holdout-s4"
+    )
+    proposal = PlanProposal(
+        proposal_id="mixed-dsl-then-python",
+        task_id=case.task_id,
+        final_output_contract_version="statebus.cited_report.v1",
+        steps=(
+            PlanStepProposal(
+                "retrieve", "retriever", "retrieve_semantic_evidence_v1", "retrieve facts",
+            ),
+            PlanStepProposal(
+                "filter-table", "executor", "execute_analysis_dsl_v2", "filter the table",
+            ),
+            PlanStepProposal(
+                "merge-fact", "executor", "execute_bounded_python_v2", "merge labeled fact",
+                depends_on=("filter-table",),
+            ),
+            PlanStepProposal(
+                "report", "summarizer", "compose_claim_set_v2", "report facts",
+                depends_on=("retrieve", "filter-table", "merge-fact"),
+            ),
+        ),
+    )
+
+    assert not any(
+        error.startswith("formal_planner_labeled_fact_extraction_requires")
+        for error in _model_plan_errors(case, proposal)
+    )
 
 
 def test_resolved_raw_wiring_error_does_not_trigger_planner_repair() -> None:

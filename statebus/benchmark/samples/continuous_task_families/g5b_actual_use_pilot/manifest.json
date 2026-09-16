@@ -1,0 +1,22 @@
+{
+  "schema_version": "statebus.g5b.fixture.v1",
+  "fixture": "actual_use_acceptance_pilot",
+  "serial_repeat_modes": ["cold", "warm", "cold"],
+  "families": [
+    {
+      "family_id": "g5b-cross-period-financial",
+      "task_family": "g5b_financial_related_task",
+      "base_value": 100.0,
+      "round_count": 10,
+      "no_effect_rounds": [5, 10]
+    },
+    {
+      "family_id": "g5b-incident-diagnosis",
+      "task_family": "g5b_incident_related_task",
+      "base_value": 200.0,
+      "round_count": 10,
+      "no_effect_rounds": [5, 10]
+    }
+  ],
+  "sealed_fields": ["sealed_expected_value", "future_marker"]
+}

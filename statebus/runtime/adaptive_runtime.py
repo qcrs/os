@@ -708,6 +708,50 @@ class AdaptiveRuntimeEngine:
                         grant_hash=grant.grant_hash,
                         receipt=receipt,
                     )
+                    # C0/C1 replay positivity is promoted only after the
+                    # current result admission joins the real Memory read.
+                    # The dispatcher may have recorded a provider bypass
+                    # observation earlier, but that observation is not a
+                    # result or quality authority.
+                    context = request.dispatcher.context
+                    validated_replay_count = sum(
+                        record.replay_class == ReplayClass.VALIDATED_REPLAY
+                        and bool(record.attempt_result_admission_receipt_hash)
+                        for record in context.memory_consumption_records
+                    )
+                    replay_observation_count = sum(
+                        observation.get("provider_invocation_status") == "not_started"
+                        and observation.get("attempt_id") == (result.attempt_id or attempt_id)
+                        and observation.get("capability_grant_hash") == grant.grant_hash
+                        for observation in context.replay_observations
+                    )
+                    telemetry.emit(TelemetryEvent.create(
+                        trace_id=request.trace_id,
+                        task_id=request.task_id,
+                        step_id=step.step_id,
+                        attempt_id=result.attempt_id or attempt_id,
+                        event_type="METRIC_SNAPSHOT",
+                        role="runtime_driver",
+                        channel="replay",
+                        payload={
+                            "replay_result_admitted": True,
+                            "validated_replay_count": float(validated_replay_count),
+                            "provider_skip_observed_count": float(replay_observation_count),
+                        },
+                        metrics={
+                            "validated_replay_count": float(validated_replay_count),
+                            "provider_skip_observed_count": float(replay_observation_count),
+                        },
+                    ))
+                    for observation in context.replay_observations:
+                        if (
+                            observation.get("attempt_id") == (result.attempt_id or attempt_id)
+                            and observation.get("capability_grant_hash") == grant.grant_hash
+                        ):
+                            observation["attempt_result_admission_receipt_hash"] = receipt.receipt_hash
+                            quality_hashes = tuple(result.quality_report_hashes or result.validator_report_hashes)
+                            observation["quality_report_hash"] = quality_hashes[-1] if quality_hashes else ""
+                            observation["terminal_status"] = "success" if result.success else "runtime_fail"
                 return receipt
             fenced.add(step.step_id)
             telemetry.emit(TelemetryEvent.create(
@@ -1715,9 +1759,19 @@ class AdaptiveRuntimeEngine:
             runtime_identity=runtime_identity,
         )
         promoted = []
+        descriptor = request.registry.get(bound_grant.grant.capability_id)
+        allow_detached_builtin_refs = descriptor.execution_kind.value == "runtime_builtin"
         for artifact_id in artifact_ids:
             stored = context.artifacts.get(artifact_id)
             if stored is None:
+                # Runtime-builtin handlers may return an already-authorized
+                # opaque output ref (for example a test/integration adapter)
+                # without materializing an ExecutionArtifactRef.  Keep the
+                # strict candidate verifier for transform/CodeAct paths, but
+                # do not turn the generic builtin result contract into an
+                # artifact-registration requirement.
+                if allow_detached_builtin_refs:
+                    continue
                 raise ArtifactVerificationError("artifact_candidate_not_registered")
             verified, receipt = authority.verify_candidate(
                 candidate=stored.artifact,
@@ -1856,7 +1910,14 @@ class AdaptiveRuntimeEngine:
                 admitted = context.memory_store.get_admitted(memory_id)
                 if decision is None or not decision.policy_approved or admitted is None:
                     continue
-                commit, _admission_receipt = admitted
+                commit, admission_receipt = admitted
+                if (
+                    admission_receipt.memory_id != memory_id
+                    or admission_receipt.memory_commit_hash != commit.commit_hash
+                    or str(getattr(admission_receipt.decision, "value", admission_receipt.decision))
+                    != "ADMITTED"
+                ):
+                    continue
                 mode = match.replay_class
                 if mode == ReplayClass.VALIDATED_REPLAY:
                     if (
@@ -1923,7 +1984,10 @@ class AdaptiveRuntimeEngine:
             ("validator_digest", getattr(context, "validator_digest", "")),
         ):
             stored_value = str(metadata.get(metadata_key, ""))
-            if current_value and stored_value and stored_value != str(current_value):
+            # Validated procedure reuse is fail-closed: a missing digest is
+            # not evidence of compatibility.  Assist mode does not call this
+            # helper and may remain a bounded degraded context projection.
+            if not current_value or not stored_value or stored_value != str(current_value):
                 return False
         return True
 

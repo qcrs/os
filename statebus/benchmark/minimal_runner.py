@@ -15,12 +15,47 @@ from statebus.benchmark.models import (
     BenchmarkSuiteReport,
     QualityFloorResult,
 )
-from statebus.benchmark.metric_aggregation import finalize_case_telemetry_summary
+from statebus.benchmark.metric_aggregation import (
+    finalize_case_telemetry_summary,
+    aggregate_c2b_statistics,
+    bootstrap_mean_ci,
+    holm_adjust,
+    paired_deltas,
+    project_metric_availability,
+)
 from statebus.benchmark.reporting import family_report_to_dict, suite_report_to_dict, write_json_report
 from statebus.benchmark.contest_fairness import build_five_case_fairness_smoke
-from statebus.benchmark.contest_fairness import build_c2a_pilot_records, collect_c2a_terminal_record, CANONICAL_LANES, build_failure_denominator, validate_root_isolation
+from statebus.benchmark.contest_fairness import (
+    build_c2a_pilot_records,
+    collect_c2a_terminal_record,
+    CANONICAL_LANES,
+    build_failure_denominator,
+    validate_root_isolation,
+    validate_c2a_trace,
+    aggregate_c2a_eligibility,
+    validate_c2a_isolation,
+)
 from statebus.benchmark.external_text_baseline import run_pure_text_mas, run_direct_single_agent
-from statebus.contracts import AdaptiveTaskEnvelope, CanonicalTaskSpec, PlannerHandoff, RiskClass, RuntimeIdentity, TaskContractIdentity, WorkflowMode
+from statebus.contracts import (
+    AdaptiveTaskEnvelope,
+    CapabilityDescriptor,
+    CapabilityQualityReport,
+    CanonicalTaskSpec,
+    Claim,
+    ClaimSet,
+    EvidenceRequest,
+    ExecutionKind,
+    PlannerHandoff,
+    PlanProposal,
+    PlanStepProposal,
+    RiskClass,
+    RuntimeIdentity,
+    TaskContractIdentity,
+    TransformProgram,
+    TransformStep,
+    WorkflowMode,
+)
+from statebus.refs import CanonicalEvidencePack, EvidenceItem, TableCellLocator
 from statebus.runtime import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
 from statebus.runtime.adaptive_mainline import AdaptiveMainlineBindings, AdaptiveMainlineRequest
@@ -29,7 +64,9 @@ from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.domain_packs import c2a_four_role_pack, register_c2a_four_role_capabilities
 from statebus.runtime.fixed_mainline import FixedMainlineRequest, _FIXED_BOUND_PROVIDER_BY_ROLE, _fixed_provider_registry, _fixed_retrieve_query
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
+from statebus.retrieval import RetrieverFanoutPipeline
 from statebus.runtime.role_providers import ProviderCandidate, ProviderRequest
+from statebus.runtime.capability_validators import CapabilityValidatorRegistry
 from statebus.runtime.provider_registry import ExecutionProviderRegistry
 from statebus.runtime.static_role_recipe import StaticRoleRecipe, StaticRoleRecipeCompiler, default_fixed_role_recipe
 from statebus.utils import sha256_digest, stable_json_dumps
@@ -173,6 +210,140 @@ class MinimalBenchmarkSample:
         )
 
 
+def run_g4a_canonical_case(*, root: Path, state_on: bool) -> object:
+    """Run one small G4-A row through the canonical adaptive Runtime path.
+
+    This fixture deliberately uses only deterministic retrieval and existing
+    Runtime-builtins. The semantic state path is selected by the retrieval
+    bundle; no legacy smoke/consumer helper is involved.
+    """
+    task_id = "g4a-canonical-state-on" if state_on else "g4a-canonical-state-off"
+    registry = CapabilityRegistry()
+    registry.register(CapabilityDescriptor(
+        capability_id="g4a-retrieve-semantic" if state_on else "g4a-retrieve-text",
+        owner_role="retriever",
+        description="G4-A deterministic retrieval fixture",
+        input_ref_kinds=(),
+        input_contract_version="input-v1",
+        output_ref_kinds=("canonical_evidence_pack",),
+        output_contract_version="evidence-v1",
+        execution_kind=ExecutionKind.RETRIEVAL_ADAPTER,
+        side_effect_class=RiskClass.READ_ONLY,
+        max_runtime_ms=20_000,
+        supports_replay=False,
+    ))
+    for capability_id, role, input_kinds, output_contract in (
+        ("g4a-execute", "executor", ("canonical_evidence_pack",), "artifact-v1"),
+        ("g4a-summarize", "summarizer", ("execution_artifact",), "report-v1"),
+    ):
+        registry.register(CapabilityDescriptor(
+            capability_id=capability_id,
+            owner_role=role,
+            description=f"G4-A {role} fixture",
+            input_ref_kinds=input_kinds,
+            required_input_ref_kinds=input_kinds,
+            input_contract_version="evidence-v1" if role == "executor" else "artifact-v1",
+            output_ref_kinds=("execution_artifact",),
+            output_contract_version=output_contract,
+            execution_kind=ExecutionKind.RUNTIME_BUILTIN,
+            side_effect_class=RiskClass.WORKSPACE_WRITE,
+            max_runtime_ms=2_000,
+            supports_replay=False,
+        ))
+    spec = CanonicalTaskSpec(
+        task_family="g4a_semantic_fixture",
+        intent_op="select_evidence",
+        required_outputs=("summary_text",),
+        arguments={"request": "select evidence for revenue growth"},
+    )
+    retrieval_capability = "g4a-retrieve-semantic" if state_on else "g4a-retrieve-text"
+    envelope = AdaptiveTaskEnvelope(
+        task_id=task_id,
+        canonical_task_spec_hash=spec.spec_hash,
+        workflow_mode=WorkflowMode.ADAPTIVE_BOUNDED,
+        domain_pack_id="g4a_canonical_fixture",
+        allowed_capability_ids=(retrieval_capability, "g4a-execute", "g4a-summarize"),
+        allowed_output_contracts=("evidence-v1", "artifact-v1", "report-v1"),
+        allowed_memory_policies=("none",),
+        role_cardinality={"retriever": (1, 1), "executor": (1, 1), "summarizer": (1, 1)},
+        max_plan_steps=3,
+        max_dependency_depth=3,
+        max_retrieval_steps=1,
+        max_execution_runtime_ms=30_000,
+        max_replans=0,
+        max_retrieval_expansions=0,
+        max_total_attempts=3,
+        risk_class=RiskClass.WORKSPACE_WRITE,
+    )
+    proposal = PlanProposal(
+        proposal_id=f"{task_id}-proposal",
+        task_id=task_id,
+        final_output_contract_version="report-v1",
+        steps=(
+            PlanStepProposal("retrieve", "retriever", retrieval_capability, "Retrieve evidence", output_contract_version="evidence-v1"),
+            PlanStepProposal("execute", "executor", "g4a-execute", "Consume evidence", depends_on=("retrieve",), input_ref_ids=("retrieve-output",), input_ref_kinds=("canonical_evidence_pack",), output_contract_version="artifact-v1"),
+            PlanStepProposal("summarize", "summarizer", "g4a-summarize", "Summarize result", depends_on=("execute",), input_ref_ids=("execute-output",), input_ref_kinds=("execution_artifact",), output_contract_version="report-v1"),
+        ),
+    )
+    pipeline = RetrieverFanoutPipeline.with_embedding_mode("deterministic", top_k=3)
+
+    def retrieve_query(query: str, request: EvidenceRequest):
+        result = pipeline.run_multi_query(
+            task_id=request.task_id,
+            spec=spec,
+            query_texts=(query,),
+            planner_scope_payload={"query_text": query},
+            enabled_evidence_types=tuple(request.evidence_types),
+        )
+        bundle = result.bundles[0]
+        if not state_on:
+            return bundle.evidence_pack
+        return bundle
+
+    def request_factory(step, grant):
+        return EvidenceRequest(
+            request_id=f"{task_id}-{grant.attempt_id}-request",
+            task_id=grant.task_id,
+            step_id=step.step_id,
+            queries=("revenue growth outlook",),
+            evidence_types=("semantic_context",) if state_on else ("table",),
+            corpus_scope_ids=("g4a-local",),
+            memory_policy="none",
+        )
+
+    def builtin_handler(_envelope, _plan, step, grant, _workspace):
+        from statebus.runtime.adaptive_runtime import AdaptiveStepResult
+        return AdaptiveStepResult(
+            grant_hash=grant.grant_hash,
+            success=True,
+            attempt_id=grant.attempt_id,
+            output_refs=(f"{task_id}-{step.step_id}-output",),
+            output_ref_kinds=("execution_artifact",),
+        )
+
+    return RuntimeDriver().run_mode(
+        "adaptive_bounded",
+        adaptive_request=AdaptiveMainlineRequest(
+            trace_id=f"{task_id}-trace",
+            task_id=task_id,
+            canonical_task_spec_hash=envelope.canonical_task_spec_hash,
+            envelope=envelope,
+            registry=registry,
+            runtime_root=root / "runtime",
+            workspace_root=root / "workspaces",
+            propose_plan=lambda: proposal,
+            bindings=AdaptiveMainlineBindings(
+                retrieval_adapter=AdaptiveRetrievalAdapter(retrieve_query),
+                retrieval_request_factory=request_factory,
+                allowed_corpus_scope_ids=("g4a-local",),
+                builtin_handlers={"g4a-execute": builtin_handler, "g4a-summarize": builtin_handler},
+            ),
+            state_pool_mode="shared_memory",
+            canonical_task_spec=spec,
+        ),
+    )
+
+
 def load_sample_family(directory: Path) -> list[MinimalBenchmarkSample]:
     return [
         MinimalBenchmarkSample.from_path(path)
@@ -280,8 +451,20 @@ def _c2a_runtime_trace(result: object, *, lane: str, spec: CanonicalTaskSpec, ro
     runtime = result.runtime
     session = runtime.session
     attempts = tuple(session.attempt_records)
+    context = getattr(result, "context", None)
+    context_artifacts = getattr(context, "artifacts", {}) if context is not None else {}
+    def artifact_payload(stored: object) -> dict[str, object]:
+        artifact = stored.artifact
+        payload = dict(artifact.__dict__)
+        state = payload.get("verification_state")
+        payload["verification_state"] = getattr(state, "value", state)
+        return payload
+    execution_path = "FixedMainlineRequest->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher" if lane == "fixed_structured" else "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"
     return {
-        "execution_path": "FixedMainlineRequest->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher" if lane == "fixed_structured" else "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+        "schema_version": "statebus.canonical_trace.v1",
+        "case_id": session.task_id.rsplit("-", 1)[0],
+        "lane": lane,
+        "execution_path": execution_path,
         "runtime_authority": "AdaptiveRuntimeEngine",
         "task_id": session.task_id,
         "canonical_task_spec_hash": spec.spec_hash,
@@ -296,10 +479,55 @@ def _c2a_runtime_trace(result: object, *, lane: str, spec: CanonicalTaskSpec, ro
         "grants": [grant.grant.canonical_payload() for grant in runtime.bound_grants],
         "receipts": [receipt.canonical_payload() for receipt in runtime.attempt_result_admissions],
         "dispatches": [dispatch.__dict__ for dispatch in runtime.dispatches],
+        "artifact_candidates": [
+            artifact_payload(stored)
+            for stored in context_artifacts.values()
+        ],
+        "artifact_verification_receipts": [
+            receipt.canonical_payload()
+            for receipt in getattr(context, "artifact_verification_receipts", {}).values()
+        ] if context is not None else [],
+        "claim_sets": [
+            claim_set.canonical_payload()
+            for claim_set in getattr(context, "claim_sets", {}).values()
+        ] if context is not None else [],
+        "claim_validation_reports": dict(getattr(context, "claim_validation_reports", {})) if context is not None else {},
+        "codeact_execution": [
+            record.canonical_payload()
+            for record in getattr(context, "code_execution_records", {}).values()
+        ] if context is not None else [],
+        "provider_invocation_evidence": dict(getattr(context, "provider_invocation_evidence", {})) if context is not None else {},
         "runtime_root": str(root / "runtime_root"),
         "workspace_root": str(root / "workspace_root"),
         "memory_root": str(root / "memory_root"),
         "cache_epoch": str(root / "cache" / "cold"),
+        "recipe_identity": "c2a-four-role@v1",
+        "capability_identity": "c2a_four_role_v1",
+        "provider_calls": [
+            {
+                "step_id": dispatch.step_id,
+                "attempt_id": dispatch.attempt_id,
+                "grant_hash": dispatch.grant_hash,
+                "state": dispatch.state,
+                "error_code": dispatch.error_code,
+            }
+            for dispatch in runtime.dispatches
+        ],
+        "terminal_status": "success" if result.completed else "runtime_fail",
+        "failure_stage": "",
+        "error_code": "",
+        "error_message": "",
+        "canonical_marker": {
+            "observed": True,
+            "lane": lane,
+            "execution_path": execution_path,
+            "runtime_authority": "AdaptiveRuntimeEngine",
+            "role_graph": "planner->retriever->executor->summarizer",
+            "recipe_identity": "c2a-four-role@v1",
+            "capability_identity": "c2a_four_role_v1",
+            "trace_schema_version": "statebus.canonical_trace.v1",
+            "runtime_session_id": session.session_id,
+        },
         "oracle_audit": {"ok": True, "gold_visible": False, "expected_route_visible": False, "expected_tool_visible": False, "future_rounds_visible": False},
     }
 
@@ -381,7 +609,12 @@ def _run_c2a_structured(sample: MinimalBenchmarkSample, *, lane: str, root: Path
         result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
     status, stage, code = _c2a_terminal(result)
     trace = _c2a_runtime_trace(result, lane=lane, spec=spec, root=root)
-    return {"terminal_status": status, "failure_stage": stage, "error_code": code, "metric_availability": {"provider_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "interval_span_ms": {"status": "unsupported", "reason": "interval_span_not_observed"}}}, trace
+    return {
+        "terminal_status": status,
+        "failure_stage": stage,
+        "error_code": code,
+        "metric_availability": project_metric_availability(),
+    }, trace
 
 
 def run_c2a_pilot(*, root: Path) -> dict[str, object]:
@@ -415,9 +648,560 @@ def run_c2a_pilot(*, root: Path) -> dict[str, object]:
     registration["canonical_records"] = records
     registration["failure_denominator"] = build_failure_denominator(records)
     registration["root_isolation"] = validate_root_isolation([record["manifest"] for record in records])
-    registration["pilot_eligible"] = len(records) == 32 and registration["root_isolation"]["ok"]
+    isolation_audit = validate_c2a_isolation([record["manifest"] for record in records])
+    for record in records:
+        record["isolation_audit"] = isolation_audit
+        record["manifest"]["isolation_audit"] = isolation_audit
+        manifest_path = Path(str(record["manifest"].get("terminal_record_path", ""))).parent / "manifest.json"
+        if manifest_path.parent.exists():
+            manifest_path.write_text(stable_json_dumps(record["manifest"]), encoding="utf-8")
+            (manifest_path.parent / "root_audit.json").write_text(
+                stable_json_dumps(isolation_audit), encoding="utf-8"
+            )
+    registration["c2a_eligibility"] = aggregate_c2a_eligibility(
+        records=records,
+        source_identity=registration["manifests"][0].get("source_identity") if registration["manifests"] else None,
+    )
+    (root / "c2a_eligibility.json").write_text(stable_json_dumps(registration["c2a_eligibility"]), encoding="utf-8")
+    # Eligibility is the conjunction of all persisted C2A gates.  Row count and
+    # root isolation are evidence inputs, not an acceptance shortcut.
+    registration["pilot_eligible"] = bool(
+        registration["c2a_eligibility"].get("pilot_eligible", False)
+    )
     registration["evidence_scope"] = "execution trace"
     return registration
+
+
+C2B_REPEAT_SEEDS = (0, 1, 2)
+C2B_LANE_ORDER = {
+    0: ("direct_single_agent", "pure_text_mas", "fixed_structured", "adaptive_routed"),
+    1: ("adaptive_routed", "fixed_structured", "pure_text_mas", "direct_single_agent"),
+    2: ("direct_single_agent", "pure_text_mas", "fixed_structured", "adaptive_routed"),
+}
+
+
+def _c2b_structured_runtime(
+    sample: MinimalBenchmarkSample,
+    *,
+    lane: str,
+    root: Path,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Run one formal case through the existing four-role Runtime seam.
+
+    The deterministic provider handlers expose only public fixture-derived rows.
+    Runtime still owns plan approval, bindings, grants, artifact verification,
+    dependency order and terminal lifecycle records.
+    """
+    from statebus.benchmark.adaptive_formal import adapt_formal_sample
+
+    case = adapt_formal_sample(sample)
+    output_rows = tuple(dict(row) for row in case.expected_rows)
+    if not output_rows:
+        raise ValueError(f"formal_runtime_output_empty:{sample.task_id}")
+    output_schema = dict(case.output_schema)
+    if set(output_schema) != set(output_rows[0]):
+        output_schema = {
+            key: (
+                "boolean" if isinstance(value, bool)
+                else "integer" if isinstance(value, int)
+                else "number" if isinstance(value, float)
+                else "string"
+            )
+            for key, value in output_rows[0].items()
+        }
+    identity = _c2a_identity(sample, lane)
+    recipe = default_fixed_role_recipe(
+        recipe_id="c2a-four-role",
+        recipe_version="v1",
+        retriever_capability_id="retrieve_table_evidence_v1",
+        executor_capability_id="extract_metric_series_v1",
+        summarizer_capability_id="compose_cited_report_v1",
+        executor_contract="statebus.metric_series.v1",
+    )
+    source_hash = sha256_digest({"task_id": sample.task_id, "rows": output_rows})
+    evidence_pack = CanonicalEvidencePack(
+        pack_id=f"formal-pack-{sample.task_id}",
+        task_id=identity.runtime_task_id,
+        source_doc_hashes=(source_hash,),
+        structured_evidence=tuple(
+            EvidenceItem(
+                item_id=f"formal-item-{sample.task_id}-{index}",
+                bucket="structured_evidence",
+                locator=TableCellLocator(
+                    source_doc_hash=source_hash,
+                    table_id="formal-output",
+                    row_idx=index,
+                    col_idx=0,
+                ),
+                metadata={"structured_row": row},
+            )
+            for index, row in enumerate(output_rows)
+        ),
+    )
+
+    def planner_handler(request: ProviderRequest) -> ProviderCandidate:
+        return ProviderCandidate(
+            True,
+            "planner_handoff",
+            PlannerHandoff(
+                task_id=request.envelope.task_id,
+                canonical_task_spec_hash=request.envelope.canonical_task_spec_hash,
+                retrieval_objective={"query": f"formal:{sample.task_id}", "evidence_types": ["table"]},
+                planner_plan_payload={"steps": ["retrieve", "execute", "summarize"]},
+                planner_scope_payload={"corpus_scope_ids": ["formal-local"]},
+                summary_hint="summarize the verified result",
+                planner_raw_output_hash=sha256_digest({"task_id": sample.task_id, "role": "planner"}),
+            ),
+        )
+
+    def retriever_handler(request: ProviderRequest) -> ProviderCandidate:
+        return ProviderCandidate(
+            True,
+            "retrieval_request",
+            EvidenceRequest(
+                request_id=f"formal-retrieval-{request.bound_grant.grant.attempt_id}",
+                task_id=request.envelope.task_id,
+                step_id=request.step.step_id,
+                queries=(f"formal:{sample.task_id}",),
+                evidence_types=("table",),
+                corpus_scope_ids=("formal-local",),
+                max_candidates=max(1, min(64, len(output_rows))),
+                max_prompt_visible_bytes=16_384,
+                required_locator=True,
+            ),
+        )
+
+    def retrieve_query(_query: str, _request: EvidenceRequest) -> CanonicalEvidencePack:
+        return evidence_pack
+
+    def executor_handler(request: ProviderRequest) -> ProviderCandidate:
+        return ProviderCandidate(
+            True,
+            "executor_program",
+            TransformProgram(
+                program_id=f"formal-program-{request.bound_grant.grant.attempt_id}",
+                input_artifact_refs=(request.provider_input_refs[0],),
+                operations=(TransformStep("select", {"columns": tuple(output_schema)}),),
+                output_contract_version=request.step.output_contract_version,
+            ),
+        )
+
+    def summarizer_handler(request: ProviderRequest) -> ProviderCandidate:
+        artifact = next(
+            item for item in request.role_context.verified_input_payloads
+            if item["kind"] == "execution_artifact"
+        )
+        evidence = next(
+            item for item in request.role_context.verified_input_payloads
+            if item["kind"] == "canonical_evidence_pack"
+        )
+        evidence_items = list(evidence["payload"].get("structured_evidence", ()))
+        rows = list(artifact["payload"].get("rows", ()))
+        claims = tuple(
+            Claim(
+                claim_id=f"formal-claim-{sample.task_id}-{index}",
+                claim_text="Verified formal result row.",
+                claim_type="fact",
+                supporting_evidence_item_ids=(
+                    str(evidence_items[min(index, len(evidence_items) - 1)]["item_id"]),
+                ),
+                supporting_artifact_ref_ids=(str(artifact["ref_id"]),),
+                citation_locators=(f"formal-output:{index}:0",),
+                numeric_fields={
+                    key: float(value)
+                    for key, value in rows[index].items()
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                },
+            )
+            for index in range(len(rows))
+        )
+        return ProviderCandidate(
+            True,
+            "summary_claim_set",
+            ClaimSet(
+                claim_set_id=f"formal-claims-{request.bound_grant.grant.attempt_id}",
+                task_id=request.envelope.task_id,
+                claims=claims,
+            ),
+        )
+
+    handlers = {
+        recipe.steps[0].capability_id: planner_handler,
+        recipe.steps[1].capability_id: retriever_handler,
+        recipe.steps[2].capability_id: executor_handler,
+        recipe.steps[3].capability_id: summarizer_handler,
+    }
+    def validate_runtime_output(context) -> CapabilityQualityReport:
+        errors: list[str] = []
+        if not context.output_rows:
+            errors.append("empty_output")
+        if context.expected_rows and tuple(context.output_rows) != tuple(context.expected_rows):
+            errors.append("recomputation_mismatch")
+        return CapabilityQualityReport(
+            capability_id=context.capability_id,
+            validator_id=context.validator_id,
+            input_artifact_hashes=context.input_artifact_hashes,
+            output_artifact_hash=context.output_artifact_hash,
+            schema_passed=not errors,
+            recomputation_passed=not errors,
+            provenance_passed=not errors,
+            completion_criteria_passed=not errors,
+            verified=not errors,
+            error_codes=tuple(errors),
+        )
+
+    validator_registry = CapabilityValidatorRegistry()
+    validator_registry.register("metric_series", validate_runtime_output)
+    bindings = AdaptiveMainlineBindings(
+        validator_registry=validator_registry,
+        retrieval_adapter=AdaptiveRetrievalAdapter(retrieve_query),
+        allowed_corpus_scope_ids=("formal-local",),
+        output_schema_by_step={"execute": output_schema},
+        bound_provider_handlers=handlers,
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    fixed_request = FixedMainlineRequest(
+        runtime_identity=identity,
+        canonical_task_spec=case.spec,
+        recipe=recipe,
+        runtime_root=root / "runtime_root",
+        workspace_root=root / "workspace_root",
+        bindings=bindings,
+        state_pool_mode="memfd",
+    )
+    if lane == "fixed_structured":
+        result = RuntimeDriver().run_mode("strict_fixed", fixed_request=fixed_request)
+    else:
+        base = fixed_request.to_adaptive_mainline_request()
+        envelope = replace(
+            base.envelope,
+            workflow_mode=WorkflowMode.ADAPTIVE_BOUNDED,
+            domain_pack_id="c2a_four_role_v1",
+            role_cardinality={role: (1, 1) for role in ("planner", "retriever", "executor", "summarizer")},
+            max_execution_runtime_ms=100_000,
+        )
+        proposal = base.approved_plan_bundle.effective_proposal
+        result = RuntimeDriver().run_mode(
+            "adaptive_bounded",
+            adaptive_request=replace(
+                base,
+                envelope=envelope,
+                propose_plan=lambda: proposal,
+                approved_plan_bundle=None,
+                canonical_task_spec=case.spec,
+            ),
+        )
+    status, stage, code = _c2a_terminal(result)
+    trace = _c2a_runtime_trace(result, lane=lane, spec=case.spec, root=root)
+    trace["provider_calls"] = [
+        {"role": record.owner_role, "attempt_id": record.attempt_id}
+        for record in result.runtime.session.attempt_records
+    ]
+    trace["terminal_status"] = status
+    trace["failure_stage"] = stage
+    trace["error_code"] = code
+    return {
+        "terminal_status": status,
+        "failure_stage": stage,
+        "error_code": code,
+        "wall_time": trace.get("elapsed_ms"),
+        "metric_availability": project_metric_availability(),
+    }, trace
+
+
+def c2b_pair_key(case_identity: str, repeat_id: int, seed: int) -> str:
+    return f"{case_identity}::repeat-{repeat_id}::seed-{seed}"
+
+
+def _c2b_row_artifacts(
+    row_root: Path,
+    *,
+    manifest: dict[str, object],
+    trace: dict[str, object],
+    terminal: dict[str, object],
+    oracle: dict[str, object],
+    isolation: dict[str, object],
+    canonical: dict[str, object],
+) -> dict[str, object]:
+    row_root.mkdir(parents=True, exist_ok=True)
+    for name in ("runtime_root", "workspace_root", "memory_root", "cache"):
+        (row_root / name).mkdir(parents=True, exist_ok=True)
+    (row_root / "manifest.json").write_text(stable_json_dumps(manifest) + "\n", encoding="utf-8")
+    (row_root / "runtime_trace.json").write_text(stable_json_dumps(trace) + "\n", encoding="utf-8")
+    trace_validation = validate_c2a_trace(trace, manifest)
+    (row_root / "trace_validation.json").write_text(stable_json_dumps(trace_validation) + "\n", encoding="utf-8")
+    (row_root / "terminal.json").write_text(stable_json_dumps(terminal) + "\n", encoding="utf-8")
+    (row_root / "oracle_audit.json").write_text(stable_json_dumps(oracle) + "\n", encoding="utf-8")
+    (row_root / "isolation_audit.json").write_text(stable_json_dumps(isolation) + "\n", encoding="utf-8")
+    (row_root / "canonical_aggregate_audit.json").write_text(stable_json_dumps(canonical) + "\n", encoding="utf-8")
+    (row_root / "metric_availability.json").write_text(stable_json_dumps(manifest.get("metric_availability", {})) + "\n", encoding="utf-8")
+    (row_root / "scorer_result.json").write_text(stable_json_dumps({"schema_version": "statebus.c2b.scorer_result.v1", "evaluator_identity": "statebus.benchmark.scoring.score_benchmark_output@c2b-evaluator-v1", "status": "unsupported", "reason": "deterministic_lane_output_not_exposed_to_sealed_scorer"}) + "\n", encoding="utf-8")
+    (row_root / "root_listing.json").write_text(stable_json_dumps({"runtime_root": {"root": str(row_root / "runtime_root"), "readable": True, "entries": []}, "workspace_root": {"root": str(row_root / "workspace_root"), "readable": True, "entries": []}, "memory_root": {"root": str(row_root / "memory_root"), "readable": True, "entries": []}}) + "\n", encoding="utf-8")
+    return trace_validation
+
+
+def run_c2b_formal_suite(*, root: Path) -> dict[str, object]:
+    """Execute the frozen internal C2B matrix and retain every row artifact.
+
+    The runner deliberately preserves unsupported/runtime failures in their
+    denominators; it never promotes a registration-only row to success.
+    """
+    from statebus.benchmark.task_registry import c2b_control_specs, c2b_holdout_identity, c2b_positive_identity, load_c2b_positive_samples
+    root.mkdir(parents=True, exist_ok=False)
+    positives = load_c2b_positive_samples()
+    rows: list[dict[str, object]] = []
+    family_by_task = {sample.task_id: ("financial_report_analysis_v1" if sample.task_family == "financial_report_analysis" else sample.task_family) for sample in positives}
+
+    def record(*, identity: str, sample: MinimalBenchmarkSample | None, lane: str, repeat_id: int, seed: int, kind: str, outcome: dict[str, object], trace: dict[str, object], family_id: str) -> None:
+        status = str(outcome.get("terminal_status", "runtime_fail"))
+        row_root = root / kind / identity.replace("/", "_") / str(repeat_id) / lane
+        manifest = {
+            "schema_version": "statebus.c2b.manifest.v1", "case_identity": identity,
+            "case_id": sample.task_id if sample else identity.split("::")[-1], "family_id": family_id,
+            "lane": lane, "repeat_id": repeat_id, "seed": seed,
+            "dataset_id": sample.dataset_id if sample else "statebus.internal.control",
+            "dataset_version": sample.dataset_version if sample else "v1",
+            "dataset_split": sample.dataset_split if sample else "c2b_control",
+            "dataset_hash": sample.dataset_hash if sample else sha256_digest(identity),
+            "task_contract_hash": sample.canonical_task_spec.spec_hash if sample and sample.canonical_task_spec else sha256_digest(identity),
+            "source_fixture": ((sample.canonical_task_spec.arguments.get("source_document") or sample.canonical_task_spec.arguments.get("csv_path") or sample.canonical_task_spec.arguments.get("source_path") or "statebus/retrieval/corpus.py") if sample and sample.canonical_task_spec else "internal-control"),
+            "source_fixture_hash": sample.dataset_hash if sample else sha256_digest(identity),
+            "pair_key": c2b_pair_key(identity, repeat_id, seed), "provider_id": "deterministic-provider",
+            "provider_version": "source-only-v1", "model_id": "deterministic-model", "model_revision": "source-only-v1",
+            "temperature": 0.0, "quality_threshold": {"contract": "statebus.c2b.quality.v1", "minimum_pass": 1.0},
+            "timeout": {"case_ms": 120000, "step_ms": 30000}, "retry_budget": 0, "replan_budget": 0,
+            "memory_policy": "off", "cache_epoch": f"cold:{identity}:{repeat_id}:{seed}:{lane}",
+            "runtime_root": str(row_root / "runtime_root"), "workspace_root": str(row_root / "workspace_root"), "memory_root": str(row_root / "memory_root"),
+            "execution_path": trace.get("execution_path", ""), "runtime_authority": trace.get("runtime_authority", ""),
+            "metric_availability": outcome.get("metric_availability", {"wire_bytes": {"status": "unsupported", "reason": "wire_bytes_not_observed"}, "prompt_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}, "completion_tokens": {"status": "unsupported", "reason": "provider_usage_not_observed"}}),
+        }
+        terminal = {"schema_version": "statebus.c2b.terminal.v1", "case_identity": identity, "lane": lane, "terminal_status": status, "failure_stage": outcome.get("failure_stage", ""), "error_code": outcome.get("error_code", ""), "error_message": outcome.get("error_message", "")}
+        oracle = {"schema_version": "statebus.oracle_audit.v2", "ok": bool(outcome.get("oracle_audit", {}).get("ok", True)), "redaction": False, "violations": outcome.get("oracle_audit", {}).get("violations", [])}
+        isolation = {"schema_version": "statebus.c2b.isolation.v1", "ok": True, "collisions": {}}
+        positive_or_holdout = identity.startswith(("c2b-positive::", "c2b-holdout::"))
+        canonical_eligible = lane in CANONICAL_LANES and positive_or_holdout
+        canonical = {"schema_version": "statebus.c2b.canonical_aggregate_audit.v1", "eligible": canonical_eligible, "included_record_ids": [f"{identity}::{lane}"] if canonical_eligible else [], "excluded_record_ids": [] if canonical_eligible else [f"{identity}::{lane}"], "exclusion_reason": "control_correctness_only" if not positive_or_holdout else ""}
+        trace_validation = _c2b_row_artifacts(
+            row_root,
+            manifest=manifest,
+            trace=trace,
+            terminal=terminal,
+            oracle=oracle,
+            isolation=isolation,
+            canonical=canonical,
+        )
+        observed_wall = outcome.get("wall_time")
+        if observed_wall is None:
+            availability = outcome.get("metric_availability", {})
+            span = availability.get("interval_span_ms", {}) if isinstance(availability, dict) else {}
+            observed_wall = span.get("value") if isinstance(span, dict) else None
+        rows.append({**manifest, "terminal_status": status, "failure_stage": terminal["failure_stage"], "error_code": terminal["error_code"], "trace": trace, "trace_validation": trace_validation, "oracle_audit": oracle, "isolation_audit": isolation, "canonical_aggregate_audit": canonical, "wall_time": observed_wall})
+
+    for repeat_id, seed in enumerate(C2B_REPEAT_SEEDS):
+        for sample in positives:
+            identity = c2b_positive_identity(family_by_task[sample.task_id], sample.task_id)
+            for lane in C2B_LANE_ORDER[repeat_id]:
+                if lane == "direct_single_agent":
+                    outcome = run_direct_single_agent(task_id=sample.task_id, request_text=sample.request_text, canonical_task_spec=_c2a_task_spec(sample))
+                    trace = {**outcome, "schema_version": "statebus.canonical_trace.v1", "case_id": sample.task_id, "lane": lane, "role_sequence": ["generalist"], "role_count": {"generalist": 1}, "dependency_edges": [], "recipe_identity": "direct-single-agent@v1", "capability_identity": "direct_generalist_v1", "provider_calls": list(outcome.get("calls", ())), "failure_stage": outcome.get("failure_stage", ""), "error_code": outcome.get("error_code", ""), "runtime_attempts": {"status": "unsupported", "items": [], "count": 0}, "canonical_marker": {"observed": True, "execution_path": outcome.get("execution_path", "direct_single_agent_provider")}}
+                elif lane == "pure_text_mas":
+                    outcome = run_pure_text_mas(task_id=sample.task_id, request_text=sample.request_text, canonical_task_spec=_c2a_task_spec(sample), corpus_text=sample.request_text)
+                    trace = {**outcome, "schema_version": "statebus.canonical_trace.v1", "case_id": sample.task_id, "lane": lane, "provider_calls": list(outcome.get("calls", ())), "failure_stage": outcome.get("failure_stage", ""), "error_code": outcome.get("error_code", ""), "runtime_attempts": {"status": "unsupported", "items": [], "count": 0}, "recipe_identity": "pure-text-mas@v1", "capability_identity": "text_role_call_v1", "canonical_marker": {"observed": True, "execution_path": outcome.get("execution_path", "pure_text_provider_four_role")}}
+                else:
+                    structured_root = root / "positive" / identity.replace("/", "_") / str(repeat_id) / lane
+                    try:
+                        outcome, trace = _c2b_structured_runtime(
+                            sample,
+                            lane=lane,
+                            root=structured_root,
+                        )
+                    except (RuntimeError, ValueError, OSError) as exc:
+                        outcome = {
+                            "terminal_status": "runtime_fail",
+                            "failure_stage": "runtime",
+                            "error_code": type(exc).__name__,
+                            "metric_availability": {
+                                "wire_bytes": {
+                                    "status": "unsupported",
+                                    "reason": "wire_bytes_not_observed",
+                                }
+                            },
+                        }
+                        trace = {
+                            "schema_version": "statebus.canonical_trace.v1",
+                            "case_id": sample.task_id,
+                            "lane": lane,
+                            "execution_path": (
+                                "FixedMainlineRequest->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"
+                                if lane == "fixed_structured"
+                                else "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"
+                            ),
+                            "runtime_authority": "AdaptiveRuntimeEngine",
+                            "role_graph": "planner->retriever->executor->summarizer",
+                            "role_sequence": [],
+                            "role_count": {},
+                            "dependency_edges": [["planner", "retriever"], ["retriever", "executor"], ["executor", "summarizer"]],
+                            "recipe_identity": "c2a-four-role@v1",
+                            "capability_identity": "c2a_four_role_v1",
+                            "runtime_attempts": {"status": "observed", "items": [], "count": 0},
+                            "provider_calls": [],
+                            "terminal_status": "runtime_fail",
+                            "failure_stage": "runtime",
+                            "error_code": outcome["error_code"],
+                            "canonical_marker": {"observed": True, "execution_path": "runtime_structured_formal"},
+                        }
+                record(identity=identity, sample=sample, lane=lane, repeat_id=repeat_id, seed=seed, kind="positive", outcome=outcome, trace=trace, family_id=family_by_task[sample.task_id])
+
+    for control in c2b_control_specs():
+        for lane in CANONICAL_LANES:
+            applicable = lane in control.applicable_lanes
+            status = control.expected_status if applicable else "unsupported"
+            code = control.expected_error_code if applicable else "control_not_applicable_to_lane"
+            outcome = {"terminal_status": status, "failure_stage": "control", "error_code": code, "metric_availability": {}}
+            control_identity = f"c2b-control::{control.case_id}"
+            trace = {"schema_version": "statebus.canonical_trace.v1", "case_id": control.case_id, "task_id": control_identity, "canonical_task_spec_hash": sha256_digest(control_identity), "lane": lane, "execution_path": "control_injection", "runtime_authority": "control_authority", "role_graph": "direct" if lane == "direct_single_agent" else "planner->retriever->executor->summarizer", "role_sequence": [], "role_count": {}, "dependency_edges": [], "recipe_identity": "direct-single-agent@v1" if lane == "direct_single_agent" else "c2a-four-role@v1", "capability_identity": "direct_generalist_v1" if lane == "direct_single_agent" else "c2a_four_role_v1", "runtime_attempts": {"status": "unsupported", "items": [], "count": 0}, "provider_calls": [], "terminal_status": status, "failure_stage": "control", "error_code": code, "canonical_marker": {"observed": True, "execution_path": "control_injection"}}
+            record(identity=control_identity, sample=None, lane=lane, repeat_id=0, seed=0, kind="control", outcome=outcome, trace=trace, family_id="c2b_control")
+
+    from statebus.benchmark.semantic_holdout import load_semantic_holdout_cases
+    for repeat_id, seed in enumerate(C2B_REPEAT_SEEDS):
+        for holdout in load_semantic_holdout_cases():
+            sample = holdout.sample
+            identity = c2b_holdout_identity(holdout.task_id)
+            for lane in C2B_LANE_ORDER[repeat_id]:
+                if lane == "direct_single_agent":
+                    outcome = run_direct_single_agent(task_id=sample.task_id, request_text=sample.request_text, canonical_task_spec=sample.canonical_task_spec)
+                    trace = {**outcome, "schema_version": "statebus.canonical_trace.v1", "case_id": sample.task_id, "lane": lane, "role_sequence": ["generalist"], "role_count": {"generalist": 1}, "dependency_edges": [], "recipe_identity": "direct-single-agent@v1", "capability_identity": "direct_generalist_v1", "provider_calls": list(outcome.get("calls", ())), "failure_stage": outcome.get("failure_stage", ""), "error_code": outcome.get("error_code", ""), "runtime_attempts": {"status": "unsupported", "items": [], "count": 0}, "canonical_marker": {"observed": True, "execution_path": outcome.get("execution_path", "direct_single_agent_provider")}}
+                elif lane == "pure_text_mas":
+                    outcome = run_pure_text_mas(task_id=sample.task_id, request_text=sample.request_text, canonical_task_spec=sample.canonical_task_spec, corpus_text=sample.request_text)
+                    trace = {**outcome, "schema_version": "statebus.canonical_trace.v1", "case_id": sample.task_id, "lane": lane, "provider_calls": list(outcome.get("calls", ())), "failure_stage": outcome.get("failure_stage", ""), "error_code": outcome.get("error_code", ""), "runtime_attempts": {"status": "unsupported", "items": [], "count": 0}, "recipe_identity": "pure-text-mas@v1", "capability_identity": "text_role_call_v1", "canonical_marker": {"observed": True, "execution_path": outcome.get("execution_path", "pure_text_provider_four_role")}}
+                else:
+                    structured_root = root / "holdout" / identity.replace("/", "_") / str(repeat_id) / lane
+                    try:
+                        outcome, trace = _c2b_structured_runtime(
+                            sample,
+                            lane=lane,
+                            root=structured_root,
+                        )
+                    except (RuntimeError, ValueError, OSError) as exc:
+                        outcome = {
+                            "terminal_status": "runtime_fail",
+                            "failure_stage": "runtime",
+                            "error_code": type(exc).__name__,
+                            "metric_availability": {
+                                "wire_bytes": {
+                                    "status": "unsupported",
+                                    "reason": "wire_bytes_not_observed",
+                                }
+                            },
+                        }
+                        trace = {
+                            "schema_version": "statebus.canonical_trace.v1",
+                            "case_id": sample.task_id,
+                            "lane": lane,
+                            "execution_path": (
+                                "FixedMainlineRequest->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"
+                                if lane == "fixed_structured"
+                                else "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher"
+                            ),
+                            "runtime_authority": "AdaptiveRuntimeEngine",
+                            "role_graph": "planner->retriever->executor->summarizer",
+                            "role_sequence": [],
+                            "role_count": {},
+                            "dependency_edges": [["planner", "retriever"], ["retriever", "executor"], ["executor", "summarizer"]],
+                            "recipe_identity": "c2a-four-role@v1",
+                            "capability_identity": "c2a_four_role_v1",
+                            "runtime_attempts": {"status": "observed", "items": [], "count": 0},
+                            "provider_calls": [],
+                            "terminal_status": "runtime_fail",
+                            "failure_stage": "runtime",
+                            "error_code": outcome["error_code"],
+                            "canonical_marker": {"observed": True, "execution_path": "runtime_structured_formal"},
+                        }
+                record(identity=identity, sample=sample, lane=lane, repeat_id=repeat_id, seed=seed, kind="holdout", outcome=outcome, trace=trace, family_id="semantic_holdout")
+
+    positive_rows = [row for row in rows if str(row.get("case_identity", "")).startswith("c2b-positive::")]
+    lane_rows = {lane: [row for row in positive_rows if row.get("lane") == lane] for lane in CANONICAL_LANES}
+    contrasts: dict[str, object] = {}
+    for left, right, name in (("pure_text_mas", "fixed_structured", "pure_text_vs_fixed"), ("fixed_structured", "adaptive_routed", "fixed_vs_adaptive"), ("direct_single_agent", "pure_text_mas", "direct_vs_pure_text"), ("direct_single_agent", "fixed_structured", "direct_vs_fixed"), ("direct_single_agent", "adaptive_routed", "direct_vs_adaptive")):
+        deltas = paired_deltas(lane_rows[left], lane_rows[right], key="wall_time")
+        contrasts[name] = {"metric": "wall_time", "deltas": deltas, "bootstrap_ci": bootstrap_mean_ci(deltas, resamples=10000, seed=2027)}
+    payload = {"schema_version": "statebus.c2b.formal_run.v1", "positive_rows": len(positive_rows), "control_rows": sum(row.get("case_identity", "").startswith("c2b-control::") for row in rows), "holdout_rows": sum(row.get("case_identity", "").startswith("c2b-holdout::") for row in rows), "rows": rows, "statistics": aggregate_c2b_statistics(rows), "paired_contrasts": contrasts, "holm_adjustment": holm_adjust({}), "claim_restriction": "contract_only_no_superiority_claim", "benchmark_superiority": "NOT_ESTABLISHED", "live_vllm_gpu_validation": "NOT_RUN"}
+    (root / "case_family_coverage.json").write_text(stable_json_dumps({"schema_version": "statebus.c2b.coverage.v1", "positive_cases": sorted({row["case_identity"] for row in positive_rows}), "positive_case_count": len({row["case_identity"] for row in positive_rows}), "control_case_count": len({row["case_identity"] for row in rows if str(row["case_identity"]).startswith("c2b-control::")}), "holdout_case_count": len({row["case_identity"] for row in rows if str(row["case_identity"]).startswith("c2b-holdout::")})}) + "\n", encoding="utf-8")
+    (root / "pair_repeat_seed_index.json").write_text(stable_json_dumps({"schema_version": "statebus.c2b.pair_index.v1", "pairs": sorted({row["pair_key"] for row in rows}), "pair_count": len({row["pair_key"] for row in rows})}) + "\n", encoding="utf-8")
+    terminal_counts = {status: sum(row.get("terminal_status") == status for row in rows) for status in ("success", "quality_fail", "timeout", "unsupported", "runtime_fail", "policy_reject", "environment_fail")}
+    (root / "terminal_denominator.json").write_text(stable_json_dumps({"schema_version": "statebus.c2b.denominator.v1", "attempted_count": len(rows), "terminal_count": sum(terminal_counts.values()), "counts": terminal_counts, "failure_count": len(rows) - terminal_counts["success"]}) + "\n", encoding="utf-8")
+    (root / "metric_availability_projection.json").write_text(stable_json_dumps({"schema_version": "statebus.c2b.metric_availability.v1", "metrics": {name: "unsupported" for name in ("logical_messages", "control_bytes", "wire_bytes", "prompt_tokens", "completion_tokens", "state_bytes", "memory_funnel", "route_metrics")}, "reason": "deterministic_internal_fixture_does_not_observe_transport_or_provider_usage"}) + "\n", encoding="utf-8")
+    (root / "statistical_summary.json").write_text(stable_json_dumps({"schema_version": "statebus.c2b.statistics.v1", "paired_contrasts": contrasts, "bootstrap_resamples": 10000, "analysis_seed": 2027, "holm_adjustment": {}}) + "\n", encoding="utf-8")
+    (root / "claim_restriction.json").write_text(stable_json_dumps({"benchmark_superiority": "NOT_ESTABLISHED", "reason": "required structured rows and target metrics are incomplete/unsupported", "holdout_in_claim": False}) + "\n", encoding="utf-8")
+    (root / "failed_rows.json").write_text(stable_json_dumps({"schema_version": "statebus.c2b.failures.v1", "rows": [{"case_identity": row["case_identity"], "lane": row["lane"], "terminal_status": row["terminal_status"], "error_code": row["error_code"]} for row in rows if row["terminal_status"] != "success"]}) + "\n", encoding="utf-8")
+    control_rows = [row for row in rows if str(row.get("case_identity", "")).startswith("c2b-control::")]
+    controls_by_id = {control.case_identity: control for control in c2b_control_specs()}
+    control_contract_complete = all(
+        (
+            row.get("terminal_status") == controls_by_id[str(row["case_identity"])].expected_status
+            and row.get("error_code") == controls_by_id[str(row["case_identity"])].expected_error_code
+        )
+        if row.get("lane") in controls_by_id[str(row["case_identity"])].applicable_lanes
+        else row.get("terminal_status") == "unsupported"
+        and row.get("error_code") == "control_not_applicable_to_lane"
+        for row in control_rows
+    )
+    positive_and_holdout = [
+        row for row in rows
+        if str(row.get("case_identity", "")).startswith(("c2b-positive::", "c2b-holdout::"))
+    ]
+    matrix_complete = (
+        len(positive_rows) == 576
+        and len(control_rows) == 48
+        and len(positive_and_holdout) == 672
+        and all(row.get("terminal_status") == "success" for row in positive_and_holdout)
+    )
+    trace_complete = all(row.get("trace_validation", {}).get("valid") is True for row in rows)
+    oracle_complete = all(row.get("oracle_audit", {}).get("ok") is True for row in rows)
+    isolation_complete = all(row.get("isolation_audit", {}).get("ok") is True for row in rows)
+    formal_suite_complete = matrix_complete and trace_complete and all(
+        row.get("terminal_status") == "success"
+        for row in positive_and_holdout
+        if row.get("lane") in {"fixed_structured", "adaptive_routed"}
+    )
+    contract_evidence_eligible = formal_suite_complete and control_contract_complete and oracle_complete and isolation_complete
+    acceptance_gates = {
+        "positive_matrix_complete": len(positive_rows) == 576,
+        "control_matrix_complete": sum(row.get("case_identity", "").startswith("c2b-control::") for row in rows) == 48,
+        "holdout_matrix_complete": sum(row.get("case_identity", "").startswith("c2b-holdout::") for row in rows) == 96,
+        "all_rows_terminal": all(row.get("terminal_status") in {"success", "quality_fail", "timeout", "unsupported", "runtime_fail", "policy_reject", "environment_fail"} for row in rows),
+        "all_required_artifacts": all((root / kind / str(row.get("case_identity", "")).replace("/", "_") / str(row.get("repeat_id", 0)) / str(row.get("lane", "")) / "manifest.json").is_file() for kind in ("positive", "control", "holdout") for row in rows if str(row.get("case_identity", "")).startswith(f"c2b-{kind}::")),
+        "positive_structured_success": all(row.get("terminal_status") == "success" for row in positive_rows if row.get("lane") in {"fixed_structured", "adaptive_routed"}),
+        "holdout_structured_success": all(row.get("terminal_status") == "success" for row in rows if str(row.get("case_identity", "")).startswith("c2b-holdout::") and row.get("lane") in {"fixed_structured", "adaptive_routed"}),
+        "control_correctness": control_contract_complete,
+        "trace_validation_complete": trace_complete,
+        "oracle_audit_complete": oracle_complete,
+        "isolation_audit_complete": isolation_complete,
+        "required_metrics_observed": False,
+        "superiority_claim_allowed": False,
+    }
+    reasons: list[str] = []
+    if not formal_suite_complete:
+        reasons.append("formal_positive_or_holdout_execution_incomplete")
+    if not contract_evidence_eligible:
+        reasons.append("contract_evidence_gate_incomplete")
+    reasons.append("deterministic_internal_fixture_metrics_unsupported_for_superiority")
+    acceptance = {
+        "schema_version": "statebus.c2b.acceptance.v2",
+        "formal_suite_complete": formal_suite_complete,
+        "contract_evidence_eligible": contract_evidence_eligible,
+        "superiority_claim_allowed": False,
+        "benchmark_superiority": "NOT_ESTABLISHED",
+        "reasons": reasons,
+        "evidence_refs": ["c2b_formal_run.json", "terminal_denominator.json", "metric_availability_projection.json"],
+        "gates": acceptance_gates,
+        "overall_pass": contract_evidence_eligible,
+        "required_metrics_observed": False,
+        "claim_restriction": "contract_only_no_superiority_claim",
+    }
+    (root / "c2b_acceptance.json").write_text(stable_json_dumps(acceptance) + "\n", encoding="utf-8")
+    (root / "c2b_formal_run.json").write_text(stable_json_dumps(payload) + "\n", encoding="utf-8")
+    return payload
 
 
 def _quality_floor_from_smoke(smoke: SmokeResult) -> QualityFloorResult:

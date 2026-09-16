@@ -108,12 +108,70 @@ def _fixed_or_adapted_formal_sample(path: Path) -> FixedAnswerSample:
 
 def load_registered_formal_fixed_answer_samples() -> list[FixedAnswerSample]:
     samples: list[FixedAnswerSample] = []
+    legacy_additions = {
+        "financial_report_analysis_v1": {f"benchmark-sample-{i}" for i in range(9, 13)},
+        "multi_period_trend_analysis_v1": {f"formal-trend-{i:03d}" for i in range(6, 11)},
+        "cross_table_join_analysis_v1": {f"formal-join-{i:03d}" for i in range(6, 11)},
+        "conditional_aggregation_v1": {f"formal-agg-{i:03d}" for i in range(5, 9)},
+        "anomaly_detection_v1": {f"formal-anomaly-{i:03d}" for i in range(4, 9)},
+    }
     for family in formal_family_specs():
         paths = sorted(family.sample_dir.glob("*.json"))
+        paths = [
+            path
+            for path in paths
+            if MinimalBenchmarkSample.from_path(path).task_id
+            not in legacy_additions[family.family_id]
+        ]
         if len(paths) != family.expected_case_count:
             raise ValueError(
                 f"formal family {family.family_id} expected {family.expected_case_count} cases, "
                 f"found {len(paths)} in {family.sample_dir}"
             )
         samples.extend(_fixed_or_adapted_formal_sample(path) for path in paths)
+    return samples
+
+
+def public_formal_case_projection(sample: MinimalBenchmarkSample) -> dict[str, object]:
+    """Project only provider-visible registration fields; gold stays sealed."""
+    if sample.canonical_task_spec is None:
+        raise ValueError(f"formal registry sample lacks canonical_task_spec: {sample.task_id}")
+    spec_payload = sample.canonical_task_spec.canonical_payload()
+    # CanonicalTaskSpec is public task identity, but benchmark-only assertions
+    # can be carried in its arguments by fixtures.  Keep those fields in the
+    # scorer/registry surface only; never expose them to role providers.
+    arguments = {
+        str(key): value
+        for key, value in dict(spec_payload.get("arguments", {})).items()
+        if not (
+            str(key).lower() in {"gold", "gold_answer", "quality_checks", "expected_route", "expected_tool", "expected_tool_name", "expected_facts"}
+            or str(key).lower().startswith(("expected_", "hidden_", "future_round"))
+        )
+    }
+    public_spec = {**spec_payload, "arguments": arguments}
+    return {
+        "case_id": sample.task_id,
+        "task_family": sample.task_family,
+        "request_text": sample.request_text,
+        "canonical_task_spec": public_spec,
+        "dataset_id": sample.dataset_id,
+        "dataset_version": sample.dataset_version,
+        "dataset_split": sample.dataset_split,
+        "dataset_hash": sample.dataset_hash,
+        "scenario_tags": list(sample.scenario_tags),
+    }
+
+
+def load_c2b_formal_fixed_answer_samples() -> list[FixedAnswerSample]:
+    """Adapt the frozen 48-case C2B registry without exposing sealed facts."""
+    from statebus.benchmark.task_registry import c2b_formal_family_specs
+
+    samples: list[FixedAnswerSample] = []
+    for family in c2b_formal_family_specs():
+        paths = sorted(family.sample_dir.glob("*.json"))
+        if len(paths) != family.expected_case_count:
+            raise ValueError(f"c2b_family_case_count:{family.family_id}:{len(paths)}")
+        samples.extend(_fixed_or_adapted_formal_sample(path) for path in paths)
+    if len(samples) != 48:
+        raise ValueError(f"c2b_fixed_answer_case_count:{len(samples)}")
     return samples

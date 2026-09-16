@@ -57,7 +57,10 @@ def test_memory_index_store_commit_lookup_and_invalidate() -> None:
         allow_replay=True,
     )
     assert match_result.retrieval_decision == "memory_match_found"
-    assert match_result.matches[0].replay_class == ReplayClass.EXACT_REPLAY
+    # A committed Memory object without the Runtime-issued admission receipt
+    # remains discoverable, but replay is fail-closed to ASSIST. The canonical
+    # receipt-backed EXACT_REPLAY path is covered by the Runtime admission tests.
+    assert match_result.matches[0].replay_class == ReplayClass.ASSIST
     assert match_result.candidate_pool_hash
     assert match_result.rerank_result_hash
     assert match_result.candidate_pool is not None

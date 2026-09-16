@@ -56,18 +56,18 @@ def load_semantic_holdout_cases(
     gold = json.loads(gold_path.read_text(encoding="utf-8"))
     raw_cases = manifest.get("cases", [])
     facts = gold.get("facts", {})
-    if not isinstance(raw_cases, list) or len(raw_cases) != 4:
-        raise ValueError("semantic_holdout_requires_exactly_four_cases")
+    if not isinstance(raw_cases, list) or len(raw_cases) != 8:
+        raise ValueError("semantic_holdout_requires_exactly_eight_cases")
     if not isinstance(facts, dict):
         raise ValueError("semantic_holdout_gold_invalid")
     task_ids = [str(item.get("task_id", "")) for item in raw_cases if isinstance(item, dict)]
-    if len(task_ids) != 4 or len(set(task_ids)) != 4 or set(task_ids) != set(facts):
+    if len(task_ids) != 8 or len(set(task_ids)) != 8 or set(task_ids) != set(facts):
         raise ValueError("semantic_holdout_manifest_gold_task_mismatch")
     input_shapes = Counter(str(item.get("input_shape", "")) for item in raw_cases)
     if input_shapes != Counter({
-        "narrative_only": 2,
-        "table_only": 1,
-        "mixed_narrative_table": 1,
+        "narrative_only": 3,
+        "table_only": 3,
+        "mixed_narrative_table": 2,
     }):
         raise ValueError(f"semantic_holdout_input_shape_contract:{dict(input_shapes)}")
     serialized_manifest = stable_json_dumps(manifest)
@@ -464,14 +464,14 @@ def run_semantic_holdout(
     semantic_rows = [row for row in case_rows if row["semantic_selected"]]
     freeze_audit = runtime_freeze_audit()
     gates = {
-        "case_count_complete": len(case_summaries) == 4 and not failures,
-        "quality_4_of_4": len(case_rows) == 4 and all(row["ok"] for row in case_rows),
+        "case_count_complete": len(case_summaries) == 8 and not failures,
+        "quality_8_of_8": len(case_rows) == 8 and all(row["ok"] for row in case_rows),
         "semantic_capability_at_least_2": capability_counts["retrieve_semantic_evidence_v1"] >= 2,
         "table_capability_at_least_1": capability_counts["retrieve_table_evidence_v1"] >= 1,
         "semantic_state_cross_process_consumed": bool(semantic_rows) and all(
             row["semantic_state_gate"] for row in semantic_rows
         ),
-        "benchmark_gold_hidden_from_role_requests": len(case_rows) == 4 and all(
+        "benchmark_gold_hidden_from_role_requests": len(case_rows) == 8 and all(
             row["gold_key_visibility_gate"] for row in case_rows
         ),
         "runtime_freeze_unchanged": bool(freeze_audit["ok"]),
@@ -481,7 +481,7 @@ def run_semantic_holdout(
         "suite_id": "semantic_holdout_v1",
         "run_dir": str(run_root),
         "serial_execution": True,
-        "case_count": 4,
+        "case_count": 8,
         "attempted_case_count": len(case_summaries) + len(failures),
         "quality_pass_count": sum(bool(row["ok"]) for row in case_rows),
         "manifest_hash": sha256_digest(_MANIFEST_PATH.read_bytes()),
