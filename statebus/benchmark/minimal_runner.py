@@ -685,21 +685,35 @@ def _c2b_structured_runtime(
     *,
     lane: str,
     root: Path,
+    provider_mode: str = "deterministic",
+    llm_config: object | None = None,
+    role_path_runner: object | None = None,
+    provider_observation_sink: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Run one formal case through the existing four-role Runtime seam.
 
-    The deterministic provider handlers expose only public fixture-derived rows.
+    Both modes expose only source-owned rows to the role path.  Deterministic
+    mode uses an explicitly isolated, source-derived fixture transform so the
+    offline smoke exercises the same Runtime quality/admission path without
+    pretending to be provider evidence.  Live mode asks the configured
+    provider for the typed role candidates; expected rows remain
+    scorer/validator material and never enter a provider request.
     Runtime still owns plan approval, bindings, grants, artifact verification,
     dependency order and terminal lifecycle records.
     """
     from statebus.benchmark.adaptive_formal import adapt_formal_sample
+    from statebus.benchmark.adaptive_formal import build_formal_quality_validator
 
     case = adapt_formal_sample(sample)
-    output_rows = tuple(dict(row) for row in case.expected_rows)
-    if not output_rows:
-        raise ValueError(f"formal_runtime_output_empty:{sample.task_id}")
+    if provider_mode not in {"deterministic", "live"}:
+        raise ValueError(f"formal_runtime_provider_mode_invalid:{provider_mode}")
+    expected_rows = tuple(dict(row) for row in case.expected_rows)
+    source_rows = tuple(dict(row) for row in case.source_rows)
+    provider_rows = source_rows
+    if not provider_rows:
+        raise ValueError(f"formal_runtime_source_rows_empty:{sample.task_id}")
     output_schema = dict(case.output_schema)
-    if set(output_schema) != set(output_rows[0]):
+    if set(output_schema) != set(expected_rows[0]):
         output_schema = {
             key: (
                 "boolean" if isinstance(value, bool)
@@ -707,8 +721,9 @@ def _c2b_structured_runtime(
                 else "number" if isinstance(value, float)
                 else "string"
             )
-            for key, value in output_rows[0].items()
+            for key, value in expected_rows[0].items()
         }
+    source_schema = dict(case.source_schema)
     identity = _c2a_identity(sample, lane)
     recipe = default_fixed_role_recipe(
         recipe_id="c2a-four-role",
@@ -718,7 +733,18 @@ def _c2b_structured_runtime(
         summarizer_capability_id="compose_cited_report_v1",
         executor_contract="statebus.metric_series.v1",
     )
-    source_hash = sha256_digest({"task_id": sample.task_id, "rows": output_rows})
+    # Preserve the source-owned document identity when the formal source rows
+    # carry one.  Falling back to a fixture digest is only for source families
+    # without document hashes (for example the markdown trend fixture); never
+    # replace an observed source hash with a scorer/gold value.
+    source_hash = next(
+        (
+            str(row.get("source_doc_hash", "")).strip()
+            for row in case.source_rows
+            if str(row.get("source_doc_hash", "")).strip()
+        ),
+        sha256_digest({"task_id": sample.task_id, "rows": source_rows}),
+    )
     evidence_pack = CanonicalEvidencePack(
         pack_id=f"formal-pack-{sample.task_id}",
         task_id=identity.runtime_task_id,
@@ -735,7 +761,7 @@ def _c2b_structured_runtime(
                 ),
                 metadata={"structured_row": row},
             )
-            for index, row in enumerate(output_rows)
+            for index, row in enumerate(provider_rows)
         ),
     )
 
@@ -765,7 +791,7 @@ def _c2b_structured_runtime(
                 queries=(f"formal:{sample.task_id}",),
                 evidence_types=("table",),
                 corpus_scope_ids=("formal-local",),
-                max_candidates=max(1, min(64, len(output_rows))),
+                max_candidates=max(1, min(64, len(provider_rows))),
                 max_prompt_visible_bytes=16_384,
                 required_locator=True,
             ),
@@ -774,14 +800,33 @@ def _c2b_structured_runtime(
     def retrieve_query(_query: str, _request: EvidenceRequest) -> CanonicalEvidencePack:
         return evidence_pack
 
+    def deterministic_fixture_runner(step: TransformStep, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        if str(step.arguments.get("fixture_id", "")) != sample.task_id:
+            raise ValueError("deterministic_fixture_id_mismatch")
+        from statebus.benchmark.adaptive_formal import recompute_formal_rows
+
+        return [
+            dict(row)
+            for row in recompute_formal_rows(
+                case.operation,
+                dict(case.spec.arguments),
+                tuple(dict(row) for row in rows),
+            )
+        ]
+
     def executor_handler(request: ProviderRequest) -> ProviderCandidate:
+        operations = (
+            (TransformStep("deterministic_fixture", {"fixture_id": sample.task_id}),)
+            if provider_mode == "deterministic"
+            else (TransformStep("select", {"columns": tuple(output_schema)}),)
+        )
         return ProviderCandidate(
             True,
             "executor_program",
             TransformProgram(
                 program_id=f"formal-program-{request.bound_grant.grant.attempt_id}",
                 input_artifact_refs=(request.provider_input_refs[0],),
-                operations=(TransformStep("select", {"columns": tuple(output_schema)}),),
+                operations=operations,
                 output_contract_version=request.step.output_contract_version,
             ),
         )
@@ -831,32 +876,30 @@ def _c2b_structured_runtime(
         recipe.steps[2].capability_id: executor_handler,
         recipe.steps[3].capability_id: summarizer_handler,
     }
-    def validate_runtime_output(context) -> CapabilityQualityReport:
-        errors: list[str] = []
-        if not context.output_rows:
-            errors.append("empty_output")
-        if context.expected_rows and tuple(context.output_rows) != tuple(context.expected_rows):
-            errors.append("recomputation_mismatch")
-        return CapabilityQualityReport(
-            capability_id=context.capability_id,
-            validator_id=context.validator_id,
-            input_artifact_hashes=context.input_artifact_hashes,
-            output_artifact_hash=context.output_artifact_hash,
-            schema_passed=not errors,
-            recomputation_passed=not errors,
-            provenance_passed=not errors,
-            completion_criteria_passed=not errors,
-            verified=not errors,
-            error_codes=tuple(errors),
-        )
-
     validator_registry = CapabilityValidatorRegistry()
-    validator_registry.register("metric_series", validate_runtime_output)
+    validator_registry.register("metric_series", build_formal_quality_validator(case))
+    recipe = replace(
+        recipe,
+        steps=tuple(
+            replace(
+                step,
+                completion_criteria={
+                    **step.completion_criteria,
+                    **({"required_fields": tuple(output_schema)} if step.step_id == "execute" else {}),
+                },
+            )
+            for step in recipe.steps
+        ),
+    )
     bindings = AdaptiveMainlineBindings(
         validator_registry=validator_registry,
         retrieval_adapter=AdaptiveRetrievalAdapter(retrieve_query),
         allowed_corpus_scope_ids=("formal-local",),
         output_schema_by_step={"execute": output_schema},
+        input_schema_by_step={"execute": source_schema},
+        deterministic_fixture_runner=(
+            deterministic_fixture_runner if provider_mode == "deterministic" else None
+        ),
         bound_provider_handlers=handlers,
     )
     root.mkdir(parents=True, exist_ok=True)
@@ -868,6 +911,17 @@ def _c2b_structured_runtime(
         workspace_root=root / "workspace_root",
         bindings=bindings,
         state_pool_mode="memfd",
+        provider_mode=provider_mode,
+        llm_config=llm_config,
+        role_path_runner=role_path_runner,
+        provider_observation_sink=provider_observation_sink,
+        task_request=sample.request_text,
+        task_goal=sample.request_text,
+        task_theme=case.spec.task_family,
+        corpus_scope_ids=("formal-local",),
+        evidence_types=("table",),
+        output_fields=tuple(output_schema),
+        operation_semantics=dict(case.operation_semantics),
     )
     if lane == "fixed_structured":
         result = RuntimeDriver().run_mode("strict_fixed", fixed_request=fixed_request)
@@ -900,12 +954,29 @@ def _c2b_structured_runtime(
     trace["terminal_status"] = status
     trace["failure_stage"] = stage
     trace["error_code"] = code
+    trace["provider_mode"] = provider_mode
+    trace["provider_observation"] = dict(provider_observation_sink or {})
+    role_invocations = trace["provider_observation"].get("role_invocations", ())
+    observed_invocations = [
+        item for item in role_invocations
+        if isinstance(item, dict) and item.get("status") == "response_received"
+    ] if isinstance(role_invocations, list) else []
+    trace["provider_observation_gate"] = {
+        "passed": provider_mode == "deterministic" or len(observed_invocations) >= 4,
+        "status": "not_applicable" if provider_mode == "deterministic" else (
+            "observed" if len(observed_invocations) >= 4 else "missing"
+        ),
+        "observed_role_count": len(observed_invocations),
+    }
     return {
         "terminal_status": status,
         "failure_stage": stage,
         "error_code": code,
         "wall_time": trace.get("elapsed_ms"),
         "metric_availability": project_metric_availability(),
+        "provider_mode": provider_mode,
+        "provider_observation": dict(provider_observation_sink or {}),
+        "provider_observation_gate": trace["provider_observation_gate"],
     }, trace
 
 

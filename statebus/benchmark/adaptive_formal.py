@@ -438,6 +438,14 @@ def _output_schema(operation: str, arguments: dict[str, object]) -> tuple[dict[s
     raise ValueError(f"formal_output_schema_unsupported:{operation}")
 
 
+def formal_output_contract(spec: CanonicalTaskSpec) -> tuple[str, dict[str, str], str]:
+    """Return the controller-owned operation and output types without loading sources."""
+
+    operation = _operation_for_spec(spec)
+    output_schema, shape = _output_schema(operation, spec.arguments)
+    return operation, output_schema, shape
+
+
 def _labeled_fact_semantics(arguments: dict[str, object]) -> dict[str, object]:
     return {
         "fact_selectors": arguments.get("fact_selectors", []),
@@ -526,10 +534,27 @@ def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[s
         )
     elif operation == "compute_trend":
         tickers = arguments.get("tickers", [arguments.get("ticker", "")])
+        normalized_tickers = [str(item).upper() for item in tickers if str(item).strip()]
+        normalized_quarters = [str(item) for item in arguments["quarters"]]
+        metric = str(arguments["metric"])
         semantics.update(
-            tickers=[str(item).upper() for item in tickers if str(item).strip()],
-            quarters=[str(item) for item in arguments["quarters"]],
-            metric=str(arguments["metric"]),
+            tickers=normalized_tickers,
+            quarters=normalized_quarters,
+            metric=metric,
+            dsl_operation="trend_series",
+            dsl_arguments={
+                "ticker_field": "ticker",
+                "period_field": "quarter",
+                "metric_field": "metric",
+                "value_field": "value",
+                "tickers": normalized_tickers,
+                "periods": normalized_quarters,
+                "metric": metric,
+                "ticker_output": "ticker",
+                "period_output": "quarter",
+                "value_output": "metric_value",
+                "direction_output": "trend_direction",
+            },
             formula=(
                 "Emit one row per requested ticker and quarter in ticker-list then quarter-list order. "
                 "Direction is increasing when every adjacent value rises, decreasing when every adjacent value falls, "
@@ -628,7 +653,7 @@ def adapt_formal_sample(sample: MinimalBenchmarkSample) -> FormalAdaptiveCase:
     if sample.canonical_task_spec is None:
         raise ValueError(f"formal_sample_missing_canonical_task_spec:{sample.task_id}")
     spec = sample.canonical_task_spec
-    operation = _operation_for_spec(spec)
+    operation, output_schema, shape = formal_output_contract(spec)
     if operation in {
         "extract_narrative_facts",
         "synthesize_narrative_risk",
@@ -642,7 +667,6 @@ def adapt_formal_sample(sample: MinimalBenchmarkSample) -> FormalAdaptiveCase:
         source_rows = _cross_period_source_rows()
     else:
         source_rows = _csv_source_rows(spec)
-    output_schema, shape = _output_schema(operation, spec.arguments)
     report_capabilities = ("compose_risk_memo_v1", "compose_claim_set_v2")
     return FormalAdaptiveCase(
         sample=sample,

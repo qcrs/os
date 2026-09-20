@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -32,3 +33,54 @@ def test_formal_suite_rejects_overlong_container_socket_path_before_container(
     assert "shorten STATEBUS_LOCAL_VLLM_FORMAL_RUN_ID" in result.stderr
     assert "statebus-local-vllm-check" not in result.stdout
     assert "statebus-local-vllm-check" not in result.stderr
+
+
+def test_real_embedding_recommended_uses_selected_8b_profile(tmp_path: Path) -> None:
+    source_root = Path(__file__).resolve().parents[1]
+    os_root = tmp_path / "os"
+    scripts = os_root / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "run_g6b2_real_embedding.sh"
+    shutil.copy2(source_root / "scripts" / wrapper.name, wrapper)
+
+    live_runner = scripts / "run_g6b2_live.sh"
+    live_runner.write_text(
+        """#!/usr/bin/env bash
+printf 'live_args=%s\\n' "$*"
+printf 'llm_config=%s\\n' "$STATEBUS_LLM_CONFIG_FILE"
+printf 'container_llm_config=%s\\n' "$STATEBUS_CONTAINER_LLM_CONFIG_FILE"
+""",
+        encoding="utf-8",
+    )
+    container_runner = scripts / "run_g6b2_os_container.sh"
+    container_runner.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "exec" ]]; then
+  printf 'container_exec=%s\\n' "$*"
+  printf 'container_llm_config=%s\\n' "$STATEBUS_CONTAINER_LLM_CONFIG_FILE"
+fi
+""",
+        encoding="utf-8",
+    )
+    live_runner.chmod(0o755)
+    container_runner.chmod(0o755)
+
+    minimal_root = tmp_path / "minimal"
+    minimal_root.mkdir()
+    env = os.environ.copy()
+    env["STATEBUS_LOCAL_VLLM_MODEL"] = "qwen3-8b"
+    result = subprocess.run(
+        [str(wrapper), "recommended", "--minimal-evidence-root", str(minimal_root)],
+        cwd=os_root,
+        env=env,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--service-runtime-dir /home/qcrs/statebus/work/vllm-qwen3-8b-gpu0-u050" in result.stdout
+    expected_config = "/workspace/statebus/os/deploy/statebus_llm.g6b2-qwen3-8b.example"
+    assert f"llm_config={expected_config}" in result.stdout
+    assert f"container_llm_config={expected_config}" in result.stdout

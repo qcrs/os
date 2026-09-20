@@ -150,6 +150,54 @@ def _apply(
             str(args.get("ratio_output", "ratio")): float(current) / float(base),
             str(args.get("growth_pct_output", "growth_pct")): ((float(current) - float(base)) / float(base)) * 100.0,
         }]
+    if step.op == "trend_series":
+        ticker_field = str(args["ticker_field"])
+        period_field = str(args["period_field"])
+        metric_field = str(args["metric_field"])
+        value_field = str(args["value_field"])
+        tickers = tuple(str(item) for item in args["tickers"])
+        periods = tuple(str(item) for item in args["periods"])
+        metric = str(args["metric"])
+        ticker_output = str(args["ticker_output"])
+        period_output = str(args["period_output"])
+        value_output = str(args["value_output"])
+        direction_output = str(args["direction_output"])
+        output: list[dict[str, object]] = []
+        for ticker in tickers:
+            values: list[float] = []
+            for period in periods:
+                matches = [
+                    row
+                    for row in rows
+                    if str(row.get(ticker_field, "")).upper() == ticker.upper()
+                    and str(row.get(period_field, "")) == period
+                    and str(row.get(metric_field, "")).lower() == metric.lower()
+                ]
+                if len(matches) != 1:
+                    raise CapabilityRecomputeError("recompute_trend_series_match_count_invalid")
+                value = matches[0].get(value_field)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    raise CapabilityRecomputeError("recompute_trend_series_value_invalid")
+                values.append(float(value))
+            deltas = [right - left for left, right in zip(values, values[1:], strict=False)]
+            if all(delta > 0 for delta in deltas):
+                direction = "increasing"
+            elif all(delta < 0 for delta in deltas):
+                direction = "decreasing"
+            elif all(delta == 0 for delta in deltas):
+                direction = "flat"
+            else:
+                direction = "mixed"
+            output.extend(
+                {
+                    ticker_output: ticker,
+                    period_output: period,
+                    value_output: value,
+                    direction_output: direction,
+                }
+                for period, value in zip(periods, values, strict=True)
+            )
+        return output
     if step.op == "join_by_key":
         right_rows = inputs[str(args["right_ref"])]
         left_key, right_key = str(args["left_key"]), str(args["right_key"])

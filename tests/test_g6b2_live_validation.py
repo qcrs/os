@@ -13,6 +13,8 @@ from statebus.benchmark.g6b2_live_validation import (
     _g6b2_service_identity,
     _g6b2_write_artifacts,
     QWEN3_8B_U050_PROFILE,
+    QWEN3_32B_U050_PROFILE,
+    _config_matches,
     run_g6b2_live_campaign,
 )
 from statebus.benchmark.metric_aggregation import _g6b2_metric_availability
@@ -96,6 +98,23 @@ def test_gpu_preflight_still_requires_target_vllm_identity() -> None:
     assert missing["status"] == "environment_fail"
     assert "target_service_process_missing" in missing["reason"]
     assert "service_config_mismatch" in missing["reason"]
+
+
+def test_32b_profile_accepts_default_cpu_offload() -> None:
+    observed = {
+        "model_path": "/data/models/Qwen3-32B",
+        "served_model": "qwen3-32b",
+        "host": "127.0.0.1",
+        "port": "53334",
+        "dtype": "bfloat16",
+        "max_model_len": "8192",
+        "max_num_seqs": "1",
+        "max_num_batched_tokens": "8192",
+        "gpu_memory_utilization": "0.82",
+        "cpu_offload_gb": None,
+        "enforce_eager": True,
+    }
+    assert _config_matches(observed, QWEN3_32B_U050_PROFILE)
 
 
 def test_service_identity_does_not_inspect_coexisting_processes(
@@ -385,3 +404,29 @@ def test_execute_cli_returns_130_for_interrupted_result(monkeypatch) -> None:
         "--min-slot-interval-s",
         "60",
     ]) == 130
+
+
+def test_execute_cli_returns_failure_when_final_acceptance_failed(monkeypatch) -> None:
+    import statebus.benchmark.g6b2_live_validation as module
+
+    monkeypatch.setattr(
+        module,
+        "run_g6b2_live_campaign",
+        lambda **_kwargs: {
+            "status": "FAILED",
+            "artifact_root": "/tmp/final-gate-failed",
+            "eligible_live_pair_count": 1,
+            "interrupted": False,
+        },
+    )
+    assert module.main([
+        "execute",
+        "--mode",
+        "minimal",
+        "--artifact-root",
+        "/tmp/final-gate-failed",
+        "--pairs",
+        "1",
+        "--max-duration-s",
+        "600",
+    ]) == 1

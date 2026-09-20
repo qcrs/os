@@ -1,9 +1,9 @@
 name: statebus-g6b2-os
 
 services:
-  statebus-b2:
+  statebus-runtime:
     image: ${STATEBUS_B2_IMAGE:-statebus-dev-openeuler:24.03-lts-sp3-embed}
-    container_name: ${STATEBUS_B2_CONTAINER_NAME:-statebus-b2-qwen3-8b}
+    container_name: ${STATEBUS_B2_CONTAINER_NAME:-statebus-runtime}
     init: true
     stdin_open: true
     tty: true
@@ -13,16 +13,27 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["1"]
+              device_ids: ["${STATEBUS_EMBED_PHYSICAL_GPU:-1}"]
               capabilities: [gpu]
     shm_size: 1g
-    user: "${STATEBUS_UID:-1000}:${STATEBUS_GID:-1000}"
+    # bwrap needs a trusted outer process with namespace mount capability. The
+    # generated Python still drops to the configured non-root sandbox identity
+    # inside bwrap; this is the same boundary used by docker/compose.bwrap.yaml.
+    user: "0:0"
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
     working_dir: /workspace/statebus/os
     entrypoint: ["/bin/bash"]
     command: ["-lc", "exec sleep infinity"]
     volumes:
-      - ${STATEBUS_OS_CHECKOUT:-/home/qcrs/statebus/os}:/workspace/statebus/os
-      - ${STATEBUS_B2_HOME_HOST:-/home/qcrs/statebus/work/g6b2-qwen3-8b-container}:/statebus
+      # Mount the workspace root so both the architecture checkout and the
+      # runnable reference checkout are visible to the same container.
+      - ${STATEBUS_WORKSPACE_ROOT_HOST:-/home/qcrs/statebus}:/workspace/statebus
+      - ${STATEBUS_B2_HOME_HOST:-/home/qcrs/statebus/work/statebus-b2-container}:/statebus
       - ${STATEBUS_VLLM_MODELS_ROOT:-/data/models}:/data/models:ro
       - ${STATEBUS_HOST_ENV:-/home/qcrs/statebus/conda-envs/statebus_host}:/home/qcrs/statebus/conda-envs/statebus_host:ro
       - ${STATEBUS_EMBED_MODEL_ROOT:-/home/qcrs/statebus/models}:/statebus/models:ro
@@ -40,15 +51,28 @@ services:
       STATEBUS_WORKSPACES_DIR: /statebus/work/workspaces
       STATEBUS_STATEPOOL_DIR: /statebus/work/statepool
       STATEBUS_EMBED_DEVICE: cuda:0
+      STATEBUS_EMBED_PHYSICAL_GPU: ${STATEBUS_EMBED_PHYSICAL_GPU:-1}
       STATEBUS_STUDIO_EMBED_DEVICE: cuda:0
-      STATEBUS_LLM_CONFIG_FILE: /workspace/statebus/os/deploy/statebus_llm.g6b2-qwen3-8b.example
+      STATEBUS_G6B2_PROFILE_ID: ${STATEBUS_G6B2_PROFILE_ID:-g6b2-live-qwen3-32b-gpu2-u050-qwen3-embedding-gpu1-v1}
+      STATEBUS_G6B2_SERVICE_PHYSICAL_GPU: ${STATEBUS_G6B2_SERVICE_PHYSICAL_GPU:-2}
+      STATEBUS_G6B2_EMBEDDING_MODE: ${STATEBUS_G6B2_EMBEDDING_MODE:-local}
+      STATEBUS_G6B2_EMBEDDING_MODEL_PATH: ${STATEBUS_G6B2_EMBEDDING_MODEL_PATH:-/statebus/models/Qwen3-Embedding-0.6B}
+      STATEBUS_G6B2_EMBEDDING_DEVICE: ${STATEBUS_G6B2_EMBEDDING_DEVICE:-cuda:0}
+      STATEBUS_G6B2_EMBEDDING_PHYSICAL_GPU: ${STATEBUS_G6B2_EMBEDDING_PHYSICAL_GPU:-1}
+      STATEBUS_LLM_CONFIG_FILE: ${STATEBUS_LLM_CONFIG_FILE:-/workspace/statebus/os/deploy/statebus_llm.g6b2-qwen3-32b.example}
       STATEBUS_LLM_ENV_FILE: /dev/null
       STATEBUS_LOCAL_VLLM_BASE_URL: ${STATEBUS_LOCAL_VLLM_BASE_URL:-http://127.0.0.1:53334/v1}
       STATEBUS_LOCAL_VLLM_HEALTH_URL: ${STATEBUS_LOCAL_VLLM_HEALTH_URL:-http://127.0.0.1:53334/health}
+      STATEBUS_LOCAL_VLLM_MODEL: ${STATEBUS_LOCAL_VLLM_MODEL:-qwen3-32b}
+      STATEBUS_VLLM_SERVED_MODEL_NAME: ${STATEBUS_VLLM_SERVED_MODEL_NAME:-qwen3-32b}
       STATEBUS_VLLM_METRICS_URL: ${STATEBUS_VLLM_METRICS_URL:-http://127.0.0.1:53334/metrics}
-      STATEBUS_VLLM_MODEL_PATH: ${STATEBUS_VLLM_MODEL_PATH:-/data/models/Qwen3-8B}
-      STATEBUS_VLLM_TOKENIZER_PATH: ${STATEBUS_VLLM_TOKENIZER_PATH:-/data/models/Qwen3-8B}
-      STATEBUS_ENGINE_LOCAL_KV_MODEL: qwen3-8b
+      STATEBUS_VLLM_MODEL_PATH: ${STATEBUS_VLLM_MODEL_PATH:-/data/models/Qwen3-32B}
+      STATEBUS_VLLM_TOKENIZER_PATH: ${STATEBUS_VLLM_TOKENIZER_PATH:-/data/models/Qwen3-32B}
+      STATEBUS_VLLM_MAX_MODEL_LEN: ${STATEBUS_VLLM_MAX_MODEL_LEN:-8192}
+      STATEBUS_VLLM_MAX_NUM_SEQS: ${STATEBUS_VLLM_MAX_NUM_SEQS:-1}
+      STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS: ${STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS:-8192}
+      STATEBUS_VLLM_GPU_MEMORY_UTILIZATION: ${STATEBUS_VLLM_GPU_MEMORY_UTILIZATION:-0.82}
+      STATEBUS_ENGINE_LOCAL_KV_MODEL: ${STATEBUS_LOCAL_VLLM_MODEL:-qwen3-32b}
       STATEBUS_PREFIX_ALIGNMENT_MODE: independent
       STATEBUS_PREFIX_POLICY: off
       STATEBUS_LOGIT_GATE_MODE: off

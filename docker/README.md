@@ -5,8 +5,11 @@ StateBus 应用运行在单个 openEuler 容器中，模型推理可以选择两
 - 外部 OpenAI-compatible API；
 - 宿主机上的 Qwen3-32B vLLM，地址为 `http://127.0.0.1:53334/v1`。
 
-应用容器使用 host network，因此可以直接访问宿主机的 loopback 地址。容器
-本身不申请 GPU，Embedding 默认使用 CPU；宿主机 vLLM 默认只使用物理卡 2。
+应用容器使用 host network，因此可以直接访问宿主机的 loopback 地址。普通
+应用容器默认不申请 GPU；`scripts/start_statebus.sh` 启动的
+`statebus-runtime` 容器按 `STATEBUS_EMBED_PHYSICAL_GPU` 映射 Embedding GPU
+（默认物理 GPU1，容器内永远显示为 `cuda:0`）。宿主机 vLLM 的 GPU 和模型
+由 profile 选择。
 
 ## 1. 文件分工
 
@@ -20,6 +23,11 @@ StateBus 应用运行在单个 openEuler 容器中，模型推理可以选择两
 | `docker/compose.yaml` | StateBus 应用容器定义 |
 | `scripts/vllm/start_qwen3_32b.sh` | 前台启动普通 vLLM |
 | `scripts/vllm/manage_qwen3_32b.sh` | 后台启停、状态、健康检查和日志入口 |
+| `scripts/start_statebus.sh` | 一键选择 8B/32B profile、复用/启动 vLLM、启动并验证 `statebus-runtime` |
+
+启动后，脚本会打印 `model_path`、`served_model`、vLLM 物理 GPU、
+`max_model_len`、Embedding 模型、Embedding 物理 GPU、容器内逻辑设备
+（固定为 `cuda:0`）、容器名以及挂载的 `statebus_host` 环境路径。
 
 本仓库没有修改或内置 vLLM 源码。显式 KV 通过 vLLM 0.9.2 的 Connector、
 Worker Extension 和 Middleware 扩展入口加载。

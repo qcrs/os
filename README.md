@@ -132,16 +132,39 @@ cp deploy/statebus_llm.env.example deploy/statebus_llm.env.local
 
 修改本地 YAML 中的 `base_url`、模型名和角色参数，并在 env 文件中填写 API Key。
 
-使用宿主机 Qwen3-32B vLLM：
+使用宿主机 vLLM 和 StateBus Embedding 容器：
 
 ```bash
-cp deploy/vllm.env.example deploy/vllm.env.local
-scripts/vllm/manage_qwen3_32b.sh print-config
-scripts/vllm/manage_qwen3_32b.sh start
+scripts/start_statebus.sh qwen3-32b-gpu2-u050
 ```
 
-vLLM 默认监听 `127.0.0.1:53334`，只使用物理卡 2。首次启动默认使用 4096 token 上下文，确认稳定后再提高到 8192。依赖安装与显式 KV 模式切换见
-[部署说明](docker/README.md#固定的推理环境)。
+可用 profile 和解析后的地址、GPU、context、Embedding 位置：
+
+```bash
+scripts/start_statebus.sh --list-profiles
+scripts/start_statebus.sh qwen3-8b-gpu0-u050 --print-config
+scripts/start_statebus.sh qwen3-32b-gpu2-u050 --print-config
+```
+
+默认 profile 固定为 `/data/models/Qwen3-32B`、物理 GPU2、
+`http://127.0.0.1:53334/v1`、8192 token context；容器默认名为
+`statebus-runtime`，只映射 Embedding 物理 GPU1，容器内显示为 `cuda:0`。
+8B profile 使用 `/data/models/Qwen3-8B`、物理 GPU0 和 4096 context。
+脚本会复用已经健康且模型匹配的服务，不会停止或重启它。
+如需显式指定 Embedding 物理卡和容器名：
+
+```bash
+scripts/start_statebus.sh qwen3-32b-gpu2-u050 \
+  --embedding-gpu 1 --container-name statebus-runtime
+```
+如需查看解析后的模型地址和参数：
+
+```bash
+source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b-gpu2-u050
+scripts/vllm/manage_qwen3_32b.sh print-config
+```
+
+依赖安装与显式 KV 模式切换见[部署说明](docker/README.md#固定的推理环境)。
 
 ### 2. 准备应用容器
 

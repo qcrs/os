@@ -85,6 +85,9 @@ ApprovedPlanValidator = Callable[[ApprovedPlan], None]
 class AdaptiveMainlineBindings:
     """Domain handlers supplied to the product-owned adaptive assembly point."""
 
+    # Matched-ablation control for the cross-process semantic state path.
+    # Keep the default on so existing callers retain the production behavior.
+    semantic_state_mode: str = "on"
     validator_registry: CapabilityValidatorRegistry = field(
         default_factory=default_capability_validator_registry
     )
@@ -99,6 +102,7 @@ class AdaptiveMainlineBindings:
     allowed_corpus_scope_ids: tuple[str, ...] = ()
     transform_program_factory: TransformProgramFactory | None = None
     transform_program_repair_factory: TransformProgramRepairFactory | None = None
+    deterministic_fixture_runner: Callable | None = None
     code_source_factory: CodeSourceFactory | None = None
     code_repair_factory: CodeRepairFactory | None = None
     code_policy_factory: Callable | None = None
@@ -106,11 +110,14 @@ class AdaptiveMainlineBindings:
     quality_semantics_by_capability: dict[str, dict[str, object]] = field(default_factory=dict)
     output_schema_by_capability: dict[str, dict[str, str]] = field(default_factory=dict)
     output_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
+    input_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
     claim_set_factory: ClaimSetFactory | None = None
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
     bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
     provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
     provider_invocation_evidence: dict[str, dict[str, str]] = field(default_factory=dict)
+    g5c_c0_artifact_root: Path | None = None
+    g5c_c1_artifact_root: Path | None = None
     # Internal deterministic fixture seam for an observed no-effect Memory
     # read. It does not create a receipt or alter Runtime authority.
     memory_after_surface_hash_by_memory_id: dict[str, str] = field(default_factory=dict)
@@ -266,6 +273,10 @@ class AdaptiveMainlineRunner:
             WorkflowMode.ADAPTIVE_BOUNDED,
         }:
             raise AdaptiveMainlineError("unsupported_mainline_workflow_mode")
+        if request.bindings.semantic_state_mode not in {"off", "on", "consumer_off"}:
+            raise AdaptiveMainlineError(
+                f"semantic_state_mode_invalid:{request.bindings.semantic_state_mode}"
+            )
         if request.envelope.task_id != request.task_id:
             raise AdaptiveMainlineError("adaptive_mainline_task_id_mismatch")
         if (
@@ -339,6 +350,7 @@ class AdaptiveMainlineRunner:
         })
         context = AdaptiveDispatchContext(
             registry=request.registry,
+            semantic_state_mode=bindings.semantic_state_mode,
             validator_registry=bindings.validator_registry,
             artifacts=bindings.artifacts,
             artifact_verification_receipts=bindings.artifact_verification_receipts,
@@ -349,6 +361,7 @@ class AdaptiveMainlineRunner:
             allowed_corpus_scope_ids=bindings.allowed_corpus_scope_ids,
             transform_program_factory=bindings.transform_program_factory,
             transform_program_repair_factory=bindings.transform_program_repair_factory,
+            deterministic_fixture_runner=bindings.deterministic_fixture_runner,
             code_source_factory=bindings.code_source_factory,
             code_repair_factory=bindings.code_repair_factory,
             code_policy_factory=bindings.code_policy_factory,
@@ -356,11 +369,14 @@ class AdaptiveMainlineRunner:
             quality_semantics_by_capability=bindings.quality_semantics_by_capability,
             output_schema_by_capability=bindings.output_schema_by_capability,
             output_schema_by_step=bindings.output_schema_by_step,
+            input_schema_by_step=bindings.input_schema_by_step,
             claim_set_factory=bindings.claim_set_factory,
             builtin_handlers=bindings.builtin_handlers,
             bound_provider_handlers=bindings.bound_provider_handlers,
             provider_state_reader_factory=bindings.provider_state_reader_factory,
             provider_invocation_evidence=bindings.provider_invocation_evidence,
+            g5c_c0_artifact_root=bindings.g5c_c0_artifact_root,
+            g5c_c1_artifact_root=bindings.g5c_c1_artifact_root,
             provider_registry=(
                 request.provider_registry
                 or ExecutionProviderRegistry.from_legacy_capability_registry(request.registry)
@@ -1225,6 +1241,11 @@ class AdaptiveMainlineRunner:
             },
             "socket_path": str(infrastructure.socket_path),
             "runtime_compatibility_signature": context.runtime_compatibility_signature,
+            "component_activation_receipts": {
+                name: dict(receipt)
+                for name, receipt in sorted(context.component_activation_receipts.items())
+            },
+            "semantic_state_mode": context.semantic_state_mode,
             "memory_query_hashes": {
                 task_id: query.query_hash
                 for task_id, query in sorted(context.memory_queries_by_task.items())

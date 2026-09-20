@@ -400,6 +400,17 @@ def test_runtime_mode_selector_requires_the_matching_product_request() -> None:
             raise AssertionError(f"{mode} accepted missing request")
 
 
+def test_mainline_rejects_unknown_semantic_state_ablation_mode(tmp_path: Path) -> None:
+    request = _mainline_request(tmp_path)
+    with pytest.raises(AdaptiveMainlineError, match="semantic_state_mode_invalid:bogus"):
+        AdaptiveMainlineRunner().run(
+            replace(
+                request,
+                bindings=replace(request.bindings, semantic_state_mode="bogus"),
+            )
+        )
+
+
 def test_plan_source_has_no_attempt_factory(tmp_path: Path) -> None:
     request = _mainline_request(tmp_path)
     proposal = replace(
@@ -949,6 +960,8 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     )
     metrics = result.runtime.telemetry.summarize_task("adaptive-semantic-task")
     assert metrics["hybrid_memory_query_count"] == 1.0
+    assert metrics["semantic_state_publish_count"] == 1.0
+    assert metrics["semantic_state_consume_count"] == 1.0
     assert metrics["embedding_encode_count"] == float(publication.contract.shape[0])
     assert metrics["raw_evidence_bytes_seen_by_llm"] > 0.0
     assert len(result.context.memory_queries_by_task) == 1
@@ -1019,6 +1032,14 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     assert lifecycle_times[0] < lifecycle_times[1] <= lifecycle_times[2] <= lifecycle_times[3] <= lifecycle_times[4] <= lifecycle_times[5]
     assert release_receipt["release_after_response_admission"] is True
     assert result.infrastructure.state_store.materializations == {}
+    activation = result.context.component_activation_receipts["semantic_state"]
+    assert activation["requested_mode"] == "on"
+    assert activation["effective_mode"] == "on"
+    assert activation["producer_active"] is True
+    assert activation["consumer_active"] is True
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["semantic_state_mode"] == "on"
+    assert manifest["component_activation_receipts"]["semantic_state"] == activation
     (tmp_path / "real_subprocess_scope.txt").write_text(
         json.dumps(
             {

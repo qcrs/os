@@ -31,7 +31,10 @@ from statebus.benchmark.reporting import (
     suite_report_to_dict,
 )
 from statebus.benchmark.replay_negative_audit import run_replay_negative_audit
-from statebus.benchmark.semantic_holdout import run_semantic_holdout
+from statebus.benchmark.semantic_holdout import (
+    run_semantic_holdout,
+    run_semantic_state_ablation,
+)
 from statebus.benchmark.task_registry import formal_family_payload, load_registered_formal_samples
 from statebus.runtime import runtime_preflight
 from statebus.utils import stable_json_dumps
@@ -140,6 +143,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "replay-negative-audit",
             "adaptive-memory",
             "semantic-holdout",
+            "semantic-state-ablation",
             "preflight",
         ),
         default="preflight",
@@ -401,10 +405,11 @@ def main() -> None:
             "continuous-replay",
             "adaptive-memory",
             "semantic-holdout",
+            "semantic-state-ablation",
         }
     ):
         raise SystemExit(
-            "--transport subprocess is supported for formal, continuous, adaptive-memory, and semantic-holdout suites"
+            "--transport subprocess is supported for formal, continuous, adaptive-memory, semantic-holdout, and semantic-state-ablation suites"
         )
     if args.case_id and args.suite in {"continuous", "continuous-replay", "continuous-design-audit"}:
         raise SystemExit("--case-id is only supported for fixed/formal suites; use --max-cases for continuous rounds")
@@ -414,12 +419,12 @@ def main() -> None:
         raise SystemExit("--round-view is only supported for continuous suites")
     if args.round_view and args.max_cases > 0:
         raise SystemExit("--round-view selects a complete experiment and cannot be combined with --max-cases")
-    if args.suite in {"adaptive-memory", "semantic-holdout"} and (args.case_id or args.max_cases):
+    if args.suite == "adaptive-memory" and (args.case_id or args.max_cases):
         raise SystemExit(
-            f"{args.suite} is a fixed-size formal suite and does not accept --case-id or --max-cases"
+            "adaptive-memory is a fixed-size formal suite and does not accept --case-id or --max-cases"
         )
 
-    if args.suite in {"adaptive-memory", "semantic-holdout"}:
+    if args.suite in {"adaptive-memory", "semantic-holdout", "semantic-state-ablation"}:
         if args.role_path_mode != "local_vllm":
             raise SystemExit(f"{args.suite} requires --role-path-mode local_vllm")
         if args.embedding_mode != "local":
@@ -435,17 +440,25 @@ def main() -> None:
             ),
             "embedding_device": os.getenv("STATEBUS_EMBED_DEVICE", "cuda:0"),
         }
-        report = (
-            run_adaptive_memory(
+        if args.suite == "adaptive-memory":
+            report = run_adaptive_memory(
                 output_root=args.runtime_root / "adaptive-memory",
                 **common,
             )
-            if args.suite == "adaptive-memory"
-            else run_semantic_holdout(
+        elif args.suite == "semantic-holdout":
+            report = run_semantic_holdout(
                 output_root=args.runtime_root / "semantic-holdout",
+                case_ids=tuple(args.case_id),
+                max_cases=args.max_cases,
                 **common,
             )
-        )
+        else:
+            report = run_semantic_state_ablation(
+                output_root=args.runtime_root / "semantic-state-ablation",
+                case_ids=tuple(args.case_id),
+                max_cases=args.max_cases,
+                **common,
+            )
         print(stable_json_dumps(report))
         if not report.get("ok"):
             raise SystemExit(1)

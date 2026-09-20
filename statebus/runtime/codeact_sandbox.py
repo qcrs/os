@@ -159,7 +159,7 @@ class CodeActSandboxRunner:
             source.chmod(0o444)
             completed = self._run_llm_bwrap(
                 bwrap_path=bwrap_path,
-                command=(sys.executable, "/sandbox/generated.py"),
+                command=(self._sandbox_python_executable(), "/sandbox/generated.py"),
                 env={},
                 source_path=source,
                 inputs_dir=inputs,
@@ -204,7 +204,7 @@ class CodeActSandboxRunner:
             raise RuntimeError("bwrap_disappeared_after_readiness")
         completed = self._run_llm_bwrap(
             bwrap_path=bwrap_path,
-            command=(sys.executable, "/sandbox/generated.py"),
+            command=(self._sandbox_python_executable(), "/sandbox/generated.py"),
             env={},
             source_path=source_path,
             inputs_dir=inputs_dir,
@@ -390,7 +390,8 @@ class CodeActSandboxRunner:
         }
         for key, value in sorted(safe_env.items()):
             env_args.extend(("--setenv", key, value))
-        python_runtime_root = Path(sys.executable).resolve().parent.parent
+        sandbox_python = self._sandbox_python_executable()
+        python_runtime_root = Path(sandbox_python).resolve().parent.parent
         with tempfile.TemporaryDirectory(prefix="statebus-llm-bwrap-root-") as root_dir:
             sandbox_root = Path(root_dir)
             (sandbox_root / "inputs").mkdir()
@@ -457,6 +458,17 @@ class CodeActSandboxRunner:
                 return subprocess.CompletedProcess(
                     args=argv, returncode=124, stdout=exc.stdout or "", stderr=(exc.stderr or "") + "\nsandbox_timeout",
                 )
+
+    @staticmethod
+    def _sandbox_python_executable() -> str:
+        """Use container Python for root-launched bwrap, host Python otherwise."""
+        if (
+            os.geteuid() == 0
+            and os.getenv("STATEBUS_ENV_PREFIX") == "container-python"
+            and Path("/usr/bin/python3").exists()
+        ):
+            return "/usr/bin/python3"
+        return sys.executable
 
     def _resource_preexec(self) -> None:
         self._set_limit(resource.RLIMIT_CPU, self.config.cpu_seconds)

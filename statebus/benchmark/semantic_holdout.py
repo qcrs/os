@@ -110,6 +110,29 @@ def load_semantic_holdout_cases(
     return tuple(cases)
 
 
+def _select_semantic_holdout_cases(
+    cases: tuple[FormalAdaptiveCase, ...],
+    *,
+    case_ids: tuple[str, ...] = (),
+    max_cases: int = 0,
+) -> tuple[FormalAdaptiveCase, ...]:
+    if max_cases < 0:
+        raise ValueError("semantic_holdout_max_cases_negative")
+    normalized_ids = tuple(dict.fromkeys(case_id.strip() for case_id in case_ids if case_id.strip()))
+    selected = cases
+    if normalized_ids:
+        by_id = {case.task_id: case for case in cases}
+        missing = [case_id for case_id in normalized_ids if case_id not in by_id]
+        if missing:
+            raise ValueError(f"semantic_holdout_unknown_case_ids:{','.join(missing)}")
+        selected = tuple(by_id[case_id] for case_id in normalized_ids)
+    if max_cases > 0:
+        selected = selected[:max_cases]
+    if not selected:
+        raise ValueError("semantic_holdout_selection_empty")
+    return selected
+
+
 def _directory_content_hash(project_root: Path, relative_dir: str) -> str:
     directory = project_root / relative_dir
     paths = sorted(
@@ -387,13 +410,298 @@ def _write_markdown(summary: dict[str, object], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_ablation_markdown(summary: dict[str, object], path: Path) -> None:
+    lines = [
+        "# Semantic State Ablation Summary",
+        "",
+        f"- Overall: {'PASS' if summary['ok'] else 'INCONCLUSIVE'}",
+        f"- Pairs: {summary['denominator']['closed_pairs']}/{summary['denominator']['planned_pairs']} closed",
+        "- Variants: off, on, consumer_off",
+        "",
+        "| Pair | Off | On | Consumer off | Denominator |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for report in summary["pairs"]:
+        by_mode = {row["variant"]: row for row in report["variants"]}
+        lines.append(
+            "| {pair} | {off} | {on} | {consumer_off} | {denominator} |".format(
+                pair=report["task_id"],
+                off="PASS" if by_mode.get("off", {}).get("ok") else "FAIL",
+                on="PASS" if by_mode.get("on", {}).get("ok") else "FAIL",
+                consumer_off="PASS" if by_mode.get("consumer_off", {}).get("ok") else "FAIL",
+                denominator="CLOSED" if report["denominator_eligible"] else "OPEN",
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _semantic_ablation_row(
+    *,
+    case: FormalAdaptiveCase,
+    mode: str,
+    case_summary: dict[str, object] | None = None,
+    failure: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Project one matched semantic-state variant without inventing metrics."""
+
+    summary = case_summary or {}
+    telemetry = summary.get("telemetry", {})
+    telemetry = telemetry if isinstance(telemetry, dict) else {}
+    receipts = summary.get("component_activation_receipts", {})
+    receipts = receipts if isinstance(receipts, dict) else {}
+    activation = receipts.get("semantic_state", {})
+    activation = activation if isinstance(activation, dict) else {}
+    selections = summary.get("semantic_state_selections", {})
+    selections = selections if isinstance(selections, dict) else {}
+    effects = summary.get("downstream_effects", {})
+    effects = effects if isinstance(effects, dict) else {}
+    terminal = bool(summary.get("runtime_completed"))
+    quality = bool(summary.get("ok"))
+    on_gate = mode != "on" or _semantic_state_case_gate(summary)
+    receipt_matches = activation.get("requested_mode") == mode
+    row = {
+        "pair_id": f"{case.task_id}:semantic_state",
+        "task_id": case.task_id,
+        "task_contract_hash": case.spec.spec_hash,
+        "variant": mode,
+        "requested_feature_flags": {"semantic_state": mode},
+        "effective_feature_flags": {
+            "semantic_state": activation.get("effective_mode", "unknown")
+        },
+        "activation_receipt": dict(activation),
+        "terminal": terminal,
+        "quality_pass": quality,
+        "ok": bool(terminal and quality and on_gate and receipt_matches),
+        "provider_call_count": len(summary.get("provider_invocation_events", [])),
+        "semantic_publish_count": float(telemetry.get("semantic_state_publish_count", 0.0)),
+        "semantic_consume_count": float(telemetry.get("semantic_state_consume_count", 0.0)),
+        "semantic_transfer_count": float(telemetry.get("semantic_state_transfer_count", 0.0)),
+        "producer_active": bool(activation.get("producer_active", False)),
+        "consumer_active": bool(activation.get("consumer_active", False)),
+        "actual_use": bool(selections),
+        "downstream_effect": any(
+            isinstance(effect, dict)
+            and effect.get("behavioral_effect") in {"changed", "no_effect"}
+            for effect in effects.values()
+        ),
+        "state_release_reclaim_closed": bool(
+            summary.get("state_release_reclaim_receipts")
+            or mode == "off"
+        ),
+        "summary_path": str(summary.get("run_dir", "")),
+    }
+    if failure is not None:
+        row.update({
+            "terminal": False,
+            "quality_pass": False,
+            "ok": False,
+            "failure": failure,
+        })
+    return row
+
+
+def run_semantic_state_ablation(
+    *,
+    output_root: Path,
+    embedding_model_path: str,
+    embedding_device: str,
+    case_ids: tuple[str, ...] = (),
+    max_cases: int = 0,
+) -> dict[str, object]:
+    """Run a small matched off/on/consumer-off SemanticState ablation.
+
+    The runner deliberately keeps the public task, source, provider profile,
+    and scorer fixed.  Only the Runtime-owned semantic-state mode changes.
+    """
+
+    available_cases = load_semantic_holdout_cases()
+    cases = _select_semantic_holdout_cases(
+        available_cases,
+        case_ids=case_ids,
+        max_cases=max_cases,
+    )
+    run_root = output_root / (
+        f"semantic_state_ablation_{time.strftime('%Y%m%d_%H%M%S')}_"
+        f"{time.time_ns() % 1_000_000_000:09d}"
+    )
+    run_root.mkdir(parents=True, exist_ok=False)
+    case_root = run_root / "cases"
+    case_root.mkdir()
+    modes = ("off", "on", "consumer_off")
+    rows: list[dict[str, object]] = []
+    failures: list[dict[str, object]] = []
+    pair_reports: list[dict[str, object]] = []
+    for case in cases:
+        pair_rows: list[dict[str, object]] = []
+        for mode in modes:
+            variant_root = case_root / case.task_id / mode
+            print(stable_json_dumps({
+                "stage": "semantic_state_ablation_variant_started",
+                "task_id": case.task_id,
+                "variant": mode,
+            }), flush=True)
+            try:
+                case_summary = _run_adaptive_case(
+                    case,
+                    case_root=variant_root,
+                    embedding_model_path=embedding_model_path,
+                    embedding_device=embedding_device,
+                    memory_policy="none",
+                    semantic_state_mode=mode,
+                )
+                row = _semantic_ablation_row(
+                    case=case,
+                    mode=mode,
+                    case_summary=case_summary,
+                )
+                row["summary_path"] = str(variant_root / "summary.json")
+            except Exception as exc:
+                stage = _failure_stage(str(exc))
+                category = _classify_failure(str(exc), stage=stage)
+                failure = LaneFailure(
+                    lane=f"semantic-state:{case.task_id}:{mode}",
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    category=category,
+                    stage=stage,
+                    task_id=case.task_id,
+                    error_code=str(exc).split(":", 1)[0] or type(exc).__name__,
+                    system_gate_failed=category in _SYSTEM_FAILURE_CLASSES,
+                ).canonical_payload()
+                failures.append(failure)
+                variant_root.mkdir(parents=True, exist_ok=True)
+                (variant_root / "failure.json").write_text(
+                    stable_json_dumps(failure) + "\n", encoding="utf-8"
+                )
+                row = _semantic_ablation_row(
+                    case=case,
+                    mode=mode,
+                    failure=failure,
+                )
+                traceback.print_exc()
+            pair_rows.append(row)
+            rows.append(row)
+        expected_modes = {"off", "on", "consumer_off"}
+        observed_modes = {str(row.get("variant")) for row in pair_rows}
+        by_mode = {str(row["variant"]): row for row in pair_rows}
+        on_row = by_mode.get("on", {})
+        off_row = by_mode.get("off", {})
+        consumer_off_row = by_mode.get("consumer_off", {})
+        mode_contract = {
+            "off_disabled": (
+                not off_row.get("producer_active", False)
+                and not off_row.get("consumer_active", False)
+            ),
+            "on_cross_process_consumer": bool(
+                on_row.get("producer_active", False)
+                and on_row.get("consumer_active", False)
+                and on_row.get("actual_use", False)
+            ),
+            "consumer_off_producer_only": bool(
+                consumer_off_row.get("producer_active", False)
+                and not consumer_off_row.get("consumer_active", False)
+            ),
+        }
+        pair_gate = {
+            "exactly_three_variants": observed_modes == expected_modes,
+            "all_variants_terminal": len(pair_rows) == 3 and all(row["terminal"] for row in pair_rows),
+            "all_variants_quality_pass": len(pair_rows) == 3 and all(row["quality_pass"] for row in pair_rows),
+            "receipt_modes_match": len(pair_rows) == 3 and all(
+                row.get("activation_receipt", {}).get("requested_mode") == row.get("variant")
+                for row in pair_rows
+            ),
+            **mode_contract,
+        }
+        pair_report = {
+            "pair_id": f"{case.task_id}:semantic_state",
+            "task_id": case.task_id,
+            "task_contract_hash": case.spec.spec_hash,
+            "variants": pair_rows,
+            "gates": pair_gate,
+            "denominator_eligible": all(pair_gate.values()),
+        }
+        pair_reports.append(pair_report)
+
+    denominator = {
+        "schema_version": "statebus.semantic_state_ablation_denominator.v1",
+        "planned_pairs": len(cases),
+        "closed_pairs": sum(bool(report["denominator_eligible"]) for report in pair_reports),
+        "incomplete_pairs": sum(not bool(report["denominator_eligible"]) for report in pair_reports),
+        "eligible_pair_ids": [
+            str(report["pair_id"])
+            for report in pair_reports
+            if report["denominator_eligible"]
+        ],
+        "excluded_pair_ids": [
+            str(report["pair_id"])
+            for report in pair_reports
+            if not report["denominator_eligible"]
+        ],
+        "arithmetic_closed": len(pair_reports) == len(cases),
+    }
+    gates = {
+        "pair_count_complete": len(pair_reports) == len(cases),
+        "all_pairs_closed": bool(pair_reports) and all(
+            report["denominator_eligible"] for report in pair_reports
+        ),
+        "no_system_failures": not any(
+            failure.get("system_gate_failed") for failure in failures
+        ),
+        "denominator_arithmetic_closed": bool(denominator["arithmetic_closed"]),
+    }
+    summary = {
+        "schema_version": "statebus.semantic_state_ablation_summary.v1",
+        "suite_id": "semantic_state_ablation_v1",
+        "run_dir": str(run_root),
+        "serial_execution": True,
+        "case_count": len(cases),
+        "variant_count": len(rows),
+        "modes": list(modes),
+        "case_ids": [case.task_id for case in cases],
+        "rows": rows,
+        "pairs": pair_reports,
+        "denominator": denominator,
+        "gates": gates,
+        "failures": failures,
+        "ok": all(gates.values()),
+        "formal_campaign_eligible": False,
+        "benchmark_superiority": "NOT_ESTABLISHED",
+        "statistical_superiority": "NOT_ESTABLISHED",
+        "claim_scope": "matched_semantic_state_mechanism_ablation_only",
+    }
+    (run_root / "manifest.json").write_text(stable_json_dumps({
+        "schema_version": "statebus.semantic_state_ablation_manifest.v1",
+        "suite_id": summary["suite_id"],
+        "modes": list(modes),
+        "case_ids": summary["case_ids"],
+        "embedding_model_path": embedding_model_path,
+        "embedding_device": embedding_device,
+        "provider_profile": "inherited_from_adaptive_formal_case",
+        "lane_order": list(modes),
+        "requested_feature_flags": {"semantic_state": "matched_off_on_consumer_off"},
+    }) + "\n", encoding="utf-8")
+    (run_root / "rows.json").write_text(stable_json_dumps(rows) + "\n", encoding="utf-8")
+    (run_root / "denominator.json").write_text(stable_json_dumps(denominator) + "\n", encoding="utf-8")
+    (run_root / "summary.json").write_text(stable_json_dumps(summary) + "\n", encoding="utf-8")
+    _write_ablation_markdown(summary, run_root / "summary.md")
+    return summary
+
+
 def run_semantic_holdout(
     *,
     output_root: Path,
     embedding_model_path: str,
     embedding_device: str,
+    case_ids: tuple[str, ...] = (),
+    max_cases: int = 0,
 ) -> dict[str, object]:
-    cases = load_semantic_holdout_cases()
+    available_cases = load_semantic_holdout_cases()
+    cases = _select_semantic_holdout_cases(
+        available_cases,
+        case_ids=case_ids,
+        max_cases=max_cases,
+    )
+    bounded_selection = bool(case_ids or max_cases > 0)
     run_root = output_root / f"semantic_holdout_{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 1_000_000_000:09d}"
     run_root.mkdir(parents=True, exist_ok=False)
     adaptive_root = run_root / "cases"
@@ -464,24 +772,35 @@ def run_semantic_holdout(
     semantic_rows = [row for row in case_rows if row["semantic_selected"]]
     freeze_audit = runtime_freeze_audit()
     gates = {
-        "case_count_complete": len(case_summaries) == 8 and not failures,
-        "quality_8_of_8": len(case_rows) == 8 and all(row["ok"] for row in case_rows),
+        "case_count_complete": len(case_summaries) == len(cases) and not failures,
+        "quality_selected_complete": len(case_rows) == len(cases) and all(row["ok"] for row in case_rows),
         "semantic_capability_at_least_2": capability_counts["retrieve_semantic_evidence_v1"] >= 2,
         "table_capability_at_least_1": capability_counts["retrieve_table_evidence_v1"] >= 1,
         "semantic_state_cross_process_consumed": bool(semantic_rows) and all(
             row["semantic_state_gate"] for row in semantic_rows
         ),
-        "benchmark_gold_hidden_from_role_requests": len(case_rows) == 8 and all(
+        "benchmark_gold_hidden_from_role_requests": len(case_rows) == len(cases) and all(
             row["gold_key_visibility_gate"] for row in case_rows
         ),
         "runtime_freeze_unchanged": bool(freeze_audit["ok"]),
     }
+    required_gates = (
+        (
+            "case_count_complete",
+            "quality_selected_complete",
+            "semantic_state_cross_process_consumed",
+            "benchmark_gold_hidden_from_role_requests",
+        )
+        if bounded_selection
+        else tuple(gates)
+    )
     summary = {
         "schema_version": "statebus.semantic_holdout_summary.v1",
         "suite_id": "semantic_holdout_v1",
         "run_dir": str(run_root),
         "serial_execution": True,
-        "case_count": 8,
+        "case_count": len(cases),
+        "available_case_count": len(available_cases),
         "attempted_case_count": len(case_summaries) + len(failures),
         "quality_pass_count": sum(bool(row["ok"]) for row in case_rows),
         "manifest_hash": sha256_digest(_MANIFEST_PATH.read_bytes()),
@@ -490,9 +809,25 @@ def run_semantic_holdout(
         "capability_counts": dict(sorted(capability_counts.items())),
         "cases": case_rows,
         "runtime_freeze_audit": freeze_audit,
+        "selection": {
+            "mode": "bounded_diagnostic" if bounded_selection else "formal_full",
+            "requested_case_ids": list(case_ids),
+            "max_cases": max_cases,
+            "selected_case_ids": [case.task_id for case in cases],
+        },
         "gates": gates,
+        "required_gates": list(required_gates),
         "failures": failures,
-        "ok": all(gates.values()),
+        "ok": all(gates[name] for name in required_gates),
+        "formal_acceptance_eligible": not bounded_selection,
+        "performance_claim_eligible": False,
+        "benchmark_superiority": "NOT_ESTABLISHED",
+        "statistical_superiority": "NOT_ESTABLISHED",
+        "claim_scope": (
+            "bounded_semantic_state_lifecycle_validation_only"
+            if bounded_selection
+            else "formal_semantic_holdout_quality_and_lifecycle"
+        ),
     }
     (run_root / "summary.json").write_text(stable_json_dumps(summary) + "\n", encoding="utf-8")
     _write_markdown(summary, run_root / "summary.md")

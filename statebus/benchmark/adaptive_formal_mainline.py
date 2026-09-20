@@ -944,8 +944,12 @@ def _run_adaptive_case(
     memory_policy: str = "none",
     memory_commit_replay_class: ReplayClass = ReplayClass.ASSIST,
     memory_tags: tuple[str, ...] = (),
+    semantic_state_mode: str = "on",
     require_executor_model_role: bool = True,
+    measurement_seed: int | None = None,
 ) -> dict[str, object]:
+    if semantic_state_mode not in {"off", "on", "consumer_off"}:
+        raise ValueError(f"semantic_state_mode_invalid:{semantic_state_mode}")
     started_ns = time.perf_counter_ns()
     case_root.mkdir(parents=True, exist_ok=False)
     registry = CapabilityRegistry()
@@ -1303,6 +1307,12 @@ def _run_adaptive_case(
                 "a later generator safe. A reducer must receive only numeric values, unless the semantic contract explicitly "
                 "requires imputing those missing rows before the reducer."
             )
+            if isinstance(request.operation_semantics.get("labeled_fact_algorithm"), dict):
+                violation_guidance += (
+                    " This contract may contain multiple labeled fact selectors. Apply each selector independently "
+                    "to its matching narrative_section and merge all output_field and locator_field values into one "
+                    "result; never index a partial facts[0] dictionary, and never read narrative text from a table_row."
+                )
         if "unsafe_full_string_digit_concatenation" in violations:
             violation_guidance += (
                 " The authorized source uses a leading numeric token followed by an optional bracketed range. "
@@ -1617,6 +1627,7 @@ def _run_adaptive_case(
         return repaired
 
     bindings = AdaptiveMainlineBindings(
+        semantic_state_mode=semantic_state_mode,
         validator_registry=validator_registry,
         artifacts={case.source_ref_id: source},
         artifact_verification_receipts={case.source_ref_id: source_receipt},
@@ -1784,6 +1795,11 @@ def _run_adaptive_case(
         "approved_steps": [step.canonical_payload() for step in approved.steps],
         "selected_capability_ids": [step.capability_id for step in approved.steps],
         "runtime_completed": runtime.completed,
+        "semantic_state_mode": semantic_state_mode,
+        "component_activation_receipts": {
+            name: dict(receipt)
+            for name, receipt in sorted(context.component_activation_receipts.items())
+        },
         "runtime_dispatches": [dispatch.__dict__ for dispatch in runtime.dispatches],
         "runtime_session": runtime.session.canonical_payload(),
         "telemetry": telemetry,
@@ -1820,6 +1836,22 @@ def _run_adaptive_case(
             }
             for state_id, selection in context.semantic_state_selections.items()
         },
+        "state_publication_receipts": {
+            state_id: dict(receipt)
+            for state_id, receipt in sorted(context.state_publication_receipts.items())
+        },
+        "semantic_consumer_receipts": {
+            state_id: dict(receipt)
+            for state_id, receipt in sorted(context.semantic_consumer_receipts.items())
+        },
+        "state_release_reclaim_receipts": {
+            state_id: dict(receipt)
+            for state_id, receipt in sorted(context.state_release_reclaim_receipts.items())
+        },
+        "downstream_effects": {
+            state_id: dict(effect)
+            for state_id, effect in sorted(context.downstream_effects.items())
+        },
         "memory_query_results": {
             step_id: result.canonical_payload()
             for step_id, result in context.memory_match_results.items()
@@ -1842,6 +1874,19 @@ def _run_adaptive_case(
         "output_rows": [dict(row) for row in output_rows],
         "elapsed_ms": (time.perf_counter_ns() - started_ns) / 1_000_000.0,
         "ok": passed,
+        "requested_seed": measurement_seed,
+        "effective_seed": None,
+        "seed_status": "unsupported_by_provider_worker_contract" if measurement_seed is not None else "not_requested",
+        "provider_invocation_events": [
+            {
+                "event": "provider_invocation",
+                "role": str(item.get("role", "")),
+                "request_id": str(item.get("request_audit", {}).get("request_id", "")) if isinstance(item.get("request_audit"), dict) else "",
+                "status": "observed" if item.get("attempts") else "unknown",
+                "retry_kind": "unknown",
+            }
+            for item in role_invocations
+        ],
     }
     system_gate_checks = _case_system_gate_checks(summary)
     summary["system_gate_checks"] = system_gate_checks
@@ -1878,6 +1923,11 @@ def _run_adaptive_case(
         "dispatches": [item.__dict__ for item in runtime.dispatches],
         "provider_calls": role_invocations,
         "provider_invocation_evidence": dict(context.provider_invocation_evidence),
+        "semantic_state_mode": semantic_state_mode,
+        "component_activation_receipts": {
+            name: dict(receipt)
+            for name, receipt in sorted(context.component_activation_receipts.items())
+        },
         "state_publication_receipts": dict(context.state_publication_receipts),
         "state_access_grants": {
             state_id: [grant.canonical_payload() for grant in grants]
@@ -1929,6 +1979,7 @@ def _run_adaptive_case(
         "model_revision": "deterministic-formal",
         "implementation_snapshot": {
             "kind": "deterministic_fixture",
+            "semantic_state_mode": semantic_state_mode,
             "semantic_execution_path": "cross_process_subprocess_worker" if context.semantic_state_selections else "state_off",
             "live_health_verified": False,
         },
@@ -1937,17 +1988,32 @@ def _run_adaptive_case(
         "memory_root": str(mainline.infrastructure.memory_store.store_root),
         "cache_epoch": f"{case.task_id}:formal:0",
         "timeout": {"case_ms": envelope.max_execution_runtime_ms, "step_ms": envelope.max_execution_runtime_ms},
-        "retry_budget": envelope.max_total_attempts,
+        "attempt_budget": envelope.max_total_attempts,
+        "retry_budget": "unknown_unless_observed",
+        "requested_feature_flags": {"semantic_state": semantic_state_mode},
+        "effective_feature_flags": {
+            "semantic_state": str(
+                context.component_activation_receipts.get("semantic_state", {}).get(
+                    "effective_mode", "not_applicable"
+                )
+            )
+        },
+        "component_activation_receipts": trace["component_activation_receipts"],
         "oracle_visibility": {"roles": False, "runtime_scorer": True, "future_rounds": False},
         "terminal_status": trace["terminal_status"],
         "failure_stage": trace["failure_stage"],
         "error_code": trace["error_code"],
         "metric_availability": project_metric_availability(),
         "canonical_aggregate_eligible": True,
+        "requested_seed": measurement_seed,
+        "effective_seed": None,
+        "seed_status": "unsupported_by_provider_worker_contract" if measurement_seed is not None else "not_requested",
         "claim_scope": "contract_only_no_superiority_claim",
         "headline_eligibility": "cross_process_semantic_only" if context.semantic_state_selections else "state_off_control",
     }
     trace_validation = validate_c2a_trace(trace, manifest)
+    summary["trace_validation"] = trace_validation
+    summary["trace_gate_passed"] = bool(trace_validation.get("valid", False))
     evidence_files = {
         "manifest.json": manifest,
         "runtime_trace.json": trace,
@@ -1975,6 +2041,7 @@ def _run_adaptive_case(
             }
             for state_id, publication in context.semantic_state_publications.items()
         },
+        "component_activation_receipts.json": trace["component_activation_receipts"],
         "state_access_grants.json": trace["state_access_grants"],
         "state_pin_receipts.json": trace["state_pin_receipts"],
         "semantic_consumer_receipt.json": trace["semantic_consumer_receipts"],

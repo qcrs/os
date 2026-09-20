@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+OS_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 HOST_RUNS_ROOT="${STATEBUS_HOST_RUNS_ROOT:-/home/qcrs/statebus/runs}"
 CONTAINER_RUNS_ROOT="${STATEBUS_CONTAINER_RUNS_ROOT:-/statebus/runs}"
+CONTAINER_NAME="${STATEBUS_CONTAINER_NAME:-statebus-runtime}"
+DEFAULT_B2_HOME_HOST="${STATEBUS_B2_HOME_HOST:-$HOME/statebus/work/${CONTAINER_NAME}-container}"
 STAMP="${STATEBUS_LOCAL_VLLM_FORMAL_STAMP:-$(date +%Y%m%d_%H%M%S)}"
 MODEL_SLUG_RAW="${STATEBUS_LOCAL_VLLM_MODEL:-${STATEBUS_VLLM_SERVED_MODEL_NAME:-qwen3-32b}}"
 MODEL_SLUG="$(printf '%s' "$MODEL_SLUG_RAW" | sed 's/[^A-Za-z0-9._-]/-/g')"
@@ -23,6 +27,104 @@ SUMMARY_JSON="${RUN_ROOT}/formal_suite.summary.json"
 CONTAINER_STDOUT_JSON="${CONTAINER_RUN_ROOT}/formal_suite.stdout.json"
 CONTAINER_SOCKET_PATH="${CONTAINER_RUN_ROOT}/control.sock"
 AF_UNIX_SOCKET_PATH_MAX_BYTES="${STATEBUS_AF_UNIX_SOCKET_PATH_MAX_BYTES:-107}"
+
+# Stage 2 is a separate bounded pilot contract.  Keep it out of live_runner's
+# formal/dev tier parser so the ordinary formal suite cannot be mistaken for
+# the four-lane live-vLLM pilot.
+if [[ "$SUITE" == "stage2-pilot" ]]; then
+  STAGE2_HOST_RUNS_ROOT="${STATEBUS_STAGE2_HOST_RUNS_ROOT:-${HOST_RUNS_ROOT}}"
+  STAGE2_HOST_RUN_ROOT="${STAGE2_HOST_RUNS_ROOT}/${RUN_ID}"
+  STAGE2_STDOUT_LOG="${STAGE2_HOST_RUN_ROOT}/stage2_pilot.stdout.log"
+  STAGE2_STDERR_JSON="${STAGE2_HOST_RUN_ROOT}/stage2_pilot.stderr.log"
+  VERIFY_LOG="${STAGE2_HOST_RUN_ROOT}/container_verify.log"
+  DRY_RUN="${STATEBUS_LOCAL_VLLM_FORMAL_DRY_RUN:-0}"
+  TIMEOUT_S="${STATEBUS_LOCAL_VLLM_FORMAL_TIMEOUT_S:-}"
+  REPEATS="${STATEBUS_LOCAL_VLLM_FORMAL_REPEATS:-2}"
+  STAGE2_CASE_IDS="${STATEBUS_STAGE2_CASE_IDS:-}"
+  STAGE2_FAMILY_IDS="${STATEBUS_STAGE2_FAMILY_IDS:-}"
+  STAGE2_MAX_CASES_PER_FAMILY="${STATEBUS_STAGE2_MAX_CASES_PER_FAMILY:-0}"
+  embedding_device="${STATEBUS_G6B2_EMBEDDING_DEVICE:-${STATEBUS_EMBED_DEVICE:-cuda:0}}"
+  [[ "$DRY_RUN" == "0" || "$DRY_RUN" == "1" ]] || {
+    printf '[statebus-local-vllm-formal] invalid STATEBUS_LOCAL_VLLM_FORMAL_DRY_RUN=%s (expected 0 or 1)\n' "$DRY_RUN" >&2
+    exit 2
+  }
+  [[ "$RUN_ID" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    printf '[statebus-local-vllm-formal] invalid run id: %s\n' "$RUN_ID" >&2
+    exit 2
+  }
+  if [[ -n "$TIMEOUT_S" ]]; then
+    if ! [[ "$TIMEOUT_S" =~ ^[0-9]+([.][0-9]+)?$ ]] || [[ "$TIMEOUT_S" =~ ^0+([.]0+)?$ ]]; then
+      printf '[statebus-local-vllm-formal] invalid STATEBUS_LOCAL_VLLM_FORMAL_TIMEOUT_S=%s\n' "$TIMEOUT_S" >&2
+      exit 2
+    fi
+  fi
+  if ! [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
+    printf '[statebus-local-vllm-formal] invalid STATEBUS_LOCAL_VLLM_FORMAL_REPEATS=%s\n' "$REPEATS" >&2
+    exit 2
+  fi
+  if ! [[ "$STAGE2_MAX_CASES_PER_FAMILY" =~ ^[0-9]+$ ]]; then
+    printf '[statebus-local-vllm-formal] invalid STATEBUS_STAGE2_MAX_CASES_PER_FAMILY=%s\n' "$STAGE2_MAX_CASES_PER_FAMILY" >&2
+    exit 2
+  fi
+  if [[ -n "$STAGE2_CASE_IDS" && -n "$STAGE2_FAMILY_IDS" ]]; then
+    printf '[statebus-local-vllm-formal] STATEBUS_STAGE2_CASE_IDS and STATEBUS_STAGE2_FAMILY_IDS are mutually exclusive\n' >&2
+    exit 2
+  fi
+  mkdir -p "$STAGE2_HOST_RUNS_ROOT"
+  if ! mkdir "$STAGE2_HOST_RUN_ROOT" 2>/dev/null; then
+    printf '[statebus-local-vllm-formal] stage2 run root must be new: %s\n' "$STAGE2_HOST_RUN_ROOT" >&2
+    exit 2
+  fi
+
+  set +e
+  "$SCRIPT_DIR/run_g6b2_os_container.sh" verify >"$VERIFY_LOG" 2>&1
+  verify_status=$?
+  set -e
+  if (( verify_status != 0 )); then
+    printf '[statebus-local-vllm-formal] container verify failed; runner was not started\n' >&2
+    printf '[statebus-local-vllm-formal] verify_log=%s\n' "$VERIFY_LOG" >&2
+    exit "$verify_status"
+  fi
+
+  STAGE2_CONTAINER_RUN_ROOT="$("$SCRIPT_DIR/run_g6b2_os_container.sh" map-path "$STAGE2_HOST_RUN_ROOT")" || {
+    printf '[statebus-local-vllm-formal] stage2 run root is not visible in statebus-runtime: %s\n' "$STAGE2_HOST_RUN_ROOT" >&2
+    exit 2
+  }
+  STAGE2_CONTAINER_ROOT="${STAGE2_CONTAINER_RUN_ROOT}/stage2-pilot"
+  stage2_args=(
+    python3 -m statebus.benchmark.stage2_pilot
+    --output-root "$STAGE2_CONTAINER_ROOT"
+    --embedding-device "$embedding_device"
+    --run-id "$RUN_ID"
+    --repeats "$REPEATS"
+    --max-cases-per-family "$STAGE2_MAX_CASES_PER_FAMILY"
+  )
+  if [[ -n "$STAGE2_CASE_IDS" ]]; then
+    IFS=',' read -r -a stage2_case_ids <<<"$STAGE2_CASE_IDS"
+    for case_id in "${stage2_case_ids[@]}"; do
+      [[ -n "$case_id" ]] && stage2_args+=(--case-id "$case_id")
+    done
+  fi
+  if [[ -n "$STAGE2_FAMILY_IDS" ]]; then
+    IFS=',' read -r -a stage2_family_ids <<<"$STAGE2_FAMILY_IDS"
+    for family_id in "${stage2_family_ids[@]}"; do
+      [[ -n "$family_id" ]] && stage2_args+=(--family-id "$family_id")
+    done
+  fi
+  [[ "$DRY_RUN" == "1" ]] && stage2_args+=(--dry-run)
+  [[ -n "$TIMEOUT_S" ]] && stage2_args+=(--timeout-s "$TIMEOUT_S")
+
+  set +e
+  "$SCRIPT_DIR/run_g6b2_os_container.sh" exec "${stage2_args[@]}" >"$STAGE2_STDOUT_LOG" 2>"$STAGE2_STDERR_JSON"
+  stage2_status=$?
+  set -e
+  echo "[statebus-local-vllm-formal] run_root=$STAGE2_HOST_RUN_ROOT"
+  echo "[statebus-local-vllm-formal] stage2_output_root=${STAGE2_HOST_RUN_ROOT}/stage2-pilot"
+  echo "[statebus-local-vllm-formal] stage2_stdout_log=$STAGE2_STDOUT_LOG"
+  echo "[statebus-local-vllm-formal] stage2_stderr_log=$STAGE2_STDERR_JSON"
+  echo "[statebus-local-vllm-formal] verify_log=$VERIFY_LOG"
+  exit "$stage2_status"
+fi
 
 mkdir -p "$RUN_ROOT"
 

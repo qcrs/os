@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Mapping
 
 from statebus.integrations.llm import ChatMessage, LLMConfig, build_llm_client, extract_json_object
 from statebus.benchmark.fixed_answer_runner import FixedAnswerSample
@@ -25,8 +26,9 @@ from statebus.benchmark.scoring import (
     expected_facts_for_scoring,
     score_fixed_answer_case,
 )
+from statebus.benchmark.stage2_contract import canonical_output_projection, public_case_projection
 from statebus.benchmark.external_public_tools import execute_public_task, supports_public_task
-from statebus.retrieval.corpus import OfflineFinancialReportCorpus
+from statebus.retrieval.corpus import OfflineFinancialReportCorpus, OfflineMarkdownLongDocCorpus
 from statebus.route_tool_catalog import FINANCIAL_ROUTE_PROFILES, INCIDENT_ROUTE_PROFILES, RouteToolProfile, select_route_profiles
 from statebus.utils import stable_json_dumps
 
@@ -74,7 +76,7 @@ class ExternalTextRoleUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    latency_ms: float = 0.0
+    latency_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +96,7 @@ class ExternalTextCaseResult:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    llm_ms: float
+    llm_ms: float | None
     end_to_end_ms: float
     llm_call_count: int
     route_exact: bool
@@ -116,6 +118,9 @@ class ExternalTextCaseResult:
     summarizer_usage: ExternalTextRoleUsage
     tool_ms: float = 0.0
     tool_execution: dict[str, object] = field(default_factory=dict)
+    provider_invocation_events: tuple[dict[str, object], ...] = ()
+    provider_request_events: tuple[dict[str, object], ...] = ()
+    retry_events: tuple[dict[str, object], ...] = ()
 
 
 def _run_sync(awaitable: object) -> object:
@@ -413,6 +418,8 @@ def _requested_metric_name(sample: FixedAnswerSample) -> str:
         if len(parts) >= 2 and parts[0] in {"exact", "numeric_tolerance"}:
             metric_name = parts[1].strip()
             if metric_name:
+                if metric_name in {"metric_name", "metric_value"}:
+                    return str(arguments.get("metric", "")).strip()
                 return metric_name
     requested_metric = str(arguments.get("metric", "")).strip()
     if requested_metric:
@@ -422,7 +429,12 @@ def _requested_metric_name(sample: FixedAnswerSample) -> str:
 
 # NOTE: max_chars 从 14000 降到 6000，防止 retriever prompt 在 Qwen3-32B（8192 ctx）下超出上下文窗口。
 # 6000 chars ≈ 2000 tokens，留足 planner payload + 候选项 + 900 completion 的余量。
-def _read_public_evidence_excerpt(sample: FixedAnswerSample, *, max_chars: int = 6000) -> str:
+def _read_public_evidence_excerpt(
+    sample: FixedAnswerSample,
+    *,
+    max_chars: int = 6000,
+    public_case: Mapping[str, object] | None = None,
+) -> str:
     arguments = sample.canonical_task_spec.arguments
     candidate_paths = [
         str(arguments.get(key, "")).strip()
@@ -433,19 +445,15 @@ def _read_public_evidence_excerpt(sample: FixedAnswerSample, *, max_chars: int =
         candidate_paths.append(
             "statebus/benchmark/samples/continuous_task_families/cross_period_financial/cross_period_financial_report.md"
         )
-    parts = [
-        "Task specification:",
-        stable_json_dumps(sample.canonical_task_spec.canonical_payload()),
-        "Request text:",
-        sample.request_text,
-    ]
+    visible_case = dict(public_case or public_case_projection(sample))
+    parts = ["Public case:", stable_json_dumps(visible_case)]
     root = _repo_root()
     for raw_path in candidate_paths:
         path = Path(raw_path)
         if not path.is_absolute():
             path = root / path
         if not path.exists() or not path.is_file():
-            parts.append(f"Public evidence file unavailable: {raw_path}")
+            raise FileNotFoundError(f"public_evidence_file_unavailable:{raw_path}")
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         if len(text) > max_chars:
@@ -454,18 +462,41 @@ def _read_public_evidence_excerpt(sample: FixedAnswerSample, *, max_chars: int =
     return "\n".join(parts)
 
 
-def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionContext:
-    request_payload = sample.canonical_task_spec.canonical_payload()
-    request_payload["request_text"] = sample.request_text
+def _load_execution_context(
+    sample: FixedAnswerSample,
+    *,
+    public_case: Mapping[str, object] | None = None,
+) -> ExternalExecutionContext:
+    visible_case = dict(public_case or public_case_projection(sample))
+    request_payload = dict(visible_case.get("task_spec", {}))
+    request_payload["request"] = visible_case.get("request", "")
     requested_metric = _requested_metric_name(sample)
     public_execution_required = supports_public_task(
         task_family=sample.canonical_task_spec.task_family,
         intent_op=sample.canonical_task_spec.intent_op,
     )
     if sample.canonical_task_spec.task_family != "financial_report_analysis":
-        public_doc_hashes = (
-            "sha256:" + hashlib.sha256(sample.task_id.encode("utf-8")).hexdigest()[:24],
-        )
+        public_doc_hashes = tuple(str(item) for item in visible_case.get("public_sources", ()) if str(item).strip())
+        if sample.canonical_task_spec.task_family == "cross_period_financial_analysis":
+            document_path = str(
+                sample.canonical_task_spec.arguments.get(
+                    "document_path",
+                    sample.canonical_task_spec.arguments.get("source_document", ""),
+                )
+            ).strip()
+            if document_path:
+                document = OfflineMarkdownLongDocCorpus().resolve(
+                    dataset_id=str(
+                        sample.canonical_task_spec.arguments.get(
+                            "dataset_id",
+                            getattr(sample, "dataset_id", ""),
+                        )
+                    ),
+                    document_path=document_path,
+                )
+                public_doc_hashes = (document.source_doc_hash,)
+        if not public_doc_hashes:
+            public_doc_hashes = (f"public-task:{sample.task_id}",)
         profiles = _candidate_profiles_for_sample(sample)
         route_candidates = tuple(
             PublicRouteCandidate(
@@ -489,6 +520,7 @@ def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionConte
         public_evidence_text = _read_public_evidence_excerpt(
             sample,
             max_chars=1800 if public_execution_required else 6000,
+            public_case=visible_case,
         )
         return ExternalExecutionContext(
             request_payload=request_payload,
@@ -530,7 +562,7 @@ def _load_execution_context(sample: FixedAnswerSample) -> ExternalExecutionConte
         )
         for profile in profiles
     )
-    requested_metric = requested_metric or str(sample.canonical_task_spec.arguments.get("metric", "revenue")).strip() or "revenue"
+    requested_metric = requested_metric or str(visible_case.get("task_spec", {}).get("arguments", {}).get("metric", "revenue")).strip() or "revenue"
     metric_value = next(
         (
             row.value
@@ -671,8 +703,9 @@ def _summarizer_prompt(
         "Task theme: fixed_answer_route_tool\n"
         "Tags: external,pure-text,four-role\n"
         "Reusable steps: retrieve,execute\n\n"
-        "Summary hint:\n"
-        f"{sample.summary_hint}\n\n"
+        # Keep the established handoff grammar while intentionally exposing no
+        # answer-bearing summary hint to the summarizer.
+        "Summary hint:\n\n\n"
         "Evidence note:\n"
         f"{evidence_summary}\n\n"
         "Playbook actions:\n"
@@ -838,6 +871,19 @@ def _lookup_output_value(payload: dict[str, object], dotted_key: str) -> object 
     return current
 
 
+def _observed_required_outputs(
+    required_outputs: tuple[str, ...],
+    public_tool_outputs: Mapping[str, object],
+) -> dict[str, object]:
+    """Project only required fields actually returned by the public tool."""
+
+    return {
+        str(field): public_tool_outputs[str(field)]
+        for field in required_outputs
+        if str(field) in public_tool_outputs
+    }
+
+
 def _project_public_tool_metric(
     *,
     sample: FixedAnswerSample,
@@ -858,50 +904,121 @@ def run_external_text_case(
     runtime_root: Path,
     role_path_mode: str = "deterministic",
     embedding_mode: str = "deterministic",
+    requested_seed: int | None = None,
+    llm_config: LLMConfig | None = None,
+    public_case: Mapping[str, object] | None = None,
 ) -> ExternalTextCaseResult:
-    llm_client = build_llm_client(LLMConfig.from_runtime().with_mode(role_path_mode))
+    active_config = (llm_config or LLMConfig.from_runtime()).with_mode(role_path_mode)
+    llm_client = build_llm_client(active_config)
+    provider_invocation_events: list[dict[str, object]] = []
+
+    def attach_observation(exc: BaseException) -> None:
+        request_events = tuple(dict(item) for item in getattr(llm_client, "request_events", ()))
+        retry_events = tuple(
+            item for item in request_events if str(item.get("retry_kind", "none")) != "none"
+        )
+        for name, value in (
+            ("provider_invocation_events", tuple(provider_invocation_events)),
+            ("provider_request_events", request_events),
+            ("retry_events", retry_events),
+        ):
+            try:
+                setattr(exc, name, value)
+            except Exception:
+                pass
+
+    def complete_observed(messages, *, purpose: str, response_schema: dict[str, object]):
+        request_id = f"external:{sample.task_id}:{purpose}:{time.monotonic_ns()}"
+        started_ns = time.monotonic_ns()
+        try:
+            result = _run_sync(
+                llm_client.complete(
+                    messages,
+                    purpose=purpose,
+                    response_schema=response_schema,
+                )
+            )
+        except BaseException as exc:
+            event = {
+                "event": "provider_invocation",
+                "request_id": request_id,
+                "role": purpose,
+                "status": "error",
+                "start_ns": started_ns,
+                "end_ns": time.monotonic_ns(),
+                "retry_kind": "not_applicable",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+            provider_invocation_events.append(event)
+            attach_observation(exc)
+            raise
+        provider_invocation_events.append(
+            {
+                "event": "provider_invocation",
+                "request_id": request_id,
+                "role": purpose,
+                "status": "response_received",
+                "start_ns": started_ns,
+                "end_ns": time.monotonic_ns(),
+                "retry_kind": "not_applicable",
+            }
+        )
+        return result
+
+    def extract_observed_json(result: object, *, purpose: str) -> dict[str, object]:
+        try:
+            return extract_json_object(result.text)  # type: ignore[attr-defined]
+        except BaseException as exc:
+            for event in reversed(provider_invocation_events):
+                if event.get("role") == purpose and event.get("status") == "response_received":
+                    event["status"] = "parse_error"
+                    event["error_type"] = type(exc).__name__
+                    event["error"] = str(exc)
+                    break
+            attach_observation(exc)
+            raise
+
     del embedding_mode
     case_start_ns = time.perf_counter_ns()
-    context = _load_execution_context(sample)
+    context = (
+        _load_execution_context(sample, public_case=public_case)
+        if public_case is not None
+        else _load_execution_context(sample)
+    )
     case_root = runtime_root / sample.task_id
     case_root.mkdir(parents=True, exist_ok=True)
 
     planner_prompt = _planner_prompt(sample=sample, context=context)
     planner_start_ns = time.perf_counter_ns()
-    planner_result = _run_sync(
-        llm_client.complete(
-            [ChatMessage(role="user", content=planner_prompt)],
-            purpose="planner",
-            response_schema=_build_baseline_planner_schema(context.route_candidates),
-        )
+    planner_result = complete_observed(
+        [ChatMessage(role="user", content=planner_prompt)],
+        purpose="planner",
+        response_schema=_build_baseline_planner_schema(context.route_candidates),
     )
     planner_latency_ms = (time.perf_counter_ns() - planner_start_ns) / 1_000_000.0
-    planner_payload_raw = extract_json_object(planner_result.text)  # type: ignore[arg-type]
+    planner_payload_raw = extract_observed_json(planner_result, purpose="planner")
     planner_payload = _normalize_visible_candidate_payload(planner_payload_raw, context.route_candidates)
     planner_usage = _usage_from_result(prompt=planner_prompt, result=planner_result)
     planner_usage = ExternalTextRoleUsage(**{**planner_usage.__dict__, "latency_ms": planner_latency_ms})
 
     retriever_prompt = _retriever_prompt(sample=sample, context=context, planner_payload=planner_payload)
     retriever_start_ns = time.perf_counter_ns()
-    retriever_result = _run_sync(
-        llm_client.complete(
-            [ChatMessage(role="user", content=retriever_prompt)],
-            purpose="retriever",
-            response_schema=_build_baseline_retriever_schema(context),
-        )
+    retriever_result = complete_observed(
+        [ChatMessage(role="user", content=retriever_prompt)],
+        purpose="retriever",
+        response_schema=_build_baseline_retriever_schema(context),
     )
     retriever_latency_ms = (time.perf_counter_ns() - retriever_start_ns) / 1_000_000.0
-    retriever_payload_raw = extract_json_object(retriever_result.text)  # type: ignore[arg-type]
+    retriever_payload_raw = extract_observed_json(retriever_result, purpose="retriever")
     retriever_payload = _normalize_visible_candidate_payload(retriever_payload_raw, context.route_candidates)
     retriever_usage = _usage_from_result(prompt=retriever_prompt, result=retriever_result)
     retriever_usage = ExternalTextRoleUsage(**{**retriever_usage.__dict__, "latency_ms": retriever_latency_ms})
     route = str(retriever_payload.get("route", planner_payload.get("route", ""))).strip()
     tool_name = str(retriever_payload.get("tool_name", planner_payload.get("tool_name", ""))).strip()
-    # Extract evidence_summary written by Retriever; fall back to a minimal summary if absent.
-    evidence_summary = str(retriever_payload.get(
-        "evidence_summary",
-        retriever_payload.get("evidence", f"Retrieved docs: {','.join(context.public_doc_hashes)}"),
-    )).strip() or f"Retrieved docs: {','.join(context.public_doc_hashes)}"
+    # The retriever must provide the evidence summary.  Do not reconstruct it
+    # from preloaded source text or a scorer summary.
+    evidence_summary = str(retriever_payload.get("evidence_summary", "")).strip()
     # Use metric_value exactly as extracted by the LLM Retriever. Do not fall
     # back to the corpus preload here, or the external baseline can appear
     # correct without actually extracting the fact.
@@ -915,8 +1032,8 @@ def run_external_text_case(
         retriever_payload.get("revenue_value", retriever_payload_raw.get("revenue_value", ""))
     ).strip()
     observed_metric_name = llm_metric_name
-    observed_metric_value = llm_metric_value or llm_revenue_value
-    observed_revenue_value = llm_revenue_value
+    observed_metric_value = llm_metric_value
+    observed_revenue_value = llm_metric_value if llm_metric_name == "revenue" else ""
     raw_supporting_doc_ids = retriever_payload.get(
         "supporting_doc_ids",
         retriever_payload.get("selected_doc_hashes", ()),
@@ -932,15 +1049,13 @@ def run_external_text_case(
         evidence_summary=evidence_summary,
     )
     executor_start_ns = time.perf_counter_ns()
-    executor_result = _run_sync(
-        llm_client.complete(
-            [ChatMessage(role="user", content=executor_prompt)],
-            purpose="executor",
-            response_schema=_build_baseline_executor_schema(context.route_candidates),
-        )
+    executor_result = complete_observed(
+        [ChatMessage(role="user", content=executor_prompt)],
+        purpose="executor",
+        response_schema=_build_baseline_executor_schema(context.route_candidates),
     )
     executor_latency_ms = (time.perf_counter_ns() - executor_start_ns) / 1_000_000.0
-    executor_payload_raw = extract_json_object(executor_result.text)  # type: ignore[arg-type]
+    executor_payload_raw = extract_observed_json(executor_result, purpose="executor")
     executor_payload = _normalize_visible_candidate_payload(executor_payload_raw, context.route_candidates)
     executor_usage = _usage_from_result(prompt=executor_prompt, result=executor_result)
     executor_usage = ExternalTextRoleUsage(**{**executor_usage.__dict__, "latency_ms": executor_latency_ms})
@@ -1026,25 +1141,28 @@ def run_external_text_case(
         evidence_summary=evidence_summary,
     )
     summarizer_start_ns = time.perf_counter_ns()
-    summarizer_result = _run_sync(
-        llm_client.complete(
-            [ChatMessage(role="user", content=summarizer_prompt)],
-            purpose="summarizer",
-            response_schema=_build_baseline_summarizer_schema(),
-        )
+    summarizer_result = complete_observed(
+        [ChatMessage(role="user", content=summarizer_prompt)],
+        purpose="summarizer",
+        response_schema=_build_baseline_summarizer_schema(),
     )
     summarizer_latency_ms = (time.perf_counter_ns() - summarizer_start_ns) / 1_000_000.0
-    summarizer_payload = extract_json_object(summarizer_result.text)  # type: ignore[arg-type]
+    summarizer_payload = extract_observed_json(summarizer_result, purpose="summarizer")
     summarizer_usage = _usage_from_result(prompt=summarizer_prompt, result=summarizer_result)
     summarizer_usage = ExternalTextRoleUsage(**{**summarizer_usage.__dict__, "latency_ms": summarizer_latency_ms})
     summary_text = str(summarizer_payload.get("summary", summarizer_payload.get("s", ""))).strip()
 
     end_to_end_ms = (time.perf_counter_ns() - case_start_ns) / 1_000_000.0
+    observed_latencies = (
+        planner_usage.latency_ms,
+        retriever_usage.latency_ms,
+        executor_usage.latency_ms,
+        summarizer_usage.latency_ms,
+    )
     llm_ms = (
-        planner_usage.latency_ms
-        + retriever_usage.latency_ms
-        + executor_usage.latency_ms
-        + summarizer_usage.latency_ms
+        sum(float(value) for value in observed_latencies)
+        if all(isinstance(value, (int, float)) for value in observed_latencies)
+        else None
     )
     message_log = [
         f"Planner -> Retriever: route={planner_payload.get('route', '')}; tool={planner_payload.get('tool_name', '')}",
@@ -1095,7 +1213,16 @@ def run_external_text_case(
 
     output_path = case_root / "external_text_output.json"
     report_path = case_root / "external_text_report.json"
-    output_payload = {
+    # Public-tool outputs are observed task results, not benchmark gold.  Keep
+    # every requested output that the tool actually produced in the canonical
+    # output projection (not only the scalar metric alias), so multi-period
+    # tasks retain their complete series and direction.
+    observed_public_outputs = _observed_required_outputs(
+        tuple(str(field) for field in sample.canonical_task_spec.required_outputs),
+        public_tool_outputs,
+    )
+    output_payload = canonical_output_projection(
+        {
         "task_id": sample.task_id,
         "route": route,
         "tool_name": tool_name,
@@ -1107,7 +1234,20 @@ def run_external_text_case(
         "supporting_doc_ids": list(supporting_doc_ids),
         "public_tool_outputs": public_tool_outputs,
         "public_tool_execution": public_tool_execution,
-    }
+        **observed_public_outputs,
+        },
+        observed_metric_name=observed_metric_name,
+        observed_metric_value=observed_metric_value,
+        selected_doc_ids=supporting_doc_ids,
+        allowed_doc_ids=context.public_doc_hashes,
+        required_outputs=sample.canonical_task_spec.required_outputs,
+        output_path=str(output_path),
+        report_path=str(report_path),
+    )
+    provider_request_events = tuple(dict(item) for item in getattr(llm_client, "request_events", ()))
+    retry_events = tuple(
+        item for item in provider_request_events if str(item.get("retry_kind", "none")) != "none"
+    )
     report_payload = {
         "task_id": sample.task_id,
         "baseline_name": "external_pure_text_four_role_public_tool_baseline_v2",
@@ -1156,7 +1296,7 @@ def run_external_text_case(
         "metric_name_exact": shared_score.metric_name_exact,
         "metric_value_exact": shared_score.metric_value_exact,
         "revenue_exact": shared_score.revenue_exact,
-        "revenue_fallback_used": 1.0 if (not llm_revenue_value and context.revenue_value) else 0.0,
+        "revenue_fallback_used": 0.0,
         "selected_doc_hashes_exact": shared_score.selected_doc_hashes_exact,
         "exact_match": shared_score.exact_match,
         "admissible_match": shared_score.admissible_match,
@@ -1198,6 +1338,14 @@ def run_external_text_case(
         "public_doc_hashes": list(context.public_doc_hashes),
         "public_tool_execution": public_tool_execution,
         "public_tool_outputs": public_tool_outputs,
+        "requested_seed": requested_seed,
+        "effective_seed": None,
+        "seed_status": "unsupported_by_llm_client_contract" if requested_seed is not None else "not_requested",
+        "provider_usage_status": "observed",
+        "provider_invocation_events": provider_invocation_events,
+        "provider_request_events": list(provider_request_events),
+        "retry_events": list(retry_events),
+        "retry_count": len(retry_events),
     }
     output_path.write_text(stable_json_dumps(output_payload) + "\n", encoding="utf-8")
     report_path.write_text(stable_json_dumps(report_payload) + "\n", encoding="utf-8")
@@ -1224,7 +1372,7 @@ def run_external_text_case(
         tool_exact=shared_score.tool_exact,
         metric_name_exact=shared_score.metric_name_exact,
         metric_value_exact=shared_score.metric_value_exact,
-        revenue_fallback_used=not llm_revenue_value and bool(context.revenue_value),
+        revenue_fallback_used=False,
         exact_match=shared_score.exact_match,
         admissible_match=shared_score.admissible_match,
         correctness_label=shared_score.correctness_label,
@@ -1239,6 +1387,9 @@ def run_external_text_case(
         summarizer_usage=summarizer_usage,
         tool_ms=tool_ms,
         tool_execution=public_tool_execution,
+        provider_invocation_events=tuple(provider_invocation_events),
+        provider_request_events=provider_request_events,
+        retry_events=retry_events,
     )
 
 
@@ -1306,6 +1457,8 @@ def run_external_text_family(
         for check in fairness_failed_checks:
             fairness_failed_check_counts[check] = fairness_failed_check_counts.get(check, 0) + 1
         fairness_gate_passed = bool(result.fairness_gate.get("pass_hard_gate", False))
+        if result.llm_ms is None:
+            raise RuntimeError("external_llm_latency_missing")
         case_metrics = {
             "message_count": float(result.message_count),
             "text_bytes": float(result.text_bytes),

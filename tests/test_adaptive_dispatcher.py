@@ -511,3 +511,45 @@ def test_runtime_rejects_dsl_program_that_changes_controller_owned_anomaly_seman
     )
     with pytest.raises(AdaptiveDispatchError, match="transform_program_semantics_argument_mismatch:z_threshold"):
         AdaptiveCapabilityDispatcher._validate_transform_semantics(changed_threshold, semantics)
+
+
+def test_runtime_rejects_trend_program_that_changes_controller_owned_scope() -> None:
+    dsl_arguments = {
+        "ticker_field": "ticker",
+        "period_field": "quarter",
+        "metric_field": "metric",
+        "value_field": "value",
+        "tickers": ["ACME"],
+        "periods": ["2025Q3", "2025Q4", "2026Q1"],
+        "metric": "revenue",
+        "ticker_output": "ticker",
+        "period_output": "quarter",
+        "value_output": "metric_value",
+        "direction_output": "trend_direction",
+    }
+    semantics = {
+        "operation": "compute_trend",
+        "dsl_operation": "trend_series",
+        "dsl_arguments": dsl_arguments,
+    }
+    correct = TransformProgram(
+        program_id="trend-correct",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("trend_series", dsl_arguments),),
+    )
+    AdaptiveCapabilityDispatcher._validate_transform_semantics(correct, semantics)
+    changed_scope = TransformProgram(
+        program_id="trend-wrong-scope",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("trend_series", {
+            **dsl_arguments,
+            "tickers": ["BETA"],
+        }),),
+    )
+    with pytest.raises(
+        AdaptiveDispatchError,
+        match="transform_program_semantics_argument_mismatch:tickers",
+    ):
+        AdaptiveCapabilityDispatcher._validate_transform_semantics(changed_scope, semantics)

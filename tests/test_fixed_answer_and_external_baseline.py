@@ -834,7 +834,7 @@ def test_external_text_case_runs(tmp_path: Path) -> None:
     assert Path(result.report_path).exists()
     assert result.correctness_label == "mismatch"
     assert result.revenue_value == ""
-    assert result.revenue_fallback_used is True
+    assert result.revenue_fallback_used is False
     assert result.quality_floor.revenue_exact is False
     assert result.quality_floor.quality_floor.quality_floor_pass is False
     assert result.planner_usage.prompt_bytes > 0
@@ -843,10 +843,19 @@ def test_external_text_case_runs(tmp_path: Path) -> None:
     assert result.summarizer_usage.prompt_bytes > 0
     assert result.fairness_gate["pass_hard_gate"] is True
     payload = json.loads(Path(result.report_path).read_text(encoding="utf-8"))
-    assert payload["revenue_fallback_used"] == 1.0
+    assert payload["revenue_fallback_used"] == 0.0
     assert payload["fairness_gate"]["pass_hard_gate"] is True
     output_payload = json.loads(Path(result.output_path).read_text(encoding="utf-8"))
-    assert output_payload["revenue_value"] == ""
+    assert "revenue_value" not in output_payload
+
+
+def test_public_tool_required_outputs_are_projected_without_unobserved_fields() -> None:
+    from statebus.benchmark.external_text_baseline import _observed_required_outputs
+
+    assert _observed_required_outputs(
+        ("trend_values", "trend_direction", "summary_text"),
+        {"trend_values": "98,109,120", "trend_direction": "increasing", "internal_gold": "never"},
+    ) == {"trend_values": "98,109,120", "trend_direction": "increasing"}
 
 
 def test_external_public_tool_case_writes_auditable_provenance(tmp_path: Path) -> None:

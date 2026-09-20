@@ -280,6 +280,34 @@ def _operation_argument_contract(op: str) -> dict[str, object]:
                 "growth_pct_output": "optional output field",
             },
         },
+        "trend_series": {
+            "required": [
+                "ticker_field",
+                "period_field",
+                "metric_field",
+                "value_field",
+                "tickers",
+                "periods",
+                "metric",
+                "ticker_output",
+                "period_output",
+                "value_output",
+                "direction_output",
+            ],
+            "fields": {
+                "ticker_field": "authorized ticker column",
+                "period_field": "authorized ordered period column",
+                "metric_field": "authorized metric-name column",
+                "value_field": "authorized numeric value column",
+                "tickers": "controller-owned ticker[] in output order",
+                "periods": "controller-owned period[] in output order",
+                "metric": "controller-owned metric value",
+                "ticker_output": "ticker output field",
+                "period_output": "period output field",
+                "value_output": "numeric value output field",
+                "direction_output": "increasing|decreasing|flat|mixed output field",
+            },
+        },
         "join_by_key": {"required": ["right_ref", "left_key", "right_key"], "fields": {"right_ref": "authorized ref", "left_key": "authorized column", "right_key": "authorized column"}},
         "anomaly_check": {"required": ["column", "output"], "fields": {"column": "authorized numeric column", "output": "new boolean column"}},
         "anomaly_zscore": {
@@ -1387,6 +1415,20 @@ class RolePathRunner:
         init=False,
         repr=False,
     )
+    # Payload builders return typed contracts, while provider telemetry belongs
+    # to the JSON completion that produced them. Keep that observation at the
+    # runner boundary so callers can consume it without changing payload types.
+    role_observations: dict[str, dict[str, Any]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+
+    def take_role_observation(self, role: str) -> dict[str, Any] | None:
+        """Return and remove the latest completion observation for ``role``."""
+
+        observation = self.role_observations.pop(str(role), None)
+        return dict(observation) if observation is not None else None
 
     def _render_prompt(
         self,
@@ -1525,15 +1567,37 @@ class RolePathRunner:
                 current_prompt = f"{prompt}{retry_note}"
                 continue
             latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+            merged_result = _merge_llm_results(attempts)
+            self.role_observations[purpose] = {
+                "model": merged_result.model,
+                "prompt_tokens": merged_result.usage.prompt_tokens,
+                "completion_tokens": merged_result.usage.completion_tokens,
+                "total_tokens": merged_result.usage.total_tokens,
+                "raw_text": merged_result.text,
+                "latency_ms": latency_ms,
+                "prompt_bytes": prompt_bytes,
+                "attempt_count": len(attempts),
+            }
             return JsonRoleCompletion(
                 payload=payload,
-                result=_merge_llm_results(attempts),
+                result=merged_result,
                 prompt_bytes=prompt_bytes,
                 latency_ms=latency_ms,
                 attempt_count=len(attempts),
             )
         latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
-        last_text = attempts[-1].text if attempts else ""
+        merged_result = _merge_llm_results(attempts)
+        self.role_observations[purpose] = {
+            "model": merged_result.model,
+            "prompt_tokens": merged_result.usage.prompt_tokens,
+            "completion_tokens": merged_result.usage.completion_tokens,
+            "total_tokens": merged_result.usage.total_tokens,
+            "raw_text": merged_result.text,
+            "latency_ms": latency_ms,
+            "prompt_bytes": prompt_bytes,
+            "attempt_count": len(attempts),
+        }
+        last_text = merged_result.text
         raise ValueError(
             f"{purpose} role returned invalid JSON after {len(attempts)} attempt(s): {last_text!r}"
         ) from last_error
@@ -2579,6 +2643,8 @@ class RolePathRunner:
             "or arbitrary expressions. Use only supplied input refs, columns, and operation_catalog. "
             "Choose operations that satisfy step_goal and desired_output_fields. Copy argument field names from "
             "operation_contracts exactly and satisfy the controller-owned operation_semantics exactly. "
+            "When operation_semantics contains dsl_operation and dsl_arguments, return exactly that one operation and "
+            "copy dsl_arguments without changing, adding, or removing fields. "
             "When an existing field only needs a new output name, use rename; never use derive_safe to copy or rename "
             "a value, and never put a numeric literal where an operation contract requires a column. "
             "Track the output columns of every operation in order and never reference a column that has not been "

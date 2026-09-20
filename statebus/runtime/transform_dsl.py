@@ -20,7 +20,7 @@ class TransformProgramError(ValueError):
 _ALLOWED_OPS = {
     "select", "rename", "filter_eq", "filter_contains", "filter_in", "filter_range", "sort", "limit",
     "group_by", "aggregate", "aggregate_grouped", "derive_safe", "compare_periods", "join_by_key",
-    "anomaly_check", "anomaly_zscore", "project_claim_fields",
+    "trend_series", "anomaly_check", "anomaly_zscore", "project_claim_fields", "deterministic_fixture",
 }
 _FORBIDDEN_FIELD_TOKENS = {"__", "/", "\\", ".."}
 _FORBIDDEN_VALUE_TOKENS = _FORBIDDEN_FIELD_TOKENS | {"eval", "exec", "lambda", "import", "shell"}
@@ -49,12 +49,14 @@ class TransformProgramValidator:
         max_join_rows: int = 20_000,
         max_columns: int = 128,
         max_output_bytes: int = 1_048_576,
+        allow_deterministic_fixture: bool = False,
     ) -> None:
         self.max_operations = max_operations
         self.max_rows = max_rows
         self.max_join_rows = max_join_rows
         self.max_columns = max_columns
         self.max_output_bytes = max_output_bytes
+        self.allow_deterministic_fixture = allow_deterministic_fixture
 
     def validate(
         self,
@@ -77,6 +79,14 @@ class TransformProgramValidator:
         for index, step in enumerate(program.operations):
             if step.op not in _ALLOWED_OPS:
                 return TransformValidationReport(False, "unknown_operation", index)
+            if step.op == "deterministic_fixture":
+                if not self.allow_deterministic_fixture:
+                    return TransformValidationReport(False, "deterministic_fixture_not_allowed", index)
+                fixture_id = step.arguments.get("fixture_id")
+                if not isinstance(fixture_id, str) or not fixture_id:
+                    return TransformValidationReport(False, "missing_fixture_id", index)
+                if set(step.arguments) != {"fixture_id"}:
+                    return TransformValidationReport(False, "invalid_fixture_arguments", index)
             invalid = self._validate_arguments(step, known_columns, program.input_artifact_refs)
             if invalid:
                 return TransformValidationReport(False, invalid, index)
@@ -125,6 +135,13 @@ class TransformProgramValidator:
                 str(args.get("ratio_output", "ratio")),
                 str(args.get("growth_pct_output", "growth_pct")),
             }
+        if step.op == "trend_series":
+            return {
+                str(args.get("ticker_output", "ticker")),
+                str(args.get("period_output", "period")),
+                str(args.get("value_output", "metric_value")),
+                str(args.get("direction_output", "trend_direction")),
+            }
         if step.op == "join_by_key":
             right_ref = str(args.get("right_ref", ""))
             return {*known_columns, *available_columns.get(right_ref, ())}
@@ -149,7 +166,8 @@ class TransformProgramValidator:
         columns: list[str] = []
         for key in (
             "column", "columns", "group_by", "group_field", "period_field", "value_field",
-            "left_key", "right_key", "numerator", "denominator", "source", "carry_fields",
+            "ticker_field", "metric_field", "left_key", "right_key", "numerator", "denominator",
+            "source", "carry_fields",
         ):
             value = step.arguments.get(key)
             if isinstance(value, str):
@@ -203,6 +221,49 @@ class TransformProgramValidator:
             }
             if set(carry_names) & output_names:
                 return "comparison_output_collision"
+        if step.op == "trend_series":
+            required = {
+                "ticker_field",
+                "period_field",
+                "metric_field",
+                "value_field",
+                "tickers",
+                "periods",
+                "metric",
+                "ticker_output",
+                "period_output",
+                "value_output",
+                "direction_output",
+            }
+            if not required <= set(step.arguments):
+                return "missing_trend_fields"
+            tickers = step.arguments.get("tickers")
+            periods = step.arguments.get("periods")
+            if (
+                not isinstance(tickers, (tuple, list))
+                or not tickers
+                or any(not isinstance(item, str) or not item for item in tickers)
+            ):
+                return "invalid_trend_tickers"
+            if (
+                not isinstance(periods, (tuple, list))
+                or len(periods) < 2
+                or any(not isinstance(item, str) or not item for item in periods)
+            ):
+                return "invalid_trend_periods"
+            if not isinstance(step.arguments.get("metric"), str) or not step.arguments["metric"]:
+                return "invalid_trend_metric"
+            output_names = tuple(
+                str(step.arguments[name])
+                for name in (
+                    "ticker_output",
+                    "period_output",
+                    "value_output",
+                    "direction_output",
+                )
+            )
+            if any(not name for name in output_names) or len(output_names) != len(set(output_names)):
+                return "invalid_trend_outputs"
         if step.op == "anomaly_zscore" and not {"period_field", "value_field"} <= set(step.arguments):
             return "missing_anomaly_fields"
         if step.op == "derive_safe" and step.arguments.get("kind") not in {"difference", "ratio", "pct_change"}:
@@ -226,8 +287,16 @@ class TransformProgramValidator:
 
 
 class TransformDslInterpreter:
-    def __init__(self, validator: TransformProgramValidator | None = None) -> None:
-        self.validator = validator or TransformProgramValidator()
+    def __init__(
+        self,
+        validator: TransformProgramValidator | None = None,
+        *,
+        deterministic_fixture_runner: Callable[[TransformStep, list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    ) -> None:
+        self.deterministic_fixture_runner = deterministic_fixture_runner
+        self.validator = validator or TransformProgramValidator(
+            allow_deterministic_fixture=deterministic_fixture_runner is not None,
+        )
 
     def run(self, program: TransformProgram, *, inputs: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
         available_columns = {
@@ -367,6 +436,18 @@ class TransformDslInterpreter:
             return sorted(rows, key=lambda row: tuple((row.get(column) is None, row.get(column)) for column in columns))
         if step.op == "limit":
             return rows[:int(args["count"])]
+        if step.op == "deterministic_fixture":
+            if self.deterministic_fixture_runner is None:
+                raise TransformProgramError("deterministic_fixture_not_allowed")
+            try:
+                fixture_rows = self.deterministic_fixture_runner(step, rows)
+            except TransformProgramError:
+                raise
+            except (KeyError, TypeError, ValueError, OSError) as exc:
+                raise TransformProgramError("deterministic_fixture_failed") from exc
+            if not isinstance(fixture_rows, list) or any(not isinstance(row, dict) for row in fixture_rows):
+                raise TransformProgramError("deterministic_fixture_result_invalid")
+            return [dict(row) for row in fixture_rows]
         if step.op == "group_by":
             columns = tuple(args["columns"])
             return [dict(row) for row in sorted(rows, key=lambda row: tuple(row.get(column) for column in columns))]
@@ -444,6 +525,54 @@ class TransformDslInterpreter:
                 str(args.get("ratio_output", "ratio")): float(current) / float(base),
                 str(args.get("growth_pct_output", "growth_pct")): ((float(current) - float(base)) / float(base)) * 100.0,
             }]
+        if step.op == "trend_series":
+            ticker_field = str(args["ticker_field"])
+            period_field = str(args["period_field"])
+            metric_field = str(args["metric_field"])
+            value_field = str(args["value_field"])
+            tickers = tuple(str(item) for item in args["tickers"])
+            periods = tuple(str(item) for item in args["periods"])
+            metric = str(args["metric"])
+            ticker_output = str(args["ticker_output"])
+            period_output = str(args["period_output"])
+            value_output = str(args["value_output"])
+            direction_output = str(args["direction_output"])
+            output: list[dict[str, Any]] = []
+            for ticker in tickers:
+                values: list[float] = []
+                for period in periods:
+                    matches = [
+                        row
+                        for row in rows
+                        if str(row.get(ticker_field, "")).upper() == ticker.upper()
+                        and str(row.get(period_field, "")) == period
+                        and str(row.get(metric_field, "")).lower() == metric.lower()
+                    ]
+                    if len(matches) != 1:
+                        raise TransformProgramError("trend_series_match_count_invalid")
+                    value = matches[0].get(value_field)
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        raise TransformProgramError("trend_series_value_invalid")
+                    values.append(float(value))
+                deltas = [right - left for left, right in zip(values, values[1:], strict=False)]
+                if all(delta > 0 for delta in deltas):
+                    direction = "increasing"
+                elif all(delta < 0 for delta in deltas):
+                    direction = "decreasing"
+                elif all(delta == 0 for delta in deltas):
+                    direction = "flat"
+                else:
+                    direction = "mixed"
+                output.extend(
+                    {
+                        ticker_output: ticker,
+                        period_output: period,
+                        value_output: value,
+                        direction_output: direction,
+                    }
+                    for period, value in zip(periods, values, strict=True)
+                )
+            return output
         if step.op == "join_by_key":
             right_rows = inputs[str(args["right_ref"])]
             if len(rows) * len(right_rows) > self.validator.max_join_rows:

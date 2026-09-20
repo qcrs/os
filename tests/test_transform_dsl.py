@@ -86,7 +86,7 @@ def test_transform_dsl_rejects_nested_code_paths_types_and_scale() -> None:
         TransformDslInterpreter(TransformProgramValidator(max_join_rows=2)).run(oversized_join, inputs=inputs)
 
 
-def test_transform_dsl_signs_only_schema_and_quality_valid_fixed_output(tmp_path) -> None:
+def test_transform_dsl_registers_only_schema_and_quality_valid_candidate(tmp_path) -> None:
     program = TransformProgram(
         program_id="verified", input_artifact_refs=("table",), output_contract_version="statebus.metric_series.v1",
         operations=(TransformStep("select", {"columns": ["quarter", "revenue"]}),),
@@ -103,7 +103,7 @@ def test_transform_dsl_signs_only_schema_and_quality_valid_fixed_output(tmp_path
         attempt_workspace=tmp_path, output_schema={"quarter": "string", "revenue": "number"},
         quality_validator=lambda rows: len(rows) == 1,
     )
-    assert result.artifact.verification_state == RefStatus.VERIFIED
+    assert result.artifact.verification_state == RefStatus.CANDIDATE
     assert (tmp_path / "outputs" / "transform_result.json").is_file()
     with pytest.raises(TransformProgramError, match="output_schema_fields_mismatch"):
         interpreter.run_verified(
@@ -160,6 +160,62 @@ def test_transform_dsl_supports_bounded_compare_grouped_aggregate_and_zscore_fal
         {"segment": "a", "revenue": 10.0}, {"segment": "a", "revenue": 30.0},
     ]})
     assert rows == [{"count": 2, "max": 30.0, "mean": 20.0, "min": 10.0, "segment": "a", "sum": 40.0}]
+
+
+def test_transform_dsl_builds_controller_scoped_trend_series() -> None:
+    program = TransformProgram(
+        program_id="trend-series",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("trend_series", {
+            "ticker_field": "ticker",
+            "period_field": "quarter",
+            "metric_field": "metric",
+            "value_field": "value",
+            "tickers": ["ACME"],
+            "periods": ["2025Q3", "2025Q4", "2026Q1"],
+            "metric": "revenue",
+            "ticker_output": "ticker",
+            "period_output": "quarter",
+            "value_output": "metric_value",
+            "direction_output": "trend_direction",
+        }),),
+    )
+    rows = TransformDslInterpreter().run(program, inputs={"metrics": [
+        {"ticker": "BETA", "quarter": "2025Q3", "metric": "revenue", "value": 72.0},
+        {"ticker": "ACME", "quarter": "2026Q1", "metric": "revenue", "value": 120.0},
+        {"ticker": "ACME", "quarter": "2025Q3", "metric": "revenue", "value": 98.0},
+        {"ticker": "ACME", "quarter": "2025Q4", "metric": "revenue", "value": 109.0},
+    ]})
+
+    assert rows == [
+        {"ticker": "ACME", "quarter": "2025Q3", "metric_value": 98.0, "trend_direction": "increasing"},
+        {"ticker": "ACME", "quarter": "2025Q4", "metric_value": 109.0, "trend_direction": "increasing"},
+        {"ticker": "ACME", "quarter": "2026Q1", "metric_value": 120.0, "trend_direction": "increasing"},
+    ]
+
+
+def test_transform_dsl_rejects_incomplete_trend_series_contract() -> None:
+    program = TransformProgram(
+        program_id="trend-series-incomplete",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("trend_series", {
+            "ticker_field": "ticker",
+            "period_field": "quarter",
+            "metric_field": "metric",
+            "value_field": "value",
+            "tickers": ["ACME"],
+            "periods": ["2025Q3", "2025Q4"],
+            "metric": "revenue",
+        }),),
+    )
+
+    with pytest.raises(TransformProgramError, match="missing_trend_fields"):
+        TransformDslInterpreter().run(program, inputs={"metrics": [
+            {"ticker": "ACME", "quarter": "2025Q3", "metric": "revenue", "value": 98.0},
+            {"ticker": "ACME", "quarter": "2025Q4", "metric": "revenue", "value": 109.0},
+        ]})
 
 
 def test_transform_validator_tracks_columns_across_operations() -> None:

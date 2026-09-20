@@ -76,3 +76,35 @@ def test_independent_recompute_matches_interpreter_for_invariant_comparison_fiel
     assert recomputed == tuple(interpreted)
     assert recomputed[0]["ticker"] == "BETA"
     assert recomputed[0]["delta_value"] == 15.0
+
+
+def test_independent_recompute_matches_interpreter_for_trend_series() -> None:
+    program = TransformProgram(
+        program_id="independent-recompute-trend",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("trend_series", {
+            "ticker_field": "ticker",
+            "period_field": "quarter",
+            "metric_field": "metric",
+            "value_field": "value",
+            "tickers": ["ACME"],
+            "periods": ["2025Q3", "2025Q4", "2026Q1"],
+            "metric": "revenue",
+            "ticker_output": "ticker",
+            "period_output": "quarter",
+            "value_output": "metric_value",
+            "direction_output": "trend_direction",
+        }),),
+    )
+    inputs = {"metrics": [
+        {"ticker": "ACME", "quarter": "2025Q4", "metric": "revenue", "value": 109.0},
+        {"ticker": "ACME", "quarter": "2025Q3", "metric": "revenue", "value": 98.0},
+        {"ticker": "ACME", "quarter": "2026Q1", "metric": "revenue", "value": 120.0},
+    ]}
+
+    recomputed = recompute_transform_program(program, inputs=inputs)
+    interpreted = TransformDslInterpreter().run(program, inputs=inputs)
+
+    assert recomputed == tuple(interpreted)
+    assert all(row["trend_direction"] == "increasing" for row in recomputed)

@@ -1,4 +1,4 @@
-"""Bounded G6-B2 live validation for the authorized Qwen3-8B reuse profile."""
+"""Bounded G6-B2 live validation for the selected local vLLM profile."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import subprocess
 import time
 from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 DEFAULT_PROFILE_ID = "g6b2-live-qwen3-8b-gpu0-u050-v1"
@@ -37,12 +37,22 @@ EMBEDDING_DEVICE = os.getenv(
     "STATEBUS_G6B2_EMBEDDING_DEVICE",
     os.getenv("STATEBUS_EMBED_DEVICE", "cuda:0"),
 ).strip()
-GPU_UUID = "GPU-3ecfad62-035b-2626-e769-79c785e7665d"
+EMBEDDING_PHYSICAL_GPU = int(
+    os.getenv("STATEBUS_G6B2_EMBEDDING_PHYSICAL_GPU", "1")
+)
+SERVICE_PHYSICAL_GPU = int(os.getenv("STATEBUS_G6B2_SERVICE_PHYSICAL_GPU", "0"))
+GPU_UUID = os.getenv(
+    "STATEBUS_G6B2_SERVICE_GPU_UUID",
+    {
+        0: "GPU-3ecfad62-035b-2626-e769-79c785e7665d",
+        2: "GPU-25019de8-09aa-328a-be23-4bec986badad",
+    }.get(SERVICE_PHYSICAL_GPU, ""),
+).strip()
 QWEN3_8B_U050_PROFILE: dict[str, object] = {
     "profile_id": PROFILE_ID,
     "model_path": "/data/models/Qwen3-8B",
     "served_model": "qwen3-8b",
-    "physical_gpu": 0,
+    "physical_gpu": SERVICE_PHYSICAL_GPU,
     "gpu_uuid": GPU_UUID,
     "gpu_memory_utilization": 0.50,
     "max_model_len": 4096,
@@ -57,7 +67,31 @@ QWEN3_8B_U050_PROFILE: dict[str, object] = {
     "health_url": "http://127.0.0.1:53334/health",
     "reuse_min_free_mib": 4096,
 }
-DEFAULT_MODEL_PROFILE = QWEN3_8B_U050_PROFILE
+QWEN3_32B_U050_PROFILE: dict[str, object] = {
+    "profile_id": PROFILE_ID,
+    "model_path": "/data/models/Qwen3-32B",
+    "served_model": "qwen3-32b",
+    "physical_gpu": SERVICE_PHYSICAL_GPU,
+    "gpu_uuid": GPU_UUID,
+    "gpu_memory_utilization": 0.82,
+    "max_model_len": 8192,
+    "max_num_seqs": 1,
+    "max_num_batched_tokens": 8192,
+    "dtype": "bfloat16",
+    "enforce_eager": True,
+    "cpu_offload_gb": None,
+    "host": "127.0.0.1",
+    "port": 53334,
+    "base_url": "http://127.0.0.1:53334/v1",
+    "health_url": "http://127.0.0.1:53334/health",
+    "reuse_min_free_mib": 4096,
+}
+DEFAULT_MODEL_PROFILE = (
+    QWEN3_32B_U050_PROFILE
+    if os.getenv("STATEBUS_LOCAL_VLLM_MODEL", "qwen3-8b").strip()
+    == "qwen3-32b"
+    else QWEN3_8B_U050_PROFILE
+)
 ALLOWED_SEQUENCE = (
     "B2-Preflight",
     "Docker-Verify",
@@ -110,7 +144,7 @@ def _embedding_profile() -> dict[str, object]:
         "mode": EMBEDDING_MODE,
         "model_path": EMBEDDING_MODEL_PATH if EMBEDDING_MODE == "local" else None,
         "device": EMBEDDING_DEVICE if EMBEDDING_MODE == "local" else "cpu",
-        "physical_gpu": 1 if EMBEDDING_MODE == "local" else None,
+        "physical_gpu": EMBEDDING_PHYSICAL_GPU if EMBEDDING_MODE == "local" else None,
         "container_device": "cuda:0" if EMBEDDING_MODE == "local" else None,
         "workload_scope": "memory_query_and_commit_vector",
         "document_retrieval": "table_structure",
@@ -123,7 +157,7 @@ def _now() -> str:
 
 
 def _profile(model_profile: Mapping[str, object] | None = None) -> dict[str, object]:
-    profile = dict(QWEN3_8B_U050_PROFILE)
+    profile = dict(DEFAULT_MODEL_PROFILE)
     if model_profile:
         profile.update(dict(model_profile))
     return profile
@@ -262,6 +296,16 @@ def _config_matches(
     profile: Mapping[str, object],
 ) -> bool:
     try:
+        observed_cpu_offload = observed.get("cpu_offload_gb")
+        expected_cpu_offload = profile["cpu_offload_gb"]
+        if expected_cpu_offload is None:
+            cpu_offload_ok = observed_cpu_offload is None or float(
+                str(observed_cpu_offload)
+            ) == 0.0
+        else:
+            cpu_offload_ok = float(str(observed_cpu_offload)) == float(
+                expected_cpu_offload
+            )
         return (
             observed.get("model_path") == profile["model_path"]
             and observed.get("served_model") == profile["served_model"]
@@ -276,8 +320,7 @@ def _config_matches(
             == int(profile["max_num_batched_tokens"])
             and float(str(observed.get("gpu_memory_utilization")))
             == float(profile["gpu_memory_utilization"])
-            and float(str(observed.get("cpu_offload_gb")))
-            == float(profile["cpu_offload_gb"])
+            and cpu_offload_ok
             and observed.get("enforce_eager") is True
         )
     except (TypeError, ValueError):
@@ -399,7 +442,9 @@ def _g6b2_http_request(
         method=method,
         headers={"Content-Type": "application/json"} if data else {},
     )
-    opener = build_opener(_NoRedirect())
+    # The local vLLM endpoint is loopback-only.  Do not let a host-wide
+    # HTTP(S)_PROXY setting route this request through an unrelated proxy.
+    opener = build_opener(ProxyHandler({}), _NoRedirect())
     try:
         with opener.open(request, timeout=timeout) as response:
             return {
@@ -434,7 +479,7 @@ def _g6b2_vllm_health_projection(
     error: str = "",
     manager_owned: bool = False,
 ) -> dict[str, object]:
-    endpoint = endpoint or str(QWEN3_8B_U050_PROFILE["health_url"])
+    endpoint = endpoint or str(DEFAULT_MODEL_PROFILE["health_url"])
     passed = status_code is not None and 200 <= status_code < 300 and manager_owned
     return {
         "schema_version": "statebus.g6b2.vllm_health.v2",
@@ -769,6 +814,7 @@ class G6B2LiveProvider:
             "temperature": 0,
             "max_tokens": 256,
             "stream": False,
+            "response_format": {"type": "json_object"},
             "chat_template_kwargs": {"enable_thinking": False},
             "messages": [
                 {
@@ -1143,7 +1189,7 @@ def _g6b2_runtime_row(
         "reason": reason,
         "environment_limitation": "",
         "runtime_authority": "AdaptiveRuntimeEngine",
-        "model_identity": QWEN3_8B_U050_PROFILE["served_model"],
+        "model_identity": DEFAULT_MODEL_PROFILE["served_model"],
         "service_profile_id": PROFILE_ID,
         "embedding_evidence": _memory_embedding_evidence(result),
         "quality_evidence": {
@@ -1710,7 +1756,7 @@ def _default_artifact_root(base: Path, mode: str) -> Path:
     embedding_label = "-real-embedding" if EMBEDDING_MODE == "local" else ""
     for suffix in range(1, 1000):
         root = base / (
-            f"g6b2-live-validation-{stamp}-qwen3-8b-gpu0-u050-"
+            f"g6b2-live-validation-{stamp}-{str(DEFAULT_MODEL_PROFILE['served_model'])}-gpu{int(DEFAULT_MODEL_PROFILE['physical_gpu'])}-u050-"
             f"{mode}{embedding_label}-{os.getpid()}-{suffix}"
         )
         if not root.exists():
@@ -1966,7 +2012,7 @@ def run_g6b2_preflight(
     *,
     artifact_root: Path | str | None = None,
     output_base: Path | str = "artifacts",
-    service_runtime_dir: Path | str = "/home/qcrs/statebus/work/vllm-qwen3-8b-gpu0-u050",
+    service_runtime_dir: Path | str = "/home/qcrs/statebus/work/vllm-qwen3-32b-gpu2-u050",
     coexist_pids: Iterable[int] = (),
     mode: str = "minimal",
     planned_slots: int = 1,
@@ -2056,10 +2102,11 @@ def run_g6b2_live_smoke(
         smoke = dict(smoke_runner())
     else:
         payload = {
-            "model": QWEN3_8B_U050_PROFILE["served_model"],
+            "model": DEFAULT_MODEL_PROFILE["served_model"],
             "temperature": 0,
             "max_tokens": 256,
             "stream": False,
+            "response_format": {"type": "json_object"},
             "chat_template_kwargs": {"enable_thinking": False},
             "messages": [
                 {
@@ -2074,7 +2121,7 @@ def run_g6b2_live_smoke(
         _json_write(root / "requests" / "smoke.request.json", payload)
         response = _g6b2_http_request(
             "POST",
-            f"{QWEN3_8B_U050_PROFILE['base_url']}/chat/completions",
+            f"{DEFAULT_MODEL_PROFILE['base_url']}/chat/completions",
             payload=payload,
             timeout=timeout_s,
         )
@@ -2084,7 +2131,7 @@ def run_g6b2_live_smoke(
             content = json.loads(body["choices"][0]["message"]["content"])
             valid = bool(
                 response["status"] == "observed"
-                and body.get("model") == QWEN3_8B_U050_PROFILE["served_model"]
+                and body.get("model") == DEFAULT_MODEL_PROFILE["served_model"]
                 and body["choices"][0].get("finish_reason") != "length"
                 and content
                 == {
@@ -2303,7 +2350,10 @@ def run_g6b2_live_campaign(
             "statebus_module": __file__,
             "uid": os.getuid(),
             "gid": os.getgid(),
-            "container": "statebus-b2-qwen3-8b",
+            "container": os.getenv(
+                "STATEBUS_CONTAINER_NAME",
+                os.getenv("STATEBUS_B2_CONTAINER_NAME", "statebus-runtime"),
+            ),
             "network": "host",
             "source_receipt_references": ["container-inspect"],
         },
@@ -2442,6 +2492,9 @@ def run_g6b2_live_campaign(
         planned_slots=slots,
         max_duration_s=max_duration_s,
     )
+    final_status = str(_json_read(root / "g6b2_acceptance.json")["status"])
+    if final_status != status:
+        status = final_status
     return {
         "status": status,
         "artifact_root": str(root),
@@ -2626,7 +2679,7 @@ def main(argv: list[str] | None = None) -> int:
     host.add_argument("--output-base", default="artifacts")
     host.add_argument(
         "--service-runtime-dir",
-        default="/home/qcrs/statebus/work/vllm-qwen3-8b-gpu0-u050",
+        default="/home/qcrs/statebus/work/vllm-qwen3-32b-gpu2-u050",
     )
     host.add_argument("--coexist-pids", default="")
     host.add_argument("--pairs", type=int, required=True)

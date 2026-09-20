@@ -104,6 +104,9 @@ TransformProgramRepairFactory = Callable[
     [PlanStepProposal, CapabilityGrant, str, tuple[dict[str, object], ...], tuple[str, ...]],
     TransformProgram,
 ]
+DeterministicFixtureRunner = Callable[
+    [TransformStep, list[dict[str, object]]], list[dict[str, object]]
+]
 CodeSourceFactory = Callable[[CodeGenerationRequest, str], str]
 CodeRepairFactory = Callable[[CodeGenerationRequest, str, str, tuple[str, ...]], str]
 BuiltinHandler = Callable[[AdaptiveTaskEnvelope, ApprovedPlan, PlanStepProposal, CapabilityGrant, Path], "AdaptiveStepResult"]
@@ -111,9 +114,16 @@ ClaimSetFactory = Callable[..., ClaimSet]
 BoundProviderHandler = Callable[[ProviderRequest], ProviderCandidate]
 
 
+_SEMANTIC_STATE_MODES = frozenset({"off", "on", "consumer_off"})
+
+
 @dataclass
 class AdaptiveDispatchContext:
     registry: CapabilityRegistry
+    # Matched-ablation control.  ``on`` is the production path; ``off``
+    # suppresses publication and consumption; ``consumer_off`` keeps the
+    # producer path observable while disabling the cross-process consumer.
+    semantic_state_mode: str = "on"
     validator_registry: CapabilityValidatorRegistry = field(default_factory=default_capability_validator_registry)
     evidence_packs: dict[str, CanonicalEvidencePack] = field(default_factory=dict)
     evidence_statuses: dict[str, EvidenceCoverageStatus] = field(default_factory=dict)
@@ -135,6 +145,10 @@ class AdaptiveDispatchContext:
     allowed_corpus_scope_ids: tuple[str, ...] = ()
     transform_program_factory: TransformProgramFactory | None = None
     transform_program_repair_factory: TransformProgramRepairFactory | None = None
+    # Offline benchmark fixtures may provide a source-derived transform for a
+    # deterministic smoke.  The callback is absent for live/provider paths;
+    # the DSL validator therefore rejects the fixture-only operation there.
+    deterministic_fixture_runner: DeterministicFixtureRunner | None = None
     code_source_factory: CodeSourceFactory | None = None
     code_repair_factory: CodeRepairFactory | None = None
     code_policy_factory: Callable[[PlanStepProposal], CodeGenerationPolicy] | None = None
@@ -144,6 +158,7 @@ class AdaptiveDispatchContext:
     quality_semantics_by_capability: dict[str, dict[str, object]] = field(default_factory=dict)
     output_schema_by_capability: dict[str, dict[str, str]] = field(default_factory=dict)
     output_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
+    input_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
     # The caller supplies an LLM-backed candidate factory only.  The Runtime
     # continues to select verified inputs, validate citations/numerics and
     # issue the final cited-report ArtifactRef.
@@ -168,6 +183,7 @@ class AdaptiveDispatchContext:
     socket_path: Path | None = None
     semantic_state_publications: dict[str, object] = field(default_factory=dict)
     semantic_state_selections: dict[str, object] = field(default_factory=dict)
+    component_activation_receipts: dict[str, dict[str, object]] = field(default_factory=dict)
     state_access_grants: dict[str, tuple[StateAccessGrant, ...]] = field(default_factory=dict)
     control_response_admissions: dict[str, tuple[object, ...]] = field(default_factory=dict)
     # Physical worker observations are retained for audit only.  They do not
@@ -231,7 +247,9 @@ class AdaptiveCapabilityDispatcher:
     ) -> None:
         self.context = context
         self.projection_adapter = projection_adapter or EvidenceProjectionAdapter()
-        self.transform_interpreter = transform_interpreter or TransformDslInterpreter()
+        self.transform_interpreter = transform_interpreter or TransformDslInterpreter(
+            deterministic_fixture_runner=context.deterministic_fixture_runner,
+        )
         self.codeact_runner = codeact_runner or LlmCodeActRunner(
             registry=context.registry,
             validator_registry=context.validator_registry,
@@ -721,6 +739,20 @@ class AdaptiveCapabilityDispatcher:
             if record.behavioral_effect in {"changed", "no_effect"}
         )
         report_hashes = tuple(sha256_digest(report.canonical_payload()) for report in result.coverage_reports)
+        # The dispatcher returns the physical SemanticState lifecycle events
+        # below.  Those events are the sole telemetry authority for the
+        # publish/transfer/consume headline counters; copying the same
+        # counters into STEP_COMPLETED metrics would make TelemetryEmitter's
+        # additive aggregation count one physical operation twice.
+        step_metrics = {
+            key: value
+            for key, value in state_metrics.items()
+            if key not in {
+                "semantic_state_publish_count",
+                "semantic_state_transfer_count",
+                "semantic_state_consume_count",
+            }
+        }
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
             success=True,
@@ -742,7 +774,7 @@ class AdaptiveCapabilityDispatcher:
                     record.behavioral_effect == "changed"
                     for record in evaluated_effect_records
                 )),
-                **state_metrics,
+                **step_metrics,
             },
         )
 
@@ -784,11 +816,14 @@ class AdaptiveCapabilityDispatcher:
             build_state_publication_receipt,
         )
 
+        mode = str(self.context.semantic_state_mode).strip()
+        if mode not in _SEMANTIC_STATE_MODES:
+            raise AdaptiveDispatchError(f"semantic_state_mode_invalid:{mode}")
         if self.context.state_store is None or self.context.memory_store is None:
             raise AdaptiveDispatchError("adaptive_product_state_infrastructure_missing")
-        if self.context.socket_path is None:
+        if mode != "off" and self.context.socket_path is None:
             raise AdaptiveDispatchError("adaptive_product_control_socket_missing")
-        if state_access_authority is None:
+        if mode != "off" and state_access_authority is None:
             raise AdaptiveDispatchError("state_access_authority_required")
 
         semantic_requested = bool(
@@ -800,6 +835,7 @@ class AdaptiveCapabilityDispatcher:
         data_plane_events: list[dict[str, object]] = []
         transfer_count = 0
         publish_count = 0
+        consume_count = 0
         selected_count = 0
         selected_bytes = 0
         for index, bundle in enumerate(result.retrieval_bundles, start=1):
@@ -808,6 +844,11 @@ class AdaptiveCapabilityDispatcher:
                 or bundle.semantic_state_manifest is None
                 or not bundle.semantic_candidate_embeddings
             ):
+                selected_bundles.append(bundle)
+                continue
+            # ``off`` is a true producer/consumer disable: the retriever's
+            # typed result remains the input, with no state publication.
+            if mode == "off":
                 selected_bundles.append(bundle)
                 continue
             state_id = (
@@ -850,6 +891,14 @@ class AdaptiveCapabilityDispatcher:
                     "semantic_state_transfer_count": 0.0,
                 },
             })
+            # ``consumer_off`` is the negative control for the matched
+            # ablation.  It publishes a real state reference and receipt, but
+            # deliberately does not issue a read grant or start a worker.
+            # Mainline cleanup still owns the eventual release/reclaim.
+            if mode == "consumer_off":
+                selected_bundles.append(bundle)
+                publish_count += 1
+                continue
             entries = bundle.semantic_state_manifest.entries
             top_k = max(1, min(len(entries), max(len(bundle.evidence_pack.semantic_contexts), 1)))
             reference_selected_ids = {
@@ -1164,12 +1213,32 @@ class AdaptiveCapabilityDispatcher:
             ))
             self.context.state_pin_receipts[state_id] = tuple(pin_receipts)
             publish_count += 1
+            consume_count += 1
             transfer_count += int(response.consumer_pid != response.producer_pid)
             selected_count += len(response.selected_candidate_ids)
             selected_bytes += int(response.selected_evidence_bytes)
 
         if not selected_bundles:
             selected_bundles = list(result.retrieval_bundles)
+        self.context.component_activation_receipts["semantic_state"] = {
+            "component": "semantic_state",
+            "requested_mode": mode,
+            "effective_mode": mode if semantic_requested else "not_applicable",
+            "producer_active": bool(publish_count),
+            "consumer_active": bool(consume_count),
+            "publish_count": int(publish_count),
+            "consume_count": int(consume_count),
+            "transfer_count": int(transfer_count),
+            "disable_reason": (
+                "requested_off"
+                if mode == "off"
+                else "consumer_disabled_negative_control"
+                if mode == "consumer_off"
+                else ""
+                if consume_count
+                else "no_semantic_state_payload"
+            ),
+        }
         selected_pack = stable_fan_in_evidence_packs(
             task_id=result.request.task_id,
             packs=tuple(bundle.evidence_pack for bundle in selected_bundles),
@@ -1246,7 +1315,7 @@ class AdaptiveCapabilityDispatcher:
             {
                 "semantic_state_publish_count": float(publish_count),
                 "semantic_state_transfer_count": float(transfer_count),
-                "semantic_state_consume_count": float(publish_count),
+                "semantic_state_consume_count": float(consume_count),
                 "semantic_state_selected_count": float(selected_count),
                 "semantic_state_selected_bytes": float(selected_bytes),
                 "raw_evidence_bytes_seen_by_llm": float(raw_evidence_bytes),
@@ -1823,7 +1892,15 @@ class AdaptiveCapabilityDispatcher:
                     self.context.quality_semantics_by_capability.get(step.capability_id, {}),
                 )
                 transformed = tuple(self.transform_interpreter.run(program, inputs=projected_inputs))
-                recomputed = recompute_transform_program(program, inputs=projected_inputs)
+                if any(operation.op == "deterministic_fixture" for operation in program.operations):
+                    # The fixture operation is available only to an explicitly
+                    # configured offline smoke.  The registered business
+                    # validator still performs its own source-row
+                    # recomputation; this value is only the generic
+                    # dispatcher context projection.
+                    recomputed = tuple(transformed)
+                else:
+                    recomputed = recompute_transform_program(program, inputs=projected_inputs)
             except (AdaptiveDispatchError, CapabilityRecomputeError, TransformProgramError) as exc:
                 if self.context.transform_program_repair_factory is None or dsl_repair_count >= 1:
                     raise AdaptiveDispatchError(str(exc)) from exc
@@ -2147,6 +2224,7 @@ class AdaptiveCapabilityDispatcher:
                     "llm_codeact_quality_rejected_count": float(sum(
                         not report.verified for report in quality_reports
                     )),
+                    "llm_codeact_verified_count": 0.0,
                     "llm_codeact_sandbox_fallback_count": float(outcome.record.sandbox_actual_backend != "bwrap"),
                 },
             )
@@ -2203,6 +2281,9 @@ class AdaptiveCapabilityDispatcher:
                 )),
                 "llm_codeact_execution_count": 1.0,
                 "llm_codeact_candidate_count": 1.0,
+                "llm_codeact_verified_count": float(bool(quality_reports) and all(
+                    report.verified for report in quality_reports
+                )),
                 "llm_codeact_sandbox_fallback_count": 0.0,
                 **memory_metrics,
             },
@@ -2430,7 +2511,9 @@ class AdaptiveCapabilityDispatcher:
                 step_id=grant.step_id,
                 evidence_pack_ref_id=ref_id,
                 evidence_pack_hash=evidence_pack.pack_hash,
-                requested_fields=tuple(self._output_schema(step.capability_id, (), step.step_id).keys()),
+                requested_fields=tuple(
+                    self._configured_input_schema(step.capability_id, step.step_id).keys()
+                ),
                 output_contract_version="statebus.transform_input.v1",
             )
             rows, artifact, report = self.projection_adapter.project(
@@ -2453,6 +2536,13 @@ class AdaptiveCapabilityDispatcher:
         assert stored is not None
         rows = self._read_verified_artifact_rows(stored)
         return ref_id, rows, (stored.artifact.blob_hash,), stored.provenance_item_ids, ()
+
+    def _configured_input_schema(self, capability_id: str, step_id: str = "") -> dict[str, str]:
+        if step_id:
+            configured = self.context.input_schema_by_step.get(step_id)
+            if configured:
+                return configured
+        return self._output_schema(capability_id, (), step_id)
 
     def _verified_evidence_pack(
         self,
@@ -2659,6 +2749,25 @@ class AdaptiveCapabilityDispatcher:
         """Reject a DSL program that changes a registered business operation."""
         operation = str(semantics.get("operation", ""))
         if not operation:
+            return
+        dsl_operation = str(semantics.get("dsl_operation", ""))
+        dsl_arguments = semantics.get("dsl_arguments")
+        if dsl_operation:
+            if (
+                len(program.operations) != 1
+                or program.operations[0].op != dsl_operation
+            ):
+                raise AdaptiveDispatchError("transform_program_semantics_operation_mismatch")
+            if not isinstance(dsl_arguments, dict):
+                raise AdaptiveDispatchError("transform_program_semantics_arguments_missing")
+            arguments = dict(program.operations[0].arguments)
+            for field, expected in dsl_arguments.items():
+                if arguments.get(field) != expected:
+                    raise AdaptiveDispatchError(
+                        f"transform_program_semantics_argument_mismatch:{field}"
+                    )
+            if set(arguments) != set(dsl_arguments):
+                raise AdaptiveDispatchError("transform_program_semantics_arguments_mismatch")
             return
         expected_ops = {
             "compare_periods": "compare_periods",

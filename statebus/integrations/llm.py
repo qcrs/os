@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -323,6 +324,9 @@ class OpenAICompatibleLLMClient:
     def __init__(self, config: LLMConfig) -> None:
         config.require_api_ready()
         self.config = config
+        # Measurement callers read this after a case completes.  The list is
+        # observation only; it does not own retry or terminal semantics.
+        self.request_events: list[dict[str, object]] = []
 
     def _build_provider_client(self, provider_name: str) -> AsyncOpenAI:
         provider = self.config.provider_config(provider_name)
@@ -330,6 +334,9 @@ class OpenAICompatibleLLMClient:
             api_key=provider.resolved_api_key or ("EMPTY" if self.config.mode == "local_vllm" else None),
             base_url=provider.base_url,
             timeout=provider.timeout_s,
+            # The measurement contract owns retry accounting.  The SDK must
+            # not add an unobserved retry layer underneath it.
+            max_retries=0,
             default_headers=provider.default_headers or None,
         )
 
@@ -395,6 +402,7 @@ class OpenAICompatibleLLMClient:
             provider_name=provider_name,
             provider=self.config.provider_config(provider_name),
             request=request,
+            purpose=purpose,
         )
         choice = response.choices[0]
         content = _coerce_content_to_text(choice.message.content)
@@ -417,6 +425,7 @@ class OpenAICompatibleLLMClient:
         provider_name: str,
         provider: ProviderConfig,
         request: dict[str, Any],
+        purpose: str,
     ) -> Any:
         max_attempts = max(1, int(provider.request_max_attempts))
         delay_s = max(0.0, provider.retry_initial_delay_s)
@@ -424,14 +433,90 @@ class OpenAICompatibleLLMClient:
         last_error: BaseException | None = None
         for attempt_index in range(max_attempts):
             client = self._build_provider_client(provider_name)
+            request_id = f"llm-{time.monotonic_ns()}"
+            started_ns = time.monotonic_ns()
             try:
-                return await client.chat.completions.create(**request)
+                response = await client.chat.completions.create(**request)
+                self.request_events.append(
+                    {
+                        "event": "provider_request",
+                        "request_id": request_id,
+                        "role": purpose,
+                        "provider": provider_name,
+                        "model": request.get("model"),
+                        "attempt": attempt_index + 1,
+                        "retry_kind": "none" if attempt_index == 0 else "transient_retry",
+                        "status": "response_received",
+                        "start_ns": started_ns,
+                        "end_ns": time.monotonic_ns(),
+                        "requested_seed": request.get("seed"),
+                    }
+                )
+                return response
             except BaseException as exc:
-                context_adjusted_request = _context_window_adjusted_request(request, exc)
+                self.request_events.append(
+                    {
+                        "event": "provider_request",
+                        "request_id": request_id,
+                        "role": purpose,
+                        "provider": provider_name,
+                        "model": request.get("model"),
+                        "attempt": attempt_index + 1,
+                        "retry_kind": "none" if attempt_index == 0 else "transient_retry",
+                        "status": "error",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "start_ns": started_ns,
+                        "end_ns": time.monotonic_ns(),
+                        "requested_seed": request.get("seed"),
+                    }
+                )
+                # A single-attempt measurement request must not acquire a
+                # hidden second request through context-window adjustment.
+                context_adjusted_request = (
+                    _context_window_adjusted_request(request, exc)
+                    if max_attempts > 1
+                    else None
+                )
                 if context_adjusted_request is not None:
+                    adjusted_request_id = f"llm-{time.monotonic_ns()}"
+                    adjusted_started_ns = time.monotonic_ns()
                     try:
-                        return await client.chat.completions.create(**context_adjusted_request)
+                        response = await client.chat.completions.create(**context_adjusted_request)
+                        self.request_events.append(
+                            {
+                                "event": "provider_request",
+                                "request_id": adjusted_request_id,
+                                "role": purpose,
+                                "provider": provider_name,
+                                "model": context_adjusted_request.get("model"),
+                                "attempt": attempt_index + 1,
+                                "retry_kind": "context_adjustment",
+                                "status": "response_received",
+                                "start_ns": adjusted_started_ns,
+                                "end_ns": time.monotonic_ns(),
+                                "requested_seed": context_adjusted_request.get("seed"),
+                            }
+                        )
+                        return response
                     except BaseException as retry_exc:
+                        self.request_events.append(
+                            {
+                                "event": "provider_request",
+                                "request_id": adjusted_request_id,
+                                "role": purpose,
+                                "provider": provider_name,
+                                "model": context_adjusted_request.get("model"),
+                                "attempt": attempt_index + 1,
+                                "retry_kind": "context_adjustment",
+                                "status": "error",
+                                "error_type": type(retry_exc).__name__,
+                                "error": str(retry_exc),
+                                "start_ns": adjusted_started_ns,
+                                "end_ns": time.monotonic_ns(),
+                                "requested_seed": context_adjusted_request.get("seed"),
+                            }
+                        )
                         exc = retry_exc
                 if not _is_transient_openai_error(exc) or attempt_index + 1 >= max_attempts:
                     raise

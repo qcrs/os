@@ -86,16 +86,28 @@ def test_live_runner_preflight_fails_closed_for_missing_local_embedding(
 
 
 @pytest.mark.parametrize(
-    ("suite", "runner_name", "output_leaf"),
+    ("suite", "runner_name", "output_leaf", "extra_args"),
     [
-        ("adaptive-memory", "run_adaptive_memory", "adaptive-memory"),
-        ("semantic-holdout", "run_semantic_holdout", "semantic-holdout"),
+        ("adaptive-memory", "run_adaptive_memory", "adaptive-memory", {}),
+        (
+            "semantic-holdout",
+            "run_semantic_holdout",
+            "semantic-holdout",
+            {"case_ids": (), "max_cases": 0},
+        ),
+        (
+            "semantic-state-ablation",
+            "run_semantic_state_ablation",
+            "semantic-state-ablation",
+            {"case_ids": (), "max_cases": 0},
+        ),
     ],
 )
 def test_live_runner_dispatches_fixed_contest_suites_with_required_profile(
     suite: str,
     runner_name: str,
     output_leaf: str,
+    extra_args: dict[str, object],
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -141,12 +153,11 @@ def test_live_runner_dispatches_fixed_contest_suites_with_required_profile(
         "output_root": tmp_path / "runtime" / output_leaf,
         "embedding_model_path": "/statebus/models/test-embedding",
         "embedding_device": "cuda:0",
+        **extra_args,
     }
 
 
-@pytest.mark.parametrize("suite", ["adaptive-memory", "semantic-holdout"])
 def test_live_runner_rejects_partial_selection_for_fixed_contest_suites(
-    suite: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -158,7 +169,7 @@ def test_live_runner_rejects_partial_selection_for_fixed_contest_suites(
         [
             "statebus-live",
             "--suite",
-            suite,
+            "adaptive-memory",
             "--role-path-mode",
             "local_vllm",
             "--embedding-mode",
@@ -174,6 +185,52 @@ def test_live_runner_rejects_partial_selection_for_fixed_contest_suites(
 
     with pytest.raises(SystemExit, match="fixed-size formal suite"):
         live_runner_main()
+
+
+def test_live_runner_threads_bounded_semantic_holdout_selection(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "statebus.benchmark.live_runner.runtime_preflight",
+        lambda **kwargs: SimpleNamespace(ok=True, canonical_payload=lambda: {"ok": True, **kwargs}),
+    )
+
+    def fake_runner(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "suite_id": "semantic-holdout"}
+
+    monkeypatch.setattr("statebus.benchmark.live_runner.run_semantic_holdout", fake_runner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "statebus-live",
+            "--suite",
+            "semantic-holdout",
+            "--runtime-root",
+            str(tmp_path / "runtime"),
+            "--role-path-mode",
+            "local_vllm",
+            "--embedding-mode",
+            "local",
+            "--state-pool-mode",
+            "shared_memory",
+            "--transport",
+            "subprocess",
+            "--case-id",
+            "semantic-holdout-s1",
+            "--max-cases",
+            "1",
+        ],
+    )
+
+    live_runner_main()
+
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert captured["case_ids"] == ("semantic-holdout-s1",)
+    assert captured["max_cases"] == 1
 
 
 def test_live_runner_formal_suite_uses_formal_family_by_default(
