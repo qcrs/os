@@ -1293,6 +1293,21 @@ def test_case_gate_failure_attributes_external_quality_to_executor_model() -> No
     assert failure["system_gate_failed"] is False
 
 
+def test_case_gate_failure_does_not_treat_provenance_diagnostic_as_runtime_failure() -> None:
+    failure = _case_gate_failure({
+        "task_id": "formal-case",
+        "runtime_completed": True,
+        "runtime_dispatches": [],
+        "approved_steps": [],
+        "provenance_expected_facts": {"passed": False, "blocking": False},
+        "expected_facts_report": {"passed": False},
+        "claim_sets": [{"status": "ready"}],
+    })
+
+    assert failure["error_code"] == "external_expected_facts_quality_failed"
+    assert failure["stage"] == "executor"
+
+
 def test_terminal_quality_gate_accepts_verified_repair_and_retains_rejected_history() -> None:
     rejected = {
         "output_artifact_hash": "rejected-output",

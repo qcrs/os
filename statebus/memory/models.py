@@ -368,9 +368,14 @@ class MemoryConsumptionRecord:
     downstream_ref_ids: tuple[str, ...] = ()
     skipped_generation_step_count: int = 0
     skipped_llm_call_count: int = 0
+    skipped_provider_call_count: int = 0
+    # One narrow projection of the current recipe step.  This is evidence of
+    # what the consumer did, not a second replay authority.
+    recipe_step_status: str = "recomputed_current_input"
+    skip_evidence: dict[str, object] = field(default_factory=dict)
     recipe_recomputed: bool = False
     consumed_at_ns: int = 0
-    schema_version: str = "statebus.memory_consumption_record.v2"
+    schema_version: str = "statebus.memory_consumption_record.v3"
     # Consumption is an observation of a current execution, not a new
     # authority root.  These references make that observation auditable
     # against the current Grant and the upstream admission truths.
@@ -401,6 +406,9 @@ class MemoryConsumptionRecord:
             "downstream_ref_ids": list(self.downstream_ref_ids),
             "skipped_generation_step_count": self.skipped_generation_step_count,
             "skipped_llm_call_count": self.skipped_llm_call_count,
+            "skipped_provider_call_count": self.skipped_provider_call_count,
+            "recipe_step_status": self.recipe_step_status,
+            "skip_evidence": dict(self.skip_evidence),
             "recipe_recomputed": self.recipe_recomputed,
             "consumed_at_ns": self.consumed_at_ns,
             "schema_version": self.schema_version,

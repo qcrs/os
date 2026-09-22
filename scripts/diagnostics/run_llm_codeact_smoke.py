@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import time
 import traceback
@@ -727,11 +728,23 @@ def main() -> None:
     codeact_verified = bool(
         record
         and record.get("sandbox_actual_backend") == "bwrap"
+        and int(record.get("sandbox_uid", 0)) == 65534
+        and int(record.get("sandbox_gid", 0)) == 65534
         and record.get("output_schema_valid")
         and record.get("output_quality_valid")
         and telemetry.get("llm_codeact_verified_count") == 1.0
         and telemetry.get("llm_codeact_sandbox_fallback_count") == 0.0
     )
+    sandbox_children = [
+        {
+            "backend": execution_record.get("sandbox_actual_backend"),
+            "uid": execution_record.get("sandbox_uid"),
+            "gid": execution_record.get("sandbox_gid"),
+            "fallback_reason": execution_record.get("fallback_reason", ""),
+        }
+        for execution_record in records
+        if execution_record.get("sandbox_actual_backend") is not None
+    ]
     summary = {
         "schema_version": "statebus.adaptive_live_task.v1",
         "task_name": task.name,
@@ -746,6 +759,14 @@ def main() -> None:
         "approved_capability_ids": selected_capability_ids,
         "runtime_completed": result.completed,
         "runtime_final_plan_hash": result.approved_plan_hash,
+        "execution_identity": {
+            "container": {
+                "uid": os.getuid(),
+                "gid": os.getgid(),
+                "is_root": os.getuid() == 0,
+            },
+            "sandbox_children": sandbox_children,
+        },
         "generation_attempts": generations,
         "role_invocations": role_invocations,
         "claim_sets": claim_sets,

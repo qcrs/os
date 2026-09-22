@@ -116,6 +116,9 @@ class AdaptiveMainlineBindings:
     bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
     provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
     provider_invocation_evidence: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Per-step route requests for matched routing lanes.  Empty means the
+    # canonical Runtime policy route.
+    requested_routes_by_step: dict[str, str] = field(default_factory=dict)
     g5c_c0_artifact_root: Path | None = None
     g5c_c1_artifact_root: Path | None = None
     # Internal deterministic fixture seam for an observed no-effect Memory
@@ -375,6 +378,7 @@ class AdaptiveMainlineRunner:
             bound_provider_handlers=bindings.bound_provider_handlers,
             provider_state_reader_factory=bindings.provider_state_reader_factory,
             provider_invocation_evidence=bindings.provider_invocation_evidence,
+            requested_routes_by_step=dict(bindings.requested_routes_by_step),
             g5c_c0_artifact_root=bindings.g5c_c0_artifact_root,
             g5c_c1_artifact_root=bindings.g5c_c1_artifact_root,
             provider_registry=(
@@ -1289,6 +1293,10 @@ class AdaptiveMainlineRunner:
                 for receipt in runtime.replay_eligibility_receipts
             ],
             "replay_observations": [dict(observation) for observation in context.replay_observations],
+            "route_evidence": {
+                step_id: [dict(item) for item in rows]
+                for step_id, rows in sorted(context.route_evidence_by_step.items())
+            },
             "evidence_ref_ids": sorted(context.evidence_packs),
             "created_at_ns": time.time_ns(),
         }
@@ -1557,12 +1565,18 @@ class AdaptiveMainlineRunner:
             metrics={
                 "memory_actual_use": {"status": "observed", "value": actual_use_count, "reason": "receipt_joined_consumer_read"},
                 "memory_behavioral_effect": {"status": "observed", "value": sum(record.behavioral_effect == "changed" for record in context.memory_consumption_records), "reason": "changed_surface_hash_only"},
-                "validated_replay_count": {"status": "observed", "value": 0, "reason": "no_G5C_validated_replay_claim_in_G5A"},
+                "validated_replay_count": {"status": "observed", "value": sum(
+                    record.replay_class == ReplayClass.VALIDATED_REPLAY
+                    and bool(record.attempt_result_admission_receipt_hash)
+                    for record in context.memory_consumption_records
+                ), "reason": "current_attempt_replay_receipt_join"},
                 "exact_replay_count": {"status": "observed", "value": 0, "reason": "no_G5C_exact_replay_claim_in_G5A"},
-                "skipped_generation_step_count": {"status": "observed", "value": 0, "reason": "recipe_recomputed_is_diagnostic_only"},
-                "skipped_llm_call_count": {"status": "observed", "value": 0, "reason": "recipe_recomputed_is_diagnostic_only"},
+                "skipped_generation_step_count": {"status": "observed", "value": sum(record.skipped_generation_step_count for record in context.memory_consumption_records), "reason": "runtime_owned_recipe_step_evidence"},
+                "skipped_llm_call_count": {"status": "observed", "value": sum(record.skipped_llm_call_count for record in context.memory_consumption_records), "reason": "runtime_owned_recipe_step_evidence"},
+                "skipped_provider_call_count": {"status": "observed", "value": sum(record.skipped_provider_call_count for record in context.memory_consumption_records), "reason": "runtime_owned_provider_boundary_evidence"},
                 "provider_work_avoided": {"status": "unsupported", "value": None, "reason": "G5-C matched baseline and skip receipt are not implemented"},
-                "verified_recipe_work_avoided": {"status": "unsupported", "value": None, "reason": "G5-C explicit skip receipt is not implemented"},
+                "verified_recipe_work_avoided": {"status": "unsupported", "value": None, "reason": "matched_baseline_not_available_in_G5A"},
+                "recipe_step_skip": {"status": "observed" if any(record.recipe_step_status == "skipped_generation" for record in context.memory_consumption_records) else "not_applicable", "value": sum(record.recipe_step_status == "skipped_generation" for record in context.memory_consumption_records), "reason": "current_input_recipe_reuse_evidence"},
                 "hydration_bytes_avoided": {"status": "unsupported", "value": None, "reason": "no paired carrier measurement"},
             },
         ))
@@ -1602,9 +1616,15 @@ class AdaptiveMainlineRunner:
                 ),
                 "behavioral_effect": behavior,
                 "recipe_recomputed": record.recipe_recomputed,
+                "recipe_step_status": record.recipe_step_status,
                 "skipped_generation_step_count": record.skipped_generation_step_count,
                 "skipped_llm_call_count": record.skipped_llm_call_count,
-                "validated_replay_count": 0,
+                "skipped_provider_call_count": record.skipped_provider_call_count,
+                "skip_evidence": dict(record.skip_evidence),
+                "validated_replay_count": int(
+                    record.replay_class == ReplayClass.VALIDATED_REPLAY
+                    and bool(record.attempt_result_admission_receipt_hash)
+                ),
                 "exact_replay_count": 0,
                 "row_identity": record_identity,
                 "task_id": record_identity["task_id"],
@@ -1881,7 +1901,11 @@ class AdaptiveMainlineRunner:
                     artifact_verification_hash = "" if receipt is None else receipt.receipt_hash
                     break
                 if row.get("replay_class") == ReplayClass.VALIDATED_REPLAY.value:
-                    restore_status = "verified_recipe" if row.get("recipe_recomputed") else "verified_recipe"
+                    restore_status = (
+                        "verified_procedure_reuse"
+                        if row.get("recipe_step_status") == "skipped_generation"
+                        else "recomputed_current_input"
+                    )
                 row.update({
                     "execution_binding_hash": "" if binding is None else binding.binding_hash,
                     "restore_kind": "recipe" if row.get("replay_class") == ReplayClass.VALIDATED_REPLAY.value else "none",
@@ -1935,6 +1959,8 @@ class AdaptiveMainlineRunner:
                     "current_invocation_status": observation.get("provider_invocation_status", "unknown"),
                     "skipped_step_ids": [],
                     "skipped_provider_calls": [observation.get("provider_id", "")],
+                    "recipe_step_status": observation.get("recipe_step_status", ""),
+                    "skip_evidence": dict(observation.get("skip_evidence", {})),
                     "quality_report_hash": observation.get("quality_report_hash", ""),
                     "quality_result_admission_hash": observation.get("attempt_result_admission_receipt_hash", ""),
                     "terminal_status": observation.get("terminal_status", "runtime_fail"),
@@ -1994,6 +2020,10 @@ class AdaptiveMainlineRunner:
                 "runtime_bindings": [binding.canonical_payload() for binding in runtime.execution_bindings],
                 "attempt_result_admissions": result_admissions,
                 "g6a_memfd_limitation": "skipped: memfd unavailable; SHM actual-read retained",
+                "route_evidence": {
+                    step_id: [dict(item) for item in route_rows]
+                    for step_id, route_rows in sorted(context.route_evidence_by_step.items())
+                },
             }
 
             def put(name: str, payload: object) -> None:
@@ -2010,6 +2040,7 @@ class AdaptiveMainlineRunner:
                 **common,
             ))
             put("runtime_trace.json", c0c1_envelope("observed", runtime_identity=runtime_identity.canonical_payload(), dispatches=[dispatch.__dict__ for dispatch in runtime.dispatches], replay_observations=observations, **common))
+            put("route_evidence.json", c0c1_envelope("observed" if context.route_evidence_by_step else "not_applicable", reason="" if context.route_evidence_by_step else "no_route_evidence", routes=common["route_evidence"], **common))
             put("replay_eligibility_receipts.json", c0c1_envelope("observed" if replay_eligibility else "not_applicable", reason="" if replay_eligibility else "no_validated_replay_eligibility", receipts=replay_eligibility, **common))
             put("replay_consumption_receipts.json", c0c1_envelope("observed" if validated_rows else "unsupported", reason="" if validated_rows else "no_result_admitted_validated_replay", receipts=validated_rows, **common))
             put("replay_quality_evidence.json", c0c1_envelope("observed" if quality_rows else "unsupported", reason="" if quality_rows else "quality_reports_not_observed", quality_reports=quality_rows, result_admissions=result_admissions, **common))
@@ -2052,7 +2083,7 @@ class AdaptiveMainlineRunner:
                 "recipe_recomputed_count": {"status": "observed", "value": sum(bool(row.get("recipe_recomputed")) for row in rows), "reason": "current_recipe_execution_diagnostic"},
                 "provider_skip_observed_count": {"status": "observed" if stage == "C1" and skip_receipts else "not_applicable", "value": len(skip_receipts) if stage == "C1" else None, "reason": "runtime_owned_observation" if skip_receipts else ("provider_bypass_observation_only_in_c1" if stage == "C0" else "no_runtime_provider_bypass_observed")},
                 "provider_work_avoided": {"status": "unsupported", "value": None, "reason": "no_matched_baseline_or_c2_work_avoided"},
-                "verified_recipe_work_avoided": {"status": "unsupported", "value": None, "reason": "recipe_step_skip_deferred_to_c2"},
+                "verified_recipe_work_avoided": {"status": "unsupported", "value": None, "reason": "c2_matched_baseline_deferred"},
             }, **common))
             put("g5c_acceptance.json", c0c1_envelope("observed", acceptance_status=f"{stage}_COMPLETE_PENDING_ASTRA_ACCEPTANCE", validated_replay_observed=len(validated_rows), exact_replay=exact_projection, exact_replay_status=exact_projection, work_avoided="unsupported", benchmark_superiority="NOT_ESTABLISHED", **common))
             put("scorer_result.json", c0c1_envelope("observed", quality_pass=all(item["verified"] for item in quality_rows) if quality_rows else False, quality_non_regression={"status": "unsupported", "reason": "no_matched_baseline"}, claim_restriction={"exact_replay": exact_projection, "work_avoided": "unsupported"}, exact_replay=exact_projection, **common))

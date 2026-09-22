@@ -162,6 +162,70 @@ def test_transform_dsl_supports_bounded_compare_grouped_aggregate_and_zscore_fal
     assert rows == [{"count": 2, "max": 30.0, "mean": 20.0, "min": 10.0, "segment": "a", "sum": 40.0}]
 
 
+def test_transform_dsl_compare_metric_joins_two_entities_without_invariant_carry() -> None:
+    program = TransformProgram(
+        program_id="compare-metric",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("compare_metric", {
+            "ticker_field": "ticker",
+            "period_field": "quarter",
+            "metric_field": "metric",
+            "value_field": "value",
+            "left_ticker": "ACME",
+            "right_ticker": "BETA",
+            "period": "2026Q1",
+            "metric": "revenue",
+            "period_output": "quarter",
+            "left_output": "acme_revenue_value",
+            "right_output": "beta_revenue_value",
+            "gap_output": "gap_value",
+        }),),
+    )
+
+    rows = TransformDslInterpreter().run(program, inputs={"metrics": [
+        {"ticker": "ACME", "quarter": "2026Q1", "metric": "revenue", "value": 120.0},
+        {"ticker": "BETA", "quarter": "2026Q1", "metric": "revenue", "value": 87.0},
+        {"ticker": "ACME", "quarter": "2025Q4", "metric": "revenue", "value": 109.0},
+    ]})
+
+    assert rows == [{
+        "quarter": "2026Q1",
+        "acme_revenue_value": 120.0,
+        "beta_revenue_value": 87.0,
+        "gap_value": 33.0,
+    }]
+
+
+def test_transform_dsl_compare_metric_rejects_duplicate_entity_rows() -> None:
+    program = TransformProgram(
+        program_id="compare-metric-duplicate",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("compare_metric", {
+            "ticker_field": "ticker",
+            "period_field": "quarter",
+            "metric_field": "metric",
+            "value_field": "value",
+            "left_ticker": "ACME",
+            "right_ticker": "BETA",
+            "period": "2026Q1",
+            "metric": "revenue",
+            "period_output": "quarter",
+            "left_output": "acme_revenue_value",
+            "right_output": "beta_revenue_value",
+            "gap_output": "gap_value",
+        }),),
+    )
+
+    with pytest.raises(TransformProgramError, match="compare_metric_match_count_invalid"):
+        TransformDslInterpreter().run(program, inputs={"metrics": [
+            {"ticker": "ACME", "quarter": "2026Q1", "metric": "revenue", "value": 120.0},
+            {"ticker": "ACME", "quarter": "2026Q1", "metric": "revenue", "value": 121.0},
+            {"ticker": "BETA", "quarter": "2026Q1", "metric": "revenue", "value": 87.0},
+        ]})
+
+
 def test_transform_dsl_builds_controller_scoped_trend_series() -> None:
     program = TransformProgram(
         program_id="trend-series",

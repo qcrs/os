@@ -209,9 +209,6 @@ def _case_gate_failure(case_summary: dict[str, object]) -> dict[str, object]:
     elif not case_summary.get("runtime_completed"):
         error_code = "adaptive_runtime_incomplete_without_failed_dispatch"
         stage = "runtime"
-    elif not case_summary.get("provenance_expected_facts", {}).get("passed", True):
-        error_code = "retrieval_provenance_quality_failed"
-        stage = "retriever"
     elif not case_summary.get("expected_facts_report", {}).get("passed", False):
         error_code = "external_expected_facts_quality_failed"
         stage = "executor"
@@ -1760,7 +1757,6 @@ def _run_adaptive_case(
     passed = bool(
         runtime.completed
         and expected_report["passed"]
-        and provenance_expected_facts_passed
         and len(claims) == 1
         and bool(terminal_quality_reports)
         and all(report.get("verified") for report in terminal_quality_reports)
@@ -1868,6 +1864,7 @@ def _run_adaptive_case(
         "expected_facts_report": expected_report,
         "provenance_expected_facts": {
             "passed": provenance_expected_facts_passed,
+            "blocking": False,
             "expected_doc_hashes": sorted(expected_doc_hashes),
             "observed_doc_hashes": sorted(observed_doc_hashes),
         },

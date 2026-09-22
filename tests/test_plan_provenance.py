@@ -20,7 +20,7 @@ from statebus.contracts import (
 )
 from statebus.runtime.adaptive_plan_compiler import compile_required_input_wiring
 from statebus.runtime.capability_registry import CapabilityRegistry
-from statebus.runtime.domain_packs import register_long_doc_analysis_capabilities
+from statebus.runtime.domain_packs import register_c2a_four_role_capabilities
 from statebus.runtime.plan_policy import PlanPolicyValidator
 from statebus.runtime.static_role_recipe import (
     StaticRoleRecipeCompiler,
@@ -31,7 +31,7 @@ from statebus.runtime.static_role_recipe import (
 
 def _context() -> tuple[CapabilityRegistry, AdaptiveTaskEnvelope]:
     registry = CapabilityRegistry()
-    pack = register_long_doc_analysis_capabilities(registry)
+    pack = register_c2a_four_role_capabilities(registry)
     envelope = AdaptiveTaskEnvelope(
         task_id="provenance-task",
         canonical_task_spec_hash="sha256:provenance-contract",
@@ -48,15 +48,22 @@ def _context() -> tuple[CapabilityRegistry, AdaptiveTaskEnvelope]:
         ),
         allowed_memory_policies=("none", "assist"),
         role_cardinality={
+            "planner": (1, 1),
             "retriever": (1, 1),
             "executor": (1, 1),
             "summarizer": (1, 1),
         },
-        max_plan_steps=3,
+        max_plan_steps=4,
         max_execution_runtime_ms=100_000,
         risk_class=RiskClass.WORKSPACE_WRITE,
     )
     return registry, envelope
+
+
+def _recipe():
+    return default_fixed_role_recipe(
+        retriever_capability_id="retrieve_table_evidence_v1",
+    )
 
 
 def _proposal_and_incomplete_normalization() -> tuple[
@@ -69,19 +76,25 @@ def _proposal_and_incomplete_normalization() -> tuple[
     proposal = StaticRoleRecipeCompiler().compile(
         envelope.task_id,
         envelope,
-        default_fixed_role_recipe(),
+        _recipe(),
     )
     incomplete = replace(
         proposal,
         steps=(
             proposal.steps[0],
-            proposal.steps[1],
+            replace(
+                proposal.steps[1],
+                depends_on=(),
+                input_ref_ids=(),
+                input_ref_kinds=(),
+            ),
             replace(
                 proposal.steps[2],
                 depends_on=("execute",),
                 input_ref_ids=(),
                 input_ref_kinds=(),
             ),
+            proposal.steps[3],
         ),
     )
     return registry, envelope, incomplete, proposal
@@ -91,10 +104,9 @@ def test_required_input_wiring_is_mechanical() -> None:
     registry, envelope, incomplete, _ = _proposal_and_incomplete_normalization()
     normalized, fields = compile_required_input_wiring(incomplete, registry)
 
-    assert normalized.steps[-1].depends_on == ("retrieve", "execute")
+    assert normalized.steps[1].depends_on == ("plan",)
     assert fields == (
-        "steps.summarize.depends_on.required_input_kind.canonical_evidence_pack",
-        "steps.summarize.depends_on.controller_order",
+        "steps.retrieve.depends_on.required_input_kind.planner_handoff",
     )
     assert semantic_plan_hash(
         incomplete,
@@ -124,7 +136,7 @@ def test_required_input_wiring_is_mechanical() -> None:
     assert receipt.before_semantic_hash == receipt.after_semantic_hash
     assert receipt.source_proposal_hash == incomplete.proposal_hash
     assert receipt.effective_proposal_hash == normalized.proposal_hash
-    assert "steps.summarize.depends_on" in receipt.changed_fields
+    assert "steps.retrieve.depends_on" in receipt.changed_fields
 
 
 def test_normalization_receipt_rejects_semantic_mutations() -> None:
@@ -173,19 +185,20 @@ def test_normalization_receipt_rejects_semantic_mutations() -> None:
         ),
         replace(
             proposal,
-            steps=(
-                proposal.steps[0],
-                replace(proposal.steps[1], on_failure="fail"),
-                *proposal.steps[2:],
-            ),
+                steps=(
+                    proposal.steps[0],
+                    replace(proposal.steps[1], on_failure="request_replan"),
+                    *proposal.steps[2:],
+                ),
         ),
         replace(
             proposal,
-            steps=(
-                proposal.steps[0],
-                replace(proposal.steps[1], required_input_fields=("metric",)),
-                *proposal.steps[2:],
-            ),
+                steps=(
+                    proposal.steps[0],
+                    proposal.steps[1],
+                    replace(proposal.steps[2], required_input_fields=("metric",)),
+                    proposal.steps[3],
+                ),
         ),
         replace(
             proposal,
@@ -248,7 +261,7 @@ def test_approved_plan_bundle_hash_links_all_provenance() -> None:
     result = compile_static_role_recipe_plan(
         runtime_task_id=envelope.task_id,
         envelope=envelope,
-        recipe=default_fixed_role_recipe(),
+        recipe=_recipe(),
         registry=registry,
         runtime_identity=identity,
     )
@@ -281,7 +294,7 @@ def test_approved_plan_bundle_hash_links_all_provenance() -> None:
 
 def test_semantic_replan_creates_new_proposal_plan_and_bundle_hashes() -> None:
     registry, envelope = _context()
-    recipe = default_fixed_role_recipe()
+    recipe = _recipe()
     first = compile_static_role_recipe_plan(
         runtime_task_id=envelope.task_id,
         envelope=envelope,
@@ -388,7 +401,7 @@ def test_plan_only_static_compilation_stops_at_bundle(monkeypatch: pytest.Monkey
     result = compile_static_role_recipe_plan(
         runtime_task_id=envelope.task_id,
         envelope=envelope,
-        recipe=default_fixed_role_recipe(),
+        recipe=_recipe(),
         registry=registry,
     )
     assert calls == []
@@ -398,7 +411,7 @@ def test_plan_only_static_compilation_stops_at_bundle(monkeypatch: pytest.Monkey
 
 def test_static_plan_source_and_normalizer_cannot_bypass_plan_policy() -> None:
     registry, envelope = _context()
-    recipe = default_fixed_role_recipe()
+    recipe = _recipe()
     unauthorized_recipe = replace(
         recipe,
         steps=(

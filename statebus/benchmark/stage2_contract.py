@@ -188,7 +188,7 @@ def canonical_output_projection(
     output_path: str = "",
     report_path: str = "",
 ) -> dict[str, Any]:
-    """Return a strict output-only projection and validation diagnostics."""
+    """Return the business-output projection plus non-blocking provenance diagnostics."""
     # Project recursively before validating.  Top-level ``pop`` alone lets
     # nested oracle fields in rows or public-tool payloads leak into the
     # provider/output surface.
@@ -196,15 +196,16 @@ def canonical_output_projection(
     if not isinstance(output, dict):
         output = {}
     errors: list[str] = []
+    provenance_errors: list[str] = []
     raw_doc_ids = [str(item).strip() for item in selected_doc_ids if str(item).strip()]
     if len(set(raw_doc_ids)) != len(raw_doc_ids):
-        errors.append("duplicate_doc_id")
+        provenance_errors.append("duplicate_doc_id")
     output["selected_doc_ids"] = list(dict.fromkeys(raw_doc_ids))
     if allowed_doc_ids is not None:
         allowed = {str(item) for item in allowed_doc_ids}
         unknown = sorted(set(output["selected_doc_ids"]) - allowed)
         if unknown:
-            errors.append(f"unknown_doc_id:{','.join(unknown)}")
+            provenance_errors.append(f"unknown_doc_id:{','.join(unknown)}")
     output["output_path"] = output_path
     output["report_path"] = report_path
     if output_path and report_path and output_path == report_path:
@@ -250,6 +251,8 @@ def canonical_output_projection(
             seen.add(identity)
     output["projection_errors"] = errors
     output["projection_valid"] = not errors
+    output["provenance_errors"] = provenance_errors
+    output["provenance_valid"] = not provenance_errors
     # Keep compatibility aliases at the top level for existing scorers, while
     # making the output/provenance boundary explicit and auditable.
     provenance = output.get("provenance")

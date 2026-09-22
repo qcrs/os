@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
+import httpx
 import yaml
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
@@ -54,6 +55,9 @@ class LLMResult:
     model: str
     usage: LLMUsage = field(default_factory=LLMUsage)
     top_logprobs: list | None = None
+    # Provider terminal state is response evidence. Clients that cannot
+    # observe it retain ``None`` rather than inventing a stop classification.
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -330,6 +334,11 @@ class OpenAICompatibleLLMClient:
 
     def _build_provider_client(self, provider_name: str) -> AsyncOpenAI:
         provider = self.config.provider_config(provider_name)
+        http_client = (
+            httpx.AsyncClient(timeout=provider.timeout_s, trust_env=False)
+            if self.config.mode == "local_vllm"
+            else None
+        )
         return AsyncOpenAI(
             api_key=provider.resolved_api_key or ("EMPTY" if self.config.mode == "local_vllm" else None),
             base_url=provider.base_url,
@@ -338,6 +347,7 @@ class OpenAICompatibleLLMClient:
             # not add an unobserved retry layer underneath it.
             max_retries=0,
             default_headers=provider.default_headers or None,
+            http_client=http_client,
         )
 
     async def complete(
@@ -405,6 +415,7 @@ class OpenAICompatibleLLMClient:
             purpose=purpose,
         )
         choice = response.choices[0]
+        finish_reason = str(getattr(choice, "finish_reason", "") or "").strip() or None
         content = _coerce_content_to_text(choice.message.content)
         usage = getattr(response, "usage", None)
         raw_logprobs = getattr(getattr(choice, "logprobs", None), "content", None)
@@ -417,6 +428,7 @@ class OpenAICompatibleLLMClient:
                 total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
             ),
             top_logprobs=raw_logprobs,
+            finish_reason=finish_reason,
         )
 
     async def _create_completion_with_retry(
@@ -447,6 +459,10 @@ class OpenAICompatibleLLMClient:
                         "attempt": attempt_index + 1,
                         "retry_kind": "none" if attempt_index == 0 else "transient_retry",
                         "status": "response_received",
+                        "finish_reason": _response_finish_reason(response),
+                        "response_prompt_tokens": _response_usage_value(response, "prompt_tokens"),
+                        "response_completion_tokens": _response_usage_value(response, "completion_tokens"),
+                        "response_total_tokens": _response_usage_value(response, "total_tokens"),
                         "start_ns": started_ns,
                         "end_ns": time.monotonic_ns(),
                         "requested_seed": request.get("seed"),
@@ -493,6 +509,10 @@ class OpenAICompatibleLLMClient:
                                 "attempt": attempt_index + 1,
                                 "retry_kind": "context_adjustment",
                                 "status": "response_received",
+                                "finish_reason": _response_finish_reason(response),
+                                "response_prompt_tokens": _response_usage_value(response, "prompt_tokens"),
+                                "response_completion_tokens": _response_usage_value(response, "completion_tokens"),
+                                "response_total_tokens": _response_usage_value(response, "total_tokens"),
                                 "start_ns": adjusted_started_ns,
                                 "end_ns": time.monotonic_ns(),
                                 "requested_seed": context_adjusted_request.get("seed"),
@@ -1599,6 +1619,22 @@ def _coerce_content_to_text(content: Any) -> str:
                 chunks.append(str(item["text"]))
         return "\n".join(chunks)
     return str(content or "")
+
+
+def _response_finish_reason(response: Any) -> str | None:
+    choices = getattr(response, "choices", None) or ()
+    if not choices:
+        return None
+    value = str(getattr(choices[0], "finish_reason", "") or "").strip()
+    return value or None
+
+
+def _response_usage_value(response: Any, name: str) -> int | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    value = getattr(usage, name, None)
+    return int(value) if value is not None else None
 
 
 def _is_transient_openai_error(exc: BaseException) -> bool:

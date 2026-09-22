@@ -117,7 +117,14 @@ def _manifest(rounds_per_family: int) -> dict[str, object]:
                 "name": name,
                 "headline_denominator": False,
                 "status": (
-                    "executed" if name == "no_effect_round" else "retained_by_runtime_targeted_tests"
+                    "executed"
+                    if name in {
+                        "no_effect_round",
+                        "recipe_hash_mismatch",
+                        "capability_mismatch",
+                        "output_contract_mismatch",
+                    }
+                    else "retained_by_runtime_targeted_tests"
                 ),
             }
             for name in (
@@ -128,6 +135,9 @@ def _manifest(rounds_per_family: int) -> dict[str, object]:
                 "no_admission_receipt",
                 "expired_artifact",
                 "no_effect_round",
+                "recipe_hash_mismatch",
+                "capability_mismatch",
+                "output_contract_mismatch",
             )
         ],
         "planned_pairs": [dict(item) for item in pairs],
@@ -414,6 +424,19 @@ def _memory_projection(
         ),
         "validated_replay": validated_replay,
         "recipe_recomputed": bool(record and record.recipe_recomputed),
+        "recipe_step_status": (
+            "not_applicable" if record is None else record.recipe_step_status
+        ),
+        "skipped_generation_step_count": (
+            0 if record is None else record.skipped_generation_step_count
+        ),
+        "skipped_llm_call_count": (
+            0 if record is None else record.skipped_llm_call_count
+        ),
+        "skipped_provider_call_count": (
+            0 if record is None else record.skipped_provider_call_count
+        ),
+        "skip_evidence": {} if record is None else dict(record.skip_evidence),
         "memory_read_evidence": dict(read_evidence),
         "memory_consumption_receipt": (
             None if record is None else record.canonical_payload()
@@ -438,6 +461,7 @@ def _project_row(
     provider_boundary_rows: list[dict[str, object]],
     prior_memory_ids: set[str],
     source_round_by_memory_id: dict[str, int],
+    runtime_elapsed_ms: float,
 ) -> dict[str, object]:
     value = float(pair["current_value"])
     task_id = request.task_id
@@ -473,6 +497,11 @@ def _project_row(
             "memory_admission_receipt": None,
             "replay_eligibility_receipt": None,
             "provider_not_started_observation": {},
+            "recipe_step_status": "not_applicable",
+            "skipped_generation_step_count": 0,
+            "skipped_llm_call_count": 0,
+            "skipped_provider_call_count": 0,
+            "skip_evidence": {},
         }
         if variant == "memory_off"
         else _memory_projection(
@@ -527,6 +556,7 @@ def _project_row(
         "failure_stage": execution["failure_stage"],
         "reason": execution["reason"],
         "provider_boundary_call_count": len(provider_boundary_rows),
+        "runtime_elapsed_ms": runtime_elapsed_ms,
         "current_input_recomputed": execution["current_input_recomputed"],
         "quality_evidence": {
             "status": "observed" if quality_hash else "unsupported",
@@ -551,6 +581,11 @@ def _project_row(
         "behavioral_effect": memory["behavioral_effect"],
         "validated_replay": memory["validated_replay"],
         "recipe_recomputed": memory["recipe_recomputed"],
+        "recipe_step_status": memory["recipe_step_status"],
+        "skipped_generation_step_count": memory["skipped_generation_step_count"],
+        "skipped_llm_call_count": memory["skipped_llm_call_count"],
+        "skipped_provider_call_count": memory["skipped_provider_call_count"],
+        "skip_evidence": memory["skip_evidence"],
         "query": memory["query"],
         "memory_id": memory["memory_id"],
         "source_round": memory["source_round"],
@@ -602,6 +637,7 @@ def _producer_projection(
     request: Any,
     family_id: str,
     provider_boundary_rows: list[dict[str, object]],
+    runtime_elapsed_ms: float,
 ) -> dict[str, object]:
     decision = result.memory_commit_decision
     terminal_status, failure_stage, reason = _g5b_terminal_status(result)
@@ -618,6 +654,7 @@ def _producer_projection(
         "failure_stage": failure_stage,
         "reason": reason,
         "provider_boundary_call_count": len(provider_boundary_rows),
+        "runtime_elapsed_ms": runtime_elapsed_ms,
         "provider_invocation_evidence": (
             dict(provider_boundary_rows[0])
             if len(provider_boundary_rows) == 1
@@ -678,6 +715,7 @@ def _metrics(
     *,
     rows: list[dict[str, object]],
     pair_projection: Mapping[str, object],
+    producer_rows: list[dict[str, object]],
 ) -> dict[str, object]:
     replay_rows = [item for item in rows if item.get("variant") == "validated_replay"]
     effects = {
@@ -687,6 +725,96 @@ def _metrics(
     unsupported = {
         "status": "unsupported",
         "value": None,
+    }
+    pair_by_replay_row_id = {
+        str(pair.get("replay_row_id", "")): pair
+        for pair in pair_projection.get("pairings", ())
+        if isinstance(pair, Mapping)
+    }
+    recipe_evidence_rows = []
+    for row in replay_rows:
+        pair = pair_by_replay_row_id.get(str(row.get("row_id", "")), {})
+        quality = row.get("quality_evidence", {})
+        admission = row.get("result_admission", {})
+        read_evidence = row.get("memory_read_evidence", {})
+        skip_evidence = row.get("skip_evidence", {})
+        observation = row.get("provider_not_started_observation", {})
+        if (
+            pair.get("status") == "eligible"
+            and row.get("actual_use")
+            and row.get("validated_replay")
+            and row.get("recipe_step_status") == "skipped_generation"
+            and int(row.get("skipped_generation_step_count", 0)) > 0
+            and isinstance(row.get("memory_consumption_receipt"), Mapping)
+            and bool(row.get("memory_admission_receipt"))
+            and bool(row.get("replay_eligibility_receipt"))
+            and isinstance(quality, Mapping)
+            and quality.get("passed") is True
+            and isinstance(admission, Mapping)
+            and admission.get("status") == "observed"
+            and isinstance(read_evidence, Mapping)
+            and read_evidence.get("status") == "observed"
+            and isinstance(skip_evidence, Mapping)
+            and skip_evidence.get("status") == "observed"
+            and isinstance(observation, Mapping)
+            and observation.get("attempt_result_admission_receipt_hash")
+        ):
+            recipe_evidence_rows.append(row)
+    if recipe_evidence_rows and len(recipe_evidence_rows) == len(replay_rows):
+        verified_recipe_work_avoided = {
+            "status": "observed",
+            "value": len(recipe_evidence_rows),
+            "eligible_matched_pair_count": len(recipe_evidence_rows),
+            "reason": "current_input_recipe_reuse_skip_evidence_closed",
+            "source_row_ids": [str(row.get("row_id", "")) for row in recipe_evidence_rows],
+        }
+    else:
+        verified_recipe_work_avoided = {
+            **unsupported,
+            "reason": (
+                "recipe_skip_evidence_incomplete"
+                if recipe_evidence_rows
+                else "recipe_step_skip_not_observed"
+            ),
+        }
+    producer_setup_ms = sum(float(row.get("runtime_elapsed_ms", 0.0)) for row in producer_rows)
+    baseline_elapsed = [
+        float(row.get("runtime_elapsed_ms", 0.0))
+        for row in rows
+        if row.get("variant") == "memory_off"
+    ]
+    replay_elapsed = [
+        float(row.get("runtime_elapsed_ms", 0.0))
+        for row in replay_rows
+    ]
+    baseline_mean_ms = sum(baseline_elapsed) / len(baseline_elapsed) if baseline_elapsed else None
+    replay_mean_ms = sum(replay_elapsed) / len(replay_elapsed) if replay_elapsed else None
+    marginal_delta_ms = (
+        baseline_mean_ms - replay_mean_ms
+        if baseline_mean_ms is not None and replay_mean_ms is not None
+        else None
+    )
+    break_even = (
+        max(1, int(producer_setup_ms / marginal_delta_ms) + int(producer_setup_ms % marginal_delta_ms > 0))
+        if marginal_delta_ms is not None and marginal_delta_ms > 0
+        else None
+    )
+    timing = {
+        "status": "observed" if baseline_elapsed and replay_elapsed else "unsupported",
+        "producer_setup_ms": producer_setup_ms,
+        "baseline_total_ms": sum(baseline_elapsed),
+        "replay_total_ms": sum(replay_elapsed),
+        "baseline_mean_ms": baseline_mean_ms,
+        "marginal_replay_cost_ms": replay_mean_ms,
+        "producer_inclusive_replay_cost_ms": producer_setup_ms + sum(replay_elapsed),
+        "break_even_reuse_count": {
+            "status": "observed" if break_even is not None else "unsupported",
+            "value": break_even,
+            "reason": "positive_baseline_minus_replay_delta"
+            if break_even is not None
+            else "replay_not_cheaper_than_baseline_or_timing_missing",
+        },
+        "claim_boundary": "observed elapsed accounting only; no latency superiority claim",
     }
     return {
         "schema_version": "statebus.p4.memory_ablation_metrics.v1",
@@ -712,14 +840,9 @@ def _metrics(
             ),
         },
         "provider_work_avoided": dict(
-            pair_projection.get(
-                "provider_work_avoided",
-                {
-                    "status": "unsupported",
-                    "value": None,
-                    "reason": "no_matched_baseline_or_runtime_skip_receipt",
-                },
-            )
+            status="unsupported",
+            value=None,
+            reason="provider_work_units_not_observed",
         ),
         "quality_non_regression": dict(
             pair_projection.get(
@@ -727,10 +850,18 @@ def _metrics(
                 {"status": "unsupported", "reason": "no_matched_baseline"},
             )
         ),
-        "verified_recipe_work_avoided": {
-            **unsupported,
-            "reason": "recipe_step_skip_not_observed",
+        "verified_recipe_work_avoided": verified_recipe_work_avoided,
+        "recipe_step_status_counts": {
+            status: sum(row.get("recipe_step_status") == status for row in rows)
+            for status in (
+                "recomputed_current_input",
+                "skipped_generation",
+                "incompatible",
+                "rejected",
+                "failed",
+            )
         },
+        "timing_accounting": timing,
         "hydration_bytes_avoided": {
             **unsupported,
             "reason": "hydration_bytes_not_observed",
@@ -759,6 +890,109 @@ def _metrics(
         "benchmark_superiority": "NOT_ESTABLISHED",
         "statistical_superiority": "NOT_ESTABLISHED",
     }
+
+
+def _recipe_negative_controls() -> list[dict[str, object]]:
+    """Run small, deterministic fail-closed checks for recipe admission.
+
+    These rows are deliberately negative evidence.  They do not enter the
+    measured pair denominator and they never manufacture an eligible replay.
+    The checks exercise the same narrow recipe matcher used by the dispatcher
+    so a mismatch remains recomputable from the emitted artifact.
+    """
+
+    from statebus.runtime.adaptive_dispatcher import (
+        AdaptiveCapabilityDispatcher,
+        AdaptiveDispatchError,
+    )
+
+    recipe = {
+        "execution_kind": "transform_dsl",
+        "capability_id": "g5b-execute-recipe",
+        "output_contract_version": "statebus.metric_series.v1",
+        "operations": [{"op": "select", "arguments": {"columns": ["value"]}}],
+    }
+    base_input = {
+        "ref_id": "negative-memory",
+        "replay_class": "validated_replay",
+        "execution_recipe": recipe,
+        "execution_recipe_hash": sha256_digest(recipe),
+    }
+    cases: tuple[tuple[str, dict[str, object], str, str], ...] = (
+        (
+            "recipe_hash_mismatch",
+            {**base_input, "execution_recipe_hash": "stale-recipe-hash"},
+            "_validated_recipe",
+            "validated_replay_recipe_checksum_mismatch",
+        ),
+        (
+            "capability_mismatch",
+            {
+                **base_input,
+                "execution_recipe": {
+                    **recipe,
+                    "capability_id": "wrong-capability",
+                },
+                "execution_recipe_hash": sha256_digest(
+                    {**recipe, "capability_id": "wrong-capability"}
+                ),
+            },
+            "_require_validated_recipe_match",
+            "validated_replay_recipe_match_missing",
+        ),
+        (
+            "output_contract_mismatch",
+            {
+                **base_input,
+                "execution_recipe": {
+                    **recipe,
+                    "output_contract_version": "statebus.other_contract.v1",
+                },
+                "execution_recipe_hash": sha256_digest(
+                    {**recipe, "output_contract_version": "statebus.other_contract.v1"}
+                ),
+            },
+            "_require_validated_recipe_match",
+            "validated_replay_recipe_match_missing",
+        ),
+    )
+    rows: list[dict[str, object]] = []
+    for control_id, memory_input, operation, expected_error in cases:
+        observed_error = ""
+        terminal_status = "unexpected_success"
+        try:
+            replay_recipe, _memory_id = AdaptiveCapabilityDispatcher._validated_recipe(
+                (memory_input,),
+                execution_kind="transform_dsl",
+                capability_id="g5b-execute-recipe",
+                output_contract_version="statebus.metric_series.v1",
+            )
+            if operation == "_require_validated_recipe_match":
+                AdaptiveCapabilityDispatcher._require_validated_recipe_match(
+                    (memory_input,), replay_recipe
+                )
+            else:
+                terminal_status = "unexpected_success"
+        except AdaptiveDispatchError as exc:
+            observed_error = str(exc)
+            terminal_status = (
+                "policy_reject" if observed_error == expected_error else "runtime_fail"
+            )
+        rows.append(
+            {
+                "schema_version": "statebus.p4.memory_negative_control_row.v1",
+                "control_id": control_id,
+                "operation": operation,
+                "expected_error": expected_error,
+                "observed_error": observed_error,
+                "terminal_status": terminal_status,
+                "fail_closed": terminal_status == "policy_reject",
+                "headline_denominator": False,
+                "recomputable": True,
+                "authority": "AdaptiveCapabilityDispatcher",
+            }
+        )
+    return rows
 
 
 def run_memory_ablation(
@@ -806,13 +1040,16 @@ def run_memory_ablation(
             producer_boundary,
         )
         try:
+            started_ns = time.perf_counter_ns()
             producer_result = _run_runtime(producer_request)
+            producer_elapsed_ms = (time.perf_counter_ns() - started_ns) / 1_000_000.0
             producer_rows.append(
                 _producer_projection(
                     result=producer_result,
                     request=producer_request,
                     family_id=family_id,
                     provider_boundary_rows=producer_boundary,
+                    runtime_elapsed_ms=producer_elapsed_ms,
                 )
             )
             if producer_result.memory_commit_decision.committed:
@@ -882,7 +1119,9 @@ def run_memory_ablation(
                     )
                 request = _bind_deterministic_provider(request, boundary_rows)
                 try:
+                    started_ns = time.perf_counter_ns()
                     result = _run_runtime(request)
+                    runtime_elapsed_ms = (time.perf_counter_ns() - started_ns) / 1_000_000.0
                     row = _project_row(
                         result=result,
                         request=request,
@@ -892,6 +1131,7 @@ def run_memory_ablation(
                         provider_boundary_rows=boundary_rows,
                         prior_memory_ids=prior_ids,
                         source_round_by_memory_id=source_round_by_memory_id,
+                        runtime_elapsed_ms=runtime_elapsed_ms,
                     )
                     rows.append(row)
                     _write_json(row_root / "measurement_row.json", row)
@@ -915,6 +1155,15 @@ def run_memory_ablation(
     baseline_rows = [item for item in rows if item["variant"] == "memory_off"]
     replay_rows = [item for item in rows if item["variant"] == "validated_replay"]
     pair_projection = _c2c_baseline_pairing(baseline_rows, replay_rows)
+    provider_work_unobserved = {
+        "status": "unsupported",
+        "value": None,
+        "reason": "provider_work_units_not_observed",
+    }
+    pair_projection["provider_work_avoided"] = dict(provider_work_unobserved)
+    pair_metrics = dict(pair_projection.get("metrics", {}))
+    pair_metrics["provider_work_avoided"] = dict(provider_work_unobserved)
+    pair_projection["metrics"] = pair_metrics
     denominator = _build_denominator(
         planned_pairs=planned_pairs,
         rows=rows,
@@ -922,7 +1171,12 @@ def run_memory_ablation(
         failures=failures,
         pair_projection=pair_projection,
     )
-    metrics = _metrics(rows=rows, pair_projection=pair_projection)
+    metrics = _metrics(
+        rows=rows,
+        pair_projection=pair_projection,
+        producer_rows=producer_rows,
+    )
+    negative_controls = _recipe_negative_controls()
 
     rows_by_pair: dict[str, list[dict[str, object]]] = {}
     for row in rows:
@@ -991,22 +1245,37 @@ def run_memory_ablation(
             and denominator["provider_pairing_arithmetic_closed"]
             and denominator["closed_pairs"] == denominator["planned_pairs"]
         ),
-        "provider_work_avoidance_receipt_backed": (
-            metrics["provider_work_avoided"].get("status") == "observed"
-            and metrics["provider_work_avoided"].get("value")
-            == denominator["closed_pairs"]
+        "provider_work_avoided_unclaimed": (
+            metrics["provider_work_avoided"].get("status") == "unsupported"
+            and metrics["provider_work_avoided"].get("value") is None
+            and metrics["provider_work_avoided"].get("reason")
+            == "provider_work_units_not_observed"
+        ),
+        "verified_recipe_evidence_closed": (
+            metrics["verified_recipe_work_avoided"].get("status") == "observed"
+            and metrics["verified_recipe_work_avoided"].get("value")
+            == len(replay_rows)
+            and all(
+                row.get("recipe_step_status") == "skipped_generation"
+                and int(row.get("skipped_generation_step_count", 0)) == 1
+                for row in replay_rows
+            )
         ),
         "unsupported_metrics_not_zero_filled": all(
             metrics[name]["status"] == "unsupported"
             and metrics[name]["value"] is None
             for name in (
-                "verified_recipe_work_avoided",
                 "hydration_bytes_avoided",
                 "embedding_work_avoided",
                 "rerank_work_avoided",
                 "compatibility_work_avoided",
                 "exact_replay",
             )
+        ),
+        "negative_controls_fail_closed": all(
+            bool(item.get("fail_closed"))
+            and item.get("headline_denominator") is False
+            for item in negative_controls
         ),
     }
     ok = not failures and all(checks.values())
@@ -1017,6 +1286,7 @@ def run_memory_ablation(
         "checks": checks,
         "denominator": denominator,
         "metrics": metrics,
+        "negative_control_count": len(negative_controls),
         "formal_campaign_executed": False,
         "live_vllm_validation": "NOT_RUN",
         "benchmark_superiority": "NOT_ESTABLISHED",
@@ -1028,6 +1298,7 @@ def run_memory_ablation(
     _write_json(output_root / "pair_projection.json", pair_projection)
     _write_json(output_root / "denominator.json", denominator)
     _write_json(output_root / "metrics.json", metrics)
+    _write_json(output_root / "negative_controls.json", negative_controls)
     _write_json(output_root / "failures.json", failures)
     _write_json(output_root / "acceptance.json", acceptance)
     return {
@@ -1036,6 +1307,7 @@ def run_memory_ablation(
         "row_count": len(rows),
         "producer_row_count": len(producer_rows),
         "failure_count": len(failures),
+        "negative_control_count": len(negative_controls),
     }
 
 

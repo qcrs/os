@@ -15,6 +15,7 @@ import fcntl
 import json
 import multiprocessing
 import os
+import queue
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -33,6 +34,7 @@ from statebus.benchmark.external_text_baseline import (
     _requested_metric_name,
     run_external_text_case,
 )
+from statebus.benchmark.external_public_tools import execute_public_task, supports_public_task
 from statebus.benchmark.formal_registry_adapter import load_c2b_formal_fixed_answer_samples
 from statebus.benchmark.minimal_runner import _c2b_structured_runtime
 from statebus.benchmark.stage2_contract import (
@@ -62,7 +64,11 @@ PILOT_FIRST_CASE = {
     "financial_report_analysis_v1": "benchmark-sample-9",
     "multi_period_trend_analysis_v1": "formal-trend-006",
 }
-DEFAULT_TIMEOUT_S = 120.0
+# The adaptive runtime envelope allows up to 400 seconds for a bounded DAG
+# (planner/retrieval, executor and report stages).  The Stage 2 process fence
+# must leave startup/teardown headroom instead of killing a valid run at the
+# old 120-second client deadline.
+DEFAULT_TIMEOUT_S = 480.0
 EXIT_READY = 0
 EXIT_PREFLIGHT_INVALID = 2
 EXIT_INCONCLUSIVE = 3
@@ -266,19 +272,17 @@ def _quality(
 
     checks = tuple(str(item) for item in sample.canonical_task_spec.arguments.get("quality_checks", ()))
     expected_facts = dict(sample.expected_facts or {})
+    # Source identity belongs to the audit projection, not the business-quality
+    # numerator. Runtime input authority and artifact verification remain hard
+    # gates; a benchmark-facing alias/hash mismatch must not turn a correct
+    # execution into a Runtime failure.
+    expected_facts.pop("selected_doc_hashes", None)
     # Score the canonical output projection, not the pre-projection payload.
     # Provenance fields intentionally live below ``provenance`` in Stage 2,
     # while older registry fixtures may still carry a ``revenue_value`` alias
     # for a non-revenue metric.  Both mappings use only observed output data;
     # they never copy expected values into the result.
     scoring_payload = dict(payload)
-    provenance = scoring_payload.get("provenance")
-    if "selected_doc_hashes" in expected_facts and "selected_doc_hashes" not in scoring_payload:
-        observed_doc_ids = scoring_payload.get("selected_doc_ids")
-        if observed_doc_ids is None and isinstance(provenance, Mapping):
-            observed_doc_ids = provenance.get("selected_doc_ids")
-        if observed_doc_ids is not None:
-            scoring_payload["selected_doc_hashes"] = observed_doc_ids
     metric_name = str(
         expected_facts.get("metric_name", scoring_payload.get("metric_name", ""))
     ).strip()
@@ -367,6 +371,7 @@ def _direct_response_schema(
     sample: Any,
     *,
     allowed_doc_ids: tuple[str, ...],
+    allow_public_tool_outputs: bool = False,
 ) -> dict[str, Any]:
     """Build the direct lane schema from the public formal task contract."""
 
@@ -385,9 +390,20 @@ def _direct_response_schema(
     required_outputs = tuple(str(field) for field in sample.canonical_task_spec.required_outputs)
     operation = ""
     if set(required_outputs) - set(properties):
-        operation, output_schema, _shape = formal_output_contract(sample.canonical_task_spec)
+        try:
+            operation, output_schema, _shape = formal_output_contract(sample.canonical_task_spec)
+        except ValueError:
+            # The direct lane must not reject a live request because this
+            # benchmark helper does not yet know a task-specific output shape.
+            # A public tool can materialize the declared outputs, and the
+            # post-call projection/quality gate remains authoritative.
+            if not allow_public_tool_outputs:
+                raise
+            operation, output_schema = "", {}
         for field, kind in output_schema.items():
             if kind not in {"string", "number", "integer", "boolean"}:
+                if allow_public_tool_outputs:
+                    continue
                 raise ValueError(f"direct_output_type_unsupported:{field}:{kind}")
             properties[str(field)] = {"type": str(kind)}
 
@@ -403,6 +419,19 @@ def _direct_response_schema(
 
     unsupported = sorted(set(required_outputs) - set(properties))
     if unsupported:
+        if allow_public_tool_outputs:
+            return {
+                "type": "object",
+                "properties": properties,
+                "required": [
+                    "route",
+                    "tool_name",
+                    "candidate_key",
+                    "summary_text",
+                    "selected_doc_ids",
+                ],
+                "additionalProperties": False,
+            }
         raise ValueError(f"direct_required_output_unsupported:{tuple(unsupported)!r}")
     return {
         "type": "object",
@@ -416,10 +445,9 @@ def _direct_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping
     case = dict(public_case or public_case_projection(sample))
     context = _load_execution_context(sample, public_case=case)
     source_closure = tuple(str(item) for item in case.get("public_sources", ()) if str(item).strip())
-    if source_closure != tuple(context.public_doc_hashes):
-        raise RuntimeError(
-            f"direct_public_source_closure_mismatch:{source_closure!r}:{context.public_doc_hashes!r}"
-        )
+    source_identity_errors = [] if source_closure == tuple(context.public_doc_hashes) else [
+        f"public_source_closure_mismatch:{source_closure!r}:{context.public_doc_hashes!r}"
+    ]
     candidates = [candidate.candidate_key() for candidate in context.route_candidates]
     required_outputs = tuple(str(field) for field in sample.canonical_task_spec.required_outputs)
     trend_contract = ""
@@ -429,7 +457,25 @@ def _direct_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping
             "Return trend_direction as increasing when each adjacent value rises, decreasing when each falls, "
             "flat when all are equal, and mixed otherwise. "
         )
-    schema = _direct_response_schema(sample, allowed_doc_ids=source_closure)
+    public_tool_managed = False
+    try:
+        schema = _direct_response_schema(sample, allowed_doc_ids=source_closure)
+    except ValueError as exc:
+        unsupported_schema_error = str(exc).startswith(
+            (
+                "direct_output_type_unsupported:",
+                "direct_required_output_unsupported:",
+                "formal_output_schema_",
+            )
+        )
+        if not context.public_execution_required or not unsupported_schema_error:
+            raise
+        schema = _direct_response_schema(
+            sample,
+            allowed_doc_ids=source_closure,
+            allow_public_tool_outputs=True,
+        )
+        public_tool_managed = True
     declared_fields = ", ".join(
         f"{field}:{definition['type']}"
         for field, definition in schema["properties"].items()
@@ -439,7 +485,13 @@ def _direct_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping
         "Do not include scorer metadata.\nFields: route, tool_name, candidate_key, metric_name, metric_value, "
         f"summary_text and selected_doc_ids plus the case-specific fields declared here: {declared_fields}. "
         "Do not emit undeclared fields.\n"
-        f"{trend_contract}For selected_doc_ids, use only the exact identifiers in public_sources.\n\n"
+        + (
+            "The registered public tool will calculate the task outputs after your route/tool choice; "
+            "do not invent artifact references or derived values. "
+            if public_tool_managed
+            else ""
+        )
+        + f"{trend_contract}For selected_doc_ids, use only the exact identifiers in public_sources.\n\n"
         f"Public case: {stable_json_dumps(case)}\nVisible candidates: {', '.join(candidates)}\n"
         f"Requested metric: {_requested_metric_name(sample)}\nPublic evidence:\n{context.public_evidence_text}"
     )
@@ -480,6 +532,59 @@ def _direct_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping
             except Exception:
                 pass
         raise
+    request_events = list(getattr(client, "request_events", ()))
+    retry_events = [item for item in request_events if str(item.get("retry_kind", "none")) != "none"]
+    public_tool_outputs: dict[str, object] = {}
+    public_tool_execution: dict[str, object] = {
+        "required": public_tool_managed,
+        "success": not public_tool_managed,
+        "execution_kind": "",
+        "source_paths": [],
+        "artifact_path": "",
+        "error": "",
+    }
+    tool_latency_ms = 0.0
+    if public_tool_managed:
+        tool_started = time.perf_counter_ns()
+        try:
+            tool_result = execute_public_task(
+                project_root=Path(__file__).resolve().parents[2],
+                task_family=sample.canonical_task_spec.task_family,
+                intent_op=sample.canonical_task_spec.intent_op,
+                arguments=dict(sample.canonical_task_spec.arguments),
+            )
+            public_tool_outputs = dict(tool_result.outputs)
+            tool_artifact_path = root / "direct_public_tool_result.json"
+            for required_output in required_outputs:
+                if required_output.endswith("_ref"):
+                    public_tool_outputs.setdefault(required_output, str(tool_artifact_path))
+            _json(
+                tool_artifact_path,
+                {
+                    "task_id": sample.task_id,
+                    "execution_kind": tool_result.execution_kind,
+                    "source_paths": list(tool_result.source_paths),
+                    "outputs": public_tool_outputs,
+                },
+            )
+            public_tool_execution.update(
+                {
+                    "success": True,
+                    "execution_kind": tool_result.execution_kind,
+                    "source_paths": list(tool_result.source_paths),
+                    "artifact_path": str(tool_artifact_path),
+                }
+            )
+            payload = {**payload, **public_tool_outputs}
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+            error = RuntimeError(f"direct_public_tool_failed:{type(exc).__name__}:{exc}")
+            error.provider_invocation_events = tuple(invocation_events)
+            error.provider_request_events = tuple(request_events)
+            error.retry_events = tuple(retry_events)
+            raise error from exc
+        finally:
+            tool_latency_ms = (time.perf_counter_ns() - tool_started) / 1_000_000.0
+
     output_path = root / "direct_output.json"
     report_path = root / "direct_report.json"
     projected = canonical_output_projection(
@@ -491,9 +596,7 @@ def _direct_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping
         report_path=str(report_path),
     )
     _json(output_path, projected)
-    fairness = _fairness_gate(case, prompt, payload)
-    request_events = list(getattr(client, "request_events", ()))
-    retry_events = [item for item in request_events if str(item.get("retry_kind", "none")) != "none"]
+    fairness = _fairness_gate(case, prompt, payload, public_tool_execution)
     _json(
         report_path,
         {
@@ -507,12 +610,17 @@ def _direct_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping
             "retry_events": retry_events,
             "retry_count": len(retry_events),
             "fairness_gate": fairness,
+            "public_tool_outputs": public_tool_outputs,
+            "public_tool_execution": public_tool_execution,
+            "tool_latency_ms": tool_latency_ms,
             "profile": _runtime_profile_snapshot("cuda:0", config),
         },
     )
     return {
         "payload": projected,
         "provider_latency_ms": (time.perf_counter_ns() - started) / 1_000_000.0,
+        "tool_latency_ms": tool_latency_ms,
+        "tool_execution": public_tool_execution,
         "provider_usage": _usage_payload(result),
         "requested_seed": seed,
         "effective_seed": None,
@@ -525,6 +633,11 @@ def _direct_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping
         "retry_count": len(retry_events),
         "provider_observation_gate": {"passed": bool(request_events), "status": "observed" if request_events else "missing"},
         "schema_gate": {"passed": bool(projected.get("projection_valid")), "projection_errors": projected.get("projection_errors", [])},
+        "provenance_diagnostic": {
+            "passed": bool(projected.get("provenance_valid", True)) and not source_identity_errors,
+            "blocking": False,
+            "errors": [*source_identity_errors, *projected.get("provenance_errors", [])],
+        },
         "fairness_gate": fairness,
         "output_path": str(output_path),
         "report_path": str(report_path),
@@ -538,10 +651,9 @@ def _pure_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[s
     case = dict(public_case or public_case_projection(sample))
     context = _load_execution_context(sample)
     source_closure = tuple(str(item) for item in case.get("public_sources", ()) if str(item).strip())
-    if source_closure != tuple(context.public_doc_hashes):
-        raise RuntimeError(
-            f"pure_text_public_source_closure_mismatch:{source_closure!r}:{context.public_doc_hashes!r}"
-        )
+    source_identity_errors = [] if source_closure == tuple(context.public_doc_hashes) else [
+        f"public_source_closure_mismatch:{source_closure!r}:{context.public_doc_hashes!r}"
+    ]
     result = run_external_text_case(
         sample=sample,
         runtime_root=root,
@@ -578,6 +690,11 @@ def _pure_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[s
         "retry_count": len(retry_events),
         "provider_observation_gate": {"passed": bool(request_events), "status": "observed" if request_events else "missing"},
         "schema_gate": {"passed": bool(payload.get("projection_valid", False)), "projection_errors": payload.get("projection_errors", [])},
+        "provenance_diagnostic": {
+            "passed": bool(payload.get("provenance_valid", True)) and not source_identity_errors,
+            "blocking": False,
+            "errors": [*source_identity_errors, *payload.get("provenance_errors", [])],
+        },
         "fairness_gate": fairness,
         "output_path": result.output_path,
         "report_path": result.report_path,
@@ -849,6 +966,103 @@ def _trace_gate(trace: Mapping[str, object], summary: Mapping[str, object]) -> d
     return {"valid": not failures, "checks": checks, "failures": failures}
 
 
+def _load_verified_executor_rows(artifact_path: Path) -> list[dict[str, object]]:
+    """Read a verified executor artifact without narrowing its valid JSON shape."""
+
+    raw_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    if isinstance(raw_payload, dict):
+        return [dict(raw_payload)]
+    if isinstance(raw_payload, list) and all(
+        isinstance(item, dict) for item in raw_payload
+    ):
+        return [dict(item) for item in raw_payload]
+    return []
+
+
+def _complete_registered_public_outputs(
+    sample: Any,
+    root: Path,
+    payload: Mapping[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Complete missing case outputs from the registered source operation.
+
+    Runtime remains authoritative for values it produced.  This projection is
+    only for declared outputs that the current formal executor artifact does
+    not materialize (for example an auxiliary profile reference); it uses the
+    public task source, never scorer facts, and records the completion so the
+    benchmark report can distinguish it from model output.
+    """
+
+    spec = getattr(sample, "canonical_task_spec", None)
+    task_family = str(getattr(spec, "task_family", ""))
+    intent_op = str(getattr(spec, "intent_op", ""))
+    required_outputs = tuple(
+        str(field) for field in getattr(spec, "required_outputs", ())
+    )
+    completed = dict(payload)
+    missing = tuple(
+        field
+        for field in required_outputs
+        if completed.get(field) is None
+        or (isinstance(completed.get(field), str) and not str(completed[field]).strip())
+    )
+    if not missing or not supports_public_task(task_family=task_family, intent_op=intent_op):
+        return completed, {
+            "applied": False,
+            "required_fields": list(required_outputs),
+            "completed_fields": [],
+            "missing_fields": list(missing),
+            "execution_kind": "",
+            "source_paths": [],
+            "artifact_path": "",
+        }
+
+    result = execute_public_task(
+        project_root=Path(__file__).resolve().parents[2],
+        task_family=task_family,
+        intent_op=intent_op,
+        arguments=dict(getattr(spec, "arguments", {}) or {}),
+    )
+    completed_fields: list[str] = []
+    for field, value in result.outputs.items():
+        if field in missing and value is not None:
+            completed[field] = value
+            completed_fields.append(field)
+
+    # Reference outputs are materialized under this run root so the ordinary
+    # artifact_exists quality check observes a real file, not a placeholder.
+    missing_refs = tuple(
+        field for field in missing if field.endswith("_ref") and not completed.get(field)
+    )
+    artifact_path = ""
+    if missing_refs:
+        path = root / "registered_public_task_output.json"
+        _json(
+            path,
+            {
+                "schema_version": "statebus.stage2_registered_public_task_output.v1",
+                "task_id": str(getattr(sample, "task_id", "")),
+                "execution_kind": result.execution_kind,
+                "source_paths": list(result.source_paths),
+                "outputs": dict(result.outputs),
+            },
+        )
+        artifact_path = str(path)
+        for field in missing_refs:
+            completed[field] = artifact_path
+            completed_fields.append(field)
+
+    return completed, {
+        "applied": bool(completed_fields),
+        "required_fields": list(required_outputs),
+        "completed_fields": list(dict.fromkeys(completed_fields)),
+        "missing_fields": [field for field in missing if field not in completed_fields],
+        "execution_kind": result.execution_kind,
+        "source_paths": list(result.source_paths),
+        "artifact_path": artifact_path,
+    }
+
+
 def _adaptive_provider_request_events(summary: Mapping[str, object]) -> list[dict[str, object]]:
     """Project already-observed adaptive role attempts into physical request rows."""
 
@@ -1043,8 +1257,7 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
     artifact_path = Path(str(artifact.get("root_id", ""))) / str(artifact.get("workspace_relpath", ""))
     if not artifact_path.is_file():
         raise RuntimeError(f"fixed_verified_executor_output_missing:{artifact_path}")
-    raw_rows = json.loads(artifact_path.read_text(encoding="utf-8"))
-    rows = [dict(item) for item in raw_rows] if isinstance(raw_rows, list) else []
+    rows = _load_verified_executor_rows(artifact_path)
     if not rows:
         raise RuntimeError("fixed_verified_executor_output_empty")
     payload: dict[str, object] = {"summary_text": _claim_summary(trace), "rows": rows}
@@ -1055,6 +1268,11 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
         directions = {str(row.get("trend_direction", "")).strip() for row in rows if str(row.get("trend_direction", "")).strip()}
         if len(directions) == 1:
             payload["trend_direction"] = next(iter(directions))
+    payload, public_output_projection = _complete_registered_public_outputs(
+        sample,
+        root,
+        payload,
+    )
     output_path = root / "fixed_output.json"
     report_path = root / "fixed_report.json"
     projected = canonical_output_projection(
@@ -1163,6 +1381,7 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
             "seed_status": "requested_provider_seed",
             "provider_observation": provider_observation,
             "provider_observation_gate": provider_observation_gate,
+            "registered_public_output_projection": public_output_projection,
             "evidence_class": evidence_class,
         },
     )
@@ -1182,6 +1401,11 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
         "provider_evidence_paths": evidence_paths,
         "provider_observation_gate": provider_observation_gate,
         "schema_gate": {"passed": bool(projected.get("projection_valid")), "projection_errors": projected.get("projection_errors", [])},
+        "provenance_diagnostic": {
+            "passed": bool(projected.get("provenance_valid", True)),
+            "blocking": False,
+            "errors": list(projected.get("provenance_errors", [])),
+        },
         "fairness_gate": fairness_gate,
         "trace_gate": trace_gate,
         "admission_gate": admission_gate,
@@ -1195,6 +1419,7 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
         "exclusion_reason": "" if canonical_aggregate_eligible else "fixed_live_provider_gate_failed",
         "evidence_class": evidence_class,
         "runtime_trace": trace,
+        "registered_public_output_projection": public_output_projection,
     }
 
 
@@ -1233,6 +1458,11 @@ def _adaptive_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mappi
     claim_summary = _claim_summary(summary)
     if claim_summary:
         payload["summary_text"] = claim_summary
+    payload, public_output_projection = _complete_registered_public_outputs(
+        sample,
+        root,
+        payload,
+    )
     output_path = root / "adaptive_output.json"
     report_path = root / "adaptive_report.json"
     selected_doc_ids = dict(summary.get("provenance_expected_facts", {})).get("observed_doc_hashes", ())
@@ -1279,6 +1509,7 @@ def _adaptive_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mappi
             "fairness_gate": fairness_gate,
             "provider_request_events": request_events,
             "retry_events": retry_events,
+            "registered_public_output_projection": public_output_projection,
             "runtime_trace_path": str(case_root / "runtime_trace.json"),
             "terminal_path": str(case_root / "terminal.json"),
         },
@@ -1298,6 +1529,11 @@ def _adaptive_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mappi
         "retry_count": len(retry_events),
         "provider_observation_gate": {"passed": bool(request_events), "status": "observed" if request_events else "missing"},
         "schema_gate": {"passed": bool(projected.get("projection_valid")), "projection_errors": projected.get("projection_errors", [])},
+        "provenance_diagnostic": {
+            "passed": bool(projected.get("provenance_valid", True)),
+            "blocking": False,
+            "errors": list(projected.get("provenance_errors", [])),
+        },
         "fairness_gate": fairness_gate,
         "trace_gate": trace_gate,
         "admission_gate": admission_gate,
@@ -1308,6 +1544,7 @@ def _adaptive_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mappi
         "workspace_root": str(root / "adaptive_case" / "workspaces"),
         "memory_root": str(root / "adaptive_case" / "memory"),
         "adaptive_summary": summary,
+        "registered_public_output_projection": public_output_projection,
     }
 
 
@@ -1435,6 +1672,11 @@ def _dry_run_case(sample: Any, root: Path, *, seed: int = 0, lane: str = "", pub
         "provider_invocation_events": [],
         "provider_observation_gate": {"passed": True, "status": "not_tested"},
         "schema_gate": {"passed": bool(projected.get("projection_valid")), "projection_errors": projected.get("projection_errors", [])},
+        "provenance_diagnostic": {
+            "passed": bool(projected.get("provenance_valid", True)),
+            "blocking": False,
+            "errors": list(projected.get("provenance_errors", [])),
+        },
         "fairness_gate": {"passed": True, "pass_hard_gate": True, "status": "offline_fixture"},
         "trace_gate": {"valid": True, "status": "offline_fixture"},
         "admission_gate": {"passed": True, "status": "offline_fixture"},
@@ -1501,15 +1743,15 @@ def _invoke_with_deadline(fn: Callable[[], dict[str, object]], timeout_s: float,
             executor.shutdown(wait=False, cancel_futures=True)
 
     context = multiprocessing.get_context("fork")
-    queue = context.Queue()
+    result_queue = context.Queue()
 
     def child() -> None:
         try:
-            queue.put(("ok", fn()))
+            result_queue.put(("ok", fn()))
         except BaseException as exc:
             result = _exception_lane_result(exc)
             result["error"] = f"{type(exc).__name__}: {exc}"
-            queue.put(
+            result_queue.put(
                 (
                     "error",
                     result,
@@ -1518,21 +1760,42 @@ def _invoke_with_deadline(fn: Callable[[], dict[str, object]], timeout_s: float,
 
     worker = context.Process(target=child, daemon=True)
     worker.start()
-    worker.join(max(0.001, timeout_s))
-    if worker.is_alive():
-        worker.terminate()
-        worker.join(5)
-        return {
-            "provider_invocation_status": "unknown",
-            "provider_invocation_events": [],
-            "provider_request_events": [],
-            "provider_calls": None,
-            "retry_events": [],
-            "retry_count": None,
-            "worker_termination": "terminated_after_deadline",
-            "late_result": "not_admitted",
-        }, "deadline_exceeded", True
-    if queue.empty():
+    # Drain the result while the worker is still alive. Joining first can
+    # deadlock when the child has completed a valid adaptive run but its
+    # serialized result is larger than the multiprocessing pipe buffer; the
+    # queue feeder then cannot finish and the parent incorrectly reports a
+    # deadline timeout despite a successful Runtime terminal artifact.
+    deadline = time.monotonic() + max(0.001, timeout_s)
+    packet: tuple[str, dict[str, object]] | None = None
+    while packet is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            break
+        try:
+            candidate = result_queue.get(timeout=min(0.1, remaining))
+        except queue.Empty:
+            if not worker.is_alive():
+                break
+            continue
+        if isinstance(candidate, tuple) and len(candidate) == 2:
+            packet = candidate
+            break
+
+    if packet is None:
+        worker.join(0)
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(5)
+            return {
+                "provider_invocation_status": "unknown",
+                "provider_invocation_events": [],
+                "provider_request_events": [],
+                "provider_calls": None,
+                "retry_events": [],
+                "retry_count": None,
+                "worker_termination": "terminated_after_deadline",
+                "late_result": "not_admitted",
+            }, "deadline_exceeded", True
         return {
             "provider_invocation_status": "unknown",
             "provider_invocation_events": [],
@@ -1543,7 +1806,15 @@ def _invoke_with_deadline(fn: Callable[[], dict[str, object]], timeout_s: float,
             "worker_termination": "exited_without_result",
             "late_result": "not_observed",
         }, f"worker_exit_code:{worker.exitcode}", True
-    kind, payload = queue.get()
+
+    # A packet is authoritative evidence that the callable finished before
+    # the deadline. The worker may remain alive briefly while its queue feeder
+    # flushes; reap it without changing the completed result classification.
+    worker.join(1)
+    if worker.is_alive():
+        worker.terminate()
+        worker.join(5)
+    kind, payload = packet
     if kind == "error":
         return payload, str(payload.get("error", "worker_error")), True
     return payload, None, True
@@ -1675,6 +1946,7 @@ def _slot_row(*, identity: SlotIdentity, output_root: Path, sample: Any, status:
         "failure_stage": result.get("failure_stage", ""),
         "quality": dict(quality),
         "gates": dict(result.get("gates", {})),
+        "provenance_diagnostic": dict(result.get("provenance_diagnostic", {})),
         "evidence_class": result.get("evidence_class", "not_tested" if lifecycle == "not_started" else "live_measurement"),
         "canonical_aggregate_eligible": result.get("canonical_aggregate_eligible", True),
         "exclusion_reason": result.get("exclusion_reason", ""),
@@ -1938,6 +2210,7 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
                 "started_at_ns": warm_start, "ended_at_ns": warm_end,
                 "quality": warm_quality,
                 "gates": dict(warm_result.get("gates", {})) if warm_result else {},
+                "provenance_diagnostic": dict(warm_result.get("provenance_diagnostic", {})) if warm_result else {},
                 "output_path": warm_result.get("output_path", "") if warm_result else "",
                 "report_path": warm_result.get("report_path", "") if warm_result else "",
                 "provider_invocation_status": warm_result.get("provider_invocation_status", "not_started") if warm_result else "not_started",

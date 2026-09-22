@@ -73,6 +73,7 @@ def _merge_llm_results(results: list[LLMResult]) -> LLMResult:
             total_tokens=sum(result.usage.total_tokens for result in results),
         ),
         top_logprobs=last.top_logprobs,
+        finish_reason=last.finish_reason,
     )
 
 
@@ -278,6 +279,36 @@ def _operation_argument_contract(op: str) -> dict[str, object]:
                 "difference_output": "optional output field",
                 "ratio_output": "optional output field",
                 "growth_pct_output": "optional output field",
+            },
+        },
+        "compare_metric": {
+            "required": [
+                "ticker_field",
+                "period_field",
+                "metric_field",
+                "value_field",
+                "left_ticker",
+                "right_ticker",
+                "period",
+                "metric",
+                "period_output",
+                "left_output",
+                "right_output",
+                "gap_output",
+            ],
+            "fields": {
+                "ticker_field": "authorized ticker column",
+                "period_field": "authorized period column",
+                "metric_field": "authorized metric-name column",
+                "value_field": "authorized numeric value column",
+                "left_ticker": "controller-owned left entity",
+                "right_ticker": "controller-owned right entity",
+                "period": "controller-owned period value",
+                "metric": "controller-owned metric value",
+                "period_output": "period output field",
+                "left_output": "left numeric output field",
+                "right_output": "right numeric output field",
+                "gap_output": "difference output field",
             },
         },
         "trend_series": {
@@ -1570,6 +1601,7 @@ class RolePathRunner:
             merged_result = _merge_llm_results(attempts)
             self.role_observations[purpose] = {
                 "model": merged_result.model,
+                "finish_reason": merged_result.finish_reason,
                 "prompt_tokens": merged_result.usage.prompt_tokens,
                 "completion_tokens": merged_result.usage.completion_tokens,
                 "total_tokens": merged_result.usage.total_tokens,
@@ -1589,6 +1621,7 @@ class RolePathRunner:
         merged_result = _merge_llm_results(attempts)
         self.role_observations[purpose] = {
             "model": merged_result.model,
+            "finish_reason": merged_result.finish_reason,
             "prompt_tokens": merged_result.usage.prompt_tokens,
             "completion_tokens": merged_result.usage.completion_tokens,
             "total_tokens": merged_result.usage.total_tokens,

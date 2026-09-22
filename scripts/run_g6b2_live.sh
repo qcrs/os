@@ -149,6 +149,9 @@ printf 'artifact_root=%s\n' "$artifact_root"
 "$CONTAINER_SCRIPT" up
 "$CONTAINER_SCRIPT" verify
 "$CONTAINER_SCRIPT" smoke
+python3 -m "$PYTHON_MODULE" container-profile \
+  --artifact-root "$artifact_root" \
+  --container-name "$STATEBUS_CONTAINER_NAME"
 container_root="$(container_artifact_root "$artifact_root")"
 if [[ "${STATEBUS_G6B2_EMBEDDING_MODE:-deterministic}" == "local" ]]; then
   "$CONTAINER_SCRIPT" exec python3 -m "$PYTHON_MODULE" embedding-probe \

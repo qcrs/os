@@ -632,10 +632,10 @@ def _g6b2_metric_availability(
     observed("live_matched_pair_count", counts["matched_pair_count"], pair_refs)
     observed("live_eligible_matched_pair_count", counts["eligible_matched_pair_count"], pair_refs)
     metrics["provider_work_avoided"] = {
-        "status": "observed" if quality_pass and closed else "unsupported",
-        "value": len(eligible) if quality_pass and closed else None,
-        "reason": "eligible_pair_count_only" if quality_pass and closed else "no_eligible_live_matched_pair",
-        "source_receipt_references": pair_refs if quality_pass and closed else [],
+        "status": "unsupported",
+        "value": None,
+        "reason": "provider_work_units_not_observed",
+        "source_receipt_references": [],
     }
     observed("live_quality_non_regression", True, pair_refs) if quality_pass and closed else metrics.update({
         "live_quality_non_regression": {"status": "unsupported", "value": None, "reason": "no_eligible_quality_join", "source_receipt_references": []}

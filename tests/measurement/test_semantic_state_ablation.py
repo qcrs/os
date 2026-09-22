@@ -111,6 +111,62 @@ def test_semantic_state_ablation_does_not_close_pair_after_variant_failure(
 
     assert summary["ok"] is False
     assert summary["denominator"]["closed_pairs"] == 0
-    assert summary["denominator"]["incomplete_pairs"] == 1
+    assert summary["denominator"]["environment_failure_pairs"] == 1
+    assert summary["denominator"]["incomplete_pairs"] == 0
     assert summary["failures"][0]["error"] == "worker unavailable"
 
+
+def test_semantic_state_inactive_negative_control_is_excluded_from_active_denominator(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    case = _case("semantic-holdout-table-only")
+    monkeypatch.setattr(semantic_holdout, "load_semantic_holdout_cases", lambda: (case,))
+
+    def fake_run(case, *, case_root, semantic_state_mode, **kwargs):
+        del case, case_root, kwargs
+        summary = _summary_for_mode(semantic_state_mode)
+        activation = dict(summary["component_activation_receipts"]["semantic_state"])
+        if semantic_state_mode != "off":
+            activation.update(
+                {
+                    "effective_mode": "not_applicable",
+                    "producer_active": False,
+                    "consumer_active": False,
+                    "publish_count": 0,
+                    "consume_count": 0,
+                    "transfer_count": 0,
+                    "disable_reason": "no_semantic_state_payload",
+                }
+            )
+            summary["component_activation_receipts"] = {"semantic_state": activation}
+            summary["telemetry"] = {
+                "semantic_state_publish_count": 0.0,
+                "semantic_state_consume_count": 0.0,
+                "semantic_state_transfer_count": 0.0,
+            }
+            summary["semantic_state_selections"] = {}
+            summary["state_consumption_records"] = []
+            summary["downstream_effects"] = {}
+            summary["state_release_reclaim_receipts"] = {}
+        return summary
+
+    monkeypatch.setattr(semantic_holdout, "_run_adaptive_case", fake_run)
+    summary = semantic_holdout.run_semantic_state_ablation(
+        output_root=tmp_path,
+        embedding_model_path="/models/embed",
+        embedding_device="cpu",
+        case_ids=(case.task_id,),
+    )
+
+    report = summary["pairs"][0]
+    assert report["activation_class"] == "inactive_negative_control"
+    assert report["negative_control_valid"] is True
+    rows = {row["variant"]: row for row in report["variants"]}
+    assert rows["off"]["activation_status"] == "disabled_control"
+    assert rows["on"]["state_release_reclaim_closed"] is True
+    assert rows["consumer_off"]["state_release_reclaim_closed"] is True
+    assert summary["denominator"]["closed_pairs"] == 0
+    assert summary["denominator"]["inactive_negative_control_pairs"] == 1
+    assert summary["denominator"]["incomplete_pairs"] == 0
+    assert summary["gates"]["all_pairs_closed"] is True

@@ -355,6 +355,59 @@ def _lane_identity(lane: str) -> tuple[str, str, str]:
     return "direct-single-agent@v1", "direct_generalist_v1", "direct_single_agent_provider"
 
 
+def _planner_provider_evidence_observed(trace: Mapping[str, object]) -> bool:
+    """Return whether an adaptive trace records the controller planner call.
+
+    Adaptive formal runs plan outside the Runtime dispatch lineage.  The
+    planner therefore must be evidenced in the provider-call boundary rather
+    than fabricated as a fourth Runtime attempt.  The older C2A pilot stores
+    the same evidence below ``provider_observation``; accept that explicit
+    carrier as well.
+    """
+
+    calls = trace.get("provider_calls", ())
+    if isinstance(calls, (list, tuple)) and any(
+        isinstance(item, Mapping) and str(item.get("role", "")) == "planner"
+        for item in calls
+    ):
+        return True
+    observation = trace.get("provider_observation")
+    if isinstance(observation, Mapping):
+        invocations = observation.get("role_invocations", ())
+        if isinstance(invocations, (list, tuple)) and any(
+            isinstance(item, Mapping)
+            and str(item.get("role", "")) == "planner"
+            and bool(item.get("attempts"))
+            for item in invocations
+        ):
+            return True
+    return False
+
+
+def _adaptive_runtime_topology_valid(trace: Mapping[str, object]) -> tuple[bool, str]:
+    """Validate one of the two observed adaptive execution boundaries.
+
+    The fixed C2A pilot dispatches the planner through Runtime (four
+    attempts).  The formal adaptive runner invokes the planner at the
+    controller/provider boundary and dispatches only the approved DAG
+    (retriever, executor, summarizer; three attempts).  Both are real,
+    auditable contracts; any other shape is invalid.
+    """
+
+    sequence = trace.get("role_sequence")
+    attempts = trace.get("attempts", ())
+    attempt_count = len(attempts) if isinstance(attempts, (list, tuple)) else -1
+    if sequence == ["planner", "retriever", "executor", "summarizer"] and attempt_count == 4:
+        return True, "runtime_planner"
+    if (
+        sequence == ["retriever", "executor", "summarizer"]
+        and attempt_count == 3
+        and _planner_provider_evidence_observed(trace)
+    ):
+        return True, "controller_planner"
+    return False, "invalid_adaptive_runtime_topology"
+
+
 def validate_c2a_trace(trace: Mapping[str, object], manifest: Mapping[str, object]) -> dict[str, object]:
     """Validate the single canonical trace envelope without creating runtime facts."""
     lane = str(manifest.get("lane", ""))
@@ -378,13 +431,22 @@ def validate_c2a_trace(trace: Mapping[str, object], manifest: Mapping[str, objec
         checks["capability_identity"] = "FAIL"
     if not is_control and trace.get("execution_path") != path:
         checks["execution_path"] = "FAIL"
-    if lane in {"fixed_structured", "adaptive_routed"}:
+    if lane == "fixed_structured":
         if not is_control and trace.get("role_sequence") != ["planner", "retriever", "executor", "summarizer"]:
             checks["role_sequence"] = "FAIL"
         if not is_control and len(trace.get("attempts", ())) != 4:
             checks["runtime_attempts"] = "FAIL"
         if not is_control and (not trace.get("provider_bindings") or not trace.get("grants") or not trace.get("receipts")):
             checks["runtime_lineage"] = "FAIL"
+    elif lane == "adaptive_routed":
+        if not is_control:
+            topology_valid, topology_reason = _adaptive_runtime_topology_valid(trace)
+            if not topology_valid:
+                checks["role_sequence"] = "FAIL"
+                checks["runtime_attempts"] = "FAIL"
+                checks["adaptive_runtime_topology"] = topology_reason
+            if not trace.get("provider_bindings") or not trace.get("grants") or not trace.get("receipts"):
+                checks["runtime_lineage"] = "FAIL"
     elif lane == "pure_text_mas":
         if not is_control and len(trace.get("provider_calls", trace.get("calls", ()))) != 4:
             checks["provider_calls"] = "FAIL"
@@ -408,7 +470,22 @@ def aggregate_c2a_eligibility(*, records: Iterable[Mapping[str, object]], eviden
     gate("terminal_records_complete", len(canonical) == 32 and all(bool(row.get("terminal_status")) for row in canonical), "all canonical rows terminally closed")
     validations = [row.get("trace_validation") for row in canonical]
     gate("unified_trace_schema", len(validations) == 32 and all(isinstance(item, Mapping) and item.get("valid") is True for item in validations), "all rows have valid trace_validation")
-    gate("structured_runtime_trace", all(len(row.get("trace", {}).get("attempts", ())) == 4 for row in canonical if row.get("lane") in {"fixed_structured", "adaptive_routed"} and not str(row.get("case_id", "")).startswith("control_")), "four runtime attempts on structured positive rows")
+    structured_rows = [
+        row
+        for row in canonical
+        if row.get("lane") in {"fixed_structured", "adaptive_routed"}
+        and not str(row.get("case_id", "")).startswith("control_")
+    ]
+    gate(
+        "structured_runtime_trace",
+        all(
+            len(row.get("trace", {}).get("attempts", ())) == 4
+            if row.get("lane") == "fixed_structured"
+            else _adaptive_runtime_topology_valid(row.get("trace", {}))[0]
+            for row in structured_rows
+        ),
+        "fixed rows use four Runtime attempts; adaptive rows use an observed four-attempt or controller-planned three-attempt topology",
+    )
     gate("pure_text_and_direct_calls", all(len(row.get("trace", {}).get("provider_calls", row.get("trace", {}).get("calls", ()))) == (4 if row.get("lane") == "pure_text_mas" else 1) for row in canonical if row.get("lane") in {"pure_text_mas", "direct_single_agent"} and not str(row.get("case_id", "")).startswith("control_")), "real provider call counts")
     gate("persisted_oracle_audit", all(row.get("oracle_audit", {}).get("ok", False) for row in canonical), "all persisted oracle audits pass")
     gate("canonical_aggregate_legacy_exclusion", all(row.get("canonical_aggregate_audit", {}).get("eligible", False) for row in canonical), "observed marker and identity checks pass")

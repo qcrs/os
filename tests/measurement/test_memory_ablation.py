@@ -83,13 +83,30 @@ def test_memory_ablation_closes_six_runtime_owned_matched_pairs(
         "memory_off": 6,
         "validated_replay": 0,
     }
-    assert metrics["provider_work_avoided"]["status"] == "observed"
-    assert metrics["provider_work_avoided"]["value"] == 6
-    assert metrics["verified_recipe_work_avoided"] == {
+    assert metrics["provider_work_avoided"] == {
         "status": "unsupported",
         "value": None,
-        "reason": "recipe_step_skip_not_observed",
+        "reason": "provider_work_units_not_observed",
     }
+    negative_controls = json.loads(
+        (root / "negative_controls.json").read_text(encoding="utf-8")
+    )
+    assert len(negative_controls) == 3
+    assert all(
+        item["terminal_status"] == "policy_reject"
+        and item["fail_closed"] is True
+        and item["headline_denominator"] is False
+        for item in negative_controls
+    )
+    assert metrics["verified_recipe_work_avoided"]["status"] == "observed"
+    assert metrics["verified_recipe_work_avoided"]["value"] == 6
+    assert all(
+        row["recipe_step_status"] == "skipped_generation"
+        and row["skipped_generation_step_count"] == 1
+        and row["skipped_provider_call_count"] == 1
+        and row["skip_evidence"]["status"] == "observed"
+        for row in replay_rows
+    )
     for name in (
         "hydration_bytes_avoided",
         "embedding_work_avoided",

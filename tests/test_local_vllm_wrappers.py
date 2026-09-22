@@ -84,3 +84,19 @@ fi
     expected_config = "/workspace/statebus/os/deploy/statebus_llm.g6b2-qwen3-8b.example"
     assert f"llm_config={expected_config}" in result.stdout
     assert f"container_llm_config={expected_config}" in result.stdout
+
+
+def test_local_vllm_container_check_is_loopback_only_and_uses_os_root() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_local_vllm_container_check.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'CONTAINER_PROJECT_ROOT="${STATEBUS_CONTAINER_PROJECT_ROOT:-/workspace/statebus/os}"' in source
+    assert '"$mapper" map-path "$HOST_RUNS_ROOT"' in source
+    assert 'ProxyHandler({})' in source
+    assert "-e HTTP_PROXY=" in source
+    assert "-e HTTPS_PROXY=" in source
+    assert "-e ALL_PROXY=" in source
+    assert 'LOCAL_NO_PROXY="127.0.0.1,localhost,::1"' in source

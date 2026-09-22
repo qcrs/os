@@ -1123,8 +1123,12 @@ def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_va
     )
     assert consumption.memory_id == first.memory_commit_decision.memory_id
     assert consumption.recipe_recomputed is True
-    assert consumption.skipped_generation_step_count == 0
+    assert consumption.recipe_step_status == "skipped_generation"
+    assert consumption.skipped_generation_step_count == 1
     assert consumption.skipped_llm_call_count == 0
+    assert consumption.skipped_provider_call_count == 0
+    assert consumption.skip_evidence["status"] == "observed"
+    assert consumption.skip_evidence["provider_boundary"] == "not_observed"
     output = next(
         stored
         for stored in second.context.artifacts.values()
@@ -1146,7 +1150,7 @@ def test_adaptive_memory_persists_across_fresh_runners_and_recomputes_current_va
     assert metrics["memory_behavioral_effect_count"] >= 1.0
     assert metrics["validated_replay_count"] == 1.0
     assert metrics["exact_replay_count"] == 0.0
-    assert metrics["skipped_step_count"] == 0.0
+    assert metrics["skipped_step_count"] == 1.0
     assert metrics["skipped_llm_call_count"] == 0.0
 
 
@@ -2075,7 +2079,7 @@ def test_g5c_c1_runtime_bypasses_bound_provider_before_call_boundary(tmp_path: P
     assert result.success
     assert calls == []
     assert dispatcher.context.replay_observations[0]["provider_invocation_status"] == "not_started"
-    assert dispatcher.context.replay_observations[0]["recipe_step_status"] == "unknown"
+    assert dispatcher.context.replay_observations[0]["recipe_step_status"] == "skipped_generation"
 
 
 def test_g5c_c1_mainline_persists_provider_not_started_observation(tmp_path: Path) -> None:
@@ -2175,7 +2179,7 @@ def test_g5c_c1_mainline_persists_provider_not_started_observation(tmp_path: Pat
     assert trace["replay_observations"] == [observed[0]]
     assert skip["receipts"][0]["quality_result_admission_hash"] == observed[0]["attempt_result_admission_receipt_hash"]
     assert skip["receipts"][0]["quality_report_hash"]
-    assert skip["receipts"][0]["recipe_step_status"] == "unknown"
+    assert skip["receipts"][0]["recipe_step_status"] == "skipped_generation"
 
 
 def test_g5a_memory_artifact_checksum_mismatch_fails_closed(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import shutil
 import time
 from dataclasses import dataclass, replace
@@ -43,6 +44,7 @@ from statebus.contracts import (
     CanonicalTaskSpec,
     Claim,
     ClaimSet,
+    CodeGenerationPolicy,
     EvidenceRequest,
     ExecutionKind,
     PlannerHandoff,
@@ -55,6 +57,7 @@ from statebus.contracts import (
     TransformStep,
     WorkflowMode,
 )
+from statebus.integrations.llm import ChatMessage, LLMConfig, build_llm_client, extract_json_object
 from statebus.refs import CanonicalEvidencePack, EvidenceItem, TableCellLocator
 from statebus.runtime import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.smoke import SmokeLayerConfig, SmokeResult, run_smoke
@@ -62,7 +65,14 @@ from statebus.runtime.adaptive_mainline import AdaptiveMainlineBindings, Adaptiv
 from statebus.runtime.driver import RuntimeDriver
 from statebus.runtime.capability_registry import CapabilityRegistry
 from statebus.runtime.domain_packs import c2a_four_role_pack, register_c2a_four_role_capabilities
-from statebus.runtime.fixed_mainline import FixedMainlineRequest, _FIXED_BOUND_PROVIDER_BY_ROLE, _fixed_provider_registry, _fixed_retrieve_query
+from statebus.runtime.fixed_mainline import (
+    FixedMainlineRequest,
+    _FIXED_BOUND_PROVIDER_BY_ROLE,
+    _fixed_provider_registry,
+    _fixed_retrieve_query,
+    _live_call,
+)
+from statebus.runtime.role_path import RolePathRunner
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
 from statebus.retrieval import RetrieverFanoutPipeline
 from statebus.runtime.role_providers import ProviderCandidate, ProviderRequest
@@ -680,6 +690,25 @@ C2B_LANE_ORDER = {
 }
 
 
+def _live_summarizer_config(config: LLMConfig, *, expected_claim_count: int) -> LLMConfig:
+    """Reserve enough completion space for the typed ClaimSet contract.
+
+    ClaimSet output grows with the number of verified rows because every claim
+    carries typed evidence/artifact references and numeric fields. The old
+    profile-wide 1024-token cap could end in the middle of the final claim;
+    keep the contract bounded while scaling the budget from controller-owned
+    row count rather than task-specific expected values.
+    """
+
+    if expected_claim_count < 1:
+        raise ValueError("live_summarizer_expected_claim_count_invalid")
+    configured = config.role_config("summarizer").max_tokens or 0
+    required = max(2_048, min(3_072, expected_claim_count * 384))
+    if configured >= required:
+        return config
+    return config.with_role_override("summarizer", max_tokens=required)
+
+
 def _c2b_structured_runtime(
     sample: MinimalBenchmarkSample,
     *,
@@ -725,13 +754,26 @@ def _c2b_structured_runtime(
         }
     source_schema = dict(case.source_schema)
     identity = _c2a_identity(sample, lane)
+    use_bounded_python = (
+        provider_mode == "live"
+        and not bool(case.operation_semantics.get("dsl_operation"))
+    )
+    executor_capability_id = (
+        "execute_bounded_python_v2"
+        if use_bounded_python
+        else "extract_metric_series_v1"
+    )
     recipe = default_fixed_role_recipe(
         recipe_id="c2a-four-role",
         recipe_version="v1",
         retriever_capability_id="retrieve_table_evidence_v1",
-        executor_capability_id="extract_metric_series_v1",
+        executor_capability_id=executor_capability_id,
         summarizer_capability_id="compose_cited_report_v1",
-        executor_contract="statebus.metric_series.v1",
+        executor_contract=(
+            case.output_contract_version
+            if use_bounded_python
+            else "statebus.metric_series.v1"
+        ),
     )
     # Preserve the source-owned document identity when the formal source rows
     # carry one.  Falling back to a fixture digest is only for source families
@@ -764,6 +806,104 @@ def _c2b_structured_runtime(
             for index, row in enumerate(provider_rows)
         ),
     )
+    live_runner = role_path_runner
+    effective_llm_config = llm_config
+    if provider_mode == "live" and live_runner is None:
+        config = llm_config or LLMConfig.from_runtime().with_mode("local_vllm")
+        config = _live_summarizer_config(
+            config,
+            expected_claim_count=len(provider_rows),
+        )
+        effective_llm_config = config
+        live_runner = RolePathRunner(
+            llm_client=build_llm_client(config),
+            json_response_max_attempts=1,
+        )
+
+    def _code_from_result(result: object) -> str:
+        raw_text = str(getattr(result, "text", ""))
+        try:
+            payload = extract_json_object(raw_text)
+        except ValueError:
+            # Keep a plain fenced/file response usable for compatible
+            # providers; local vLLM is requested with the object schema below.
+            return raw_text
+        code = payload.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("fixed_live_code_generation_missing_code")
+        return code
+
+    def code_source_factory(request, prompt: str) -> str:
+        if live_runner is None:
+            raise RuntimeError("fixed_live_codeact_runner_missing")
+        result = _live_call(
+            live_runner,
+            provider_observation_sink,
+            "executor",
+            lambda: asyncio.run(
+                live_runner.llm_client.complete(
+                    [ChatMessage(role="user", content=prompt)],
+                    purpose="executor",
+                    response_schema={
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"code": {"type": "string"}},
+                        "required": ["code"],
+                    },
+                )
+            ),
+        )
+        code = _code_from_result(result)
+        (root / "executor_initial_raw.txt").write_text(code, encoding="utf-8")
+        return code
+
+    def code_repair_factory(request, prompt: str, previous_source: str, violations: tuple[str, ...]) -> str:
+        if live_runner is None:
+            raise RuntimeError("fixed_live_codeact_runner_missing")
+        repair_prompt = (
+            f"{prompt}\n"
+            "The previous bounded Python candidate failed validation inside the Runtime. "
+            "Return a complete replacement file, not a diff and not commentary. "
+            f"Fix every reported issue: {', '.join(violations)}.\n"
+            "<sb-current-python-source>\n"
+            f"{previous_source}\n"
+            "</sb-current-python-source>\n"
+        )
+        result = _live_call(
+            live_runner,
+            provider_observation_sink,
+            "executor",
+            lambda: asyncio.run(
+                live_runner.llm_client.complete(
+                    [ChatMessage(role="user", content=repair_prompt)],
+                    purpose="executor",
+                    response_schema={
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"code": {"type": "string"}},
+                        "required": ["code"],
+                    },
+                )
+            ),
+        )
+        code = _code_from_result(result)
+        (root / "executor_repair_raw.txt").write_text(code, encoding="utf-8")
+        return code
+
+    def code_policy_factory(step: PlanStepProposal) -> CodeGenerationPolicy:
+        if step.capability_id != "execute_bounded_python_v2":
+            raise ValueError("fixed_unexpected_codeact_capability")
+        return CodeGenerationPolicy(
+            capability_id="execute_bounded_python_v2",
+            enabled=True,
+            require_bwrap=True,
+            allowed_module_roots=("json", "pathlib", "re", "statistics", "collections"),
+            allowed_input_relpaths=("inputs/task.json",),
+            output_relpath="outputs/result.json",
+            output_required_fields=tuple(output_schema),
+            timeout_seconds=30.0,
+            max_output_bytes=1_048_576,
+        )
 
     def planner_handler(request: ProviderRequest) -> ProviderCandidate:
         return ProviderCandidate(
@@ -876,6 +1016,11 @@ def _c2b_structured_runtime(
         recipe.steps[2].capability_id: executor_handler,
         recipe.steps[3].capability_id: summarizer_handler,
     }
+    if use_bounded_python:
+        # No bound executor handler is registered for the open-ended route;
+        # Runtime dispatch therefore selects the declared bounded-Python
+        # implementation and keeps CodeAct as the authority boundary.
+        handlers.pop(recipe.steps[2].capability_id, None)
     validator_registry = CapabilityValidatorRegistry()
     validator_registry.register("metric_series", build_formal_quality_validator(case))
     recipe = replace(
@@ -900,6 +1045,28 @@ def _c2b_structured_runtime(
         deterministic_fixture_runner=(
             deterministic_fixture_runner if provider_mode == "deterministic" else None
         ),
+        code_source_factory=code_source_factory if use_bounded_python else None,
+        code_repair_factory=code_repair_factory if use_bounded_python else None,
+        code_policy_factory=code_policy_factory if use_bounded_python else None,
+        codeact_contracts=(
+            {
+                "execute_bounded_python_v2": {
+                    "operation_semantics": dict(case.operation_semantics),
+                    "quality_constraints": {
+                        "runtime_recomputation_from_authorized_inputs": True,
+                        "finite_numbers_only": True,
+                    },
+                    "expected_output_shape": case.expected_output_shape,
+                }
+            }
+            if use_bounded_python
+            else {}
+        ),
+        output_schema_by_capability=(
+            {"execute_bounded_python_v2": output_schema}
+            if use_bounded_python
+            else {}
+        ),
         bound_provider_handlers=handlers,
     )
     root.mkdir(parents=True, exist_ok=True)
@@ -912,8 +1079,8 @@ def _c2b_structured_runtime(
         bindings=bindings,
         state_pool_mode="memfd",
         provider_mode=provider_mode,
-        llm_config=llm_config,
-        role_path_runner=role_path_runner,
+        llm_config=effective_llm_config,
+        role_path_runner=live_runner,
         provider_observation_sink=provider_observation_sink,
         task_request=sample.request_text,
         task_goal=sample.request_text,
@@ -922,6 +1089,11 @@ def _c2b_structured_runtime(
         evidence_types=("table",),
         output_fields=tuple(output_schema),
         operation_semantics=dict(case.operation_semantics),
+        executor_execution_kind=(
+            ExecutionKind.LLM_BOUNDED_PYTHON
+            if use_bounded_python
+            else ExecutionKind.TRANSFORM_DSL
+        ),
     )
     if lane == "fixed_structured":
         result = RuntimeDriver().run_mode("strict_fixed", fixed_request=fixed_request)

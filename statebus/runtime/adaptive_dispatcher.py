@@ -72,6 +72,7 @@ from statebus.runtime.role_providers import (
     detach_provider_candidate,
 )
 from statebus.runtime.transform_dsl import TransformDslInterpreter, TransformProgramError
+from statebus.runtime.execution_routing import resolve_execution_route
 from statebus.runtime.claims import ClaimSetValidator
 from statebus.runtime.workspace import ArtifactLifecycleManager
 from statebus.utils import sha256_digest, stable_json_dumps
@@ -232,6 +233,10 @@ class AdaptiveDispatchContext:
     g5c_c0_artifact_root: Path | None = None
     g5c_c1_artifact_root: Path | None = None
     replay_observations: list[dict[str, object]] = field(default_factory=list)
+    # Route requests are controller-owned metadata.  The dispatcher records
+    # the effective route; it never grants a new capability from this map.
+    requested_routes_by_step: dict[str, str] = field(default_factory=dict)
+    route_evidence_by_step: dict[str, list[dict[str, object]]] = field(default_factory=dict)
 
 
 class AdaptiveCapabilityDispatcher:
@@ -281,6 +286,38 @@ class AdaptiveCapabilityDispatcher:
                 raise AdaptiveDispatchError("execution_binding_required")
             descriptor = self.context.registry.get(step.capability_id)
             bound_handler = self.context.bound_provider_handlers.get(step.capability_id)
+            selected_kind = (
+                grant.execution_binding.selected_implementation_kind
+                if isinstance(grant, BoundCapabilityGrant)
+                else descriptor.execution_kind.value
+            )
+            route_decision = resolve_execution_route(
+                self.context.requested_routes_by_step.get(step.step_id, "runtime_policy"),
+                descriptor_execution_kind=descriptor.execution_kind,
+                selected_execution_kind=selected_kind,
+                allow_llm_python=envelope.allow_llm_python,
+                risk_class=envelope.risk_class,
+            )
+            route_evidence = {
+                "schema_version": "statebus.execution_route_evidence.v1",
+                "route_evidence_id": f"route:{plain_grant.attempt_id}:{step.step_id}",
+                "task_id": plain_grant.task_id,
+                "step_id": step.step_id,
+                "attempt_id": plain_grant.attempt_id,
+                "capability_grant_hash": plain_grant.grant_hash,
+                "requested_route": route_decision.requested_route,
+                "effective_route": route_decision.effective_route,
+                "execution_kind": route_decision.execution_kind,
+                "accepted": route_decision.accepted,
+                "failure_reason": route_decision.failure_reason,
+                "fallback_or_replan": "none",
+                "artifact_ref_ids": [],
+                "quality_report_hashes": [],
+                "terminal_status": "dispatching" if route_decision.accepted else "route_rejected",
+            }
+            self.context.route_evidence_by_step.setdefault(step.step_id, []).append(route_evidence)
+            if not route_decision.accepted:
+                raise AdaptiveDispatchError(f"route_rejected:{route_decision.failure_reason}")
             execution_kind = self._validate_dispatch(
                 envelope,
                 approved_plan,
@@ -289,6 +326,13 @@ class AdaptiveCapabilityDispatcher:
                 grant,
                 runtime_identity,
             )
+            if execution_kind.value != route_decision.execution_kind:
+                route_evidence.update({
+                    "accepted": False,
+                    "terminal_status": "route_rejected",
+                    "failure_reason": "effective_route_implementation_mismatch",
+                })
+                raise AdaptiveDispatchError("route_rejected:effective_route_implementation_mismatch")
             if bound_handler is not None:
                 # C1 is deliberately a Runtime-owned branch before the
                 # provider candidate call.  Only a fully validated procedure
@@ -304,6 +348,11 @@ class AdaptiveCapabilityDispatcher:
                     capability_id=step.capability_id,
                     output_contract_version=plain_grant.output_contract_version,
                 )
+                if any(
+                    item.get("replay_class") == ReplayClass.VALIDATED_REPLAY.value
+                    for item in memory_inputs
+                ) and replay_recipe is None:
+                    raise AdaptiveDispatchError("validated_replay_recipe_match_missing")
                 if replay_recipe is not None and replay_memory_id:
                     self._record_replay_observation(
                         bound_grant=grant,
@@ -314,9 +363,22 @@ class AdaptiveCapabilityDispatcher:
                         ),
                         observation_kind="provider_invocation",
                         provider_invocation_status="not_started",
-                        recipe_step_status="unknown",
+                        recipe_step_status="skipped_generation",
                         artifact_restore_status="not_applicable",
                         reason="validated_procedure_reuse_provider_bypass",
+                        skip_evidence={
+                            "status": "observed",
+                            "recipe_hash": str(replay_recipe.get("recipe_hash", ""))
+                            or str(
+                                next(
+                                    item.get("execution_recipe_hash", "")
+                                    for item in memory_inputs
+                                    if str(item.get("ref_id", "")) == replay_memory_id
+                                )
+                            ),
+                            "generation_boundary": "skipped",
+                            "provider_boundary": "skipped",
+                        },
                     )
                     if execution_kind == ExecutionKind.TRANSFORM_DSL:
                         result = self._dispatch_transform_dsl(
@@ -373,6 +435,17 @@ class AdaptiveCapabilityDispatcher:
             handler = self._handlers[execution_kind]
             return handler(envelope, approved_plan, step, plain_grant, attempt_workspace)
         except (AdaptiveDispatchError, ValueError) as exc:
+            for route_row in reversed(
+                self.context.route_evidence_by_step.get(step.step_id, ())
+            ):
+                if str(route_row.get("attempt_id", "")) == plain_grant.attempt_id:
+                    route_row["terminal_status"] = (
+                        "route_rejected"
+                        if str(exc).startswith("route_rejected:")
+                        else "runtime_fail"
+                    )
+                    route_row["failure_reason"] = str(exc) or type(exc).__name__
+                    break
             return AdaptiveStepResult(
                 grant_hash=plain_grant.grant_hash,
                 success=False,
@@ -391,6 +464,7 @@ class AdaptiveCapabilityDispatcher:
         recipe_step_status: str,
         artifact_restore_status: str,
         reason: str,
+        skip_evidence: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Record a Runtime-owned, row-local execution observation.
 
@@ -408,6 +482,7 @@ class AdaptiveCapabilityDispatcher:
             "observation_kind": observation_kind,
             "provider_invocation_status": provider_invocation_status,
             "recipe_step_status": recipe_step_status,
+            "skip_evidence": dict(skip_evidence or {}),
             "artifact_restore_status": artifact_restore_status,
             "runtime_task_id": grant.task_id,
             "run_id": self.context.runtime_identity.run_id if self.context.runtime_identity else "",
@@ -1526,6 +1601,17 @@ class AdaptiveCapabilityDispatcher:
         return None, ""
 
     @staticmethod
+    def _require_validated_recipe_match(
+        memory_inputs: tuple[dict[str, object], ...],
+        replay_recipe: dict[str, object] | None,
+    ) -> None:
+        if replay_recipe is None and any(
+            item.get("replay_class") == ReplayClass.VALIDATED_REPLAY.value
+            for item in memory_inputs
+        ):
+            raise AdaptiveDispatchError("validated_replay_recipe_match_missing")
+
+    @staticmethod
     def _factory_accepts_memory_inputs(
         factory: Callable[..., object],
         *,
@@ -1552,6 +1638,8 @@ class AdaptiveCapabilityDispatcher:
         replay_memory_id: str = "",
         consumed_memory_ids: tuple[str, ...] | None = None,
         after_surface_hash: str = "",
+        recipe_step_status: str = "",
+        skip_evidence_by_memory_id: dict[str, dict[str, object]] | None = None,
     ) -> dict[str, float]:
         if not memory_inputs:
             return {
@@ -1562,6 +1650,7 @@ class AdaptiveCapabilityDispatcher:
                 "exact_replay_count": 0.0,
                 "skipped_step_count": 0.0,
                 "skipped_llm_call_count": 0.0,
+                "skipped_provider_call_count": 0.0,
             }
         if consumed_memory_ids is None:
             consumed_memory_ids = self.context.memory_read_observations_by_step.get(
@@ -1584,6 +1673,7 @@ class AdaptiveCapabilityDispatcher:
                 "exact_replay_count": 0.0,
                 "skipped_step_count": 0.0,
                 "skipped_llm_call_count": 0.0,
+                "skipped_provider_call_count": 0.0,
             }
         if self.context.session_manager is not None:
             for memory_input in memory_inputs:
@@ -1621,6 +1711,49 @@ class AdaptiveCapabilityDispatcher:
                 })
             replay_class = ReplayClass(str(memory_input["replay_class"]))
             recipe_recomputed = memory_id == replay_memory_id
+            evidence = dict((skip_evidence_by_memory_id or {}).get(memory_id, {}))
+            observation = next(
+                (
+                    item
+                    for item in self.context.replay_observations
+                    if str(item.get("memory_id", "")) == memory_id
+                    and str(item.get("attempt_id", "")) == grant.attempt_id
+                ),
+                None,
+            )
+            if observation is not None:
+                evidence = {
+                    **dict(observation.get("skip_evidence", {})),
+                    **evidence,
+                    "observation_id": str(observation.get("observation_id", "")),
+                    "provider_invocation_status": str(
+                        observation.get("provider_invocation_status", "")
+                    ),
+                    "provider_id": str(observation.get("provider_id", "")),
+                }
+            effective_recipe_step_status = (
+                recipe_step_status
+                or ("skipped_generation" if recipe_recomputed else "recomputed_current_input")
+            )
+            skipped_generation = int(effective_recipe_step_status == "skipped_generation")
+            skipped_provider = int(
+                evidence.get("provider_invocation_status") == "not_started"
+            )
+            skipped_llm = int(
+                skipped_generation
+                and isinstance(memory_input.get("execution_recipe"), dict)
+                and str(
+                    dict(memory_input.get("execution_recipe", {})).get("execution_kind", "")
+                ) == ExecutionKind.LLM_BOUNDED_PYTHON.value
+            )
+            if skipped_generation and not evidence:
+                evidence = {
+                    "status": "observed",
+                    "recipe_hash": str(memory_input.get("execution_recipe_hash", "")),
+                    "generation_boundary": "skipped",
+                    "provider_boundary": "not_observed",
+                    "reason": "validated_recipe_current_input_execution",
+                }
             behavioral_effect = (
                 "no_effect" if record_after_surface_hash == before_surface_hash else "changed"
             )
@@ -1661,11 +1794,11 @@ class AdaptiveCapabilityDispatcher:
                 after_decision_surface_hash=record_after_surface_hash,
                 behavioral_effect=behavioral_effect,
                 downstream_ref_ids=downstream_ref_ids,
-                # Recomputing a recipe is a diagnostic fact only.  G5-A has
-                # no Runtime-owned skip receipt or matched baseline, so it
-                # must not be projected as skipped work or replay evidence.
-                skipped_generation_step_count=0,
-                skipped_llm_call_count=0,
+                skipped_generation_step_count=skipped_generation,
+                skipped_llm_call_count=skipped_llm,
+                skipped_provider_call_count=skipped_provider,
+                recipe_step_status=effective_recipe_step_status,
+                skip_evidence=evidence,
                 recipe_recomputed=recipe_recomputed,
                 consumed_at_ns=time.time_ns(),
                 consumer_runtime_task_id=consumer_runtime_task_id,
@@ -1713,6 +1846,9 @@ class AdaptiveCapabilityDispatcher:
             ),
             "skipped_llm_call_count": float(
                 sum(record.skipped_llm_call_count for record in task_records)
+            ),
+            "skipped_provider_call_count": float(
+                sum(record.skipped_provider_call_count for record in task_records)
             ),
         }
 
@@ -1836,6 +1972,7 @@ class AdaptiveCapabilityDispatcher:
             capability_id=step.capability_id,
             output_contract_version=grant.output_contract_version,
         )
+        self._require_validated_recipe_match(memory_inputs, replay_recipe)
         if replay_recipe is not None and replay_memory_id:
             replay_input = next(
                 item for item in memory_inputs if str(item.get("ref_id", "")) == replay_memory_id
@@ -1977,9 +2114,17 @@ class AdaptiveCapabilityDispatcher:
             provenance_item_ids=provenance,
         )
         self.context.execution_recipes_by_artifact[artifact.artifact_id] = {
+            "recipe_id": f"{step.capability_id}:{ExecutionKind.TRANSFORM_DSL.value}",
+            "recipe_version": "v1",
+            "step_ids": [step.step_id],
+            "operation_names": [operation.op for operation in program.operations],
             "execution_kind": ExecutionKind.TRANSFORM_DSL.value,
             "capability_id": step.capability_id,
+            "capability_version": self.context.registry.get(step.capability_id).version,
             "output_contract_version": grant.output_contract_version,
+            "input_schema_digest": self.context.input_schema_digest,
+            "validator_digest": self.context.validator_digest,
+            "runtime_signature_hash": self.context.runtime_compatibility_signature,
             "operations": [operation.canonical_payload() for operation in program.operations],
             "source_program_hash": program.program_hash,
         }
@@ -1994,6 +2139,11 @@ class AdaptiveCapabilityDispatcher:
                 (replay_memory_id,)
                 if replay_memory_id and dsl_repair_count == 0
                 else ()
+            ),
+            recipe_step_status=(
+                "skipped_generation"
+                if replay_memory_id and dsl_repair_count == 0
+                else "recomputed_current_input"
             ),
         )
         return AdaptiveStepResult(
@@ -2044,12 +2194,23 @@ class AdaptiveCapabilityDispatcher:
             raise AdaptiveDispatchError("llm_python_handler_not_registered")
         if not grant.input_ref_ids:
             raise AdaptiveDispatchError("llm_python_requires_verified_artifact")
+        # ``CodeAct`` normally consumes a verified execution artifact.  A
+        # fixed four-role recipe can also hand the executor a verified
+        # evidence pack directly, in which case the pack is projected into a
+        # typed input.  When an execution artifact is already present, the
+        # evidence pack is retrieval context only: it must not be silently
+        # mounted as executable data or make CodeAct depend on fields that are
+        # not part of the artifact contract.
+        artifact_ref_ids = tuple(
+            ref_id for ref_id in grant.input_ref_ids if ref_id in self.context.artifacts
+        )
+        project_evidence_as_input = not artifact_ref_ids
         stored_inputs: list[StoredAdaptiveArtifact] = []
         verified_inputs: list[tuple[dict[str, object], ...]] = []
         retrieval_context: list[dict[str, object]] = []
         evidence_manifest: dict[str, str] = {}
         evidence_provenance: list[str] = []
-        for ref_id in grant.input_ref_ids:
+        for input_index, ref_id in enumerate(grant.input_ref_ids):
             stored = self.context.artifacts.get(ref_id)
             if stored is not None:
                 if not self._artifact_in_grant_scope(stored, grant):
@@ -2073,8 +2234,39 @@ class AdaptiveCapabilityDispatcher:
                     "locator": "" if item.locator is None else repr(item.locator),
                     "text": item.rendered_text[:800],
                 })
-        if not stored_inputs:
-            raise AdaptiveDispatchError("llm_python_requires_verified_artifact")
+            if not project_evidence_as_input:
+                continue
+            input_schema = self._configured_input_schema(step.capability_id, step.step_id)
+            projection_request = EvidenceProjectionRequest(
+                task_id=grant.task_id,
+                session_id=grant.session_id,
+                step_id=grant.step_id,
+                evidence_pack_ref_id=ref_id,
+                evidence_pack_hash=evidence_pack.pack_hash,
+                requested_fields=tuple(input_schema),
+                output_contract_version="statebus.transform_input.v1",
+            )
+            rows, projected_artifact, projection_report = self.projection_adapter.project(
+                request=projection_request,
+                evidence_pack=evidence_pack,
+                coverage_status=self.context.evidence_statuses.get(
+                    ref_id,
+                    EvidenceCoverageStatus.INSUFFICIENT_EVIDENCE,
+                ),
+                grant=grant,
+                attempt_workspace=attempt_workspace / "evidence_projection" / str(input_index),
+            )
+            projected = StoredAdaptiveArtifact(
+                artifact=projected_artifact,
+                rows=rows,
+                provenance_item_ids=projection_report.consumed_evidence_item_ids,
+            )
+            self.context.artifacts[projected_artifact.artifact_id] = projected
+            self.context.projection_reports[projection_report.report_hash] = projection_report
+            stored_inputs.append(projected)
+            verified_inputs.append(rows)
+        if not verified_inputs:
+            raise AdaptiveDispatchError("llm_python_requires_verified_input")
         verified_rows = verified_inputs[-1]
         memory_inputs = self._memory_inputs_for_step(step=step, grant=grant)
         before_memory_surface_hash = sha256_digest({
@@ -2088,6 +2280,7 @@ class AdaptiveCapabilityDispatcher:
             capability_id=step.capability_id,
             output_contract_version=grant.output_contract_version,
         )
+        self._require_validated_recipe_match(memory_inputs, replay_recipe)
         if replay_recipe is not None and replay_memory_id:
             replay_input = next(
                 item for item in memory_inputs if str(item.get("ref_id", "")) == replay_memory_id
@@ -2097,7 +2290,7 @@ class AdaptiveCapabilityDispatcher:
         policy = self.context.code_policy_factory(step)
         if not policy.enabled or not policy.require_bwrap:
             raise AdaptiveDispatchError("llm_python_policy_not_bwrap_required")
-        if len(policy.allowed_input_relpaths) == 1 and len(stored_inputs) > 1:
+        if len(policy.allowed_input_relpaths) == 1 and len(verified_inputs) > 1:
             policy = replace(
                 policy,
                 allowed_input_relpaths=(
@@ -2105,7 +2298,7 @@ class AdaptiveCapabilityDispatcher:
                     *(f"inputs/upstream-{index}.json" for index in range(1, len(stored_inputs))),
                 ),
             )
-        if len(policy.allowed_input_relpaths) != len(stored_inputs):
+        if len(policy.allowed_input_relpaths) != len(verified_inputs):
             raise AdaptiveDispatchError("llm_python_input_path_arity_mismatch")
         input_files = {
             relpath: stable_json_dumps(list(rows)).encode("utf-8")
@@ -2239,9 +2432,17 @@ class AdaptiveCapabilityDispatcher:
             provenance_item_ids=combined_provenance,
         )
         self.context.execution_recipes_by_artifact[artifact.artifact_id] = {
+            "recipe_id": f"{step.capability_id}:{ExecutionKind.LLM_BOUNDED_PYTHON.value}",
+            "recipe_version": "v1",
+            "step_ids": [step.step_id],
+            "operation_names": ["bounded_python_program"],
             "execution_kind": ExecutionKind.LLM_BOUNDED_PYTHON.value,
             "capability_id": step.capability_id,
+            "capability_version": self.context.registry.get(step.capability_id).version,
             "output_contract_version": grant.output_contract_version,
+            "input_schema_digest": self.context.input_schema_digest,
+            "validator_digest": self.context.validator_digest,
+            "runtime_signature_hash": self.context.runtime_compatibility_signature,
             "source": source,
             "source_hash": sha256_digest(source.encode("utf-8")),
         }
@@ -2257,13 +2458,42 @@ class AdaptiveCapabilityDispatcher:
                 if replay_memory_id and not outcome.repairs
                 else ()
             ),
+            recipe_step_status=(
+                "skipped_generation"
+                if replay_memory_id and not outcome.repairs
+                else "recomputed_current_input"
+            ),
+        )
+        output_kinds = self.context.registry.get(step.capability_id).output_ref_kinds
+        # An evidence ref may be an executor input used as retrieval context,
+        # but it is only an output when the capability contract explicitly
+        # declares ``canonical_evidence_pack`` in ``output_ref_kinds``.  The
+        # executor's public contract normally produces only its artifact; a
+        # previous implementation appended every evidence input while still
+        # declaring one output kind, so Runtime rejected an otherwise valid
+        # CodeAct artifact with a generic ``step_validator_failed``.
+        passthrough_evidence_refs = (
+            tuple(
+                ref_id
+                for ref_id in grant.input_ref_ids
+                if ref_id in self.context.evidence_packs
+            )
+            if "canonical_evidence_pack" in output_kinds
+            else ()
+        )
+        if "canonical_evidence_pack" in output_kinds and not passthrough_evidence_refs:
+            raise AdaptiveDispatchError("llm_python_evidence_passthrough_missing")
+        output_refs = (artifact.artifact_id, *passthrough_evidence_refs)
+        output_ref_kinds = (
+            ("execution_artifact",)
+            + ("canonical_evidence_pack",) * len(passthrough_evidence_refs)
         )
         return AdaptiveStepResult(
             grant_hash=grant.grant_hash,
             success=True,
             attempt_id=grant.attempt_id,
-            output_refs=(artifact.artifact_id,),
-            output_ref_kinds=("execution_artifact",),
+            output_refs=output_refs,
+            output_ref_kinds=output_ref_kinds,
             validator_report_hashes=quality_hashes,
             quality_report_hashes=quality_hashes,
             source_hashes=(outcome.record.source_hash,),
@@ -2749,6 +2979,15 @@ class AdaptiveCapabilityDispatcher:
         """Reject a DSL program that changes a registered business operation."""
         operation = str(semantics.get("operation", ""))
         if not operation:
+            return
+        # The deterministic fixture is an explicit offline-only seam.  Its
+        # source-derived runner owns the operation semantics; live requests do
+        # not have this operation available because their interpreter has no
+        # fixture runner.
+        if (
+            len(program.operations) == 1
+            and program.operations[0].op == "deterministic_fixture"
+        ):
             return
         dsl_operation = str(semantics.get("dsl_operation", ""))
         dsl_arguments = semantics.get("dsl_arguments")

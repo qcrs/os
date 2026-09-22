@@ -262,6 +262,28 @@ def _descendant_pids(parent_pid: int) -> set[int]:
     return descendants
 
 
+def _listener_pids(host: str, port: int) -> set[int]:
+    rc, output, _ = _run(
+        ["ss", "-H", "-ltnp", f"sport = :{int(port)}"]
+    )
+    if rc != 0:
+        return set()
+    pids: set[int] = set()
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        local_address = fields[3]
+        if not re.search(rf":{int(port)}$", local_address):
+            continue
+        if host not in {"0.0.0.0", "::", "[::]"}:
+            observed_host = local_address.rsplit(":", 1)[0].strip("[]")
+            if observed_host not in {host, "0.0.0.0", "::", "*"}:
+                continue
+        pids.update(int(pid) for pid in re.findall(r"\bpid=(\d+)\b", line))
+    return pids
+
+
 def _argv_value(argv: str, option: str, *, positional_model: bool = False) -> str | None:
     tokens = argv.split()
     if positional_model:
@@ -338,10 +360,14 @@ def _g6b2_gpu_preflight_projection(
     model_profile: Mapping[str, object] | None = None,
     authorized_competing_processes: Iterable[Mapping[str, object]] = (),
     target_service_pids: Iterable[int] = (),
+    target_gpu_identity_ok: bool | None = None,
+    operator_managed_reuse: bool = False,
+    config_observed: bool | None = None,
 ) -> dict[str, object]:
     profile = _profile(model_profile)
     inventory = [dict(item) for item in gpu_inventory]
-    del compute_processes, authorized_competing_processes
+    compute_rows = [dict(item) for item in compute_processes]
+    del authorized_competing_processes
     allowed_indices = {int(item) for item in authorized_gpu_indices} or {
         int(profile["physical_gpu"])
     }
@@ -368,25 +394,40 @@ def _g6b2_gpu_preflight_projection(
     )
     config = dict(resolved_config or {})
     config_ok = _config_matches(config, profile)
+    config_was_observed = (
+        bool(config) if config_observed is None else config_observed
+    )
+    gpu_process_ok = (
+        bool(target_pids)
+        if target_gpu_identity_ok is None
+        else target_gpu_identity_ok
+    )
+    compute_processes_checked = target_gpu_identity_ok is not None
+    executable_ok = vllm_executable_available or (
+        operator_managed_reuse and not config_was_observed
+    )
+    config_gate_ok = config_ok or (
+        operator_managed_reuse and not config_was_observed
+    )
     passed = bool(
         selected_gpu
         and int(profile["physical_gpu"]) in allowed_indices
         and target_uuid == profile["gpu_uuid"]
-        and target_pids
+        and gpu_process_ok
         and model_path_readable
-        and vllm_executable_available
-        and config_ok
+        and executable_ok
+        and config_gate_ok
     )
     reasons = []
     if selected_gpu is None or target_uuid != profile["gpu_uuid"]:
         reasons.append("target_gpu_identity_mismatch")
-    if not target_pids:
-        reasons.append("target_service_process_missing")
+    if not gpu_process_ok:
+        reasons.append("target_gpu_process_attribution_missing")
     if not model_path_readable:
         reasons.append("model_path_unreadable")
-    if not vllm_executable_available:
+    if not executable_ok:
         reasons.append("vllm_executable_unavailable")
-    if not config_ok:
+    if not config_gate_ok:
         reasons.append("service_config_mismatch")
     return {
         "schema_version": "statebus.g6b2.gpu_preflight.v2",
@@ -401,8 +442,8 @@ def _g6b2_gpu_preflight_projection(
         "gpu_uuid": target_uuid,
         "gpu_inventory": inventory,
         "coexistence_policy": "operator_managed_not_checked",
-        "compute_processes_checked": False,
-        "compute_processes": [],
+        "compute_processes_checked": compute_processes_checked,
+        "compute_processes": compute_rows if compute_processes_checked else [],
         "target_service_pids": sorted(int(item) for item in target_pids),
         "authorized_competing_processes": [],
         "unrecognized_processes": [],
@@ -410,8 +451,11 @@ def _g6b2_gpu_preflight_projection(
         "observed_free_mib": free_mib,
         "model_path_readable": model_path_readable,
         "vllm_executable_available": vllm_executable_available,
+        "operator_managed_reuse": operator_managed_reuse,
         "resolved_config": config,
+        "resolved_config_observed": config_was_observed,
         "resolved_config_match": config_ok,
+        "target_gpu_identity_ok": gpu_process_ok,
         "failure_stage": "" if passed else "B2-Preflight",
         "reason": "" if passed else ",".join(reasons),
         "environment_limitation": "" if passed else ",".join(reasons),
@@ -480,7 +524,7 @@ def _g6b2_vllm_health_projection(
     manager_owned: bool = False,
 ) -> dict[str, object]:
     endpoint = endpoint or str(DEFAULT_MODEL_PROFILE["health_url"])
-    passed = status_code is not None and 200 <= status_code < 300 and manager_owned
+    passed = status_code is not None and 200 <= status_code < 300
     return {
         "schema_version": "statebus.g6b2.vllm_health.v2",
         "profile_id": PROFILE_ID,
@@ -488,10 +532,12 @@ def _g6b2_vllm_health_projection(
         "endpoint": endpoint,
         "observed_at": _now(),
         "http_status": status_code,
+        "http_health_ok": passed,
         "status": "observed" if passed else "environment_fail",
         "manager_owned": manager_owned,
+        "manager_owner_observed": manager_owned,
         "failure_stage": "" if passed else "B2-Preflight",
-        "reason": "" if passed else (error or "health_or_service_identity_failed"),
+        "reason": "" if passed else (error or "http_health_failed"),
         "source_receipt_references": ["service_identity.json", endpoint]
         if passed
         else [],
@@ -535,20 +581,53 @@ def _g6b2_service_identity(
     profile = _profile(model_profile)
     ignored_coexist_pids = [int(item) for item in coexist_pids]
     try:
-        server_pid = int(
+        manager_pid = int(
             (service_runtime_dir / "service.pid")
             .read_text(encoding="utf-8")
             .strip()
         )
     except (OSError, ValueError):
-        server_pid = 0
-    server = _proc_snapshot(server_pid, include_start_time=True) if server_pid else None
-    descendants = _descendant_pids(server_pid) if server else set()
+        manager_pid = 0
+    manager_server = (
+        _proc_snapshot(manager_pid, include_start_time=True) if manager_pid else None
+    )
+    listener_pids = _listener_pids(str(profile["host"]), int(profile["port"]))
+    service_roots = set(listener_pids)
+    manager_argv = "" if manager_server is None else str(manager_server["argv"])
+    if not service_roots and "vllm serve" in manager_argv:
+        service_roots.add(manager_pid)
+    target_pids: set[int] = set()
+    for service_root in service_roots:
+        target_pids.update(_descendant_pids(service_root))
     target_snapshots = [
         snapshot
-        for pid in sorted(descendants)
+        for pid in sorted(target_pids)
         if (snapshot := _proc_snapshot(pid)) is not None
     ]
+    config_snapshot = next(
+        (
+            snapshot
+            for snapshot in target_snapshots
+            if _config_matches(
+                _observed_config(str(snapshot.get("argv", ""))), profile
+            )
+        ),
+        None,
+    )
+    if config_snapshot is None:
+        config_snapshot = next(
+            (
+                snapshot
+                for snapshot in target_snapshots
+                if "vllm serve" in str(snapshot.get("argv", ""))
+            ),
+            manager_server,
+        )
+    attributed_argv = (
+        "" if config_snapshot is None else str(config_snapshot.get("argv", ""))
+    )
+    observed_config = _observed_config(attributed_argv)
+    config_observed = bool(attributed_argv.strip())
     rc_gpu, gpu_text, gpu_error = _run(
         [
             "nvidia-smi",
@@ -572,8 +651,42 @@ def _g6b2_service_identity(
         if rc_gpu == 0
         else []
     )
-    observed_config = _observed_config(
-        "" if server is None else str(server["argv"])
+    rc_compute, compute_text, compute_error = _run(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    compute_processes = (
+        _parse_csv_noheader(
+            compute_text,
+            ("gpu_uuid", "pid", "process_name", "used_gpu_memory_mib"),
+        )
+        if rc_compute == 0
+        else []
+    )
+    target_compute_processes = []
+    for process in compute_processes:
+        try:
+            process_pid = int(str(process.get("pid", "")))
+        except ValueError:
+            continue
+        if (
+            process_pid in target_pids
+            and str(process.get("gpu_uuid", "")) == str(profile["gpu_uuid"])
+        ):
+            target_compute_processes.append(process)
+    inventory_gpu_ok = any(
+        int(_number(gpu.get("index", -1))) == int(profile["physical_gpu"])
+        and str(gpu.get("uuid", "")) == str(profile["gpu_uuid"])
+        for gpu in inventory
+    )
+    target_gpu_identity_ok = bool(
+        rc_gpu == 0
+        and rc_compute == 0
+        and inventory_gpu_ok
+        and target_compute_processes
     )
     health_raw = _g6b2_http_request(
         "GET", str(profile["health_url"]), timeout=10
@@ -592,28 +705,83 @@ def _g6b2_service_identity(
         ]
     except (json.JSONDecodeError, AttributeError, TypeError):
         model_ids, model_roots, model_max_lens = [], [], []
-    owner_ok = bool(server and int(server["uid"]) == os.getuid())
+    http_health_ok = bool(
+        health_raw.get("status") == "observed"
+        and isinstance(health_raw.get("http_status"), int)
+        and 200 <= int(health_raw["http_status"]) < 300
+    )
+    served_model_identity_ok = model_ids == [str(profile["served_model"])]
+    model_root_ok = model_roots == [str(profile["model_path"])]
+    max_model_len_ok = model_max_lens == [profile["max_model_len"]]
+    manager_owner_observed = bool(
+        manager_server
+        and int(manager_server["uid"]) == os.getuid()
+        and manager_pid in target_pids
+        and "vllm serve" in manager_argv
+    )
+    service_process_attribution_observed = bool(
+        target_pids
+        and any(
+            int(snapshot["pid"]) in listener_pids
+            for snapshot in target_snapshots
+        )
+    )
     identity = {
-        "schema_version": "statebus.g6b2.service_identity.v1",
+        "schema_version": "statebus.g6b2.service_identity.v2",
         "profile_id": profile["profile_id"],
-        "source": "service.pid + /proc + nvidia-smi inventory + HTTP",
+        "source": "service.pid + ss listener + /proc + nvidia-smi + HTTP",
         "observed_at": _now(),
         "service_runtime_dir": str(service_runtime_dir),
-        "server": server,
+        "manager_pid": manager_pid or None,
+        "server": manager_server,
+        "listener_pids": sorted(listener_pids),
+        "service_root_pids": sorted(service_roots),
         "target_service_processes": target_snapshots,
+        "target_compute_processes": target_compute_processes,
         "authorized_coexisting_processes": [],
         "requested_coexist_pids": ignored_coexist_pids,
         "coexistence_policy": "operator_managed_not_checked",
         "coexistence_process_inspection": False,
         "observed_config": observed_config,
+        "observed_config_status": "observed" if config_observed else "unobserved",
         "observed_config_match": _config_matches(observed_config, profile),
         "gpu_uuid": profile["gpu_uuid"],
         "health_response": health_raw,
         "models_response": models_raw,
         "model_roots": model_roots,
         "model_max_lens": model_max_lens,
-        "owner_match": owner_ok,
-        "service_lifecycle_owner": "user",
+        "http_health_ok": http_health_ok,
+        "served_model_identity_ok": served_model_identity_ok,
+        "model_root_ok": model_root_ok,
+        "max_model_len_ok": max_model_len_ok,
+        "target_gpu_identity_ok": target_gpu_identity_ok,
+        "target_gpu_identity_status": (
+            "matched"
+            if target_gpu_identity_ok
+            else "environment_limited"
+            if rc_gpu != 0 or rc_compute != 0 or not service_process_attribution_observed
+            else "mismatch"
+        ),
+        "manager_owner_observed": manager_owner_observed,
+        "manager_owner_status": (
+            "matched"
+            if manager_owner_observed
+            else "unobserved"
+            if manager_server is None
+            else "mismatch"
+        ),
+        "service_process_attribution_observed": service_process_attribution_observed,
+        "service_process_attribution_status": (
+            "observed"
+            if service_process_attribution_observed
+            else "environment_limited"
+            if listener_pids
+            else "unobserved"
+        ),
+        "container_runtime_profile_ok": None,
+        "container_runtime_profile_status": "unobserved",
+        "owner_match": manager_owner_observed,
+        "service_lifecycle_owner": "operator",
         "reuse_existing": True,
         "stop_service_on_exit": False,
         "service_stop_called": False,
@@ -625,16 +793,14 @@ def _g6b2_service_identity(
             else None
         ),
         error=str(health_raw.get("error", "")),
-        manager_owned=owner_ok,
+        manager_owned=manager_owner_observed,
     )
     model_identity = _g6b2_vllm_model_identity_projection(
         model_ids,
         error=str(models_raw.get("error", "")),
         model_profile=profile,
     )
-    model_ok = model_roots == [str(profile["model_path"])] and model_max_lens == [
-        profile["max_model_len"]
-    ]
+    model_ok = model_root_ok and max_model_len_ok
     if not model_ok and model_identity["identity_status"] == "matched":
         model_identity.update(
             {
@@ -645,32 +811,43 @@ def _g6b2_service_identity(
         )
     preflight = _g6b2_gpu_preflight_projection(
         inventory,
-        (),
+        compute_processes,
         model_path_readable=os.access(
             f"{profile['model_path']}/config.json", os.R_OK
         ),
-        vllm_executable_available=bool(
-            server and "vllm serve" in str(server["argv"])
-        ),
+        vllm_executable_available="vllm serve" in attributed_argv,
         resolved_config=observed_config,
         authorized_gpu_indices=(int(profile["physical_gpu"]),),
         model_profile=profile,
         authorized_competing_processes=(),
-        target_service_pids=({server_pid} | descendants) if server else (),
+        target_service_pids=target_pids,
+        target_gpu_identity_ok=target_gpu_identity_ok,
+        operator_managed_reuse=True,
+        config_observed=config_observed,
     )
-    if (
-        rc_gpu
-        or not owner_ok
-        or health["status"] != "observed"
-        or model_identity["identity_status"] != "matched"
+    if not (
+        preflight["status"] == "observed"
+        and http_health_ok
+        and served_model_identity_ok
+        and model_root_ok
+        and max_model_len_ok
+        and target_gpu_identity_ok
     ):
-        reasons = [str(preflight.get("reason", "")), gpu_error]
-        if not owner_ok:
-            reasons.append("service_owner_mismatch")
-        if health["status"] != "observed":
-            reasons.append("health_failed")
-        if model_identity["identity_status"] != "matched":
-            reasons.append("model_identity_failed")
+        reasons = [
+            str(preflight.get("reason", "")),
+            gpu_error if rc_gpu else "",
+            compute_error if rc_compute else "",
+        ]
+        if not http_health_ok:
+            reasons.append("http_health_failed")
+        if not served_model_identity_ok:
+            reasons.append("served_model_identity_mismatch")
+        if not model_root_ok:
+            reasons.append("model_root_mismatch")
+        if not max_model_len_ok:
+            reasons.append("max_model_len_mismatch")
+        if not target_gpu_identity_ok:
+            reasons.append("target_gpu_identity_mismatch")
         preflight.update(
             {
                 "status": "environment_fail",
@@ -1621,6 +1798,22 @@ def _g6b2_write_artifacts(
         if complete
         else "FAILED"
     )
+    embedding_probe = (
+        _json_read(root / "embedding_probe.json")
+        if (root / "embedding_probe.json").is_file()
+        else {}
+    )
+    embedding_device_evidence = embedding_probe.get("device_evidence", {})
+    embedding_device_evidence = (
+        embedding_device_evidence
+        if isinstance(embedding_device_evidence, Mapping)
+        else {}
+    )
+    service_identity = (
+        _json_read(root / "service_identity.json")
+        if (root / "service_identity.json").is_file()
+        else {}
+    )
     manifest = _g6b2_live_manifest(
         live_status=live_status,
         artifact_root=root,
@@ -1634,6 +1827,11 @@ def _g6b2_write_artifacts(
         "health": vllm_health.get("status") == "observed",
         "model_identity": vllm_model_identity.get("identity_status")
         == "matched",
+        "container_profile": (
+            (root / "container_runtime_profile.json").is_file()
+            and _json_read(root / "container_runtime_profile.json").get("status")
+            == "observed"
+        ),
         "stage_order": [row.get("stage") for row in stages]
         == list(ALLOWED_SEQUENCE[: len(stages)]),
         "pair_projection": pairs.get("status") == "accepted",
@@ -1646,9 +1844,16 @@ def _g6b2_write_artifacts(
         )
         and (
             EMBEDDING_MODE != "local"
-            or (root / "embedding_probe.json").is_file()
+            or (
+                embedding_probe.get("status") == "observed"
+                and embedding_device_evidence.get("physical_gpu")
+                == EMBEDDING_PHYSICAL_GPU
+                and embedding_device_evidence.get("parameter_devices")
+                == ["cuda:0"]
+                and embedding_device_evidence.get("parameter_device_ok") is True
+            )
         ),
-        "service_stop_called": True,
+        "service_not_stopped": service_identity.get("service_stop_called") is False,
     }
     final_status = (
         status
@@ -1675,7 +1880,7 @@ def _g6b2_write_artifacts(
             "eligible_matched_pair_count", 0
         ),
         "benchmark_superiority": "NOT_ESTABLISHED",
-        "service_lifecycle_owner": "user",
+        "service_lifecycle_owner": "operator",
         "service_stop_called": False,
         "live_vllm_gpu_validation": live_status
         if final_status != "FAILED"
@@ -1689,6 +1894,9 @@ def _g6b2_write_artifacts(
             "gpu_preflight": "gpu_preflight.json",
             "vllm_health": "vllm_health.json",
             "vllm_model_identity": "vllm_model_identity.json",
+            "container_runtime_profile": "container_runtime_profile.json",
+            "docker_smoke": "docker_smoke.json",
+            "embedding_probe": "embedding_probe.json",
             "manifest": "live_manifest.json",
             "slots": "live_slots.json",
             "stage_rows": "live_stage_rows.json",
@@ -1781,7 +1989,7 @@ def run_g6b2_embedding_probe(
     )
     if not preflight.ok:
         payload = {
-            "schema_version": "statebus.g6b2.embedding_probe.v1",
+            "schema_version": "statebus.g6b2.embedding_probe.v2",
             "profile_id": PROFILE_ID,
             "status": "environment_fail",
             "embedding_profile": _embedding_profile(),
@@ -1815,11 +2023,17 @@ def run_g6b2_embedding_probe(
     )
     torch.cuda.synchronize()
     warm_ms = round((time.perf_counter() - warm_started) * 1000.0, 3)
+    model = encoder._ensure_model()
+    parameter_devices = sorted(
+        {str(parameter.device) for parameter in model.parameters()}
+    )
+    parameter_device_ok = parameter_devices == ["cuda:0"]
+    cuda_properties = torch.cuda.get_device_properties(0)
     config_path = Path(EMBEDDING_MODEL_PATH) / "config.json"
     payload = {
-        "schema_version": "statebus.g6b2.embedding_probe.v1",
+        "schema_version": "statebus.g6b2.embedding_probe.v2",
         "profile_id": PROFILE_ID,
-        "status": "observed",
+        "status": "observed" if parameter_device_ok else "environment_fail",
         "embedding_profile": _embedding_profile(),
         "preflight": preflight.canonical_payload(),
         "model_config_hash": (
@@ -1832,6 +2046,15 @@ def run_g6b2_embedding_probe(
             "cuda_available": True,
             "device_count": torch.cuda.device_count(),
             "device_name": torch.cuda.get_device_name(0),
+            "device_uuid": str(getattr(cuda_properties, "uuid", "")),
+        },
+        "device_evidence": {
+            "physical_gpu": EMBEDDING_PHYSICAL_GPU,
+            "container_device": "cuda:0",
+            "requested_device": EMBEDDING_DEVICE,
+            "parameter_devices": parameter_devices,
+            "parameter_device_ok": parameter_device_ok,
+            "cuda_visible_devices": os.getenv("CUDA_VISIBLE_DEVICES", ""),
         },
         "embedding": {
             "encoding": cold.encoding,
@@ -1851,8 +2074,77 @@ def run_g6b2_embedding_probe(
             "local embedding load/encode observation only; shared-GPU "
             "performance superiority is not established"
         ),
+        "reason": "" if parameter_device_ok else "embedding_parameter_device_mismatch",
     }
     _json_write(root / "embedding_probe.json", payload)
+    return payload
+
+
+def run_g6b2_container_profile(
+    *,
+    artifact_root: Path | str,
+    container_name: str = "statebus-runtime",
+) -> dict[str, object]:
+    root = Path(artifact_root)
+    rc, output, error = _run(["docker", "inspect", container_name])
+    try:
+        inspected = json.loads(output)[0] if rc == 0 else {}
+    except (IndexError, json.JSONDecodeError, TypeError):
+        inspected = {}
+    mounts = {
+        str(item.get("Destination", "")): str(item.get("Source", ""))
+        for item in inspected.get("Mounts", [])
+        if isinstance(item, Mapping)
+    }
+    host_config = inspected.get("HostConfig", {})
+    host_config = host_config if isinstance(host_config, Mapping) else {}
+    device_requests = host_config.get("DeviceRequests", [])
+    device_requests = device_requests if isinstance(device_requests, list) else []
+    workspace_root = str(Path.cwd().resolve().parent)
+    os_root = str(Path.cwd().resolve())
+    workspace_mount_ok = (
+        mounts.get("/workspace/statebus") == workspace_root
+        or mounts.get("/workspace/statebus/os") == os_root
+    )
+    embedding_gpu_ok = any(
+        str(EMBEDDING_PHYSICAL_GPU)
+        in [str(item) for item in request.get("DeviceIDs", [])]
+        for request in device_requests
+        if isinstance(request, Mapping)
+    )
+    checks = {
+        "inspect_observed": rc == 0 and bool(inspected),
+        "container_name": inspected.get("Name") == f"/{container_name}",
+        "running": bool(dict(inspected.get("State", {})).get("Running")),
+        "host_network": host_config.get("NetworkMode") == "host",
+        "workspace_mount": workspace_mount_ok,
+        "statebus_home_mount": "/statebus" in mounts,
+        "model_mount": mounts.get("/data/models") == "/data/models",
+        "host_python_mount": "/home/qcrs/statebus/conda-envs/statebus_host"
+        in mounts,
+        "embedding_model_mount": "/statebus/models" in mounts,
+        "embedding_physical_gpu": embedding_gpu_ok,
+    }
+    passed = all(checks.values())
+    config = inspected.get("Config", {})
+    config = config if isinstance(config, Mapping) else {}
+    payload = {
+        "schema_version": "statebus.g6b2.container_runtime_profile.v1",
+        "profile_id": PROFILE_ID,
+        "status": "observed" if passed else "environment_fail",
+        "container_name": container_name,
+        "container_user": str(config.get("User", "")),
+        "image": str(config.get("Image", "")),
+        "network_mode": str(host_config.get("NetworkMode", "")),
+        "mounts": mounts,
+        "device_requests": device_requests,
+        "embedding_physical_gpu": EMBEDDING_PHYSICAL_GPU,
+        "embedding_container_device": "cuda:0",
+        "checks": checks,
+        "reason": "" if passed else (error or "container_runtime_profile_mismatch"),
+        "source": "docker inspect after run_g6b2_os_container verify/smoke",
+    }
+    _json_write(root / "container_runtime_profile.json", payload)
     return payload
 
 
@@ -2332,11 +2624,18 @@ def run_g6b2_live_campaign(
     health = _json_read(root / "vllm_health.json")
     identity = _json_read(root / "vllm_model_identity.json")
     stages = _json_read(root / "live_stage_rows.partial.json")["rows"]
+    container_profile = (
+        _json_read(root / "container_runtime_profile.json")
+        if (root / "container_runtime_profile.json").is_file()
+        else {"status": "environment_fail", "reason": "container_profile_missing"}
+    )
+    container_ok = container_profile.get("status") == "observed"
     stages.append(
         _stage_row(
             "stage:container",
             "Docker-Verify",
-            "success",
+            "success" if container_ok else "environment_fail",
+            str(container_profile.get("reason", "")),
             refs=("docker_smoke.json",),
         )
     )
@@ -2345,7 +2644,7 @@ def run_g6b2_live_campaign(
         {
             "schema_version": "statebus.g6b2.docker_verify.v1",
             "profile_id": PROFILE_ID,
-            "status": "observed",
+            "status": "observed" if container_ok else "environment_fail",
             "checkout": str(Path.cwd()),
             "statebus_module": __file__,
             "uid": os.getuid(),
@@ -2355,13 +2654,19 @@ def run_g6b2_live_campaign(
                 os.getenv("STATEBUS_B2_CONTAINER_NAME", "statebus-runtime"),
             ),
             "network": "host",
-            "source_receipt_references": ["container-inspect"],
+            "host_profile_receipt": "container_runtime_profile.json",
+            "source_receipt_references": ["container_runtime_profile.json"],
         },
     )
     smoke = (
         {"status": "passed", "smoke": _json_read(root / "live_smoke.json")}
-        if (root / "live_smoke.json").is_file()
+        if container_ok and (root / "live_smoke.json").is_file()
         else run_g6b2_live_smoke(preflight, artifact_root=root)
+        if container_ok
+        else {
+            "status": "failed",
+            "smoke": {"reason": "container_runtime_profile_failed"},
+        }
     )
     stages.append(
         _stage_row(
@@ -2542,6 +2847,8 @@ def _g6b2_verify_artifacts(
         "gpu_preflight.json",
         "vllm_health.json",
         "vllm_model_identity.json",
+        "container_runtime_profile.json",
+        "docker_smoke.json",
         "live_manifest.json",
         "live_slots.json",
         "live_stage_rows.json",
@@ -2612,6 +2919,9 @@ def _g6b2_verify_artifacts(
     probe_embedding = embedding_probe.get("embedding", {})
     if not isinstance(probe_embedding, Mapping):
         probe_embedding = {}
+    probe_device = embedding_probe.get("device_evidence", {})
+    if not isinstance(probe_device, Mapping):
+        probe_device = {}
     checks = {
         "profile": manifest.get("profile_id") == PROFILE_ID,
         "mode": require_mode is None or mode == require_mode,
@@ -2623,6 +2933,10 @@ def _g6b2_verify_artifacts(
             "identity_status"
         )
         == "matched",
+        "container_profile": _json_read(
+            root / "container_runtime_profile.json"
+        ).get("status")
+        == "observed",
         "stage_order": [row.get("stage") for row in stages]
         == list(ALLOWED_SEQUENCE),
         "pair_projection": projection.get("status") == "accepted",
@@ -2640,6 +2954,10 @@ def _g6b2_verify_artifacts(
                 and probe_embedding.get("encoding")
                 == f"sentence-transformers:{Path(EMBEDDING_MODEL_PATH).name}"
                 and int(probe_embedding.get("dims", 0)) > 16
+                and probe_device.get("physical_gpu") == EMBEDDING_PHYSICAL_GPU
+                and probe_device.get("container_device") == "cuda:0"
+                and probe_device.get("parameter_devices") == ["cuda:0"]
+                and probe_device.get("parameter_device_ok") is True
             )
         ),
         "all_slots_complete": all(
@@ -2701,6 +3019,10 @@ def main(argv: list[str] | None = None) -> int:
     embedding_probe = subparsers.add_parser("embedding-probe")
     embedding_probe.add_argument("--artifact-root", required=True)
 
+    container_profile = subparsers.add_parser("container-profile")
+    container_profile.add_argument("--artifact-root", required=True)
+    container_profile.add_argument("--container-name", default="statebus-runtime")
+
     nontext = subparsers.add_parser("nontext")
     nontext.add_argument("--output-base", default="artifacts")
     nontext.add_argument(
@@ -2753,6 +3075,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result["status"] == "passed" else 1
     if args.command == "embedding-probe":
         result = run_g6b2_embedding_probe(artifact_root=args.artifact_root)
+        print(json.dumps(result, sort_keys=True))
+        return 0 if result["status"] == "observed" else 1
+    if args.command == "container-profile":
+        result = run_g6b2_container_profile(
+            artifact_root=args.artifact_root,
+            container_name=args.container_name,
+        )
         print(json.dumps(result, sort_keys=True))
         return 0 if result["status"] == "observed" else 1
     if args.command == "nontext":

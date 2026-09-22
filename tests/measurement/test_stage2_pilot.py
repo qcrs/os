@@ -9,6 +9,7 @@ import time
 import pytest
 
 import statebus.benchmark.stage2_pilot as pilot
+from statebus.benchmark.contest_fairness import validate_c2a_trace
 from statebus.integrations.llm import LLMResult
 from statebus.utils import sha256_digest
 
@@ -499,6 +500,39 @@ def test_adaptive_trace_gate_accepts_three_step_runtime_and_keeps_legacy_mismatc
     assert gate["legacy_topology"]["diagnostic"]["valid"] is False
 
 
+def test_canonical_validator_accepts_controller_planned_adaptive_topology() -> None:
+    trace, summary, _grant_receipts = _adaptive_trace_fixture()
+    trace = {
+        **trace,
+        "schema_version": "statebus.canonical_trace.v1",
+        "case_id": "case-1",
+        "task_id": "case-1",
+        "canonical_task_spec_hash": "task-hash",
+        "lane": "adaptive_routed",
+        "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+        "runtime_authority": "AdaptiveRuntimeEngine",
+        "role_graph": "planner->retriever->executor->summarizer",
+        "dependency_edges": [["planner", "retriever"], ["retriever", "executor"], ["executor", "summarizer"]],
+        "recipe_identity": "c2a-four-role@v1",
+        "capability_identity": "c2a_four_role_v1",
+        "provider_calls": [{"role": "planner", "attempts": [{"raw_response_hash": "planner-response"}]}],
+        "terminal_status": "success",
+        "failure_stage": "",
+        "error_code": "",
+        "canonical_marker": {"observed": True},
+    }
+    manifest = {
+        "lane": "adaptive_routed",
+        "case_id": "case-1",
+        "task_contract_hash": "task-hash",
+    }
+
+    validation = validate_c2a_trace(trace, manifest)
+
+    assert validation["valid"] is True
+    assert validation["failed_fields"] == []
+
+
 def test_adaptive_trace_gate_rejects_missing_receipt_wrong_step_and_duplicate_attempt() -> None:
     trace, summary, grant_receipts = _adaptive_trace_fixture()
 
@@ -588,8 +622,10 @@ def test_direct_trend_contract_requires_public_outputs_and_keeps_unknown_source_
 
     selected_doc_ids[:] = ["doc-cross-period-financial"]
     invalid = pilot._direct_case(sample, tmp_path / "invalid", public_case=public_case)
-    assert invalid["payload"]["projection_valid"] is False
-    assert "unknown_doc_id:doc-cross-period-financial" in invalid["payload"]["projection_errors"]
+    assert invalid["payload"]["projection_valid"] is True
+    assert invalid["payload"]["provenance_valid"] is False
+    assert "unknown_doc_id:doc-cross-period-financial" in invalid["payload"]["provenance_errors"]
+    assert invalid["provenance_diagnostic"]["blocking"] is False
 
 
 def test_direct_join_contract_uses_case_output_schema_without_gold(monkeypatch, tmp_path: Path) -> None:
@@ -631,6 +667,100 @@ def test_direct_join_contract_uses_case_output_schema_without_gold(monkeypatch, 
     assert "expected_facts" not in captured["prompt"]
     assert "const" not in repr(schema)
     assert "default" not in repr(schema)
+
+
+def test_direct_csv_contract_uses_public_tool_for_structured_required_outputs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    sample = next(
+        item
+        for _family, item, _fixed in pilot._select_samples()
+        if item.task_id == "formal-agg-001"
+    )
+    public_case, source_ids = pilot._stage2_public_case(sample)
+
+    class FakeClient:
+        request_events = [{"event": "provider_request", "request_id": "csv-1", "retry_kind": "none"}]
+
+        async def complete(self, messages, *, purpose, response_schema):
+            del messages, purpose
+            assert "schema_profile_ref" not in response_schema["required"]
+            return LLMResult(
+                text=pilot.stable_json_dumps(
+                    {
+                        "route": "profile_table",
+                        "tool_name": "csv_profiler",
+                        "candidate_key": "profile_table::csv_profiler",
+                        "summary_text": "Profiled the public CSV.",
+                        "selected_doc_ids": list(source_ids),
+                    }
+                ),
+                model="qwen3-32b",
+            )
+
+    monkeypatch.setattr(pilot, "build_llm_client", lambda config: FakeClient())
+    result = pilot._direct_case(sample, tmp_path, public_case=public_case)
+
+    assert result["payload"]["projection_valid"] is True
+    assert result["payload"]["schema_profile_ref"]
+    assert result["payload"]["missingness_summary"] == {
+        "percentage_cases_min": 36.45,
+        "percentage_deaths_max": 38.79,
+    }
+    assert Path(result["payload"]["schema_profile_ref"]).is_file()
+    assert result["tool_execution"]["success"] is True
+
+
+def test_registered_public_output_projection_completes_missing_case_outputs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    sample = next(
+        item
+        for _family, item, _fixed in pilot._select_samples()
+        if item.task_id == "formal-agg-001"
+    )
+    monkeypatch.setattr(
+        pilot,
+        "supports_public_task",
+        lambda **kwargs: kwargs == {
+            "task_family": "continuous_csv_table_analysis",
+            "intent_op": "profile_table",
+        },
+    )
+    monkeypatch.setattr(
+        pilot,
+        "execute_public_task",
+        lambda **kwargs: SimpleNamespace(
+            execution_kind="public_csv_profile_table",
+            outputs={
+                "missingness_summary": {
+                    "percentage_cases_min": 36.45,
+                    "percentage_deaths_max": 38.79,
+                },
+            },
+            source_paths=("datasets/operating_metrics/estimated_numbers.csv",),
+        ),
+    )
+
+    payload, projection = pilot._complete_registered_public_outputs(
+        sample,
+        tmp_path,
+        {
+            "percentage_cases_min": 36.45,
+            "percentage_deaths_max": 38.79,
+            "summary_text": "runtime result",
+        },
+    )
+
+    assert projection["applied"] is True
+    assert projection["completed_fields"] == [
+        "missingness_summary",
+        "schema_profile_ref",
+    ]
+    assert payload["missingness_summary"]["percentage_cases_min"] == 36.45
+    assert Path(payload["schema_profile_ref"]).is_file()
 
 
 def test_preflight_checks_model_identity_path_and_context() -> None:

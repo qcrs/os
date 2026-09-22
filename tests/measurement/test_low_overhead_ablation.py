@@ -83,3 +83,53 @@ def test_shm_is_unlinked_when_worker_exits_before_ready(
     assert not socket_path.exists()
     with pytest.raises(FileNotFoundError):
         SharedMemory(name=created_names[0])
+
+
+def test_size_aware_threshold_sweep_keeps_payloads_matched_and_allocates_by_policy(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "p2-threshold"
+    result = p2.run_size_aware_threshold_sweep(
+        output_root=root,
+        thresholds=(128, 2_048),
+        sizes={"small": 128, "medium": 2_048, "large": 8_192},
+        payload_count_per_size=1,
+        repeats=1,
+        timeout_s=5,
+    )
+
+    rows = json.loads((root / "rows.json").read_text(encoding="utf-8"))
+    assert result["status"] == "passed"
+    assert result["row_count"] == 6
+    by_payload = {}
+    for row in rows:
+        by_payload.setdefault(row["matched_payload_id"], []).append(row)
+    assert all(
+        len({row["semantic_payload_sha256"] for row in group}) == 1
+        for group in by_payload.values()
+    )
+    observed = {
+        (row["threshold_bytes"], row["matched_payload_id"].split(":", 1)[0]): row
+        for row in rows
+    }
+    assert observed[(128, "small")]["effective_carrier"] == "inline"
+    assert observed[(128, "small")]["shared_memory_created"] is False
+    assert observed[(128, "medium")]["effective_carrier"] == "ref_shm"
+    assert observed[(128, "large")]["effective_carrier"] == "ref_shm"
+    assert observed[(2_048, "small")]["effective_carrier"] == "inline"
+    assert observed[(2_048, "medium")]["effective_carrier"] == "inline"
+    assert observed[(2_048, "large")]["effective_carrier"] == "ref_shm"
+    assert all(
+        row["effective_carrier"] == "inline"
+        and row["shared_memory_created"] is False
+        and row["shm_setup_ms"] == 0.0
+        for row in rows
+        if row["effective_carrier"] == "inline"
+    )
+    assert all(
+        row["effective_carrier"] == "ref_shm"
+        and row["descriptor_only_control_frame"] is True
+        and row["payload_control_plane_bytes"] == 0
+        for row in rows
+        if row["effective_carrier"] == "ref_shm"
+    )

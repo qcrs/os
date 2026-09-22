@@ -26,6 +26,20 @@ def test_output_projection_only_aliases_observed_revenue() -> None:
     assert "revenue_value" not in other
 
 
+def test_output_projection_keeps_source_identity_mismatch_non_blocking() -> None:
+    projection = canonical_output_projection(
+        {"summary_text": "correct result"},
+        selected_doc_ids=("sha256:observed",),
+        allowed_doc_ids=("public-task:case-1",),
+        required_outputs=("summary_text",),
+    )
+
+    assert projection["projection_valid"] is True
+    assert projection["projection_errors"] == []
+    assert projection["provenance_valid"] is False
+    assert projection["provenance_errors"] == ["unknown_doc_id:sha256:observed"]
+
+
 def test_slot_set_reports_missing_extra_duplicate() -> None:
     result = compare_slot_sets(["a", "b"], ["a", "a", "c"])
     assert result == {"closed": False, "missing": ["b"], "extra": ["c"], "duplicate": ["a"]}

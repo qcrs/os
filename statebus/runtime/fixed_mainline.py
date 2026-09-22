@@ -68,6 +68,7 @@ _DEFAULT_OPERATION_CATALOG = (
     "aggregate_grouped",
     "derive_safe",
     "compare_periods",
+    "compare_metric",
     "trend_series",
     "join_by_key",
     "anomaly_check",
@@ -162,6 +163,7 @@ def _live_observation(
         "role": role,
         "status": "error" if error is not None else "response_received",
         "model": str(_value("model") or ""),
+        "finish_reason": _value("finish_reason"),
         "latency_ms": _value("latency_ms"),
         "prompt_tokens": _value("prompt_tokens"),
         "completion_tokens": _value("completion_tokens"),
@@ -228,6 +230,58 @@ _OUTPUT_REF_KIND_BY_ROLE = {
     "executor": "execution_artifact",
     "summarizer": "execution_artifact",
 }
+
+_LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS = 8
+_LIVE_SUMMARIZER_MAX_EVIDENCE_TEXT_CHARS = 1_000
+
+
+def _compact_live_summarizer_evidence(
+    evidence_items_payload: Mapping[str, object],
+) -> tuple[dict[str, str], ...]:
+    """Bound the summarizer prompt without changing evidence authority.
+
+    Retrieval may legitimately return a large complete table.  The summarizer
+    needs a small set of locatable support items plus the verified executor
+    artifact; sending every retrieved row back through vLLM can exceed the
+    model context window.  This is a prompt-size projection only: the original
+    evidence pack remains the validator's authority.
+    """
+
+    selected: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    # Keep compact, higher-signal narrative facts first, then table evidence.
+    # The order is deterministic so the same verified input has the same prompt
+    # surface across runs.
+    for bucket in (
+        "hard_facts",
+        "semantic_contexts",
+        "structured_evidence",
+        "lexical_hints",
+        "conflicts",
+    ):
+        values = evidence_items_payload.get(bucket, ())
+        if not isinstance(values, (tuple, list)):
+            continue
+        for item in values:
+            if not isinstance(item, Mapping):
+                continue
+            item_id = str(item.get("item_id", "")).strip()
+            locator = item.get("locator")
+            if not item_id or locator is None or item_id in seen_ids:
+                continue
+            selected.append(
+                {
+                    "id": item_id,
+                    "locator": repr(locator),
+                    "text": str(item.get("rendered_text", ""))[
+                        :_LIVE_SUMMARIZER_MAX_EVIDENCE_TEXT_CHARS
+                    ],
+                }
+            )
+            seen_ids.add(item_id)
+            if len(selected) >= _LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS:
+                return tuple(selected)
+    return tuple(selected)
 
 _COMPLETION_CRITERIA_BY_ROLE = {
     "planner": {
@@ -648,19 +702,7 @@ def _live_provider_handlers(
         rows = final_artifact.get("payload", {}).get("rows", ())
         if not artifact_ref or not isinstance(rows, (tuple, list)):
             raise FixedMainlineError("fixed_live_summarizer_artifact_rows_missing")
-        evidence_items: list[dict[str, str]] = []
-        for bucket in ("hard_facts", "structured_evidence", "semantic_contexts", "lexical_hints"):
-            values = evidence_items_payload.get(bucket, ())
-            if not isinstance(values, (tuple, list)):
-                continue
-            for item in values:
-                if not isinstance(item, Mapping):
-                    continue
-                evidence_items.append({
-                    "id": str(item.get("item_id", "")),
-                    "locator": repr(item.get("locator")),
-                    "text": str(item.get("rendered_text", "")),
-                })
+        evidence_items = list(_compact_live_summarizer_evidence(evidence_items_payload))
         artifact_summaries = ({
             "artifact_ref_id": artifact_ref,
             "status": "verified",
@@ -685,15 +727,24 @@ def _live_provider_handlers(
     handlers_by_role = {
         "planner": RolePathPlannerProvider(planner),
         "retriever": RolePathRetrieverProvider(retriever),
-        "executor": RolePathExecutorProvider(executor),
         "summarizer": RolePathSummarizerProvider(summarizer),
     }
+    # Open-ended formal transformations use the bounded-Python route.  The
+    # executor is intentionally left unbound in that mode so the dispatcher
+    # reaches CodeAct instead of forcing the candidate through Transform DSL.
+    if request.executor_execution_kind != ExecutionKind.LLM_BOUNDED_PYTHON:
+        handlers_by_role["executor"] = RolePathExecutorProvider(executor)
     return (
         {
             step.capability_id: handlers_by_role[step.role]
             for step in recipe.steps
+            if step.role in handlers_by_role
         },
-        repair_transform_program,
+        (
+            repair_transform_program
+            if request.executor_execution_kind == ExecutionKind.TRANSFORM_DSL
+            else None
+        ),
     )
 
 
@@ -721,6 +772,7 @@ class FixedMainlineRequest:
     output_fields: tuple[str, ...] = ()
     operation_catalog: tuple[str, ...] = _DEFAULT_OPERATION_CATALOG
     operation_semantics: dict[str, object] = field(default_factory=dict)
+    executor_execution_kind: ExecutionKind = ExecutionKind.TRANSFORM_DSL
 
     def __post_init__(self) -> None:
         if (self.recipe is None) == (self.approved_plan_bundle is None):
@@ -781,6 +833,7 @@ def _compatibility_registry(
     recipe: StaticRoleRecipe,
     *,
     role_runtime_ms: Mapping[str, int] | None = None,
+    executor_execution_kind: ExecutionKind = ExecutionKind.TRANSFORM_DSL,
 ) -> CapabilityRegistry:
     runtime_budgets = dict(role_runtime_ms or {})
     output_kinds_by_step = {
@@ -816,12 +869,17 @@ def _compatibility_registry(
                 execution_kind={
                     "planner": ExecutionKind.RUNTIME_BUILTIN,
                     "retriever": ExecutionKind.RETRIEVAL_ADAPTER,
-                    "executor": ExecutionKind.TRANSFORM_DSL,
+                    "executor": executor_execution_kind,
                     # The bound provider seam dispatches the typed ClaimSet
                     # through the existing summarizer mechanism.
                     "summarizer": ExecutionKind.RUNTIME_BUILTIN,
                 }[step.role],
-                side_effect_class=RiskClass.READ_ONLY,
+                side_effect_class=(
+                    RiskClass.BOUNDED_CODE
+                    if step.role == "executor"
+                    and executor_execution_kind == ExecutionKind.LLM_BOUNDED_PYTHON
+                    else RiskClass.READ_ONLY
+                ),
                 max_runtime_ms=runtime_budgets.get(
                     step.role,
                     _DETERMINISTIC_CAPABILITY_RUNTIME_MS,
@@ -874,6 +932,10 @@ def _strict_envelope(
         role: sum(step.role == role for step in recipe.steps)
         for role in ("planner", "retriever", "executor", "summarizer")
     }
+    bounded_code = any(
+        registry.get(step.capability_id).execution_kind == ExecutionKind.LLM_BOUNDED_PYTHON
+        for step in recipe.steps
+    )
     return AdaptiveTaskEnvelope(
         task_id=runtime_identity.runtime_task_id,
         canonical_task_spec_hash=canonical_task_spec.spec_hash,
@@ -895,8 +957,8 @@ def _strict_envelope(
         max_replans=0,
         max_retrieval_expansions=0,
         max_total_attempts=len(recipe.steps),
-        risk_class=RiskClass.READ_ONLY,
-        allow_llm_python=False,
+        risk_class=RiskClass.BOUNDED_CODE if bounded_code else RiskClass.READ_ONLY,
+        allow_llm_python=bounded_code,
     )
 
 
@@ -909,10 +971,15 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
     registry = _compatibility_registry(
         recipe,
         role_runtime_ms=_fixed_role_runtime_budgets(request, recipe),
+        executor_execution_kind=request.executor_execution_kind,
     )
     default_handlers = {
         step.capability_id: _FIXED_BOUND_PROVIDER_BY_ROLE[step.role]
         for step in recipe.steps
+        if not (
+            step.role == "executor"
+            and request.executor_execution_kind == ExecutionKind.LLM_BOUNDED_PYTHON
+        )
     }
     live_handlers: Mapping[str, object] = {}
     live_transform_program_repair_factory = None
@@ -936,7 +1003,7 @@ def build_fixed_mainline_request(request: FixedMainlineRequest) -> AdaptiveMainl
         None,
     )
     runtime_quality_semantics: dict[str, dict[str, object]] = {}
-    if executor_step is not None and request.operation_semantics.get("dsl_operation"):
+    if executor_step is not None and request.operation_semantics:
         runtime_quality_semantics[executor_step.capability_id] = dict(
             request.operation_semantics
         )

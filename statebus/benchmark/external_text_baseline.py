@@ -1214,13 +1214,10 @@ def run_external_text_case(
     output_path = case_root / "external_text_output.json"
     report_path = case_root / "external_text_report.json"
     # Public-tool outputs are observed task results, not benchmark gold.  Keep
-    # every requested output that the tool actually produced in the canonical
-    # output projection (not only the scalar metric alias), so multi-period
-    # tasks retain their complete series and direction.
-    observed_public_outputs = _observed_required_outputs(
-        tuple(str(field) for field in sample.canonical_task_spec.required_outputs),
-        public_tool_outputs,
-    )
+    # the complete observed result at the top level: some task contracts expose
+    # a structured required output while their business scorer checks derived
+    # scalar facts from the same tool result.
+    observed_public_outputs = dict(public_tool_outputs)
     output_payload = canonical_output_projection(
         {
         "task_id": sample.task_id,

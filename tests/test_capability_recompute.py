@@ -108,3 +108,39 @@ def test_independent_recompute_matches_interpreter_for_trend_series() -> None:
 
     assert recomputed == tuple(interpreted)
     assert all(row["trend_direction"] == "increasing" for row in recomputed)
+
+
+def test_independent_recompute_matches_interpreter_for_compare_metric() -> None:
+    program = TransformProgram(
+        program_id="independent-recompute-compare-metric",
+        input_artifact_refs=("metrics",),
+        output_contract_version="statebus.analysis_result.v2",
+        operations=(TransformStep("compare_metric", {
+            "ticker_field": "ticker",
+            "period_field": "quarter",
+            "metric_field": "metric",
+            "value_field": "value",
+            "left_ticker": "ACME",
+            "right_ticker": "BETA",
+            "period": "2026Q1",
+            "metric": "revenue",
+            "period_output": "quarter",
+            "left_output": "acme_revenue_value",
+            "right_output": "beta_revenue_value",
+            "gap_output": "gap_value",
+        }),),
+    )
+    inputs = {"metrics": [
+        {"ticker": "ACME", "quarter": "2026Q1", "metric": "revenue", "value": 120.0},
+        {"ticker": "BETA", "quarter": "2026Q1", "metric": "revenue", "value": 87.0},
+    ]}
+
+    recomputed = recompute_transform_program(program, inputs=inputs)
+    interpreted = TransformDslInterpreter().run(program, inputs=inputs)
+
+    assert recomputed == tuple(interpreted) == ({
+        "quarter": "2026Q1",
+        "acme_revenue_value": 120.0,
+        "beta_revenue_value": 87.0,
+        "gap_value": 33.0,
+    },)

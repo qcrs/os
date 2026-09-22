@@ -70,7 +70,9 @@ def test_projection_materializes_rows_from_evidence_and_preserves_locator_lineag
         attempt_workspace=tmp_path,
     )
     assert rows == ({"quarter": "2026Q1", "revenue_musd": 120.0},)
-    assert artifact.verification_state.value == "verified"
+    # Projection materializes a Candidate.  The independent Runtime artifact
+    # verifier issues the receipt that can promote it to Verified.
+    assert artifact.verification_state.value == "candidate"
     assert artifact.metadata["attempt_id"] == "attempt"
     assert report.consumed_evidence_item_ids == ("revenue-q1",)
     assert report.row_lineage[0]["evidence_item_id"] == "revenue-q1"

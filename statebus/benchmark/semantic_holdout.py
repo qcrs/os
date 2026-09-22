@@ -457,7 +457,41 @@ def _semantic_ablation_row(
     effects = effects if isinstance(effects, dict) else {}
     terminal = bool(summary.get("runtime_completed"))
     quality = bool(summary.get("ok"))
-    on_gate = mode != "on" or _semantic_state_case_gate(summary)
+    disable_reason = str(activation.get("disable_reason", ""))
+    effective_mode = str(activation.get("effective_mode", ""))
+    if failure is not None:
+        activation_status = "environment_failure"
+    elif mode == "off":
+        activation_status = "disabled_control"
+    elif effective_mode == "not_applicable" or disable_reason == "no_semantic_state_payload":
+        activation_status = "inactive_no_semantic_state_payload"
+    else:
+        activation_status = "active"
+    release_receipts = summary.get("state_release_reclaim_receipts", {})
+    release_receipts = release_receipts if isinstance(release_receipts, dict) else {}
+    semantic_refs = any(
+        bool(summary.get(name))
+        for name in (
+            "semantic_state_selections",
+            "state_publication_receipts",
+            "state_access_grants",
+            "state_pin_receipts",
+            "state_release_reclaim_receipts",
+        )
+    )
+    inactive_lifecycle_closed = (
+        activation_status == "inactive_no_semantic_state_payload"
+        and not semantic_refs
+    )
+    active_gate = mode != "on" or _semantic_state_case_gate(summary)
+    inactive_gate = (
+        activation_status == "inactive_no_semantic_state_payload"
+        and not selections
+        and float(telemetry.get("semantic_state_publish_count", 0.0)) == 0.0
+        and float(telemetry.get("semantic_state_transfer_count", 0.0)) == 0.0
+        and float(telemetry.get("semantic_state_consume_count", 0.0)) == 0.0
+        and inactive_lifecycle_closed
+    )
     receipt_matches = activation.get("requested_mode") == mode
     row = {
         "pair_id": f"{case.task_id}:semantic_state",
@@ -466,12 +500,14 @@ def _semantic_ablation_row(
         "variant": mode,
         "requested_feature_flags": {"semantic_state": mode},
         "effective_feature_flags": {
-            "semantic_state": activation.get("effective_mode", "unknown")
+            "semantic_state": effective_mode or "unknown"
         },
         "activation_receipt": dict(activation),
+        "activation_status": activation_status,
+        "activation_reason": disable_reason,
         "terminal": terminal,
         "quality_pass": quality,
-        "ok": bool(terminal and quality and on_gate and receipt_matches),
+        "ok": bool(terminal and quality and receipt_matches and (active_gate or inactive_gate)),
         "provider_call_count": len(summary.get("provider_invocation_events", [])),
         "semantic_publish_count": float(telemetry.get("semantic_state_publish_count", 0.0)),
         "semantic_consume_count": float(telemetry.get("semantic_state_consume_count", 0.0)),
@@ -484,9 +520,23 @@ def _semantic_ablation_row(
             and effect.get("behavioral_effect") in {"changed", "no_effect"}
             for effect in effects.values()
         ),
+        "behavioral_effect": next(
+            (
+                str(effect.get("behavioral_effect"))
+                for effect in effects.values()
+                if isinstance(effect, dict)
+                and effect.get("behavioral_effect") in {"changed", "no_effect"}
+            ),
+            "not_applicable",
+        ),
+        "headline_effect": any(
+            isinstance(effect, dict) and effect.get("behavioral_effect") == "changed"
+            for effect in effects.values()
+        ),
         "state_release_reclaim_closed": bool(
-            summary.get("state_release_reclaim_receipts")
+            release_receipts
             or mode == "off"
+            or inactive_lifecycle_closed
         ),
         "summary_path": str(summary.get("run_dir", "")),
     }
@@ -495,6 +545,7 @@ def _semantic_ablation_row(
             "terminal": False,
             "quality_pass": False,
             "ok": False,
+            "activation_status": "environment_failure",
             "failure": failure,
         })
     return row
@@ -602,6 +653,23 @@ def run_semantic_state_ablation(
                 and not consumer_off_row.get("consumer_active", False)
             ),
         }
+        activation_statuses = {
+            str(row.get("activation_status", "unknown")) for row in pair_rows
+        }
+        inactive_variant_statuses = {
+            str(by_mode.get(mode, {}).get("activation_status", "unknown"))
+            for mode in ("on", "consumer_off")
+        }
+        inactive_negative_control = (
+            inactive_variant_statuses == {"inactive_no_semantic_state_payload"}
+            and by_mode.get("off", {}).get("activation_status") == "disabled_control"
+            and all(row.get("ok", False) for row in pair_rows)
+            and all(not row.get("actual_use", False) for row in pair_rows)
+        )
+        active_pair = not inactive_negative_control and (
+            "active" in activation_statuses or "disabled_control" in activation_statuses
+        )
+        environment_failure = "environment_failure" in activation_statuses
         pair_gate = {
             "exactly_three_variants": observed_modes == expected_modes,
             "all_variants_terminal": len(pair_rows) == 3 and all(row["terminal"] for row in pair_rows),
@@ -611,6 +679,7 @@ def run_semantic_state_ablation(
                 for row in pair_rows
             ),
             **mode_contract,
+            "activation_status_explained": bool(activation_statuses) and not environment_failure,
         }
         pair_report = {
             "pair_id": f"{case.task_id}:semantic_state",
@@ -618,7 +687,19 @@ def run_semantic_state_ablation(
             "task_contract_hash": case.spec.spec_hash,
             "variants": pair_rows,
             "gates": pair_gate,
-            "denominator_eligible": all(pair_gate.values()),
+            "activation_class": (
+                "environment_failure"
+                if environment_failure
+                else "inactive_negative_control"
+                if inactive_negative_control
+                else "active"
+                if active_pair
+                else "unclassified"
+            ),
+            # Inactive controls are valid evidence but deliberately excluded
+            # from the active mechanism denominator.
+            "denominator_eligible": bool(active_pair and all(pair_gate.values())),
+            "negative_control_valid": bool(inactive_negative_control),
         }
         pair_reports.append(pair_report)
 
@@ -626,7 +707,17 @@ def run_semantic_state_ablation(
         "schema_version": "statebus.semantic_state_ablation_denominator.v1",
         "planned_pairs": len(cases),
         "closed_pairs": sum(bool(report["denominator_eligible"]) for report in pair_reports),
-        "incomplete_pairs": sum(not bool(report["denominator_eligible"]) for report in pair_reports),
+        "active_planned_pairs": sum(report["activation_class"] == "active" for report in pair_reports),
+        "inactive_negative_control_pairs": sum(
+            report["activation_class"] == "inactive_negative_control" for report in pair_reports
+        ),
+        "environment_failure_pairs": sum(
+            report["activation_class"] == "environment_failure" for report in pair_reports
+        ),
+        "incomplete_pairs": sum(
+            report["activation_class"] == "active" and not bool(report["denominator_eligible"])
+            for report in pair_reports
+        ),
         "eligible_pair_ids": [
             str(report["pair_id"])
             for report in pair_reports
@@ -642,7 +733,14 @@ def run_semantic_state_ablation(
     gates = {
         "pair_count_complete": len(pair_reports) == len(cases),
         "all_pairs_closed": bool(pair_reports) and all(
-            report["denominator_eligible"] for report in pair_reports
+            report["denominator_eligible"]
+            or report["activation_class"] == "inactive_negative_control"
+            for report in pair_reports
+        ),
+        "inactive_negative_controls_valid": all(
+            report["negative_control_valid"]
+            for report in pair_reports
+            if report["activation_class"] == "inactive_negative_control"
         ),
         "no_system_failures": not any(
             failure.get("system_gate_failed") for failure in failures

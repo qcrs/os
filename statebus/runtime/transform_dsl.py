@@ -19,7 +19,7 @@ class TransformProgramError(ValueError):
 
 _ALLOWED_OPS = {
     "select", "rename", "filter_eq", "filter_contains", "filter_in", "filter_range", "sort", "limit",
-    "group_by", "aggregate", "aggregate_grouped", "derive_safe", "compare_periods", "join_by_key",
+    "group_by", "aggregate", "aggregate_grouped", "derive_safe", "compare_periods", "compare_metric", "join_by_key",
     "trend_series", "anomaly_check", "anomaly_zscore", "project_claim_fields", "deterministic_fixture",
 }
 _FORBIDDEN_FIELD_TOKENS = {"__", "/", "\\", ".."}
@@ -135,6 +135,13 @@ class TransformProgramValidator:
                 str(args.get("ratio_output", "ratio")),
                 str(args.get("growth_pct_output", "growth_pct")),
             }
+        if step.op == "compare_metric":
+            return {
+                str(args.get("period_output", "quarter")),
+                str(args.get("left_output", "acme_revenue_value")),
+                str(args.get("right_output", "beta_revenue_value")),
+                str(args.get("gap_output", "gap_value")),
+            }
         if step.op == "trend_series":
             return {
                 str(args.get("ticker_output", "ticker")),
@@ -221,6 +228,46 @@ class TransformProgramValidator:
             }
             if set(carry_names) & output_names:
                 return "comparison_output_collision"
+        if step.op == "compare_metric":
+            required = {
+                "ticker_field",
+                "period_field",
+                "metric_field",
+                "value_field",
+                "left_ticker",
+                "right_ticker",
+                "period",
+                "metric",
+                "period_output",
+                "left_output",
+                "right_output",
+                "gap_output",
+            }
+            if not required <= set(step.arguments):
+                return "missing_compare_metric_fields"
+            if step.arguments.get("left_ticker") == step.arguments.get("right_ticker"):
+                return "compare_metric_tickers_must_differ"
+            if not all(
+                isinstance(step.arguments.get(field), str)
+                and bool(str(step.arguments.get(field)).strip())
+                for field in (
+                    "left_ticker",
+                    "right_ticker",
+                    "period",
+                    "metric",
+                    "period_output",
+                    "left_output",
+                    "right_output",
+                    "gap_output",
+                )
+            ):
+                return "invalid_compare_metric_fields"
+            output_names = tuple(
+                str(step.arguments[name])
+                for name in ("period_output", "left_output", "right_output", "gap_output")
+            )
+            if len(output_names) != len(set(output_names)):
+                return "invalid_compare_metric_outputs"
         if step.op == "trend_series":
             required = {
                 "ticker_field",
@@ -524,6 +571,43 @@ class TransformDslInterpreter:
                 str(args.get("difference_output", "difference")): float(current) - float(base),
                 str(args.get("ratio_output", "ratio")): float(current) / float(base),
                 str(args.get("growth_pct_output", "growth_pct")): ((float(current) - float(base)) / float(base)) * 100.0,
+            }]
+        if step.op == "compare_metric":
+            ticker_field = str(args["ticker_field"])
+            period_field = str(args["period_field"])
+            metric_field = str(args["metric_field"])
+            value_field = str(args["value_field"])
+            left_ticker = str(args["left_ticker"]).upper()
+            right_ticker = str(args["right_ticker"]).upper()
+            period = str(args["period"])
+            metric = str(args["metric"]).lower()
+
+            def select_value(ticker: str) -> float:
+                matches = [
+                    row
+                    for row in rows
+                    if str(row.get(ticker_field, "")).upper() == ticker
+                    and str(row.get(period_field, "")) == period
+                    and str(row.get(metric_field, "")).lower() == metric
+                ]
+                if len(matches) != 1:
+                    raise TransformProgramError("compare_metric_match_count_invalid")
+                value = matches[0].get(value_field)
+                if (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not isfinite(float(value))
+                ):
+                    raise TransformProgramError("compare_metric_value_invalid")
+                return float(value)
+
+            left = select_value(left_ticker)
+            right = select_value(right_ticker)
+            return [{
+                str(args["period_output"]): period,
+                str(args["left_output"]): left,
+                str(args["right_output"]): right,
+                str(args["gap_output"]): left - right,
             }]
         if step.op == "trend_series":
             ticker_field = str(args["ticker_field"])

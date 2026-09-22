@@ -1076,6 +1076,14 @@ class AdaptiveRuntimeEngine:
                     )
                     if result_admission is None:
                         continue
+                if request.dispatcher is not None:
+                    self._update_route_evidence(
+                        context=request.dispatcher.context,
+                        step_id=step.step_id,
+                        attempt_id=result.attempt_id or attempt_id,
+                        result=result,
+                        result_admission=result_admission,
+                    )
                 # A bounded-Python failure may only downgrade through the
                 # descriptor's registered fallback capability. The Controller
                 # issues a fresh Grant; the Python Grant is never reused.
@@ -1124,6 +1132,13 @@ class AdaptiveRuntimeEngine:
                         state_access_authority=state_access_authority,
                         state_store=state_store,
                     )
+                    if request.dispatcher is not None:
+                        self._mark_route_fallback(
+                            context=request.dispatcher.context,
+                            step_id=step.step_id,
+                            attempt_id=attempt_id,
+                            marker="fallback_regrant",
+                        )
                     fallback_descriptor = request.registry.get(
                         logical_capability.fallback_capability_id
                     )
@@ -1675,6 +1690,13 @@ class AdaptiveRuntimeEngine:
                             fallback_dag_hash=sha256_digest(replacement.canonical_payload()),
                         ),
                     )
+                    if request.dispatcher is not None:
+                        self._mark_route_fallback(
+                            context=request.dispatcher.context,
+                            step_id=step.step_id,
+                            attempt_id=attempt_id,
+                            marker="replan",
+                        )
                     telemetry.emit(TelemetryEvent.create(
                         trace_id=request.trace_id, task_id=request.task_id, step_id=step.step_id,
                         attempt_id=attempt_id, event_type="STEP_REPLAN_REQUESTED", role="runtime_driver",
@@ -1704,6 +1726,51 @@ class AdaptiveRuntimeEngine:
             memory_projection_bindings=tuple(memory_projection_bindings),
             replay_eligibility_receipts=tuple(replay_eligibility_receipts),
         )
+
+    @staticmethod
+    def _update_route_evidence(
+        *,
+        context: object,
+        step_id: str,
+        attempt_id: str,
+        result: AdaptiveStepResult,
+        result_admission: AttemptResultAdmissionReceipt | None,
+    ) -> None:
+        rows = getattr(context, "route_evidence_by_step", {}).get(step_id, ())
+        for row in reversed(rows):
+            if str(row.get("attempt_id", "")) != attempt_id:
+                continue
+            row["artifact_ref_ids"] = list(result.output_refs)
+            row["quality_report_hashes"] = list(
+                result.quality_report_hashes or result.validator_report_hashes
+            )
+            if not result.success and str(result.error_code).startswith("route_rejected:"):
+                row["terminal_status"] = "route_rejected"
+            else:
+                row["terminal_status"] = (
+                    "success"
+                    if result.success and result_admission is not None
+                    else "runtime_fail"
+                )
+            row["failure_reason"] = result.error_code if not result.success else ""
+            row["result_admission_receipt_hash"] = (
+                "" if result_admission is None else result_admission.receipt_hash
+            )
+            return
+
+    @staticmethod
+    def _mark_route_fallback(
+        *,
+        context: object,
+        step_id: str,
+        attempt_id: str,
+        marker: str,
+    ) -> None:
+        rows = getattr(context, "route_evidence_by_step", {}).get(step_id, ())
+        for row in reversed(rows):
+            if str(row.get("attempt_id", "")) == attempt_id:
+                row["fallback_or_replan"] = marker
+                return
 
     @staticmethod
     def _bind_memory_consumption_to_result_admission(

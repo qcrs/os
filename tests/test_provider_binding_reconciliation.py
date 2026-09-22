@@ -297,9 +297,11 @@ def test_canonical_fixed_runtime_binds_before_grant_and_dispatches_bound_provide
             ("grant", attempt_id),
         )
     ]
-    assert len(result.runtime.provider_eligibility_projections) == 3
-    assert len(result.runtime.execution_bindings) == 3
-    assert len(result.runtime.bound_grants) == 3
+    # The canonical fixed recipe owns planner, retriever, executor, and
+    # summarizer attempts; provider binding is recorded for all four steps.
+    assert len(result.runtime.provider_eligibility_projections) == 4
+    assert len(result.runtime.execution_bindings) == 4
+    assert len(result.runtime.bound_grants) == 4
     assert dispatched == list(result.runtime.bound_grants)
     for projection, binding, bound_grant in zip(
         result.runtime.provider_eligibility_projections,

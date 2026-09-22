@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 import time
 
 from statebus.contracts import (
@@ -12,6 +13,7 @@ from statebus.contracts import (
     CodeExecutionRecord,
     CodeGenerationPolicy,
     CodePolicyReport,
+    CapabilityQualityReport,
     EvidenceCoverageStatus,
     PlanProposal,
     PlanStepProposal,
@@ -134,14 +136,19 @@ def _approved_codeact_plan(*, fallback: bool = False):
     return registry, envelope, approved
 
 
-def _input_artifact(tmp_path) -> StoredAdaptiveArtifact:
+def _input_artifact(
+    tmp_path,
+    *,
+    task_id: str = "code-task",
+    session_id: str = "adaptive-session-code-task",
+) -> StoredAdaptiveArtifact:
     rows = ({"quarter": "2026Q1", "revenue_musd": 120.0},)
     payload = stable_json_dumps(list(rows)).encode("utf-8")
     path = tmp_path / "input.json"
     path.write_bytes(payload)
     artifact = ExecutionArtifactRef(
         artifact_id="input",
-        task_id="code-task",
+        task_id=task_id,
         step_id="upstream",
         artifact_type="json",
         root_id=str(tmp_path),
@@ -151,15 +158,20 @@ def _input_artifact(tmp_path) -> StoredAdaptiveArtifact:
         produced_by="executor",
         verification_state=RefStatus.VERIFIED,
         metadata={
-            "session_id": "adaptive-session-code-task",
+            "session_id": session_id,
             "attempt_id": "controller-bound-source",
         },
     )
     return StoredAdaptiveArtifact(artifact=artifact, rows=rows, provenance_item_ids=("evidence-row",))
 
 
-def _receipt_backed_input_artifact(tmp_path) -> tuple[StoredAdaptiveArtifact, ArtifactVerificationReceipt]:
-    stored = _input_artifact(tmp_path)
+def _receipt_backed_input_artifact(
+    tmp_path,
+    *,
+    task_id: str = "code-task",
+    session_id: str = "adaptive-session-code-task",
+) -> tuple[StoredAdaptiveArtifact, ArtifactVerificationReceipt]:
+    stored = _input_artifact(tmp_path, task_id=task_id, session_id=session_id)
     artifact = stored.artifact
     producer_grant_hash = sha256_digest({
         "artifact_id": artifact.artifact_id,
@@ -170,7 +182,7 @@ def _receipt_backed_input_artifact(tmp_path) -> tuple[StoredAdaptiveArtifact, Ar
         artifact_id=artifact.artifact_id,
         runtime_task_id=artifact.task_id,
         run_id="run-codeact-source",
-        session_id="adaptive-session-code-task",
+        session_id=session_id,
         producer_step_id=artifact.step_id,
         producer_attempt_id=str(artifact.metadata.get("attempt_id", "")),
         execution_binding_hash=sha256_digest("test-execution-binding"),
@@ -255,13 +267,39 @@ def test_python_executor_consumes_verified_retrieval_context_without_mounting_it
     payload = stable_json_dumps(list(rows)).encode("utf-8")
     source_path = tmp_path / "source.json"
     source_path.write_bytes(payload)
+    source_grant_hash = sha256_digest({
+        "artifact_id": "source",
+        "producer_step_id": "source",
+        "producer_attempt_id": "source-attempt",
+    })
+    source_receipt = ArtifactVerificationReceipt(
+        artifact_id="source",
+        runtime_task_id="context-task",
+        run_id="run-context-source",
+        session_id="session",
+        producer_step_id="source",
+        producer_attempt_id="source-attempt",
+        execution_binding_hash=sha256_digest("context-source-binding"),
+        capability_grant_hash=source_grant_hash,
+        candidate_blob_hash=sha256_digest(payload),
+        candidate_size_bytes=len(payload),
+        validator_ids=(),
+        validator_report_hashes=(),
+        decision=ArtifactVerificationDecision.VERIFIED,
+        reason="test_receipt_backed_source",
+    )
     source = StoredAdaptiveArtifact(
-        artifact=ExecutionArtifactRef(
+        artifact=replace(ExecutionArtifactRef(
             artifact_id="source", task_id="context-task", step_id="source", artifact_type="json",
             root_id=str(tmp_path), relpath=source_path.name, blob_hash=sha256_digest(payload),
             size_bytes=len(payload), produced_by="controller", verification_state=RefStatus.VERIFIED,
             metadata={"session_id": "session", "attempt_id": "source-attempt"},
-        ),
+        ), metadata={
+            "session_id": "session",
+            "attempt_id": "source-attempt",
+            "grant_hash": source_grant_hash,
+            "artifact_verification_receipt_hash": source_receipt.receipt_hash,
+        }, manifest_hash="source-manifest"),
         rows=rows,
         provenance_item_ids=("source-row",),
     )
@@ -298,6 +336,7 @@ def test_python_executor_consumes_verified_retrieval_context_without_mounting_it
     context = AdaptiveDispatchContext(
         registry=registry,
         artifacts={"source": source},
+        artifact_verification_receipts={"source": source_receipt},
         evidence_packs={"evidence": evidence},
         evidence_statuses={"evidence": EvidenceCoverageStatus.COMPLETE},
         evidence_ref_scopes={"evidence": ("session", "retrieve-attempt")},
@@ -323,7 +362,8 @@ def test_python_executor_consumes_verified_retrieval_context_without_mounting_it
     step = approved.steps[0]
     grant = CapabilityGrant(
         grant_id="grant", task_id="context-task", session_id="session", step_id=step.step_id,
-        attempt_id="attempt", capability_id=step.capability_id, capability_version="v2",
+        attempt_id="attempt", capability_id=step.capability_id,
+        capability_version=registry.logical_descriptor(step.capability_id).version,
         input_ref_ids=("source", "evidence"), output_contract_version=step.output_contract_version,
         workspace_root_id="workspace", max_runtime_ms=120_000,
         expires_at_ns=time.time_ns() + 1_000_000_000,
@@ -376,8 +416,153 @@ def test_python_executor_consumes_verified_retrieval_context_without_mounting_it
     assert '"embedding"' not in request_payload
 
 
+def test_python_executor_does_not_return_retrieval_context_when_contract_only_produces_artifact(tmp_path) -> None:
+    registry, envelope, approved = _approved_codeact_plan()
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
+    locator = TableCellLocator(source_doc_hash="doc", table_id="metrics", row_idx=0, col_idx=0)
+    evidence = CanonicalEvidencePack(
+        pack_id="pack-output-contract",
+        task_id="code-task",
+        source_doc_hashes=("doc",),
+        semantic_contexts=(EvidenceItem(
+            item_id="metric-definition",
+            bucket="semantic_context",
+            locator=locator,
+            rendered_text="value is the requested operating metric",
+        ),),
+    )
+
+    class SuccessfulRunner:
+        def execute(self, **kwargs):
+            request = kwargs["request"]
+            attempt_workspace = Path(kwargs["attempt_workspace"])
+            output_path = attempt_workspace / "outputs" / "result.json"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"quarter": "2026Q1", "revenue_musd": 120.0}
+            encoded = stable_json_dumps(payload).encode("utf-8")
+            output_path.write_bytes(encoded)
+            quality = CapabilityQualityReport(
+                capability_id=request.capability_id,
+                validator_id="metric_series",
+                input_artifact_hashes=(input_artifact.artifact.blob_hash,),
+                output_artifact_hash=sha256_digest(encoded),
+                schema_passed=True,
+                recomputation_passed=True,
+                provenance_passed=True,
+                completion_criteria_passed=True,
+                verified=True,
+            )
+            candidate = ArtifactLifecycleManager().register_candidate(ExecutionArtifactRef(
+                artifact_id="codeact-output",
+                task_id=request.task_id,
+                step_id=request.step_id,
+                artifact_type="json",
+                root_id=str(attempt_workspace),
+                relpath="outputs/result.json",
+                blob_hash=sha256_digest(encoded),
+                size_bytes=len(encoded),
+                produced_by="executor",
+                workspace_relpath="outputs/result.json",
+                manifest_hash=request.input_manifest_digest,
+                metadata={
+                    "schema_version": "statebus.test_codeact_artifact.v1",
+                    "source_hash": "source",
+                    "quality_report_hash": quality.report_hash,
+                    "grant_hash": request.capability_grant_hash,
+                    "session_id": request.session_id,
+                    "attempt_id": request.attempt_id,
+                },
+            ))
+            return LlmCodeActOutcome(
+                record=CodeExecutionRecord(
+                    request_hash="request",
+                    source_hash="source",
+                    raw_response_hash="raw",
+                    policy_report_hash="policy",
+                    sandbox_requested_backend="bwrap_required",
+                    sandbox_actual_backend="bwrap",
+                    sandbox_readiness_digest="ready",
+                    sandbox_policy_digest="policy",
+                    sandbox_uid=65534,
+                    sandbox_gid=65534,
+                    mount_policy_digest="mount",
+                    input_ref_ids=request.input_ref_ids,
+                    output_hash=sha256_digest(encoded),
+                    output_schema_valid=True,
+                    output_quality_valid=True,
+                    exit_code=0,
+                    quality_report_hash=quality.report_hash,
+                ),
+                policy_report=CodePolicyReport(source_hash="source", passed=True),
+                repairs=(),
+                artifact=candidate,
+                output_payload=payload,
+                quality_report=quality,
+                quality_reports=(quality,),
+            )
+
+    context = AdaptiveDispatchContext(
+        registry=registry,
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
+        evidence_packs={"evidence": evidence},
+        evidence_statuses={"evidence": EvidenceCoverageStatus.COMPLETE},
+        evidence_ref_scopes={"evidence": ("adaptive-session-code-task", "attempt")},
+        code_policy_factory=lambda step: CodeGenerationPolicy(
+            capability_id=step.capability_id,
+            enabled=True,
+            require_bwrap=True,
+            allowed_input_relpaths=("inputs/task.json",),
+            output_relpath="outputs/result.json",
+            output_required_fields=("quarter", "revenue_musd"),
+        ),
+        code_source_factory=lambda request, prompt: "pass",
+        output_schema_by_capability={
+            "bounded_metric_python_v1": {"quarter": "string", "revenue_musd": "number"},
+        },
+    )
+    step = approved.steps[0]
+    grant = CapabilityGrant(
+        grant_id="grant-output-contract",
+        task_id="code-task",
+        session_id="adaptive-session-code-task",
+        step_id=step.step_id,
+        attempt_id="attempt-output-contract",
+        capability_id=step.capability_id,
+        capability_version=registry.logical_descriptor(step.capability_id).version,
+        input_ref_ids=("input", "evidence"),
+        output_contract_version=step.output_contract_version,
+        workspace_root_id="workspace",
+        max_runtime_ms=120_000,
+        expires_at_ns=time.time_ns() + 1_000_000_000,
+        approved_plan_hash=approved.approved_plan_hash,
+    )
+    result = AdaptiveCapabilityDispatcher(
+        context=context,
+        codeact_runner=SuccessfulRunner(),
+    ).dispatch(
+        envelope=envelope,
+        approved_plan=approved,
+        step=step,
+        grant=_bound_grant(registry, grant),
+        attempt_workspace=tmp_path / "attempt-output-contract",
+        runtime_identity=RuntimeIdentity(
+            runtime_task_id=envelope.task_id,
+            run_id="run-output-contract",
+            session_id=grant.session_id,
+            trace_id="trace-output-contract",
+            task_contract=TaskContractIdentity.from_hash(envelope.canonical_task_spec_hash),
+        ),
+    )
+
+    assert result.success
+    assert result.output_refs == ("codeact-output",)
+    assert result.output_ref_kinds == ("execution_artifact",)
+
+
 def test_run_adaptive_dispatches_approved_python_through_bwrap_and_quality_gate(tmp_path) -> None:
     registry, envelope, approved = _approved_codeact_plan()
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
 
     def policy_factory(step) -> CodeGenerationPolicy:
         assert step.capability_id == "bounded_metric_python_v1"
@@ -402,7 +587,8 @@ def test_run_adaptive_dispatches_approved_python_through_bwrap_and_quality_gate(
 
     context = AdaptiveDispatchContext(
         registry=registry,
-        artifacts={"input": _input_artifact(tmp_path)},
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=policy_factory,
         code_source_factory=source_factory,
         output_schema_by_capability={"bounded_metric_python_v1": {"quarter": "string", "revenue_musd": "number"}},
@@ -442,6 +628,49 @@ def test_run_adaptive_dispatches_approved_python_through_bwrap_and_quality_gate(
     assert metrics["llm_codeact_execution_count"] == 1.0
     assert metrics["llm_codeact_verified_count"] == 1.0
     assert metrics["llm_codeact_sandbox_fallback_count"] == 0.0
+
+
+def test_wrong_route_fails_before_provider_and_cannot_become_direct_success(tmp_path) -> None:
+    registry, envelope, approved = _approved_codeact_plan()
+    provider_calls: list[str] = []
+
+    def provider(_request):
+        provider_calls.append("provider")
+        raise AssertionError("wrong route must reject before provider invocation")
+
+    context = AdaptiveDispatchContext(
+        registry=registry,
+        artifacts={"input": _input_artifact(tmp_path)},
+        bound_provider_handlers={"bounded_metric_python_v1": provider},
+        requested_routes_by_step={"code": "wrong_route"},
+        builtin_handlers={"compose_cited_report_v1": _report_handler},
+    )
+    result = RuntimeDriver().run_adaptive(
+        AdaptiveRuntimeRequest(
+            trace_id="wrong-route-trace",
+            task_id="code-task",
+            canonical_task_spec_hash="spec",
+            envelope=envelope,
+            approved_plan=approved,
+            registry=registry,
+            runtime_root=str(tmp_path / "runtime"),
+            workspace_root_id="workspace",
+            available_input_refs={
+                "input": "execution_artifact",
+                "evidence": "canonical_evidence_pack",
+            },
+            dispatcher=AdaptiveCapabilityDispatcher(context=context),
+            proposal_hash="wrong-route-proposal",
+        )
+    )
+
+    assert not result.completed
+    assert provider_calls == []
+    assert context.route_evidence_by_step["code"][0]["terminal_status"] == "route_rejected"
+    assert context.route_evidence_by_step["code"][0]["failure_reason"] == (
+        "route_rejected:wrong_route_negative_control"
+    )
+    assert set(context.artifacts) == {"input"}
 
 
 def test_run_adaptive_rejects_cross_session_artifact_before_model_generation(tmp_path) -> None:
@@ -490,6 +719,7 @@ def test_run_adaptive_rejects_cross_session_artifact_before_model_generation(tmp
 
 def test_python_failure_falls_back_only_with_a_fresh_dsl_grant(tmp_path) -> None:
     registry, envelope, approved = _approved_codeact_plan(fallback=True)
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
     seen_grants: list[tuple[str, str]] = []
 
     def program_factory(step, grant, input_ref_id, rows) -> TransformProgram:
@@ -503,7 +733,8 @@ def test_python_failure_falls_back_only_with_a_fresh_dsl_grant(tmp_path) -> None
 
     context = AdaptiveDispatchContext(
         registry=registry,
-        artifacts={"input": _input_artifact(tmp_path)},
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=lambda step: CodeGenerationPolicy(capability_id=step.capability_id, enabled=False),
         code_source_factory=lambda request, prompt: "",
         transform_program_factory=program_factory,
@@ -536,6 +767,7 @@ def test_python_failure_falls_back_only_with_a_fresh_dsl_grant(tmp_path) -> None
 
 def test_runtime_dispatcher_allows_one_ast_repair_without_expanding_authority(tmp_path) -> None:
     registry, envelope, approved = _approved_codeact_plan()
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
     repair_calls: list[tuple[str, ...]] = []
 
     def policy_factory(step) -> CodeGenerationPolicy:
@@ -562,7 +794,8 @@ def test_runtime_dispatcher_allows_one_ast_repair_without_expanding_authority(tm
 
     context = AdaptiveDispatchContext(
         registry=registry,
-        artifacts={"input": _input_artifact(tmp_path)},
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=policy_factory,
         code_source_factory=lambda request, prompt: "import os\n",
         code_repair_factory=repair_factory,
@@ -594,6 +827,7 @@ def test_runtime_dispatcher_allows_one_ast_repair_without_expanding_authority(tm
 
 def test_runtime_dispatcher_repairs_python_runtime_error_in_fresh_bwrap_workspace(tmp_path) -> None:
     registry, envelope, approved = _approved_codeact_plan()
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
     repair_calls: list[tuple[str, ...]] = []
 
     def policy_factory(step) -> CodeGenerationPolicy:
@@ -629,7 +863,8 @@ def test_runtime_dispatcher_repairs_python_runtime_error_in_fresh_bwrap_workspac
     )
     context = AdaptiveDispatchContext(
         registry=registry,
-        artifacts={"input": _input_artifact(tmp_path)},
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=policy_factory,
         code_source_factory=lambda request, prompt: initial_source,
         code_repair_factory=repair_factory,
@@ -784,6 +1019,7 @@ def test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace(t
 
 def test_policy_repair_does_not_consume_the_independent_runtime_repair_budget(tmp_path) -> None:
     registry, envelope, approved = _approved_codeact_plan()
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
     repair_calls: list[tuple[str, ...]] = []
 
     def policy_factory(step) -> CodeGenerationPolicy:
@@ -819,7 +1055,8 @@ def test_policy_repair_does_not_consume_the_independent_runtime_repair_budget(tm
 
     context = AdaptiveDispatchContext(
         registry=registry,
-        artifacts={"input": _input_artifact(tmp_path)},
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=policy_factory,
         code_source_factory=lambda request, prompt: "import os\n",
         code_repair_factory=repair_factory,
@@ -933,9 +1170,11 @@ def test_runtime_dispatcher_exposes_source_and_upstream_artifact_as_distinct_inp
             output_required_fields=("quarter", "revenue_musd"),
         )
 
+    input_artifact, input_receipt = _receipt_backed_input_artifact(tmp_path)
     context = AdaptiveDispatchContext(
         registry=registry,
-        artifacts={"input": _input_artifact(tmp_path)},
+        artifacts={"input": input_artifact},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=policy_factory,
         code_source_factory=source_factory,
         output_schema_by_capability={"bounded_metric_python_v1": {"quarter": "string", "revenue_musd": "number"}},
@@ -964,7 +1203,7 @@ def test_runtime_dispatcher_exposes_source_and_upstream_artifact_as_distinct_inp
 
 def test_runtime_rejects_cached_rows_that_do_not_match_the_verified_artifact(tmp_path) -> None:
     registry, envelope, approved = _approved_codeact_plan()
-    stored = _input_artifact(tmp_path)
+    stored, input_receipt = _receipt_backed_input_artifact(tmp_path)
     tampered = StoredAdaptiveArtifact(
         artifact=stored.artifact,
         rows=({"quarter": "2026Q1", "revenue_musd": 999.0},),
@@ -973,6 +1212,7 @@ def test_runtime_rejects_cached_rows_that_do_not_match_the_verified_artifact(tmp
     context = AdaptiveDispatchContext(
         registry=registry,
         artifacts={"input": tampered},
+        artifact_verification_receipts={"input": input_receipt},
         code_policy_factory=lambda step: CodeGenerationPolicy(capability_id=step.capability_id, enabled=True, require_bwrap=True),
         code_source_factory=lambda request, prompt: (_ for _ in ()).throw(AssertionError("must not call model")),
         builtin_handlers={"compose_cited_report_v1": _report_handler},

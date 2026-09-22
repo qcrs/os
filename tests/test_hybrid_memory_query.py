@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 
 from statebus.contracts import CanonicalTaskSpec, ReplayClass
 from statebus.benchmark.adaptive_memory import _negative_fixture_gate
 from statebus.memory import (
     DeterministicEmbeddingEncoder,
+    MemoryAdmissionDecision,
+    MemoryAdmissionReceipt,
     MemoryCommit,
+    MemoryCommitStatus,
     MemoryIndexStore,
     MemoryQuery,
     MemoryRef,
     MemoryType,
+    MemoryValidationStatus,
 )
 
 
@@ -38,11 +43,11 @@ def _put_memory(
     commit = MemoryCommit(
         memory_ref=MemoryRef(
             memory_id=memory_id,
-            memory_type=(
-                MemoryType.EXACT_REPLAY
-                if replay_class == ReplayClass.EXACT_REPLAY
-                else MemoryType.EVIDENCE
-            ),
+        memory_type=(
+            MemoryType.EXACT_REPLAY
+            if replay_class == ReplayClass.EXACT_REPLAY
+            else MemoryType.STRATEGY
+        ),
             replay_class=replay_class,
             score=0.8,
             source_task_id=f"source-{memory_id}",
@@ -51,6 +56,8 @@ def _put_memory(
             tags=tags,
             embedding_ref_id=embedding.embedding_id,
             metadata={
+                "artifact_verification_receipt_hash": f"sha256:artifact-receipt-{memory_id}",
+                "runtime_semantic_commit_receipt_hash": f"sha256:semantic-commit-{memory_id}",
                 "runtime_signature_hash": runtime_signature,
                 "output_contract_version": output_contract_version,
                 "input_lineage_hashes": [f"sha256:input-{memory_id}"],
@@ -72,7 +79,38 @@ def _put_memory(
         quality_floor_pass=True,
         created_from_artifact_hash=f"sha256:{memory_id}",
     )
-    store.commit_candidate(commit=commit, quality_floor_pass=True, answer_adopted=True)
+    committed = replace(
+        commit,
+        memory_ref=replace(
+            commit.memory_ref,
+            artifact_ref_id=f"artifact-{memory_id}",
+            commit_status=MemoryCommitStatus.COMMITTED,
+            validation_status=MemoryValidationStatus.PASSED,
+            answer_adopted=True,
+        ),
+        quality_floor_pass=True,
+    )
+    receipt = MemoryAdmissionReceipt(
+        memory_id=memory_id,
+        memory_commit_hash=committed.commit_hash,
+        memory_type=committed.memory_ref.memory_type.value,
+        source_artifact_id=committed.memory_ref.artifact_ref_id,
+        source_artifact_blob_hash=committed.created_from_artifact_hash,
+        artifact_verification_receipt_hash=committed.memory_ref.metadata[
+            "artifact_verification_receipt_hash"
+        ],
+        admission_policy_id="test-memory-admission",
+        admission_policy_version="v1",
+        decision=MemoryAdmissionDecision.ADMITTED,
+        reason="test_fixture_admitted",
+        admitted_at_ns=1,
+        memory_admission_receipt_id=f"admission-{memory_id}",
+        runtime_semantic_commit_receipt_hash=committed.memory_ref.metadata[
+            "runtime_semantic_commit_receipt_hash"
+        ],
+        memory_projection_binding_hash=f"sha256:projection-{memory_id}",
+    )
+    store.persist_admitted(commit=committed, admission_receipt=receipt)
 
 
 def test_adaptive_negative_fixture_gate_requires_visible_rejected_unconsumed_candidate() -> None:

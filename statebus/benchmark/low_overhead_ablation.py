@@ -19,6 +19,19 @@ from statebus.utils import stable_json_dumps
 
 VARIANTS = ("utf8_text_inline", "typed_protobuf_inline", "typed_protobuf_shm_ref")
 DEFAULT_SIZES = {"small": 1_024, "medium": 65_536, "large": 524_288}
+DEFAULT_THRESHOLDS = (256, 1_024, 4_096, 16_384)
+
+
+def select_carrier(payload_size: int, *, inline_threshold_bytes: int) -> str:
+    """Choose the carrier before any data-plane allocation is performed."""
+
+    if payload_size < 1 or inline_threshold_bytes < 1:
+        raise ValueError("p2_payload_size_and_threshold_must_be_positive")
+    return (
+        "typed_protobuf_inline"
+        if payload_size <= inline_threshold_bytes
+        else "typed_protobuf_shm_ref"
+    )
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -145,6 +158,8 @@ def _run_variant(
     payload_id: str,
     socket_path: Path,
     timeout_s: float,
+    policy_name: str = "fixed_variant",
+    threshold_bytes: int | None = None,
 ) -> dict[str, object]:
     payload_hash = hashlib.sha256(payload).hexdigest()
     shared: SharedMemory | None = None
@@ -228,18 +243,34 @@ def _run_variant(
 
     quality_pass = bool(response.get("ok")) and response.get("payload_sha256") == payload_hash
     terminal_class = "success" if quality_pass and process.exitcode == 0 else "runtime_fail"
+    is_ref = variant == "typed_protobuf_shm_ref"
+    control_plane_bytes = len(request_frame) + response_wire_bytes
+    descriptor_bytes = len(request_payload) if is_ref else 0
+    payload_data_plane_bytes = len(payload) if is_ref else 0
+    payload_control_plane_bytes = len(payload) if not is_ref else 0
     return {
         "schema_version": "statebus.p2.low_overhead_row.v1",
         "row_id": f"{payload_id}:{variant}",
         "matched_payload_id": payload_id,
         "variant": variant,
+        "policy": policy_name,
+        "threshold_bytes": threshold_bytes,
+        "effective_carrier": "ref_shm" if is_ref else "inline",
+        "carrier_decision_before_allocation": True,
+        "shared_memory_created": is_ref,
+        "descriptor_only_control_frame": is_ref,
         "semantic_payload_sha256": payload_hash,
         "semantic_payload_bytes": len(payload),
         "producer_pid": os.getpid(),
         "consumer_pid": int(response.get("consumer_pid", 0) or 0),
         "cross_process": int(response.get("consumer_pid", 0) or 0) != os.getpid(),
         "logical_messages": 2,
-        "control_bytes": len(request_frame) + response_wire_bytes,
+        "control_bytes": control_plane_bytes,
+        "control_plane_bytes": control_plane_bytes,
+        "descriptor_bytes": descriptor_bytes,
+        "payload_data_plane_bytes": payload_data_plane_bytes,
+        "payload_control_plane_bytes": payload_control_plane_bytes,
+        "copy_setup_ms": encode_ms + socket_wait_ms,
         "wire_bytes": {
             "status": "observed",
             "value": len(request_frame) + response_wire_bytes,
@@ -258,6 +289,10 @@ def _run_variant(
         "state_map_ms": float(response.get("state_map_ms", 0.0) or 0.0) if variant == "typed_protobuf_shm_ref" else None,
         "state_read_ms": float(response.get("state_read_ms", 0.0) or 0.0) if variant == "typed_protobuf_shm_ref" else None,
         "state_release_ms": state_release_ms if variant == "typed_protobuf_shm_ref" else None,
+        "shm_setup_ms": state_publish_ms if is_ref else 0.0,
+        "shm_map_ms": float(response.get("state_map_ms", 0.0) or 0.0) if is_ref else 0.0,
+        "shm_read_ms": float(response.get("state_read_ms", 0.0) or 0.0) if is_ref else 0.0,
+        "shm_release_ms": state_release_ms if is_ref else 0.0,
         "critical_path_wall_ms": (time.perf_counter_ns() - wall_started) / 1_000_000,
         "quality": {"passed": quality_pass, "expected_sha256": payload_hash, "observed_sha256": response.get("payload_sha256", "")},
         "terminal_class": terminal_class,
@@ -270,6 +305,142 @@ def _run_variant(
             "kv_hidden_latent": False,
         },
     }
+
+
+def run_size_aware_threshold_sweep(
+    *,
+    output_root: Path,
+    thresholds: tuple[int, ...] = DEFAULT_THRESHOLDS,
+    sizes: dict[str, int] | None = None,
+    payload_count_per_size: int = 1,
+    repeats: int = 1,
+    timeout_s: float = 20.0,
+) -> dict[str, object]:
+    """Run the existing carrier runner with an explicit size-aware policy.
+
+    The selected fixed variant is passed to ``_run_variant`` only after the
+    threshold decision.  This is the important invariant: an inline row never
+    allocates a shared-memory object, while a ref row sends only a descriptor
+    over the control socket.
+    """
+
+    if payload_count_per_size < 1 or repeats < 1 or timeout_s <= 0:
+        raise ValueError("p2_positive_counts_and_timeout_required")
+    normalized_thresholds = tuple(dict.fromkeys(int(item) for item in thresholds))
+    if not normalized_thresholds or any(item < 1 for item in normalized_thresholds):
+        raise ValueError("p2_thresholds_must_be_positive")
+    effective_sizes = dict(sizes or DEFAULT_SIZES)
+    if not effective_sizes or any(int(value) < 1 for value in effective_sizes.values()):
+        raise ValueError("p2_payload_sizes_must_be_positive")
+    if output_root.exists():
+        if not output_root.is_dir() or any(output_root.iterdir()):
+            raise FileExistsError(f"p2_output_root_must_be_new_or_empty:{output_root}")
+    else:
+        output_root.mkdir(parents=True, exist_ok=False)
+
+    manifest = {
+        "schema_version": "statebus.p2.size_aware_threshold_manifest.v1",
+        "policy": "payload_size <= inline_threshold_bytes => typed_protobuf_inline; otherwise typed_protobuf_shm_ref",
+        "thresholds_bytes": list(normalized_thresholds),
+        "payload_sizes": effective_sizes,
+        "payload_count_per_size": payload_count_per_size,
+        "repeats": repeats,
+        "decision_before_shared_memory_creation": True,
+        "claim_boundary": "carrier decision and directly observed setup/control/data-plane telemetry; no provider or superiority claim",
+    }
+    _write_json(output_root / "manifest.json", manifest)
+
+    rows: list[dict[str, object]] = []
+    for threshold_bytes in normalized_thresholds:
+        for repeat in range(1, repeats + 1):
+            for size_name, size_bytes in effective_sizes.items():
+                for payload_index in range(1, payload_count_per_size + 1):
+                    payload_id = f"{size_name}:{payload_index:03d}:repeat-{repeat}"
+                    # Threshold is a carrier policy variable only.  Keep the
+                    # payload identity stable across the sweep so every row
+                    # is a true matched-payload comparison.
+                    stable_payload_index = (
+                        repeat * 1_000_000
+                        + sum(
+                            index * 10_000
+                            for index, name in enumerate(effective_sizes, start=1)
+                            if name == size_name
+                        )
+                        + payload_index
+                    )
+                    logical_payload = _payload(
+                        int(size_bytes), payload_index=stable_payload_index
+                    )
+                    variant = select_carrier(
+                        len(logical_payload),
+                        inline_threshold_bytes=threshold_bytes,
+                    )
+                    socket_path = Path("/tmp") / (
+                        f"statebus-p2-policy-{os.getpid()}-{repeat}-"
+                        f"{size_name}-{payload_index}-"
+                        f"{threshold_bytes}.sock"
+                    )
+                    row = _run_variant(
+                        variant=variant,
+                        payload=logical_payload,
+                        payload_id=payload_id,
+                        socket_path=socket_path,
+                        timeout_s=timeout_s,
+                        policy_name="size_aware_threshold",
+                        threshold_bytes=threshold_bytes,
+                    )
+                    row["threshold_row_id"] = f"{threshold_bytes}:{payload_id}"
+                    rows.append(row)
+
+    expected_carriers = {
+        f"{threshold}:{size_name}": (
+            "inline" if int(size_bytes) <= threshold else "ref_shm"
+        )
+        for threshold in normalized_thresholds
+        for size_name, size_bytes in effective_sizes.items()
+    }
+    observed_carriers = {
+        f"{row['threshold_bytes']}:{row['matched_payload_id'].split(':', 1)[0]}": row[
+            "effective_carrier"
+        ]
+        for row in rows
+    }
+    rows_ok = all(row["terminal_class"] == "success" for row in rows)
+    policy_ok = observed_carriers == expected_carriers and all(
+        bool(row["carrier_decision_before_allocation"])
+        and bool(row["shared_memory_created"]) == (row["effective_carrier"] == "ref_shm")
+        for row in rows
+    )
+    acceptance = {
+        "schema_version": "statebus.p2.size_aware_threshold_acceptance.v1",
+        "status": "passed" if rows and rows_ok and policy_ok else "inconclusive",
+        "exit_code": 0 if rows and rows_ok and policy_ok else 3,
+        "thresholds_bytes": list(normalized_thresholds),
+        "row_count": len(rows),
+        "observed_carriers": observed_carriers,
+        "expected_carriers": expected_carriers,
+        "checks": {
+            "rows_terminal": rows_ok,
+            "carrier_matrix_matches": policy_ok,
+            "inline_has_no_shm_setup": all(
+                row["effective_carrier"] != "inline"
+                or not row["shared_memory_created"]
+                and row["shm_setup_ms"] == 0.0
+                for row in rows
+            ),
+            "ref_uses_descriptor_only_control_frame": all(
+                row["effective_carrier"] != "ref_shm"
+                or row["descriptor_only_control_frame"]
+                and row["payload_control_plane_bytes"] == 0
+                for row in rows
+            ),
+        },
+        "benchmark_superiority": "NOT_ESTABLISHED",
+        "statistical_superiority": "NOT_ESTABLISHED",
+    }
+    _write_json(output_root / "rows.json", rows)
+    _write_json(output_root / "acceptance.json", acceptance)
+    return {**acceptance, "output_root": str(output_root)}
 
 
 def run_low_overhead_ablation(
@@ -366,13 +537,34 @@ def main() -> int:
     parser.add_argument("--payload-count-per-size", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--timeout-s", type=float, default=20.0)
-    args = parser.parse_args()
-    result = run_low_overhead_ablation(
-        output_root=args.output_root,
-        payload_count_per_size=args.payload_count_per_size,
-        repeats=args.repeats,
-        timeout_s=args.timeout_s,
+    parser.add_argument(
+        "--threshold-sweep",
+        action="store_true",
+        help="run the explicit size-aware inline/ref threshold sweep",
     )
+    parser.add_argument(
+        "--threshold-bytes",
+        action="append",
+        type=int,
+        default=None,
+        help="inline threshold in bytes; repeat for a sweep",
+    )
+    args = parser.parse_args()
+    if args.threshold_sweep:
+        result = run_size_aware_threshold_sweep(
+            output_root=args.output_root,
+            thresholds=tuple(args.threshold_bytes or DEFAULT_THRESHOLDS),
+            payload_count_per_size=args.payload_count_per_size,
+            repeats=args.repeats,
+            timeout_s=args.timeout_s,
+        )
+    else:
+        result = run_low_overhead_ablation(
+            output_root=args.output_root,
+            payload_count_per_size=args.payload_count_per_size,
+            repeats=args.repeats,
+            timeout_s=args.timeout_s,
+        )
     print(stable_json_dumps(result))
     return int(result["exit_code"])
 

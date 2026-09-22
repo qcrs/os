@@ -60,7 +60,13 @@ def test_oracle_and_metric_availability() -> None:
     assert audit_oracle_visibility(provider_request={"task": "x"})["ok"]
     assert not audit_oracle_visibility(provider_request={"expected_route": "gold"})["ok"]
     projection = project_metric_availability()
-    assert all(item["status"] == "unsupported" for item in projection.values())
+    assert projection["recipe_step_skip"]["status"] == "deferred"
+    assert projection["recipe_step_skip"]["reason"] == "recipe_step_skip_deferred_to_c2"
+    assert all(
+        item["status"] == "unsupported"
+        for name, item in projection.items()
+        if name != "recipe_step_skip"
+    )
 
 
 def test_c2a_pilot_has_real_four_role_and_denominator_closure(tmp_path: Path) -> None:

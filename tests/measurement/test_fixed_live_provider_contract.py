@@ -8,7 +8,8 @@ import pytest
 import statebus.benchmark.stage2_pilot as pilot
 from statebus.integrations.llm import LLMConfig, LLMResult, LLMUsage, ProviderConfig
 from statebus.integrations.llm import parse_tagged_json
-from statebus.runtime.fixed_mainline import _live_call
+from statebus.benchmark.minimal_runner import _live_summarizer_config
+from statebus.runtime.fixed_mainline import _compact_live_summarizer_evidence, _live_call
 from statebus.runtime.role_path import RolePathRunner
 
 
@@ -20,11 +21,13 @@ class _FourRoleFakeClient:
         exception_role: str | None = None,
         invalid_executor_once: bool = False,
         invalid_executor_always: bool = False,
+        failure_finish_reason: str | None = None,
     ) -> None:
         self.failure_role = failure_role
         self.exception_role = exception_role
         self.invalid_executor_once = invalid_executor_once
         self.invalid_executor_always = invalid_executor_always
+        self.failure_finish_reason = failure_finish_reason
         self.executor_call_count = 0
         self.calls: list[tuple[str, str]] = []
         self.request_events: list[dict[str, object]] = []
@@ -51,6 +54,7 @@ class _FourRoleFakeClient:
                 text="not-json",
                 model="fake-qwen3-32b",
                 usage=LLMUsage(prompt_tokens=10, completion_tokens=2, total_tokens=12),
+                finish_reason=self.failure_finish_reason,
             )
 
         if purpose == "planner":
@@ -146,12 +150,104 @@ class _FourRoleFakeClient:
         )
 
 
-def _sample():
+def _sample(case_id: str = "benchmark-sample-1"):
     return next(
         item[2]
         for item in pilot._select_samples()
-        if item[2].task_id == "benchmark-sample-1"
+        if item[2].task_id == case_id
     )
+
+
+def test_live_summarizer_evidence_projection_is_bounded_and_locatable() -> None:
+    payload = {
+        "structured_evidence": [
+            {
+                "item_id": f"row-{index}",
+                "locator": {"row": index},
+                "rendered_text": "x" * 10_000,
+            }
+            for index in range(32)
+        ]
+    }
+
+    projected = _compact_live_summarizer_evidence(payload)
+
+    assert len(projected) == 8
+    assert projected[0]["id"] == "row-0"
+    assert all(item["locator"] for item in projected)
+    assert all(len(item["text"]) <= 1_000 for item in projected)
+
+
+def test_live_claim_set_budget_and_finish_reason_remain_fail_closed(tmp_path: Path) -> None:
+    config = LLMConfig(
+        mode="local_vllm",
+        providers={"default": ProviderConfig(timeout_s=12.5)},
+    )
+    budgeted = _live_summarizer_config(config, expected_claim_count=6)
+    assert budgeted.role_config("summarizer").max_tokens == 2_304
+
+    client = _FourRoleFakeClient(
+        failure_role="summarizer",
+        failure_finish_reason="length",
+    )
+    runner = RolePathRunner(llm_client=client, json_response_max_attempts=1)
+    sink: dict[str, object] = {}
+    with pytest.raises(ValueError, match="summarizer role returned invalid JSON"):
+        _live_call(
+            runner,
+            sink,
+            "summarizer",
+            lambda: runner.build_claim_set(
+                task_id="task-1",
+                claim_set_id="claims-1",
+                verified_artifact_refs=("artifact-1",),
+                evidence_items=(
+                    {"id": "evidence-1", "locator": "table:0", "text": "revenue 120"},
+                ),
+                artifact_summaries=(
+                    {
+                        "artifact_ref_id": "artifact-1",
+                        "status": "verified",
+                        "rows": [
+                            {"quarter": f"202{index}Q1", "metric_value": float(index)}
+                            for index in range(6)
+                        ],
+                    },
+                ),
+                expected_claim_count=6,
+            ),
+        )
+
+    invocation = next(
+        item
+        for item in sink["role_invocations"]
+        if item["role"] == "summarizer"
+    )
+    assert invocation["status"] == "error"
+    assert invocation["finish_reason"] == "length"
+    assert "invalid JSON" in invocation["error"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"percentage_cases_min": 36.45}, [{"percentage_cases_min": 36.45}]),
+        ([{"percentage_cases_min": 36.45}], [{"percentage_cases_min": 36.45}]),
+        ([{"percentage_cases_min": 36.45}, {"percentage_deaths_max": 38.79}], [
+            {"percentage_cases_min": 36.45},
+            {"percentage_deaths_max": 38.79},
+        ]),
+    ],
+)
+def test_verified_executor_artifact_projection_accepts_object_or_rows(
+    tmp_path: Path,
+    payload: object,
+    expected: list[dict[str, object]],
+) -> None:
+    artifact_path = tmp_path / "result.json"
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert pilot._load_verified_executor_rows(artifact_path) == expected
 
 
 def test_fixed_live_provider_records_all_role_telemetry_and_runtime_evidence(tmp_path: Path) -> None:

@@ -144,7 +144,7 @@ def _execute_csv_task(
 
     if intent_op == "profile_table":
         columns = [str(item) for item in arguments.get("columns", [])]
-        outputs = {
+        missingness = {
             f"percentage_{column.replace('No. of ', '').replace(' ', '_').lower()}": round(
                 sum(1 for row in rows if not str(row.get(column, "")).strip())
                 / max(len(rows), 1)
@@ -153,8 +153,12 @@ def _execute_csv_task(
             )
             for column in columns
         }
-        outputs["row_count"] = len(rows)
-        outputs["fieldnames"] = list(fieldnames)
+        outputs = {
+            **missingness,
+            "missingness_summary": missingness,
+            "row_count": len(rows),
+            "fieldnames": list(fieldnames),
+        }
     elif intent_op == "aggregate_and_extreme":
         mean_column = str(arguments["mean_column"])
         max_column = str(arguments["max_column"])

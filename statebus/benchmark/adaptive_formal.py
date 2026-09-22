@@ -562,11 +562,31 @@ def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[s
             ),
         )
     elif operation == "compare_metric":
+        tickers = [str(item).upper() for item in arguments["tickers"]]
+        if tickers != ["ACME", "BETA"]:
+            raise ValueError(f"formal_compare_metric_tickers_unsupported:{tickers}")
+        quarter = str(arguments["quarter"])
+        metric = str(arguments["metric"]).lower()
         semantics.update(
-            tickers=[str(item).upper() for item in arguments["tickers"]],
-            quarter=str(arguments["quarter"]),
-            metric=str(arguments["metric"]),
-            formula="Select ACME and BETA at the requested quarter; gap_value=ACME-BETA.",
+            tickers=tickers,
+            quarter=quarter,
+            metric=metric,
+            dsl_operation="compare_metric",
+            dsl_arguments={
+                "ticker_field": "ticker",
+                "period_field": "quarter",
+                "metric_field": "metric",
+                "value_field": "value",
+                "left_ticker": "ACME",
+                "right_ticker": "BETA",
+                "period": quarter,
+                "metric": metric,
+                "period_output": "quarter",
+                "left_output": "acme_revenue_value",
+                "right_output": "beta_revenue_value",
+                "gap_output": "gap_value",
+            },
+            formula="Select exactly one ACME and one BETA revenue row at the requested quarter; gap_value=ACME-BETA.",
         )
     elif operation == "profile_table":
         semantics.update(

@@ -236,7 +236,12 @@ def test_engine_accepts_strict_fixed_and_owns_attempts_and_grants(
         grant.grant_hash for grant in grants
     )
     assert [record.resource_handles for record in result.session.attempt_records] == [
-        (grant.grant_hash,) for grant in grants
+        (binding.binding_hash, grant.grant_hash)
+        for binding, grant in zip(
+            result.execution_bindings,
+            grants,
+            strict=True,
+        )
     ]
 
 

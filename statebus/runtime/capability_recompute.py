@@ -150,6 +150,43 @@ def _apply(
             str(args.get("ratio_output", "ratio")): float(current) / float(base),
             str(args.get("growth_pct_output", "growth_pct")): ((float(current) - float(base)) / float(base)) * 100.0,
         }]
+    if step.op == "compare_metric":
+        ticker_field = str(args["ticker_field"])
+        period_field = str(args["period_field"])
+        metric_field = str(args["metric_field"])
+        value_field = str(args["value_field"])
+        left_ticker = str(args["left_ticker"]).upper()
+        right_ticker = str(args["right_ticker"]).upper()
+        period = str(args["period"])
+        metric = str(args["metric"]).lower()
+
+        def select_value(ticker: str) -> float:
+            matches = [
+                row
+                for row in rows
+                if str(row.get(ticker_field, "")).upper() == ticker
+                and str(row.get(period_field, "")) == period
+                and str(row.get(metric_field, "")).lower() == metric
+            ]
+            if len(matches) != 1:
+                raise CapabilityRecomputeError("recompute_compare_metric_match_count_invalid")
+            value = matches[0].get(value_field)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not isfinite(float(value))
+            ):
+                raise CapabilityRecomputeError("recompute_compare_metric_value_invalid")
+            return float(value)
+
+        left = select_value(left_ticker)
+        right = select_value(right_ticker)
+        return [{
+            str(args["period_output"]): period,
+            str(args["left_output"]): left,
+            str(args["right_output"]): right,
+            str(args["gap_output"]): left - right,
+        }]
     if step.op == "trend_series":
         ticker_field = str(args["ticker_field"])
         period_field = str(args["period_field"])

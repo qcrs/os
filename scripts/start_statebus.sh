@@ -14,6 +14,7 @@ Usage:
   scripts/start_statebus.sh --list-profiles
   scripts/start_statebus.sh [profile] [--container-name NAME] [--embedding-gpu INDEX]
   scripts/start_statebus.sh [profile] --print-config
+  scripts/start_statebus.sh [profile] --print-env
 
 Profiles:
   qwen3-8b-gpu0-u050   /data/models/Qwen3-8B, served qwen3-8b, physical GPU0,
@@ -108,11 +109,13 @@ if [[ $# -gt 0 && "${1:0:2}" != "--" ]]; then
 fi
 
 PRINT_CONFIG=0
+PRINT_ENV=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --container-name) CONTAINER_NAME="${2:?missing value}"; shift 2 ;;
     --embedding-gpu) EMBED_PHYSICAL_GPU="${2:?missing value}"; shift 2 ;;
     --print-config) PRINT_CONFIG=1; shift ;;
+    --print-env) PRINT_ENV=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf '未知参数：%s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -161,6 +164,13 @@ export STATEBUS_EMBED_PHYSICAL_GPU="$EMBED_PHYSICAL_GPU"
 export STATEBUS_EMBED_MODEL_PATH="$EMBED_MODEL_PATH"
 export STATEBUS_EMBED_DEVICE="cuda:0"
 
+# Local vLLM must bypass any host HTTP/SOCKS proxy.  The host may carry a
+# proxy for model downloads or external APIs, but routing 127.0.0.1 through it
+# makes the OpenAI-compatible client fail before it reaches vLLM.
+LOCAL_NO_PROXY="127.0.0.1,localhost,::1"
+export NO_PROXY="${NO_PROXY:+${NO_PROXY},}${LOCAL_NO_PROXY}"
+export no_proxy="${no_proxy:+${no_proxy},}${LOCAL_NO_PROXY}"
+
 print_config() {
   printf '[statebus] profile=%s\n' "$PROFILE"
   printf '[statebus] model_path=%s\n' "$MODEL_PATH"
@@ -180,6 +190,35 @@ print_config() {
   printf '[statebus] container_env=%s\n' "$HOME/statebus/conda-envs/statebus_host"
 }
 
+print_env() {
+  # This output is intentionally shell-evaluable by campaign commands.  Keep
+  # it separate from the human-readable config output above so callers can
+  # use `eval "$(...)"` without accidentally importing log text.
+  local name
+  for name in \
+    STATEBUS_VLLM_ENV_FILE \
+    STATEBUS_CONTAINER_NAME STATEBUS_B2_CONTAINER_NAME STATEBUS_B2_HOME_HOST \
+    STATEBUS_LOCAL_VLLM_MODEL STATEBUS_LOCAL_VLLM_BASE_URL STATEBUS_LOCAL_VLLM_HEALTH_URL \
+    STATEBUS_LLM_CONFIG_FILE STATEBUS_CONTAINER_LLM_CONFIG_FILE STATEBUS_HOST_LLM_CONFIG_FILE \
+    STATEBUS_VLLM_MODEL_PATH STATEBUS_VLLM_TOKENIZER_PATH STATEBUS_VLLM_SERVED_MODEL_NAME \
+    STATEBUS_VLLM_HOST STATEBUS_VLLM_PORT STATEBUS_VLLM_CUDA_VISIBLE_DEVICES \
+    STATEBUS_VLLM_MAX_MODEL_LEN STATEBUS_VLLM_MAX_NUM_SEQS \
+    STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS STATEBUS_VLLM_GPU_MEMORY_UTILIZATION \
+    STATEBUS_VLLM_TENSOR_PARALLEL_SIZE STATEBUS_VLLM_PROFILE \
+    STATEBUS_G6B2_PROFILE_ID STATEBUS_G6B2_SERVICE_PHYSICAL_GPU \
+    STATEBUS_G6B2_EMBEDDING_MODE STATEBUS_G6B2_EMBEDDING_MODEL_PATH \
+    STATEBUS_G6B2_EMBEDDING_DEVICE STATEBUS_G6B2_EMBEDDING_PHYSICAL_GPU \
+    STATEBUS_EMBED_PHYSICAL_GPU STATEBUS_EMBED_MODEL_PATH STATEBUS_EMBED_DEVICE \
+    NO_PROXY no_proxy
+  do
+    printf 'export %s=%q\n' "$name" "${!name:-}"
+  done
+}
+
+if (( PRINT_ENV == 1 )); then
+  print_env
+  exit 0
+fi
 print_config
 (( PRINT_CONFIG == 1 )) && exit 0
 

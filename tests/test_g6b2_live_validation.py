@@ -96,7 +96,7 @@ def test_gpu_preflight_still_requires_target_vllm_identity() -> None:
         target_service_pids=(),
     )
     assert missing["status"] == "environment_fail"
-    assert "target_service_process_missing" in missing["reason"]
+    assert "target_gpu_process_attribution_missing" in missing["reason"]
     assert "service_config_mismatch" in missing["reason"]
 
 
@@ -144,6 +144,12 @@ def test_service_identity_does_not_inspect_coexisting_processes(
 
     def fake_run(command):
         run_calls.append(list(command))
+        if "--query-compute-apps" in " ".join(command):
+            return (
+                0,
+                f"{QWEN3_8B_U050_PROFILE['gpu_uuid']}, 102, python, 40000\n",
+                "",
+            )
         return (
             0,
             f"0, {QWEN3_8B_U050_PROFILE['gpu_uuid']}, A100, 81920 MiB, 80000 MiB, 1 MiB, 100 %\n",
@@ -167,12 +173,13 @@ def test_service_identity_does_not_inspect_coexisting_processes(
 
     monkeypatch.setattr(module, "_proc_snapshot", fake_proc)
     monkeypatch.setattr(module, "_descendant_pids", lambda _pid: {101, 102})
+    monkeypatch.setattr(module, "_listener_pids", lambda _host, _port: {101})
     monkeypatch.setattr(module, "_run", fake_run)
     monkeypatch.setattr(module, "_g6b2_http_request", fake_http)
     monkeypatch.setattr(module.os, "access", lambda *_args: True)
 
     identity, preflight, _probes = _g6b2_service_identity(
-        runtime, (999,)
+        runtime, (999,), model_profile=QWEN3_8B_U050_PROFILE
     )
 
     assert preflight["status"] == "observed"
@@ -180,8 +187,110 @@ def test_service_identity_does_not_inspect_coexisting_processes(
     assert identity["coexistence_process_inspection"] is False
     assert identity["authorized_coexisting_processes"] == []
     assert 999 not in proc_calls
-    assert len(run_calls) == 1
-    assert "--query-compute-apps" not in " ".join(run_calls[0])
+    assert len(run_calls) == 2
+    assert any("--query-compute-apps" in " ".join(call) for call in run_calls)
+
+
+def test_operator_managed_reuse_ignores_stale_manager_pid_when_live_service_is_attributed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+    import os
+    import statebus.benchmark.g6b2_live_validation as module
+
+    runtime = tmp_path / "service"
+    runtime.mkdir()
+    (runtime / "service.pid").write_text("16\n", encoding="utf-8")
+    profile = {
+        **QWEN3_32B_U050_PROFILE,
+        "physical_gpu": 2,
+        "gpu_uuid": "GPU-test-2",
+    }
+    listener_pid = 301
+    worker_pid = 302
+    argv = (
+        "/env/bin/python /env/bin/vllm serve /data/models/Qwen3-32B "
+        "--served-model-name qwen3-32b --host 127.0.0.1 --port 53334 "
+        "--dtype bfloat16 --max-model-len 8192 --max-num-seqs 1 "
+        "--max-num-batched-tokens 8192 --gpu-memory-utilization 0.82 "
+        "--enforce-eager"
+    )
+
+    def fake_proc(pid: int, *, include_start_time: bool = False):
+        del include_start_time
+        if pid == 16:
+            return {"pid": 16, "ppid": 2, "uid": 0, "argv": ""}
+        if pid == listener_pid:
+            return {
+                "pid": listener_pid,
+                "ppid": 1,
+                "uid": os.getuid(),
+                "argv": argv,
+            }
+        if pid == worker_pid:
+            return {
+                "pid": worker_pid,
+                "ppid": listener_pid,
+                "uid": os.getuid(),
+                "argv": "/env/bin/python -c multiprocessing.spawn",
+            }
+        return None
+
+    def fake_run(command):
+        joined = " ".join(command)
+        if "--query-compute-apps" in joined:
+            return (
+                0,
+                f"{profile['gpu_uuid']}, {worker_pid}, python, 67130 MiB\n",
+                "",
+            )
+        return (
+            0,
+            f"2, {profile['gpu_uuid']}, A100, 81920 MiB, 70000 MiB, 11920 MiB, 50 %\n",
+            "",
+        )
+
+    def fake_http(_method: str, url: str, **_kwargs):
+        if url.endswith("/health"):
+            return {"status": "observed", "http_status": 200, "body": "", "error": ""}
+        return {
+            "status": "observed",
+            "http_status": 200,
+            "error": "",
+            "body": json.dumps({
+                "data": [{
+                    "id": "qwen3-32b",
+                    "root": "/data/models/Qwen3-32B",
+                    "max_model_len": 8192,
+                }]
+            }),
+        }
+
+    monkeypatch.setattr(module, "_proc_snapshot", fake_proc)
+    monkeypatch.setattr(
+        module,
+        "_descendant_pids",
+        lambda pid: {listener_pid, worker_pid} if pid == listener_pid else {pid},
+    )
+    monkeypatch.setattr(module, "_listener_pids", lambda _host, _port: {listener_pid}, raising=False)
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_g6b2_http_request", fake_http)
+    monkeypatch.setattr(module.os, "access", lambda *_args: True)
+
+    identity, preflight, probes = _g6b2_service_identity(
+        runtime, (), model_profile=profile
+    )
+
+    assert preflight["status"] == "observed"
+    assert identity["manager_owner_observed"] is False
+    assert identity["service_process_attribution_observed"] is True
+    assert identity["target_gpu_identity_ok"] is True
+    assert identity["http_health_ok"] is True
+    assert identity["served_model_identity_ok"] is True
+    assert identity["model_root_ok"] is True
+    assert identity["max_model_len_ok"] is True
+    assert probes["health"]["status"] == "observed"
+    assert probes["model_identity"]["identity_status"] == "matched"
 
 
 def test_live_pair_requires_real_evidence_and_uses_c2c_key() -> None:
@@ -200,6 +309,12 @@ def test_campaign_and_metrics_keep_failure_rows() -> None:
     metrics = _g6b2_metric_availability([baseline], [replay], projection["pairings"], projection["failure_rows"], denominator, {"status": "observed", "source_receipt_references": ["health"]})
     assert denominator["eligible_matched_pair_count"] == 1
     assert metrics["live_eligible_matched_pair_count"]["status"] == "observed"
+    assert metrics["provider_work_avoided"] == {
+        "status": "unsupported",
+        "value": None,
+        "reason": "provider_work_units_not_observed",
+        "source_receipt_references": [],
+    }
     assert metrics["exact_replay"]["value"] is None
     assert metrics["recipe_step_skip"]["status"] == "deferred"
 
@@ -321,6 +436,9 @@ def test_ctrl_c_during_slot_interval_finalizes_partial_artifact(
     (root / "vllm_health.json").write_text('{"status":"observed"}\n')
     (root / "vllm_model_identity.json").write_text(
         '{"identity_status":"matched"}\n'
+    )
+    (root / "container_runtime_profile.json").write_text(
+        '{"status":"observed"}\n'
     )
     (root / "live_stage_rows.partial.json").write_text(
         json.dumps({

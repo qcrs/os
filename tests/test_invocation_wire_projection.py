@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 
+import pytest
+
 from statebus.contracts import CONTROL_PLANE_SCHEMA_VERSION
 from statebus.control import (
     ControlHeader,
@@ -176,6 +178,16 @@ def test_subprocess_worker_rejects_invalid_canonical_invocation_scope(
     )
 
     for case_name, invalid_request, expected_error in cases:
+        if expected_error in {"schema_version_missing", "schema_version_unsupported"}:
+            # Schema identity is a framing invariant and is rejected before a
+            # worker is spawned.
+            with pytest.raises(ValueError, match=expected_error):
+                frame_control_message(invalid_request)
+            continue
+
+        # Invocation scope belongs to the worker-side canonical request
+        # admission boundary and is returned as an ErrorResult without ever
+        # dispatching the operation.
         response = SubprocessExecutorTransport(
             socket_path=tmp_path / f"{case_name}.sock",
             timeout_s=10.0,
