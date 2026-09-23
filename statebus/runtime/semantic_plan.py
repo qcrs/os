@@ -55,6 +55,7 @@ _CASE_ID_PATTERN = re.compile(
     r"\b(?:formal|genericity|benchmark-sample|smoke-task)-[a-z0-9_-]+\b",
     re.IGNORECASE,
 )
+_VERSION_SUFFIX_PATTERN = re.compile(r"^(?P<base>.+?)(?:[.-]v\d+)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,9 @@ class SemanticPlanResolution:
     semantic_equivalence: bool
     validation_errors: tuple[str, ...]
     consumption_mode: str
+    final_output_contract_version: str = ""
+    recognized_output_contracts: tuple[str, ...] = ()
+    output_contract_source: str = "unbound"
 
     @property
     def model_plan_hash(self) -> str:
@@ -100,6 +104,9 @@ class SemanticPlanResolution:
             "semantic_plan_valid": self.semantic_plan_valid,
             "semantic_equivalence": self.semantic_equivalence,
             "validation_errors": list(self.validation_errors),
+            "final_output_contract_version": self.final_output_contract_version,
+            "recognized_output_contracts": list(self.recognized_output_contracts),
+            "output_contract_source": self.output_contract_source,
             "model_generated_field_count": self.model_generated_field_count,
             "fallback_field_count": self.fallback_field_count,
             "model_plan_hash": self.model_plan_hash,
@@ -306,15 +313,17 @@ def resolve_semantic_task_plan(
     fallback_query_text: str,
     model_payload: dict[str, Any] | None,
     consumption_mode: str | None = None,
+    final_output_contract_version: str = "",
 ) -> SemanticPlanResolution:
     fallback = build_runtime_semantic_plan(
         spec=spec,
         goal=goal,
         query_text=fallback_query_text,
     )
-    normalized_model, errors = _normalize_and_validate_model_plan(
+    normalized_model, errors, recognized_output_contracts = _normalize_and_validate_model_plan(
         model_payload or {},
         allowed_required_outputs=spec.required_outputs,
+        final_output_contract_version=final_output_contract_version,
     )
     mode = (consumption_mode or os.getenv("STATEBUS_PLANNER_CONSUMPTION_MODE", "effective")).strip().lower()
     if mode not in {"effective", "disabled", "perturbed"}:
@@ -349,6 +358,11 @@ def resolve_semantic_task_plan(
         semantic_equivalence=semantic_equivalence,
         validation_errors=tuple(errors),
         consumption_mode=mode,
+        final_output_contract_version=str(final_output_contract_version).strip(),
+        recognized_output_contracts=recognized_output_contracts,
+        output_contract_source=(
+            "fixed_recipe" if str(final_output_contract_version).strip() else "unbound"
+        ),
     )
 
 
@@ -356,7 +370,10 @@ def _normalize_and_validate_model_plan(
     payload: dict[str, Any],
     *,
     allowed_required_outputs: tuple[str, ...],
-) -> tuple[dict[str, Any], list[str]]:
+    final_output_contract_version: str = "",
+) -> tuple[dict[str, Any], list[str], tuple[str, ...]]:
+    expected_final_contract = str(final_output_contract_version).strip()
+    contract_aliases = set(_final_output_contract_aliases(expected_final_contract))
     candidate = payload.get("semantic_task_plan")
     if not isinstance(candidate, dict) and "retrieval_objectives" in payload:
         candidate = payload
@@ -377,8 +394,9 @@ def _normalize_and_validate_model_plan(
                 "required_outputs": [],
             }
     if not isinstance(candidate, dict):
-        return {}, ["semantic_task_plan_missing"]
+        return {}, ["semantic_task_plan_missing"], ()
     errors: list[str] = []
+    raw_candidate = candidate
     _scan_forbidden(candidate, errors=errors, path="semantic_task_plan")
     if "retrieval_objectives" not in candidate and _looks_like_flat_wire_plan(candidate):
         candidate = _canonical_plan_from_flat_wire(candidate)
@@ -423,21 +441,74 @@ def _normalize_and_validate_model_plan(
     if not objectives:
         errors.append("retrieval_objective_query_missing")
     required_evidence = _bounded_text_list(candidate.get("required_evidence"), max_items=8, max_length=64)
-    invalid_required_evidence = sorted(set(required_evidence) - REGISTERED_EVIDENCE_TYPES)
-    if invalid_required_evidence:
-        errors.append(f"unregistered_required_evidence:{','.join(invalid_required_evidence)}")
+    # ``required_evidence`` is a retrieval hint, not a second output contract.
+    # Models occasionally echo a declared business output (for example
+    # ``summary_text``) into this list.  Drop those values and keep the
+    # registered subset; the runtime fallback remains authoritative for the
+    # evidence types actually needed by the task.
     required_outputs = _bounded_text_list(candidate.get("required_outputs"), max_items=12, max_length=96)
-    invalid_outputs = sorted(set(required_outputs) - set(allowed_required_outputs))
+    allowed_output_set = set(allowed_required_outputs)
+    recognized_output_contracts: list[str] = []
+    business_outputs: list[str] = []
+    invalid_outputs: list[str] = []
+    for output in required_outputs:
+        # Task fields remain authoritative when a task happens to use the same
+        # short spelling as a final contract alias.  The controller-owned
+        # formal contract is only recognized outside that task registry.
+        if output in allowed_output_set:
+            business_outputs.append(output)
+        elif expected_final_contract and output in contract_aliases:
+            recognized_output_contracts.append(expected_final_contract)
+        else:
+            invalid_outputs.append(output)
     if invalid_outputs:
-        errors.append(f"unregistered_required_output:{','.join(invalid_outputs)}")
+        errors.append(
+            f"unregistered_required_output:{','.join(sorted(set(invalid_outputs)))}"
+        )
+
+    explicit_contract_values: list[str] = []
+    for source in (payload, raw_candidate):
+        for key in ("final_output_contract_version", "final_output_contract"):
+            value = source.get(key) if isinstance(source, dict) else None
+            normalized = _bounded_text(value, 128)
+            if normalized:
+                explicit_contract_values.append(normalized)
+    for observed_contract in dict.fromkeys(explicit_contract_values):
+        if not expected_final_contract:
+            errors.append(f"final_output_contract_unbound:{observed_contract}")
+        elif observed_contract in contract_aliases:
+            recognized_output_contracts.append(expected_final_contract)
+        else:
+            errors.append(f"final_output_contract_mismatch:{observed_contract}")
     normalized_plan = {
         "schema_version": SEMANTIC_TASK_PLAN_SCHEMA_VERSION,
         "task_semantics": normalized_semantics,
         "retrieval_objectives": objectives,
         "required_evidence": [item for item in required_evidence if item in REGISTERED_EVIDENCE_TYPES],
-        "required_outputs": [item for item in required_outputs if item in set(allowed_required_outputs)],
+        "required_outputs": list(dict.fromkeys(business_outputs)),
     }
-    return normalized_plan, errors
+    return normalized_plan, errors, tuple(dict.fromkeys(recognized_output_contracts))
+
+
+def _final_output_contract_aliases(contract_version: str) -> tuple[str, ...]:
+    """Return controller-derived spellings accepted as a final-contract marker.
+
+    The aliases are derived only from the contract supplied by the controller;
+    this function is not a global registry and therefore cannot authorize an
+    arbitrary output such as ``cited_report`` for unrelated recipes.
+    """
+
+    normalized = " ".join(str(contract_version or "").split())
+    if not normalized:
+        return ()
+    aliases: list[str] = [normalized]
+    if normalized.startswith("statebus."):
+        aliases.append(normalized[len("statebus."):])
+    for value in tuple(aliases):
+        match = _VERSION_SUFFIX_PATTERN.match(value)
+        if match:
+            aliases.append(match.group("base"))
+    return tuple(dict.fromkeys(value for value in aliases if value))
 
 
 def _canonical_plan_from_flat_wire(payload: dict[str, Any]) -> dict[str, Any]:

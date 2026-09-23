@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 import os
@@ -11,6 +12,7 @@ import pytest
 import statebus.benchmark.stage2_pilot as pilot
 from statebus.benchmark.contest_fairness import validate_c2a_trace
 from statebus.integrations.llm import LLMResult
+from statebus.runtime.codeact_sandbox import CodeActSandboxReadiness
 from statebus.utils import sha256_digest
 
 
@@ -47,7 +49,40 @@ def _success_runner(sample, root: Path, *, seed: int = 0, **kwargs):
     }
 
 
-def test_warmup_failure_blocks_remaining_slots_without_runtime_failure_rows(monkeypatch, tmp_path: Path) -> None:
+def test_slot_manifest_validates_canonical_case_lane_identity(tmp_path: Path) -> None:
+    sample = _sample("formal-trend-005")
+    manifest = tmp_path / "missing_slots.json"
+    manifest.write_text(
+        '{"schema_version":"statebus.p1_missing_slots.v1",'
+        '"slots":[{"family_id":"financial_report_analysis_v1",'
+        '"case_id":"formal-trend-005","lane":"fixed_structured",'
+        '"repeat":1,"seed":0}]}\n',
+        encoding="utf-8",
+    )
+    slots = pilot._load_slot_manifest(
+        manifest,
+        [("financial_report_analysis_v1::formal-trend-005", sample, sample)],
+    )
+    assert slots[0]["family_key"] == "financial_report_analysis_v1::formal-trend-005"
+    assert slots[0]["lane"] == "fixed_structured"
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text(
+        '{"schema_version":"statebus.p1_missing_slots.v1",'
+        '"slots":[{"family_id":"financial_report_analysis_v1",'
+        '"case_id":"formal-trend-005","lane":"fixed_structured",'
+        '"repeat":1,"seed":0},{"family_id":"financial_report_analysis_v1",'
+        '"case_id":"formal-trend-005","lane":"fixed_structured",'
+        '"repeat":1,"seed":0}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="stage2_slot_manifest_duplicate"):
+        pilot._load_slot_manifest(
+            duplicate,
+            [("financial_report_analysis_v1::formal-trend-005", sample, sample)],
+        )
+
+
+def test_warmup_failure_is_recorded_and_measured_slots_continue(monkeypatch, tmp_path: Path) -> None:
     sample = _sample()
     monkeypatch.setattr(pilot, "_select_samples", lambda: [("family", sample, sample)])
     monkeypatch.setattr(pilot, "_quality", lambda *args, **kwargs: {"passed": True, "failures": []})
@@ -66,16 +101,23 @@ def test_warmup_failure_blocks_remaining_slots_without_runtime_failure_rows(monk
 
     rows = pilot.json.loads((tmp_path / "run" / "raw_rows.json").read_text(encoding="utf-8"))
     assert acceptance["status"] == "pilot_inconclusive"
-    assert acceptance["denominator"]["not_started_count"] == len(pilot.LANES) * len(pilot.SEEDS)
-    assert all(row["status"] == "not_started" for row in rows)
-    assert all(row["terminal_class"] == "not_started" for row in rows)
+    assert acceptance["denominator"]["not_started_count"] == 0
+    assert acceptance["warmup_failure_count"] == 1
+    assert [row["status"] for row in rows if row["lane"] == "direct_single_agent"] == [
+        "runtime_fail",
+        "runtime_fail",
+    ]
+    assert all(
+        row["status"] == "success"
+        for row in rows
+        if row["lane"] != "direct_single_agent"
+    )
     manifest = pilot.json.loads((tmp_path / "run" / "stage2_manifest.json").read_text(encoding="utf-8"))
     assert {slot["regime"] for slot in manifest["planned_slots"]} == {"provider_cache_uncontrolled"}
     assert manifest["cache_control"]["cold_warm_claim"] == "not_supported"
-    blocked_warmups = pilot.json.loads((tmp_path / "run" / "warmups.json").read_text(encoding="utf-8"))
-    for warmup in blocked_warmups[1:]:
-        assert warmup["started_at_ns"] is None
-        assert not (tmp_path / "run" / "warmups" / warmup["family_id"] / warmup["lane"] / "call-start.json").exists()
+    recorded_warmups = pilot.json.loads((tmp_path / "run" / "warmups.json").read_text(encoding="utf-8"))
+    assert recorded_warmups[0]["status"] == "runtime_fail"
+    assert all(warmup["started_at_ns"] is not None for warmup in recorded_warmups)
 
 
 def test_adaptive_policy_rejection_preserves_real_planner_requests(monkeypatch, tmp_path: Path) -> None:
@@ -111,7 +153,11 @@ def test_adaptive_policy_rejection_preserves_real_planner_requests(monkeypatch, 
     assert [event["request_id"] for event in adaptive["provider_request_events"]] == ["request-first", "request-second"]
     assert [event["retry_kind"] for event in adaptive["provider_request_events"]] == ["none", "role_repair"]
     assert len(adaptive["provider_evidence_paths"]) == 2
-    assert acceptance["denominator"]["not_started_count"] == len(pilot.SEEDS)
+    assert acceptance["denominator"]["not_started_count"] == 0
+    assert len([
+        row for row in pilot.json.loads((tmp_path / "run" / "raw_rows.json").read_text(encoding="utf-8"))
+        if row["lane"] == "adaptive_routed" and row["status"] == "policy_reject"
+    ]) == len(pilot.SEEDS)
 
 
 def test_adaptive_incomplete_attempt_does_not_fabricate_response(tmp_path: Path) -> None:
@@ -170,7 +216,7 @@ def test_adaptive_plan_budget_is_independent_of_measurement_deadline(monkeypatch
     assert captured["max_execution_runtime_ms"] >= 120_000 + 2 * 120_000 + 30_000
 
 
-def test_required_gate_failure_stops_new_slots_and_preserves_unknown_failure_state(monkeypatch, tmp_path: Path) -> None:
+def test_required_gate_failure_records_one_slot_and_continues(monkeypatch, tmp_path: Path) -> None:
     sample = _sample()
     monkeypatch.setattr(pilot, "_select_samples", lambda: [("family", sample, sample)])
     monkeypatch.setattr(pilot, "_quality", lambda *args, **kwargs: {"passed": True, "failures": []})
@@ -193,16 +239,15 @@ def test_required_gate_failure_stops_new_slots_and_preserves_unknown_failure_sta
 
     rows = pilot.json.loads((tmp_path / "run" / "raw_rows.json").read_text(encoding="utf-8"))
     failed = [row for row in rows if row["status"] == "runtime_fail"]
-    blocked = [row for row in rows if row["status"] == "not_started"]
     assert acceptance["status"] == "pilot_inconclusive"
     assert len(failed) == 1
     assert failed[0]["lifecycle_state"] == "unknown"
     assert failed[0]["provider_invocation_status"] == "not_started"
-    assert blocked
-    assert all(row["terminal_class"] == "not_started" for row in blocked)
+    assert acceptance["denominator"]["not_started_count"] == 0
+    assert len(rows) == acceptance["planned_slots"]
 
 
-def test_fixed_warmup_failure_blocks_fixed_and_later_lanes(monkeypatch, tmp_path: Path) -> None:
+def test_fixed_warmup_failure_does_not_block_later_lanes(monkeypatch, tmp_path: Path) -> None:
     sample = _sample()
     monkeypatch.setattr(pilot, "_select_samples", lambda: [("family", sample, sample)])
     monkeypatch.setattr(pilot, "_quality", lambda *args, **kwargs: {"passed": True, "failures": []})
@@ -223,9 +268,10 @@ def test_fixed_warmup_failure_blocks_fixed_and_later_lanes(monkeypatch, tmp_path
     by_lane = {lane: [row for row in rows if row["lane"] == lane] for lane in pilot.LANES}
     assert all(row["status"] == "success" for row in by_lane["direct_single_agent"])
     assert all(row["status"] == "success" for row in by_lane["pure_text_mas"])
-    assert all(row["status"] == "not_started" for row in by_lane["fixed_structured"])
-    assert all(row["status"] == "not_started" for row in by_lane["adaptive_routed"])
-    assert acceptance["no_go_reasons"] == ["terminal_or_evidence_failure"]
+    assert all(row["status"] == "runtime_fail" for row in by_lane["fixed_structured"])
+    assert all(row["status"] == "success" for row in by_lane["adaptive_routed"])
+    assert acceptance["denominator"]["not_started_count"] == 0
+    assert acceptance["no_go_reasons"] == ["terminal_or_evidence_failure", "warmup_failure"]
 
 
 def test_offline_negative_quality_is_no_go_not_success(monkeypatch, tmp_path: Path) -> None:
@@ -340,6 +386,52 @@ def test_bounded_registry_selection_rejects_ambiguous_or_unknown_filters() -> No
         pilot._filter_selected_samples(selected, case_ids=("missing",))
     with pytest.raises(ValueError, match="stage2_family_not_registered"):
         pilot._filter_selected_samples(selected, family_ids=("missing",))
+
+
+def test_bounded_lane_selection_is_exact_and_canonical() -> None:
+    assert pilot._filter_selected_lanes() == pilot.LANES
+    assert pilot._filter_selected_lanes(("adaptive_routed", "fixed_structured")) == (
+        "fixed_structured",
+        "adaptive_routed",
+    )
+
+    with pytest.raises(ValueError, match="duplicate_lane_selection"):
+        pilot._filter_selected_lanes(("fixed_structured", "fixed_structured"))
+    with pytest.raises(ValueError, match="stage2_lane_not_registered"):
+        pilot._filter_selected_lanes(("missing",))
+
+
+def test_stage2_lane_selection_scopes_manifest_and_denominator(monkeypatch, tmp_path: Path) -> None:
+    sample = _sample()
+    monkeypatch.setattr(pilot, "_select_samples", lambda: [("family", sample, sample)])
+    monkeypatch.setattr(pilot, "_quality", lambda *args, **kwargs: {"passed": True, "failures": []})
+
+    def gated_success_runner(sample, root: Path, **kwargs):
+        result = _success_runner(sample, root, **kwargs)
+        result.update(
+            schema_gate={"passed": True},
+            fairness_gate={"passed": True},
+            provider_observation_gate={"passed": True},
+        )
+        return result
+
+    acceptance = pilot.run_stage2_pilot(
+        output_root=tmp_path / "run",
+        repeats=1,
+        lane_ids=("direct_single_agent",),
+        lane_runners={"direct_single_agent": gated_success_runner},
+        strict_gates=True,
+        preflight=False,
+        process_deadline=False,
+        timeout_s=1,
+    )
+
+    manifest = pilot.json.loads((tmp_path / "run" / "stage2_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["lanes"] == ["direct_single_agent"]
+    assert manifest["selection"]["lane_ids"] == ["direct_single_agent"]
+    assert acceptance["planned_slots"] == acceptance["observed_rows"] == 1
+    assert acceptance["denominator"]["arithmetic_closed"] is True
+    assert acceptance["denominator"]["not_started_count"] == 0
 
 
 def test_stage2_wrapper_rejects_existing_root_without_overwriting_logs(tmp_path: Path) -> None:
@@ -771,6 +863,81 @@ def test_preflight_checks_model_identity_path_and_context() -> None:
     assert any("served_max_model_len_mismatch" in error for error in pilot._validate_served_model(data, profile)[1])
     data["data"][0]["root"] = "/data/models/Qwen3-8B"
     assert any("served_model_path_mismatch" in error for error in pilot._validate_served_model(data, profile)[1])
+
+
+def test_live_preflight_rejects_unready_codeact_bwrap(monkeypatch, tmp_path: Path) -> None:
+    provider = SimpleNamespace(base_url="http://127.0.0.1:53334/v1", timeout_s=180.0)
+    role = SimpleNamespace(provider="default", model="qwen3-32b")
+
+    class FakeConfig:
+        use_api = True
+
+        def with_mode(self, mode: str):
+            assert mode == "local_vllm"
+            return self
+
+        def provider_config(self, name: str):
+            assert name == "default"
+            return provider
+
+        def role_config(self, name: str):
+            assert name in {"planner", "retriever", "executor", "summarizer"}
+            return role
+
+    profile = {
+        "model": "qwen3-32b",
+        "model_path": "/data/models/Qwen3-32B",
+        "max_model_len": "8192",
+    }
+    models = {
+        "data": [
+            {
+                "id": "qwen3-32b",
+                "root": "/data/models/Qwen3-32B",
+                "max_model_len": 8192,
+            }
+        ]
+    }
+
+    class FakeResponse(io.BytesIO):
+        status = 200
+
+    def fake_urlopen(url: str, **kwargs):
+        del kwargs
+        payload = models if url.endswith("/models") else {}
+        return FakeResponse(pilot.json.dumps(payload).encode("utf-8"))
+
+    class FakeSandboxRunner:
+        def check_llm_bwrap_readiness(self, *, refresh: bool):
+            assert refresh is True
+            return CodeActSandboxReadiness(
+                ready=False,
+                actual_backend="bwrap_failed",
+                sandbox_uid=65534,
+                sandbox_gid=65534,
+                policy_version="statebus.llm_bwrap.v1",
+                reason="namespace_denied",
+            )
+
+    monkeypatch.setattr(pilot.LLMConfig, "from_runtime", staticmethod(FakeConfig))
+    monkeypatch.setattr(pilot, "_runtime_profile_snapshot", lambda *args, **kwargs: profile)
+    monkeypatch.setattr(pilot, "urlopen", fake_urlopen)
+    monkeypatch.setattr(pilot, "CodeActSandboxRunner", FakeSandboxRunner)
+    monkeypatch.setenv("STATEBUS_LOCAL_VLLM_MODEL", "qwen3-32b")
+
+    with pytest.raises(RuntimeError, match="codeact_bwrap_not_ready:bwrap_failed:namespace_denied"):
+        pilot._live_preflight(
+            tmp_path,
+            "cuda:0",
+            timeout_s=900.0,
+            require_codeact=True,
+        )
+
+    report = pilot.json.loads((tmp_path / "preflight.json").read_text(encoding="utf-8"))
+    assert report["schema_version"] == "statebus.stage2_preflight.v2"
+    assert report["status"] == "environment_fail"
+    assert report["observations"]["codeact_sandbox"]["required"] is True
+    assert report["observations"]["codeact_sandbox"]["ready"] is False
 
 
 def test_public_source_closure_is_stable_deduplicated(monkeypatch) -> None:

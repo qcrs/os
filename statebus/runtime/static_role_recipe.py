@@ -284,6 +284,8 @@ class StaticRoleRecipe:
             raise PlanProvenanceError("fixed_recipe_summarizer_dependency_mismatch")
         if tuple(step.role for step in self.steps) != ("planner", "retriever", "executor", "summarizer"):
             raise PlanProvenanceError("fixed_recipe_role_topology_mismatch")
+        if self.steps[-1].output_contract_version != self.final_output_contract:
+            raise PlanProvenanceError("fixed_recipe_final_output_contract_mismatch")
 
 
 def default_fixed_role_recipe(

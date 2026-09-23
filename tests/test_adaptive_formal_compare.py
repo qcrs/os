@@ -37,6 +37,7 @@ from statebus.benchmark.adaptive_formal import (
     build_non_answer_source_profile,
     execution_task_parameters,
     expected_facts_report,
+    load_c2b_formal_cases,
     recompute_formal_rows,
 )
 from statebus.benchmark.continuous_runner import _c2c_baseline_pairing, _c2c_pair_key
@@ -399,6 +400,17 @@ def test_groupby_codeact_contract_exposes_source_date_format_without_expected_ro
         "for example 01/31/2015 23:00 has month 1"
     )
     assert "monthly_avg_windspeed.month_1" not in stable_json_dumps(case.operation_semantics)
+
+
+def test_groupby_codeact_contract_applies_public_selected_months() -> None:
+    c2b_cases = load_c2b_formal_cases()
+    selected_case = next(case for case in c2b_cases if case.task_id == "formal-agg-007")
+    all_months_case = next(case for case in c2b_cases if case.task_id == "formal-agg-004")
+
+    assert selected_case.operation_semantics["selected_months"] == [1, 12]
+    assert [row["month"] for row in selected_case.expected_rows] == [1, 12]
+    assert all_months_case.operation_semantics["selected_months"] == []
+    assert len(all_months_case.expected_rows) == 12
 
 
 def test_executor_context_profile_contains_no_values_or_benchmark_oracle() -> None:

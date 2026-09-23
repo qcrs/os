@@ -61,6 +61,8 @@ def test_generation_prompt_carries_controller_owned_analysis_semantics_without_i
     assert "Every referenced name must be a Python builtin, explicitly imported, or defined" in prompt
     assert "source profile reports missing_count greater than zero as nullable" in prompt
     assert "Preserving a row with None does not authorize passing None" in prompt
+    assert "store only a finite int/float or None" in prompt
+    assert "Never preserve or reinsert the original string" in prompt
     assert "`metric_name` should use the task's canonical `metric` token" in prompt
     assert "120" not in prompt
 

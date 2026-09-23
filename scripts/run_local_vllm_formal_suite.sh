@@ -42,6 +42,7 @@ if [[ "$SUITE" == "stage2-pilot" ]]; then
   REPEATS="${STATEBUS_LOCAL_VLLM_FORMAL_REPEATS:-2}"
   STAGE2_CASE_IDS="${STATEBUS_STAGE2_CASE_IDS:-}"
   STAGE2_FAMILY_IDS="${STATEBUS_STAGE2_FAMILY_IDS:-}"
+  STAGE2_LANE_IDS="${STATEBUS_STAGE2_LANE_IDS:-}"
   STAGE2_MAX_CASES_PER_FAMILY="${STATEBUS_STAGE2_MAX_CASES_PER_FAMILY:-0}"
   embedding_device="${STATEBUS_G6B2_EMBEDDING_DEVICE:-${STATEBUS_EMBED_DEVICE:-cuda:0}}"
   [[ "$DRY_RUN" == "0" || "$DRY_RUN" == "1" ]] || {
@@ -109,6 +110,12 @@ if [[ "$SUITE" == "stage2-pilot" ]]; then
     IFS=',' read -r -a stage2_family_ids <<<"$STAGE2_FAMILY_IDS"
     for family_id in "${stage2_family_ids[@]}"; do
       [[ -n "$family_id" ]] && stage2_args+=(--family-id "$family_id")
+    done
+  fi
+  if [[ -n "$STAGE2_LANE_IDS" ]]; then
+    IFS=',' read -r -a stage2_lane_ids <<<"$STAGE2_LANE_IDS"
+    for lane_id in "${stage2_lane_ids[@]}"; do
+      [[ -n "$lane_id" ]] && stage2_args+=(--lane "$lane_id")
     done
   fi
   [[ "$DRY_RUN" == "1" ]] && stage2_args+=(--dry-run)

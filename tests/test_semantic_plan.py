@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from statebus.contracts import CanonicalTaskSpec
 from statebus.retrieval import RetrieverFanoutPipeline
 from statebus.runtime.semantic_plan import (
@@ -162,3 +164,97 @@ def test_semantic_plan_comparison_rejects_different_output_contract() -> None:
 
     assert comparison.equivalent is False
     assert comparison.required_outputs_equal is False
+
+
+def test_fixed_recipe_final_contract_alias_is_not_a_task_output() -> None:
+    payload = _model_plan()
+    payload["semantic_task_plan"]["required_outputs"] = ["cited_report"]
+
+    resolution = resolve_semantic_task_plan(
+        spec=_spec(),
+        goal="Compute the requested trend.",
+        fallback_query_text="ACME 2026Q1 revenue compute_trend",
+        model_payload=payload,
+        final_output_contract_version="statebus.cited_report.v1",
+    )
+
+    assert resolution.semantic_plan_valid is True
+    assert resolution.validation_errors == ()
+    assert resolution.effective_plan["required_outputs"] == ["summary_text", "delta"]
+    assert resolution.recognized_output_contracts == ("statebus.cited_report.v1",)
+    audit = resolution.audit_payload()
+    assert audit["output_contract_source"] == "fixed_recipe"
+    assert audit["recognized_output_contracts"] == ["statebus.cited_report.v1"]
+
+
+def test_fixed_recipe_formal_contract_marker_is_not_a_task_output() -> None:
+    payload = _model_plan()
+    payload["semantic_task_plan"]["required_outputs"] = ["statebus.cited_report.v1"]
+
+    resolution = resolve_semantic_task_plan(
+        spec=replace(_spec(), required_outputs=("summary_text", "delta")),
+        goal="Compute the requested trend.",
+        fallback_query_text="ACME 2026Q1 revenue compute_trend",
+        model_payload=payload,
+        final_output_contract_version="statebus.cited_report.v1",
+    )
+
+    assert resolution.semantic_plan_valid is True
+    assert resolution.effective_plan["required_outputs"] == ["summary_text", "delta"]
+    assert resolution.recognized_output_contracts == ("statebus.cited_report.v1",)
+
+
+def test_fixed_recipe_explicit_contract_mismatch_fails_closed() -> None:
+    payload = _model_plan()
+    payload["semantic_task_plan"]["final_output_contract_version"] = "statebus.metric_series.v1"
+
+    resolution = resolve_semantic_task_plan(
+        spec=_spec(),
+        goal="Compute the requested trend.",
+        fallback_query_text="ACME 2026Q1 revenue compute_trend",
+        model_payload=payload,
+        final_output_contract_version="statebus.cited_report.v1",
+    )
+
+    assert resolution.semantic_plan_valid is False
+    assert "final_output_contract_mismatch:statebus.metric_series.v1" in resolution.validation_errors
+    assert resolution.objective_source == "runtime_fallback"
+
+
+def test_fixed_recipe_unknown_business_output_still_fails_closed() -> None:
+    payload = _model_plan()
+    payload["semantic_task_plan"]["required_outputs"] = ["invented_business_field"]
+
+    resolution = resolve_semantic_task_plan(
+        spec=_spec(),
+        goal="Compute the requested trend.",
+        fallback_query_text="ACME 2026Q1 revenue compute_trend",
+        model_payload=payload,
+        final_output_contract_version="statebus.cited_report.v1",
+    )
+
+    assert resolution.semantic_plan_valid is False
+    assert "unregistered_required_output:invented_business_field" in resolution.validation_errors
+
+
+def test_model_output_echo_in_required_evidence_is_ignored() -> None:
+    payload = _model_plan()
+    payload["semantic_task_plan"]["required_evidence"] = [
+        "summary_text",
+        "table_cell",
+    ]
+
+    resolution = resolve_semantic_task_plan(
+        spec=_spec(),
+        goal="Compute the requested trend.",
+        fallback_query_text="ACME 2026Q1 revenue compute_trend",
+        model_payload=payload,
+    )
+
+    assert resolution.semantic_plan_valid is True
+    assert resolution.validation_errors == ()
+    assert resolution.effective_plan["required_evidence"] == [
+        "table_cell",
+        "semantic_context",
+        "citation",
+    ]

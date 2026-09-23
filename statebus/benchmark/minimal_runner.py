@@ -4,6 +4,7 @@ import json
 import asyncio
 import shutil
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -690,6 +691,60 @@ C2B_LANE_ORDER = {
 }
 
 
+_LIVE_SUMMARIZER_MAX_CLAIMS = 64
+_LIVE_SUMMARIZER_MIN_TOKENS = 2_048
+_LIVE_SUMMARIZER_MAX_TOKENS = 4_096
+_LIVE_SUMMARIZER_TOKENS_PER_CLAIM = 512
+
+
+def _live_summarizer_claim_bound(
+    *,
+    expected_output_shape: str,
+    operation_semantics: Mapping[str, object],
+) -> int:
+    """Return a controller-owned upper bound for live ClaimSet cardinality.
+
+    The bound must come from the public operation contract, never from source
+    row count or scorer/gold output.  Source tables can contain thousands of
+    rows while the verified artifact is a small grouped or trend result.
+    """
+
+    shape = str(expected_output_shape).strip().lower()
+    if shape == "object":
+        return 1
+    if shape != "array":
+        raise ValueError(f"live_summarizer_output_shape_unsupported:{shape}")
+
+    operation = str(operation_semantics.get("operation", "")).strip()
+    if operation == "groupby_aggregate":
+        # A calendar-month groupby can produce at most one row for each month.
+        bound = 12
+    elif operation == "compute_trend":
+        tickers = operation_semantics.get("tickers", ())
+        quarters = operation_semantics.get("quarters", ())
+        ticker_count = len(tuple(item for item in tickers if str(item).strip())) if isinstance(tickers, (list, tuple)) else 0
+        quarter_count = len(tuple(item for item in quarters if str(item).strip())) if isinstance(quarters, (list, tuple)) else 0
+        if ticker_count < 1 or quarter_count < 1:
+            raise ValueError("live_summarizer_trend_scope_missing")
+        bound = ticker_count * quarter_count
+    else:
+        # Array-shaped operations must declare their public cardinality.  Do
+        # not guess from source rows because that would make provider budget
+        # depend on an unbounded retrieval payload.
+        declared_items = operation_semantics.get("fact_selectors")
+        if not isinstance(declared_items, (list, tuple)) or not declared_items:
+            raise ValueError(f"live_summarizer_array_bound_missing:{operation or 'unknown'}")
+        bound = len(declared_items)
+
+    if bound < 1:
+        raise ValueError("live_summarizer_claim_bound_invalid")
+    if bound > _LIVE_SUMMARIZER_MAX_CLAIMS:
+        raise ValueError(
+            f"live_summarizer_claim_bound_exceeds_contract:{bound}:{_LIVE_SUMMARIZER_MAX_CLAIMS}"
+        )
+    return bound
+
+
 def _live_summarizer_config(config: LLMConfig, *, expected_claim_count: int) -> LLMConfig:
     """Reserve enough completion space for the typed ClaimSet contract.
 
@@ -703,7 +758,15 @@ def _live_summarizer_config(config: LLMConfig, *, expected_claim_count: int) -> 
     if expected_claim_count < 1:
         raise ValueError("live_summarizer_expected_claim_count_invalid")
     configured = config.role_config("summarizer").max_tokens or 0
-    required = max(2_048, min(3_072, expected_claim_count * 384))
+    # A ClaimSet item contains several evidence and citation fields, so a
+    # fixed 1024-token ceiling can terminate a valid multi-row response in the
+    # middle of a JSON object.  Reserve a practical 512 tokens per declared
+    # claim, with a 4096-token ceiling that remains below the known 8192-token
+    # vLLM context profile after the prompt is accounted for.
+    required = max(
+        _LIVE_SUMMARIZER_MIN_TOKENS,
+        min(_LIVE_SUMMARIZER_MAX_TOKENS, expected_claim_count * _LIVE_SUMMARIZER_TOKENS_PER_CLAIM),
+    )
     if configured >= required:
         return config
     return config.with_role_override("summarizer", max_tokens=required)
@@ -812,7 +875,10 @@ def _c2b_structured_runtime(
         config = llm_config or LLMConfig.from_runtime().with_mode("local_vllm")
         config = _live_summarizer_config(
             config,
-            expected_claim_count=len(provider_rows),
+            expected_claim_count=_live_summarizer_claim_bound(
+                expected_output_shape=case.expected_output_shape,
+                operation_semantics=case.operation_semantics,
+            ),
         )
         effective_llm_config = config
         live_runner = RolePathRunner(

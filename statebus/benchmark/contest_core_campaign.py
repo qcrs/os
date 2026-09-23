@@ -77,7 +77,10 @@ DEFAULT_PROFILE = "qwen3-32b-gpu2-u050"
 DEFAULT_CONTAINER_NAME = "statebus-runtime"
 DEFAULT_EMBEDDING_PHYSICAL_GPU = 1
 DEFAULT_STAGE2_REPEATS = 1
-DEFAULT_STAGE2_TIMEOUT_S = 480
+# Stage 2 runs the four provider roles sequentially.  The live provider
+# profile allows 180 seconds per request plus Runtime settlement time, so the
+# generated campaign command must leave room for the full bounded workflow.
+DEFAULT_STAGE2_TIMEOUT_S = 900
 SCHEMA_VERSION = "statebus.contest_core_campaign_manifest.v1"
 
 

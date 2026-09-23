@@ -617,16 +617,22 @@ def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[s
             formula="Arithmetic mean of non-missing numeric column values, rounded to three decimals.",
         )
     elif operation == "groupby_aggregate":
+        selected_months = [int(item) for item in arguments.get("selected_months", [])]
         semantics.update(
             date_column=str(arguments["groupby"]).removeprefix("month(").removesuffix(")"),
             value_column=str(arguments["value_column"]),
+            selected_months=selected_months,
             date_format=(
                 "MM/DD/YYYY HH:MM; the month is the leading two-digit MM component, "
                 "for example 01/31/2015 23:00 has month 1"
             ),
             formula=(
                 "Parse the documented date format, compute mean of non-missing values by month, round to two decimals, "
-                "and emit ascending month rows."
+                + (
+                    f"and emit only selected_months {selected_months} in ascending order."
+                    if selected_months
+                    else "and emit all month rows in ascending order."
+                )
             ),
         )
     elif operation == "detect_outliers":
@@ -952,12 +958,21 @@ def recompute_formal_rows(
     if operation == "groupby_aggregate":
         date_column = str(arguments["groupby"]).removeprefix("month(").removesuffix(")")
         value_column = str(arguments["value_column"])
+        raw_selected_months = arguments.get("selected_months")
+        selected_months = (
+            {int(item) for item in raw_selected_months}
+            if raw_selected_months is not None
+            else None
+        )
         grouped: dict[int, list[float]] = {}
         for row in rows:
             value = _parse_number(row.get(value_column))
             if value is None:
                 continue
-            grouped.setdefault(_date_month(row.get(date_column)), []).append(value)
+            month = _date_month(row.get(date_column))
+            if selected_months is not None and month not in selected_months:
+                continue
+            grouped.setdefault(month, []).append(value)
         return tuple(
             {"month": month, "monthly_avg_windspeed": round(_mean(values), 2)}
             for month, values in sorted(grouped.items())

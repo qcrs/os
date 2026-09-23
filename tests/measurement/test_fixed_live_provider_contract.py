@@ -2,15 +2,68 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 import statebus.benchmark.stage2_pilot as pilot
 from statebus.integrations.llm import LLMConfig, LLMResult, LLMUsage, ProviderConfig
 from statebus.integrations.llm import parse_tagged_json
-from statebus.benchmark.minimal_runner import _live_summarizer_config
+from statebus.benchmark.minimal_runner import (
+    _live_summarizer_claim_bound,
+    _live_summarizer_config,
+)
 from statebus.runtime.fixed_mainline import _compact_live_summarizer_evidence, _live_call
+from statebus.runtime.codeact_sandbox import (
+    CodeActSandboxReadiness,
+    CodeActSandboxResult,
+    CodeActSandboxRunner,
+)
 from statebus.runtime.role_path import RolePathRunner
+
+
+@pytest.fixture
+def fake_codeact_bwrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the trusted fixture source without requiring host namespace privileges."""
+
+    def readiness(self, *, policy_version: str, refresh: bool = False):
+        del self, refresh
+        return CodeActSandboxReadiness(
+            ready=True,
+            actual_backend="bwrap",
+            sandbox_uid=65_534,
+            sandbox_gid=65_534,
+            policy_version=policy_version,
+            bwrap_version="test-bwrap",
+        )
+
+    def run_llm_bwrap(
+        self,
+        *,
+        source_path: Path,
+        inputs_dir: Path,
+        outputs_dir: Path,
+        policy_version: str,
+    ):
+        del inputs_dir, outputs_dir, policy_version
+        completed = subprocess.run(
+            [sys.executable, str(source_path)],
+            cwd=str(source_path.parent.parent),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=self.config.timeout_seconds,
+        )
+        return CodeActSandboxResult(
+            completed=completed,
+            requested_backend="bwrap_required",
+            actual_backend="bwrap",
+            fallback_reason="" if completed.returncode == 0 else (completed.stderr or "test_codeact_failed"),
+        )
+
+    monkeypatch.setattr(CodeActSandboxRunner, "check_llm_bwrap_readiness", readiness)
+    monkeypatch.setattr(CodeActSandboxRunner, "run_llm_bwrap", run_llm_bwrap)
 
 
 class _FourRoleFakeClient:
@@ -42,6 +95,25 @@ class _FourRoleFakeClient:
             "role": role,
             "model": "fake-qwen3-32b",
         }
+
+    @staticmethod
+    def _codeact_source(*, invalid: bool) -> str:
+        # Keep this fixture source-owned and independent of benchmark gold.
+        # The production path audits and executes the same bounded-Python
+        # contract; this fake only supplies a deterministic candidate.
+        metric_value = "999.0" if invalid else "float(row['value'])"
+        return (
+            "import json\n"
+            "from pathlib import Path\n"
+            "rows = json.loads(Path('inputs/task.json').read_text(encoding='utf-8'))\n"
+            "selected = [row for row in rows if row.get('ticker') == 'ACME' "
+            "and row.get('quarter') == '2026Q1' and row.get('metric') == 'revenue']\n"
+            "if len(selected) != 1:\n"
+            "    raise ValueError('fixture_metric_match_count')\n"
+            "row = selected[0]\n"
+            f"payload = {{'metric_name': str(row['metric']), 'metric_value': {metric_value}}}\n"
+            "Path('outputs/result.json').write_text(json.dumps(payload), encoding='utf-8')\n"
+        )
 
     async def complete(self, messages, *, purpose: str, response_schema=None, **kwargs) -> LLMResult:
         del response_schema, kwargs
@@ -86,27 +158,32 @@ class _FourRoleFakeClient:
             }
         elif purpose == "executor":
             self.executor_call_count += 1
-            request = parse_tagged_json(prompt, "sb-transform-program-v1")
-            input_ref = request["authorized_input_refs"][0]
             invalid_program = self.invalid_executor_always or (
                 self.invalid_executor_once and self.executor_call_count == 1
             )
-            payload = {
-                "input_artifact_refs": [input_ref],
-                "operations": (
-                    [{"op": "select", "arguments": {"columns": ["invented_value"]}}]
-                    if invalid_program
-                    else [
-                        {"op": "filter_eq", "arguments": {"column": "ticker", "value": "ACME"}},
-                        {"op": "filter_eq", "arguments": {"column": "quarter", "value": "2026Q1"}},
-                        {"op": "filter_eq", "arguments": {"column": "metric", "value": "revenue"}},
-                        {"op": "select", "arguments": {"columns": ["metric", "value"]}},
-                        {"op": "rename", "arguments": {"source": "metric", "target": "metric_name"}},
-                        {"op": "rename", "arguments": {"source": "value", "target": "metric_value"}},
-                    ]
-                ),
-                "output_contract_version": request["output_contract_version"],
-            }
+            if "sb-transform-program-v1" not in prompt:
+                payload = {
+                    "code": self._codeact_source(invalid=invalid_program),
+                }
+            else:
+                request = parse_tagged_json(prompt, "sb-transform-program-v1")
+                input_ref = request["authorized_input_refs"][0]
+                payload = {
+                    "input_artifact_refs": [input_ref],
+                    "operations": (
+                        [{"op": "select", "arguments": {"columns": ["invented_value"]}}]
+                        if invalid_program
+                        else [
+                            {"op": "filter_eq", "arguments": {"column": "ticker", "value": "ACME"}},
+                            {"op": "filter_eq", "arguments": {"column": "quarter", "value": "2026Q1"}},
+                            {"op": "filter_eq", "arguments": {"column": "metric", "value": "revenue"}},
+                            {"op": "select", "arguments": {"columns": ["metric", "value"]}},
+                            {"op": "rename", "arguments": {"source": "metric", "target": "metric_name"}},
+                            {"op": "rename", "arguments": {"source": "value", "target": "metric_value"}},
+                        ]
+                    ),
+                    "output_contract_version": request["output_contract_version"],
+                }
         elif purpose == "summarizer":
             request = parse_tagged_json(prompt, "sb-claim-set-v1")
             artifact = request["reference_catalog"]["artifacts"][0]
@@ -184,7 +261,7 @@ def test_live_claim_set_budget_and_finish_reason_remain_fail_closed(tmp_path: Pa
         providers={"default": ProviderConfig(timeout_s=12.5)},
     )
     budgeted = _live_summarizer_config(config, expected_claim_count=6)
-    assert budgeted.role_config("summarizer").max_tokens == 2_304
+    assert budgeted.role_config("summarizer").max_tokens == 3_072
 
     client = _FourRoleFakeClient(
         failure_role="summarizer",
@@ -229,6 +306,29 @@ def test_live_claim_set_budget_and_finish_reason_remain_fail_closed(tmp_path: Pa
 
 
 @pytest.mark.parametrize(
+    ("shape", "semantics", "expected"),
+    [
+        ("object", {"operation": "lookup_metric"}, 1),
+        ("array", {"operation": "groupby_aggregate"}, 12),
+        (
+            "array",
+            {"operation": "compute_trend", "tickers": ["ACME", "BETA"], "quarters": ["2026Q1", "2026Q2"]},
+            4,
+        ),
+    ],
+)
+def test_live_summarizer_claim_bound_comes_from_operation_contract(
+    shape: str,
+    semantics: dict[str, object],
+    expected: int,
+) -> None:
+    assert _live_summarizer_claim_bound(
+        expected_output_shape=shape,
+        operation_semantics=semantics,
+    ) == expected
+
+
+@pytest.mark.parametrize(
     ("payload", "expected"),
     [
         ({"percentage_cases_min": 36.45}, [{"percentage_cases_min": 36.45}]),
@@ -250,7 +350,11 @@ def test_verified_executor_artifact_projection_accepts_object_or_rows(
     assert pilot._load_verified_executor_rows(artifact_path) == expected
 
 
-def test_fixed_live_provider_records_all_role_telemetry_and_runtime_evidence(tmp_path: Path) -> None:
+def test_fixed_live_provider_records_all_role_telemetry_and_runtime_evidence(
+    tmp_path: Path,
+    fake_codeact_bwrap: None,
+) -> None:
+    del fake_codeact_bwrap
     client = _FourRoleFakeClient()
     runner = RolePathRunner(llm_client=client, json_response_max_attempts=1)
     sink: dict[str, object] = {}
@@ -289,8 +393,9 @@ def test_fixed_live_provider_records_all_role_telemetry_and_runtime_evidence(tmp
         assert len(invocation["raw_response_hash"]) == 64
 
     executor_prompt = next(prompt for role, prompt in client.calls if role == "executor")
-    assert '"ticker": "ACME"' in executor_prompt
-    assert '"value": 120.0' in executor_prompt
+    assert "ACME" in executor_prompt
+    assert "2026Q1" in executor_prompt
+    assert "revenue" in executor_prompt
     for _role, prompt in client.calls:
         assert "expected_facts" not in prompt
         assert "gold" not in prompt.lower()
@@ -308,7 +413,11 @@ def test_fixed_live_provider_records_all_role_telemetry_and_runtime_evidence(tmp
     )
 
 
-def test_fixed_live_provider_repairs_invalid_transform_once(tmp_path: Path) -> None:
+def test_fixed_live_provider_repairs_invalid_transform_once(
+    tmp_path: Path,
+    fake_codeact_bwrap: None,
+) -> None:
+    del fake_codeact_bwrap
     client = _FourRoleFakeClient(invalid_executor_once=True)
     runner = RolePathRunner(llm_client=client, json_response_max_attempts=1)
     sink: dict[str, object] = {}
@@ -329,22 +438,25 @@ def test_fixed_live_provider_repairs_invalid_transform_once(tmp_path: Path) -> N
     assert summary["terminal_status"] == "success"
     assert trace["terminal_status"] == "success"
     assert client.executor_call_count == 2
-    executor_requests = [
-        parse_tagged_json(prompt, "sb-transform-program-v1")
-        for role, prompt in client.calls
-        if role == "executor"
+    executor_prompts = [
+        prompt for role, prompt in client.calls if role == "executor"
     ]
-    assert executor_requests[0]["repair_context"] == {}
-    assert executor_requests[1]["repair_context"]["reason"] == "single_structured_dsl_repair"
-    assert executor_requests[1]["repair_context"]["validation_errors"] == ["unknown_column:0"]
-    assert executor_requests[1]["input_schema"] == executor_requests[0]["input_schema"]
+    assert len(executor_prompts) == 2
+    assert "Return only a Python file" in executor_prompts[0]
+    assert "<sb-current-python-source>" not in executor_prompts[0]
+    assert "<sb-current-python-source>" in executor_prompts[1]
+    assert "quality_error:" in executor_prompts[1]
     invocations = sink["role_invocations"]
     assert isinstance(invocations, list)
     assert [item["role"] for item in invocations].count("executor") == 2
     assert all(item["status"] == "response_received" for item in invocations)
 
 
-def test_fixed_live_provider_does_not_retry_invalid_repair(tmp_path: Path) -> None:
+def test_fixed_live_provider_does_not_retry_invalid_repair(
+    tmp_path: Path,
+    fake_codeact_bwrap: None,
+) -> None:
+    del fake_codeact_bwrap
     client = _FourRoleFakeClient(invalid_executor_always=True)
     runner = RolePathRunner(llm_client=client, json_response_max_attempts=1)
     sink: dict[str, object] = {}
@@ -364,7 +476,7 @@ def test_fixed_live_provider_does_not_retry_invalid_repair(tmp_path: Path) -> No
 
     assert summary["terminal_status"] == "runtime_fail"
     assert trace["terminal_status"] == "runtime_fail"
-    assert summary["error_code"] == "unknown_column:0"
+    assert summary["error_code"] == "capability_quality_rejected"
     assert client.executor_call_count == 2
     assert not any(role == "summarizer" for role, _prompt in client.calls)
 
@@ -445,3 +557,14 @@ def test_fixed_case_preserves_runtime_terminal_failure(monkeypatch, tmp_path: Pa
     assert error.failure_stage == "plan"
     assert error.error_code == "fixed_live_planner_semantic_plan_invalid"
     assert error.provider_request_events == observation["provider_request_events"]
+    assert set(Path(path).name for path in error.provider_evidence_paths) == {
+        "provider_observation.json",
+        "provider_request_events.json",
+        "rendered_request_audit.json",
+        "failure.json",
+    }
+    assert (tmp_path / "fixed" / "provider_observation.json").is_file()
+    failure = json.loads((tmp_path / "fixed" / "failure.json").read_text(encoding="utf-8"))
+    assert failure["status"] == "runtime_fail"
+    assert failure["failure_stage"] == "plan"
+    assert failure["provider_started"] is True

@@ -50,7 +50,11 @@ def _single_call(client: RecordingLLMClient) -> tuple[str, dict[str, object]]:
     return prompt, schema
 
 
-def _assert_vllm_073_xgrammar_compatible(schema: object) -> None:
+def _assert_vllm_073_xgrammar_compatible(
+    schema: object,
+    *,
+    allow_item_bounds: bool = False,
+) -> None:
     if isinstance(schema, dict):
         assert "pattern" not in schema
         assert "enum" not in schema
@@ -62,7 +66,7 @@ def _assert_vllm_073_xgrammar_compatible(schema: object) -> None:
                 "exclusiveMaximum",
                 "multipleOf",
             } & schema.keys()
-        if schema.get("type") == "array":
+        if schema.get("type") == "array" and not allow_item_bounds:
             assert not {
                 "uniqueItems",
                 "contains",
@@ -72,10 +76,10 @@ def _assert_vllm_073_xgrammar_compatible(schema: object) -> None:
                 "maxItems",
             } & schema.keys()
         for value in schema.values():
-            _assert_vllm_073_xgrammar_compatible(value)
+            _assert_vllm_073_xgrammar_compatible(value, allow_item_bounds=allow_item_bounds)
     elif isinstance(schema, list):
         for value in schema:
-            _assert_vllm_073_xgrammar_compatible(value)
+            _assert_vllm_073_xgrammar_compatible(value, allow_item_bounds=allow_item_bounds)
 
 
 def test_adaptive_planner_prompt_and_schema_expose_only_authorized_capabilities() -> None:
@@ -368,9 +372,19 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
             "supporting_artifact_ref_ids": ["artifact-1"],
             "citation_locators": ["section-1:0-77"],
             "numeric_fields": {"revenue_musd": 120.0},
-            "uncertainty_note": "",
-            "status": "ready",
-        }],
+                "uncertainty_note": "",
+                "status": "ready",
+            }, {
+                "claim_id": "revenue-series-previous",
+                "claim_text": "ACME revenue was 100 million USD in 2025Q4.",
+                "claim_type": "fact",
+                "supporting_evidence_item_ids": ["evidence-1"],
+                "supporting_artifact_ref_ids": ["artifact-1"],
+                "citation_locators": ["section-1:0-77"],
+                "numeric_fields": {"revenue_musd": 100.0},
+                "uncertainty_note": "",
+                "status": "ready",
+            }],
         "status": "ready",
     })
     claim_set = RolePathRunner(llm_client=client).build_claim_set(
@@ -391,6 +405,7 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
                 {"quarter": "2026Q1", "revenue_musd": 120.0},
             ],
         },),
+        expected_claim_count=2,
     )
 
     assert claim_set.claims[0].numeric_fields["revenue_musd"] == 120.0
@@ -409,6 +424,8 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
     assert "Create one compact claim per verified output row" in prompt
     assert payload["reference_catalog"]["evidence"][0]["evidence_id"] == "evidence-1"
     claim_properties = schema["properties"]["claims"]["items"]["properties"]
+    assert schema["properties"]["claims"]["minItems"] == 2
+    assert schema["properties"]["claims"]["maxItems"] == 2
     assert claim_properties["supporting_evidence_item_ids"]["items"] == {"type": "string"}
     assert claim_properties["supporting_artifact_ref_ids"]["items"] == {"type": "string"}
     assert claim_properties["citation_locators"]["items"] == {"type": "string"}
@@ -417,7 +434,7 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
         "additionalProperties": False,
         "properties": {"revenue_musd": {"type": "number"}},
     }
-    _assert_vllm_073_xgrammar_compatible(schema)
+    _assert_vllm_073_xgrammar_compatible(schema, allow_item_bounds=True)
 
 
 def test_adaptive_summarizer_enforces_controller_claim_count() -> None:

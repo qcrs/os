@@ -174,3 +174,13 @@ def test_static_recipe_matches_c2a_four_role_topology() -> None:
     assert tuple(step.output_contract_version for step in recipe_steps) == (
         "statebus.planner_handoff.v2", "statebus.evidence_pack.v2", "statebus.metric_series.v1", "statebus.cited_report.v1",
     )
+
+
+def test_static_recipe_final_contract_matches_summarizer_contract() -> None:
+    recipe = default_fixed_role_recipe()
+    recipe.validate_fixed_topology()
+    assert recipe.final_output_contract_version == recipe.steps[-1].output_contract_version
+
+    mismatched = replace(recipe, final_output_contract="statebus.metric_series.v1")
+    with pytest.raises(PlanProvenanceError, match="fixed_recipe_final_output_contract_mismatch"):
+        mismatched.validate_fixed_topology()

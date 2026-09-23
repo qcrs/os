@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+import time
 from typing import Any, Callable, Mapping
 
 from statebus.contracts import (
@@ -137,6 +138,7 @@ def _live_observation(
     result: object | None = None,
     error: BaseException | None = None,
     role_observation: Mapping[str, object] | None = None,
+    elapsed_ms: float | None = None,
 ) -> None:
     """Persist provider observations without changing Runtime authority."""
 
@@ -156,20 +158,38 @@ def _live_observation(
         return observed.get(name)
 
     raw_text = _value("raw_text")
+    if not raw_text:
+        raw_text = getattr(result, "text", None)
     raw_response_hash = _value("raw_response_hash")
     if not raw_response_hash and isinstance(raw_text, str) and raw_text:
         raw_response_hash = sha256_digest(raw_text.encode("utf-8"))
+    observed_latency = _value("latency_ms")
+    if observed_latency is None:
+        observed_latency = elapsed_ms
+    request_events = [
+        dict(event) for event in getattr(runner.llm_client, "request_events", ())
+    ]
+    error_type = type(error).__name__ if error is not None else ""
+    timeout_error = error_type in {"APITimeoutError", "TimeoutError", "TimeoutException"}
     invocation: dict[str, object] = {
         "role": role,
-        "status": "error" if error is not None else "response_received",
+        "status": "timeout" if timeout_error else ("error" if error is not None else "response_received"),
         "model": str(_value("model") or ""),
         "finish_reason": _value("finish_reason"),
-        "latency_ms": _value("latency_ms"),
+        "latency_ms": observed_latency,
         "prompt_tokens": _value("prompt_tokens"),
         "completion_tokens": _value("completion_tokens"),
         "total_tokens": _value("total_tokens"),
         "raw_response_hash": raw_response_hash,
+        "provider_started": bool(request_events),
+        "provider_request_event_count": len(request_events),
     }
+    if isinstance(raw_text, str) and raw_text and (
+        error is not None or _value("finish_reason") == "length"
+    ):
+        # Keep the exact failed provider payload available beside its digest;
+        # successful calls remain compact telemetry-only observations.
+        invocation["raw_response_text"] = raw_text
     if error is not None:
         invocation.update({"error_type": type(error).__name__, "error": str(error)})
     sink.setdefault("role_invocations", []).append(invocation)
@@ -177,9 +197,8 @@ def _live_observation(
         role_name: runner.rendered_request_audit_payload(role_name, include_content=False)
         for role_name in ("planner", "retriever", "executor", "summarizer")
     }
-    sink["provider_request_events"] = [
-        dict(event) for event in getattr(runner.llm_client, "request_events", ())
-    ]
+    sink["provider_request_events"] = request_events
+    sink["provider_started"] = bool(request_events) or bool(sink.get("provider_started", False))
 
 
 def _live_call(
@@ -188,6 +207,7 @@ def _live_call(
     role: str,
     fn: Callable[[], Any],
 ) -> Any:
+    started_ns = time.perf_counter_ns()
     take_role_observation = getattr(runner, "take_role_observation", None)
     if callable(take_role_observation):
         # A runner can be reused across cases; do not let a prior completion
@@ -207,7 +227,27 @@ def _live_call(
             role=role,
             error=exc,
             role_observation=observation,
+            elapsed_ms=(time.perf_counter_ns() - started_ns) / 1_000_000.0,
         )
+        request_events = tuple(
+            dict(event) for event in getattr(runner.llm_client, "request_events", ())
+        )
+        invocation_event = {
+            "role": role,
+            "status": "timeout" if type(exc).__name__ in {"APITimeoutError", "TimeoutError", "TimeoutException"} else "error",
+            "provider_started": bool(request_events),
+            "provider_request_event_count": len(request_events),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+        for name, value in (
+            ("provider_invocation_events", (invocation_event,)),
+            ("provider_request_events", request_events),
+        ):
+            try:
+                setattr(exc, name, value)
+            except Exception:
+                pass
         raise
     observation = (
         take_role_observation(role)
@@ -220,6 +260,7 @@ def _live_call(
         role=role,
         result=result,
         role_observation=observation,
+        elapsed_ms=(time.perf_counter_ns() - started_ns) / 1_000_000.0,
     )
     return result
 
@@ -530,6 +571,7 @@ def _live_provider_handlers(
                 allowed_required_outputs=tuple(spec.required_outputs),
                 target_entities=tuple(spec.target_entities),
                 time_scope=spec.time_scope,
+                final_output_contract_version=recipe.final_output_contract_version,
             ),
         )
         semantic_plan = resolve_semantic_task_plan(
@@ -537,6 +579,7 @@ def _live_provider_handlers(
             goal=task_goal,
             fallback_query_text=query_text,
             model_payload=result.workflow_payload,
+            final_output_contract_version=recipe.final_output_contract_version,
         )
         if not semantic_plan.semantic_plan_valid:
             errors = ",".join(semantic_plan.validation_errors) or "unknown"

@@ -133,7 +133,7 @@ def test_full_registry_expands_to_48_cases_and_192_rows(tmp_path: Path) -> None:
         "max_cases_per_family": 0,
         "independent_case_count": 48,
         "repeat_count": 1,
-        "timeout_s": 480,
+        "timeout_s": 900,
         "lane_count": 4,
         "planned_rows": 192,
         "denominator_fields": [

@@ -49,6 +49,7 @@ from statebus.benchmark.stage2_contract import (
 )
 from statebus.benchmark.task_registry import load_c2b_positive_samples
 from statebus.integrations.llm import ChatMessage, LLMConfig, build_llm_client, extract_json_object
+from statebus.runtime.codeact_sandbox import CodeActSandboxRunner
 from statebus.utils import sha256_digest, stable_json_dumps
 
 
@@ -64,11 +65,12 @@ PILOT_FIRST_CASE = {
     "financial_report_analysis_v1": "benchmark-sample-9",
     "multi_period_trend_analysis_v1": "formal-trend-006",
 }
-# The adaptive runtime envelope allows up to 400 seconds for a bounded DAG
-# (planner/retrieval, executor and report stages).  The Stage 2 process fence
-# must leave startup/teardown headroom instead of killing a valid run at the
-# old 120-second client deadline.
-DEFAULT_TIMEOUT_S = 480.0
+# The fixed four-role bridge gives each provider call its configured timeout
+# plus a settlement allowance.  With the current 180-second provider profile,
+# the sequential worst case is 740 seconds before process startup/teardown
+# overhead.  Keep the Stage 2 fence above that bound so a valid Runtime
+# settlement is not mistaken for a client-side deadline failure.
+DEFAULT_TIMEOUT_S = 900.0
 EXIT_READY = 0
 EXIT_PREFLIGHT_INVALID = 2
 EXIT_INCONCLUSIVE = 3
@@ -95,6 +97,7 @@ def _runtime_profile_snapshot(embedding_device: str, config: LLMConfig | None = 
         role_config = active.role_config(role)
         roles[role] = {
             "provider": role_config.provider,
+            "provider_timeout_s": active.provider_config(role_config.provider).timeout_s,
             "model": role_config.model,
             "json_output": role_config.json_output,
             "temperature": role_config.temperature,
@@ -126,6 +129,37 @@ def _runtime_profile_snapshot(embedding_device: str, config: LLMConfig | None = 
         "container_name": os.getenv("STATEBUS_CONTAINER_NAME", "statebus-runtime"),
         "request_max_attempts": provider.request_max_attempts,
         "roles": roles,
+    }
+
+
+def _stage2_timeout_contract(
+    config: LLMConfig,
+    *,
+    stage2_timeout_s: float,
+) -> dict[str, object]:
+    """Describe and validate the outer fence against role provider budgets."""
+
+    role_timeout_s = {
+        role: float(
+            config.provider_config(config.role_config(role).provider).timeout_s
+        )
+        for role in ("planner", "retriever", "executor", "summarizer")
+    }
+    settlement_allowance_s = 5.0
+    process_overhead_s = 20.0
+    worst_case_role_budget_s = sum(
+        timeout + settlement_allowance_s for timeout in role_timeout_s.values()
+    )
+    required_timeout_s = worst_case_role_budget_s + process_overhead_s
+    return {
+        "schema_version": "statebus.stage2_timeout_contract.v1",
+        "provider_timeout_s_by_role": role_timeout_s,
+        "settlement_allowance_s": settlement_allowance_s,
+        "process_overhead_s": process_overhead_s,
+        "worst_case_sequential_role_budget_s": worst_case_role_budget_s,
+        "required_stage2_timeout_s": required_timeout_s,
+        "configured_stage2_timeout_s": float(stage2_timeout_s),
+        "passed": float(stage2_timeout_s) >= required_timeout_s,
     }
 
 
@@ -241,6 +275,92 @@ def _filter_selected_samples(
     if not filtered:
         raise ValueError("stage2_selection_empty")
     return filtered
+
+
+def _filter_selected_lanes(lane_ids: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Validate an optional lane selection while preserving canonical order."""
+
+    if len(set(lane_ids)) != len(lane_ids):
+        raise ValueError("duplicate_lane_selection")
+    unknown = sorted(set(lane_ids) - set(LANES))
+    if unknown:
+        raise ValueError(f"stage2_lane_not_registered:{','.join(unknown)}")
+    if not lane_ids:
+        return LANES
+    requested = set(lane_ids)
+    return tuple(lane for lane in LANES if lane in requested)
+
+
+def _load_slot_manifest(
+    path: Path,
+    registry: list[tuple[str, Any, Any]],
+) -> list[dict[str, object]]:
+    """Load exact repair slots against the canonical Stage 2 registry."""
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"stage2_slot_manifest_invalid:{path}:{type(exc).__name__}:{exc}") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("stage2_slot_manifest_not_object")
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != "statebus.p1_missing_slots.v1":
+        raise ValueError(f"stage2_slot_manifest_schema_unsupported:{schema_version}")
+    raw_slots = payload.get("slots")
+    if not isinstance(raw_slots, list) or not raw_slots:
+        raise ValueError("stage2_slot_manifest_slots_empty")
+
+    registry_by_case: dict[str, tuple[str, Any, Any]] = {}
+    for family_key, minimal, fixed in registry:
+        case_id = str(minimal.task_id)
+        if case_id in registry_by_case:
+            raise ValueError(f"stage2_case_registry_duplicate:{case_id}")
+        registry_by_case[case_id] = (family_key, minimal, fixed)
+
+    normalized: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str, int, int]] = set()
+    for index, raw in enumerate(raw_slots):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"stage2_slot_manifest_entry_not_object:{index}")
+        family_id = str(raw.get("family_id", "")).strip()
+        case_id = str(raw.get("case_id", "")).strip()
+        lane = str(raw.get("lane", "")).strip()
+        try:
+            repeat = int(raw.get("repeat"))
+            seed = int(raw.get("seed"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"stage2_slot_manifest_identity_invalid:{index}") from exc
+        if lane not in LANES:
+            raise ValueError(f"stage2_lane_not_registered:{lane}")
+        if repeat < 1:
+            raise ValueError(f"stage2_slot_manifest_repeat_invalid:{index}")
+        registry_entry = registry_by_case.get(case_id)
+        if registry_entry is None:
+            raise ValueError(f"stage2_case_not_registered:{case_id}")
+        family_key, _minimal, _fixed = registry_entry
+        canonical_family = family_key.split("::", 1)[0]
+        if family_id != canonical_family:
+            raise ValueError(
+                f"stage2_slot_manifest_family_mismatch:{case_id}:{family_id}:{canonical_family}"
+            )
+        identity_key = (family_id, case_id, lane, repeat, seed)
+        if identity_key in seen:
+            raise ValueError(
+                "stage2_slot_manifest_duplicate:"
+                + ":".join((family_id, case_id, lane, str(repeat), str(seed)))
+            )
+        seen.add(identity_key)
+        normalized.append(
+            {
+                "family_id": family_id,
+                "family_key": family_key,
+                "case_id": case_id,
+                "lane": lane,
+                "repeat": repeat,
+                "seed": seed,
+            }
+        )
+    return normalized
 
 
 def _stage2_public_case(sample: Any) -> tuple[dict[str, Any], tuple[str, ...]]:
@@ -1196,6 +1316,88 @@ def _adaptive_failure_evidence(root: Path, result: Mapping[str, object] | None, 
     return observed
 
 
+def _write_fixed_failure_evidence(
+    root: Path,
+    *,
+    sample: Any,
+    summary: Mapping[str, object] | None,
+    trace: Mapping[str, object] | None,
+    provider_observation: Mapping[str, object] | None,
+    failure_stage: str,
+    error_code: str,
+    error: BaseException | None = None,
+) -> tuple[str, ...]:
+    """Persist provider/runtime facts before a fixed lane raises."""
+
+    root.mkdir(parents=True, exist_ok=True)
+    observation = dict(provider_observation or {})
+    request_events = [
+        dict(item)
+        for item in observation.get("provider_request_events", ())
+        if isinstance(item, Mapping)
+    ]
+    rendered_audit = observation.get("rendered_request_audit", {})
+    if not isinstance(rendered_audit, Mapping):
+        rendered_audit = {}
+    role_invocations = [
+        dict(item)
+        for item in observation.get("role_invocations", ())
+        if isinstance(item, Mapping)
+    ]
+    failure_metadata = {
+        "schema_version": "statebus.stage2_fixed_failure.v1",
+        "task_id": str(getattr(sample, "task_id", "")),
+        "terminal_status": str((summary or {}).get("terminal_status", "runtime_fail")),
+        "status": "runtime_fail",
+        "failure_stage": failure_stage,
+        "error_code": error_code,
+        "error_type": type(error).__name__ if error is not None else "",
+        "error_message": str(error) if error is not None else "",
+        "provider_started": bool(request_events),
+        "response_received_roles": [
+            str(item.get("role", ""))
+            for item in role_invocations
+            if item.get("status") == "response_received"
+        ],
+        "finish_reasons": {
+            str(item.get("role", "")): item.get("finish_reason")
+            for item in role_invocations
+            if str(item.get("role", "")).strip()
+        },
+        "usage_by_role": {
+            str(item.get("role", "")): {
+                key: item.get(key)
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            }
+            for item in role_invocations
+            if str(item.get("role", "")).strip()
+        },
+        "raw_response_hashes": {
+            str(item.get("role", "")): item.get("raw_response_hash")
+            for item in role_invocations
+            if str(item.get("role", "")).strip() and item.get("raw_response_hash")
+        },
+        "provider_request_event_count": len(request_events),
+        "artifact_root": str(root),
+        "evidence_paths": [
+            str(root / "provider_observation.json"),
+            str(root / "provider_request_events.json"),
+            str(root / "rendered_request_audit.json"),
+        ],
+    }
+    paths = (
+        root / "provider_observation.json",
+        root / "provider_request_events.json",
+        root / "rendered_request_audit.json",
+        root / "failure.json",
+    )
+    _json(paths[0], observation)
+    _json(paths[1], request_events)
+    _json(paths[2], dict(rendered_audit))
+    _json(paths[3], failure_metadata)
+    return tuple(str(path) for path in paths)
+
+
 def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[str, Any] | None = None) -> dict[str, object]:
     case = dict(public_case or public_case_projection(sample))
     source_ids = tuple(str(item) for item in case.get("public_sources", ()) if str(item).strip())
@@ -1203,14 +1405,30 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
         raise RuntimeError("fixed_public_source_closure_empty")
     observation: dict[str, object] = {}
     config = _seeded_local_config(seed)
-    summary, trace = _c2b_structured_runtime(
-        sample,
-        lane="fixed_structured",
-        root=root,
-        provider_mode="live",
-        llm_config=config,
-        provider_observation_sink=observation,
-    )
+    try:
+        summary, trace = _c2b_structured_runtime(
+            sample,
+            lane="fixed_structured",
+            root=root,
+            provider_mode="live",
+            llm_config=config,
+            provider_observation_sink=observation,
+        )
+    except Exception as exc:
+        failure_stage = str(getattr(exc, "failure_stage", "runtime") or "runtime")
+        error_code = str(getattr(exc, "error_code", "") or type(exc).__name__)
+        evidence_paths = _write_fixed_failure_evidence(
+            root,
+            sample=sample,
+            summary=None,
+            trace=None,
+            provider_observation=observation,
+            failure_stage=failure_stage,
+            error_code=error_code,
+            error=exc,
+        )
+        exc.provider_evidence_paths = evidence_paths
+        raise
     if summary.get("terminal_status") != "success":
         failure_stage = str(summary.get("failure_stage") or trace.get("failure_stage") or "runtime")
         error_code = str(summary.get("error_code") or trace.get("error_code") or "runtime_incomplete")
@@ -1230,6 +1448,15 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
             for item in request_events
             if str(item.get("retry_kind", "none")) != "none"
         ]
+        evidence_paths = _write_fixed_failure_evidence(
+            root,
+            sample=sample,
+            summary=summary,
+            trace=trace,
+            provider_observation=provider_observation,
+            failure_stage=failure_stage,
+            error_code=error_code,
+        )
         error = RuntimeError(
             f"fixed_runtime_failed:{failure_stage}:{error_code}"
         )
@@ -1241,6 +1468,7 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
         error.runtime_root = str(root / "runtime_root")
         error.workspace_root = str(root / "workspace_root")
         error.memory_root = str(root / "memory_root")
+        error.provider_evidence_paths = evidence_paths
         raise error
     artifact = next(
         (
@@ -1699,6 +1927,14 @@ def _exception_lane_result(exc: BaseException) -> dict[str, object]:
     events = tuple(getattr(exc, "provider_invocation_events", ()))
     request_events = tuple(getattr(exc, "provider_request_events", ()))
     retry_events = tuple(getattr(exc, "retry_events", ()))
+    provider_evidence_paths = tuple(getattr(exc, "provider_evidence_paths", ()))
+    error_code = str(getattr(exc, "error_code", ""))
+    error_text = f"{type(exc).__name__}:{exc}"
+    is_timeout = (
+        error_code.endswith("_timeout")
+        or type(exc).__name__ in {"APITimeoutError", "TimeoutError", "TimeoutException"}
+        or "timed out" in str(exc).lower()
+    )
     return {
         "provider_invocation_events": list(events),
         "provider_request_events": list(request_events),
@@ -1707,12 +1943,17 @@ def _exception_lane_result(exc: BaseException) -> dict[str, object]:
         "retry_count": len(retry_events) if request_events else None,
         # No event is evidence that no invocation was observed. Keep the
         # lifecycle itself unknown until a physical event exists.
-        "provider_invocation_status": "failed" if events or request_events else "not_started",
+        "provider_invocation_status": (
+            "timeout" if is_timeout else "failed"
+        ) if events or request_events else "not_started",
         "failure_stage": str(getattr(exc, "failure_stage", "")),
-        "error_code": str(getattr(exc, "error_code", "")),
+        "error_code": error_code,
+        "error_type": type(exc).__name__,
+        "error_message": error_text,
         "runtime_root": str(getattr(exc, "runtime_root", "")),
         "workspace_root": str(getattr(exc, "workspace_root", "")),
         "memory_root": str(getattr(exc, "memory_root", "")),
+        "provider_evidence_paths": list(provider_evidence_paths),
     }
 
 
@@ -1879,7 +2120,12 @@ def _assess_result(*, lane: str, sample: Any, result: Mapping[str, object] | Non
     mutable_result = dict(result) if isinstance(result, Mapping) else None
     if error:
         lifecycle = "provider_started" if _provider_started(mutable_result) else "unknown"
-        status = "timeout" if error == "deadline_exceeded" else _error_class(error)
+        timeout_error = (
+            error == "deadline_exceeded"
+            or str(mutable_result.get("provider_invocation_status", "")).lower() == "timeout"
+            or any(token in error.lower() for token in ("apitimeouterror", "timed out", "timeout"))
+        )
+        status = "timeout" if timeout_error else _error_class(error)
         if mutable_result is not None and status == "policy_reject":
             mutable_result["failure_stage"] = "planner_policy" if "planner_policy_rejected" in error.lower() else "policy"
         return status, lifecycle, error, {"passed": False, "failures": [error]}, mutable_result
@@ -1997,10 +2243,22 @@ def _validate_served_model(models_payload: object, profile: Mapping[str, object]
     return ids, errors
 
 
-def _live_preflight(output_root: Path, embedding_device: str) -> dict[str, object]:
+def _live_preflight(
+    output_root: Path,
+    embedding_device: str,
+    *,
+    timeout_s: float,
+    require_codeact: bool,
+) -> dict[str, object]:
     config = LLMConfig.from_runtime().with_mode("local_vllm")
     profile = _runtime_profile_snapshot(embedding_device, config)
+    timeout_contract = _stage2_timeout_contract(config, stage2_timeout_s=timeout_s)
     errors: list[str] = []
+    if not timeout_contract["passed"]:
+        errors.append(
+            "stage2_timeout_contract_too_small:"
+            f"{timeout_s:.3f}<{float(timeout_contract['required_stage2_timeout_s']):.3f}"
+        )
     if not config.use_api:
         errors.append("llm_mode_not_api")
     provider = config.provider_config("default")
@@ -2012,6 +2270,34 @@ def _live_preflight(output_root: Path, embedding_device: str) -> dict[str, objec
         if str(config.role_config(role).model) != expected_model:
             errors.append(f"role_model_mismatch:{role}")
     observations: dict[str, object] = {}
+    if require_codeact:
+        try:
+            readiness = CodeActSandboxRunner().check_llm_bwrap_readiness(refresh=True)
+            observations["codeact_sandbox"] = {
+                **readiness.canonical_payload(),
+                "required": True,
+                "readiness_digest": readiness.readiness_digest,
+            }
+            if not readiness.ready or readiness.actual_backend != "bwrap":
+                errors.append(
+                    "codeact_bwrap_not_ready:"
+                    f"{readiness.actual_backend}:{readiness.reason or 'readiness_probe_failed'}"
+                )
+        except (OSError, RuntimeError) as exc:
+            observations["codeact_sandbox"] = {
+                "required": True,
+                "ready": False,
+                "actual_backend": "probe_error",
+                "reason": f"{type(exc).__name__}:{exc}",
+            }
+            errors.append(f"codeact_bwrap_probe_error:{type(exc).__name__}:{exc}")
+    else:
+        observations["codeact_sandbox"] = {
+            "required": False,
+            "ready": None,
+            "actual_backend": "not_probed",
+            "reason": "selected_lanes_do_not_execute_codeact",
+        }
     if base_url:
         try:
             health_url = os.getenv("STATEBUS_LOCAL_VLLM_HEALTH_URL", base_url.rsplit("/v1", 1)[0] + "/health")
@@ -2026,9 +2312,10 @@ def _live_preflight(output_root: Path, embedding_device: str) -> dict[str, objec
         except (OSError, URLError, ValueError, KeyError) as exc:
             errors.append(f"service_probe:{type(exc).__name__}:{exc}")
     preflight = {
-        "schema_version": "statebus.stage2_preflight.v1",
+        "schema_version": "statebus.stage2_preflight.v2",
         "status": "passed" if not errors else "environment_fail",
         "profile": profile,
+        "timeout_contract": timeout_contract,
         "observations": observations,
         "errors": errors,
     }
@@ -2046,7 +2333,7 @@ def _invoke_lane(runners: Mapping[str, Callable[..., dict[str, object]]], *, lan
     return runners[lane](sample, root, seed=seed, public_case=public_case)
 
 
-def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", timeout_s: float = DEFAULT_TIMEOUT_S, run_id: str | None = None, dry_run: bool = False, repeats: int = len(SEEDS), case_ids: tuple[str, ...] = (), family_ids: tuple[str, ...] = (), max_cases_per_family: int = 0, lane_runners: Mapping[str, Callable[..., dict[str, object]]] | None = None, strict_gates: bool | None = None, preflight: bool | None = None, process_deadline: bool | None = None) -> dict[str, object]:
+def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", timeout_s: float = DEFAULT_TIMEOUT_S, run_id: str | None = None, dry_run: bool = False, repeats: int = len(SEEDS), case_ids: tuple[str, ...] = (), family_ids: tuple[str, ...] = (), max_cases_per_family: int = 0, lane_ids: tuple[str, ...] = (), slot_manifest: Path | None = None, lane_runners: Mapping[str, Callable[..., dict[str, object]]] | None = None, strict_gates: bool | None = None, preflight: bool | None = None, process_deadline: bool | None = None) -> dict[str, object]:
     if timeout_s <= 0:
         raise ValueError("timeout_s_must_be_positive")
     if repeats < 1:
@@ -2061,15 +2348,36 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
     strict = live_builtin if strict_gates is None else strict_gates
     do_preflight = live_builtin if preflight is None else preflight
     use_process = live_builtin if process_deadline is None else process_deadline
+    registry = _select_samples()
+    manifest_slots: list[dict[str, object]] | None = None
+    if slot_manifest is not None:
+        if case_ids or family_ids or lane_ids:
+            raise ValueError("stage2_slot_manifest_cannot_mix_selection_filters")
+        manifest_slots = _load_slot_manifest(slot_manifest, registry)
+        manifest_case_ids = tuple(dict.fromkeys(str(item["case_id"]) for item in manifest_slots))
+        selected = _filter_selected_samples(registry, case_ids=manifest_case_ids)
+        selected_lanes = _filter_selected_lanes(
+            tuple(dict.fromkeys(str(item["lane"]) for item in manifest_slots))
+        )
+    else:
+        selected = _filter_selected_samples(
+            registry,
+            case_ids=case_ids,
+            family_ids=family_ids,
+            max_cases_per_family=max_cases_per_family,
+        )
+        selected_lanes = _filter_selected_lanes(lane_ids)
+    preflight_report: dict[str, object] | None = None
     if do_preflight:
-        _live_preflight(output_root, embedding_device)
+        preflight_report = _live_preflight(
+            output_root,
+            embedding_device,
+            timeout_s=timeout_s,
+            require_codeact=bool(
+                {"fixed_structured", "adaptive_routed"}.intersection(selected_lanes)
+            ),
+        )
 
-    selected = _filter_selected_samples(
-        _select_samples(),
-        case_ids=case_ids,
-        family_ids=family_ids,
-        max_cases_per_family=max_cases_per_family,
-    )
     public_cases: dict[str, dict[str, Any]] = {}
     public_source_closures: dict[str, list[str]] = {}
     for family, minimal, fixed in selected:
@@ -2092,22 +2400,42 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
     profile_id = str(profile.get("profile_id") or "unconfigured-profile")
     identities: list[SlotIdentity] = []
     repeat_seeds = [SEEDS[index % len(SEEDS)] for index in range(repeats)]
-    for _family_id, minimal, _fixed in selected:
-        for repeat, seed in enumerate(repeat_seeds, start=1):
-            for lane in LANES:
-                identities.append(
-                    SlotIdentity(
-                        run_id,
-                        minimal.task_id,
-                        str(getattr(minimal, "dataset_split", "")),
-                        1,
-                        repeat,
-                        seed,
-                        profile_id,
-                        "provider_cache_uncontrolled",
-                        lane,
-                    )
+    if manifest_slots is not None:
+        selected_by_case = {
+            str(minimal.task_id): minimal for _family_id, minimal, _fixed in selected
+        }
+        for item in manifest_slots:
+            minimal = selected_by_case[str(item["case_id"])]
+            identities.append(
+                SlotIdentity(
+                    run_id,
+                    minimal.task_id,
+                    str(getattr(minimal, "dataset_split", "")),
+                    1,
+                    int(item["repeat"]),
+                    int(item["seed"]),
+                    profile_id,
+                    "provider_cache_uncontrolled",
+                    str(item["lane"]),
                 )
+            )
+    else:
+        for _family_id, minimal, _fixed in selected:
+            for repeat, seed in enumerate(repeat_seeds, start=1):
+                for lane in selected_lanes:
+                    identities.append(
+                        SlotIdentity(
+                            run_id,
+                            minimal.task_id,
+                            str(getattr(minimal, "dataset_split", "")),
+                            1,
+                            repeat,
+                            seed,
+                            profile_id,
+                            "provider_cache_uncontrolled",
+                            lane,
+                        )
+                    )
     planned_slots = [identity.__dict__ | {"pair_id": identity.pair_id, "slot_id": identity.slot_id} for identity in identities]
     manifest = {
         "schema_version": "statebus.stage2_pilot_manifest.v2",
@@ -2115,7 +2443,7 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
         "claim_scope": "bounded_repair_validation_only_no_superiority",
         "profile": profile,
         "families": [family for family, _m, _f in selected],
-        "lanes": list(LANES),
+        "lanes": list(selected_lanes),
         "seeds": list(SEEDS),
         "repeat_seeds": repeat_seeds,
         "repeat_count": repeats,
@@ -2123,11 +2451,18 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
             "case_ids": list(case_ids),
             "family_ids": list(family_ids),
             "max_cases_per_family": max_cases_per_family,
+            "lane_ids": list(selected_lanes),
             "independent_case_count": len(selected),
+            "slot_manifest": str(slot_manifest) if slot_manifest is not None else "",
         },
         "concurrency": 1,
         "warmup_per_lane_family": 1,
         "timeout_s": timeout_s,
+        "timeout_contract": (
+            dict(preflight_report.get("timeout_contract", {}))
+            if preflight_report is not None
+            else {"status": "not_run"}
+        ),
         "planned_slots": planned_slots,
         "public_cases": public_cases,
         "public_source_closures": public_source_closures,
@@ -2146,18 +2481,29 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
             "exclusion_reason": FIXED_AGGREGATE_EXCLUSION_REASON if dry_run else "",
         },
         "stop_conditions": {
-            "warmup_failure": "block_remaining_slots",
-            "required_gate_failure": "stop_new_slots_and_mark_not_started",
+            "warmup_failure": "record_and_continue",
+            "required_gate_failure": "record_slot_and_continue",
             "deadline": "late_result_is_diagnostic_only",
         },
         "run_mode": "offline_validation" if dry_run else "live_measurement",
     }
+    if manifest_slots is not None:
+        manifest["slot_manifest"] = {
+            "path": str(slot_manifest),
+            "schema_version": "statebus.p1_missing_slots.v1",
+            "slot_count": len(manifest_slots),
+        }
     _json(output_root / "stage2_manifest.json", manifest)
     _json(output_root / "planned_slots.json", {"schema_version": "statebus.stage2_planned_slots.v2", "slots": planned_slots})
 
     rows: list[dict[str, object]] = []
     warmups: list[dict[str, object]] = []
-    blocked_reason: str | None = None
+    warmup_failures: list[dict[str, object]] = []
+    requested_pairs = (
+        {(str(item["family_key"]), str(item["lane"])) for item in manifest_slots}
+        if manifest_slots is not None
+        else None
+    )
     runners = dict(lane_runners or {
         "direct_single_agent": _direct_case,
         "pure_text_mas": _pure_case,
@@ -2166,42 +2512,48 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
     })
 
     for family_id, minimal_sample, fixed_sample in selected:
-        for lane in LANES:
+        for lane in selected_lanes:
+            if requested_pairs is not None and (family_id, lane) not in requested_pairs:
+                continue
             sample = fixed_sample if lane != "adaptive_routed" else minimal_sample
             warm_root = output_root / "warmups" / family_id / lane
             warm_root.mkdir(parents=True, exist_ok=True)
             _json(warm_root / "slot_plan.json", {"schema_version": "statebus.stage2_warmup_plan.v2", "run_id": run_id, "family_id": family_id, "lane": lane, "warmup": True, "planned": True})
-            warm_start = time.monotonic_ns() if not blocked_reason else None
+            warm_start = time.monotonic_ns()
             warm_status, warm_error = "success", ""
             warm_result: dict[str, object] | None = None
             warm_quality: dict[str, object] | None = None
-            if blocked_reason:
-                warm_status, warm_error = "blocked", f"blocked:{blocked_reason}"
-            else:
-                _json(warm_root / "call-start.json", {"warmup": True, "family_id": family_id, "lane": lane, "started_at_ns": warm_start, "requested_seed": 0})
-                fn = lambda sample=sample, warm_root=warm_root, lane=lane: _invoke_lane(
-                    runners,
-                    lane=lane,
-                    sample=sample,
-                    root=warm_root,
-                    seed=0,
-                    public_case=public_cases[family_id],
-                    embedding_device=embedding_device,
-                    dry_run=dry_run,
+            _json(warm_root / "call-start.json", {"warmup": True, "family_id": family_id, "lane": lane, "started_at_ns": warm_start, "requested_seed": 0})
+            fn = lambda sample=sample, warm_root=warm_root, lane=lane: _invoke_lane(
+                runners,
+                lane=lane,
+                sample=sample,
+                root=warm_root,
+                seed=0,
+                public_case=public_cases[family_id],
+                embedding_device=embedding_device,
+                dry_run=dry_run,
+            )
+            warm_result, error, _worker_started = _invoke_with_deadline(fn, timeout_s, process=use_process)
+            if lane == "adaptive_routed" and error:
+                warm_result = _adaptive_failure_evidence(warm_root, warm_result, seed=0)
+            warm_status, _warm_lifecycle, warm_error, warm_quality, warm_result = _assess_result(
+                lane=lane,
+                sample=sample,
+                result=warm_result,
+                error=error,
+                strict_gates=strict,
+                offline=dry_run,
+            )
+            if warm_status not in {"success"}:
+                warmup_failures.append(
+                    {
+                        "family_id": family_id,
+                        "lane": lane,
+                        "status": warm_status,
+                        "error": warm_error,
+                    }
                 )
-                warm_result, error, _worker_started = _invoke_with_deadline(fn, timeout_s, process=use_process)
-                if lane == "adaptive_routed" and error:
-                    warm_result = _adaptive_failure_evidence(warm_root, warm_result, seed=0)
-                warm_status, _warm_lifecycle, warm_error, warm_quality, warm_result = _assess_result(
-                    lane=lane,
-                    sample=sample,
-                    result=warm_result,
-                    error=error,
-                    strict_gates=strict,
-                    offline=dry_run,
-                )
-                if warm_status not in {"success"}:
-                    blocked_reason = f"warmup_failed:{family_id}:{lane}:{warm_error}"
             warm_end = time.monotonic_ns()
             _json(warm_root / "call-end.json", {"warmup": True, "family_id": family_id, "lane": lane, "status": warm_status, "provider_started": bool(_provider_started(warm_result)), "ended_at_ns": warm_end, "error": warm_error})
             warmups.append({
@@ -2219,9 +2571,6 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
                 "provider_evidence_errors": list(warm_result.get("provider_evidence_errors", ())) if warm_result else [],
                 "failure_stage": warm_result.get("failure_stage", "") if warm_result else "",
             })
-            if blocked_reason:
-                continue
-
             for identity in [item for item in identities if item.case_id == minimal_sample.task_id and item.lane == lane]:
                 slot_root = output_root / "families" / family_id / lane / f"repeat-{identity.repeat}-seed-{identity.seed}"
                 slot_root.mkdir(parents=True, exist_ok=True)
@@ -2230,38 +2579,32 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
                 _json(slot_root / "call-start.json", {"slot_id": identity.slot_id, "started_at_ns": started, "requested_seed": identity.seed})
                 sample_for_lane = fixed_sample if lane != "adaptive_routed" else minimal_sample
                 status, failure, lifecycle, result, quality = "not_started", "", "not_started", None, {"passed": False, "failures": ["not_evaluated"]}
-                if blocked_reason:
-                    failure = f"blocked:{blocked_reason}"
-                else:
-                    fn = lambda sample=sample_for_lane, slot_root=slot_root, lane=lane, seed=int(identity.seed): _invoke_lane(
-                        runners,
-                        lane=lane,
-                        sample=sample,
-                        root=slot_root,
-                        seed=seed,
-                        public_case=public_cases[family_id],
-                        embedding_device=embedding_device,
-                        dry_run=dry_run,
-                    )
-                    result, error, _worker_started = _invoke_with_deadline(fn, timeout_s, process=use_process)
-                    if lane == "adaptive_routed" and error:
-                        result = _adaptive_failure_evidence(slot_root, result, seed=int(identity.seed))
-                    status, lifecycle, failure, quality, result = _assess_result(
-                        lane=lane,
-                        sample=sample_for_lane,
-                        result=result,
-                        error=error,
-                        strict_gates=strict,
-                        offline=dry_run,
-                    )
+                fn = lambda sample=sample_for_lane, slot_root=slot_root, lane=lane, seed=int(identity.seed): _invoke_lane(
+                    runners,
+                    lane=lane,
+                    sample=sample,
+                    root=slot_root,
+                    seed=seed,
+                    public_case=public_cases[family_id],
+                    embedding_device=embedding_device,
+                    dry_run=dry_run,
+                )
+                result, error, _worker_started = _invoke_with_deadline(fn, timeout_s, process=use_process)
+                if lane == "adaptive_routed" and error:
+                    result = _adaptive_failure_evidence(slot_root, result, seed=int(identity.seed))
+                status, lifecycle, failure, quality, result = _assess_result(
+                    lane=lane,
+                    sample=sample_for_lane,
+                    result=result,
+                    error=error,
+                    strict_gates=strict,
+                    offline=dry_run,
+                )
                 ended = time.monotonic_ns()
                 _json(slot_root / "call-end.json", {"slot_id": identity.slot_id, "ended_at_ns": ended, "status": status, "provider_started": _provider_started(result), "error": failure})
                 row = _slot_row(identity=identity, output_root=output_root, sample=sample_for_lane, status=status, lifecycle=lifecycle, result=result, failure=failure, started_ns=started, ended_ns=ended, quality=quality, slot_root=slot_root)
                 _json(slot_root / "raw_row.json", row)
                 rows.append(row)
-                if status not in {"success"}:
-                    blocked_reason = f"required_gate_failed:{identity.slot_id}:{failure or status}"
-                    break
 
     observed_ids = [str(row["slot_id"]) for row in rows]
     observed_set = set(observed_ids)
@@ -2280,10 +2623,10 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
             status="not_started",
             lifecycle="not_started",
             result={},
-            failure=blocked_reason or "not_started",
+            failure="not_started",
             started_ns=0,
             ended_ns=0,
-            quality={"passed": False, "failures": [blocked_reason or "not_started"]},
+            quality={"passed": False, "failures": ["not_started"]},
             slot_root=slot_root,
         )
         _json(slot_root / "slot_plan.json", {"schema_version": "statebus.stage2_slot_plan.v2", **identity.__dict__, "pair_id": identity.pair_id, "slot_id": identity.slot_id, "planned": True})
@@ -2322,6 +2665,8 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
         no_go_reasons.append("denominator_not_closed")
     if any(counts[key] for key in ("quality_fail", "timeout", "runtime_fail", "environment_fail", "policy_reject", "unsupported", "unknown", "not_started")):
         no_go_reasons.append("terminal_or_evidence_failure")
+    if warmup_failures:
+        no_go_reasons.append("warmup_failure")
     if excluded_count:
         no_go_reasons.append("canonical_aggregate_exclusion")
     if dry_run:
@@ -2344,6 +2689,8 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
         "planned_slots": len(planned_slots),
         "observed_rows": len(rows),
         "warmup_rows": len(warmups),
+        "warmup_failure_count": len(warmup_failures),
+        "warmup_failures": warmup_failures,
         "denominator": denominator,
         "no_go_reasons": no_go_reasons,
         "claim_scope": "bounded_repair_validation_only_no_superiority",
@@ -2464,6 +2811,8 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=len(SEEDS), help="Repeats per family and lane; seeds cycle through 0 and 1.")
     parser.add_argument("--case-id", action="append", default=[], help="Select an exact independent case id; repeat for multiple cases.")
     parser.add_argument("--family-id", action="append", default=[], help="Select an exact Stage 2 family id; repeat for multiple families.")
+    parser.add_argument("--lane", action="append", choices=LANES, default=[], help="Select an exact lane; repeat for multiple lanes. Empty keeps all lanes.")
+    parser.add_argument("--slot-manifest", type=Path, help="Run exactly the canonical (case,lane,repeat,seed) slots in a v1 manifest.")
     parser.add_argument("--max-cases-per-family", type=int, default=0, help="Bound selected independent cases per family; 0 keeps all selected cases.")
     parser.add_argument("--run-id")
     parser.add_argument("--dry-run", action="store_true")
@@ -2487,6 +2836,8 @@ def main() -> None:
             case_ids=tuple(args.case_id),
             family_ids=tuple(args.family_id),
             max_cases_per_family=args.max_cases_per_family,
+            lane_ids=tuple(args.lane),
+            slot_manifest=args.slot_manifest,
             run_id=args.run_id,
             dry_run=args.dry_run,
             strict_gates=True,

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import asyncio
 import inspect
 import json
 from pathlib import Path
 import time
 from typing import Callable, TYPE_CHECKING
 from uuid import uuid4
+
+from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError
 
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
@@ -88,6 +91,38 @@ if TYPE_CHECKING:
 
 class AdaptiveDispatchError(RuntimeError):
     pass
+
+
+def _classify_provider_exception(
+    role: str,
+    exc: BaseException,
+) -> tuple[str, bool, bool] | None:
+    """Map provider-boundary failures to stable Runtime result semantics.
+
+    Only exceptions that identify the provider boundary are converted here.
+    Runtime/programming errors from the handler continue through the normal
+    dispatcher error path so they are not silently reclassified as timeouts.
+    """
+
+    if isinstance(exc, (APITimeoutError, TimeoutError, asyncio.TimeoutError)):
+        return f"{role}_timeout", True, False
+    if isinstance(exc, (APIConnectionError, ConnectionError)):
+        return f"{role}_provider_connection_error", False, True
+    if isinstance(exc, APIStatusError):
+        status_code = int(getattr(exc, "status_code", 0) or 0)
+        retryable = status_code in {408, 409, 429, 500, 502, 503, 504}
+        return (
+            f"{role}_provider_http_{status_code or 'error'}",
+            False,
+            retryable,
+        )
+    if isinstance(exc, APIError):
+        return (
+            f"provider_invocation_failed:{role}:{type(exc).__name__}",
+            False,
+            False,
+        )
+    return None
 
 
 @dataclass(frozen=True)
@@ -601,7 +636,25 @@ class AdaptiveCapabilityDispatcher:
                 request,
                 state_reader=self.context.provider_state_reader_factory(request),
             )
-        raw_candidate = handler(request)
+        try:
+            raw_candidate = handler(request)
+        except BaseException as exc:
+            classified = _classify_provider_exception(role, exc)
+            if classified is None:
+                raise
+            error_code, timed_out, retryable = classified
+            return AdaptiveStepResult(
+                grant_hash=bound_grant.grant.grant_hash,
+                success=False,
+                attempt_id=bound_grant.grant.attempt_id,
+                error_code=error_code,
+                retryable=retryable,
+                timed_out=timed_out,
+                metrics={
+                    "provider_invocation_error_count": 1.0,
+                    "provider_timeout_count": 1.0 if timed_out else 0.0,
+                },
+            )
         if not isinstance(raw_candidate, ProviderCandidate):
             raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
         candidate = detach_provider_candidate(raw_candidate)
@@ -2511,9 +2564,10 @@ class AdaptiveCapabilityDispatcher:
                 )),
                 "llm_codeact_execution_count": 1.0,
                 "llm_codeact_candidate_count": 1.0,
-                "llm_codeact_verified_count": float(bool(quality_reports) and all(
-                    report.verified for report in quality_reports
-                )),
+                "llm_codeact_verified_count": float(
+                    outcome.quality_report is not None
+                    and outcome.quality_report.verified
+                ),
                 "llm_codeact_sandbox_fallback_count": 0.0,
                 **memory_metrics,
             },

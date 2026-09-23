@@ -396,6 +396,7 @@ def _claim_set_response_schema(
     verified_artifact_refs: tuple[str, ...],
     evidence_items: tuple[dict[str, str], ...],
     numeric_field_names: tuple[str, ...],
+    expected_claim_count: int | None = None,
 ) -> dict[str, Any]:
     evidence_ids = tuple(item.get("id", "") for item in evidence_items)
     locators = tuple(item.get("locator", "") for item in evidence_items)
@@ -432,11 +433,19 @@ def _claim_set_response_schema(
             "status",
         ],
     }
+    claims_schema: dict[str, Any] = {"type": "array", "items": claim_schema}
+    if expected_claim_count is not None:
+        claims_schema.update(
+            {
+                "minItems": expected_claim_count,
+                "maxItems": expected_claim_count,
+            }
+        )
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "claims": {"type": "array", "items": claim_schema},
+            "claims": claims_schema,
             "status": _string_schema(("ready",)),
         },
         "required": ["claims", "status"],
@@ -1485,7 +1494,14 @@ class RolePathRunner:
         )
         return compiled.prompt
 
-    def _planner_instruction(self) -> str:
+    def _planner_instruction(self, *, final_output_contract_version: str = "") -> str:
+        final_contract_note = (
+            f" The controller-owned final output contract is {final_output_contract_version!r}; "
+            "it is an artifact/capability contract, not a task-level required output field. "
+            "Do not place that contract, its aliases, or any capability id in required_outputs."
+            if final_output_contract_version.strip()
+            else ""
+        )
         return (
             "Return exactly one JSON object containing semantic_task_plan with these exact flat keys: goal, "
             "entities, time_scope, lexical_query, lexical_objective, semantic_query, semantic_objective, "
@@ -1495,6 +1511,7 @@ class RolePathRunner:
             "contain lexical_metadata, semantic_context, table_cell, table_schema, artifact_summary, "
             "memory_artifact, memory_strategy, or citation. Use only allowed required outputs. Do not emit workflow "
             "steps, DAGs, code, case IDs, routes, tools, candidate keys, expected facts, values, or answers."
+            + final_contract_note
         )
 
     def _retriever_instruction(self, *, preferred_candidate_enabled: bool) -> str:
@@ -1581,13 +1598,31 @@ class RolePathRunner:
                 prompt=current_prompt,
                 response_schema=response_schema,
             )
-            result = _run_sync(
-                self.llm_client.complete(
-                    [ChatMessage(role="user", content=current_prompt)],
-                    purpose=purpose,
-                    response_schema=response_schema,
+            try:
+                result = _run_sync(
+                    self.llm_client.complete(
+                        [ChatMessage(role="user", content=current_prompt)],
+                        purpose=purpose,
+                        response_schema=response_schema,
+                    )
                 )
-            )
+            except BaseException as exc:
+                latency_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+                merged_result = _merge_llm_results(attempts)
+                self.role_observations[purpose] = {
+                    "model": merged_result.model,
+                    "finish_reason": merged_result.finish_reason,
+                    "prompt_tokens": merged_result.usage.prompt_tokens,
+                    "completion_tokens": merged_result.usage.completion_tokens,
+                    "total_tokens": merged_result.usage.total_tokens,
+                    "raw_text": merged_result.text,
+                    "latency_ms": latency_ms,
+                    "prompt_bytes": prompt_bytes,
+                    "attempt_count": len(attempts),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+                raise
             attempts.append(result)
             try:
                 payload = extract_json_object(result.text)
@@ -1834,10 +1869,13 @@ class RolePathRunner:
         allowed_required_outputs: tuple[str, ...] = (),
         target_entities: tuple[str, ...] = (),
         time_scope: str = "",
+        final_output_contract_version: str = "",
     ) -> PlannerRoleResult:
         del task_id, task_group, task_theme, visible_candidates, tags, required_roles
         prompt_slice = prompt_slice or RolePromptSlice(role="planner")
-        instruction = self._planner_instruction()
+        instruction = self._planner_instruction(
+            final_output_contract_version=final_output_contract_version,
+        )
         del prompt_slice, strict_surface
         payload = {
             "g": goal,
@@ -1847,19 +1885,29 @@ class RolePathRunner:
             "en": list(target_entities),
             "ts": time_scope,
         }
+        if final_output_contract_version.strip():
+            payload["fc"] = final_output_contract_version.strip()
+        text_sections = [
+            ("Goal", goal),
+            ("Task request", query_text),
+            ("Summary hint", summary_hint),
+            ("Allowed required outputs", ", ".join(allowed_required_outputs)),
+            ("Entity hints", ", ".join(target_entities)),
+            ("Time scope hint", time_scope),
+        ]
+        if final_output_contract_version.strip():
+            text_sections.append(
+                (
+                    "Controller-owned final output contract",
+                    final_output_contract_version.strip(),
+                )
+            )
         prompt = self._render_prompt(
             role_label="planner",
             instruction=instruction,
             payload_tag="sb-plan-v1",
             payload=payload,
-            text_sections=(
-                ("Goal", goal),
-                ("Task request", query_text),
-                ("Summary hint", summary_hint),
-                ("Allowed required outputs", ", ".join(allowed_required_outputs)),
-                ("Entity hints", ", ".join(target_entities)),
-                ("Time scope hint", time_scope),
-            ),
+            text_sections=tuple(text_sections),
             shared_prefix_text="",
         )
         completion = self._complete_json_role(
@@ -2819,6 +2867,7 @@ class RolePathRunner:
                 verified_artifact_refs=verified_artifact_refs,
                 evidence_items=evidence_items,
                 numeric_field_names=numeric_field_names,
+                expected_claim_count=expected_claim_count,
             ),
         )
         response = completion.payload

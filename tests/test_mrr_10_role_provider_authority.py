@@ -46,7 +46,8 @@ from statebus.runtime.role_providers import (
     RolePathSummarizerProvider,
     RoleProviderContext,
 )
-from statebus.runtime.adaptive_runtime import AdaptiveStepResult
+from statebus.runtime.adaptive_runtime import AdaptiveRuntimeRequest, AdaptiveStepResult
+from statebus.runtime.driver import RuntimeDriver
 from statebus.utils import sha256_digest
 
 
@@ -268,6 +269,57 @@ def test_bound_dispatcher_projects_provider_failure_without_provider_retry() -> 
     assert not result.success
     assert result.error_code == "provider_parse_failed"
     assert result.retryable
+
+
+def test_provider_timeout_is_trapped_and_settled_with_stable_error_code(tmp_path: Path) -> None:
+    envelope, plan, step, bound_grant, identity, registry, providers = _fixture(
+        "executor",
+        with_snapshot=True,
+    )
+
+    def provider(_request: ProviderRequest) -> ProviderCandidate:
+        raise TimeoutError("simulated provider timeout")
+
+    dispatcher = AdaptiveCapabilityDispatcher(
+        context=AdaptiveDispatchContext(
+            registry=registry,
+            provider_registry=providers,
+            bound_provider_handlers={step.capability_id: provider},
+        )
+    )
+    direct = dispatcher.dispatch(
+        envelope=envelope,
+        approved_plan=plan,
+        step=step,
+        grant=bound_grant,
+        attempt_workspace=tmp_path / "direct",
+        runtime_identity=identity,
+    )
+    assert direct.success is False
+    assert direct.timed_out is True
+    assert direct.retryable is False
+    assert direct.error_code == "executor_timeout"
+
+    runtime = RuntimeDriver().run_adaptive(
+        AdaptiveRuntimeRequest(
+            trace_id=identity.trace_id,
+            task_id=envelope.task_id,
+            canonical_task_spec_hash=envelope.canonical_task_spec_hash,
+            envelope=envelope,
+            approved_plan=plan,
+            registry=registry,
+            runtime_root=str(tmp_path / "runtime"),
+            workspace_root_id=str(tmp_path / "workspace"),
+            dispatcher=dispatcher,
+            runtime_identity=identity,
+            provider_registry=providers,
+        )
+    )
+    assert runtime.completed is False
+    assert runtime.dispatches[0].state == "TRAPPED"
+    assert runtime.dispatches[0].error_code == "executor_timeout"
+    assert runtime.session.attempt_records[0].state == "TRAPPED"
+    assert runtime.session.attempt_records[0].trap_reason == "executor_timeout"
 
 
 def test_bound_generated_code_candidate_is_executed_once_by_dispatcher() -> None:

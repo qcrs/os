@@ -1011,6 +1011,7 @@ def test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace(t
     assert metrics["llm_codeact_repair_count"] == 1.0
     assert metrics["llm_codeact_quality_repair_count"] == 1.0
     assert metrics["llm_codeact_quality_rejected_count"] == 1.0
+    assert metrics["llm_codeact_verified_count"] == 1.0
     repaired_artifact = next(
         stored.artifact for artifact_id, stored in context.artifacts.items() if artifact_id != "input"
     )
