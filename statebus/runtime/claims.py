@@ -64,13 +64,26 @@ class ClaimSetValidator:
             factual = claim.claim_type in {"fact", "inference", "risk"}
             if factual and not (claim.supporting_evidence_item_ids or claim.supporting_artifact_ref_ids):
                 errors.append(f"missing_support:{claim.claim_id}")
+            if factual and not claim.supporting_evidence_item_ids:
+                errors.append(f"missing_source_evidence:{claim.claim_id}")
+            claim_locator_values: set[str] = set()
             for item_id in claim.supporting_evidence_item_ids:
                 item = evidence.get(item_id)
                 if item is None or item.locator is None:
                     errors.append(f"invalid_evidence_reference:{claim.claim_id}:{item_id}")
+                    continue
+                item_locator_values = self._locator_values(item.locator)
+                if not item_locator_values:
+                    errors.append(f"invalid_evidence_reference:{claim.claim_id}:{item_id}")
+                    continue
+                claim_locator_values.update(item_locator_values)
+                if factual and not (item_locator_values & set(claim.citation_locators)):
+                    errors.append(f"missing_source_locator:{claim.claim_id}:{item_id}")
             for locator in claim.citation_locators:
                 if locator not in locator_index:
                     errors.append(f"invalid_locator:{claim.claim_id}:{locator}")
+                elif locator not in claim_locator_values:
+                    errors.append(f"locator_evidence_mapping_mismatch:{claim.claim_id}:{locator}")
             for artifact_id in claim.supporting_artifact_ref_ids:
                 if artifact_id not in verified_artifacts:
                     errors.append(f"unverified_artifact:{claim.claim_id}:{artifact_id}")
@@ -95,7 +108,11 @@ class ClaimSetValidator:
                 if float(value) not in scalar_values:
                     errors.append(f"numeric_mismatch:{claim.claim_id}:{name}")
         if errors:
-            status = ClaimSetStatus.MISSING_CITATION if any("reference" in error or "support" in error or "locator" in error for error in errors) else ClaimSetStatus.FACT_CONFLICT
+            status = ClaimSetStatus.MISSING_CITATION if any(
+                token in error
+                for error in errors
+                for token in ("reference", "support", "evidence", "locator")
+            ) else ClaimSetStatus.FACT_CONFLICT
             return ClaimValidationReport(False, status, tuple(errors))
         return ClaimValidationReport(True, ClaimSetStatus.READY)
 

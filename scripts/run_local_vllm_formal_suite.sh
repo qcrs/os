@@ -44,9 +44,14 @@ if [[ "$SUITE" == "stage2-pilot" ]]; then
   STAGE2_FAMILY_IDS="${STATEBUS_STAGE2_FAMILY_IDS:-}"
   STAGE2_LANE_IDS="${STATEBUS_STAGE2_LANE_IDS:-}"
   STAGE2_MAX_CASES_PER_FAMILY="${STATEBUS_STAGE2_MAX_CASES_PER_FAMILY:-0}"
+  CAPTURE_PROVIDER_CONTENT="${STATEBUS_LOCAL_VLLM_FORMAL_CAPTURE_PROVIDER_CONTENT:-0}"
   embedding_device="${STATEBUS_G6B2_EMBEDDING_DEVICE:-${STATEBUS_EMBED_DEVICE:-cuda:0}}"
   [[ "$DRY_RUN" == "0" || "$DRY_RUN" == "1" ]] || {
     printf '[statebus-local-vllm-formal] invalid STATEBUS_LOCAL_VLLM_FORMAL_DRY_RUN=%s (expected 0 or 1)\n' "$DRY_RUN" >&2
+    exit 2
+  }
+  [[ "$CAPTURE_PROVIDER_CONTENT" == "0" || "$CAPTURE_PROVIDER_CONTENT" == "1" ]] || {
+    printf '[statebus-local-vllm-formal] invalid STATEBUS_LOCAL_VLLM_FORMAL_CAPTURE_PROVIDER_CONTENT=%s (expected 0 or 1)\n' "$CAPTURE_PROVIDER_CONTENT" >&2
     exit 2
   }
   [[ "$RUN_ID" =~ ^[A-Za-z0-9._-]+$ ]] || {
@@ -119,6 +124,7 @@ if [[ "$SUITE" == "stage2-pilot" ]]; then
     done
   fi
   [[ "$DRY_RUN" == "1" ]] && stage2_args+=(--dry-run)
+  [[ "$CAPTURE_PROVIDER_CONTENT" == "1" ]] && stage2_args+=(--capture-provider-content)
   [[ -n "$TIMEOUT_S" ]] && stage2_args+=(--timeout-s "$TIMEOUT_S")
 
   set +e

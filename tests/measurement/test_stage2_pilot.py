@@ -388,15 +388,38 @@ def test_bounded_registry_selection_rejects_ambiguous_or_unknown_filters() -> No
         pilot._filter_selected_samples(selected, family_ids=("missing",))
 
 
-def test_bounded_lane_selection_is_exact_and_canonical() -> None:
+def test_bounded_lane_selection_preserves_explicit_order() -> None:
     assert pilot._filter_selected_lanes() == pilot.LANES
     assert pilot._filter_selected_lanes(("adaptive_routed", "fixed_structured")) == (
-        "fixed_structured",
         "adaptive_routed",
+        "fixed_structured",
     )
 
     with pytest.raises(ValueError, match="duplicate_lane_selection"):
         pilot._filter_selected_lanes(("fixed_structured", "fixed_structured"))
+
+
+def test_fixed_lane_forwards_opt_in_provider_content_capture(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fixed_runner(sample, root: Path, **kwargs):
+        captured.update(kwargs)
+        return {"payload": {"summary_text": "ok"}}
+
+    result = pilot._invoke_lane(
+        {"fixed_structured": fixed_runner},
+        lane="fixed_structured",
+        sample=_sample(),
+        root=tmp_path / "fixed",
+        seed=0,
+        public_case={"public_sources": ["doc-1"]},
+        embedding_device="cuda:0",
+        dry_run=False,
+        capture_provider_content=True,
+    )
+
+    assert result["payload"] == {"summary_text": "ok"}
+    assert captured["capture_provider_content"] is True
     with pytest.raises(ValueError, match="stage2_lane_not_registered"):
         pilot._filter_selected_lanes(("missing",))
 
@@ -1045,6 +1068,63 @@ def test_adaptive_request_projection_distinguishes_initial_and_retries() -> None
     assert by_id["g2"]["retry_kind"] == "model_repair"
     assert all(event["requested_seed"] == 3 for event in events)
     assert all(event["effective_seed"] is None for event in events)
+
+
+def test_adaptive_request_projection_preserves_observed_timing_and_finish_reason() -> None:
+    events = pilot._adaptive_provider_request_events(
+        {
+            "role_invocations": [
+                {
+                    "role": "planner",
+                    "attempts": [{
+                        "attempt_index": 1,
+                        "request_id": "provider-1",
+                        "status": "response_received",
+                        "start_ns": 100,
+                        "end_ns": 250,
+                        "latency_ms": 0.00015,
+                        "finish_reason": "stop",
+                    }],
+                }
+            ],
+            "generation_attempts": [{
+                "kind": "initial",
+                "request_id": "provider-2",
+                "start_ns": 300,
+                "end_ns": 500,
+                "latency_ms": 0.0002,
+                "finish_reason": "length",
+            }],
+        }
+    )
+
+    assert events[0]["provider_request_id"] == "provider-1"
+    assert events[0]["start_ns"] == 100
+    assert events[0]["end_ns"] == 250
+    assert events[0]["latency_ms"] == 0.00015
+    assert events[0]["finish_reason"] == "stop"
+    assert events[1]["provider_request_id"] == "provider-2"
+    assert events[1]["start_ns"] == 300
+    assert events[1]["end_ns"] == 500
+    assert events[1]["latency_ms"] == 0.0002
+    assert events[1]["finish_reason"] == "length"
+
+
+def test_adaptive_request_projection_keeps_missing_timing_unknown() -> None:
+    events = pilot._adaptive_provider_request_events(
+        {
+            "role_invocations": [{
+                "role": "planner",
+                "attempts": [{"attempt_index": 1, "request_id": "provider-1"}],
+            }],
+        }
+    )
+
+    assert events[0]["provider_request_id"] == "provider-1"
+    assert events[0]["start_ns"] is None
+    assert events[0]["end_ns"] is None
+    assert events[0]["latency_ms"] is None
+    assert events[0]["finish_reason"] is None
 
 
 def test_interrupted_acceptance_recomputes_partial_slot_accounting(tmp_path: Path) -> None:

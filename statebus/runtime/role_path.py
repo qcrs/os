@@ -109,6 +109,26 @@ def _string_array_schema(
     return {"type": "array", "items": _string_schema(values)}
 
 
+def _required_evidence_id_array_schema(evidence_ids: tuple[str, ...]) -> dict[str, Any]:
+    schema = _string_array_schema(evidence_ids, max_items=8)
+    schema["minItems"] = 1
+    return schema
+
+
+def _claim_locator_by_evidence_id(evidence_items: tuple[dict[str, str], ...]) -> dict[str, str]:
+    locators: dict[str, str] = {}
+    for item in evidence_items:
+        evidence_id = str(item.get("id", ""))
+        locator = str(item.get("locator", ""))
+        if not evidence_id or not locator:
+            continue
+        prior = locators.get(evidence_id)
+        if prior is not None and prior != locator:
+            raise ValueError(f"adaptive_claim_evidence_locator_ambiguous:{evidence_id}")
+        locators[evidence_id] = locator
+    return locators
+
+
 def _adaptive_plan_response_schema(
     *,
     capability_surface: tuple[dict[str, object], ...],
@@ -399,7 +419,6 @@ def _claim_set_response_schema(
     expected_claim_count: int | None = None,
 ) -> dict[str, Any]:
     evidence_ids = tuple(item.get("id", "") for item in evidence_items)
-    locators = tuple(item.get("locator", "") for item in evidence_items)
     claim_schema = {
         "type": "object",
         "additionalProperties": False,
@@ -407,9 +426,8 @@ def _claim_set_response_schema(
             "claim_id": {"type": "string"},
             "claim_text": {"type": "string"},
             "claim_type": _string_schema(("fact", "inference", "risk")),
-            "supporting_evidence_item_ids": _string_array_schema(evidence_ids, max_items=8),
+            "supporting_evidence_item_ids": _required_evidence_id_array_schema(evidence_ids),
             "supporting_artifact_ref_ids": _string_array_schema(verified_artifact_refs, max_items=8),
-            "citation_locators": _string_array_schema(locators, max_items=8),
             "numeric_fields": {
                 "type": "object",
                 "additionalProperties": False,
@@ -427,7 +445,6 @@ def _claim_set_response_schema(
             "claim_type",
             "supporting_evidence_item_ids",
             "supporting_artifact_ref_ids",
-            "citation_locators",
             "numeric_fields",
             "uncertainty_note",
             "status",
@@ -459,21 +476,18 @@ def _claim_citation_repair_response_schema(
     evidence_items: tuple[dict[str, str], ...],
 ) -> dict[str, Any]:
     evidence_ids = tuple(item.get("id", "") for item in evidence_items)
-    locators = tuple(item.get("locator", "") for item in evidence_items)
     repair_schema = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
             "claim_id": _string_schema(claim_ids),
-            "supporting_evidence_item_ids": _string_array_schema(evidence_ids, max_items=8),
+            "supporting_evidence_item_ids": _required_evidence_id_array_schema(evidence_ids),
             "supporting_artifact_ref_ids": _string_array_schema(verified_artifact_refs, max_items=8),
-            "citation_locators": _string_array_schema(locators, max_items=8),
         },
         "required": [
             "claim_id",
             "supporting_evidence_item_ids",
             "supporting_artifact_ref_ids",
-            "citation_locators",
         ],
     }
     return {
@@ -1483,7 +1497,7 @@ class RolePathRunner:
     ) -> str:
         compiled = compile_prefix_layout(
             role_label=role_label,
-            instruction=instruction,
+            instruction=instruction + "\nSerialize compact JSON without indentation or optional whitespace; preserve every required field and value.",
             payload_tag=payload_tag,
             payload=payload,
             text_sections=text_sections,
@@ -2788,6 +2802,13 @@ class RolePathRunner:
     ) -> ClaimSet:
         if expected_claim_count is not None and expected_claim_count < 1:
             raise ValueError("adaptive_expected_claim_count_invalid")
+        locator_by_evidence_id = _claim_locator_by_evidence_id(evidence_items)
+        if not locator_by_evidence_id:
+            raise ValueError("adaptive_claim_evidence_locator_missing")
+        claim_evidence_items = tuple(
+            {"id": evidence_id, "locator": locator}
+            for evidence_id, locator in locator_by_evidence_id.items()
+        )
         numeric_field_names = tuple(sorted({
             str(key)
             for item in artifact_summaries
@@ -2802,10 +2823,10 @@ class RolePathRunner:
                 "evidence": [
                     {
                         "evidence_id": item.get("id", ""),
-                        "citation_locator": item.get("locator", ""),
                         "evidence_text": item.get("text", ""),
                     }
                     for item in evidence_items
+                    if str(item.get("id", "")) in locator_by_evidence_id
                 ],
                 "artifacts": [
                     {
@@ -2831,12 +2852,13 @@ class RolePathRunner:
                 "one_claim_per_verified_row": True,
             }
         instruction = (
-            "You are StateBus Summarizer. Return a ClaimSet JSON only. Use reference_catalog as three typed columns: "
-            "supporting_evidence_item_ids may contain only evidence.evidence_id values; citation_locators may contain "
-            "only evidence.citation_locator values; supporting_artifact_ref_ids may contain only "
+            "You are StateBus Summarizer. Return a ClaimSet JSON only. Use reference_catalog as typed columns: "
+            "supporting_evidence_item_ids may contain only evidence.evidence_id values; supporting_artifact_ref_ids may contain only "
             "artifacts.artifact_ref_id values. Never put an artifact ID in an evidence-ID field, never put an artifact "
-            "row or artifact ID in citation_locators, and never invent a reference. Artifact rows support numeric values "
-            "but are not citation locators. For every claim with numeric_fields, use only values present in its "
+            "row or artifact ID in an evidence-ID field, and never invent a reference. Every factual claim must cite at least "
+            "one source evidence ID; a verified artifact alone is not source evidence. Runtime resolves each evidence ID "
+            "to its complete source locator, so do not emit locator strings. Artifact rows support numeric values "
+            "but are not source evidence. For every claim with numeric_fields, use only values present in its "
             "supporting artifact's verified_rows, and use only that artifact's numeric_field_names as numeric_fields keys. "
             "Do not encode or convert period/date/string labels as numbers, and do not assert a numeric value that appears "
             "only in evidence text. "
@@ -2844,7 +2866,7 @@ class RolePathRunner:
             "must be fact, inference, or risk. Claim status may only be ready or "
             "missing_citation. Create one compact claim per verified output row; do not split a row across claims or "
             "repeat a claim. Keep claim_text to one short sentence and put the exact numeric values in numeric_fields. "
-            "Use only the source locators needed for the claim and never repeat a locator within a claim. Use top-level "
+            "Use only source evidence IDs that support the claim and never repeat an ID within a claim. Use top-level "
             "status ready because this request contains verified support."
         )
         if expected_claim_count is not None:
@@ -2865,7 +2887,7 @@ class RolePathRunner:
             purpose="summarizer",
             response_schema=_claim_set_response_schema(
                 verified_artifact_refs=verified_artifact_refs,
-                evidence_items=evidence_items,
+                evidence_items=claim_evidence_items,
                 numeric_field_names=numeric_field_names,
                 expected_claim_count=expected_claim_count,
             ),
@@ -2892,14 +2914,20 @@ class RolePathRunner:
             if isinstance(numeric_raw, dict) and not set(map(str, numeric_raw)) <= set(numeric_field_names):
                 raise ValueError("adaptive_claim_numeric_field_outside_contract")
             numeric = {str(key): float(value) for key, value in numeric_raw.items()} if isinstance(numeric_raw, dict) else {}
+            evidence_ids = _coerce_string_tuple(item.get("supporting_evidence_item_ids", []))
+            unknown_evidence_ids = set(evidence_ids) - set(locator_by_evidence_id)
+            if unknown_evidence_ids:
+                raise ValueError("adaptive_claim_evidence_outside_authority")
             claims.append(
                 Claim(
                     claim_id=str(item.get("claim_id", "")),
                     claim_text=str(item.get("claim_text", "")),
                     claim_type=claim_type,
-                    supporting_evidence_item_ids=_coerce_string_tuple(item.get("supporting_evidence_item_ids", [])),
+                    supporting_evidence_item_ids=evidence_ids,
                     supporting_artifact_ref_ids=_coerce_string_tuple(item.get("supporting_artifact_ref_ids", [])),
-                    citation_locators=_coerce_string_tuple(item.get("citation_locators", [])),
+                    citation_locators=tuple(dict.fromkeys(
+                        locator_by_evidence_id[evidence_id] for evidence_id in evidence_ids
+                    )),
                     numeric_fields=numeric,
                     uncertainty_note=str(item.get("uncertainty_note", "")),
                     status=claim_status,
@@ -2923,16 +2951,16 @@ class RolePathRunner:
         """Repair only typed reference fields; claim content and numbers remain controller-owned."""
         if not claim_set.claims:
             raise ValueError("adaptive_claim_repair_requires_claims")
+        locator_by_evidence_id = _claim_locator_by_evidence_id(evidence_items)
+        if not locator_by_evidence_id:
+            raise ValueError("adaptive_claim_evidence_locator_missing")
         payload = {
             "validation_errors": list(validation_errors),
             "claim_ids": [claim.claim_id for claim in claim_set.claims],
             "reference_catalog": {
                 "evidence": [
-                    {
-                        "evidence_id": item.get("id", ""),
-                        "citation_locator": item.get("locator", ""),
-                    }
-                    for item in evidence_items
+                    {"evidence_id": evidence_id}
+                    for evidence_id in locator_by_evidence_id
                 ],
                 "artifacts": [{"artifact_ref_id": artifact_id} for artifact_id in verified_artifact_refs],
             },
@@ -2940,10 +2968,11 @@ class RolePathRunner:
         instruction = (
             "You are StateBus Summarizer performing one citation-only repair. Return JSON with repairs only. "
             "Each repair must preserve its supplied claim_id and may change only supporting_evidence_item_ids, "
-            "supporting_artifact_ref_ids, and citation_locators. Do not return claim text, numeric fields, claim type, "
-            "status, or any new claims. Use only the matching typed reference_catalog column: evidence_id for "
-            "supporting_evidence_item_ids, citation_locator for citation_locators, artifact_ref_id for "
-            "supporting_artifact_ref_ids."
+            "and supporting_artifact_ref_ids. Every factual claim must include at least one source evidence ID; "
+            "a verified artifact alone is not source evidence. Runtime resolves evidence IDs to complete locators. "
+            "Do not return locator strings, claim text, numeric fields, claim type, status, or any new claims. "
+            "Use only the matching typed reference_catalog column: evidence_id for supporting_evidence_item_ids "
+            "and artifact_ref_id for supporting_artifact_ref_ids."
         )
         prompt = self._render_prompt(
             role_label="summarizer",
@@ -2976,21 +3005,21 @@ class RolePathRunner:
         expected_ids = {claim.claim_id for claim in claim_set.claims}
         if set(repairs_by_id) != expected_ids:
             raise ValueError("adaptive_claim_repair_claim_ids_mismatch")
-        allowed_evidence_ids = {item.get("id", "") for item in evidence_items}
-        allowed_locators = {item.get("locator", "") for item in evidence_items}
+        allowed_evidence_ids = set(locator_by_evidence_id)
         allowed_artifact_ids = set(verified_artifact_refs)
         repaired_claims: list[Claim] = []
         for claim in claim_set.claims:
             repair = repairs_by_id[claim.claim_id]
             evidence_ids = _coerce_string_tuple(repair.get("supporting_evidence_item_ids", []))
             artifact_ids = _coerce_string_tuple(repair.get("supporting_artifact_ref_ids", []))
-            locators = _coerce_string_tuple(repair.get("citation_locators", []))
             if (
                 not set(evidence_ids) <= allowed_evidence_ids
                 or not set(artifact_ids) <= allowed_artifact_ids
-                or not set(locators) <= allowed_locators
             ):
                 raise ValueError("adaptive_claim_repair_reference_outside_authority")
+            locators = tuple(dict.fromkeys(
+                locator_by_evidence_id[evidence_id] for evidence_id in evidence_ids
+            ))
             repaired_claims.append(
                 replace(
                     claim,

@@ -46,6 +46,7 @@ def _single_call(client: RecordingLLMClient) -> tuple[str, dict[str, object]]:
     prompt = messages[0].content
     schema = call["response_schema"]
     assert isinstance(prompt, str)
+    assert "Serialize compact JSON without indentation or optional whitespace" in prompt
     assert isinstance(schema, dict)
     return prompt, schema
 
@@ -370,7 +371,6 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
             "claim_type": "fact",
             "supporting_evidence_item_ids": ["evidence-1"],
             "supporting_artifact_ref_ids": ["artifact-1"],
-            "citation_locators": ["section-1:0-77"],
             "numeric_fields": {"revenue_musd": 120.0},
                 "uncertainty_note": "",
                 "status": "ready",
@@ -380,7 +380,6 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
                 "claim_type": "fact",
                 "supporting_evidence_item_ids": ["evidence-1"],
                 "supporting_artifact_ref_ids": ["artifact-1"],
-                "citation_locators": ["section-1:0-77"],
                 "numeric_fields": {"revenue_musd": 100.0},
                 "uncertainty_note": "",
                 "status": "ready",
@@ -409,6 +408,7 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
     )
 
     assert claim_set.claims[0].numeric_fields["revenue_musd"] == 120.0
+    assert claim_set.claims[0].citation_locators == ("section-1:0-77",)
     prompt, schema = _single_call(client)
     assert "report the verified revenue change" in prompt
     assert "ACME revenue was 100 in 2025Q4 and 120 in 2026Q1." in prompt
@@ -423,12 +423,14 @@ def test_adaptive_summarizer_receives_evidence_text_and_verified_artifact_rows()
     assert "Do not encode or convert period/date/string labels as numbers" in prompt
     assert "Create one compact claim per verified output row" in prompt
     assert payload["reference_catalog"]["evidence"][0]["evidence_id"] == "evidence-1"
+    assert "citation_locator" not in payload["reference_catalog"]["evidence"][0]
     claim_properties = schema["properties"]["claims"]["items"]["properties"]
     assert schema["properties"]["claims"]["minItems"] == 2
     assert schema["properties"]["claims"]["maxItems"] == 2
     assert claim_properties["supporting_evidence_item_ids"]["items"] == {"type": "string"}
+    assert claim_properties["supporting_evidence_item_ids"]["minItems"] == 1
     assert claim_properties["supporting_artifact_ref_ids"]["items"] == {"type": "string"}
-    assert claim_properties["citation_locators"]["items"] == {"type": "string"}
+    assert "citation_locators" not in claim_properties
     assert claim_properties["numeric_fields"] == {
         "type": "object",
         "additionalProperties": False,
@@ -471,7 +473,6 @@ def test_adaptive_summarizer_rejects_numeric_encoding_of_string_fields() -> None
             "claim_type": "fact",
             "supporting_evidence_item_ids": ["evidence-1"],
             "supporting_artifact_ref_ids": ["artifact-1"],
-            "citation_locators": ["section-1"],
             "numeric_fields": {"revenue_musd": 120.0, "quarter": 2026},
             "uncertainty_note": "",
             "status": "ready",
@@ -500,7 +501,6 @@ def test_adaptive_summarizer_citation_repair_can_only_change_typed_references() 
             "claim_id": "revenue-series",
             "supporting_evidence_item_ids": ["evidence-1"],
             "supporting_artifact_ref_ids": ["artifact-1"],
-            "citation_locators": ["section-1:0-77"],
         }],
     })
     original = ClaimSet(
@@ -542,9 +542,9 @@ def test_adaptive_summarizer_citation_repair_can_only_change_typed_references() 
         "claim_id",
         "supporting_evidence_item_ids",
         "supporting_artifact_ref_ids",
-        "citation_locators",
     }
-    _assert_vllm_073_xgrammar_compatible(schema)
+    assert repair_properties["supporting_evidence_item_ids"]["minItems"] == 1
+    _assert_vllm_073_xgrammar_compatible(schema, allow_item_bounds=True)
 
 
 def test_adaptive_retriever_rejects_values_outside_prompt_authority() -> None:
@@ -618,7 +618,6 @@ def test_adaptive_summarizer_rejects_unknown_claim_type() -> None:
             "claim_type": "opinion",
             "supporting_evidence_item_ids": [],
             "supporting_artifact_ref_ids": [],
-            "citation_locators": [],
             "numeric_fields": {},
             "uncertainty_note": "",
             "status": "ready",

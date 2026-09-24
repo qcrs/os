@@ -278,7 +278,7 @@ def _filter_selected_samples(
 
 
 def _filter_selected_lanes(lane_ids: tuple[str, ...] = ()) -> tuple[str, ...]:
-    """Validate an optional lane selection while preserving canonical order."""
+    """Validate an optional lane selection, preserving explicit run order."""
 
     if len(set(lane_ids)) != len(lane_ids):
         raise ValueError("duplicate_lane_selection")
@@ -287,8 +287,7 @@ def _filter_selected_lanes(lane_ids: tuple[str, ...] = ()) -> tuple[str, ...]:
         raise ValueError(f"stage2_lane_not_registered:{','.join(unknown)}")
     if not lane_ids:
         return LANES
-    requested = set(lane_ids)
-    return tuple(lane for lane in LANES if lane in requested)
+    return lane_ids
 
 
 def _load_slot_manifest(
@@ -1230,10 +1229,12 @@ def _adaptive_provider_request_events(summary: Mapping[str, object]) -> list[dic
                             if attempt_index > 1
                             else "none"
                         ),
-                        "status": "response_received",
-                        "start_ns": None,
-                        "end_ns": None,
-                        "latency_ms": None,
+                        "status": attempt.get("status", "response_received"),
+                        "start_ns": attempt.get("start_ns"),
+                        "end_ns": attempt.get("end_ns"),
+                        "latency_ms": attempt.get("latency_ms"),
+                        "finish_reason": attempt.get("finish_reason"),
+                        "provider_request_id": attempt.get("request_id"),
                         "requested_seed": summary.get("requested_seed"),
                         "effective_seed": summary.get("effective_seed"),
                         "source": "adaptive_role_attempt",
@@ -1258,9 +1259,11 @@ def _adaptive_provider_request_events(summary: Mapping[str, object]) -> list[dic
                     "attempt": generation_index,
                     "retry_kind": "model_repair" if kind != "initial" else "none",
                     "status": "response_received",
-                    "start_ns": None,
-                    "end_ns": None,
-                    "latency_ms": None,
+                    "start_ns": generation.get("start_ns"),
+                    "end_ns": generation.get("end_ns"),
+                    "latency_ms": generation.get("latency_ms"),
+                    "finish_reason": generation.get("finish_reason"),
+                    "provider_request_id": generation.get("request_id"),
                     "requested_seed": summary.get("requested_seed"),
                     "effective_seed": summary.get("effective_seed"),
                     "source": "adaptive_generation_attempt",
@@ -1398,7 +1401,14 @@ def _write_fixed_failure_evidence(
     return tuple(str(path) for path in paths)
 
 
-def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[str, Any] | None = None) -> dict[str, object]:
+def _fixed_case(
+    sample: Any,
+    root: Path,
+    *,
+    seed: int = 0,
+    public_case: Mapping[str, Any] | None = None,
+    capture_provider_content: bool = False,
+) -> dict[str, object]:
     case = dict(public_case or public_case_projection(sample))
     source_ids = tuple(str(item) for item in case.get("public_sources", ()) if str(item).strip())
     if not source_ids:
@@ -1413,6 +1423,7 @@ def _fixed_case(sample: Any, root: Path, *, seed: int = 0, public_case: Mapping[
             provider_mode="live",
             llm_config=config,
             provider_observation_sink=observation,
+            capture_provider_content=capture_provider_content,
         )
     except Exception as exc:
         failure_stage = str(getattr(exc, "failure_stage", "runtime") or "runtime")
@@ -2325,15 +2336,52 @@ def _live_preflight(
     return preflight
 
 
-def _invoke_lane(runners: Mapping[str, Callable[..., dict[str, object]]], *, lane: str, sample: Any, root: Path, seed: int, public_case: Mapping[str, Any], embedding_device: str, dry_run: bool) -> dict[str, object]:
+def _invoke_lane(
+    runners: Mapping[str, Callable[..., dict[str, object]]],
+    *,
+    lane: str,
+    sample: Any,
+    root: Path,
+    seed: int,
+    public_case: Mapping[str, Any],
+    embedding_device: str,
+    dry_run: bool,
+    capture_provider_content: bool = False,
+) -> dict[str, object]:
     if dry_run:
         return _dry_run_case(sample, root, seed=seed, lane=lane, public_case=public_case)
     if lane == "adaptive_routed":
         return runners[lane](sample, root, seed=seed, public_case=public_case, embedding_device=embedding_device)
+    if lane == "fixed_structured":
+        fixed_kwargs: dict[str, object] = {
+            "seed": seed,
+            "public_case": public_case,
+        }
+        if capture_provider_content:
+            fixed_kwargs["capture_provider_content"] = True
+        return runners[lane](sample, root, **fixed_kwargs)
     return runners[lane](sample, root, seed=seed, public_case=public_case)
 
 
-def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", timeout_s: float = DEFAULT_TIMEOUT_S, run_id: str | None = None, dry_run: bool = False, repeats: int = len(SEEDS), case_ids: tuple[str, ...] = (), family_ids: tuple[str, ...] = (), max_cases_per_family: int = 0, lane_ids: tuple[str, ...] = (), slot_manifest: Path | None = None, lane_runners: Mapping[str, Callable[..., dict[str, object]]] | None = None, strict_gates: bool | None = None, preflight: bool | None = None, process_deadline: bool | None = None) -> dict[str, object]:
+def run_stage2_pilot(
+    *,
+    output_root: Path,
+    embedding_device: str = "cuda:0",
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    run_id: str | None = None,
+    dry_run: bool = False,
+    repeats: int = len(SEEDS),
+    case_ids: tuple[str, ...] = (),
+    family_ids: tuple[str, ...] = (),
+    max_cases_per_family: int = 0,
+    lane_ids: tuple[str, ...] = (),
+    slot_manifest: Path | None = None,
+    lane_runners: Mapping[str, Callable[..., dict[str, object]]] | None = None,
+    strict_gates: bool | None = None,
+    preflight: bool | None = None,
+    process_deadline: bool | None = None,
+    capture_provider_content: bool = False,
+) -> dict[str, object]:
     if timeout_s <= 0:
         raise ValueError("timeout_s_must_be_positive")
     if repeats < 1:
@@ -2486,6 +2534,11 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
             "deadline": "late_result_is_diagnostic_only",
         },
         "run_mode": "offline_validation" if dry_run else "live_measurement",
+        "provider_content_capture": {
+            "enabled": bool(capture_provider_content),
+            "scope": "fixed_structured" if capture_provider_content else "none",
+            "purpose": "bounded_diagnostic_only" if capture_provider_content else "disabled",
+        },
     }
     if manifest_slots is not None:
         manifest["slot_manifest"] = {
@@ -2533,6 +2586,7 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
                 public_case=public_cases[family_id],
                 embedding_device=embedding_device,
                 dry_run=dry_run,
+                capture_provider_content=capture_provider_content,
             )
             warm_result, error, _worker_started = _invoke_with_deadline(fn, timeout_s, process=use_process)
             if lane == "adaptive_routed" and error:
@@ -2588,6 +2642,7 @@ def run_stage2_pilot(*, output_root: Path, embedding_device: str = "cuda:0", tim
                     public_case=public_cases[family_id],
                     embedding_device=embedding_device,
                     dry_run=dry_run,
+                    capture_provider_content=capture_provider_content,
                 )
                 result, error, _worker_started = _invoke_with_deadline(fn, timeout_s, process=use_process)
                 if lane == "adaptive_routed" and error:
@@ -2816,6 +2871,11 @@ def main() -> None:
     parser.add_argument("--max-cases-per-family", type=int, default=0, help="Bound selected independent cases per family; 0 keeps all selected cases.")
     parser.add_argument("--run-id")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--capture-provider-content",
+        action="store_true",
+        help="Persist bounded fixed-lane provider request/response content for a diagnostic pilot; disabled by default.",
+    )
     parser.add_argument("--lock-file", type=Path, default=Path(os.getenv("STATEBUS_STAGE2_LOCK_FILE", "/tmp/statebus-stage2-pilot.lock")))
     args = parser.parse_args()
     lock_handle = None
@@ -2843,6 +2903,7 @@ def main() -> None:
             strict_gates=True,
             preflight=not args.dry_run,
             process_deadline=not args.dry_run,
+            capture_provider_content=args.capture_provider_content,
         )
         raise SystemExit(int(acceptance["exit_code"]))
     except KeyboardInterrupt:

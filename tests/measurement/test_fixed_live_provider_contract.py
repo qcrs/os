@@ -198,7 +198,6 @@ class _FourRoleFakeClient:
                         "claim_type": "fact",
                         "supporting_evidence_item_ids": [evidence["evidence_id"]],
                         "supporting_artifact_ref_ids": [artifact["artifact_ref_id"]],
-                        "citation_locators": [evidence["citation_locator"]],
                         "numeric_fields": {"metric_value": 120.0},
                         "uncertainty_note": "",
                         "status": "ready",
@@ -253,6 +252,82 @@ def test_live_summarizer_evidence_projection_is_bounded_and_locatable() -> None:
     assert projected[0]["id"] == "row-0"
     assert all(item["locator"] for item in projected)
     assert all(len(item["text"]) <= 1_000 for item in projected)
+
+
+def test_live_summarizer_evidence_projection_prioritizes_runtime_provenance() -> None:
+    payload = {
+        "structured_evidence": [
+            {
+                "item_id": f"row-{index}",
+                "locator": {"row": index},
+                "rendered_text": f"value-{index}",
+            }
+            for index in range(12)
+        ]
+    }
+
+    projected = _compact_live_summarizer_evidence(
+        payload,
+        provenance_item_ids=("row-10", "row-11"),
+    )
+
+    ids = [item["id"] for item in projected]
+    assert len(ids) == 8
+    assert ids[:2] == ["row-10", "row-11"]
+    assert {"row-0", "row-2", "row-4", "row-9"}.issubset(ids)
+
+
+def test_live_summarizer_evidence_projection_renders_structured_row_without_text() -> None:
+    projected = _compact_live_summarizer_evidence(
+        {
+            "structured_evidence": [
+                {
+                    "item_id": "row-1",
+                    "locator": {"row": 1},
+                    "rendered_text": "",
+                    "metadata": {"structured_row": {"z": 2, "a": "source"}},
+                }
+            ]
+        }
+    )
+
+    assert len(projected) == 1
+    assert json.loads(projected[0]["text"]) == {"a": "source", "z": 2}
+
+
+def test_live_provider_content_capture_is_opt_in() -> None:
+    def run_once(*, capture_content: bool) -> dict[str, object]:
+        client = _FourRoleFakeClient()
+        runner = RolePathRunner(llm_client=client, json_response_max_attempts=1)
+        sink: dict[str, object] = {}
+        _live_call(
+            runner,
+            sink,
+            "retriever",
+            lambda: runner.build_evidence_request(
+                task_id="task-1",
+                step_id="retrieve",
+                step_goal="find evidence",
+                corpus_scope_ids=("formal-local",),
+                evidence_types=("table",),
+            ),
+            capture_content=capture_content,
+        )
+        return sink
+
+    compact = run_once(capture_content=False)
+    compact_invocation = compact["role_invocations"][0]
+    compact_audit = compact["rendered_request_audit"]["retriever"]
+    assert "raw_response_text" not in compact_invocation
+    assert compact_audit["content_persisted"] is False
+    assert "messages" not in compact_audit["requests"][0]
+
+    captured = run_once(capture_content=True)
+    captured_invocation = captured["role_invocations"][0]
+    captured_audit = captured["rendered_request_audit"]["retriever"]
+    assert captured_invocation["raw_response_text"]
+    assert captured_audit["content_persisted"] is True
+    assert captured_audit["requests"][0]["messages"]
 
 
 def test_live_claim_set_budget_and_finish_reason_remain_fail_closed(tmp_path: Path) -> None:
@@ -406,6 +481,11 @@ def test_fixed_live_provider_records_all_role_telemetry_and_runtime_evidence(
     assert len(trace["attempts"]) == 4
     assert len(trace["receipts"]) == 4
     assert {grant["max_runtime_ms"] for grant in trace["grants"]} == {17_500}
+    executor_audit = sink["rendered_request_audit"]["executor"]
+    assert executor_audit["request_count"] == 1
+    assert executor_audit["content_persisted"] is False
+    assert executor_audit["requests"][0]["prompt_bytes"] > 0
+    assert "messages" not in executor_audit["requests"][0]
     assert any(
         item.get("produced_by") == "executor"
         and item.get("verification_state") == "verified"

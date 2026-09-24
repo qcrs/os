@@ -89,6 +89,8 @@ class _RecordingLlmClient:
         temperature: float | None = None,
         response_schema: dict[str, object] | None = None,
     ):
+        started_ns = time.monotonic_ns()
+        event_start = len(getattr(self.delegate, "request_events", ()))
         try:
             result = await self.delegate.complete(
                 messages,
@@ -97,12 +99,30 @@ class _RecordingLlmClient:
                 response_schema=response_schema,
             )
         except Exception as exc:
+            ended_ns = time.monotonic_ns()
+            request_events = list(getattr(self.delegate, "request_events", ()))
+            provider_event = request_events[event_start] if len(request_events) > event_start else {}
             self.attempts.append({
                 "attempt_index": len(self.attempts) + 1,
                 "purpose": purpose,
                 "error": f"{type(exc).__name__}:{exc}",
+                "request_id": provider_event.get("request_id"),
+                "retry_kind": provider_event.get("retry_kind", "none"),
+                "status": provider_event.get("status", "error"),
+                "start_ns": provider_event.get("start_ns", started_ns),
+                "end_ns": provider_event.get("end_ns", ended_ns),
+                "latency_ms": (
+                    (int(provider_event.get("end_ns", ended_ns)) - int(provider_event.get("start_ns", started_ns)))
+                    / 1_000_000.0
+                ),
+                "finish_reason": provider_event.get("finish_reason"),
             })
             raise
+        ended_ns = time.monotonic_ns()
+        request_events = list(getattr(self.delegate, "request_events", ()))
+        provider_event = request_events[event_start] if len(request_events) > event_start else {}
+        event_start_ns = int(provider_event.get("start_ns", started_ns))
+        event_end_ns = int(provider_event.get("end_ns", ended_ns))
         self.attempts.append({
             "attempt_index": len(self.attempts) + 1,
             "purpose": purpose,
@@ -112,6 +132,13 @@ class _RecordingLlmClient:
             "total_tokens": result.usage.total_tokens,
             "raw_response": result.text,
             "raw_response_hash": sha256_digest(result.text.encode("utf-8")),
+            "request_id": provider_event.get("request_id"),
+            "retry_kind": provider_event.get("retry_kind", "none"),
+            "status": provider_event.get("status", "response_received"),
+            "start_ns": event_start_ns,
+            "end_ns": event_end_ns,
+            "latency_ms": (event_end_ns - event_start_ns) / 1_000_000.0,
+            "finish_reason": result.finish_reason or provider_event.get("finish_reason"),
         })
         return result
 

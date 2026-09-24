@@ -608,7 +608,12 @@ class AdaptiveCapabilityDispatcher:
                 verified_input_payloads.append({
                     "ref_id": ref_id,
                     "kind": "execution_artifact",
-                    "payload": {"rows": [dict(row) for row in self._read_verified_artifact_rows(stored)]},
+                    "payload": {
+                        "rows": [dict(row) for row in self._read_verified_artifact_rows(stored)],
+                        # Provenance is a Runtime-owned projection of the
+                        # verified artifact, not provider-authored metadata.
+                        "provenance_item_ids": list(stored.provenance_item_ids),
+                    },
                 })
         role_context = RoleProviderContext(
             role=role,

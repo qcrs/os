@@ -29,6 +29,42 @@ def test_claim_set_rejects_fabricated_locator() -> None:
     assert not ClaimSetValidator().validate(claims, evidence_pack=evidence, verified_artifacts={}).ok
 
 
+def test_claim_set_rejects_artifact_only_factual_claim() -> None:
+    evidence = CanonicalEvidencePack(
+        pack_id="pack", task_id="task", source_doc_hashes=("doc",),
+        hard_facts=(EvidenceItem(item_id="e1", bucket="fact", locator=FragmentLocator(fragment_id="e1")),),
+    )
+    claims = ClaimSet(
+        claim_set_id="claims", task_id="task",
+        claims=(Claim("c1", "Revenue was 12.", "fact", supporting_artifact_ref_ids=("artifact",), numeric_fields={"revenue": 12.0}),),
+    )
+
+    report = ClaimSetValidator().validate(
+        claims, evidence_pack=evidence, verified_artifacts={"artifact": {"revenue": 12}},
+    )
+    assert not report.ok
+    assert "missing_source_evidence:c1" in report.errors
+
+
+def test_claim_set_locator_must_belong_to_its_supporting_evidence() -> None:
+    evidence = CanonicalEvidencePack(
+        pack_id="pack", task_id="task", source_doc_hashes=("doc",),
+        hard_facts=(
+            EvidenceItem(item_id="e1", bucket="fact", locator=FragmentLocator(fragment_id="e1")),
+            EvidenceItem(item_id="e2", bucket="fact", locator=FragmentLocator(fragment_id="e2")),
+        ),
+    )
+    claims = ClaimSet(
+        claim_set_id="claims", task_id="task",
+        claims=(Claim("c1", "Revenue was 12.", "fact", ("e1",), citation_locators=("e2",)),),
+    )
+
+    report = ClaimSetValidator().validate(claims, evidence_pack=evidence, verified_artifacts={})
+    assert not report.ok
+    assert "missing_source_locator:c1:e1" in report.errors
+    assert "locator_evidence_mapping_mismatch:c1:e2" in report.errors
+
+
 def test_claims_bind_numeric_values_and_artifacts_to_current_task_and_session() -> None:
     evidence = CanonicalEvidencePack(
         pack_id="pack", task_id="task", source_doc_hashes=("doc",),

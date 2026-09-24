@@ -139,6 +139,7 @@ def _live_observation(
     error: BaseException | None = None,
     role_observation: Mapping[str, object] | None = None,
     elapsed_ms: float | None = None,
+    capture_content: bool = False,
 ) -> None:
     """Persist provider observations without changing Runtime authority."""
 
@@ -185,20 +186,26 @@ def _live_observation(
         "provider_request_event_count": len(request_events),
     }
     if isinstance(raw_text, str) and raw_text and (
-        error is not None or _value("finish_reason") == "length"
+        capture_content or error is not None or _value("finish_reason") == "length"
     ):
-        # Keep the exact failed provider payload available beside its digest;
-        # successful calls remain compact telemetry-only observations.
+        # Successful calls remain compact telemetry-only observations unless a
+        # bounded diagnostic pilot explicitly opts into content capture.
         invocation["raw_response_text"] = raw_text
     if error is not None:
         invocation.update({"error_type": type(error).__name__, "error": str(error)})
     sink.setdefault("role_invocations", []).append(invocation)
     sink["rendered_request_audit"] = {
-        role_name: runner.rendered_request_audit_payload(role_name, include_content=False)
+        role_name: runner.rendered_request_audit_payload(
+            role_name,
+            include_content=capture_content,
+        )
         for role_name in ("planner", "retriever", "executor", "summarizer")
     }
     sink["provider_request_events"] = request_events
     sink["provider_started"] = bool(request_events) or bool(sink.get("provider_started", False))
+    sink["provider_content_capture"] = bool(
+        capture_content or sink.get("provider_content_capture", False)
+    )
 
 
 def _live_call(
@@ -206,6 +213,8 @@ def _live_call(
     sink: dict[str, object] | None,
     role: str,
     fn: Callable[[], Any],
+    *,
+    capture_content: bool = False,
 ) -> Any:
     started_ns = time.perf_counter_ns()
     take_role_observation = getattr(runner, "take_role_observation", None)
@@ -228,6 +237,7 @@ def _live_call(
             error=exc,
             role_observation=observation,
             elapsed_ms=(time.perf_counter_ns() - started_ns) / 1_000_000.0,
+            capture_content=capture_content,
         )
         request_events = tuple(
             dict(event) for event in getattr(runner.llm_client, "request_events", ())
@@ -261,6 +271,7 @@ def _live_call(
         result=result,
         role_observation=observation,
         elapsed_ms=(time.perf_counter_ns() - started_ns) / 1_000_000.0,
+        capture_content=capture_content,
     )
     return result
 
@@ -276,8 +287,47 @@ _LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS = 8
 _LIVE_SUMMARIZER_MAX_EVIDENCE_TEXT_CHARS = 1_000
 
 
+def _compact_source_evidence_text(item: Mapping[str, object]) -> str:
+    """Return a bounded, source-owned rendering for a provider-visible item."""
+
+    rendered_value = item.get("rendered_text", "")
+    rendered = rendered_value.strip() if isinstance(rendered_value, str) else ""
+    if rendered:
+        return rendered[:_LIVE_SUMMARIZER_MAX_EVIDENCE_TEXT_CHARS]
+    metadata = item.get("metadata", {})
+    row = metadata.get("structured_row") if isinstance(metadata, Mapping) else None
+    if isinstance(row, Mapping):
+        try:
+            rendered = stable_json_dumps(
+                {str(key): row[key] for key in sorted(row, key=str)}
+            )
+        except (TypeError, ValueError):
+            rendered = repr(dict(row))
+        return rendered[:_LIVE_SUMMARIZER_MAX_EVIDENCE_TEXT_CHARS]
+    return ""
+
+
+def _coverage_indexes(count: int, limit: int) -> tuple[int, ...]:
+    """Pick deterministic spread-out indexes without materializing a large prompt."""
+
+    if count <= 0 or limit <= 0:
+        return ()
+    if count <= limit:
+        return tuple(range(count))
+    if limit == 1:
+        return (0,)
+    indexes: list[int] = []
+    for ordinal in range(limit):
+        index = round(ordinal * (count - 1) / (limit - 1))
+        if not indexes or index != indexes[-1]:
+            indexes.append(index)
+    return tuple(indexes)
+
+
 def _compact_live_summarizer_evidence(
     evidence_items_payload: Mapping[str, object],
+    *,
+    provenance_item_ids: tuple[str, ...] = (),
 ) -> tuple[dict[str, str], ...]:
     """Bound the summarizer prompt without changing evidence authority.
 
@@ -288,8 +338,8 @@ def _compact_live_summarizer_evidence(
     evidence pack remains the validator's authority.
     """
 
-    selected: list[dict[str, str]] = []
-    seen_ids: set[str] = set()
+    candidates: list[dict[str, object]] = []
+    by_id: dict[str, dict[str, object]] = {}
     # Keep compact, higher-signal narrative facts first, then table evidence.
     # The order is deterministic so the same verified input has the same prompt
     # surface across runs.
@@ -308,20 +358,61 @@ def _compact_live_summarizer_evidence(
                 continue
             item_id = str(item.get("item_id", "")).strip()
             locator = item.get("locator")
-            if not item_id or locator is None or item_id in seen_ids:
+            if not item_id or locator is None or item_id in by_id:
                 continue
-            selected.append(
-                {
-                    "id": item_id,
-                    "locator": repr(locator),
-                    "text": str(item.get("rendered_text", ""))[
-                        :_LIVE_SUMMARIZER_MAX_EVIDENCE_TEXT_CHARS
-                    ],
-                }
+            candidate = {
+                "id": item_id,
+                "locator": repr(locator),
+                "text": _compact_source_evidence_text(item),
+            }
+            candidates.append(candidate)
+            by_id[item_id] = candidate
+
+    if not candidates:
+        return ()
+
+    # Artifact provenance is Runtime-owned and contains the actual source IDs
+    # consumed by projection/CodeAct.  Prefer that lineage, then fill from the
+    # complete evidence pack if an adapter did not emit provenance.
+    provenance: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for item_id in provenance_item_ids:
+        item = by_id.get(str(item_id))
+        if item is None or str(item["id"]) in seen_ids:
+            continue
+        provenance.append(item)
+        seen_ids.add(str(item["id"]))
+
+    remainder = [item for item in candidates if str(item["id"]) not in seen_ids]
+    if len(provenance) > _LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS:
+        selected_items = [
+            provenance[index]
+            for index in _coverage_indexes(
+                len(provenance), _LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS
             )
-            seen_ids.add(item_id)
-            if len(selected) >= _LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS:
-                return tuple(selected)
+        ]
+    else:
+        remaining_slots = _LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS - len(provenance)
+        selected_items = list(provenance)
+        selected_items.extend(
+            remainder[index]
+            for index in _coverage_indexes(len(remainder), remaining_slots)
+        )
+
+    total = len(provenance) + len(remainder)
+    selected: list[dict[str, str]] = []
+    for item in selected_items:
+        text = str(item.get("text", ""))
+        if total > _LIVE_SUMMARIZER_MAX_EVIDENCE_ITEMS:
+            coverage_note = "Verified source item from the Runtime-owned evidence pack."
+            text = f"{coverage_note} {text}".strip()
+        selected.append(
+            {
+                "id": str(item["id"]),
+                "locator": str(item["locator"]),
+                "text": text[:_LIVE_SUMMARIZER_MAX_EVIDENCE_TEXT_CHARS],
+            }
+        )
     return tuple(selected)
 
 _COMPLETION_CRITERIA_BY_ROLE = {
@@ -543,6 +634,16 @@ def _live_provider_handlers(
         json_response_max_attempts=1,
     )
     sink = request.provider_observation_sink
+    capture_provider_content = bool(request.capture_provider_content)
+
+    def live_call(role: str, fn: Callable[[], Any]) -> Any:
+        return _live_call(
+            runner,
+            sink,
+            role,
+            fn,
+            capture_content=capture_provider_content,
+        )
     spec = request.canonical_task_spec
     task_goal = request.task_goal.strip() or request.task_request.strip() or recipe.steps[0].goal
     task_theme = request.task_theme.strip() or spec.task_family
@@ -556,9 +657,7 @@ def _live_provider_handlers(
 
     def planner(request_: ProviderRequest) -> PlannerHandoff:
         query_text = request.task_request.strip() or task_goal
-        result = _live_call(
-            runner,
-            sink,
+        result = live_call(
             "planner",
             lambda: runner.plan_workflow(
                 task_id=request_.envelope.task_id,
@@ -622,9 +721,7 @@ def _live_provider_handlers(
         return handoff
 
     def retriever(request_: ProviderRequest) -> EvidenceRequest:
-        result = _live_call(
-            runner,
-            sink,
+        result = live_call(
             "retriever",
             lambda: runner.build_evidence_request(
                 task_id=request_.envelope.task_id,
@@ -663,9 +760,7 @@ def _live_provider_handlers(
                     "by an earlier operation, and preserve the same task goal and output contract."
                 ),
             }
-        return _live_call(
-            runner,
-            sink,
+        return live_call(
             "executor",
             lambda: runner.build_transform_program(
                 program_id=(
@@ -742,18 +837,28 @@ def _live_provider_handlers(
             raise FixedMainlineError("fixed_live_summarizer_inputs_missing")
         final_artifact = artifact_items[-1]
         artifact_ref = str(final_artifact.get("ref_id", ""))
-        rows = final_artifact.get("payload", {}).get("rows", ())
-        if not artifact_ref or not isinstance(rows, (tuple, list)):
+        artifact_payload = final_artifact.get("payload", {})
+        if not artifact_ref or not isinstance(artifact_payload, Mapping):
+            raise FixedMainlineError("fixed_live_summarizer_artifact_payload_missing")
+        rows = artifact_payload.get("rows", ())
+        if not isinstance(rows, (tuple, list)):
             raise FixedMainlineError("fixed_live_summarizer_artifact_rows_missing")
-        evidence_items = list(_compact_live_summarizer_evidence(evidence_items_payload))
+        raw_provenance_item_ids = artifact_payload.get("provenance_item_ids", ())
+        if not isinstance(raw_provenance_item_ids, (tuple, list)):
+            raw_provenance_item_ids = ()
+        provenance_item_ids = tuple(str(item_id) for item_id in raw_provenance_item_ids)
+        evidence_items = list(
+            _compact_live_summarizer_evidence(
+                evidence_items_payload,
+                provenance_item_ids=provenance_item_ids,
+            )
+        )
         artifact_summaries = ({
             "artifact_ref_id": artifact_ref,
             "status": "verified",
             "rows": [dict(row) for row in rows if isinstance(row, Mapping)],
         },)
-        result = _live_call(
-            runner,
-            sink,
+        result = live_call(
             "summarizer",
             lambda: runner.build_claim_set(
                 task_id=request_.envelope.task_id,
@@ -807,6 +912,7 @@ class FixedMainlineRequest:
     llm_config: LLMConfig | None = None
     role_path_runner: RolePathRunner | None = None
     provider_observation_sink: dict[str, object] | None = None
+    capture_provider_content: bool = False
     task_request: str = ""
     task_goal: str = ""
     task_theme: str = ""

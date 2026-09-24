@@ -781,6 +781,7 @@ def _c2b_structured_runtime(
     llm_config: object | None = None,
     role_path_runner: object | None = None,
     provider_observation_sink: dict[str, object] | None = None,
+    capture_provider_content: bool = False,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Run one formal case through the existing four-role Runtime seam.
 
@@ -902,6 +903,19 @@ def _c2b_structured_runtime(
     def code_source_factory(request, prompt: str) -> str:
         if live_runner is None:
             raise RuntimeError("fixed_live_codeact_runner_missing")
+        response_schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"code": {"type": "string"}},
+            "required": ["code"],
+        }
+        record_rendered_request = getattr(live_runner, "_record_rendered_request", None)
+        if callable(record_rendered_request):
+            record_rendered_request(
+                role="executor",
+                prompt=prompt,
+                response_schema=response_schema,
+            )
         result = _live_call(
             live_runner,
             provider_observation_sink,
@@ -910,12 +924,7 @@ def _c2b_structured_runtime(
                 live_runner.llm_client.complete(
                     [ChatMessage(role="user", content=prompt)],
                     purpose="executor",
-                    response_schema={
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {"code": {"type": "string"}},
-                        "required": ["code"],
-                    },
+                    response_schema=response_schema,
                 )
             ),
         )
@@ -935,6 +944,19 @@ def _c2b_structured_runtime(
             f"{previous_source}\n"
             "</sb-current-python-source>\n"
         )
+        response_schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"code": {"type": "string"}},
+            "required": ["code"],
+        }
+        record_rendered_request = getattr(live_runner, "_record_rendered_request", None)
+        if callable(record_rendered_request):
+            record_rendered_request(
+                role="executor",
+                prompt=repair_prompt,
+                response_schema=response_schema,
+            )
         result = _live_call(
             live_runner,
             provider_observation_sink,
@@ -943,12 +965,7 @@ def _c2b_structured_runtime(
                 live_runner.llm_client.complete(
                     [ChatMessage(role="user", content=repair_prompt)],
                     purpose="executor",
-                    response_schema={
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {"code": {"type": "string"}},
-                        "required": ["code"],
-                    },
+                    response_schema=response_schema,
                 )
             ),
         )
@@ -1148,6 +1165,7 @@ def _c2b_structured_runtime(
         llm_config=effective_llm_config,
         role_path_runner=live_runner,
         provider_observation_sink=provider_observation_sink,
+        capture_provider_content=capture_provider_content,
         task_request=sample.request_text,
         task_goal=sample.request_text,
         task_theme=case.spec.task_family,

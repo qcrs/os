@@ -64,6 +64,8 @@ def test_generation_prompt_carries_controller_owned_analysis_semantics_without_i
     assert "store only a finite int/float or None" in prompt
     assert "Never preserve or reinsert the original string" in prompt
     assert "`metric_name` should use the task's canonical `metric` token" in prompt
+    assert "omit comments, docstrings, unused imports, main wrappers, and one-use helpers" in prompt
+    assert "Keep every required parsing, missing-value, calculation, and output-validation step" in prompt
     assert "120" not in prompt
 
 
@@ -81,6 +83,59 @@ def test_generation_prompt_requires_controller_owned_canonical_array_order() -> 
     prompt = build_code_generation_prompt(request)
 
     assert "sort every output object in ascending lexical order by `quarter`" in prompt
+
+
+def test_generation_prompt_omits_empty_locator_only_retrieval_context() -> None:
+    request = CodeGenerationRequest(
+        task_id="task", step_id="execute", attempt_id="attempt", approved_plan_hash="plan",
+        capability_grant_hash="grant-hash", capability_id="bounded_metric_python_v1",
+        input_ref_ids=("verified-input",), input_manifest_digest="input-hash",
+        output_schema={"value": "number"}, model_signature="model", prompt_signature="prompt",
+        runtime_signature="runtime", policy=CodeGenerationPolicy(capability_id="bounded_metric_python_v1"),
+        retrieval_context=(
+            {
+                "item_id": "locator-only",
+                "bucket": "structured_evidence",
+                "locator": "TableCellLocator(source_doc_hash='doc', row_idx=1, col_idx=2)",
+                "text": "",
+            },
+            {
+                "item_id": "semantic-text",
+                "bucket": "semantic_context",
+                "locator": "TableCellLocator(source_doc_hash='doc', row_idx=3, col_idx=4)",
+                "text": "WINDSPEED is the requested metric.",
+            },
+        ),
+    )
+
+    prompt = build_code_generation_prompt(request)
+
+    assert "locator-only" not in prompt
+    assert "semantic-text" in prompt
+    assert "WINDSPEED is the requested metric." in prompt
+    assert request.retrieval_context[0]["item_id"] == "locator-only"
+
+
+def test_generation_prompt_preserves_nonstandard_semantic_retrieval_fields() -> None:
+    request = CodeGenerationRequest(
+        task_id="task", step_id="execute", attempt_id="attempt", approved_plan_hash="plan",
+        capability_grant_hash="grant-hash", capability_id="bounded_metric_python_v1",
+        input_ref_ids=("verified-input",), input_manifest_digest="input-hash",
+        output_schema={"value": "number"}, model_signature="model", prompt_signature="prompt",
+        runtime_signature="runtime", policy=CodeGenerationPolicy(capability_id="bounded_metric_python_v1"),
+        retrieval_context=({
+            "item_id": "future-semantic-field",
+            "bucket": "semantic_context",
+            "locator": "",
+            "text": "",
+            "method_hint": "Use a monthly arithmetic mean.",
+        },),
+    )
+
+    prompt = build_code_generation_prompt(request)
+
+    assert "future-semantic-field" in prompt
+    assert "Use a monthly arithmetic mean." in prompt
 
 
 def test_formal_llm_codeact_fails_closed_when_bwrap_not_ready(tmp_path) -> None:

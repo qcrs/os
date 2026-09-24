@@ -593,6 +593,7 @@ def _planner_prompt(*, sample: FixedAnswerSample, context: ExternalExecutionCont
     candidate_notes = "; ".join(candidate.note_payload() for candidate in context.route_candidates)
     return (
         "You are an external pure-text planner.\n"
+        "Serialize compact JSON without indentation or optional whitespace; preserve every required field and value.\n"
         "Select the best route and tool from the visible candidates based on the task query.\n"
         "Also provide a retrieval_objective describing what evidence the retriever should find.\n"
         # NOTE: the exact phrase "Return JSON with route and tool_name" is kept so the
@@ -639,6 +640,7 @@ def _retriever_prompt(
         requested_metric_line = f"Requested metric: {context.metric_name}\n"
     return (
         "You are an external pure-text retriever.\n"
+        "Serialize compact JSON without indentation or optional whitespace; preserve every required field and value.\n"
         "Read the corpus evidence. Select the most relevant facts.\n"
         f"{output_contract}"
         "Keep evidence_summary to one short sentence.\n"
@@ -669,6 +671,7 @@ def _executor_prompt(
     candidate_notes = "; ".join(candidate.note_payload() for candidate in context.route_candidates)
     return (
         "You are an external pure-text executor.\n"
+        "Serialize compact JSON without indentation or optional whitespace; preserve every required field and value.\n"
         "Validate the chosen route/tool and return JSON with candidate_key, route, tool_name, action_result.\n\n"
         f"Task ID: {sample.task_id}\n"
         f"Task specification: {stable_json_dumps(context.request_payload)}\n"
@@ -698,6 +701,7 @@ def _summarizer_prompt(
     # Keeps labels required by DeterministicLLMClient parser.
     return (
         "You are an external pure-text summarizer.\n"
+        "Serialize compact JSON without indentation or optional whitespace; preserve every required field and value.\n"
         "Return JSON with summary only.\n\n"
         f"Task ID: {sample.task_id}\n"
         "Task theme: fixed_answer_route_tool\n"

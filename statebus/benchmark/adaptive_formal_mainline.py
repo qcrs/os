@@ -318,7 +318,7 @@ def _role_usage(role_invocations: list[dict[str, object]], generations: list[dic
     return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
 
 
-async def _complete_raw_code(prompt: str) -> tuple[str, str, dict[str, int]]:
+async def _complete_raw_code(prompt: str) -> tuple[str, str, dict[str, int], dict[str, object]]:
     config = (
         LLMConfig.from_runtime()
         .with_mode("local_vllm")
@@ -328,14 +328,29 @@ async def _complete_raw_code(prompt: str) -> tuple[str, str, dict[str, int]]:
             max_tokens=int(os.getenv("STATEBUS_ADAPTIVE_FORMAL_CODE_MAX_TOKENS", "1400")),
         )
     )
-    result = await build_llm_client(config).complete(
+    client = build_llm_client(config)
+    result = await client.complete(
         [ChatMessage(role="user", content=prompt)],
         purpose="executor",
     )
+    request_events = list(getattr(client, "request_events", ()))
+    provider_event = dict(request_events[-1]) if request_events else {}
     return result.text, result.model, {
         "prompt_tokens": result.usage.prompt_tokens,
         "completion_tokens": result.usage.completion_tokens,
         "total_tokens": result.usage.total_tokens,
+    }, {
+        "request_id": provider_event.get("request_id"),
+        "start_ns": provider_event.get("start_ns"),
+        "end_ns": provider_event.get("end_ns"),
+        "latency_ms": (
+            (int(provider_event["end_ns"]) - int(provider_event["start_ns"])) / 1_000_000.0
+            if provider_event.get("start_ns") is not None and provider_event.get("end_ns") is not None
+            else None
+        ),
+        "finish_reason": result.finish_reason or provider_event.get("finish_reason"),
+        "status": provider_event.get("status", "response_received"),
+        "retry_kind": provider_event.get("retry_kind", "none"),
     }
 
 
@@ -1265,11 +1280,12 @@ def _run_adaptive_case(
         return request_transform_program(step, grant, input_ref_id, rows, validation_errors)
 
     def code_source_factory(request, prompt: str) -> str:
-        raw, model_id, usage = asyncio.run(_complete_raw_code(prompt))
+        raw, model_id, usage, provider_event = asyncio.run(_complete_raw_code(prompt))
         generations.append({
             "kind": "initial",
             "model_id": model_id,
             "usage": usage,
+            **provider_event,
             "prompt_hash": sha256_digest(prompt),
             "raw_response_hash": sha256_digest(raw.encode("utf-8")),
         })
@@ -1369,11 +1385,12 @@ def _run_adaptive_case(
             "filter, grouping, sorting, rounding rule, and output meaning exactly; never replace a specified method with "
             "an approximation while fixing an unrelated Python defect.\n"
         )
-        raw, model_id, usage = asyncio.run(_complete_raw_code(repair_prompt))
+        raw, model_id, usage, provider_event = asyncio.run(_complete_raw_code(repair_prompt))
         generations.append({
             "kind": "repair",
             "model_id": model_id,
             "usage": usage,
+            **provider_event,
             "prompt_hash": sha256_digest(repair_prompt),
             "raw_response_hash": sha256_digest(raw.encode("utf-8")),
             "violations": list(violations),

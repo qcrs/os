@@ -48,10 +48,26 @@ _FORBIDDEN_AST_NODES = (
     ast.ClassDef, ast.AsyncFunctionDef, ast.AsyncFor, ast.AsyncWith,
     ast.Await, ast.Yield, ast.YieldFrom,
 )
+_RETRIEVAL_CONTEXT_METADATA_KEYS = frozenset({"item_id", "bucket", "locator", "text"})
 
 
 class CodePolicyError(ValueError):
     pass
+
+
+def _provider_visible_retrieval_context(
+    retrieval_context: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    """Omit locator-only entries that cannot ground an Executor decision."""
+    visible: list[dict[str, object]] = []
+    for item in retrieval_context:
+        text = item.get("text")
+        text_is_empty = text is None or (isinstance(text, str) and not text.strip())
+        metadata_only = set(item).issubset(_RETRIEVAL_CONTEXT_METADATA_KEYS)
+        if text_is_empty and metadata_only:
+            continue
+        visible.append(item)
+    return tuple(visible)
 
 
 def extract_python_source(raw_response: str) -> str:
@@ -81,6 +97,7 @@ def extract_python_source(raw_response: str) -> str:
 
 def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
     policy = request.policy
+    retrieval_context = _provider_visible_retrieval_context(request.retrieval_context)
     ordered_output_by = request.quality_constraints.get("ordered_output_by")
     output_order_requirement = ""
     if request.expected_output_shape == "array" and isinstance(ordered_output_by, str) and ordered_output_by:
@@ -106,6 +123,8 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
     return (
         "You generate one complete pure-Python data transformation file for a sandbox.\n"
         "Return only a Python file or a JSON object with exactly one `code` field.\n"
+        "Use minimal complete code: omit comments, docstrings, unused imports, main wrappers, and one-use helpers. "
+        "Keep every required parsing, missing-value, calculation, and output-validation step.\n"
         f"Allowed imports: {', '.join(policy.allowed_module_roots)}.\n"
         f"Allowed input paths: {', '.join(policy.allowed_input_relpaths)}.\n"
         f"Numeric text mode: {policy.numeric_text_mode}.\n"
@@ -120,7 +139,7 @@ def build_code_generation_prompt(request: CodeGenerationRequest) -> str:
         f"Validator ID: {request.validator_id}.\n"
         f"Quality constraints: {stable_json_dumps(request.quality_constraints)}.\n"
         f"Authorized input schema: {input_schema_text}.\n"
-        f"Retrieved semantic context: {stable_json_dumps(request.retrieval_context)}.\n"
+        f"Retrieved semantic context: {stable_json_dumps(retrieval_context)}.\n"
         f"Compatible memory inputs: {stable_json_dumps(request.memory_inputs)}.\n"
         "Follow the task goal and every operation-semantics requirement exactly, including exact source field names, "
         "the stated statistical method, rounding precision, row ordering, and output field meanings. Do not replace a "
