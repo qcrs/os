@@ -99,6 +99,8 @@ class _SamplingParamsFallback:
     max_tokens: int
     seed: int
     extra_args: dict[str, Any] | None = None
+    logprobs: int | None = None
+    guided_decoding: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,8 @@ class _GenerationReceipt:
     scheduler_output_count: int
     num_cached_tokens: int
     kv_transfer_params: Mapping[str, Any]
+    top_logprobs: list[Any] | None = None
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +123,7 @@ class _ConsumerContext:
     parent_token_ids: tuple[int, ...]
     parent_digest: str
     kv_transfer_params: dict[str, Any] | None
+    engine_generation: str
 
 
 class KVHandoffMiddleware:
@@ -305,6 +310,9 @@ class KVHandoffMiddleware:
                 sampling=request.sampling,
                 request_id=request.request_id,
                 kv_transfer_params=kv_transfer_params,
+                response_schema=request.response_schema,
+                logprobs=request.logprobs,
+                top_logprobs=request.top_logprobs,
             )
             handle: Mapping[str, Any] | None = None
             store_ms = 0.0
@@ -360,8 +368,11 @@ class KVHandoffMiddleware:
             "task_id": request.task_id,
             "output_text": receipt.text,
             "output_token_ids": list(receipt.token_ids),
+            "top_logprobs": receipt.top_logprobs,
+            "finish_reason": receipt.finish_reason,
             "handle": handle,
             "handle_id": handle_id,
+            "engine_generation": str(health.get("engine_generation", "")),
             "telemetry": telemetry.canonical_payload(),
             "telemetry_hash": telemetry.telemetry_hash,
         }
@@ -379,6 +390,9 @@ class KVHandoffMiddleware:
                 sampling=request.sampling,
                 request_id=request.request_id,
                 kv_transfer_params=context.kv_transfer_params,
+                response_schema=request.response_schema,
+                logprobs=request.logprobs,
+                top_logprobs=request.top_logprobs,
             )
             return await self._finish_consumer(engine, context, receipt)
         except Exception as exc:
@@ -410,6 +424,9 @@ class KVHandoffMiddleware:
                 request_id=request.request_id,
                 kv_transfer_params=context.kv_transfer_params,
                 on_delta=emit_delta,
+                response_schema=request.response_schema,
+                logprobs=request.logprobs,
+                top_logprobs=request.top_logprobs,
             )
             payload = await self._finish_consumer(engine, context, receipt)
             await _send_sse_event(send, "final", payload, more_body=True)
@@ -495,6 +512,7 @@ class KVHandoffMiddleware:
             parent_token_ids=parent_ids,
             parent_digest=parent_digest,
             kv_transfer_params=kv_transfer_params,
+            engine_generation=str(health.get("engine_generation", "")),
         )
 
     async def _finish_consumer(
@@ -603,9 +621,12 @@ class KVHandoffMiddleware:
             "task_id": request.task_id,
             "lane": request.lane,
             "handle_id": request.handle_id,
+            "engine_generation": context.engine_generation,
             "logical_token_digest": sha256_digest(list(context.prompt_token_ids)),
             "output_text": receipt.text,
             "output_token_ids": list(receipt.token_ids),
+            "top_logprobs": receipt.top_logprobs,
+            "finish_reason": receipt.finish_reason,
             "telemetry": telemetry.canonical_payload(),
             "telemetry_hash": telemetry.telemetry_hash,
             "forward_proof": proof_payload,
@@ -769,11 +790,20 @@ async def _run_generation(
     request_id: str,
     kv_transfer_params: Mapping[str, Any] | None,
     on_delta: Callable[[str, tuple[int, ...]], Awaitable[None]] | None = None,
+    response_schema: Mapping[str, Any] | None = None,
+    logprobs: bool = False,
+    top_logprobs: int = 0,
 ) -> _GenerationReceipt:
     generate = getattr(engine, "generate", None)
     if not callable(generate):
         raise KVApiError("kv_plugin_not_ready", "generate_unavailable")
-    sampling_params = _sampling_params(sampling, kv_transfer_params)
+    sampling_params = _sampling_params(
+        sampling,
+        kv_transfer_params,
+        response_schema=response_schema,
+        logprobs=logprobs,
+        top_logprobs=top_logprobs,
+    )
     started = time.perf_counter_ns()
     first_output_ns = 0
     scheduler_outputs = 0
@@ -781,6 +811,8 @@ async def _run_generation(
     final_tokens: tuple[int, ...] = ()
     num_cached_tokens = 0
     final_kv_params: Mapping[str, Any] = {}
+    final_top_logprobs: list[Any] | None = None
+    final_finish_reason: str | None = None
     try:
         stream = generate(
             {"prompt_token_ids": list(prompt_token_ids)},
@@ -792,9 +824,13 @@ async def _run_generation(
             raise KVApiError("kv_plugin_not_ready", "async_generation_required")
         async for chunk in stream:
             scheduler_outputs += 1
-            text_value, token_ids, cached_tokens, transfer_params = _generation_snapshot(
+            text_value, token_ids, cached_tokens, transfer_params, chunk_logprobs, chunk_finish_reason = _generation_snapshot(
                 chunk
             )
+            if chunk_logprobs is not None:
+                final_top_logprobs = chunk_logprobs
+            if chunk_finish_reason:
+                final_finish_reason = chunk_finish_reason
             text_delta = (
                 text_value[len(final_text) :]
                 if text_value.startswith(final_text)
@@ -827,12 +863,14 @@ async def _run_generation(
         scheduler_output_count=scheduler_outputs,
         num_cached_tokens=num_cached_tokens,
         kv_transfer_params=final_kv_params,
+        top_logprobs=final_top_logprobs,
+        finish_reason=final_finish_reason,
     )
 
 
 def _generation_snapshot(
     chunk: Any,
-) -> tuple[str, tuple[int, ...], int, Mapping[str, Any]]:
+) -> tuple[str, tuple[int, ...], int, Mapping[str, Any], list[Any] | None, str | None]:
     outputs = chunk.get("outputs", ()) if isinstance(chunk, Mapping) else getattr(
         chunk, "outputs", ()
     )
@@ -849,38 +887,119 @@ def _generation_snapshot(
     transfer = chunk.get("kv_transfer_params", {}) if isinstance(chunk, Mapping) else getattr(
         chunk, "kv_transfer_params", {}
     )
+    logprobs = candidate.get("logprobs") if isinstance(candidate, Mapping) else getattr(candidate, "logprobs", None)
+    finish_reason = candidate.get("finish_reason") if isinstance(candidate, Mapping) else getattr(candidate, "finish_reason", None)
+    if not finish_reason:
+        finish_reason = chunk.get("finish_reason") if isinstance(chunk, Mapping) else getattr(chunk, "finish_reason", None)
     return (
         str(text_value or ""),
         tuple(int(value) for value in (token_values or ())),
         int(cached_tokens or 0),
         dict(transfer) if isinstance(transfer, Mapping) else {},
+        _normalize_generation_logprobs(
+            logprobs,
+            tuple(int(value) for value in (token_values or ())),
+        ),
+        str(finish_reason or "") or None,
     )
+
+
+def _normalize_generation_logprobs(
+    value: Any,
+    token_ids: tuple[int, ...],
+) -> list[Any] | None:
+    """Normalize vLLM per-token maps to the OpenAI-compatible observation shape."""
+
+    if not isinstance(value, (list, tuple)):
+        return None
+    normalized: list[Any] = []
+    for index, position in enumerate(value):
+        if not isinstance(position, Mapping):
+            normalized.append(position)
+            continue
+        alternatives: list[dict[str, Any]] = []
+        chosen: dict[str, Any] | None = None
+        chosen_id = token_ids[index] if index < len(token_ids) else None
+        for raw_id, raw_entry in position.items():
+            entry = raw_entry if isinstance(raw_entry, Mapping) else raw_entry
+            logprob = entry.get("logprob") if isinstance(entry, Mapping) else getattr(entry, "logprob", None)
+            token = entry.get("decoded_token") if isinstance(entry, Mapping) else getattr(entry, "decoded_token", None)
+            if token is None:
+                token = entry.get("token") if isinstance(entry, Mapping) else getattr(entry, "token", None)
+            item = {"token": str(token if token is not None else raw_id), "logprob": logprob}
+            alternatives.append(item)
+            try:
+                if chosen_id is not None and int(raw_id) == int(chosen_id):
+                    chosen = item
+            except (TypeError, ValueError):
+                pass
+        if not alternatives:
+            normalized.append([])
+        else:
+            if chosen is None:
+                # Keep the distribution observable, but do not invent the
+                # sampled token when vLLM did not expose a matching token id.
+                normalized.append({"top_logprobs": alternatives})
+            else:
+                normalized.append({
+                    "token": chosen["token"],
+                    "logprob": chosen["logprob"],
+                    "top_logprobs": alternatives,
+                })
+    return normalized
 
 
 def _sampling_params(
     sampling: KVSamplingModel,
     kv_transfer_params: Mapping[str, Any] | None,
+    *,
+    response_schema: Mapping[str, Any] | None = None,
+    logprobs: bool = False,
+    top_logprobs: int = 0,
 ) -> Any:
-    extra_args = (
-        None
-        if kv_transfer_params is None
-        else {"kv_transfer_params": dict(kv_transfer_params)}
-    )
+    extra_args: dict[str, Any] = {}
+    if kv_transfer_params is not None:
+        extra_args["kv_transfer_params"] = dict(kv_transfer_params)
+    guided_decoding: Any | None = None
     try:
         from vllm import SamplingParams
+        from vllm.sampling_params import GuidedDecodingParams
 
-        return SamplingParams(
-            temperature=float(sampling.temperature),
-            max_tokens=int(sampling.max_tokens),
-            seed=int(sampling.seed),
-            extra_args=extra_args,
-        )
+        if response_schema is not None:
+            # vLLM 0.9.x consumes structured output through the typed
+            # ``guided_decoding`` field.  Putting ``guided_json`` in
+            # ``extra_args`` only preserves an unconsumed sideband value.
+            guided_decoding = GuidedDecodingParams(json=dict(response_schema))
+
+        kwargs: dict[str, Any] = {
+            "temperature": float(sampling.temperature),
+            "max_tokens": int(sampling.max_tokens),
+            "seed": int(sampling.seed),
+            "extra_args": extra_args or None,
+            "guided_decoding": guided_decoding,
+        }
+        if logprobs:
+            # vLLM's native field is ``logprobs`` (the OpenAI
+            # ``top_logprobs`` name is an HTTP-layer alias).
+            kwargs["logprobs"] = int(top_logprobs or 1)
+        try:
+            return SamplingParams(**kwargs)
+        except TypeError as exc:
+            if logprobs:
+                # Dropping the requested distribution would make the
+                # sideband claim logit evidence it never received.
+                raise KVApiError("kv_request_invalid", "logprobs_unsupported") from exc
+            raise
     except ImportError:
         return _SamplingParamsFallback(
             temperature=float(sampling.temperature),
             max_tokens=int(sampling.max_tokens),
             seed=int(sampling.seed),
-            extra_args=extra_args,
+            extra_args=extra_args or None,
+            logprobs=(int(top_logprobs or 1) if logprobs else None),
+            guided_decoding=(
+                {"json": dict(response_schema)} if response_schema is not None else None
+            ),
         )
 
 

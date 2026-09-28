@@ -31,6 +31,11 @@ class JournalClient:
     def describe(self):
         return self.delegate.describe()
 
+    def close(self):
+        close = getattr(self.delegate, "close", None)
+        if callable(close):
+            close()
+
     async def complete(self, messages, *, purpose, **kwargs):
         call_id = str(uuid.uuid4())
         start = time.monotonic_ns()

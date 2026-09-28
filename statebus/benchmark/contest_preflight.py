@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--embedding-model-path", required=True)
     parser.add_argument("--gpu-uuid", required=True)
+    parser.add_argument("--expected-source-root", default="/workspace/statebus/os")
     args = parser.parse_args()
     import torch
     import statebus
@@ -28,7 +29,8 @@ def main():
         values = config.role_config(role)
         if values.model != args.model or config.provider_config(values.provider).base_url.rstrip("/") != args.base_url.rstrip("/"):
             raise RuntimeError("effective_role_profile_mismatch:" + role)
-    if Path(statebus.__file__).resolve() != Path("/workspace/statebus/os/statebus/__init__.py"):
+    expected_source = Path(args.expected_source_root).resolve()
+    if Path(statebus.__file__).resolve() != expected_source / "statebus/__init__.py":
         raise RuntimeError("source_checkout_mismatch")
     if not torch.cuda.is_available():
         raise RuntimeError(f"runtime_python_has_no_cuda:{sys.executable}:{torch.__version__}")
@@ -45,7 +47,9 @@ def main():
     report = {"ok": True, "python": sys.executable, "python_version": sys.version,
               "torch": torch.__version__, "torch_file": torch.__file__, "torch_cuda": torch.version.cuda,
               "gpu_uuid": actual_uuid, "embedding_parameter_devices": devices, "embedding_dims": embedding.dims,
-              "model": args.model, "source": statebus.__file__, "budget": effective_budget(effective_configuration()),
+              "model": args.model, "source": statebus.__file__,
+              "expected_source_root": str(expected_source),
+              "budget": effective_budget(effective_configuration()),
               "probe_scope": "one_embedding_no_llm_request_not_a_performance_sample"}
     write_json(args.output, report)
     print(json.dumps(report))

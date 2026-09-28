@@ -74,7 +74,18 @@ is_expected_process() {
 }
 
 probe_health() {
-  curl --fail --silent --show-error --max-time 3 "$HEALTH_URL" >/dev/null
+  if [[ "$SERVICE_MODE" != "kv" ]]; then
+    curl --fail --silent --show-error --max-time 3 "$HEALTH_URL" >/dev/null
+    return
+  fi
+  [[ -n "${STATEBUS_KV_API_TOKEN_FILE:-}" && -r "$STATEBUS_KV_API_TOKEN_FILE" ]] || return 1
+  # Feed the Bearer header through curl's stdin so the secret never appears
+  # in argv, shell tracing, or manager output.
+  {
+    printf 'Authorization: Bearer '
+    tr -d '\r\n' < "$STATEBUS_KV_API_TOKEN_FILE"
+    printf '\n'
+  } | curl --header @- --fail --silent --show-error --max-time 3 "$HEALTH_URL" >/dev/null
 }
 
 print_config() {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
 
@@ -34,6 +34,40 @@ class VllmTokenCodec:
 
     def encode(self, text: str) -> tuple[int, ...]:
         response = self._request("/tokenize", {"model": self.model, "prompt": text})
+        return self._decode_token_response(response)
+
+    def encode_messages(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        add_generation_prompt: bool = True,
+        chat_template_kwargs: Mapping[str, Any] | None = None,
+    ) -> tuple[int, ...]:
+        """Encode the exact chat request used by the provider.
+
+        The private KV API consumes token IDs, so a plain ``prompt`` encoding
+        is not sufficient for requests that contain a system message or rely
+        on a chat template.  Keep the legacy text endpoint above intact and
+        make message encoding an explicit, narrow capability.
+        """
+
+        normalized = [
+            {"role": str(item["role"]), "content": str(item["content"])}
+            for item in messages
+        ]
+        response = self._request(
+            "/tokenize",
+            {
+                "model": self.model,
+                "messages": normalized,
+                "add_generation_prompt": bool(add_generation_prompt),
+                "chat_template_kwargs": dict(chat_template_kwargs or {}),
+            },
+        )
+        return self._decode_token_response(response)
+
+    @staticmethod
+    def _decode_token_response(response: dict[str, Any]) -> tuple[int, ...]:
         values = response.get("tokens")
         if not isinstance(values, list):
             raise VllmTokenCodecError("tokenize_response_invalid")

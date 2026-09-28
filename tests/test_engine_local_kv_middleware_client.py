@@ -9,7 +9,8 @@ from typing import Any, Mapping
 import pytest
 
 from statebus.integrations.vllm_kv.client import VllmKVClient
-from statebus.integrations.vllm_kv.middleware import KVHandoffMiddleware
+from statebus.integrations.vllm_kv.api_models import KVSamplingModel
+from statebus.integrations.vllm_kv.middleware import KVHandoffMiddleware, _sampling_params
 from statebus.utils import sha256_digest
 
 
@@ -454,3 +455,22 @@ def test_sync_client_sends_handle_only_and_measures_sse_ttft(tmp_path: Path) -> 
     assert result.client_ttft_ms >= 0.0
     assert result.client_wall_ms >= result.client_ttft_ms
     assert result.api_request_bytes == len(transport.serialized)
+
+
+def test_sampling_params_consumes_schema_through_vllm_guided_decoding() -> None:
+    params = _sampling_params(
+        KVSamplingModel(temperature=0.0, max_tokens=2, seed=7),
+        {"action": "load", "handle_id": "h"},
+        response_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+    )
+
+    guided = getattr(params, "guided_decoding", None)
+    assert guided is not None
+    guided_json = guided.get("json") if isinstance(guided, dict) else getattr(guided, "json", None)
+    assert guided_json == {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+    }
+    assert (getattr(params, "extra_args", None) or {}) == {
+        "kv_transfer_params": {"action": "load", "handle_id": "h"}
+    }

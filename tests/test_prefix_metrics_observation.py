@@ -32,6 +32,55 @@ def test_matching_labeled_token_counters_produce_valid_request_observation() -> 
     assert payload["observed_token_hit_rate"] == 0.6
 
 
+def test_task_window_accepts_multiple_generations_only_when_success_count_matches() -> None:
+    before = parse_vllm_prefix_cache_metrics(
+        'vllm:prefix_cache_queries_total{model_name="qwen",engine="0"} 10\n'
+        'vllm:prefix_cache_hits_total{model_name="qwen",engine="0"} 4\n'
+        'vllm:request_success_total{model_name="qwen",engine="0",finished_reason="stop"} 100\n'
+    )
+    after = parse_vllm_prefix_cache_metrics(
+        'vllm:prefix_cache_queries_total{model_name="qwen",engine="0"} 25\n'
+        'vllm:prefix_cache_hits_total{model_name="qwen",engine="0"} 11\n'
+        'vllm:request_success_total{model_name="qwen",engine="0",finished_reason="stop"} 102\n'
+    )
+    delta = compute_vllm_prefix_cache_counter_delta(
+        before,
+        after,
+        exclusive_interval=True,
+        request_count=2,
+        window_scope="task",
+    )
+
+    assert delta.valid is True
+    assert delta.queries == 15
+    assert delta.hits == 7
+    assert delta.canonical_payload()["window_scope"] == "task"
+
+
+def test_task_window_with_external_generation_is_unavailable() -> None:
+    before = parse_vllm_prefix_cache_metrics(
+        'vllm:prefix_cache_queries_total{model_name="qwen",engine="0"} 10\n'
+        'vllm:prefix_cache_hits_total{model_name="qwen",engine="0"} 4\n'
+        'vllm:request_success_total{model_name="qwen",engine="0",finished_reason="stop"} 100\n'
+    )
+    after = parse_vllm_prefix_cache_metrics(
+        'vllm:prefix_cache_queries_total{model_name="qwen",engine="0"} 25\n'
+        'vllm:prefix_cache_hits_total{model_name="qwen",engine="0"} 11\n'
+        'vllm:request_success_total{model_name="qwen",engine="0",finished_reason="stop"} 103\n'
+    )
+    delta = compute_vllm_prefix_cache_counter_delta(
+        before,
+        after,
+        exclusive_interval=True,
+        request_count=2,
+        window_scope="task",
+    )
+
+    assert delta.available is True
+    assert delta.valid is False
+    assert delta.unavailable_reason == "counter_window_generation_count_mismatch"
+
+
 def test_vllm_09_dual_counter_aliases_prefer_canonical_series() -> None:
     metrics = parse_vllm_prefix_cache_metrics(
         'vllm:prefix_cache_queries_total{model_name="qwen",engine="0"} 20\n'

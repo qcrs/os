@@ -51,8 +51,22 @@ class _KVClient:
     def health(self):
         return {
             "status": "ready",
+            "engine_id": "engine-1",
+            "engine_generation": "generation-1",
             "model": "qwen3-32b",
+            "model_revision": "revision-1",
+            "tokenizer_digest": "tokenizer-1",
+            "dtype": "bfloat16",
             "compatibility_digest": "compat",
+            "compatibility_signature": {
+                "engine_id": "engine-1",
+                "engine_generation": "generation-1",
+                "model_id": "qwen3-32b",
+                "model_revision": "revision-1",
+                "tokenizer_digest": "tokenizer-1",
+                "dtype": "bfloat16",
+                "block_size": 2,
+            },
             "block_size": 2,
             "automatic_prefix_caching": False,
         }
@@ -64,6 +78,22 @@ class _KVClient:
         return {
             "status": "success",
             "handle_id": "handle-1" if capture else "",
+            "engine_generation": "generation-1",
+            "handle": {
+                "handle_id": "handle-1",
+                "engine_id": "engine-1",
+                "engine_generation": "generation-1",
+                "model_id": "qwen3-32b",
+                "model_revision": "revision-1",
+                "tokenizer_digest": "tokenizer-1",
+                "task_id": payload["task_id"],
+                "producer_request_id": payload["request_id"],
+                "seq_len": 4,
+                "block_size": 2,
+                "token_digest": sha256_digest([1, 2, 3, 4]),
+                "dtype": "bfloat16",
+                "status": "ready",
+            },
             "output_text": '{"candidate_key":"k","route":"r","tool_name":"t"}',
             "output_token_ids": [101, 102],
             "telemetry": {
@@ -81,6 +111,7 @@ class _KVClient:
         return KVStreamResult(
             payload={
                 "status": "success",
+                "engine_generation": "generation-1",
                 "logical_token_digest": sha256_digest(list(parent + suffix)),
                 "output_text": '{"summary":"done"}',
                 "output_token_ids": [201, 202],
@@ -184,4 +215,32 @@ def test_role_client_fails_closed_when_role_prefixes_differ(tmp_path: Path) -> N
         )
 
     client.close()
+    assert kv_client.release_calls == ["handle-1"]
+
+
+def test_role_client_releases_returned_handle_on_generation_mismatch(tmp_path: Path) -> None:
+    class _GenerationMismatchKVClient(_KVClient):
+        def produce(self, payload):
+            response = super().produce(payload)
+            response["engine_generation"] = "generation-2"
+            return response
+
+    kv_client = _GenerationMismatchKVClient()
+    client = EngineLocalKVRoleClient(
+        _Delegate(),
+        EngineLocalKVRoleClientConfig(
+            mode="continuation",
+            task_id="task-generation-mismatch",
+            audit_path=tmp_path / "audit.json",
+            parent_tokens=4,
+        ),
+        kv_client=kv_client,
+        token_codec=_Codec(),
+    )
+
+    with pytest.raises(RuntimeError, match="generation mismatch"):
+        asyncio.run(
+            client.complete([ChatMessage(role="user", content="executor")], purpose="executor")
+        )
+
     assert kv_client.release_calls == ["handle-1"]

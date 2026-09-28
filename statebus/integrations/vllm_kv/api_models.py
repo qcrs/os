@@ -11,7 +11,7 @@ class KVApiModel(BaseModel):
 
 class KVSamplingModel(KVApiModel):
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=96, ge=1, le=512)
+    max_tokens: int = Field(default=96, ge=1, le=4096)
     seed: int = Field(default=7, ge=0)
 
 
@@ -25,6 +25,9 @@ class KVProduceRequestModel(KVApiModel):
     ttl_s: int = Field(default=120, ge=1, le=3600)
     sampling: KVSamplingModel = Field(default_factory=KVSamplingModel)
     expected_compatibility_digest: str = Field(min_length=1, max_length=256)
+    response_schema: dict[str, object] | None = None
+    logprobs: bool = False
+    top_logprobs: int = Field(default=0, ge=0, le=20)
 
 
 class KVContinueRequestModel(KVApiModel):
@@ -38,6 +41,9 @@ class KVContinueRequestModel(KVApiModel):
     stream: bool = True
     sampling: KVSamplingModel = Field(default_factory=KVSamplingModel)
     expected_compatibility_digest: str = Field(min_length=1, max_length=256)
+    response_schema: dict[str, object] | None = None
+    logprobs: bool = False
+    top_logprobs: int = Field(default=0, ge=0, le=20)
 
     @model_validator(mode="after")
     def validate_lane_payload(self) -> "KVContinueRequestModel":

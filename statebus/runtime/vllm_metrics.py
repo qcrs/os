@@ -85,6 +85,7 @@ class VllmPrefixCacheMetrics:
     metric_schema_error: str = ""
     engine_instance_id: str = ""
     cache_epoch: str = ""
+    request_success_total: float | None = None
     sampled_at_ns: int = 0
 
     @property
@@ -131,6 +132,7 @@ class VllmPrefixCacheMetrics:
             "metric_schema_error": self.metric_schema_error,
             "engine_instance_id": self.engine_instance_id,
             "cache_epoch": self.cache_epoch,
+            "request_success_total": self.request_success_total,
             "sampled_at_ns": self.sampled_at_ns,
             "has_query_hit_counters": self.has_query_hit_counters,
             "observation_kind": self.observation_kind,
@@ -156,6 +158,7 @@ class VllmPrefixCacheCounterDelta:
     pollution_detected: bool = False
     request_count: int = 0
     retry_count: int = 0
+    window_scope: str = "request"
 
     @property
     def observed_query_token_delta(self) -> float:
@@ -187,8 +190,12 @@ class VllmPrefixCacheCounterDelta:
             "pollution_detected": self.pollution_detected,
             "request_count": self.request_count,
             "retry_count": self.retry_count,
+            "window_scope": self.window_scope,
             "claim_boundary": (
-                "request_local_token_hit_rate_only_for_matching_monotonic_labeled_counters_"
+                "task_window_token_counter_delta_only_for_matching_monotonic_labeled_counters_"
+                "in_one_exclusive_retry_free_interval"
+                if self.window_scope == "task"
+                else "request_local_token_hit_rate_only_for_matching_monotonic_labeled_counters_"
                 "in_one_exclusive_retry_free_interval"
             ),
         }
@@ -196,6 +203,7 @@ class VllmPrefixCacheCounterDelta:
 
 def parse_vllm_prefix_cache_metrics(metrics_text: str) -> VllmPrefixCacheMetrics:
     samples: list[tuple[str, tuple[tuple[str, str], ...], float]] = []
+    request_success_samples: list[float] = []
     for raw_line in metrics_text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -204,12 +212,16 @@ def parse_vllm_prefix_cache_metrics(metrics_text: str) -> VllmPrefixCacheMetrics
         if match is None:
             continue
         name = match.group("name")
-        if name not in {*_QUERY_COUNTER_NAMES, *_HIT_COUNTER_NAMES, *_HIT_RATE_GAUGE_NAMES}:
+        if name not in {*_QUERY_COUNTER_NAMES, *_HIT_COUNTER_NAMES, *_HIT_RATE_GAUGE_NAMES, "vllm:request_success_total"}:
             continue
         try:
             value = float(match.group("value"))
             labels = _parse_labels(match.group("labels") or "")
         except ValueError:
+            continue
+        if name == "vllm:request_success_total":
+            if math.isfinite(value) and value >= 0:
+                request_success_samples.append(value)
             continue
         samples.append((name, labels, value))
 
@@ -263,6 +275,7 @@ def parse_vllm_prefix_cache_metrics(metrics_text: str) -> VllmPrefixCacheMetrics
         hit_series=hit_series,
         metric_schema_valid=not schema_errors,
         metric_schema_error=";".join(sorted(set(schema_errors))),
+        request_success_total=(sum(request_success_samples) if request_success_samples else None),
         sampled_at_ns=time.time_ns(),
     )
 
@@ -277,6 +290,7 @@ def compute_vllm_prefix_cache_counter_delta(
     retry_count: int = 0,
     expected_engine_instance_id: str = "",
     expected_cache_epoch: str = "",
+    window_scope: str = "request",
 ) -> VllmPrefixCacheCounterDelta:
     interval_ms = (
         max(after.sampled_at_ns - before.sampled_at_ns, 0) / 1_000_000.0
@@ -295,6 +309,7 @@ def compute_vllm_prefix_cache_counter_delta(
         "pollution_detected": pollution_detected,
         "request_count": request_count,
         "retry_count": retry_count,
+        "window_scope": str(window_scope),
     }
     if not before.metric_schema_valid or not after.metric_schema_valid:
         reason = before.metric_schema_error or after.metric_schema_error or "counter_schema_invalid"
@@ -340,6 +355,7 @@ def compute_vllm_prefix_cache_counter_delta(
         retry_count=retry_count,
         expected_engine_instance_id=expected_engine_instance_id,
         expected_cache_epoch=expected_cache_epoch,
+        window_scope=str(window_scope),
     )
     if context_reason:
         return VllmPrefixCacheCounterDelta(
@@ -455,12 +471,15 @@ def _observation_context_error(
     retry_count: int,
     expected_engine_instance_id: str,
     expected_cache_epoch: str,
+    window_scope: str,
 ) -> str:
     if not exclusive_interval:
         return "exclusive_interval_not_proven"
     if pollution_detected:
         return "counter_window_polluted"
-    if request_count != 1:
+    if window_scope == "task" and request_count <= 0:
+        return "counter_window_request_count_missing"
+    if window_scope != "task" and request_count != 1:
         return "counter_window_request_count_not_one"
     if retry_count:
         return "counter_window_contains_retry"
@@ -482,4 +501,10 @@ def _observation_context_error(
         before_epoch != expected_cache_epoch or after_epoch != expected_cache_epoch
     ):
         return "cache_epoch_mismatch"
+    if window_scope == "task":
+        before_requests = before.request_success_total
+        after_requests = after.request_success_total
+        if before_requests is not None and after_requests is not None:
+            if after_requests - before_requests != request_count:
+                return "counter_window_generation_count_mismatch"
     return ""

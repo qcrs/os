@@ -9,6 +9,7 @@ variant=SB-FULL
 family=all
 output=""
 codeact_fallback=off
+model_assist_profile=off
 dry_run=0
 usage() {
   cat <<'HELP'
@@ -19,6 +20,8 @@ Usage: bash scripts/run_contest_dsl_mainchains.sh [options]
   --container-name NAME          Default: statebus-runtime
   --codeact-fallback off|on     Default: off; after DSL initial + one repair fail,
                                 authorize one fresh bounded-Python attempt
+  --model-assist-profile PROFILE Default: off; off|logit|apc|kv_replay|kv_continuation|kv_logit|auto
+  --container-source-root PATH   Container-visible checkout; default /workspace/statebus/os
   --dry-run                      Print real runner arguments/contracts; no Docker,
                                  GPU probe, service startup or provider request
   --help                         Show this help
@@ -37,7 +40,7 @@ while (($#)); do
   case "$1" in
     --help|-h) usage; exit 0 ;;
     --dry-run) dry_run=1; shift ;;
-    --variant|--family|--output|--container-name|--codeact-fallback)
+    --variant|--family|--output|--container-name|--codeact-fallback|--model-assist-profile|--container-source-root)
       (($# >= 2)) || { echo "Missing value: $1" >&2; exit 2; }
       case "$1" in
         --variant) variant="$2" ;;
@@ -45,6 +48,8 @@ while (($#)); do
         --output) output="$2" ;;
         --container-name) container="$2" ;;
         --codeact-fallback) codeact_fallback="$2" ;;
+        --model-assist-profile) model_assist_profile="$2" ;;
+        --container-source-root) CONTAINER_SOURCE="$2" ;;
       esac
       shift 2 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -52,6 +57,11 @@ while (($#)); do
 done
 [[ "$variant" == SB-FULL || "$variant" == P-TEXT ]] || { echo 'Invalid variant' >&2; exit 2; }
 [[ "$codeact_fallback" == off || "$codeact_fallback" == on ]] || { echo 'Invalid --codeact-fallback (use off|on)' >&2; exit 2; }
+case "$model_assist_profile" in
+  off|logit|apc|kv_replay|kv_continuation|kv_logit|auto) ;;
+  *) echo 'Invalid --model-assist-profile' >&2; exit 2 ;;
+esac
+[[ "$CONTAINER_SOURCE" = /* ]] || { echo 'Container source root must be absolute' >&2; exit 2; }
 case "$family" in
   all) families=(finance service_ops) ;;
   finance|service_ops) families=("$family") ;;
@@ -64,18 +74,38 @@ case "$output" in "$ROOT"/*) ;; *) echo 'Output must be inside the os checkout (
 container_output="$CONTAINER_SOURCE/${output#"$ROOT"/}"
 args=(--profile mechanism_simple_v2 --variant "$variant" --rounds 12 --mode live
       --codeact-fallback "$codeact_fallback"
+      --model-assist-profile "$model_assist_profile"
       --model qwen3-32b --base-url http://127.0.0.1:53334/v1 --max-context 8192
       --provider-timeout-s 480
       --embedding-mode local --embedding-model /statebus/models/Qwen3-Embedding-0.6B
       --embedding-device cuda:0 --tokenizer-path /data/models/Qwen3-32B)
 cd "$ROOT"
+container_env=(
+  -e "PYTHONDONTWRITEBYTECODE=1"
+  -e "PYTHONPATH=$CONTAINER_SOURCE"
+  -e "PROJECT_ROOT=$CONTAINER_SOURCE"
+  -e "STATEBUS_LLM_CONFIG_FILE=$CONTAINER_SOURCE/deploy/statebus_llm.g6b2-qwen3-32b.example"
+)
+if [[ "$model_assist_profile" != off ]]; then
+  for name in \
+    STATEBUS_KV_API_BASE_URL STATEBUS_KV_API_TOKEN_FILE STATEBUS_KV_API_TIMEOUT_S STATEBUS_KV_TOKENIZER_TIMEOUT_S \
+    STATEBUS_ENGINE_LOCAL_KV_PARENT_TOKENS STATEBUS_ENGINE_LOCAL_KV_TTL_S STATEBUS_ENGINE_LOCAL_KV_SEED \
+    STATEBUS_APC_ENABLED STATEBUS_APC_SERVICE_READY STATEBUS_APC_METRICS_URL STATEBUS_APC_METRICS_EXCLUSIVE; do
+    if [[ -n "${!name-}" ]]; then
+      container_env+=("-e" "$name=${!name}")
+    fi
+  done
+fi
 if ((dry_run)); then
   for current in "${families[@]}"; do
-    printf '\nHOST_OUTPUT=%s/%s\nCOMMAND=' "$output" "$current"
-    printf '%q ' docker exec -w "$CONTAINER_SOURCE" "$container" "$PYTHON" -m statebus.benchmark.contest_dsl_mainline \
+    printf '\nHOST_SOURCE_ROOT=%s\nCONTAINER_SOURCE_ROOT=%s\nPYTHONPATH=%s\nPROJECT_ROOT=%s\nLLM_CONFIG=%s\nHOST_OUTPUT=%s/%s\nCONTAINER_OUTPUT=%s/%s\nCOMMAND=' \
+      "$ROOT" "$CONTAINER_SOURCE" "$CONTAINER_SOURCE" "$CONTAINER_SOURCE" \
+      "$CONTAINER_SOURCE/deploy/statebus_llm.g6b2-qwen3-32b.example" "$output" "$current" "$container_output" "$current"
+    printf '%q ' docker exec -w "$CONTAINER_SOURCE" "${container_env[@]}" "$container" "$PYTHON" -m statebus.benchmark.contest_dsl_mainline \
       "${args[@]}" --family "$current" --output "$container_output/$current"
     printf '\n'
-    "$PYTHON" -m statebus.benchmark.contest_dsl_mainline "${args[@]}" --family "$current" \
+    PYTHONPATH="$ROOT" PROJECT_ROOT="$ROOT" STATEBUS_LLM_CONFIG_FILE="$ROOT/deploy/statebus_llm.g6b2-qwen3-32b.example" \
+      "$PYTHON" -m statebus.benchmark.contest_dsl_mainline "${args[@]}" --family "$current" \
       --output "$container_output/$current" --dry-run
   done
   exit 0
@@ -95,11 +125,12 @@ mkdir -p "$(dirname "$output")"
 mkdir "$output"
 # Reuse the existing single-encode GPU validation (no LLM call).
 docker exec -w "$CONTAINER_SOURCE" \
-  -e STATEBUS_LLM_CONFIG_FILE="$CONTAINER_SOURCE/deploy/statebus_llm.g6b2-qwen3-32b.example" \
+  "${container_env[@]}" \
   "$container" "$PYTHON" -m statebus.benchmark.contest_preflight \
   --output "$container_output/embedding-preflight.json" --model qwen3-32b \
   --base-url http://127.0.0.1:53334/v1 \
   --embedding-model-path /statebus/models/Qwen3-Embedding-0.6B --gpu-uuid "$gpu_uuid" \
+  --expected-source-root "$CONTAINER_SOURCE" \
   > "$output/embedding-preflight.log" 2>&1
 trap 'echo "Interrupted; preserve $output (no automatic retry)." >&2; exit 130' INT
 trap 'echo "Terminated; preserve $output (no automatic retry)." >&2; exit 143' TERM
@@ -107,7 +138,7 @@ rc=0
 printf 'family\treturncode\n' > "$output/chain-exit-codes.tsv"
 for current in "${families[@]}"; do
   printf '\n[contest39] %s %s: 12 slots -> %s/%s\n' "$current" "$variant" "$output" "$current"
-  if docker exec -w "$CONTAINER_SOURCE" "$container" "$PYTHON" -u -m statebus.benchmark.contest_dsl_mainline \
+  if docker exec -w "$CONTAINER_SOURCE" "${container_env[@]}" "$container" "$PYTHON" -u -m statebus.benchmark.contest_dsl_mainline \
     "${args[@]}" --family "$current" --output "$container_output/$current" \
     > "$output/$current.log" 2>&1; then
     chain_rc=0

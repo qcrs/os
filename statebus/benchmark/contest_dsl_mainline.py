@@ -26,6 +26,11 @@ from statebus.benchmark.contest_dsl_scorer import score_rows
 from statebus.benchmark.contest_dsl_metrics import collect_slot_metrics, write_reports
 from statebus.benchmark.contest_dsl_transport import HandoffTransport
 from statebus.benchmark.request_journal import JournalClient, append_event
+from statebus.benchmark.contest_model_assist import (
+    ContestModelAssistSettings,
+    build_contest_model_assist_client,
+    render_public_context,
+)
 from statebus.contracts import (
     AdaptiveTaskEnvelope, ArtifactVerificationDecision, ArtifactVerificationReceipt,
     CanonicalTaskSpec, CapabilityDescriptor, CapabilityQualityReport, Claim, ClaimSet,
@@ -48,6 +53,7 @@ from statebus.runtime.transform_dsl import TransformProgramValidator
 from statebus.runtime.retrieval_adapter import AdaptiveRetrievalAdapter
 from statebus.runtime.workspace import ArtifactLifecycleManager
 from statebus.utils import sha256_digest, stable_json_dumps
+from statebus.runtime.model_assist import MODEL_ASSIST_PROFILES
 
 
 OPERATIONS = ("filter_eq", "filter_in", "filter_range", "aggregate", "aggregate_grouped",
@@ -157,7 +163,19 @@ class RepairProtocolViolation(ValueError):
         super().__init__(f"{self.code}:{detail}")
 
 
-def _live_client(path, model, base_url, max_context, provider_timeout_s=DEFAULT_PROVIDER_TIMEOUT_S):
+def _live_client(
+    path,
+    model,
+    base_url,
+    max_context,
+    provider_timeout_s=DEFAULT_PROVIDER_TIMEOUT_S,
+    *,
+    model_assist_profile: str = "off",
+    task_id: str = "",
+    run_id: str = "",
+    runtime_root: Path | None = None,
+    shared_prefix_text: str = "",
+):
     from statebus.integrations.llm import LLMConfig, ProviderConfig, RoleLLMConfig, build_llm_client
     provider_timeout_s = float(provider_timeout_s)
     if provider_timeout_s <= 0:
@@ -169,7 +187,27 @@ def _live_client(path, model, base_url, max_context, provider_timeout_s=DEFAULT_
             max_context_tokens=max_context,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}})
             for role in ("planner", "retriever", "executor", "summarizer")})
-    return JournalClient(build_llm_client(config), path)
+    raw = build_llm_client(config)
+    if model_assist_profile == "off":
+        return JournalClient(raw, path)
+    try:
+        settings = ContestModelAssistSettings.from_enabled_inputs(
+            profile=model_assist_profile,
+            task_id=task_id or "contest-task",
+            run_id=run_id or "contest-run",
+            root=runtime_root or path.parent,
+            model=model,
+            base_url=base_url,
+            max_context=max_context,
+            provider_timeout_s=provider_timeout_s,
+            shared_prefix_text=shared_prefix_text,
+        )
+        return build_contest_model_assist_client(raw, journal_path=path, settings=settings)
+    except BaseException:
+        close = getattr(raw, "close", None)
+        if callable(close):
+            close()
+        raise
 
 
 def _live_codeact_source(prompt: str, *, journal_path: Path | None = None) -> str:
@@ -189,11 +227,24 @@ def _live_codeact_source(prompt: str, *, journal_path: Path | None = None) -> st
     return source
 
 
-def _provider_json(client, role, payload, instruction, schema=None):
+def _provider_json(client, role, payload, instruction, schema=None, *, model_assist_context=None):
     from statebus.integrations.llm import ChatMessage, extract_json_object
-    result = asyncio.run(client.complete([
-        ChatMessage("system", instruction), ChatMessage("user", stable_json_dumps(payload))],
-        purpose=role, **({"response_schema": schema} if schema else {})))
+    context = {"role": role, **dict(model_assist_context or {})}
+    messages = [ChatMessage("system", instruction), ChatMessage("user", stable_json_dumps(payload))]
+    try:
+        result = asyncio.run(client.complete(
+            messages,
+            purpose=role,
+            **({"response_schema": schema} if schema else {}),
+        ))
+    except BaseException as exc:
+        recorder = getattr(client, "observe_error", None)
+        if callable(recorder):
+            recorder(exc, context=context)
+        raise
+    recorder = getattr(client, "observe_result", None)
+    if callable(recorder):
+        recorder(result, context=context)
     if getattr(result, "finish_reason", None) == "length":
         raise ProviderOutputTruncatedError(role)
     return extract_json_object(result.text)
@@ -1565,7 +1616,14 @@ def _checked_report(claims, rows):
             raise ValueError(f"report_row_identity_or_risk:{index}")
 
 
-def _simple_report_claims(client, received, *, artifact_id: str, start: int):
+def _simple_report_claims(
+    client,
+    received,
+    *,
+    artifact_id: str,
+    start: int,
+    model_assist_context: dict[str, object] | None = None,
+):
     """Typed fact report: validate model-selected rows and citations, then render.
 
     Identities belong to structured fields, not a second brittle key=value copy
@@ -1598,7 +1656,8 @@ def _simple_report_claims(client, received, *, artifact_id: str, start: int):
         "Produce a structured fact report, one claim per current row in input order. "
         "Copy every current row field into row; choose the matching entity's evidence_id and COMPLETE context_text. "
         "Do not infer causes. If memory_cross_check is supplied, independently compare each current row against "
-        "its matching producer row, return memory_id and matches_memory. Never copy a producer report.", schema)
+        "its matching producer row, return memory_id and matches_memory. Never copy a producer report.", schema,
+        model_assist_context=model_assist_context)
     if len(raw["claims"]) != len(received["rows"]):
         raise ValueError("report_row_count")
     claims = []
@@ -1761,13 +1820,14 @@ def _build_codeact_fallback_plan(
     return outcome.approved_plan
 
 
-def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: str,
+def _run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: str,
              mode: str = "offline", model: str = "qwen3-32b", base_url: str = "http://127.0.0.1:53334/v1",
              max_context: int = 8192, embedding_mode: str = "deterministic", embedding_model=None,
              embedding_device=None, tokenizer_path: Path | None = None, profile: str = "default",
              provider_timeout_s: float = DEFAULT_PROVIDER_TIMEOUT_S,
              memory_enabled: bool | None = None, semantic_state_mode: str | None = None,
-             codeact_fallback_enabled: bool = False):
+             codeact_fallback_enabled: bool = False,
+             model_assist_profile: str = "off", _client_holder: dict[str, object] | None = None):
     contract = task_contract(task_id, profile=profile)
     memory_override = memory_enabled is not None
     memory_enabled = variant == "SB-FULL" if memory_enabled is None else bool(memory_enabled)
@@ -1778,6 +1838,8 @@ def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: 
     semantic_state_mode = ("on" if variant == "SB-FULL" else "off") if semantic_state_mode is None else semantic_state_mode
     if semantic_state_mode not in {"off", "on"}:
         raise ValueError(f"contest_dsl_semantic_state_mode_invalid:{semantic_state_mode}")
+    if model_assist_profile not in MODEL_ASSIST_PROFILES:
+        raise ValueError(f"contest_dsl_model_assist_profile_invalid:{model_assist_profile}")
     root.mkdir(parents=True, exist_ok=False)
     transport = _handoff_transport(root, variant, tokenizer_path)
     inputs = bind_inputs(public, task_id, history=history, profile=profile)
@@ -1799,13 +1861,33 @@ def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: 
         "history": {key: sha256_digest(history[key]) for key in contract.required_history},
         "artifacts": {key: asdict(value.artifact) for key, value in artifacts.items()},
         "verification_receipts": {key: asdict(value) for key, value in receipts.items()}})
-    client = (_live_client(root / "provider.jsonl", model, base_url, max_context, provider_timeout_s)
-              if mode == "live" else None)
+    shared_prefix_text = render_public_context(contract.public_view(), task_id=task_id)
+    if mode == "live":
+        if model_assist_profile == "off":
+            client = _live_client(root / "provider.jsonl", model, base_url, max_context, provider_timeout_s)
+        else:
+            client = _live_client(
+                root / "provider.jsonl",
+                model,
+                base_url,
+                max_context,
+                provider_timeout_s,
+                model_assist_profile=model_assist_profile,
+                task_id=task_id,
+                run_id=run_id,
+                runtime_root=root,
+                shared_prefix_text=shared_prefix_text,
+            )
+    else:
+        client = None
+    if _client_holder is not None:
+        _client_holder["client"] = client
     write_json(root / "manifest.json", {"contract": contract.public_view(), "variant": variant,
         "mode": mode, "task_profile": profile, "runtime_identity": identity.canonical_payload(), "fixed_context_tokens": max_context,
         "executor_max_tokens": EXECUTOR_MAX_TOKENS, "summarizer_max_tokens": SUMMARIZER_MAX_TOKENS,
         "provider_timeout_s": provider_timeout_s,
         "codeact_fallback_enabled": bool(codeact_fallback_enabled),
+        "model_assist_profile": model_assist_profile,
         "codeact_fallback_contract": (
             "one new bounded Python attempt after DSL initial and single repair are exhausted"
             if codeact_fallback_enabled else "disabled"
@@ -1814,6 +1896,19 @@ def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: 
             "transport": "typed" if variant == "SB-FULL" else "text",
             "memory": "on" if memory_enabled else "off",
             "semantic_state": semantic_state_mode,
+            "model_assist_profile": model_assist_profile,
+            "shared_public_context": (
+                shared_prefix_text
+                if model_assist_profile in {
+                    "apc",
+                    "kv_replay",
+                    "kv_continuation",
+                    "kv_logit",
+                    "auto",
+                }
+                else None
+            ),
+            "model_assist_sidecar": str(root / "model-assist.jsonl") if model_assist_profile != "off" else None,
         },
         "request_max_attempts": 1, "dynamic_prompt_compression": False,
         "handoff_tokenizer_path": str(tokenizer_path) if tokenizer_path is not None else None,
@@ -1989,7 +2084,13 @@ def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: 
                     f"Maximum {contract.max_operations} operations. All supplied input tables must be declared, source first.",
                     _transform_program_response_schema(authorized_input_refs=tuple(refs),
                         input_schema={k: tuple(v) for k, v in contract.input_schemas.items()},
-                        output_contract_version=contract.output_contract_version, operation_catalog=OPERATIONS))
+                        output_contract_version=contract.output_contract_version, operation_catalog=OPERATIONS),
+                    model_assist_context={
+                        "step": step.step_id,
+                        "attempt": grant.attempt_id,
+                        "stage": "generate",
+                        "repair_stage": repair_stage,
+                    })
                 program = _bind_provider_program(raw, refs, grant.output_contract_version)
                 provider_program_hash = program.program_hash
                 completed_grouped_candidate = None
@@ -2157,10 +2258,27 @@ def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: 
                         batch_claims.append(Claim(str(start+index), text, "fact", (source["id"],), (artifact.artifact_id,),
                             (source["locator"],), {k: float(v) for k, v in row.items() if type(v) in (int, float)}))
                 elif profile == SIMPLE_PROFILE:
-                    batch_claims = _simple_report_claims(client, received, artifact_id=artifact.artifact_id, start=start)
+                    batch_claims = _simple_report_claims(
+                        client,
+                        received,
+                        artifact_id=artifact.artifact_id,
+                        start=start,
+                        model_assist_context={
+                            "step": step.step_id,
+                            "attempt": grant.attempt_id,
+                            "stage": "report",
+                            "batch_index": start // 4,
+                        },
+                    )
                 else:
                     raw = _provider_json(client, "summarizer", received,
-                        'Return JSON {"claims":[{"text":"...","evidence_id":"...","numeric_fields":{...}}]}. One claim per row in input order. Include every string and boolean row field verbatim as key=value (lowercase booleans), all numeric fields with exact values in numeric_fields, and the COMPLETE current contextual sentence for that entity, including qualifications. Cite its evidence_id. When memory_cross_check is present, use it only as a verified structured-artifact cross-check; do not copy a producer report or replace current rows. Do not infer causes.')
+                        'Return JSON {"claims":[{"text":"...","evidence_id":"...","numeric_fields":{...}}]}. One claim per row in input order. Include every string and boolean row field verbatim as key=value (lowercase booleans), all numeric fields with exact values in numeric_fields, and the COMPLETE current contextual sentence for that entity, including qualifications. Cite its evidence_id. When memory_cross_check is present, use it only as a verified structured-artifact cross-check; do not copy a producer report or replace current rows. Do not infer causes.',
+                        model_assist_context={
+                            "step": step.step_id,
+                            "attempt": grant.attempt_id,
+                            "stage": "report",
+                            "batch_index": start // 4,
+                        })
                     for index, item in enumerate(raw["claims"]):
                         source = next(e for e in received["evidence"] if e["id"] == item["evidence_id"])
                         batch_claims.append(Claim(str(start+index), item["text"], "fact", (source["id"],),
@@ -2260,6 +2378,12 @@ def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: 
         runtime_compatibility_signature=sha256_digest(Path(__file__).parents[1].joinpath("runtime/transform_dsl.py").read_bytes()))
     if codeact_fallback_enabled:
         def replan_for_codeact(current_plan, completed_step_ids, failed_step, error_code):
+            disable_pair = getattr(client, "disable_pair", None)
+            if callable(disable_pair):
+                # The bounded Python replan is outside the DSL
+                # Executor-to-Summarizer KV pair.  Release any producer
+                # handle before Runtime starts the fresh attempt.
+                disable_pair()
             return _build_codeact_fallback_plan(
                 current_plan=current_plan,
                 completed_step_ids=completed_step_ids,
@@ -2386,6 +2510,30 @@ def run_slot(root: Path, public: Path, task_id: str, *, history: dict, variant: 
             "codeact_python_attempts": len(python_dispatches),
             "dsl_execute_attempts": len(dsl_dispatches),
             "rows": rows}
+
+
+def run_slot(root: Path, public: Path, task_id: str, **kwargs):
+    """Run one slot and release any task-local model-assist resources."""
+    holder: dict[str, object] = {}
+    try:
+        return _run_slot(root, public, task_id, _client_holder=holder, **kwargs)
+    finally:
+        client = holder.get("client")
+        finalize = getattr(client, "finalize", None)
+        if callable(finalize):
+            try:
+                finalize()
+            except Exception:
+                # Preserve the task result; the sidecar retains the per-call
+                # evidence even when the optional APC observation cannot close.
+                pass
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # Cleanup must never replace a Runtime/quality failure.
+                pass
 
 
 def _mechanism_events(root, result, *, variant: str, task_id: str,
@@ -2630,6 +2778,10 @@ def main(argv=None):
     parser.add_argument(
         "--codeact-fallback", choices=("off", "on"), default="off",
         help="After DSL initial execution and its existing single repair fail, authorize one fresh bounded-Python attempt.",
+    )
+    parser.add_argument(
+        "--model-assist-profile", choices=tuple(sorted(MODEL_ASSIST_PROFILES)), default="off",
+        help="Explicit model-side Logit/APC/KV routing profile; default off.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print contracts/settings only; execute nothing")
     parser.add_argument("--model", default="qwen3-32b")
