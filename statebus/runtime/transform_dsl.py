@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from math import isfinite
+from math import ceil, isfinite
 from pathlib import Path
 import time
 from typing import Any, Callable
@@ -20,7 +20,8 @@ class TransformProgramError(ValueError):
 _ALLOWED_OPS = {
     "select", "rename", "filter_eq", "filter_contains", "filter_in", "filter_range", "sort", "limit",
     "group_by", "aggregate", "aggregate_grouped", "derive_safe", "compare_periods", "compare_metric", "join_by_key",
-    "trend_series", "anomaly_check", "anomaly_zscore", "project_claim_fields", "deterministic_fixture",
+    "trend_series", "rank", "percentile_nearest_rank", "anomaly_check", "anomaly_zscore",
+    "project_claim_fields", "deterministic_fixture",
 }
 _FORBIDDEN_FIELD_TOKENS = {"__", "/", "\\", ".."}
 _FORBIDDEN_VALUE_TOKENS = _FORBIDDEN_FIELD_TOKENS | {"eval", "exec", "lambda", "import", "shell"}
@@ -73,7 +74,7 @@ class TransformProgramValidator:
             return TransformValidationReport(False, "operation_budget_exceeded")
         if any(len(columns) > self.max_columns for columns in available_columns.values()):
             return TransformValidationReport(False, "input_column_budget_exceeded")
-        known_columns = set().union(*(set(available_columns.get(ref, ())) for ref in program.input_artifact_refs))
+        known_columns = set(available_columns.get(program.input_artifact_refs[0], ()))
         if len(known_columns) > self.max_columns:
             return TransformValidationReport(False, "input_column_budget_exceeded")
         for index, step in enumerate(program.operations):
@@ -87,7 +88,7 @@ class TransformProgramValidator:
                     return TransformValidationReport(False, "missing_fixture_id", index)
                 if set(step.arguments) != {"fixture_id"}:
                     return TransformValidationReport(False, "invalid_fixture_arguments", index)
-            invalid = self._validate_arguments(step, known_columns, program.input_artifact_refs)
+            invalid = self._validate_arguments(step, known_columns, program.input_artifact_refs, available_columns)
             if invalid:
                 return TransformValidationReport(False, invalid, index)
             known_columns = self._output_columns(step, known_columns, available_columns)
@@ -113,6 +114,8 @@ class TransformProgramValidator:
             column = str(args.get("column", ""))
             return {str(args.get("output", f"{function}_{column}"))}
         if step.op == "aggregate_grouped":
+            if "group_fields" in args:
+                return {*args["group_fields"], *args["outputs"]}
             group_field = str(args.get("group_field", ""))
             return {
                 str(args.get("group_output", group_field)),
@@ -123,9 +126,12 @@ class TransformProgramValidator:
                 str(args.get("count_output", "count")),
             }
         if step.op == "derive_safe":
+            if "calculations" in args:
+                return {*known_columns, *(item[0] for item in args["calculations"])}
             return {*known_columns, str(args.get("output", ""))}
         if step.op == "compare_periods":
             return {
+                *(str(field) for field in args.get("group_fields", ())),
                 *(str(field) for field in args.get("carry_fields", ())),
                 str(args.get("baseline_period_output", "baseline_period")),
                 str(args.get("comparison_period_output", "comparison_period")),
@@ -149,9 +155,17 @@ class TransformProgramValidator:
                 str(args.get("value_output", "metric_value")),
                 str(args.get("direction_output", "trend_direction")),
             }
+        if step.op == "rank":
+            return {*known_columns, str(args.get("output", "rank"))}
+        if step.op == "percentile_nearest_rank":
+            outputs = {*args.get("group_fields", ()), args["output"]}
+            if "sample_count_output" in args:
+                outputs.add(args["sample_count_output"])
+            return outputs
         if step.op == "join_by_key":
             right_ref = str(args.get("right_ref", ""))
-            return {*known_columns, *available_columns.get(right_ref, ())}
+            prefix = str(args.get("right_prefix", ""))
+            return {*known_columns, *(prefix + field for field in available_columns.get(right_ref, ()))}
         if step.op == "anomaly_check":
             return {*known_columns, str(args.get("output", "is_anomaly"))}
         if step.op == "anomaly_zscore":
@@ -164,7 +178,13 @@ class TransformProgramValidator:
             }
         return set(known_columns)
 
-    def _validate_arguments(self, step: TransformStep, known_columns: set[str], authorized_refs: tuple[str, ...]) -> str:
+    def _validate_arguments(
+        self,
+        step: TransformStep,
+        known_columns: set[str],
+        authorized_refs: tuple[str, ...],
+        available_columns: dict[str, tuple[str, ...]],
+    ) -> str:
         for key, value in step.arguments.items():
             if "path" in key.lower() or "file" in key.lower() or "expr" in key.lower() or "python" in key.lower():
                 return "unsafe_argument_key"
@@ -173,8 +193,8 @@ class TransformProgramValidator:
         columns: list[str] = []
         for key in (
             "column", "columns", "group_by", "group_field", "period_field", "value_field",
-            "ticker_field", "metric_field", "left_key", "right_key", "numerator", "denominator",
-            "source", "carry_fields",
+            "ticker_field", "metric_field", "left_key", "left_keys", "numerator", "denominator",
+            "source", "carry_fields", "tie_break_columns", "group_fields", "value_fields",
         ):
             value = step.arguments.get(key)
             if isinstance(value, str):
@@ -206,8 +226,10 @@ class TransformProgramValidator:
             return "limit_exceeded"
         if step.op == "aggregate" and step.arguments.get("function") not in {"count", "sum", "mean", "min", "max"}:
             return "invalid_aggregate"
-        if step.op == "aggregate_grouped" and not isinstance(step.arguments.get("group_field"), str):
-            return "missing_group_field"
+        if step.op == "aggregate_grouped":
+            error = self._validate_grouped_aggregate(step.arguments)
+            if error:
+                return error
         if step.op == "compare_periods" and not {"period_field", "value_field"} <= set(step.arguments):
             return "missing_comparison_fields"
         if step.op == "compare_periods":
@@ -217,7 +239,10 @@ class TransformProgramValidator:
             carry_names = tuple(str(field) for field in carry_fields)
             if len(carry_names) != len(set(carry_names)):
                 return "duplicate_comparison_carry_field"
-            output_names = {
+            groups = step.arguments.get("group_fields", ())
+            if not self._field_list(groups):
+                return "invalid_comparison_group_fields"
+            output_names = (
                 str(step.arguments.get("baseline_period_output", "baseline_period")),
                 str(step.arguments.get("comparison_period_output", "comparison_period")),
                 str(step.arguments.get("baseline_value_output", "baseline_value")),
@@ -225,8 +250,10 @@ class TransformProgramValidator:
                 str(step.arguments.get("difference_output", "difference")),
                 str(step.arguments.get("ratio_output", "ratio")),
                 str(step.arguments.get("growth_pct_output", "growth_pct")),
-            }
-            if set(carry_names) & output_names:
+            )
+            if any(not name for name in output_names) or len(set(output_names)) != len(output_names):
+                return "comparison_output_collision"
+            if (set(carry_names) | set(groups)) & set(output_names):
                 return "comparison_output_collision"
         if step.op == "compare_metric":
             required = {
@@ -311,12 +338,154 @@ class TransformProgramValidator:
             )
             if any(not name for name in output_names) or len(output_names) != len(set(output_names)):
                 return "invalid_trend_outputs"
+        if step.op == "rank":
+            metric = step.arguments.get("metric")
+            output = step.arguments.get("output")
+            tie_break = step.arguments.get("tie_break_columns", ())
+            if not isinstance(metric, str) or not metric or not isinstance(output, str) or not output:
+                return "missing_rank_fields"
+            if metric not in known_columns:
+                return "unknown_column"
+            if not isinstance(tie_break, (tuple, list)) or any(not isinstance(item, str) for item in tie_break):
+                return "invalid_rank_tie_break"
+            if output in known_columns:
+                return "rank_output_exists"
+            if not isinstance(step.arguments.get("descending", False), bool):
+                return "invalid_rank_direction"
+            if step.arguments.get("method", "ordinal") != "ordinal":
+                return "invalid_rank_method"
+        if step.op == "percentile_nearest_rank":
+            value_field = step.arguments.get("value_field")
+            output = step.arguments.get("output")
+            group_fields = step.arguments.get("group_fields", ())
+            percentile = step.arguments.get("percentile")
+            if not isinstance(value_field, str) or not value_field or not isinstance(output, str) or not output:
+                return "missing_percentile_fields"
+            if not self._field_list(group_fields):
+                return "invalid_percentile_group_fields"
+            if output in known_columns or output in group_fields:
+                return "percentile_output_exists"
+            if not isinstance(percentile, (int, float)) or isinstance(percentile, bool) or not 0 < float(percentile) <= 100:
+                return "invalid_percentile"
+            sample_output = step.arguments.get("sample_count_output")
+            if "sample_count_output" in step.arguments and (
+                not isinstance(sample_output, str) or not sample_output
+                or sample_output in known_columns or sample_output == output
+            ):
+                return "percentile_sample_count_output_invalid"
         if step.op == "anomaly_zscore" and not {"period_field", "value_field"} <= set(step.arguments):
             return "missing_anomaly_fields"
-        if step.op == "derive_safe" and step.arguments.get("kind") not in {"difference", "ratio", "pct_change"}:
-            return "invalid_derive_kind"
-        if step.op == "join_by_key" and step.arguments.get("right_ref") not in authorized_refs:
-            return "unauthorized_join_ref"
+        if step.op == "derive_safe":
+            error = self._validate_derivations(step.arguments, known_columns)
+            if error:
+                return error
+        if step.op == "join_by_key":
+            if step.arguments.get("right_ref") not in authorized_refs:
+                return "unauthorized_join_ref"
+            error = self._validate_join(step.arguments, known_columns, available_columns)
+            if error:
+                return error
+        return ""
+
+    @staticmethod
+    def _field_list(value: object, *, nonempty: bool = False) -> bool:
+        return (
+            isinstance(value, (list, tuple))
+            and (bool(value) or not nonempty)
+            and all(isinstance(item, str) and bool(item) for item in value)
+            and len(value) == len(set(value))
+        )
+
+    @classmethod
+    def _validate_grouped_aggregate(cls, args: dict[str, Any]) -> str:
+        batch_keys = {"group_fields", "value_fields", "functions", "outputs"}
+        if batch_keys & set(args):
+            if set(args) != batch_keys or not cls._field_list(args.get("group_fields")):
+                return "invalid_grouped_aggregate_arguments"
+            values, functions, outputs = args.get("value_fields"), args.get("functions"), args.get("outputs")
+            if not isinstance(values, (list, tuple)) or not values or any(not isinstance(v, str) or not v for v in values):
+                return "invalid_aggregate_value_fields"
+            if not isinstance(functions, (list, tuple)) or len(functions) != len(values):
+                return "invalid_aggregate_functions"
+            if any(not isinstance(function, str) or function not in {"sum", "mean", "min", "max", "count"} for function in functions):
+                return "invalid_aggregate_functions"
+            if not cls._field_list(outputs, nonempty=True) or len(outputs) != len(values):
+                return "invalid_aggregate_outputs"
+            if set(outputs) & set(args["group_fields"]):
+                return "aggregate_output_collision"
+            return ""
+        if not isinstance(args.get("group_field"), str) or not args["group_field"]:
+            return "missing_group_field"
+        if not isinstance(args.get("value_field"), str) or not args["value_field"]:
+            return "missing_value_field"
+        outputs = [args.get("group_output", args["group_field"])] + [
+            args.get(f"{function}_output", function) for function in ("sum", "mean", "min", "max", "count")
+        ]
+        if not cls._field_list(outputs, nonempty=True):
+            return "aggregate_output_collision"
+        return ""
+
+    @staticmethod
+    def _validate_derivations(args: dict[str, Any], known_columns: set[str]) -> str:
+        if "calculations" in args:
+            calculations = args["calculations"]
+            if set(args) != {"calculations"} or not isinstance(calculations, (list, tuple)) or not calculations:
+                return "invalid_derive_calculations"
+        else:
+            if not {"numerator", "denominator", "output", "kind"} <= set(args):
+                return "missing_derive_fields"
+            calculations = [[args["output"], args["kind"], args["numerator"], args["denominator"]]]
+        visible = set(known_columns)
+        for calculation in calculations:
+            if not isinstance(calculation, (tuple, list)) or not 4 <= len(calculation) <= 6:
+                return "invalid_derive_calculation"
+            output, kind, left, right = calculation[:4]
+            if not isinstance(output, str) or not output or output in visible:
+                return "derive_output_collision"
+            if not isinstance(kind, str) or kind not in {"difference", "ratio", "pct_change", "less_than", "greater_than", "boolean_change"}:
+                return "invalid_derive_kind"
+            if not isinstance(left, str) or left not in visible:
+                return "unknown_column"
+            if isinstance(right, str):
+                if right not in visible:
+                    return "unknown_column"
+            elif kind == "boolean_change":
+                if right is not None and not isinstance(right, bool):
+                    return "invalid_derive_operand"
+            elif not isinstance(right, (int, float)) or isinstance(right, bool) or not isfinite(float(right)):
+                return "invalid_derive_operand"
+            if len(calculation) > 4:
+                scale = calculation[4]
+                if kind in {"less_than", "greater_than", "boolean_change"}:
+                    return "invalid_derive_numeric_format"
+                if not isinstance(scale, (int, float)) or isinstance(scale, bool) or not isfinite(float(scale)):
+                    return "invalid_derive_scale"
+            if len(calculation) > 5:
+                decimals = calculation[5]
+                if decimals is not None and (not isinstance(decimals, int) or isinstance(decimals, bool) or not 0 <= decimals <= 12):
+                    return "invalid_derive_decimals"
+            visible.add(output)
+        return ""
+
+    @classmethod
+    def _validate_join(cls, args: dict[str, Any], known_columns: set[str], available_columns: dict[str, tuple[str, ...]]) -> str:
+        if "left_keys" in args or "right_keys" in args:
+            if "left_key" in args or "right_key" in args:
+                return "invalid_join_keys"
+            left_keys, right_keys = args.get("left_keys"), args.get("right_keys")
+        else:
+            left_keys, right_keys = [args.get("left_key")], [args.get("right_key")]
+        if not cls._field_list(left_keys, nonempty=True) or not cls._field_list(right_keys, nonempty=True) or len(left_keys) != len(right_keys):
+            return "invalid_join_keys"
+        right_columns = set(available_columns.get(str(args["right_ref"]), ()))
+        if not set(left_keys) <= known_columns or not set(right_keys) <= right_columns:
+            return "unknown_column"
+        prefix = args.get("right_prefix", "")
+        if not isinstance(prefix, str):
+            return "invalid_join_prefix"
+        common_keys = {left for left, right in zip(left_keys, right_keys) if left == right and not prefix}
+        if ({prefix + field for field in right_columns} & known_columns) - common_keys:
+            return "join_output_collision"
         return ""
 
     @staticmethod
@@ -483,6 +652,47 @@ class TransformDslInterpreter:
             return sorted(rows, key=lambda row: tuple((row.get(column) is None, row.get(column)) for column in columns))
         if step.op == "limit":
             return rows[:int(args["count"])]
+        if step.op == "rank":
+            metric = str(args["metric"])
+            output = str(args["output"])
+            descending = bool(args.get("descending", False))
+            tie_break = tuple(str(field) for field in args.get("tie_break_columns", ()))
+            if any(
+                not isinstance(row.get(metric), (int, float))
+                or isinstance(row.get(metric), bool)
+                or not isfinite(float(row[metric]))
+                for row in rows
+            ):
+                raise TransformProgramError("rank_metric_not_numeric")
+            ranked = sorted(
+                rows,
+                key=lambda row: (
+                    -row[metric] if descending else row[metric],
+                    tuple(row.get(field) for field in tie_break),
+                ),
+            )
+            positions = {id(row): index for index, row in enumerate(ranked, 1)}
+            return [{**row, output: positions[id(row)]} for row in rows]
+        if step.op == "percentile_nearest_rank":
+            value_field = str(args["value_field"])
+            output = str(args["output"])
+            percentile = float(args["percentile"])
+            group_fields = tuple(str(field) for field in args.get("group_fields", ()))
+            groups: dict[tuple[Any, ...], list[int | float]] = defaultdict(list)
+            for row in rows:
+                value = row.get(value_field)
+                if not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(float(value)):
+                    raise TransformProgramError("percentile_value_not_numeric")
+                groups[tuple(row[field] for field in group_fields)].append(value)
+            output_rows: list[dict[str, Any]] = []
+            for key, values in sorted(groups.items(), key=lambda item: tuple(str(part) for part in item[0])):
+                ordered = sorted(values)
+                index = max(1, ceil(percentile * len(ordered) / 100.0)) - 1
+                item = {**dict(zip(group_fields, key)), output: ordered[index]}
+                if "sample_count_output" in args:
+                    item[str(args["sample_count_output"])] = len(ordered)
+                output_rows.append(item)
+            return output_rows
         if step.op == "deterministic_fixture":
             if self.deterministic_fixture_runner is None:
                 raise TransformProgramError("deterministic_fixture_not_allowed")
@@ -511,67 +721,123 @@ class TransformDslInterpreter:
             else: value = max(values)
             return [{output: value}]
         if step.op == "aggregate_grouped":
-            group_field, value_field = str(args["group_field"]), str(args["value_field"])
-            groups: dict[object, list[float]] = defaultdict(list)
+            if "group_fields" in args:
+                group_fields = tuple(args["group_fields"])
+                group_outputs = group_fields
+                aggregates = tuple(zip(args["value_fields"], args["functions"], args["outputs"], strict=True))
+            else:
+                group_fields = (str(args["group_field"]),)
+                group_outputs = (str(args.get("group_output", group_fields[0])),)
+                aggregates = tuple(
+                    (str(args["value_field"]), function, str(args.get(f"{function}_output", function)))
+                    for function in ("sum", "mean", "min", "max", "count")
+                )
+            groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
             for row in rows:
-                value = row.get(value_field)
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    raise TransformProgramError("aggregate_value_not_numeric")
-                groups[row.get(group_field)].append(float(value))
-            return [
-                {
-                    str(args.get("group_output", group_field)): group,
-                    str(args.get("sum_output", "sum")): sum(values),
-                    str(args.get("mean_output", "mean")): sum(values) / len(values),
-                    str(args.get("min_output", "min")): min(values),
-                    str(args.get("max_output", "max")): max(values),
-                    str(args.get("count_output", "count")): len(values),
-                }
-                for group, values in sorted(groups.items(), key=lambda item: str(item[0]))
-            ]
+                groups[tuple(row[field] for field in group_fields)].append(row)
+            result: list[dict[str, Any]] = []
+            for key, members in sorted(groups.items(), key=lambda item: tuple(str(part) for part in item[0])):
+                record = dict(zip(group_outputs, key, strict=True))
+                for field, function, output in aggregates:
+                    values = [row[field] for row in members]
+                    if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(float(value)) for value in values):
+                        raise TransformProgramError("aggregate_value_not_numeric")
+                    if function == "count":
+                        value = len(values)
+                    elif function == "sum":
+                        value = sum(values)
+                    elif function == "mean":
+                        value = sum(values) / len(values)
+                    elif function == "min":
+                        value = min(values)
+                    else:
+                        value = max(values)
+                    if isinstance(value, float) and not isfinite(value):
+                        raise TransformProgramError("non_finite_result")
+                    record[output] = value
+                result.append(record)
+            return result
         if step.op == "derive_safe":
-            numerator = str(args["numerator"])
-            denominator = str(args["denominator"])
-            output = str(args["output"])
-            kind = str(args["kind"])
+            calculations = args.get("calculations")
+            if calculations is None:
+                calculations = [[args["output"], args["kind"], args["numerator"], args["denominator"]]]
             transformed: list[dict[str, Any]] = []
             for row in rows:
-                left, right = row.get(numerator), row.get(denominator)
-                value = None
-                if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-                    if kind == "difference": value = left - right
-                    elif kind == "ratio" and right != 0: value = left / right
-                    elif kind == "pct_change" and right != 0: value = ((left - right) / right) * 100.0
-                if isinstance(value, float) and not isfinite(value):
-                    raise TransformProgramError("non_finite_result")
-                transformed.append({**row, output: value})
+                record = dict(row)
+                for calculation in calculations:
+                    output, kind, left_field, right_operand = calculation[:4]
+                    left = record[left_field]
+                    right = record[right_operand] if isinstance(right_operand, str) else right_operand
+                    if kind == "boolean_change":
+                        if not isinstance(left, bool) or (right is not None and not isinstance(right, bool)):
+                            raise TransformProgramError("derive_boolean_operand_invalid")
+                        if right is None:
+                            value = "initial"
+                        elif left:
+                            value = "still_risk" if right else "new"
+                        else:
+                            value = "resolved" if right else "still_clear"
+                    else:
+                        if any(not isinstance(operand, (int, float)) or isinstance(operand, bool) or not isfinite(float(operand)) for operand in (left, right)):
+                            raise TransformProgramError("derive_operand_not_numeric")
+                        if kind in {"ratio", "pct_change"} and right == 0:
+                            raise TransformProgramError("derive_zero_denominator")
+                        if kind == "difference":
+                            value = left - right
+                        elif kind == "ratio":
+                            value = left / right
+                        elif kind == "pct_change":
+                            value = ((left - right) / right) * 100.0
+                        elif kind == "less_than":
+                            value = left < right
+                        else:
+                            value = left > right
+                        if len(calculation) > 4:
+                            value *= calculation[4]
+                        if len(calculation) > 5 and calculation[5] is not None:
+                            value = round(value, calculation[5])
+                        if isinstance(value, float) and not isfinite(value):
+                            raise TransformProgramError("non_finite_result")
+                    record[output] = value
+                transformed.append(record)
             return transformed
         if step.op == "compare_periods":
             period_field, value_field = str(args["period_field"]), str(args["value_field"])
             carry_fields = tuple(str(field) for field in args.get("carry_fields", ()))
-            ordered = sorted(rows, key=lambda row: str(row.get(period_field, "")))
-            if len(ordered) < 2:
+            group_fields = tuple(str(field) for field in args.get("group_fields", ()))
+            groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+            for row in rows:
+                groups[tuple(row[field] for field in group_fields)].append(row)
+            if not rows:
                 raise TransformProgramError("comparison_requires_two_rows")
-            before, after = ordered[0], ordered[-1]
-            base, current = before.get(value_field), after.get(value_field)
-            if not isinstance(base, (int, float)) or isinstance(base, bool) or not isinstance(current, (int, float)) or isinstance(current, bool) or base == 0:
-                raise TransformProgramError("comparison_values_invalid")
-            carried: dict[str, Any] = {}
-            for field in carry_fields:
-                value = ordered[0].get(field)
-                if any(row.get(field) != value for row in ordered[1:]):
-                    raise TransformProgramError("comparison_carry_field_not_invariant")
-                carried[field] = value
-            return [{
-                **carried,
-                str(args.get("baseline_period_output", "baseline_period")): before.get(period_field),
-                str(args.get("comparison_period_output", "comparison_period")): after.get(period_field),
-                str(args.get("baseline_value_output", "baseline_value")): float(base),
-                str(args.get("comparison_value_output", "comparison_value")): float(current),
-                str(args.get("difference_output", "difference")): float(current) - float(base),
-                str(args.get("ratio_output", "ratio")): float(current) / float(base),
-                str(args.get("growth_pct_output", "growth_pct")): ((float(current) - float(base)) / float(base)) * 100.0,
-            }]
+            result: list[dict[str, Any]] = []
+            for key, members in sorted(groups.items(), key=lambda item: tuple(str(part) for part in item[0])):
+                ordered = sorted(members, key=lambda row: str(row[period_field]))
+                if len(ordered) < 2:
+                    raise TransformProgramError("comparison_requires_two_rows")
+                if "group_fields" in args and (len(ordered) != 2 or ordered[0][period_field] == ordered[1][period_field]):
+                    raise TransformProgramError("comparison_period_rows_invalid")
+                before, after = ordered[0], ordered[-1]
+                base, current = before[value_field], after[value_field]
+                if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(float(value)) for value in (base, current)) or base == 0:
+                    raise TransformProgramError("comparison_values_invalid")
+                carried = dict(zip(group_fields, key, strict=True))
+                for field in carry_fields:
+                    value = ordered[0][field]
+                    if any(row[field] != value for row in ordered[1:]):
+                        raise TransformProgramError("comparison_carry_field_not_invariant")
+                    carried[field] = value
+                result.append({
+                    **carried,
+                    str(args.get("baseline_period_output", "baseline_period")): before[period_field],
+                    str(args.get("comparison_period_output", "comparison_period")): after[period_field],
+                    str(args.get("baseline_value_output", "baseline_value")): base,
+                    str(args.get("comparison_value_output", "comparison_value")): current,
+                    str(args.get("difference_output", "difference")): current - base,
+                    str(args.get("ratio_output", "ratio")): current / base,
+                    str(args.get("growth_pct_output", "growth_pct")): ((current - base) / base) * 100.0,
+                })
+            return result
         if step.op == "compare_metric":
             ticker_field = str(args["ticker_field"])
             period_field = str(args["period_field"])
@@ -661,11 +927,17 @@ class TransformDslInterpreter:
             right_rows = inputs[str(args["right_ref"])]
             if len(rows) * len(right_rows) > self.validator.max_join_rows:
                 raise TransformProgramError("join_budget_exceeded")
-            left_key, right_key = str(args["left_key"]), str(args["right_key"])
-            lookup: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+            left_keys = tuple(args["left_keys"]) if "left_keys" in args else (str(args["left_key"]),)
+            right_keys = tuple(args["right_keys"]) if "right_keys" in args else (str(args["right_key"]),)
+            prefix = str(args.get("right_prefix", ""))
+            lookup: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
             for right in right_rows:
-                lookup[right.get(right_key)].append(right)
-            return [{**left, **right} for left in rows for right in lookup.get(left.get(left_key), ())]
+                lookup[tuple(right[key] for key in right_keys)].append(right)
+            return [
+                {**left, **{prefix + key: value for key, value in right.items()}}
+                for left in rows
+                for right in lookup.get(tuple(left[key] for key in left_keys), ())
+            ]
         if step.op == "anomaly_check":
             column, output = str(args["column"]), str(args.get("output", "is_anomaly"))
             values = sorted(float(row[column]) for row in rows if isinstance(row.get(column), (int, float)))

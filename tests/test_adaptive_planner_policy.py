@@ -626,3 +626,27 @@ def test_plan_policy_rejects_fallback_capabilities_as_pipeline_stages() -> None:
     assert "fallback_capability_pipeline_forbidden" in {
         issue.error_code for issue in outcome.report.issues
     }
+
+
+def test_generic_completion_fields_honor_registered_64_item_contract():
+    registry, envelope, proposal = _generic_multi_executor_policy_fixture()
+    for count, accepted in [(9, True), (35, True), (64, True), (65, False)]:
+        steps = list(proposal.steps)
+        steps[2] = replace(steps[2], completion_criteria={'min_rows': 1, 'required_fields': [f'field_{i}' for i in range(count)]})
+        result = PlanPolicyValidator(registry, allow_llm_python=True).validate(
+            replace(proposal, steps=tuple(steps)), envelope, available_input_refs={'source': 'execution_artifact'})
+        assert (result.approved_plan is not None) is accepted, result.report.canonical_payload()
+    # A capability's smaller registered bound remains authoritative.
+    narrow = CapabilityRegistry()
+    for descriptor in registry.descriptors():
+        if descriptor.capability_id == 'execute_bounded_python_v2':
+            contract = dict(descriptor.completion_criteria_contract)
+            contract['required_fields'] = dict(contract['required_fields'], max_items=4)
+            descriptor = replace(descriptor, completion_criteria_contract=contract)
+        narrow.register(descriptor)
+    steps = list(proposal.steps)
+    steps[2] = replace(steps[2], completion_criteria={'required_fields': [f'field_{i}' for i in range(5)]})
+    result = PlanPolicyValidator(narrow, allow_llm_python=True).validate(
+        replace(proposal, steps=tuple(steps)), envelope, available_input_refs={'source': 'execution_artifact'})
+    assert result.approved_plan is None
+    assert any(issue.error_code == 'completion_criteria_outside_capability_contract' for issue in result.report.issues)

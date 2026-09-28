@@ -1,0 +1,609 @@
+{
+  "date": "2026-09-25",
+  "scope": "read_only_existing_artifact_inventory_not_a_new_campaign",
+  "stage1": [
+    {
+      "configuration": "p-text",
+      "summary_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/p-text/summary.json",
+      "scope": "four_task_development_batch",
+      "passed": 4,
+      "planned": 4,
+      "e2e_ms": 584862.367633,
+      "provider_requests": 16,
+      "provider_total_tokens": 31556,
+      "tasks": [
+        {
+          "task_id": "F01",
+          "ok": true,
+          "elapsed_ms": 150004.021085,
+          "provider": {
+            "call_count": 4,
+            "observed_provider_request_count": 4,
+            "observed_usage_partial": {
+              "completion_tokens": 2327,
+              "prompt_tokens": 5723,
+              "total_tokens": 8050
+            },
+            "provider_request_count": 4,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 1
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2327,
+              "prompt_tokens": 5723,
+              "total_tokens": 8050
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "characters": 5085,
+            "count": 4,
+            "tokens": null,
+            "utf8_bytes": 5085
+          },
+          "code_generation_attempt_count": 0,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 0,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/p-text/finance/P-TEXT/F01/result.json"
+        },
+        {
+          "task_id": "F02",
+          "ok": true,
+          "elapsed_ms": 148080.125768,
+          "provider": {
+            "call_count": 4,
+            "observed_provider_request_count": 4,
+            "observed_usage_partial": {
+              "completion_tokens": 2309,
+              "prompt_tokens": 5706,
+              "total_tokens": 8015
+            },
+            "provider_request_count": 4,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 1
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2309,
+              "prompt_tokens": 5706,
+              "total_tokens": 8015
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "characters": 4826,
+            "count": 4,
+            "tokens": null,
+            "utf8_bytes": 4826
+          },
+          "code_generation_attempt_count": 0,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 0,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/p-text/finance/P-TEXT/F02/result.json"
+        },
+        {
+          "task_id": "O01",
+          "ok": true,
+          "elapsed_ms": 142312.552848,
+          "provider": {
+            "call_count": 4,
+            "observed_provider_request_count": 4,
+            "observed_usage_partial": {
+              "completion_tokens": 2231,
+              "prompt_tokens": 5528,
+              "total_tokens": 7759
+            },
+            "provider_request_count": 4,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 1
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2231,
+              "prompt_tokens": 5528,
+              "total_tokens": 7759
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "characters": 4985,
+            "count": 4,
+            "tokens": null,
+            "utf8_bytes": 4985
+          },
+          "code_generation_attempt_count": 0,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 0,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/p-text/service_ops/P-TEXT/O01/result.json"
+        },
+        {
+          "task_id": "O02",
+          "ok": true,
+          "elapsed_ms": 144453.808411,
+          "provider": {
+            "call_count": 4,
+            "observed_provider_request_count": 4,
+            "observed_usage_partial": {
+              "completion_tokens": 2219,
+              "prompt_tokens": 5513,
+              "total_tokens": 7732
+            },
+            "provider_request_count": 4,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 1
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2219,
+              "prompt_tokens": 5513,
+              "total_tokens": 7732
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "characters": 4774,
+            "count": 4,
+            "tokens": null,
+            "utf8_bytes": 4774
+          },
+          "code_generation_attempt_count": 0,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 0,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/p-text/service_ops/P-TEXT/O02/result.json"
+        }
+      ]
+    },
+    {
+      "configuration": "sb-full",
+      "summary_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-full/summary.json",
+      "scope": "four_task_development_batch",
+      "passed": 4,
+      "planned": 4,
+      "e2e_ms": 590314.275926,
+      "provider_requests": 20,
+      "provider_total_tokens": 50092,
+      "tasks": [
+        {
+          "task_id": "F01",
+          "ok": true,
+          "elapsed_ms": 173747.050384,
+          "provider": {
+            "call_count": 5,
+            "observed_provider_request_count": 5,
+            "observed_usage_partial": {
+              "completion_tokens": 2068,
+              "prompt_tokens": 11485,
+              "total_tokens": 13553
+            },
+            "provider_request_count": 5,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 2
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2068,
+              "prompt_tokens": 11485,
+              "total_tokens": 13553
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 3,
+            "observed_callback_characters": 10881,
+            "observed_callback_messages": 7,
+            "observed_callback_utf8_bytes": 10881,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 1,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-full/finance/SB-FULL/F01/result.json"
+        },
+        {
+          "task_id": "F02",
+          "ok": true,
+          "elapsed_ms": 98568.45028,
+          "provider": {
+            "call_count": 4,
+            "observed_provider_request_count": 4,
+            "observed_usage_partial": {
+              "completion_tokens": 1262,
+              "prompt_tokens": 7603,
+              "total_tokens": 8865
+            },
+            "provider_request_count": 4,
+            "roles": {
+              "executor": 0,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 2
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 1262,
+              "prompt_tokens": 7603,
+              "total_tokens": 8865
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 3,
+            "observed_callback_characters": 5281,
+            "observed_callback_messages": 5,
+            "observed_callback_utf8_bytes": 5281,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 0,
+          "memory_consumption_count": 1,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-full/finance/SB-FULL/F02/result.json"
+        },
+        {
+          "task_id": "O01",
+          "ok": true,
+          "elapsed_ms": 165510.574063,
+          "provider": {
+            "call_count": 5,
+            "observed_provider_request_count": 5,
+            "observed_usage_partial": {
+              "completion_tokens": 2300,
+              "prompt_tokens": 11425,
+              "total_tokens": 13725
+            },
+            "provider_request_count": 5,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 2
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2300,
+              "prompt_tokens": 11425,
+              "total_tokens": 13725
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 3,
+            "observed_callback_characters": 11353,
+            "observed_callback_messages": 7,
+            "observed_callback_utf8_bytes": 11353,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 1,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-full/service_ops/SB-FULL/O01/result.json"
+        },
+        {
+          "task_id": "O02",
+          "ok": true,
+          "elapsed_ms": 152467.384037,
+          "provider": {
+            "call_count": 6,
+            "observed_provider_request_count": 6,
+            "observed_usage_partial": {
+              "completion_tokens": 1934,
+              "prompt_tokens": 12015,
+              "total_tokens": 13949
+            },
+            "provider_request_count": 6,
+            "roles": {
+              "executor": 0,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 4
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 1934,
+              "prompt_tokens": 12015,
+              "total_tokens": 13949
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 5,
+            "observed_callback_characters": 7922,
+            "observed_callback_messages": 9,
+            "observed_callback_utf8_bytes": 7922,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 0,
+          "memory_consumption_count": 1,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-full/service_ops/SB-FULL/O02/result.json"
+        }
+      ]
+    },
+    {
+      "configuration": "sb-no-memory",
+      "summary_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-no-memory/summary.json",
+      "scope": "four_task_development_batch",
+      "passed": 4,
+      "planned": 4,
+      "e2e_ms": 677226.302207,
+      "provider_requests": 23,
+      "provider_total_tokens": 61989,
+      "tasks": [
+        {
+          "task_id": "F01",
+          "ok": true,
+          "elapsed_ms": 115407.752342,
+          "provider": {
+            "call_count": 5,
+            "observed_provider_request_count": 5,
+            "observed_usage_partial": {
+              "completion_tokens": 1955,
+              "prompt_tokens": 11470,
+              "total_tokens": 13425
+            },
+            "provider_request_count": 5,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 2
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 1955,
+              "prompt_tokens": 11470,
+              "total_tokens": 13425
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 3,
+            "observed_callback_characters": 10781,
+            "observed_callback_messages": 7,
+            "observed_callback_utf8_bytes": 10781,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 1,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-no-memory/finance/SB-NO-MEMORY/F01/result.json"
+        },
+        {
+          "task_id": "F02",
+          "ok": true,
+          "elapsed_ms": 138632.719032,
+          "provider": {
+            "call_count": 5,
+            "observed_provider_request_count": 5,
+            "observed_usage_partial": {
+              "completion_tokens": 2050,
+              "prompt_tokens": 11596,
+              "total_tokens": 13646
+            },
+            "provider_request_count": 5,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 2
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2050,
+              "prompt_tokens": 11596,
+              "total_tokens": 13646
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 3,
+            "observed_callback_characters": 10974,
+            "observed_callback_messages": 7,
+            "observed_callback_utf8_bytes": 10974,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 1,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-no-memory/finance/SB-NO-MEMORY/F02/result.json"
+        },
+        {
+          "task_id": "O01",
+          "ok": true,
+          "elapsed_ms": 197851.08208,
+          "provider": {
+            "call_count": 6,
+            "observed_provider_request_count": 6,
+            "observed_usage_partial": {
+              "completion_tokens": 2473,
+              "prompt_tokens": 13685,
+              "total_tokens": 16158
+            },
+            "provider_request_count": 6,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 3
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2473,
+              "prompt_tokens": 13685,
+              "total_tokens": 16158
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 4,
+            "observed_callback_characters": 12572,
+            "observed_callback_messages": 9,
+            "observed_callback_utf8_bytes": 12572,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 1,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-no-memory/service_ops/SB-NO-MEMORY/O01/result.json"
+        },
+        {
+          "task_id": "O02",
+          "ok": true,
+          "elapsed_ms": 225310.463213,
+          "provider": {
+            "call_count": 7,
+            "observed_provider_request_count": 7,
+            "observed_usage_partial": {
+              "completion_tokens": 2817,
+              "prompt_tokens": 15943,
+              "total_tokens": 18760
+            },
+            "provider_request_count": 7,
+            "roles": {
+              "executor": 1,
+              "planner": 1,
+              "retriever": 1,
+              "summarizer": 4
+            },
+            "unresolved_call_ids": [],
+            "usage": {
+              "completion_tokens": 2817,
+              "prompt_tokens": 15943,
+              "total_tokens": 18760
+            },
+            "usage_missing_reason": ""
+          },
+          "handoff_measurement": {
+            "complete_agent_handoff_bytes": null,
+            "observations": 5,
+            "observed_callback_characters": 13497,
+            "observed_callback_messages": 11,
+            "observed_callback_utf8_bytes": 13497,
+            "reason": "measured callback payload projections, not exhaustive Runtime traffic or physical frames",
+            "tokens": null
+          },
+          "code_generation_attempt_count": 1,
+          "memory_consumption_count": 0,
+          "state_published_payload_bytes": 98304,
+          "result_path": "/home/qcrs/statebus/os/runs/contest-stage1-history-fix-20260925b/stage1/sb-no-memory/service_ops/SB-NO-MEMORY/O02/result.json"
+        }
+      ]
+    }
+  ],
+  "state_demo": {
+    "evidence_root": "/home/qcrs/statebus/os/runs/contest-stage2-state-regex-fix-20260925b",
+    "ok": true,
+    "cases": [
+      "semantic-holdout-s1"
+    ],
+    "variants": [
+      {
+        "variant": "off",
+        "quality_pass": true,
+        "semantic_publish_count": 0.0,
+        "semantic_transfer_count": 0.0,
+        "semantic_consume_count": 0.0,
+        "downstream_effect": false
+      },
+      {
+        "variant": "on",
+        "quality_pass": true,
+        "semantic_publish_count": 2.0,
+        "semantic_transfer_count": 2.0,
+        "semantic_consume_count": 2.0,
+        "downstream_effect": true
+      },
+      {
+        "variant": "consumer_off",
+        "quality_pass": true,
+        "semantic_publish_count": 2.0,
+        "semantic_transfer_count": 0.0,
+        "semantic_consume_count": 0.0,
+        "downstream_effect": false
+      }
+    ]
+  },
+  "historical_five_family_coverage": {
+    "source": "/home/qcrs/statebus/work/p1-merged-analysis-20260923/summary.json",
+    "denominator": {
+      "accepted_slot_count": 192,
+      "case_count": 48,
+      "coverage_pct": 100.0,
+      "lane_count": 4,
+      "missing_slot_count": 0,
+      "planned_slot_count": 192
+    },
+    "selection_policy": "first_accepted_root_order",
+    "scope": "eventual_repaired_coverage_not_current_first_attempt_accuracy"
+  },
+  "v2_smoke_summary": "/home/qcrs/statebus/os/runs/contest-stage2-v2-live-20260925c/review-summary.json",
+  "current_memory_campaign": {
+    "root": "/home/qcrs/statebus/os/runs/contest-stage2-memory-context-fix-20260925_213240",
+    "status": "completed",
+    "planned_count": 12,
+    "started_count": 12,
+    "passed_count": 12,
+    "failure_count": 0,
+    "acceptance_path": "/home/qcrs/statebus/os/runs/contest-stage2-memory-context-fix-20260925_213240/acceptance.json",
+    "report_path": "/home/qcrs/statebus/os/docs/reports/contest-stage2-memory-full-20260925.md",
+    "variants": {
+      "none": {
+        "task_count": 6,
+        "passed_count": 6,
+        "elapsed_total_ms": 927217.3717,
+        "provider_request_count": 35,
+        "provider_total_tokens": 98087,
+        "executor_request_count": 7,
+        "memory_consumption_count": 0
+      },
+      "validated_replay": {
+        "task_count": 6,
+        "passed_count": 6,
+        "elapsed_total_ms": 772957.4599280001,
+        "provider_request_count": 33,
+        "provider_total_tokens": 91460,
+        "executor_request_count": 5,
+        "memory_consumption_count": 2
+      }
+    },
+    "formal_stage2_ready": false,
+    "stage3_allowed": false,
+    "scope": "B1 live two public memory chains; descriptive mechanism evidence, not formal Stage 2 gate"
+  },
+  "metric_gaps": [
+    "common_text_typed_handoff_boundary",
+    "handoff_token_count",
+    "complete_transport_bytes",
+    "consumer_hydration_cost_summary",
+    "uniform_codeact_first_attempt_outcome_summary"
+  ]
+}

@@ -9,8 +9,9 @@
 | 用途 | 操作 |
 |:--|:--|
 | 字段与行选择 | `select`、`rename`、`filter_eq`、`filter_contains`、`filter_in`、`filter_range`、`sort`、`limit` |
-| 聚合与派生 | `group_by`、`aggregate`、`aggregate_grouped`、`derive_safe` |
-| 跨期与联结 | `compare_periods`、`join_by_key` |
+| 聚合、派生与排序 | `group_by`、`aggregate`、`aggregate_grouped`、`derive_safe`、`rank` |
+| 跨期、比较与联结 | `compare_periods`、`compare_metric`、`join_by_key` |
+| 分布与趋势 | `percentile_nearest_rank`、`trend_series` |
 | 异常与结论投影 | `anomaly_check`、`anomaly_zscore`、`project_claim_fields` |
 
 DSL 参数采用结构化字段和注册操作。字段来自已知输入 schema，join 的 right Ref 来自授权列表，
@@ -33,6 +34,8 @@ flowchart LR
 排序、序列化并限制输出字节。`derive_safe` 接受 difference、ratio 和 pct_change 等注册 kind。
 
 `run_verified()` 还会检查 Grant 是否过期、output contract 是否匹配、输入 Ref 是否完全在 Grant 中。输出写到 attempt workspace 的固定 `outputs/transform_result.json`，计算 hash，登记 Artifact，并在 schema 与 quality validator 通过后提升。
+
+`rank` 只接受输入字段、方向、显式 tie-break 字段和输出字段，产生稳定的 ordinal rank；它不携带任何任务编号或业务常量。`percentile_nearest_rank` 接受数值字段、百分位和可选分组字段，按 nearest-rank 规则产生分位数。两者都只处理授权输入行，缺失或非有限数值会拒绝执行。
 
 Planner/Runtime 根据 CanonicalTaskSpec 选择 capability，Retriever 提供获准证据，Summarizer
 消费 verified Artifact。Executor 根据任务结构选择 DSL 或受限 Python：注册操作由 DSL 提供

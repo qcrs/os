@@ -1,0 +1,38 @@
+{
+  "verified_rows": [
+    {
+      "below_20_pct": false,
+      "cost_cny": 475172,
+      "margin_pct": 24.0003,
+      "net_revenue_cny": 625229,
+      "note_locator": "notes_2026-02.md#U-A",
+      "profit_cny": 150057,
+      "risk_change": "resolved",
+      "unit_id": "U-A"
+    },
+    {
+      "below_20_pct": true,
+      "cost_cny": 520905,
+      "margin_pct": 17.0003,
+      "net_revenue_cny": 627599,
+      "note_locator": "notes_2026-02.md#U-B",
+      "profit_cny": 106694,
+      "risk_change": "new",
+      "unit_id": "U-B"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "ctx-section-2",
+      "evidence_text": "U-A\nU-A 2026-02: A partner promotion was active; rebates are already deducted from net revenue."
+    },
+    {
+      "evidence_id": "ctx-section-3",
+      "evidence_text": "U-B\nU-B 2026-02: Expedited shipments increased fulfillment cost; figures include these invoices."
+    }
+  ],
+  "raw_responses": [
+    "{\"claims\": [{\"claim_id\": \"unit-U-A-2026-02-risk-resolved\", \"claim_text\": \"A partner promotion was active; rebates are already deducted from net revenue.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-2\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F02-execute-analysis-adaptive-attempt-run-1790258566870144820-8ef331747643-2\"], \"numeric_fields\": {\"cost_cny\": 475172, \"margin_pct\": 24.0003, \"net_revenue_cny\": 625229, \"profit_cny\": 150057}, \"uncertainty_note\": \"\" , \"status\": \"ready\"}, {\"claim_id\": \"unit-U-B-2026-02-risk-new\", \"claim_text\": \"Expedited shipments increased fulfillment cost; figures include these invoices.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-3\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F02-execute-analysis-adaptive-attempt-run-1790258566870144820-8ef331747643-2\"], \"numeric_fields\": {\"cost_cny\": 520905, \"margin_pct\": 17.0003, \"net_revenue_cny\": 627599, \"profit_cny\": 106694}, \"uncertainty_note\": \"\" , \"status\": \"ready\"}], \"status\": \"ready\"}",
+    "{\"claims\": [{\"claim_id\": \"claim-unit-U-A-2026-02\", \"claim_text\": \"A partner promotion was active; rebates are already deducted from net revenue.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-2\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F02-execute-analysis-adaptive-attempt-run-1790258566870144820-8ef331747643-2\"], \"numeric_fields\": {\"cost_cny\": 475172, \"margin_pct\": 24.0003, \"net_revenue_cny\": 625229, \"profit_cny\": 150057}, \"uncertainty_note\": \"\", \"status\": \"ready\"}, {\"claim_id\": \"claim-unit-U-B-2026-02\", \"claim_text\": \"Expedited shipments increased fulfillment cost; figures include these invoices.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-3\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F02-execute-analysis-adaptive-attempt-run-1790258566870144820-8ef331747643-2\"], \"numeric_fields\": {\"cost_cny\": 520905, \"margin_pct\": 17.0003, \"net_revenue_cny\": 627599, \"profit_cny\": 106694}, \"uncertainty_note\": \"\", \"status\": \"ready\"}], \"status\": \"ready\"}"
+  ]
+}

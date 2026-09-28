@@ -62,11 +62,94 @@ def test_generation_prompt_carries_controller_owned_analysis_semantics_without_i
     assert "source profile reports missing_count greater than zero as nullable" in prompt
     assert "Preserving a row with None does not authorize passing None" in prompt
     assert "store only a finite int/float or None" in prompt
+    assert "have no .isfinite() method" in prompt
+    assert '`-float("inf") < value < float("inf")`' in prompt
     assert "Never preserve or reinsert the original string" in prompt
     assert "`metric_name` should use the task's canonical `metric` token" in prompt
     assert "omit comments, docstrings, unused imports, main wrappers, and one-use helpers" in prompt
     assert "Keep every required parsing, missing-value, calculation, and output-validation step" in prompt
     assert "120" not in prompt
+
+
+def test_generation_and_repair_guidance_explain_regex_transport_and_forbidden_compile() -> None:
+    policy = CodeGenerationPolicy(
+        capability_id="extract_narrative_facts_python_v1",
+        enabled=True,
+        allowed_module_roots=("json", "pathlib", "re"),
+    )
+    request = CodeGenerationRequest(
+        task_id="semantic-holdout-s1", step_id="execute", attempt_id="attempt",
+        approved_plan_hash="plan", capability_grant_hash="grant",
+        capability_id=policy.capability_id, input_ref_ids=("input",),
+        input_manifest_digest="inputs", output_schema={"value": "string"},
+        model_signature="model", prompt_signature="prompt", runtime_signature="runtime",
+        policy=policy, operation_semantics={
+            "operation": "extract_narrative_facts",
+            "labeled_fact_algorithm": {"python_regex_template": "r'\\s+'"},
+        },
+    )
+
+    prompt = build_code_generation_prompt(request)
+    guidance = build_code_repair_guidance(
+        ("forbidden_call:re.compile", "quality_error:output_type:value"),
+        policy, operation_semantics=request.operation_semantics,
+    )
+
+    assert "Output JSON type validation is strict for these fields" in guidance
+    assert '"value":"declared schema type"' in guidance
+    assert "Do not leave a declared field null" in guidance
+    assert "Apply each public fact selector independently" in guidance
+    assert "(?:was|is)" in guidance
+    for text in (prompt, guidance):
+        assert "re.compile" in text
+        assert "re.search or re.match" in text
+        assert "one backslash" in text
+        assert 'r"\\s+"' in text
+        assert 'r"\\\\s+"' in text
+
+
+def test_repair_guidance_replaces_path_open_with_literal_read_write_calls() -> None:
+    policy = CodeGenerationPolicy(
+        capability_id="extract_narrative_facts_python_v1",
+        enabled=True,
+        allowed_module_roots=("json", "pathlib", "re"),
+        allowed_input_relpaths=("inputs/task.json",),
+        output_relpath="outputs/result.json",
+    )
+    guidance = build_code_repair_guidance(
+        (
+            "forbidden_call:input_path.open",
+            "forbidden_call:output_path.open",
+            "missing_output_write",
+        ),
+        policy,
+    )
+
+    assert "Do not use open, Path.open" in guidance
+    assert "Path('literal').read_text" in guidance
+    assert "Path('literal').write_text" in guidance
+    assert "literal write_text call" in guidance
+
+
+def test_finite_number_guidance_works_without_an_allowed_math_import() -> None:
+    policy = CodeGenerationPolicy(
+        capability_id="bounded_metric_python_v1", enabled=True,
+        allowed_module_roots=("json", "pathlib", "re", "statistics", "collections"),
+    )
+    request = CodeGenerationRequest(
+        task_id="task", step_id="execute", attempt_id="attempt", approved_plan_hash="plan",
+        capability_grant_hash="grant", capability_id=policy.capability_id,
+        input_ref_ids=("input",), input_manifest_digest="inputs", output_schema={"value": "number"},
+        model_signature="model", prompt_signature="prompt", runtime_signature="runtime", policy=policy,
+    )
+    prompt = build_code_generation_prompt(request)
+    guidance = build_code_repair_guidance(
+        ("runtime_error:AttributeError: 'float' object has no attribute 'isfinite'",), policy,
+    )
+    for text in (prompt, guidance):
+        assert '`-float("inf") < value < float("inf")`' in text
+        assert "Checking only inequality with infinities does not reject NaN" in text
+        assert "import math" not in text
 
 
 def test_generation_prompt_requires_controller_owned_canonical_array_order() -> None:
@@ -426,3 +509,119 @@ def test_code_request_rejects_cross_attempt_plan_and_unsafe_workspace_policy(tmp
             attempt_workspace=tmp_path / "reordered",
             input_files={"inputs/task.json": b"{}"},
         )
+
+
+@pytest.mark.parametrize('name', ['executor_initial_raw.txt', 'executor_repair_1_raw.txt'])
+def test_real_invalid_json_code_wrappers_are_not_python_syntax_errors(name):
+    from pathlib import Path
+    raw = (Path(__file__).parent / 'fixtures/contest_stage1_failures' / name).read_text()
+    source = extract_python_source(raw)
+    assert source.strip() == raw.strip()  # No quote guessing or executable patching.
+    policy = CodeGenerationPolicy(capability_id='bounded_metric_python_v1', enabled=True)
+    report = audit_generated_source(source, policy)
+    assert not report.passed and len(report.violations) == 1
+    assert report.violations[0].startswith('code_response_format:json_decode:line=2:column=')
+    assert len(report.violations[0]) < 240
+    assert 'complete raw Python file, NOT JSON' in build_code_repair_guidance(report.violations, policy)
+
+
+@pytest.mark.parametrize('wrapper', ['raw', 'python', 'py', 'fence', 'json', 'json_fence'])
+def test_all_valid_code_response_formats_preserve_source(wrapper):
+    import json
+    source = ('import json\nfrom pathlib import Path\n'
+              'row=json.loads(Path("inputs/task.json").read_text())\n'
+              'Path("outputs/result.json").write_text(json.dumps(row))\n')
+    raw = {'raw': source, 'python': f'```python\n{source}```', 'py': f'```py\n{source}```',
+           'fence': f'```\n{source}```', 'json': json.dumps({'code': source}),
+           'json_fence': '```json\n' + json.dumps({'code': source}) + '\n```'}[wrapper]
+    extracted = extract_python_source(raw)
+    assert extracted == source
+    assert audit_generated_source(extracted, CodeGenerationPolicy(capability_id='bounded_metric_python_v1')).passed
+
+
+def test_python_syntax_diagnostic_is_bounded_and_does_not_include_source():
+    policy = CodeGenerationPolicy(capability_id='bounded_metric_python_v1')
+    report = audit_generated_source('for item in [1, 2]\n    pass\n', policy)
+    assert not report.passed and report.violations[0].startswith('syntax_error:1:column=')
+    assert 'expected' in report.violations[0] and 'for item' not in report.violations[0]
+    assert 'complete raw Python file' in build_code_repair_guidance(report.violations, policy)
+
+
+@pytest.mark.parametrize('raw', ['```json\n{"code": "pass"}', '{"code": 17}', '{"code":"pass","other":1}'])
+def test_invalid_code_wrapper_structure_fails_closed(raw):
+    report = audit_generated_source(extract_python_source(raw), CodeGenerationPolicy(capability_id='bounded_metric_python_v1'))
+    assert not report.passed and report.violations[0].startswith('code_response_format:')
+
+
+def _request_with_memory(memory_inputs):
+    return CodeGenerationRequest(
+        task_id="schema-transition", step_id="execute", attempt_id="attempt",
+        approved_plan_hash="plan", capability_grant_hash="grant",
+        capability_id="bounded_metric_python_v1", input_ref_ids=("current-input",),
+        input_manifest_digest="inputs", output_schema={"net": "number"},
+        model_signature="model", prompt_signature="prompt", runtime_signature="runtime",
+        policy=CodeGenerationPolicy(capability_id="bounded_metric_python_v1"),
+        task_goal="Compute net from booked minus refunds using current rows.",
+        authorized_input_schema={"booked": "number", "refunds": "number"},
+        memory_inputs=memory_inputs,
+    )
+
+
+def test_memory_prompt_retains_methods_and_drift_without_duplicate_code_or_authority_payload():
+    import copy
+    source = "old_net = sum(row['net_revenue'] for row in rows)\n"
+    recipe = {
+        "execution_kind": "llm_bounded_python", "source": source,
+        "source_hash": "runtime-only-source-hash", "validator_digest": "runtime-only-validator",
+    }
+    memory = tuple({
+        "ref_id": f"memory:round-{index}", "source_task_id": f"round-{index}",
+        "summary": "Group current rows by unit before calculating the ratio.",
+        "replay_class": "assist", "compatibility_verdict": "degraded",
+        "compatibility_reasons": ["input_schema_drift"],
+        "artifact_lineage": {"artifact_root_id": "/private/old-run", "old_result": 999999},
+        "memory_admission_receipt_hash": "runtime-only-receipt",
+        "input_payload_hash": f"runtime-only-payload-{index}",
+        "execution_recipe": recipe,
+    } for index in range(2))
+    before = copy.deepcopy(memory)
+    request = _request_with_memory(memory)
+    prompt = build_code_generation_prompt(request)
+
+    assert prompt.count("old_net =") == 1
+    assert "execution_recipe_ref" in prompt
+    for item in memory:
+        assert item["ref_id"] in prompt
+    assert "input_schema_drift" in prompt and '"replay_class":"assist"' in prompt
+    assert "old field names or formulas never override the current contract" in prompt
+    assert "booked minus refunds" in prompt
+    for excluded in ("/private/old-run", "999999", "runtime-only"):
+        assert excluded not in prompt
+    assert request.memory_inputs == before  # Runtime still receives the full inputs.
+
+
+def test_memory_prompt_dedup_uses_content_not_claimed_hash():
+    from statebus.runtime.memory_projection import provider_visible_memory_inputs
+    memory = tuple({
+        "ref_id": f"memory:{index}", "execution_recipe_hash": "same-claimed-hash",
+        "execution_recipe": {"source": source, "source_hash": "same-claimed-source-hash"},
+    } for index, source in enumerate(("total = sum(rows)", "total = max(rows)")))
+    projected = provider_visible_memory_inputs(memory)
+    assert [item["execution_recipe"]["source"] for item in projected] == [
+        "total = sum(rows)", "total = max(rows)",
+    ]
+
+
+def test_memory_repair_prompt_keeps_decisions_and_current_contract_without_old_source():
+    request = _request_with_memory(({
+        "ref_id": "memory:previous", "summary": "Aggregate by unit.",
+        "replay_class": "assist", "compatibility_reasons": ["input_schema_drift"],
+        "execution_recipe": {"source": "obsolete_field = row['old_name']\n"},
+    },))
+    prompt = build_code_generation_prompt(request, include_memory_recipes=False)
+    for required in ("memory:previous", "Aggregate by unit.", "input_schema_drift", "booked minus refunds"):
+        assert required in prompt
+    assert "obsolete_field" not in prompt
+    assert "obsolete_field" in build_code_generation_prompt(request)
+    empty = replace(request, memory_inputs=())
+    assert build_code_generation_prompt(empty) == build_code_generation_prompt(empty, include_memory_recipes=False)

@@ -11,6 +11,7 @@ import time
 import traceback
 
 from statebus.integrations.llm import LLMConfig, build_llm_client
+from statebus.benchmark.request_journal import with_optional_request_journal
 from statebus.contracts import (
     AdaptiveTaskEnvelope,
     Claim,
@@ -377,8 +378,24 @@ def _program_from_payload(payload: dict[str, object]) -> TransformProgram:
     )
 
 
-def _claim_set_from_payload(payload: dict[str, object]) -> ClaimSet:
-    raw_claims = payload.get("claims", [])
+def _claim_set_from_payload(
+    payload: dict[str, object],
+    *,
+    default_artifact_ref_ids: tuple[str, ...] = (),
+) -> ClaimSet:
+    # The current ClaimSet contract names the top-level array ``claims``.
+    # Some providers still emit the historical ``claim_set`` name even when
+    # they follow the current item schema. Normalize that shape at the role
+    # boundary so the normal ClaimSet/scorer validators remain authoritative.
+    # A batch may have one controller-bound verified artifact. If a provider
+    # omits that typed reference while emitting numeric_fields, bind only that
+    # already-authorized artifact; this repairs provenance shape, never claim
+    # values or task content.
+    raw_claims = payload.get("claims")
+    if raw_claims is None and isinstance(payload.get("claim_set"), list):
+        raw_claims = payload["claim_set"]
+    if raw_claims is None:
+        raw_claims = []
     if not isinstance(raw_claims, list):
         raise ValueError("worker_claims_not_list")
     claims: list[Claim] = []
@@ -386,14 +403,21 @@ def _claim_set_from_payload(payload: dict[str, object]) -> ClaimSet:
         if not isinstance(raw, dict):
             continue
         numeric_fields = raw.get("numeric_fields", {})
+        numeric = (
+            {str(key): float(value) for key, value in numeric_fields.items()}
+            if isinstance(numeric_fields, dict) else {}
+        )
+        artifact_refs = _string_tuple(raw.get("supporting_artifact_ref_ids"))
+        if numeric and not artifact_refs and default_artifact_ref_ids:
+            artifact_refs = tuple(default_artifact_ref_ids)
         claims.append(Claim(
             claim_id=str(raw.get("claim_id", "")),
             claim_text=str(raw.get("claim_text", "")),
             claim_type=str(raw.get("claim_type", "fact")),
             supporting_evidence_item_ids=_string_tuple(raw.get("supporting_evidence_item_ids")),
-            supporting_artifact_ref_ids=_string_tuple(raw.get("supporting_artifact_ref_ids")),
+            supporting_artifact_ref_ids=artifact_refs,
             citation_locators=_string_tuple(raw.get("citation_locators")),
-            numeric_fields={str(key): float(value) for key, value in numeric_fields.items()} if isinstance(numeric_fields, dict) else {},
+            numeric_fields=numeric,
             uncertainty_note=str(raw.get("uncertainty_note", "")),
             status=str(raw.get("status", "ready")),
         ))
@@ -497,7 +521,7 @@ def _run_role_worker(role: str) -> None:
     max_tokens = _role_max_tokens_override(role)
     if max_tokens is not None:
         llm_config = llm_config.with_role_override(role, max_tokens=max_tokens)
-    recording_client = _RecordingLlmClient(build_llm_client(llm_config))
+    recording_client = _RecordingLlmClient(with_optional_request_journal(build_llm_client(llm_config)))
     runner = RolePathRunner(llm_client=recording_client, json_response_max_attempts=1)
     worker_error = ""
     try:
@@ -612,6 +636,8 @@ def _run_role_worker(role: str) -> None:
                         if payload.get("expected_claim_count") is not None
                         else None
                     ),
+                    report_requirements=str(payload.get("report_requirements", "")),
+                    repair_context=payload.get("repair_context"),
                 ).canonical_payload()
         else:
             raise ValueError(f"unsupported_role_worker:{role}")

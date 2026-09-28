@@ -142,7 +142,20 @@ def test_runtime_dispatcher_executes_retrieval_projection_dsl_and_registered_bui
             operations=(TransformStep("select", {"columns": ["invented_revenue"]}),),
         )
 
-    def repair_program(step, grant, input_ref_id, rows, validation_errors) -> TransformProgram:
+    def repair_program(
+        step,
+        grant,
+        input_ref_id,
+        rows,
+        validation_errors,
+        *,
+        input_tables,
+        previous_program,
+        repair_stage,
+    ) -> TransformProgram:
+        assert input_tables[input_ref_id] == rows
+        assert previous_program.program_id == "invalid-extract-program"
+        assert repair_stage == "execution_validation"
         assert validation_errors == ("unknown_column:0",)
         assert rows == ({"quarter": "2026Q1", "revenue_musd": 120.0},)
         return TransformProgram(
@@ -272,8 +285,19 @@ def test_runtime_dispatcher_repairs_dsl_after_business_validator_rejection(tmp_p
             ),
         )
 
-    def repair_program(step, grant, input_ref_id, rows, validation_errors) -> TransformProgram:
+    def repair_program(
+        step,
+        grant,
+        input_ref_id,
+        rows,
+        validation_errors,
+        *,
+        previous_program,
+        repair_stage,
+    ) -> TransformProgram:
         del step
+        assert previous_program.program_id == "empty-result"
+        assert repair_stage == "quality_validation"
         assert rows == ({"quarter": "2026Q1", "revenue_musd": 120.0},)
         repair_errors.append(validation_errors)
         return TransformProgram(

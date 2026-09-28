@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 from dataclasses import replace
+from math import ceil, isfinite
 import os
 from pathlib import Path
 import time
@@ -34,6 +35,14 @@ FAMILY_CONFIGS: tuple[dict[str, object], ...] = (
         "no_effect_rounds": (3,),
     },
 )
+
+
+def _phase_projection(result: Any) -> list[dict[str, object]]:
+    return [
+        event.canonical_payload()
+        for event in result.runtime.telemetry.events
+        if event.event_type == "RUNTIME_PHASE_TIMING"
+    ]
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -557,6 +566,7 @@ def _project_row(
         "reason": execution["reason"],
         "provider_boundary_call_count": len(provider_boundary_rows),
         "runtime_elapsed_ms": runtime_elapsed_ms,
+        "runtime_phase_events": _phase_projection(result),
         "current_input_recomputed": execution["current_input_recomputed"],
         "quality_evidence": {
             "status": "observed" if quality_hash else "unsupported",
@@ -655,6 +665,7 @@ def _producer_projection(
         "reason": reason,
         "provider_boundary_call_count": len(provider_boundary_rows),
         "runtime_elapsed_ms": runtime_elapsed_ms,
+        "runtime_phase_events": _phase_projection(result),
         "provider_invocation_evidence": (
             dict(provider_boundary_rows[0])
             if len(provider_boundary_rows) == 1
@@ -711,11 +722,36 @@ def _build_denominator(
     }
 
 
+def _elapsed_accounting(records: list[dict[str, object]]) -> dict[str, object]:
+    attempted = [row for row in records if row.get("attempt_status") != "not_started"]
+    observed: list[float] = []
+    failed: list[float] = []
+    for row in attempted:
+        value = row.get("runtime_elapsed_ms")
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value >= 0:
+            observed.append(float(value))
+            if row.get("error") or row.get("terminal_status") != "success":
+                failed.append(float(value))
+    complete = bool(attempted) and len(observed) == len(attempted)
+    return {
+        "status": "observed" if complete else "unsupported",
+        "attempted_count": len(attempted),
+        "not_started_count": len(records) - len(attempted),
+        "missing_timing_count": len(attempted) - len(observed),
+        "observed_subtotal_ms": sum(observed) if observed else None,
+        "total_ms": sum(observed) if complete else None,
+        "mean_ms": sum(observed) / len(attempted) if complete else None,
+        "failed_observed_ms": sum(failed) if observed else None,
+    }
+
+
 def _metrics(
     *,
     rows: list[dict[str, object]],
     pair_projection: Mapping[str, object],
     producer_rows: list[dict[str, object]],
+    failures: list[dict[str, object]],
+    denominator: Mapping[str, object],
 ) -> dict[str, object]:
     replay_rows = [item for item in rows if item.get("variant") == "validated_replay"]
     effects = {
@@ -777,44 +813,61 @@ def _metrics(
                 else "recipe_step_skip_not_observed"
             ),
         }
-    producer_setup_ms = sum(float(row.get("runtime_elapsed_ms", 0.0)) for row in producer_rows)
-    baseline_elapsed = [
-        float(row.get("runtime_elapsed_ms", 0.0))
-        for row in rows
-        if row.get("variant") == "memory_off"
-    ]
-    replay_elapsed = [
-        float(row.get("runtime_elapsed_ms", 0.0))
-        for row in replay_rows
-    ]
-    baseline_mean_ms = sum(baseline_elapsed) / len(baseline_elapsed) if baseline_elapsed else None
-    replay_mean_ms = sum(replay_elapsed) / len(replay_elapsed) if replay_elapsed else None
+    producer_cost = _elapsed_accounting(
+        producer_rows + [row for row in failures if row.get("row_scope") == "producer"]
+    )
+    lane_costs = {
+        variant: _elapsed_accounting([
+            row for row in rows + failures if row.get("variant") == variant
+        ])
+        for variant in VARIANTS
+    }
+    baseline_cost, replay_cost = (lane_costs[variant] for variant in VARIANTS)
+    producer_setup_ms = producer_cost["total_ms"]
+    baseline_mean_ms = baseline_cost["mean_ms"]
+    replay_mean_ms = replay_cost["mean_ms"]
+    accounting_complete = all(
+        cost["status"] == "observed" for cost in (producer_cost, baseline_cost, replay_cost)
+    )
+    comparable = (
+        accounting_complete and not failures
+        and denominator.get("closed_pairs", 0) == denominator.get("planned_pairs")
+        and denominator.get("planned_pairs", 0) > 0
+        and all(row.get("terminal_status") == "success" for row in rows + producer_rows)
+    )
     marginal_delta_ms = (
         baseline_mean_ms - replay_mean_ms
-        if baseline_mean_ms is not None and replay_mean_ms is not None
+        if comparable
         else None
     )
     break_even = (
-        max(1, int(producer_setup_ms / marginal_delta_ms) + int(producer_setup_ms % marginal_delta_ms > 0))
+        max(1, ceil(producer_setup_ms / marginal_delta_ms))
         if marginal_delta_ms is not None and marginal_delta_ms > 0
         else None
     )
     timing = {
-        "status": "observed" if baseline_elapsed and replay_elapsed else "unsupported",
+        "status": "observed" if accounting_complete else "unsupported",
+        "paired_comparison_status": "observed" if comparable else "unsupported",
+        "producer": producer_cost,
+        "lanes": lane_costs,
         "producer_setup_ms": producer_setup_ms,
-        "baseline_total_ms": sum(baseline_elapsed),
-        "replay_total_ms": sum(replay_elapsed),
+        "baseline_total_ms": baseline_cost["total_ms"],
+        "replay_total_ms": replay_cost["total_ms"],
         "baseline_mean_ms": baseline_mean_ms,
         "marginal_replay_cost_ms": replay_mean_ms,
-        "producer_inclusive_replay_cost_ms": producer_setup_ms + sum(replay_elapsed),
+        "producer_inclusive_replay_cost_ms": (
+            producer_setup_ms + replay_cost["total_ms"]
+            if producer_setup_ms is not None and replay_cost["total_ms"] is not None else None
+        ),
         "break_even_reuse_count": {
             "status": "observed" if break_even is not None else "unsupported",
             "value": break_even,
             "reason": "positive_baseline_minus_replay_delta"
             if break_even is not None
-            else "replay_not_cheaper_than_baseline_or_timing_missing",
+            else "incomplete_or_failed_pairs" if not comparable
+            else "replay_not_cheaper_than_baseline",
         },
-        "claim_boundary": "observed elapsed accounting only; no latency superiority claim",
+        "claim_boundary": "attempt costs include failures; means are per attempted run; break-even is pooled descriptive only, not a per-family or latency superiority claim",
     }
     return {
         "schema_version": "statebus.p4.memory_ablation_metrics.v1",
@@ -831,12 +884,12 @@ def _metrics(
             "status": "observed",
             "memory_off": sum(
                 int(item.get("provider_boundary_call_count", 0))
-                for item in rows
+                for item in rows + failures
                 if item.get("variant") == "memory_off"
             ),
             "validated_replay": sum(
                 int(item.get("provider_boundary_call_count", 0))
-                for item in replay_rows
+                for item in rows + failures if item.get("variant") == "validated_replay"
             ),
         },
         "provider_work_avoided": dict(
@@ -1039,23 +1092,23 @@ def run_memory_ablation(
             ),
             producer_boundary,
         )
+        started_ns = time.perf_counter_ns()
+        producer_elapsed_ms = None
         try:
-            started_ns = time.perf_counter_ns()
             producer_result = _run_runtime(producer_request)
             producer_elapsed_ms = (time.perf_counter_ns() - started_ns) / 1_000_000.0
-            producer_rows.append(
-                _producer_projection(
-                    result=producer_result,
-                    request=producer_request,
-                    family_id=family_id,
-                    provider_boundary_rows=producer_boundary,
-                    runtime_elapsed_ms=producer_elapsed_ms,
-                )
+            producer_row = _producer_projection(
+                result=producer_result,
+                request=producer_request,
+                family_id=family_id,
+                provider_boundary_rows=producer_boundary,
+                runtime_elapsed_ms=producer_elapsed_ms,
             )
             if producer_result.memory_commit_decision.committed:
                 memory_id = producer_result.memory_commit_decision.memory_id
                 known_memory_ids.add(memory_id)
                 source_round_by_memory_id[memory_id] = 0
+            producer_rows.append(producer_row)
         except Exception as exc:  # benchmark failure accounting is explicit
             failures.append(
                 {
@@ -1064,6 +1117,13 @@ def run_memory_ablation(
                     "family_id": family_id,
                     "variant": "producer",
                     "error": f"{type(exc).__name__}:{exc}",
+                    "attempt_status": "failed",
+                    "runtime_elapsed_ms": (
+                        producer_elapsed_ms if producer_elapsed_ms is not None
+                        else (time.perf_counter_ns() - started_ns) / 1_000_000.0
+                    ),
+                    "provider_boundary_call_count": len(producer_boundary),
+                    "runtime_root": str(producer_request.runtime_root),
                 }
             )
             for pair in family_pairs[family_id]:
@@ -1077,6 +1137,9 @@ def run_memory_ablation(
                             "round_number": pair["round_number"],
                             "variant": variant,
                             "error": "family_producer_failed",
+                            "attempt_status": "not_started",
+                            "runtime_elapsed_ms": None,
+                            "provider_boundary_call_count": 0,
                         }
                     )
             continue
@@ -1118,8 +1181,9 @@ def run_memory_ablation(
                         ),
                     )
                 request = _bind_deterministic_provider(request, boundary_rows)
+                started_ns = time.perf_counter_ns()
+                runtime_elapsed_ms = None
                 try:
-                    started_ns = time.perf_counter_ns()
                     result = _run_runtime(request)
                     runtime_elapsed_ms = (time.perf_counter_ns() - started_ns) / 1_000_000.0
                     row = _project_row(
@@ -1133,12 +1197,12 @@ def run_memory_ablation(
                         source_round_by_memory_id=source_round_by_memory_id,
                         runtime_elapsed_ms=runtime_elapsed_ms,
                     )
-                    rows.append(row)
                     _write_json(row_root / "measurement_row.json", row)
                     if not baseline and result.memory_commit_decision.committed:
                         memory_id = result.memory_commit_decision.memory_id
                         known_memory_ids.add(memory_id)
                         source_round_by_memory_id[memory_id] = round_number
+                    rows.append(row)
                 except Exception as exc:  # benchmark failure accounting is explicit
                     failures.append(
                         {
@@ -1149,6 +1213,13 @@ def run_memory_ablation(
                             "round_number": round_number,
                             "variant": variant,
                             "error": f"{type(exc).__name__}:{exc}",
+                            "attempt_status": "failed",
+                            "runtime_elapsed_ms": (
+                                runtime_elapsed_ms if runtime_elapsed_ms is not None
+                                else (time.perf_counter_ns() - started_ns) / 1_000_000.0
+                            ),
+                            "provider_boundary_call_count": len(boundary_rows),
+                            "runtime_root": str(request.runtime_root),
                         }
                     )
 
@@ -1175,6 +1246,8 @@ def run_memory_ablation(
         rows=rows,
         pair_projection=pair_projection,
         producer_rows=producer_rows,
+        failures=failures,
+        denominator=denominator,
     )
     negative_controls = _recipe_negative_controls()
 

@@ -88,6 +88,68 @@ def test_semantic_state_ablation_closes_only_matched_three_variant_pairs(
     assert rows["consumer_off"]["semantic_consume_count"] == 0.0
 
 
+def test_semantic_state_ablation_closes_requested_two_variant_pair(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    case = _case()
+    monkeypatch.setattr(semantic_holdout, "load_semantic_holdout_cases", lambda: (case,))
+
+    def fake_run(case, *, case_root, semantic_state_mode, **kwargs):
+        del case, case_root, kwargs
+        return _summary_for_mode(semantic_state_mode)
+
+    monkeypatch.setattr(semantic_holdout, "_run_adaptive_case", fake_run)
+    summary = semantic_holdout.run_semantic_state_ablation(
+        output_root=tmp_path,
+        embedding_model_path="/models/embed",
+        embedding_device="cpu",
+        case_ids=(case.task_id,),
+        modes=("off", "on"),
+        run_name="two-mode",
+    )
+
+    assert summary["ok"] is True
+    assert summary["modes"] == ["off", "on"]
+    assert [row["variant"] for row in summary["rows"]] == ["off", "on"]
+    assert summary["pairs"][0]["gates"]["exact_requested_variants"] is True
+    assert summary["pairs"][0]["gates"]["exactly_three_variants"] is True
+    assert summary["denominator"]["closed_pairs"] == 1
+
+
+def test_executor_consumer_policy_is_only_bound_to_state_on(monkeypatch, tmp_path) -> None:
+    case = _case()
+    monkeypatch.setattr(semantic_holdout, "load_semantic_holdout_cases", lambda: (case,))
+    observed = []
+
+    def fake_run(case, *, case_root, semantic_state_mode, **kwargs):
+        del case, case_root
+        observed.append((semantic_state_mode, kwargs))
+        return _summary_for_mode(semantic_state_mode)
+
+    monkeypatch.setattr(semantic_holdout, "_run_adaptive_case", fake_run)
+    summary = semantic_holdout.run_semantic_state_ablation(
+        output_root=tmp_path,
+        embedding_model_path="/models/embed",
+        embedding_device="cpu",
+        case_ids=(case.task_id,),
+        modes=("off", "on"),
+        run_name="executor-policy",
+        executor_top_k=2,
+        executor_budget_bytes=0,
+    )
+
+    assert summary["ok"] is True
+    for mode, kwargs in observed:
+        assert kwargs["memory_policy"] == "none"
+    assert observed[0][0] == "off"
+    assert observed[0][1]["semantic_state_executor_top_k"] is None
+    assert observed[0][1]["semantic_state_executor_budget_bytes"] is None
+    assert observed[1][0] == "on"
+    assert observed[1][1]["semantic_state_executor_top_k"] == 2
+    assert observed[1][1]["semantic_state_executor_budget_bytes"] == 0
+
+
 def test_semantic_state_ablation_does_not_close_pair_after_variant_failure(
     monkeypatch,
     tmp_path,

@@ -17,6 +17,7 @@ from statebus.contracts import (
     PlanNormalizationReceipt,
     PlanPolicyReport,
     PlanProposal,
+    PlanStepProposal,
     PlanProvenanceError,
     RefStatus,
     ReplayClass,
@@ -79,6 +80,9 @@ class AdaptiveMainlineError(RuntimeError):
 PlanNormalizer = Callable[[PlanProposal], tuple[PlanProposal, tuple[str, ...]]]
 PlanRepair = Callable[[PlanProposal, PlanPolicyReport, tuple[str, ...]], PlanProposal | None]
 ApprovedPlanValidator = Callable[[ApprovedPlan], None]
+AdaptiveReplanForStep = Callable[
+    [ApprovedPlan, tuple[str, ...], PlanStepProposal, str], ApprovedPlan | None
+]
 
 
 @dataclass
@@ -88,6 +92,15 @@ class AdaptiveMainlineBindings:
     # Matched-ablation control for the cross-process semantic state path.
     # Keep the default on so existing callers retain the production behavior.
     semantic_state_mode: str = "on"
+    # Optional experiment-only Executor consumer policy. ``None`` preserves
+    # the historical policy derived from the Retriever-selected pack.
+    semantic_state_executor_top_k: int | None = None
+    semantic_state_executor_budget_bytes: int | None = None
+    # Independent mechanism-control seam for experiments that must disable
+    # Memory lookup itself, not merely reject every candidate via policy.
+    # The default remains on so existing SB-FULL/P-TEXT callers keep their
+    # historical Runtime projection unless they explicitly opt out.
+    memory_query_enabled: bool = True
     validator_registry: CapabilityValidatorRegistry = field(
         default_factory=default_capability_validator_registry
     )
@@ -112,6 +125,11 @@ class AdaptiveMainlineBindings:
     output_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
     input_schema_by_step: dict[str, dict[str, str]] = field(default_factory=dict)
     claim_set_factory: ClaimSetFactory | None = None
+    # Domain-selected evidence reads still require the current Runtime Grant.
+    claim_memory_selector: Callable[[tuple[dict[str, object], ...]], tuple[str, ...]] | None = None
+    # Runtime-side allowlist for non-replay consumers that may read an
+    # admitted Memory artifact as assist context under their current Grant.
+    memory_assist_capability_ids: tuple[str, ...] = ()
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
     bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
     provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
@@ -185,6 +203,8 @@ class AdaptiveMainlineRequest:
     available_input_refs: dict[str, str] = field(default_factory=dict)
     normalize_plan: PlanNormalizer | None = None
     repair_plan: PlanRepair | None = None
+    replan_for_step: AdaptiveReplanForStep | None = None
+    skip_memory_commit_on_replan: bool = False
     validate_approved_plan: ApprovedPlanValidator | None = None
     fallback_proposal: PlanProposal | None = None
     state_pool_mode: str = "auto"
@@ -354,6 +374,9 @@ class AdaptiveMainlineRunner:
         context = AdaptiveDispatchContext(
             registry=request.registry,
             semantic_state_mode=bindings.semantic_state_mode,
+            semantic_state_executor_top_k=bindings.semantic_state_executor_top_k,
+            semantic_state_executor_budget_bytes=bindings.semantic_state_executor_budget_bytes,
+            memory_query_enabled=bindings.memory_query_enabled,
             validator_registry=bindings.validator_registry,
             artifacts=bindings.artifacts,
             artifact_verification_receipts=bindings.artifact_verification_receipts,
@@ -374,6 +397,8 @@ class AdaptiveMainlineRunner:
             output_schema_by_step=bindings.output_schema_by_step,
             input_schema_by_step=bindings.input_schema_by_step,
             claim_set_factory=bindings.claim_set_factory,
+            claim_memory_selector=bindings.claim_memory_selector,
+            memory_assist_capability_ids=bindings.memory_assist_capability_ids,
             builtin_handlers=bindings.builtin_handlers,
             bound_provider_handlers=bindings.bound_provider_handlers,
             provider_state_reader_factory=bindings.provider_state_reader_factory,
@@ -420,6 +445,7 @@ class AdaptiveMainlineRunner:
             repair_used=(planner_record.schema_repair_used or planner_record.policy_repair_used),
             fallback_used=planner_record.fallback_used,
             dispatcher=AdaptiveCapabilityDispatcher(context=context),
+            replan_for_step=request.replan_for_step,
             layer_name=request.layer_name,
             runtime_identity=runtime_identity,
             provider_registry=request.provider_registry,
@@ -443,14 +469,24 @@ class AdaptiveMainlineRunner:
         )
         try:
             runtime_result = AdaptiveRuntimeEngine().run(runtime_request)
-            memory_commit_decision = self._commit_verified_memory(
-                request=request,
-                approved_plan=approved_plan,
-                runtime=runtime_result,
-                context=context,
-                memory_store=memory_store,
-                runtime_identity=runtime_identity,
-            )
+            if request.skip_memory_commit_on_replan and runtime_result.plan_replaced:
+                memory_commit_decision = AdaptiveMemoryCommitDecision(
+                    attempted=False,
+                    committed=False,
+                    reason="memory_commit_skipped_after_replan",
+                )
+            else:
+                with runtime_result.telemetry.measure_phase(
+                    "memory_commit", trace_id=request.trace_id, task_id=request.task_id,
+                ):
+                    memory_commit_decision = self._commit_verified_memory(
+                        request=request,
+                        approved_plan=approved_plan,
+                        runtime=runtime_result,
+                        context=context,
+                        memory_store=memory_store,
+                        runtime_identity=runtime_identity,
+                    )
             runtime_result.telemetry.emit(
                 TelemetryEvent.create(
                     trace_id=request.trace_id,

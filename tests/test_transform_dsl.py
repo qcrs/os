@@ -320,3 +320,52 @@ def test_transform_validator_tracks_columns_across_operations() -> None:
     assert not report.ok
     assert report.error_code == "unknown_column"
     assert report.operation_index == 1
+
+
+def test_transform_dsl_rank_is_generic_and_uses_explicit_tie_break() -> None:
+    program = TransformProgram(
+        program_id="rank",
+        input_artifact_refs=("rows",),
+        output_contract_version="statebus.rank.v1",
+        operations=(
+            TransformStep("rank", {
+                "metric": "delta",
+                "descending": True,
+                "tie_break_columns": ["entity"],
+                "output": "rank",
+            }),
+        ),
+    )
+    rows = TransformDslInterpreter().run(program, inputs={"rows": [
+        {"entity": "B", "delta": 2.0},
+        {"entity": "A", "delta": 2.0},
+        {"entity": "C", "delta": 1.0},
+    ]})
+    assert rows == [
+        {"entity": "B", "delta": 2.0, "rank": 2},
+        {"entity": "A", "delta": 2.0, "rank": 1},
+        {"entity": "C", "delta": 1.0, "rank": 3},
+    ]
+
+
+def test_transform_dsl_nearest_rank_percentile_supports_optional_groups() -> None:
+    program = TransformProgram(
+        program_id="p95",
+        input_artifact_refs=("samples",),
+        output_contract_version="statebus.percentile.v1",
+        operations=(
+            TransformStep("percentile_nearest_rank", {
+                "value_field": "latency_ms",
+                "group_fields": ["site"],
+                "percentile": 95,
+                "output": "p95",
+            }),
+        ),
+    )
+    rows = TransformDslInterpreter().run(program, inputs={"samples": [
+        {"site": "A", "latency_ms": 10},
+        {"site": "A", "latency_ms": 20},
+        {"site": "A", "latency_ms": 30},
+        {"site": "B", "latency_ms": 5},
+    ]})
+    assert rows == [{"site": "A", "p95": 30.0}, {"site": "B", "p95": 5.0}]

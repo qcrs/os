@@ -1,0 +1,41 @@
+{
+  "source_run": "runs/contest-main-targeted-20260926c/finance/SB-FULL/F08",
+  "verified_rows": [
+    {
+      "actual_net_revenue_cny": 598216,
+      "attainment_pct": 99.7027,
+      "budget_net_revenue_cny": 600000,
+      "note_locator": "notes_2026-05.md#U-A",
+      "risk_change": "initial",
+      "under_budget": true,
+      "unit_id": "U-A",
+      "variance_cny": -1784,
+      "variance_pct": -0.2973
+    },
+    {
+      "actual_net_revenue_cny": 601066,
+      "attainment_pct": 98.8595,
+      "budget_net_revenue_cny": 608000,
+      "note_locator": "notes_2026-05.md#U-B",
+      "risk_change": "initial",
+      "under_budget": true,
+      "unit_id": "U-B",
+      "variance_cny": -6934,
+      "variance_pct": -1.1405
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "ctx-section-2",
+      "evidence_text": "U-A\nU-A 2026-05: Refunds are reported separately from booked revenue; deduct them once under the v2 dictionary."
+    },
+    {
+      "evidence_id": "ctx-section-3",
+      "evidence_text": "U-B\nU-B 2026-05: Fulfillment invoices are included in cost; refunds remain a separate revenue deduction."
+    }
+  ],
+  "raw_responses": [
+    "{\"claims\": [{\"claim_id\": \"U-A-risk-initial\", \"claim_text\": \"unit_id=U-A risk=true risk_change=initial notes_2026-05.md#U-A: Refunds are reported separately from booked revenue; deduct them once under the v2 dictionary.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-2\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F08-execute-analysis-adaptive-attempt-run-1790353596992522103-3219982ed565-2\"], \"numeric_fields\": {\"actual_net_revenue_cny\": 598216, \"attainment_pct\": 99.7027, \"budget_net_revenue_cny\": 600000, \"variance_cny\": -1784, \"variance_pct\": -2.973}, \"uncertainty_note\": \"\", \"status\": \"ready\"}, {\"claim_id\": \"U-B-risk-initial\", \"claim_text\": \"unit_id=U-B risk=true risk_change=initial notes_2026-05.md#U-B: Fulfillment invoices are included in cost; refunds remain a separate revenue deduction.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-3\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F08-execute-analysis-adaptive-attempt-run-1790353596992522103-3219982ed565-2\"], \"numeric_fields\": {\"actual_net_revenue_cny\": 601066, \"attainment_pct\": 98.8595, \"budget_net_revenue_cny\": 608000, \"variance_cny\": -6934, \"variance_pct\": -1.1405}, \"uncertainty_note\": \"\", \"status\": \"ready\"}], \"status\": \"ready\"}",
+    "{\"claims\": [{\"claim_id\": \"U-A-risk-initial\", \"claim_text\": \"unit_id=U-A risk=true risk_change=initial note_locator=notes_2026-05.md#U-A Refunds are reported separately from booked revenue; deduct them once under the v2 dictionary.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-2\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F08-execute-analysis-adaptive-attempt-run-1790353596992522103-3219982ed565-2\"], \"numeric_fields\": {\"actual_net_revenue_cny\": 598216, \"attainment_pct\": 99.7027, \"budget_net_revenue_cny\": 600000, \"variance_cny\": -1784, \"variance_pct\": -2.973}, \"uncertainty_note\": \"\", \"status\": \"ready\"}, {\"claim_id\": \"U-B-risk-initial\", \"claim_text\": \"unit_id=U-B risk=true risk_change=initial note_locator=notes_2026-05.md#U-B Fulfillment invoices are included in cost; refunds remain a separate revenue deduction.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-3\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-F08-execute-analysis-adaptive-attempt-run-1790353596992522103-3219982ed565-2\"], \"numeric_fields\": {\"actual_net_revenue_cny\": 601066, \"attainment_pct\": 98.8595, \"budget_net_revenue_cny\": 608000, \"variance_cny\": -6934, \"variance_pct\": -1.1405}, \"uncertainty_note\": \"\", \"status\": \"ready\"}], \"status\": \"ready\"}"
+  ]
+}

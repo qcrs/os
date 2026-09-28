@@ -476,7 +476,7 @@ def test_python_executor_does_not_return_retrieval_context_when_contract_only_pr
             return LlmCodeActOutcome(
                 record=CodeExecutionRecord(
                     request_hash="request",
-                    source_hash="source",
+                    source_hash=sha256_digest("pass\n".encode()),
                     raw_response_hash="raw",
                     policy_report_hash="policy",
                     sandbox_requested_backend="bwrap_required",
@@ -499,6 +499,7 @@ def test_python_executor_does_not_return_retrieval_context_when_contract_only_pr
                 output_payload=payload,
                 quality_report=quality,
                 quality_reports=(quality,),
+                accepted_source="pass\n",
             )
 
     context = AdaptiveDispatchContext(
@@ -1016,6 +1017,11 @@ def test_runtime_dispatcher_repairs_quality_rejection_in_fresh_bwrap_workspace(t
         stored.artifact for artifact_id, stored in context.artifacts.items() if artifact_id != "input"
     )
     assert "codeact-quality-repair-1" in repaired_artifact.root_id
+    recipe = context.execution_recipes_by_artifact[repaired_artifact.artifact_id]
+    assert recipe["source"] == source_with_value("rows[0]['revenue_musd']")
+    assert recipe["source_hash"] == repaired_artifact.metadata["source_hash"]
+    assert sha256_digest(recipe["source"].encode()) == recipe["source_hash"]
+    assert "999.0" not in recipe["source"]
 
 
 def test_policy_repair_does_not_consume_the_independent_runtime_repair_budget(tmp_path) -> None:

@@ -280,6 +280,78 @@ def _memory_loop_request(
     )
 
 
+def _multi_input_memory_request(tmp_path, task_id, offset, calls):
+    request = _memory_loop_request(
+        tmp_path, task_id=task_id, value=10.0,
+        family_memory_root=tmp_path / "multi-memory", program_calls=calls,
+    )
+    template = next(iter(request.bindings.artifacts.values())).artifact
+    receipt_template = next(iter(request.bindings.artifact_verification_receipts.values()))
+    artifacts, receipts = {}, {}
+    for name, rows in (("actual", [{"key": "A", "value": 10.0}]),
+                       ("adjustments", [{"key": "A", "offset": offset}])):
+        ref = "source:" + name
+        payload = stable_json_dumps(rows).encode()
+        path = Path(template.root_id) / (name + ".json")
+        path.write_bytes(payload)
+        artifact = replace(template, artifact_id=ref, relpath=path.name,
+                           blob_hash=sha256_digest(payload), size_bytes=len(payload))
+        receipt = replace(receipt_template, artifact_id=ref,
+                          candidate_blob_hash=artifact.blob_hash, candidate_size_bytes=len(payload))
+        artifact = replace(artifact, metadata={**artifact.metadata, "artifact_verification_receipt_hash": receipt.receipt_hash})
+        artifacts[ref] = StoredAdaptiveArtifact(artifact, tuple(rows), (ref,))
+        receipts[ref] = receipt
+
+    def program(step, grant, input_ref, rows, memory_inputs=(), *, input_tables):
+        calls.append(task_id)
+        return TransformProgram("multi-input", tuple(input_tables), (
+            TransformStep("join_by_key", {"right_ref": "source:adjustments", "left_key": "key", "right_key": "key"}),
+            TransformStep("derive_safe", {"numerator": "value", "denominator": "offset", "kind": "difference", "output": "adjusted"}),
+            TransformStep("select", {"columns": ["adjusted"]}),
+        ), grant.output_contract_version)
+
+    proposal = request.propose_plan()
+    proposal = replace(proposal, steps=(proposal.steps[0], replace(
+        proposal.steps[1], input_ref_ids=tuple(artifacts), input_ref_kinds=("execution_artifact",) * 2)))
+    request.bindings.artifacts = artifacts
+    request.bindings.artifact_verification_receipts = receipts
+    request.bindings.transform_program_factory = program
+    request.bindings.output_schema_by_step = {"execute": {"adjusted": "number"}}
+    return replace(request, propose_plan=lambda: proposal,
+                   available_input_refs={ref: "execution_artifact" for ref in artifacts})
+
+
+def test_dsl_multi_input_replay_rehydrates_second_current_table(tmp_path):
+    calls = []
+    first = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=_multi_input_memory_request(tmp_path, "multi1", 2, calls))
+    second = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=_multi_input_memory_request(tmp_path, "multi2", 7, calls))
+    assert first.completed and second.completed
+    assert calls == ["multi1"]
+    output = [s for s in second.context.artifacts.values() if s.artifact.step_id == "execute"]
+    assert output[0].rows == ({"adjusted": 3.0},)
+    assert second.context.memory_consumption_records[0].recipe_recomputed
+    recipe = second.context.execution_recipes_by_artifact[output[0].artifact.artifact_id]
+    assert len(recipe["input_artifact_hashes"]) == 2
+
+
+def test_dsl_multi_input_rejects_tampered_secondary_source(tmp_path):
+    request = _multi_input_memory_request(tmp_path, "tampered-second", 2, [])
+    artifact = request.bindings.artifacts["source:adjustments"].artifact
+    (Path(artifact.root_id) / artifact.relpath).write_text('[{"key":"A","offset":9}]')
+    result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+    assert not result.completed
+    assert not result.context.execution_recipes_by_artifact
+
+
+def test_dsl_multi_input_rejects_candidate_dropping_secondary_source(tmp_path):
+    request = _multi_input_memory_request(tmp_path, "dropped-second", 2, [])
+    request.bindings.transform_program_factory = lambda step, grant, ref, rows: TransformProgram(
+        "drop-input", (ref,), (TransformStep("select", {"columns": ["value"]}),), grant.output_contract_version)
+    result = RuntimeDriver().run_mode("adaptive_bounded", adaptive_request=request)
+    assert not result.completed
+    assert not result.context.execution_recipes_by_artifact
+
+
 def _mainline_request(tmp_path: Path) -> AdaptiveMainlineRequest:
     registry = CapabilityRegistry()
     descriptors = (
@@ -765,12 +837,14 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     )
 
     def retrieve_query(query: str, request: EvidenceRequest):
-        return pipeline.run(
+        bundle = pipeline.run(
             task_id=request.task_id,
             spec=spec,
             planner_scope_payload={"query_text": query},
             enabled_evidence_types=tuple(request.evidence_types),
         )
+        observed_retrieval["producer_selected_ids"] = tuple(item.item_id for item in bundle.evidence_pack.semantic_contexts)
+        return bundle
 
     def request_factory(step, grant):
         return EvidenceRequest(
@@ -988,6 +1062,17 @@ def test_adaptive_product_retrieval_owns_cross_process_semantic_state(
     } == {"executor", "runtime"}
     release_receipt = result.context.state_release_reclaim_receipts[publication.ref.state_id]
     consumer_receipt = result.context.semantic_consumer_receipts[publication.ref.state_id]
+    before_ids = observed_retrieval["producer_selected_ids"]
+    after_ids = selection.selected_candidate_ids
+    expected_effect = "no_effect" if before_ids == after_ids else "changed"
+    record = result.context.state_consumption_records[0]
+    assert record.behavioral_effect == consumer_receipt["behavioral_effect"] == expected_effect
+    assert consumer_receipt["input_decision_surface_hash"] == sha256_digest({"selected_candidate_ids": before_ids})
+    assert consumer_receipt["output_decision_surface_hash"] == sha256_digest({"selected_candidate_ids": after_ids})
+    effect = result.context.downstream_effects[publication.ref.state_id]
+    assert effect["behavioral_effect"] == expected_effect
+    assert effect["before_selected_candidate_ids"] == list(before_ids)
+    assert effect["after_selected_candidate_ids"] == list(after_ids)
     assert consumer_receipt["task_id"] == runtime_identity.runtime_task_id
     assert consumer_receipt["session_id"] == runtime_identity.session_id
     assert consumer_receipt["step_id"] == worker_access_grant.step_id

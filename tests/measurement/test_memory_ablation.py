@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import pytest
 
 import statebus.benchmark.memory_ablation as p4
 
@@ -117,6 +118,34 @@ def test_memory_ablation_closes_six_runtime_owned_matched_pairs(
         assert metrics[name]["status"] == "unsupported"
         assert metrics[name]["value"] is None
 
+    timing = metrics["timing_accounting"]
+    assert timing["paired_comparison_status"] == "observed"
+    assert timing["producer_inclusive_replay_cost_ms"] == pytest.approx(
+        sum(row["runtime_elapsed_ms"] for row in producers + replay_rows)
+    )
+    for row in rows + producers:
+        events = row["runtime_phase_events"]
+        persisted = [
+            json.loads(line) for line in
+            (Path(row["runtime_root"]) / "telemetry/runtime_events.jsonl").read_text().splitlines()
+        ]
+        assert events == [event for event in persisted if event["event_type"] == "RUNTIME_PHASE_TIMING"]
+        phases = {event["payload"]["phase"] for event in events}
+        assert {
+            "execution_input_hydration", "transform_execution", "transform_recompute",
+            "quality_validation", "transform_verified_materialization", "attempt_result_admission", "memory_commit",
+        } <= phases
+        assert all(event["payload"]["status"] == "returned" for event in events)
+        if row in replay_rows:
+            assert {
+                "memory_lookup_including_compatibility", "memory_authorization_and_hydration", "memory_read_verification",
+            } <= phases
+            executor_calls = [
+                event for event in events if event["payload"]["phase"] == "provider_invocation"
+                and event["step_id"] == row["memory_consumption_receipt"]["consumer_step_id"]
+            ]
+            assert not executor_calls
+
 
 def test_failed_replay_variant_is_accounted_but_never_closes_pair(
     monkeypatch,
@@ -156,3 +185,87 @@ def test_failed_replay_variant_is_accounted_but_never_closes_pair(
     assert denominator["arithmetic_closed"] is True
     assert failures[-1]["variant"] == "validated_replay"
     assert failures[-1]["error"] == "RuntimeError:injected_replay_failure"
+    timing = _load(root, "metrics.json")["timing_accounting"]
+    assert failures[-1]["runtime_elapsed_ms"] > 0
+    assert timing["replay_total_ms"] == failures[-1]["runtime_elapsed_ms"]
+    assert timing["lanes"]["validated_replay"]["failed_observed_ms"] == timing["replay_total_ms"]
+    assert timing["producer_inclusive_replay_cost_ms"] == timing["producer_setup_ms"] + timing["replay_total_ms"]
+    assert timing["paired_comparison_status"] == "unsupported"
+    assert timing["break_even_reuse_count"]["value"] is None
+
+
+def test_failed_producer_cost_is_retained_without_inventing_unstarted_lane_times(monkeypatch, tmp_path: Path) -> None:
+    def fail_producer(request):
+        raise RuntimeError("injected_producer_failure")
+
+    monkeypatch.setattr(p4, "_run_runtime", fail_producer)
+    root = tmp_path / "failed-producers"
+    result = p4.run_memory_ablation(output_root=root, rounds_per_family=1)
+    failures = _load(root, "failures.json")
+    timing = _load(root, "metrics.json")["timing_accounting"]
+    assert not result["ok"]
+    assert timing["producer_setup_ms"] == sum(
+        row["runtime_elapsed_ms"] for row in failures if row["row_scope"] == "producer"
+    )
+    assert timing["producer_setup_ms"] > 0
+    for lane in timing["lanes"].values():
+        assert lane["attempted_count"] == 0
+        assert lane["not_started_count"] == 2
+        assert lane["total_ms"] is None
+    assert timing["producer_inclusive_replay_cost_ms"] is None
+    assert timing["break_even_reuse_count"]["value"] is None
+    assert _load(root, "denominator.json")["arithmetic_closed"]
+
+
+def test_row_write_failure_is_counted_once_and_keeps_completed_runtime_cost(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(p4, "FAMILY_CONFIGS", p4.FAMILY_CONFIGS[:1])
+    write_json = p4._write_json
+
+    def fail_baseline_row(path, payload):
+        if path.name == "measurement_row.json" and path.parent.name == "memory_off":
+            raise OSError("injected_row_write_failure")
+        write_json(path, payload)
+
+    monkeypatch.setattr(p4, "_write_json", fail_baseline_row)
+    root = tmp_path / "failed-write"
+    result = p4.run_memory_ablation(output_root=root, rounds_per_family=1)
+    denominator = _load(root, "denominator.json")
+    failures = _load(root, "failures.json")
+    metrics = _load(root, "metrics.json")
+    assert not result["ok"]
+    assert denominator["observed_measured_rows"] == 1
+    assert denominator["failed_measured_rows"] == 1
+    assert denominator["arithmetic_closed"]
+    assert failures[0]["error"] == "OSError:injected_row_write_failure"
+    assert failures[0]["runtime_elapsed_ms"] > 0
+    assert metrics["timing_accounting"]["baseline_total_ms"] == failures[0]["runtime_elapsed_ms"]
+    assert metrics["provider_boundary_calls"]["memory_off"] == 1
+    assert metrics["timing_accounting"]["break_even_reuse_count"]["value"] is None
+
+
+@pytest.mark.parametrize("missing", [None, float("nan"), float("inf"), -1, False, "12"])
+def test_missing_or_invalid_elapsed_is_not_zero_filled(missing) -> None:
+    cost = p4._elapsed_accounting([
+        {"runtime_elapsed_ms": 5.0, "terminal_status": "success"},
+        {"runtime_elapsed_ms": missing, "terminal_status": "success"},
+    ])
+    assert cost["status"] == "unsupported"
+    assert cost["observed_subtotal_ms"] == 5.0
+    assert cost["missing_timing_count"] == 1
+    assert cost["total_ms"] is None
+    assert cost["mean_ms"] is None
+
+
+def test_incomplete_pairs_cannot_produce_optimistic_break_even() -> None:
+    metrics = p4._metrics(
+        rows=[
+            {"variant": "memory_off", "terminal_status": "success", "runtime_elapsed_ms": 100},
+            {"variant": "validated_replay", "terminal_status": "success", "runtime_elapsed_ms": 10},
+        ],
+        producer_rows=[{"terminal_status": "success", "runtime_elapsed_ms": 20}],
+        failures=[], pair_projection={}, denominator={"planned_pairs": 2, "closed_pairs": 1},
+    )
+    timing = metrics["timing_accounting"]
+    assert timing["status"] == "observed"
+    assert timing["paired_comparison_status"] == "unsupported"
+    assert timing["break_even_reuse_count"]["value"] is None

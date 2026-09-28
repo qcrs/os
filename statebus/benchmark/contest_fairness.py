@@ -390,8 +390,10 @@ def _adaptive_runtime_topology_valid(trace: Mapping[str, object]) -> tuple[bool,
     The fixed C2A pilot dispatches the planner through Runtime (four
     attempts).  The formal adaptive runner invokes the planner at the
     controller/provider boundary and dispatches only the approved DAG
-    (retriever, executor, summarizer; three attempts).  Both are real,
-    auditable contracts; any other shape is invalid.
+    (retriever, executor, summarizer; three attempts).  An explicitly
+    recorded DSL-to-Python replan adds one replacement Executor attempt,
+    yielding four attempts without changing the role topology.  Both are
+    real, auditable contracts; any other shape is invalid.
     """
 
     sequence = trace.get("role_sequence")
@@ -405,6 +407,21 @@ def _adaptive_runtime_topology_valid(trace: Mapping[str, object]) -> tuple[bool,
         and _planner_provider_evidence_observed(trace)
     ):
         return True, "controller_planner"
+    replans = trace.get("runtime_replan_history", ())
+    if (
+        sequence == ["retriever", "executor", "summarizer"]
+        and attempt_count == 4
+        and _planner_provider_evidence_observed(trace)
+        and isinstance(replans, (list, tuple))
+        and len(replans) == 1
+    ):
+        record = replans[0]
+        if isinstance(record, Mapping) and (
+            str(record.get("trigger_reason", "")).startswith("dsl_repair_exhausted:")
+            and record.get("selected_capability") == "execute_analysis_dsl_v2"
+            and record.get("fallback_action") == "replace_unexecuted_subgraph"
+        ):
+            return True, "controller_planner_dsl_to_python_replan"
     return False, "invalid_adaptive_runtime_topology"
 
 

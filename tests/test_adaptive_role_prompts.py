@@ -218,6 +218,7 @@ def test_adaptive_planner_prompt_and_schema_expose_only_authorized_capabilities(
     assert "Omit additional_executor_steps" in prompt
     assert "completion_criteria" in prompt
     payload = parse_tagged_json(prompt, "sb-adaptive-plan-v1")
+    assert "REMOVE the named unsupported criteria key" in prompt
     assert payload["authority"]["role_cardinality"] == {
         "executor": {"minimum": 1, "maximum": 2},
         "retriever": {"minimum": 1, "maximum": 1},
@@ -631,3 +632,48 @@ def test_adaptive_summarizer_rejects_unknown_claim_type() -> None:
             verified_artifact_refs=("artifact-1",),
             evidence_items=({"id": "evidence-1", "locator": "section-1", "text": "evidence"},),
         )
+
+
+def test_report_requirements_are_caller_owned_not_business_specific():
+    body = 'sensor-R9 calibration=uncertain; laboratory verification pending.'
+    client = RecordingLLMClient({'claims': [dict(claim_id='r9', claim_text=body, claim_type='fact',
+        supporting_evidence_item_ids=['lab'], supporting_artifact_ref_ids=['measurement'],
+        numeric_fields={}, uncertainty_note='', status='ready')], 'status': 'ready'})
+    requirements = 'Include sensor name, calibration status and laboratory caveat in claim_text.'
+    context = {'previous_candidate': {'claims': [{'claim_text': 'sensor-R9'}]},
+               'validation_errors': ['body_missing:calibration', 'body_missing:caveat']}
+    claim_set = RolePathRunner(llm_client=client).build_claim_set(
+        task_id='calibration-report', claim_set_id='report', verified_artifact_refs=('measurement',),
+        evidence_items=({'id': 'lab', 'locator': 'lab#r9', 'text': body},),
+        artifact_summaries=({'artifact_ref_id': 'measurement', 'rows': [{'sensor': 'sensor-R9'}]},),
+        expected_claim_count=1, report_requirements=requirements, repair_context=context)
+    prompt, _ = _single_call(client)
+    payload = parse_tagged_json(prompt, 'sb-claim-set-v1')
+    assert payload['report_requirements'] == requirements
+    assert payload['repair_context'] == context
+    assert 'risk_change' not in prompt and 'unit_id' not in prompt
+    assert claim_set.claims[0].claim_text == body
+
+
+def test_role_slot_criteria_schema_comes_from_registry_not_task_or_capability_names():
+    from statebus.runtime.role_path import _adaptive_plan_response_schema
+    surface = (
+        {'id': 'fetch-lab-context', 'role': 'retriever', 'completion_criteria': {'min_locator_count': {}, 'max_conflicts': {}}},
+        {'id': 'measure-vibration', 'role': 'executor', 'completion_criteria': {'min_rows': {}, 'required_fields': {}}},
+        {'id': 'write-lab-report', 'role': 'summarizer', 'completion_criteria': {'min_locator_count': {}, 'max_conflicts': {}}},
+    )
+    def schema(items):
+        return _adaptive_plan_response_schema(capability_surface=items, allowed_outputs=('lab-report',),
+            allowed_memory_policies=('none',), max_steps=4, role_slot_layout=True)
+    def keys(step):
+        assert step['properties']['completion_criteria']['additionalProperties'] is False
+        return set(step['properties']['completion_criteria']['properties'])
+    result = schema(surface)
+    assert keys(result['properties']['primary_executor_step']) == {'min_rows', 'required_fields'}
+    assert keys(result['properties']['additional_executor_steps']['items']) == {'min_rows', 'required_fields'}
+    assert keys(result['properties']['retriever_step']) == {'min_locator_count', 'max_conflicts'}
+    assert keys(result['properties']['summarizer_step']) == {'min_locator_count', 'max_conflicts'}
+    _assert_vllm_073_xgrammar_compatible(result)
+    # The same key is legal when an executor capability actually declares it.
+    expanded = (*surface, {'id': 'reconcile-lab-readings', 'role':'executor', 'completion_criteria':{'max_conflicts':{}}})
+    assert 'max_conflicts' in keys(schema(expanded)['properties']['primary_executor_step'])

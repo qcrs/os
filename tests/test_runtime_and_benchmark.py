@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import pytest
 
 from statebus.benchmark import BenchmarkLayer, BenchmarkRunReport, QualityFloorResult
 from statebus.contracts import (
@@ -1103,6 +1104,32 @@ def test_telemetry_emitter_persists_runtime_event_and_fact_logs(tmp_path: Path) 
     assert io_metrics["telemetry_fact_write_count"] == 2.0
     assert io_metrics["telemetry_log_handle_open_count"] == 2.0
     assert io_metrics["telemetry_emit_stage_ms"] >= 0.0
+
+
+def test_phase_timing_preserves_exceptions_and_is_not_an_additive_fact(tmp_path: Path) -> None:
+    emitter = TelemetryEmitter(
+        runtime_event_log_path=tmp_path / "events.jsonl",
+        runtime_fact_log_path=tmp_path / "facts.jsonl",
+    )
+    with emitter.measure_phase("query", trace_id="trace", task_id="task", step_id="step", attempt_id="attempt"):
+        pass
+    failure = ValueError("injected_failure")
+    with pytest.raises(ValueError) as caught:
+        with emitter.measure_phase("hydrate", trace_id="trace", task_id="task", step_id="step", attempt_id="attempt"):
+            raise failure
+    emitter.close()
+    assert caught.value is failure
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert [event["payload"]["status"] for event in events] == ["returned", "raised"]
+    assert [event["payload"]["phase"] for event in events] == ["query", "hydrate"]
+    for event in events:
+        assert event["attempt_id"] == "attempt"
+        assert event["step_id"] == "step"
+        metrics = event["metrics"]
+        assert metrics["ended_perf_ns"] >= metrics["started_perf_ns"]
+        assert metrics["duration_ms"] == (metrics["ended_perf_ns"] - metrics["started_perf_ns"]) / 1_000_000.0
+    assert emitter.summarize_task("task") == {}
+    assert not (tmp_path / "facts.jsonl").exists()
 
 
 def test_telemetry_emitter_batches_flushes_for_benchmark_balanced_profile(tmp_path: Path) -> None:

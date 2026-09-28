@@ -32,6 +32,7 @@ from statebus.benchmark.adaptive_memory import (
     load_adaptive_memory_cases,
 )
 from statebus.benchmark.adaptive_formal import (
+    _operation_semantics,
     adapt_formal_sample,
     build_formal_quality_validator,
     build_non_answer_source_profile,
@@ -485,6 +486,26 @@ def test_aggregation_numeric_encoding_and_repair_guidance_are_explicit_without_a
     assert "Do not use re.sub" in guidance
     serialized = stable_json_dumps({"context": context, "guidance": guidance})
     assert all(str(value) not in serialized for value in case.sample.expected_facts.values())
+
+
+def test_cross_period_review_contract_recomputes_prior_risk_from_raw_rows() -> None:
+    operations = {
+        "finance_monthly_review": {"current_period": "2026-02", "previous_period": "2026-01"},
+        "service_weekly_review": {"current_period": "W02", "previous_period": "W01"},
+    }
+    for operation, arguments in operations.items():
+        semantics = _operation_semantics(operation, arguments)
+        contract = stable_json_dumps(semantics)
+        guidance = _formal_recomputation_repair_guidance(semantics)
+        derived_field = "below_20_pct" if operation == "finance_monthly_review" else "exceeds_slo"
+        assert "raw input rows do not contain" in contract
+        assert derived_field in guidance
+        assert "recompute prior risk" in guidance.lower()
+        assert f"row.get('{derived_field}')" in guidance
+        assert "synthetic prior entity" in guidance
+        assert "first test `if entity not in prior_map`" in guidance
+        assert "skip the prior aggregate lookup" in guidance
+        assert "only in the existing-entity branch" in guidance
 
 
 def test_formal_analysis_context_preserves_controller_operation_contract_without_answers() -> None:

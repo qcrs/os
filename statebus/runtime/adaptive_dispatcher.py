@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from contextlib import AbstractContextManager, nullcontext
 import asyncio
 import inspect
 import json
@@ -75,6 +76,7 @@ from statebus.runtime.role_providers import (
     detach_provider_candidate,
 )
 from statebus.runtime.transform_dsl import TransformDslInterpreter, TransformProgramError
+from statebus.runtime.telemetry import TelemetryEmitter
 from statebus.runtime.execution_routing import resolve_execution_route
 from statebus.runtime.claims import ClaimSetValidator
 from statebus.runtime.workspace import ArtifactLifecycleManager
@@ -91,6 +93,35 @@ if TYPE_CHECKING:
 
 class AdaptiveDispatchError(RuntimeError):
     pass
+
+
+_DSL_REPAIR_NON_BUSINESS_FAILURES = {
+    "invalid_schema_version",
+    "unauthorized_input_ref",
+    "input_column_budget_exceeded",
+    "output_column_budget_exceeded",
+    "unsafe_argument_key",
+    "unsafe_argument_value",
+    "deterministic_fixture_not_allowed",
+    "missing_fixture_id",
+    "invalid_fixture_arguments",
+    "unauthorized_join_ref",
+    "input_row_budget_exceeded",
+    "output_row_budget_exceeded",
+    "output_byte_budget_exceeded",
+    "join_budget_exceeded",
+    "recompute_input_missing",
+}
+
+
+def _dsl_repair_exhausted_code(error: BaseException) -> str:
+    if not isinstance(error, (CapabilityRecomputeError, TransformProgramError)):
+        return ""
+    failure = str(error)
+    root = failure.split(":", 1)[0]
+    if root in _DSL_REPAIR_NON_BUSINESS_FAILURES:
+        return ""
+    return f"dsl_repair_exhausted:{failure}"
 
 
 def _classify_provider_exception(
@@ -136,10 +167,11 @@ RetrievalRequestFactory = Callable[[PlanStepProposal, CapabilityGrant], "Evidenc
 RetrievalExpansionFactory = Callable[["EvidenceRequest", "EvidenceCoverageReport"], "EvidenceRequest | None"]
 RetrievalResultObserver = Callable[[AdaptiveRetrievalResult, PlanStepProposal, CapabilityGrant], tuple["StateConsumptionRecord", ...]]
 TransformProgramFactory = Callable[..., TransformProgram]
-TransformProgramRepairFactory = Callable[
-    [PlanStepProposal, CapabilityGrant, str, tuple[dict[str, object], ...], tuple[str, ...]],
-    TransformProgram,
-]
+# The first five positional arguments are the stable legacy contract.  New
+# callers may accept keyword-only repair context (``previous_program``,
+# ``repair_stage`` and ``input_tables``) so a repair provider can make a
+# minimally-scoped correction instead of regenerating blindly.
+TransformProgramRepairFactory = Callable[..., TransformProgram]
 DeterministicFixtureRunner = Callable[
     [TransformStep, list[dict[str, object]]], list[dict[str, object]]
 ]
@@ -160,6 +192,11 @@ class AdaptiveDispatchContext:
     # suppresses publication and consumption; ``consumer_off`` keeps the
     # producer path observable while disabling the cross-process consumer.
     semantic_state_mode: str = "on"
+    # Optional bounded experiment policy for the Executor-side semantic-state
+    # consumer. Production callers leave these unset and retain the historical
+    # reference-pack-derived selection policy.
+    semantic_state_executor_top_k: int | None = None
+    semantic_state_executor_budget_bytes: int | None = None
     validator_registry: CapabilityValidatorRegistry = field(default_factory=default_capability_validator_registry)
     evidence_packs: dict[str, CanonicalEvidencePack] = field(default_factory=dict)
     evidence_statuses: dict[str, EvidenceCoverageStatus] = field(default_factory=dict)
@@ -179,6 +216,9 @@ class AdaptiveDispatchContext:
     retrieval_expansion_factory: RetrievalExpansionFactory | None = None
     retrieval_result_observer: RetrievalResultObserver | None = None
     allowed_corpus_scope_ids: tuple[str, ...] = ()
+    # Explicitly disable the Memory query projection for a matched control.
+    # Keep the default enabled for compatibility with existing mainline runs.
+    memory_query_enabled: bool = True
     transform_program_factory: TransformProgramFactory | None = None
     transform_program_repair_factory: TransformProgramRepairFactory | None = None
     # Offline benchmark fixtures may provide a source-derived transform for a
@@ -199,6 +239,13 @@ class AdaptiveDispatchContext:
     # continues to select verified inputs, validate citations/numerics and
     # issue the final cited-report ArtifactRef.
     claim_set_factory: ClaimSetFactory | None = None
+    claim_memory_selector: Callable[[tuple[dict[str, object], ...]], tuple[str, ...]] | None = None
+    # Explicit Runtime-side allowlist for capabilities that may read an
+    # admitted validated-replay candidate as bounded assist context.  This is
+    # intentionally separate from ``CapabilityDescriptor.supports_replay``:
+    # a consumer such as a summarizer may verify a producer artifact without
+    # being allowed to reuse the producer procedure or skip its own work.
+    memory_assist_capability_ids: tuple[str, ...] = ()
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
     # Disjoint from legacy BuiltinHandler: bound providers receive the full
     # BoundCapabilityGrant through ProviderRequest and return a candidate.
@@ -214,6 +261,7 @@ class AdaptiveDispatchContext:
     state_store: "LayeredStateStore | None" = None
     memory_store: "MemoryIndexStore | None" = None
     session_manager: "RuntimeSessionManager | None" = None
+    telemetry: TelemetryEmitter | None = None
     runtime_identity: RuntimeIdentity | None = None
     workspace_manager: "WorkspaceManager | None" = None
     socket_path: Path | None = None
@@ -277,6 +325,15 @@ class AdaptiveDispatchContext:
 class AdaptiveCapabilityDispatcher:
     """Execute only an already-approved capability under a one-attempt Grant."""
 
+    def _measure_phase(self, phase: str, grant: CapabilityGrant) -> AbstractContextManager:
+        if self.context.telemetry is None:
+            return nullcontext()
+        return self.context.telemetry.measure_phase(
+            phase,
+            trace_id=self.context.runtime_identity.trace_id if self.context.runtime_identity else "",
+            task_id=grant.task_id, step_id=grant.step_id, attempt_id=grant.attempt_id,
+        )
+
     def __init__(
         self,
         *,
@@ -300,6 +357,59 @@ class AdaptiveCapabilityDispatcher:
             ExecutionKind.LLM_BOUNDED_PYTHON: self._dispatch_llm_python,
             ExecutionKind.RUNTIME_BUILTIN: self._dispatch_builtin,
         }
+
+    @staticmethod
+    def _invoke_transform_program_repair(
+        factory: TransformProgramRepairFactory,
+        *,
+        step: PlanStepProposal,
+        grant: CapabilityGrant,
+        input_ref_id: str,
+        rows: tuple[dict[str, object], ...],
+        validation_errors: tuple[str, ...],
+        input_tables: dict[str, tuple[dict[str, object], ...]],
+        previous_program: TransformProgram,
+        repair_stage: str,
+    ) -> TransformProgram:
+        """Invoke a DSL repair factory with the rejected candidate attached.
+
+        Existing integrations use the original five positional parameters.
+        Optional keyword arguments are capability-neutral metadata and are
+        supplied only when the callback declares them (or accepts ``**kwargs``).
+        This keeps older fixtures working while making the repair boundary
+        auditable and useful for provider-backed implementations.
+        """
+        try:
+            parameters = inspect.signature(factory).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+        optional = {
+            "input_tables": input_tables,
+            "previous_program": previous_program,
+            "repair_stage": repair_stage,
+        }
+        kwargs = {
+            name: value
+            for name, value in optional.items()
+            if accepts_kwargs
+            or (
+                name in parameters
+                and parameters[name].kind is not inspect.Parameter.POSITIONAL_ONLY
+            )
+        }
+        return factory(
+            step,
+            grant,
+            input_ref_id,
+            rows,
+            tuple(validation_errors),
+            **kwargs,
+        )
 
     def dispatch(
         self,
@@ -642,7 +752,8 @@ class AdaptiveCapabilityDispatcher:
                 state_reader=self.context.provider_state_reader_factory(request),
             )
         try:
-            raw_candidate = handler(request)
+            with self._measure_phase("provider_invocation", bound_grant.grant):
+                raw_candidate = handler(request)
         except BaseException as exc:
             classified = _classify_provider_exception(role, exc)
             if classified is None:
@@ -1033,19 +1144,28 @@ class AdaptiveCapabilityDispatcher:
                 publish_count += 1
                 continue
             entries = bundle.semantic_state_manifest.entries
-            top_k = max(1, min(len(entries), max(len(bundle.evidence_pack.semantic_contexts), 1)))
-            reference_selected_ids = {
-                item.item_id for item in bundle.evidence_pack.semantic_contexts
-            }
-            evidence_budget_bytes = sum(
-                max(int(entry.byte_hint), 0)
-                for entry in entries
-                if entry.candidate_id in reference_selected_ids
+            configured_top_k = self.context.semantic_state_executor_top_k
+            top_k = (
+                max(1, min(len(entries), int(configured_top_k)))
+                if configured_top_k is not None
+                else max(1, min(len(entries), max(len(bundle.evidence_pack.semantic_contexts), 1)))
             )
-            if evidence_budget_bytes <= 0:
+            configured_budget = self.context.semantic_state_executor_budget_bytes
+            if configured_budget is not None:
+                evidence_budget_bytes = max(int(configured_budget), 0)
+            else:
+                reference_selected_ids = {
+                    item.item_id for item in bundle.evidence_pack.semantic_contexts
+                }
                 evidence_budget_bytes = sum(
-                    max(int(entry.byte_hint), 0) for entry in entries
+                    max(int(entry.byte_hint), 0)
+                    for entry in entries
+                    if entry.candidate_id in reference_selected_ids
                 )
+                if evidence_budget_bytes <= 0:
+                    evidence_budget_bytes = sum(
+                        max(int(entry.byte_hint), 0) for entry in entries
+                    )
             invocation_id = f"invocation-{uuid4().hex}"
             worker_access_grant = state_access_authority.issue_read(
                 ref=publication.ref,
@@ -1252,6 +1372,13 @@ class AdaptiveCapabilityDispatcher:
                 },
             ))
             downstream_ref_id = f"evidence:{grant.task_id}:{grant.step_id}:{grant.attempt_id}"
+            # Compare the same decision surface on both sides. A candidate
+            # pool hash and an evidence-pack hash differ by construction and
+            # cannot establish an effect. Scores/PIDs/provenance are audit
+            # metadata, not a change to the ordered evidence selection.
+            before_selected_ids = tuple(item.item_id for item in bundle.evidence_pack.semantic_contexts)
+            input_surface_hash = sha256_digest({"selected_candidate_ids": before_selected_ids})
+            output_surface_hash = sha256_digest({"selected_candidate_ids": response.selected_candidate_ids})
             records.append(build_state_consumption_record(
                 state_ref_id=state_id,
                 consumer_role="executor",
@@ -1260,20 +1387,11 @@ class AdaptiveCapabilityDispatcher:
                 read_field_ids=tuple(
                     f"row:{row_index}" for row_index in (0, *response.selected_row_indices)
                 ),
-                input_decision_surface_hash=bundle.candidate_pool.candidate_surface_hash,
-                output_decision_surface_hash=sha256_digest({
-                    "selected_candidate_ids": response.selected_candidate_ids,
-                    "selected_scores": response.selected_scores,
-                }),
+                input_decision_surface_hash=input_surface_hash,
+                output_decision_surface_hash=output_surface_hash,
                 selected_ids=response.selected_candidate_ids,
                 downstream_ref_ids=(downstream_ref_id,),
             ))
-            output_surface_hash = sha256_digest({
-                "selected_candidate_ids": response.selected_candidate_ids,
-                "selected_row_indices": response.selected_row_indices,
-                "downstream_ref_ids": (downstream_ref_id,),
-                "downstream_input": selected.evidence_pack.canonical_payload(),
-            })
             run_start = next(
                 (message for message in transport.last_response_messages if type(message).__name__ == "RunStart"),
                 None,
@@ -1310,7 +1428,7 @@ class AdaptiveCapabilityDispatcher:
                 execution_binding_hash=execution_binding_hash,
                 pin_id=worker_pin.pin_id,
                 downstream_ref_ids=(downstream_ref_id,),
-                input_decision_surface_hash=bundle.candidate_pool.candidate_surface_hash,
+                input_decision_surface_hash=input_surface_hash,
                 output_decision_surface_hash=output_surface_hash,
                 response_admission_hash=sha256_digest(terminal_admission.canonical_payload()),
                 descriptor_identity=descriptor_identity,
@@ -1322,8 +1440,13 @@ class AdaptiveCapabilityDispatcher:
             self.context.downstream_effects[state_id] = {
                 "state_ref_id": state_id,
                 "downstream_ref_ids": [downstream_ref_id],
-                "before_decision_surface_hash": bundle.candidate_pool.candidate_surface_hash,
+                "before_decision_surface_hash": input_surface_hash,
                 "after_decision_surface_hash": output_surface_hash,
+                "effect_scope": "ordered_semantic_candidate_selection_not_quality_or_causal_gain",
+                "before_selected_candidate_ids": list(before_selected_ids),
+                "after_selected_candidate_ids": list(response.selected_candidate_ids),
+                "candidate_pool_hash": bundle.candidate_pool.candidate_surface_hash,
+                "downstream_input_hash": sha256_digest(selected.evidence_pack.canonical_payload()),
                 "behavioral_effect": self.context.semantic_consumer_receipts[state_id]["behavioral_effect"],
                 "response_admitted": True,
                 "completed_at_ns": downstream_effect_completed_at_ns,
@@ -1376,40 +1499,43 @@ class AdaptiveCapabilityDispatcher:
             task_id=result.request.task_id,
             packs=tuple(bundle.evidence_pack for bundle in selected_bundles),
         )
-        query_bundle = selected_bundles[0]
-        executor_output_contract = next(
-            (
-                candidate.output_contract_version
-                for candidate in reversed(approved_plan.steps)
-                if candidate.role == "executor"
-            ),
-            approved_plan.final_output_contract_version,
-        )
-        memory_query = MemoryQuery(
-            query_task_id=grant.task_id,
-            query_spec_hash=envelope.canonical_task_spec_hash,
-            query_text=" ".join(result.request.queries),
-            tags=tuple(result.request.target_entities),
-            query_embedding=query_bundle.memory_query_embedding or query_bundle.query_embedding,
-            limit=max(1, min(result.request.max_candidates, 5)),
-            allow_assist=result.request.memory_policy != "none",
-            allow_validated_replay=result.request.memory_policy in {"validated_replay", "exact_replay"},
-            allow_exact_replay=result.request.memory_policy == "exact_replay",
-            compatibility_signature=(
-                self.context.runtime_compatibility_signature
-                or self.context.registry.digest
-            ),
-            output_contract_version=executor_output_contract,
-            canonical_task_spec=self.context.canonical_task_spec,
-            input_lineage_hashes=self.context.input_lineage_hashes,
-            input_schema_digest=self.context.input_schema_digest,
-            validator_digest=self.context.validator_digest,
-        )
-        if grant.task_id in self.context.memory_queries_by_task:
-            raise AdaptiveDispatchError("hybrid_memory_query_already_issued_for_task")
-        memory_result = self.context.memory_store.lookup_hybrid(memory_query)
-        self.context.memory_queries_by_task[grant.task_id] = memory_query
-        self.context.memory_match_results[step.step_id] = memory_result
+        memory_result = None
+        if self.context.memory_query_enabled:
+            query_bundle = selected_bundles[0]
+            executor_output_contract = next(
+                (
+                    candidate.output_contract_version
+                    for candidate in reversed(approved_plan.steps)
+                    if candidate.role == "executor"
+                ),
+                approved_plan.final_output_contract_version,
+            )
+            memory_query = MemoryQuery(
+                query_task_id=grant.task_id,
+                query_spec_hash=envelope.canonical_task_spec_hash,
+                query_text=" ".join(result.request.queries),
+                tags=tuple(result.request.target_entities),
+                query_embedding=query_bundle.memory_query_embedding or query_bundle.query_embedding,
+                limit=max(1, min(result.request.max_candidates, 5)),
+                allow_assist=result.request.memory_policy != "none",
+                allow_validated_replay=result.request.memory_policy in {"validated_replay", "exact_replay"},
+                allow_exact_replay=result.request.memory_policy == "exact_replay",
+                compatibility_signature=(
+                    self.context.runtime_compatibility_signature
+                    or self.context.registry.digest
+                ),
+                output_contract_version=executor_output_contract,
+                canonical_task_spec=self.context.canonical_task_spec,
+                input_lineage_hashes=self.context.input_lineage_hashes,
+                input_schema_digest=self.context.input_schema_digest,
+                validator_digest=self.context.validator_digest,
+            )
+            if grant.task_id in self.context.memory_queries_by_task:
+                raise AdaptiveDispatchError("hybrid_memory_query_already_issued_for_task")
+            with self._measure_phase("memory_lookup_including_compatibility", grant):
+                memory_result = self.context.memory_store.lookup_hybrid(memory_query)
+            self.context.memory_queries_by_task[grant.task_id] = memory_query
+            self.context.memory_match_results[step.step_id] = memory_result
         raw_evidence_bytes = sum(
             len(item.rendered_text.encode("utf-8"))
             for bucket in (
@@ -1425,7 +1551,10 @@ class AdaptiveCapabilityDispatcher:
             1 + len(bundle.semantic_candidate_embeddings)
             for bundle in result.retrieval_bundles
         )
-        compatibility_decisions = tuple(memory_result.compatibility_decisions)
+        compatibility_decisions = (
+            tuple(memory_result.compatibility_decisions)
+            if memory_result is not None else ()
+        )
         compatible_count = sum(
             decision.verdict != CompatibilityVerdict.INCOMPATIBLE
             for decision in compatibility_decisions
@@ -1436,6 +1565,12 @@ class AdaptiveCapabilityDispatcher:
         rejected_incompatible_count = sum(
             decision.verdict == CompatibilityVerdict.INCOMPATIBLE
             for decision in compatibility_decisions
+        )
+        source_ranks = memory_result.source_ranks if memory_result is not None else {}
+        candidate_memory_ids = (
+            memory_result.candidate_pool.candidate_memory_ids
+            if memory_result is not None and memory_result.candidate_pool is not None
+            else ()
         )
         return (
             replace(
@@ -1453,15 +1588,11 @@ class AdaptiveCapabilityDispatcher:
                 "semantic_state_selected_bytes": float(selected_bytes),
                 "raw_evidence_bytes_seen_by_llm": float(raw_evidence_bytes),
                 "embedding_encode_count": float(embedding_encode_count),
-                "hybrid_memory_query_count": 1.0,
-                "memory_keyword_candidate_count": float(len(memory_result.source_ranks.get("keyword", ()))),
-                "memory_tag_candidate_count": float(len(memory_result.source_ranks.get("tags", ()))),
-                "memory_vector_candidate_count": float(len(memory_result.source_ranks.get("vector", ()))),
-                "memory_candidate_count": float(
-                    len(memory_result.candidate_pool.candidate_memory_ids)
-                    if memory_result.candidate_pool is not None
-                    else 0
-                ),
+                "hybrid_memory_query_count": float(memory_result is not None),
+                "memory_keyword_candidate_count": float(len(source_ranks.get("keyword", ()))),
+                "memory_tag_candidate_count": float(len(source_ranks.get("tags", ()))),
+                "memory_vector_candidate_count": float(len(source_ranks.get("vector", ()))),
+                "memory_candidate_count": float(len(candidate_memory_ids)),
                 "memory_compatible_match_count": float(compatible_count),
                 "memory_policy_approved_match_count": float(policy_approved_count),
                 "memory_rejected_incompatible_count": float(rejected_incompatible_count),
@@ -1476,6 +1607,12 @@ class AdaptiveCapabilityDispatcher:
     ) -> tuple[dict[str, object], ...]:
         if not grant.memory_ref_ids:
             return ()
+        with self._measure_phase("memory_authorization_and_hydration", grant):
+            return self._load_memory_inputs_for_step(step=step, grant=grant)
+
+    def _load_memory_inputs_for_step(
+        self, *, step: PlanStepProposal, grant: CapabilityGrant,
+    ) -> tuple[dict[str, object], ...]:
         if self.context.memory_store is None:
             raise AdaptiveDispatchError("memory_store_required_for_grant_memory")
         if self.context.runtime_identity is not None and (
@@ -1916,7 +2053,8 @@ class AdaptiveCapabilityDispatcher:
         *,
         grant: CapabilityGrant,
         step: PlanStepProposal,
-    ) -> None:
+        read_rows: bool = False,
+    ) -> tuple[dict[str, object], ...]:
         """Perform and record the bounded, verified Memory-side read.
 
         This is intentionally Runtime-owned.  Metadata/descriptor creation is
@@ -1962,6 +2100,8 @@ class AdaptiveCapabilityDispatcher:
         artifact_read = "not_applicable"
         artifact_hash = ""
         artifact_ref_id = ""
+        artifact_rows = ()
+        artifact_size = 0
         if isinstance(lineage, dict):
             artifact_ref_id = str(lineage.get("artifact_ref_id", ""))
             root_id = str(lineage.get("artifact_root_id", ""))
@@ -1972,10 +2112,16 @@ class AdaptiveCapabilityDispatcher:
                 if not artifact_path.is_file():
                     raise AdaptiveDispatchError("memory_read_artifact_missing")
                 artifact_bytes = artifact_path.read_bytes()
+                artifact_size = len(artifact_bytes)
                 artifact_hash = sha256_digest(artifact_bytes)
                 if expected_hash and artifact_hash != expected_hash:
                     raise AdaptiveDispatchError("memory_read_artifact_checksum_mismatch")
                 artifact_read = "observed"
+                if read_rows:
+                    payload = json.loads(artifact_bytes)
+                    if not isinstance(payload, list) or any(not isinstance(row, dict) for row in payload):
+                        raise AdaptiveDispatchError("memory_read_artifact_rows_invalid")
+                    artifact_rows = tuple(dict(row) for row in payload)
             expected_manifest_hash = str(lineage.get("manifest_hash", ""))
             if expected_manifest_hash and str(memory_input.get("artifact_verification_receipt_hash", "")):
                 if self.context.memory_store is not None:
@@ -1993,6 +2139,7 @@ class AdaptiveCapabilityDispatcher:
             "artifact_read": artifact_read,
             "artifact_ref_id": artifact_ref_id,
             "artifact_hash": artifact_hash,
+            "artifact_read_bytes": artifact_size,
             "recipe_hash": recipe_hash,
             "artifact_verification_receipt_hash": str(memory_input.get("artifact_verification_receipt_hash", "")),
             "manifest_hash": str(lineage.get("manifest_hash", "")) if isinstance(lineage, dict) else "",
@@ -2001,6 +2148,7 @@ class AdaptiveCapabilityDispatcher:
         prior = self.context.memory_read_observations_by_step.get(step.step_id, ())
         if str(memory_input["ref_id"]) not in prior:
             self.context.memory_read_observations_by_step[step.step_id] = (*prior, str(memory_input["ref_id"]))
+        return artifact_rows
 
     def _dispatch_transform_dsl(
         self,
@@ -2013,11 +2161,15 @@ class AdaptiveCapabilityDispatcher:
     ) -> "AdaptiveStepResult":
         from statebus.runtime.adaptive_runtime import AdaptiveStepResult
 
-        input_ref_id, rows, input_hashes, provenance, projection_hashes = self._typed_input(
-            step=step,
-            grant=grant,
-            attempt_workspace=attempt_workspace,
-        )
+        with self._measure_phase("execution_input_hydration", grant):
+            input_tables, input_hashes, provenance, projection_hashes = self._typed_transform_inputs(
+                step=step,
+                grant=grant,
+                attempt_workspace=attempt_workspace,
+            )
+        input_ref_id = next(iter(input_tables))
+        rows = input_tables[input_ref_id]
+        data_refs = tuple(input_tables)
         memory_inputs = self._memory_inputs_for_step(step=step, grant=grant)
         before_memory_surface_hash = sha256_digest({
             "step": step.canonical_payload(),
@@ -2035,14 +2187,10 @@ class AdaptiveCapabilityDispatcher:
             replay_input = next(
                 item for item in memory_inputs if str(item.get("ref_id", "")) == replay_memory_id
             )
-            self._observe_memory_read(replay_input, grant=grant, step=step)
+            with self._measure_phase("memory_read_verification", grant):
+                self._observe_memory_read(replay_input, grant=grant, step=step)
         if candidate_program is not None:
             program = candidate_program
-            if tuple(program.input_artifact_refs) not in {
-                (input_ref_id,),
-                tuple(grant.input_ref_ids),
-            }:
-                raise AdaptiveDispatchError("provider_candidate_input_scope_mismatch")
         elif replay_recipe is not None:
             operations = tuple(
                 TransformStep(
@@ -2054,26 +2202,25 @@ class AdaptiveCapabilityDispatcher:
             )
             if not operations:
                 raise AdaptiveDispatchError("validated_replay_recipe_operations_missing")
+            if len(data_refs) > 1 and tuple(replay_recipe.get("input_artifact_refs", ())) != data_refs:
+                raise AdaptiveDispatchError("validated_replay_input_bindings_mismatch")
             program = TransformProgram(
                 program_id=f"validated-replay-{grant.attempt_id}",
-                input_artifact_refs=(input_ref_id,),
+                input_artifact_refs=data_refs,
                 operations=operations,
                 output_contract_version=grant.output_contract_version,
             )
         elif self.context.transform_program_factory is None:
             raise AdaptiveDispatchError("transform_program_handler_not_registered")
-        elif self._factory_accepts_memory_inputs(self.context.transform_program_factory):
-            program = self.context.transform_program_factory(
-                step,
-                grant,
-                input_ref_id,
-                rows,
-                memory_inputs,
-            )
         else:
-            program = self.context.transform_program_factory(step, grant, input_ref_id, rows)
+            factory = self.context.transform_program_factory
+            args = (step, grant, input_ref_id, rows)
+            if self._factory_accepts_memory_inputs(factory):
+                args = (*args, memory_inputs)
+            kwargs = {"input_tables": input_tables} if "input_tables" in inspect.signature(factory).parameters else {}
+            program = factory(*args, **kwargs)
         schema = self._output_schema(step.capability_id, rows, step.step_id)
-        projected_inputs = {input_ref_id: [dict(row) for row in rows]}
+        projected_inputs = {ref: [dict(row) for row in table] for ref, table in input_tables.items()}
         dsl_repair_count = 0
         dsl_quality_repair_count = 0
         quality_rejection_count = 0
@@ -2082,11 +2229,18 @@ class AdaptiveCapabilityDispatcher:
         validator_id = self._business_validator_id(step.capability_id)
         while True:
             try:
+                # Check every generated/repaired candidate before executing it.
+                # Evidence may accompany data in a Grant but is not a data table.
+                program_data_refs = tuple(ref for ref in program.input_artifact_refs if ref in input_tables)
+                if (program_data_refs != data_refs
+                        or any(ref not in grant.input_ref_ids for ref in program.input_artifact_refs)):
+                    raise AdaptiveDispatchError("provider_candidate_input_scope_mismatch")
                 self._validate_transform_semantics(
                     program,
                     self.context.quality_semantics_by_capability.get(step.capability_id, {}),
                 )
-                transformed = tuple(self.transform_interpreter.run(program, inputs=projected_inputs))
+                with self._measure_phase("transform_execution", grant):
+                    transformed = tuple(self.transform_interpreter.run(program, inputs=projected_inputs))
                 if any(operation.op == "deterministic_fixture" for operation in program.operations):
                     # The fixture operation is available only to an explicitly
                     # configured offline smoke.  The registered business
@@ -2095,35 +2249,46 @@ class AdaptiveCapabilityDispatcher:
                     # dispatcher context projection.
                     recomputed = tuple(transformed)
                 else:
-                    recomputed = recompute_transform_program(program, inputs=projected_inputs)
+                    with self._measure_phase("transform_recompute", grant):
+                        recomputed = recompute_transform_program(program, inputs=projected_inputs)
             except (AdaptiveDispatchError, CapabilityRecomputeError, TransformProgramError) as exc:
                 if self.context.transform_program_repair_factory is None or dsl_repair_count >= 1:
-                    raise AdaptiveDispatchError(str(exc)) from exc
-                program = self.context.transform_program_repair_factory(
-                    step,
-                    grant,
-                    input_ref_id,
-                    rows,
-                    (str(exc),),
+                    exhausted_error = (
+                        _dsl_repair_exhausted_code(exc)
+                        if dsl_repair_count >= 1
+                        else ""
+                    )
+                    raise AdaptiveDispatchError(exhausted_error or str(exc)) from exc
+                program = self._invoke_transform_program_repair(
+                    self.context.transform_program_repair_factory,
+                    step=step,
+                    grant=grant,
+                    input_ref_id=input_ref_id,
+                    rows=rows,
+                    validation_errors=(str(exc),),
+                    input_tables=input_tables,
+                    previous_program=program,
+                    repair_stage="execution_validation",
                 )
                 dsl_repair_count += 1
                 program_hashes.append(program.program_hash)
                 continue
-            quality = self.context.validator_registry.validate(
-                CapabilityQualityContext(
-                    capability_id=step.capability_id,
-                    validator_id=validator_id,
-                    input_rows=(rows,),
-                    output_rows=transformed,
-                    input_artifact_hashes=input_hashes,
-                    output_artifact_hash=sha256_digest(stable_json_dumps(transformed).encode("utf-8")),
-                    expected_rows=recomputed,
-                    required_fields=tuple(schema),
-                    completion_criteria=step.completion_criteria,
-                    operation_semantics=dict(self.context.quality_semantics_by_capability.get(step.capability_id, {})),
-                    provenance_item_ids=provenance,
+            with self._measure_phase("quality_validation", grant):
+                quality = self.context.validator_registry.validate(
+                    CapabilityQualityContext(
+                        capability_id=step.capability_id,
+                        validator_id=validator_id,
+                        input_rows=tuple(input_tables.values()),
+                        output_rows=transformed,
+                        input_artifact_hashes=input_hashes,
+                        output_artifact_hash=sha256_digest(stable_json_dumps(transformed).encode("utf-8")),
+                        expected_rows=recomputed,
+                        required_fields=tuple(schema),
+                        completion_criteria=step.completion_criteria,
+                        operation_semantics=dict(self.context.quality_semantics_by_capability.get(step.capability_id, {})),
+                        provenance_item_ids=provenance,
+                    )
                 )
-            )
             self.context.quality_reports[quality.report_hash] = quality
             quality_hashes.append(quality.report_hash)
             if quality.verified:
@@ -2134,7 +2299,11 @@ class AdaptiveCapabilityDispatcher:
                     grant_hash=grant.grant_hash,
                     success=False,
                     attempt_id=grant.attempt_id,
-                    error_code="capability_quality_rejected",
+                    error_code=(
+                        "dsl_repair_exhausted:capability_quality_rejected"
+                        if dsl_repair_count >= 1
+                        else "capability_quality_rejected"
+                    ),
                     validator_report_hashes=tuple(quality_hashes),
                     quality_report_hashes=tuple(quality_hashes),
                     projection_report_hashes=projection_hashes,
@@ -2147,24 +2316,29 @@ class AdaptiveCapabilityDispatcher:
                         "llm_codeact_quality_rejected_count": 0.0,
                     },
                 )
-            program = self.context.transform_program_repair_factory(
-                step,
-                grant,
-                input_ref_id,
-                rows,
-                quality.error_codes,
+            program = self._invoke_transform_program_repair(
+                self.context.transform_program_repair_factory,
+                step=step,
+                grant=grant,
+                input_ref_id=input_ref_id,
+                rows=rows,
+                validation_errors=quality.error_codes,
+                input_tables=input_tables,
+                previous_program=program,
+                repair_stage="quality_validation",
             )
             dsl_repair_count += 1
             dsl_quality_repair_count += 1
             program_hashes.append(program.program_hash)
-        result = self.transform_interpreter.run_verified(
-            program,
-            inputs=projected_inputs,
-            grant=grant,
-            attempt_workspace=attempt_workspace / "dsl",
-            output_schema=schema,
-            quality_report=quality,
-        )
+        with self._measure_phase("transform_verified_materialization", grant):
+            result = self.transform_interpreter.run_verified(
+                program,
+                inputs=projected_inputs,
+                grant=grant,
+                attempt_workspace=attempt_workspace / "dsl",
+                output_schema=schema,
+                quality_report=quality,
+            )
         artifact = result.artifact
         self.context.artifacts[artifact.artifact_id] = StoredAdaptiveArtifact(
             artifact=artifact,
@@ -2185,6 +2359,8 @@ class AdaptiveCapabilityDispatcher:
             "runtime_signature_hash": self.context.runtime_compatibility_signature,
             "operations": [operation.canonical_payload() for operation in program.operations],
             "source_program_hash": program.program_hash,
+            "input_artifact_refs": list(data_refs),
+            "input_artifact_hashes": list(input_hashes),
         }
         memory_metrics = self._record_memory_consumption(
             memory_inputs=memory_inputs,
@@ -2479,6 +2655,8 @@ class AdaptiveCapabilityDispatcher:
                     "llm_codeact_sandbox_fallback_count": float(outcome.record.sandbox_actual_backend != "bwrap"),
                 },
             )
+        if sha256_digest(outcome.accepted_source.encode("utf-8")) != outcome.record.source_hash:
+            raise AdaptiveDispatchError("llm_python_accepted_source_hash_mismatch")
         artifact = outcome.artifact
         self.context.artifacts[artifact.artifact_id] = StoredAdaptiveArtifact(
             artifact=artifact,
@@ -2501,8 +2679,8 @@ class AdaptiveCapabilityDispatcher:
             "input_schema_digest": self.context.input_schema_digest,
             "validator_digest": self.context.validator_digest,
             "runtime_signature_hash": self.context.runtime_compatibility_signature,
-            "source": source,
-            "source_hash": sha256_digest(source.encode("utf-8")),
+            "source": outcome.accepted_source,
+            "source_hash": outcome.record.source_hash,
         }
         memory_metrics = self._record_memory_consumption(
             memory_inputs=memory_inputs,
@@ -2646,6 +2824,19 @@ class AdaptiveCapabilityDispatcher:
             claim_set = candidate_claim_set
         else:
             assert self.context.claim_set_factory is not None
+            memory_artifacts = {}
+            if self.context.claim_memory_selector is not None:
+                if "memory_artifacts" not in inspect.signature(self.context.claim_set_factory).parameters:
+                    raise AdaptiveDispatchError("summarizer_memory_reader_not_registered")
+                selected_ids = self.context.claim_memory_selector(memory_inputs)
+                granted_inputs = {str(item["ref_id"]): item for item in memory_inputs}
+                if len(selected_ids) != len(set(selected_ids)) or not set(selected_ids) <= set(granted_inputs):
+                    raise AdaptiveDispatchError("summarizer_memory_selection_outside_grant")
+                for memory_id in selected_ids:
+                    with self._measure_phase("memory_read_verification", grant):
+                        memory_artifacts[memory_id] = self._observe_memory_read(
+                            granted_inputs[memory_id], grant=grant, step=step, read_rows=True,
+                        )
             try:
                 if self._factory_accepts_memory_inputs(
                     self.context.claim_set_factory,
@@ -2658,6 +2849,7 @@ class AdaptiveCapabilityDispatcher:
                         rows,
                         evidence_pack,
                         memory_inputs,
+                        **({"memory_artifacts": memory_artifacts} if self.context.claim_memory_selector is not None else {}),
                     )
                 else:
                     claim_set = self.context.claim_set_factory(
@@ -2757,6 +2949,43 @@ class AdaptiveCapabilityDispatcher:
             validator_report_hashes=(audit_hash,),
             metrics=memory_metrics,
         )
+
+    def _typed_transform_inputs(
+        self,
+        *,
+        step: PlanStepProposal,
+        grant: CapabilityGrant,
+        attempt_workspace: Path,
+    ) -> tuple[dict[str, tuple[dict[str, object], ...]], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        """Hydrate all current data artifacts under the same verified Grant.
+
+        Evidence-only projection keeps its existing single-pack contract. When
+        data artifacts exist, evidence is context and never silently unioned
+        into a table. Each data file is re-read and checked independently.
+        """
+        refs = tuple(ref for ref in grant.input_ref_ids if ref in self.context.artifacts)
+        if len(refs) <= 1:
+            ref, rows, hashes, provenance, projections = self._typed_input(
+                step=step, grant=grant, attempt_workspace=attempt_workspace,
+            )
+            return {ref: rows}, hashes, provenance, projections
+        unknown = set(grant.input_ref_ids) - set(refs) - set(self.context.evidence_packs)
+        if unknown:
+            raise AdaptiveDispatchError("transform_input_ref_unknown")
+        for ref in grant.input_ref_ids:
+            if ref in self.context.evidence_packs:
+                self._verified_evidence_pack(ref, grant)
+        tables = {}
+        hashes = []
+        provenance = []
+        for ref in refs:
+            stored = self.context.artifacts[ref]
+            if not self._artifact_in_grant_scope(stored, grant):
+                raise AdaptiveDispatchError("transform_input_not_verified")
+            tables[ref] = self._read_verified_artifact_rows(stored)
+            hashes.append(stored.artifact.blob_hash)
+            provenance.extend(stored.provenance_item_ids)
+        return tables, tuple(hashes), tuple(dict.fromkeys(provenance)), ()
 
     def _typed_input(
         self,

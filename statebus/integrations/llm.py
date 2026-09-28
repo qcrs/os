@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import math
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -371,10 +372,15 @@ class OpenAICompatibleLLMClient:
         # copy-attractor degeneration on unbounded string/array values is also
         # structurally impossible. Only applied for local_vllm; the DeepSeek API
         # path keeps json_object untouched.
+        simple_fact_report = (
+            isinstance(response_schema, dict)
+            and response_schema.get("title") == "statebus_simple_fact_report_v1"
+        )
         if (
             self.config.mode == "local_vllm"
             and isinstance(request.get("response_format"), dict)
             and request["response_format"].get("type") == "json_object"
+            and (purpose != "summarizer" or simple_fact_report)
         ):
             schema = response_schema or {"type": "object", "additionalProperties": True}
             request = {
@@ -388,6 +394,21 @@ class OpenAICompatibleLLMClient:
                     },
                 },
             }
+        # vLLM 0.9.2's default xgrammar backend rejects valid negative
+        # fractional JSON numbers such as -0.2973. Legacy summarizer numeric
+        # fields are still checked by ClaimSetValidator and the business report
+        # scorer, so keep those callers on ordinary JSON-object decoding. The
+        # Contest39 simple fact report is a closed, enum-backed schema with a
+        # dedicated marker; it must use schema-guided decoding or Qwen can
+        # legally emit the old free-form report shape.
+        elif (
+            self.config.mode == "local_vllm"
+            and purpose == "summarizer"
+            and isinstance(request.get("response_format"), dict)
+            and request["response_format"].get("type") == "json_object"
+            and not simple_fact_report
+        ):
+            request = {**request, "response_format": {"type": "json_object"}}
         # local_vllm: Qwen3 defaults to enable_thinking=True and emits a
         # "<think>..." block before the answer. Under object-only JSON grammar the
         # first token must be "{", so the model cannot emit "<think>" and ends up
@@ -408,12 +429,27 @@ class OpenAICompatibleLLMClient:
                 "logprobs": True,
                 "top_logprobs": 20,
             }
-        response = await self._create_completion_with_retry(
-            provider_name=provider_name,
-            provider=self.config.provider_config(provider_name),
-            request=request,
-            purpose=purpose,
-        )
+        request_event_start = len(self.request_events)
+        try:
+            response = await self._create_completion_with_retry(
+                provider_name=provider_name,
+                provider=self.config.provider_config(provider_name),
+                request=request,
+                purpose=purpose,
+            )
+        finally:
+            prompt_tokens = _estimate_chat_prompt_tokens(messages)
+            budget_observation = {
+                "estimated_prompt_tokens": prompt_tokens,
+                "prompt_token_estimator": "local_tokenizer" if _load_prompt_tokenizer() is not None else "fallback_heuristic",
+                "configured_max_tokens": role_config.max_tokens,
+                "effective_max_tokens": request.get("max_tokens"),
+                "max_context_tokens": role_config.max_context_tokens,
+                "max_context_safety_margin_tokens": role_config.max_context_safety_margin_tokens,
+            }
+            for event in self.request_events[request_event_start:]:
+                if event.get("event") == "provider_request":
+                    event.update(budget_observation)
         choice = response.choices[0]
         finish_reason = str(getattr(choice, "finish_reason", "") or "").strip() or None
         content = _coerce_content_to_text(choice.message.content)
@@ -456,6 +492,7 @@ class OpenAICompatibleLLMClient:
                         "role": purpose,
                         "provider": provider_name,
                         "model": request.get("model"),
+                        "requested_max_tokens": request.get("max_tokens"),
                         "attempt": attempt_index + 1,
                         "retry_kind": "none" if attempt_index == 0 else "transient_retry",
                         "status": "response_received",
@@ -477,6 +514,7 @@ class OpenAICompatibleLLMClient:
                         "role": purpose,
                         "provider": provider_name,
                         "model": request.get("model"),
+                        "requested_max_tokens": request.get("max_tokens"),
                         "attempt": attempt_index + 1,
                         "retry_kind": "none" if attempt_index == 0 else "transient_retry",
                         "status": "error",
@@ -1559,16 +1597,77 @@ def _cap_max_tokens_for_context(
         - _estimate_chat_prompt_tokens(messages)
         - max(0, int(role_config.max_context_safety_margin_tokens))
     )
-    return max(1, min(max_tokens, available_tokens))
+    if available_tokens <= 0:
+        raise ValueError(
+            "prompt_exceeds_model_context: "
+            f"estimated_prompt_tokens={_estimate_chat_prompt_tokens(messages)} "
+            f"max_context_tokens={role_config.max_context_tokens} "
+            f"safety_margin_tokens={role_config.max_context_safety_margin_tokens}"
+        )
+    return min(max_tokens, available_tokens)
+
+
+_PROMPT_TOKENIZER_CACHE: dict[str, Any] = {}
+
+
+def _load_prompt_tokenizer() -> Any | None:
+    """Load an optional local tokenizer for exact prompt budgeting.
+
+    The serving process owns the authoritative tokenizer, so this is only a
+    local estimate. When a tokenizer file is mounted, using it avoids the
+    large over-estimation caused by byte heuristics. Missing optional
+    dependencies or paths deliberately fall back to the bounded estimator.
+    """
+    tokenizer_path = (
+        os.getenv("STATEBUS_LLM_TOKENIZER_PATH")
+        or os.getenv("STATEBUS_VLLM_TOKENIZER_PATH")
+        or ""
+    ).strip()
+    if not tokenizer_path:
+        return None
+    cached = _PROMPT_TOKENIZER_CACHE.get(tokenizer_path)
+    if cached is not None:
+        return None if cached is False else cached
+    try:
+        from tokenizers import Tokenizer
+        path = Path(tokenizer_path)
+        if path.is_dir():
+            path = path / "tokenizer.json"
+        tokenizer = Tokenizer.from_file(str(path))
+    except (ImportError, OSError, ValueError, TypeError):
+        _PROMPT_TOKENIZER_CACHE[tokenizer_path] = False
+        return None
+    _PROMPT_TOKENIZER_CACHE[tokenizer_path] = tokenizer
+    return tokenizer
+
+
+def _fallback_prompt_token_count(content: str) -> int:
+    # ASCII prose/JSON averages close to four characters per token, while
+    # non-ASCII text generally consumes about one token per character. Keep a
+    # word/punctuation floor so short identifiers and JSON delimiters are not
+    # underestimated. This is intentionally a preflight estimate, not a
+    # claimed provider token count.
+    ascii_chars = sum(1 for char in content if ord(char) < 128)
+    non_ascii_chars = len(content) - ascii_chars
+    char_estimate = math.ceil(ascii_chars / 4.0 + non_ascii_chars / 1.5)
+    lexical_floor = len(re.findall(r"\w+|[^\w\s]", content, flags=re.UNICODE))
+    return max(1, char_estimate, lexical_floor)
 
 
 def _estimate_chat_prompt_tokens(messages: list[ChatMessage]) -> int:
+    tokenizer = _load_prompt_tokenizer()
     total = 3
     for item in messages:
         content = str(item.content or "")
-        byte_len = len(content.encode("utf-8"))
         total += 4
-        total += max(len(content.split()), (byte_len + 2) // 3)
+        if tokenizer is not None:
+            try:
+                encoded = tokenizer.encode(content, add_special_tokens=False)
+                total += len(encoded.ids)
+                continue
+            except (AttributeError, TypeError, ValueError):
+                pass
+        total += _fallback_prompt_token_count(content)
     return max(1, total)
 
 

@@ -550,7 +550,10 @@ class PlanPolicyValidator:
         if isinstance(value, str):
             return len(value) <= 128 and "\n" not in value
         if isinstance(value, (tuple, list)):
-            return len(value) <= 8 and all(isinstance(item, str) and len(item) <= 128 for item in value)
+            # Generic analysis contracts permit up to 64 required fields. This
+            # structural safety bound must not silently narrow that registered
+            # contract to eight; per-capability cardinality is checked below.
+            return len(value) <= 64 and all(isinstance(item, str) and len(item) <= 128 for item in value)
         return False
 
     @staticmethod

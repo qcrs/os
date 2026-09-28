@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, TextIO
+from typing import Any, Iterator, TextIO
 
 from statebus.contracts import TELEMETRY_EVENT_SCHEMA_VERSION
 
@@ -125,6 +126,29 @@ class TelemetryEmitter:
         "METRIC_SNAPSHOT",
     )
     snapshot_event_types: tuple[str, ...] = ("TASK_SUMMARY_METRICS",)
+
+    @contextmanager
+    def measure_phase(
+        self, phase: str, *, trace_id: str, task_id: str,
+        step_id: str = "", attempt_id: str = "",
+    ) -> Iterator[None]:
+        """Diagnostic intervals, not additive counters or admission evidence."""
+        started_ns = time.perf_counter_ns()
+        returned = False
+        try:
+            yield
+            returned = True
+        finally:
+            ended_ns = time.perf_counter_ns()
+            self.emit(TelemetryEvent.create(
+                trace_id=trace_id, task_id=task_id, step_id=step_id, attempt_id=attempt_id,
+                event_type="RUNTIME_PHASE_TIMING", role="runtime_driver", channel="diagnostic",
+                payload={"phase": phase, "status": "returned" if returned else "raised"},
+                metrics={
+                    "started_perf_ns": started_ns, "ended_perf_ns": ended_ns,
+                    "duration_ms": (ended_ns - started_ns) / 1_000_000.0,
+                },
+            ))
 
     def emit(self, event: TelemetryEvent) -> TelemetryEvent:
         emit_start_ns = time.perf_counter_ns()

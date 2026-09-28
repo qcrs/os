@@ -39,6 +39,32 @@ event payload 用于身份和原因，metrics 用于数值聚合。例如 `STATE
 Emitter 还测量自身日志开销，包括 emit、event/fact write、flush 和 handle open 时间/次数，
 从而把 Telemetry 固定成本与业务阶段分开统计。
 
+## Adaptive Memory 阶段计时
+
+`RUNTIME_PHASE_TIMING` 是诊断 interval，不属于 additive/snapshot metric，也不是 runtime
+fact 或 authority receipt；只写入完整 runtime event log，不新增 Studio 展示字段。
+每次调用保留 task/step/attempt、phase、单调时钟起止值和 duration_ms。`returned` 只表示
+调用正常返回（返回的结果仍可能被拒绝），`raised` 表示调用抛异常；异常继续沿原路径传播。
+duration 在 emit 前结束，因此不包含该条计时日志的写入时间。
+
+当前覆盖 bound provider invocation、Memory lookup（包含 compatibility）、Memory 输入授权
+与 hydration、DSL input hydration、Memory read verification、transform execution、独立
+recompute、quality validation、verified materialization、Attempt result admission 和 Memory commit。
+同一 Grant 下重复授权检查保留为多次调用，不缓存或合并。`transform_verified_materialization`
+包含 interpreter 的再次执行和产物写出，不能描述为纯磁盘时间。DSL 各段独立测量，但这里没有
+覆盖所有 Runtime 阶段，不能用它们求和或用 E2E 减这些时间推导 Runtime exclusive overhead。
+
+Memory lookup 的 query 与 compatibility 尚未拆分；embedding generation、LLM Python 内部
+execution/verification 尚未获得本组独立计时。缺少事件意味着未观测，不自动填零。
+provider skip 仍由原有 skip/read/result-admission receipts 证明，不由计时事件缺席证明。
+
+P4 `rows.json` 和 `producer_rows.json` 保留对应原始 phase events。`timing_accounting` 的
+总时间覆盖 `_run_runtime` 调用，失败 attempt 和 producer 成本都计入；未启动的 lane 保留
+null 和 not_started_count。缺失或非法耗时只报告 observed subtotal，不伪造完整 total。
+只有全部计划配对成功、producer 成功且 timing 完整时才计算 pooled descriptive break-even；
+不完整或失败配对不会得到正向收益结论。计时 instrumentation 本身有开销，不能将新增计时
+后的结果与旧 artifact 直接解释为优化加速。
+
 Logit Gate 的任务终态指标还包括 extraction attempt/available count、跨 PID transfer count、
 传输字节、retry trigger、top gap、entropy、decision position 与 sequence length。完整闭环同时
 核对 publish、跨 PID consume、release、最终状态和 Worker dispatch。受控挑战的 19 次状态

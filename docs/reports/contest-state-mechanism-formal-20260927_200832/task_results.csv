@@ -1,0 +1,7 @@
+experiment,task_id,variant,status,quality,e2e_ms,provider_requests,provider_tokens,repair,reason,source_path
+state,semantic-holdout-s5,off,success,True,98370.08303,4,7042,0,,/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s5/off/summary.json
+state,semantic-holdout-s5,on,success,True,101324.566675,4,6899,0,,/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s5/on/summary.json
+state,semantic-holdout-s4,off,success,True,227083.892027,7,15694,1,,/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s4/off/summary.json
+state,semantic-holdout-s4,on,success,True,203434.746135,6,13894,1,,/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s4/on/summary.json
+state,semantic-holdout-s8,off,success,True,190782.87719,6,12013,0,,/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s8/off/summary.json
+state,semantic-holdout-s8,on,success,True,153632.676644,5,9846,0,,/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s8/on/summary.json

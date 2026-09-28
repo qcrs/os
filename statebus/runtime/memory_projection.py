@@ -16,10 +16,45 @@ from statebus.memory.models import (
     MemoryValidationStatus,
 )
 from statebus.refs import ExecutionArtifactRef
-from statebus.utils import sha256_digest
+from statebus.utils import sha256_digest, stable_json_dumps
 
 
 MEMORY_PROJECTION_BINDING_SCHEMA_VERSION = "statebus.memory_projection_binding.v1"
+
+
+def provider_visible_memory_inputs(
+    memory_inputs: tuple[dict[str, object], ...], *, include_recipe: bool = True,
+) -> tuple[dict[str, object], ...]:
+    """Project approved Memory inputs for an LLM; keep authority data in Runtime.
+
+    Every candidate keeps its identity and compatibility decision. Identical
+    methods are emitted once, based on their actual content, not a supplied hash.
+    Summarization and code repair need summaries, not historical code bodies.
+    This does not modify grants, recipes, replay eligibility or consumption.
+    """
+    visible: list[dict[str, object]] = []
+    recipe_refs: dict[str, str] = {}
+    for item in memory_inputs:
+        projected = {key: item[key] for key in (
+            "ref_id", "source_task_id", "source_agent", "summary", "replay_class",
+            "compatibility_verdict", "compatibility_reasons",
+        ) if key in item}
+        recipe = item.get("execution_recipe")
+        if include_recipe and isinstance(recipe, dict):
+            method = {key: recipe[key] for key in (
+                "execution_kind", "capability_id", "output_contract_version",
+                "operation_names", "source", "operations",
+            ) if key in recipe}
+            if method:
+                identity = stable_json_dumps(method)
+                if identity in recipe_refs:
+                    projected["execution_recipe_ref"] = recipe_refs[identity]
+                else:
+                    projected["execution_recipe"] = method
+                    if item.get("ref_id"):
+                        recipe_refs[identity] = str(item["ref_id"])
+        visible.append(projected)
+    return tuple(visible)
 
 
 @dataclass(frozen=True)

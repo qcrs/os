@@ -1,0 +1,46 @@
+{
+  "mode": "live",
+  "codeact_fallback": "on",
+  "cases": [
+    {
+      "case_id": "formal-trend-001",
+      "expected_backend": "dsl",
+      "operation": "compute_trend",
+      "max_dsl_attempts": 2,
+      "max_python_attempts": 1,
+      "rationale": "registered trend_series over one ticker and three requested periods"
+    },
+    {
+      "case_id": "formal-trend-005",
+      "expected_backend": "dsl",
+      "operation": "compute_trend",
+      "max_dsl_attempts": 2,
+      "max_python_attempts": 1,
+      "rationale": "registered trend_series over the requested ticker/period lists"
+    },
+    {
+      "case_id": "formal-join-001",
+      "expected_backend": "dsl",
+      "operation": "compare_metric",
+      "max_dsl_attempts": 2,
+      "max_python_attempts": 1,
+      "rationale": "registered compare_metric for the fixed ACME/BETA alignment"
+    },
+    {
+      "case_id": "formal-agg-004",
+      "expected_backend": "python",
+      "operation": "groupby_aggregate",
+      "max_dsl_attempts": 2,
+      "max_python_attempts": 1,
+      "rationale": "requires date-string month derivation and numeric-string normalization"
+    },
+    {
+      "case_id": "formal-anomaly-001",
+      "expected_backend": "python",
+      "operation": "detect_outliers",
+      "max_dsl_attempts": 2,
+      "max_python_attempts": 1,
+      "rationale": "requires inclusive interpolated quartiles and outlier-filtered means"
+    }
+  ]
+}

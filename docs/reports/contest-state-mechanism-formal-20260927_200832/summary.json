@@ -1,0 +1,420 @@
+{
+  "schema_version": "statebus.contest_mechanism_collection.v1",
+  "raw_root": "/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832",
+  "planned": 6,
+  "started": 6,
+  "passed": 6,
+  "status_counts": {
+    "success": 6
+  },
+  "experiments": {
+    "memory": {
+      "planned": 0,
+      "by_variant": {
+        "off": {
+          "planned": 0,
+          "started": 0,
+          "passed": 0,
+          "provider_requests": null,
+          "provider_tokens": null,
+          "task_e2e_ms_sum": null,
+          "repairs": null
+        },
+        "on": {
+          "planned": 0,
+          "started": 0,
+          "passed": 0,
+          "provider_requests": null,
+          "provider_tokens": null,
+          "task_e2e_ms_sum": null,
+          "repairs": null
+        }
+      },
+      "pairs": [],
+      "observed_mechanism": {
+        "query_count": 0,
+        "candidate_hit_count": 0,
+        "candidate_hit_rate": null,
+        "actual_consumed_tasks": 0,
+        "validated_replay_tasks": 0,
+        "planned_on_tasks": 0
+      },
+      "chains": {
+        "finance": {
+          "off": {
+            "planned": 0,
+            "started": 0,
+            "passed": 0,
+            "provider_requests": null,
+            "provider_tokens": null,
+            "task_e2e_ms_sum": null
+          },
+          "on": {
+            "planned": 0,
+            "started": 0,
+            "passed": 0,
+            "provider_requests": null,
+            "provider_tokens": null,
+            "task_e2e_ms_sum": null
+          }
+        },
+        "service_ops": {
+          "off": {
+            "planned": 0,
+            "started": 0,
+            "passed": 0,
+            "provider_requests": null,
+            "provider_tokens": null,
+            "task_e2e_ms_sum": null
+          },
+          "on": {
+            "planned": 0,
+            "started": 0,
+            "passed": 0,
+            "provider_requests": null,
+            "provider_tokens": null,
+            "task_e2e_ms_sum": null
+          }
+        }
+      }
+    },
+    "state": {
+      "planned": 6,
+      "by_variant": {
+        "off": {
+          "planned": 3,
+          "started": 3,
+          "passed": 3,
+          "provider_requests": 17,
+          "provider_tokens": 34749,
+          "task_e2e_ms_sum": 516236.852247,
+          "repairs": 1
+        },
+        "on": {
+          "planned": 3,
+          "started": 3,
+          "passed": 3,
+          "provider_requests": 15,
+          "provider_tokens": 30639,
+          "task_e2e_ms_sum": 458391.989454,
+          "repairs": 1
+        }
+      },
+      "pairs": [
+        {
+          "task_id": "semantic-holdout-s5",
+          "comparable": true,
+          "off": {
+            "experiment": "state",
+            "task_id": "semantic-holdout-s5",
+            "variant": "off",
+            "status": "success",
+            "quality": true,
+            "e2e_ms": 98370.08303,
+            "provider_requests": 4,
+            "provider_prompt_tokens": 6222,
+            "provider_completion_tokens": 820,
+            "provider_tokens": 7042,
+            "repair": 0,
+            "reason": null,
+            "source_path": "/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s5/off/summary.json",
+            "state": {
+              "publish_count": 0,
+              "transfer_count": 0,
+              "consume_count": 0,
+              "payload_bytes": 0,
+              "read_bytes": 0,
+              "cross_process_consumption_observed": false,
+              "release_observed": false,
+              "selected_ids": [
+                "ctx-section-2",
+                "ctx-section-1",
+                "ctx-section-3"
+              ],
+              "selected_evidence_chars": 304,
+              "selected_evidence_tokens": 54,
+              "behavioral_effect": "not_applicable"
+            }
+          },
+          "on": {
+            "experiment": "state",
+            "task_id": "semantic-holdout-s5",
+            "variant": "on",
+            "status": "success",
+            "quality": true,
+            "e2e_ms": 101324.566675,
+            "provider_requests": 4,
+            "provider_prompt_tokens": 6073,
+            "provider_completion_tokens": 826,
+            "provider_tokens": 6899,
+            "repair": 0,
+            "reason": null,
+            "source_path": "/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s5/on/summary.json",
+            "state": {
+              "publish_count": 3,
+              "transfer_count": 3,
+              "consume_count": 3,
+              "payload_bytes": 49152,
+              "read_bytes": 49152,
+              "cross_process_consumption_observed": true,
+              "release_observed": true,
+              "selected_ids": [
+                "ctx-section-1",
+                "ctx-section-2"
+              ],
+              "selected_evidence_chars": 145,
+              "selected_evidence_tokens": 25,
+              "behavioral_effect": "changed"
+            }
+          },
+          "e2e_saving_ratio": -0.030034371772350434,
+          "provider_token_saving_ratio": 0.020306731042317522,
+          "provider_request_saving_ratio": 0
+        },
+        {
+          "task_id": "semantic-holdout-s4",
+          "comparable": true,
+          "off": {
+            "experiment": "state",
+            "task_id": "semantic-holdout-s4",
+            "variant": "off",
+            "status": "success",
+            "quality": true,
+            "e2e_ms": 227083.892027,
+            "provider_requests": 7,
+            "provider_prompt_tokens": 13744,
+            "provider_completion_tokens": 1950,
+            "provider_tokens": 15694,
+            "repair": 1,
+            "reason": null,
+            "source_path": "/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s4/off/summary.json",
+            "state": {
+              "publish_count": 0,
+              "transfer_count": 0,
+              "consume_count": 0,
+              "payload_bytes": 0,
+              "read_bytes": 0,
+              "cross_process_consumption_observed": false,
+              "release_observed": false,
+              "selected_ids": [
+                "ctx-section-5",
+                "ctx-section-1",
+                "ctx-section-4"
+              ],
+              "selected_evidence_chars": 568,
+              "selected_evidence_tokens": 175,
+              "behavioral_effect": "not_applicable"
+            }
+          },
+          "on": {
+            "experiment": "state",
+            "task_id": "semantic-holdout-s4",
+            "variant": "on",
+            "status": "success",
+            "quality": true,
+            "e2e_ms": 203434.746135,
+            "provider_requests": 6,
+            "provider_prompt_tokens": 12132,
+            "provider_completion_tokens": 1762,
+            "provider_tokens": 13894,
+            "repair": 1,
+            "reason": null,
+            "source_path": "/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s4/on/summary.json",
+            "state": {
+              "publish_count": 2,
+              "transfer_count": 2,
+              "consume_count": 2,
+              "payload_bytes": 49152,
+              "read_bytes": 49152,
+              "cross_process_consumption_observed": true,
+              "release_observed": true,
+              "selected_ids": [
+                "ctx-section-4",
+                "ctx-section-5",
+                "ctx-section-1"
+              ],
+              "selected_evidence_chars": 568,
+              "selected_evidence_tokens": 175,
+              "behavioral_effect": "changed"
+            }
+          },
+          "e2e_saving_ratio": 0.10414277155857513,
+          "provider_token_saving_ratio": 0.11469351344462853,
+          "provider_request_saving_ratio": 0.14285714285714285
+        },
+        {
+          "task_id": "semantic-holdout-s8",
+          "comparable": true,
+          "off": {
+            "experiment": "state",
+            "task_id": "semantic-holdout-s8",
+            "variant": "off",
+            "status": "success",
+            "quality": true,
+            "e2e_ms": 190782.87719,
+            "provider_requests": 6,
+            "provider_prompt_tokens": 10346,
+            "provider_completion_tokens": 1667,
+            "provider_tokens": 12013,
+            "repair": 0,
+            "reason": null,
+            "source_path": "/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s8/off/summary.json",
+            "state": {
+              "publish_count": 0,
+              "transfer_count": 0,
+              "consume_count": 0,
+              "payload_bytes": 0,
+              "read_bytes": 0,
+              "cross_process_consumption_observed": false,
+              "release_observed": false,
+              "selected_ids": [
+                "ctx-section-1",
+                "ctx-section-3",
+                "ctx-section-2"
+              ],
+              "selected_evidence_chars": 292,
+              "selected_evidence_tokens": 81,
+              "behavioral_effect": "not_applicable"
+            }
+          },
+          "on": {
+            "experiment": "state",
+            "task_id": "semantic-holdout-s8",
+            "variant": "on",
+            "status": "success",
+            "quality": true,
+            "e2e_ms": 153632.676644,
+            "provider_requests": 5,
+            "provider_prompt_tokens": 8539,
+            "provider_completion_tokens": 1307,
+            "provider_tokens": 9846,
+            "repair": 0,
+            "reason": null,
+            "source_path": "/home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832/state/ablation/cases/semantic-holdout-s8/on/summary.json",
+            "state": {
+              "publish_count": 3,
+              "transfer_count": 3,
+              "consume_count": 3,
+              "payload_bytes": 49152,
+              "read_bytes": 49152,
+              "cross_process_consumption_observed": true,
+              "release_observed": true,
+              "selected_ids": [
+                "ctx-section-3",
+                "ctx-section-1"
+              ],
+              "selected_evidence_chars": 154,
+              "selected_evidence_tokens": 58,
+              "behavioral_effect": "changed"
+            }
+          },
+          "e2e_saving_ratio": 0.19472502508179626,
+          "provider_token_saving_ratio": 0.180387913094148,
+          "provider_request_saving_ratio": 0.16666666666666666
+        }
+      ],
+      "aggregate": {
+        "pair_count": 3,
+        "selected_evidence_chars": {
+          "off": 1164,
+          "on": 867,
+          "delta": -297,
+          "reduction_ratio": 0.2551546392
+        },
+        "provider_requests": {
+          "off": 17,
+          "on": 15,
+          "delta": -2,
+          "reduction_ratio": 0.1176470588
+        },
+        "provider_tokens": {
+          "off": 34749,
+          "on": 30639,
+          "delta": -4110,
+          "reduction_ratio": 0.1182775044
+        },
+        "task_e2e_ms": {
+          "off": 516236.852247,
+          "on": 458391.989454,
+          "delta": -57844.862793,
+          "reduction_ratio": 0.1120506586
+        }
+      }
+    }
+  },
+  "run_configuration": {
+    "mechanism": "state",
+    "mode": "live",
+    "output": "/workspace/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832",
+    "family": "all",
+    "memory_variant": "all",
+    "task_id": [],
+    "case_id": [],
+    "dry_run": false,
+    "model": "qwen3-32b",
+    "base_url": "http://127.0.0.1:53334/v1",
+    "max_context": 8192,
+    "provider_timeout_s": 480,
+    "embedding_mode": "local",
+    "embedding_model": "/statebus/models/Qwen3-Embedding-0.6B",
+    "embedding_device": "cuda:0",
+    "tokenizer_path": "/data/models/Qwen3-32B"
+  },
+  "run_plan": [
+    {
+      "experiment": "state",
+      "task_id": "semantic-holdout-s5",
+      "variant": "off"
+    },
+    {
+      "experiment": "state",
+      "task_id": "semantic-holdout-s5",
+      "variant": "on"
+    },
+    {
+      "experiment": "state",
+      "task_id": "semantic-holdout-s4",
+      "variant": "off"
+    },
+    {
+      "experiment": "state",
+      "task_id": "semantic-holdout-s4",
+      "variant": "on"
+    },
+    {
+      "experiment": "state",
+      "task_id": "semantic-holdout-s8",
+      "variant": "off"
+    },
+    {
+      "experiment": "state",
+      "task_id": "semantic-holdout-s8",
+      "variant": "on"
+    }
+  ],
+  "actual_commands": {
+    "runner": "bash scripts/run_contest_mechanisms.sh \\\n  --mechanism state \\\n  --mode live \\\n  --output /home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832",
+    "collector": "bash scripts/run_contest_mechanisms.sh --collect-only --output /home/qcrs/statebus/os/runs/contest-state-executor-consumer-formal-20260927_200832 --collect-output <new-report-root>"
+  },
+  "environment": {
+    "host_model": "qwen3-32b",
+    "vllm_model_root": "/data/models/Qwen3-32B",
+    "vllm_physical_gpu": 2,
+    "api_base_url": "http://127.0.0.1:53334/v1",
+    "context_tokens": 8192,
+    "container": "statebus-runtime",
+    "container_source": "/workspace/statebus/os",
+    "runtime_python": "/home/qcrs/statebus/conda-envs/statebus_host/bin/python",
+    "embedding_model": "/statebus/models/Qwen3-Embedding-0.6B",
+    "embedding_physical_gpu": 1,
+    "embedding_container_device": "cuda:0",
+    "os": "openEuler 24.03 LTS-SP3"
+  },
+  "boundaries": {
+    "provider_tokens_are_not_agent_communication_tokens": true,
+    "wire_bytes_not_inferred": true,
+    "state_no_effect_is_not_business_benefit": true,
+    "task_e2e_ms_sum_is_not_batch_wall_clock": true
+  },
+  "scope": "complete_quality_passing_state_pairs"
+}

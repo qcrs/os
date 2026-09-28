@@ -196,11 +196,31 @@ def _adaptive_plan_response_schema(
     plan_properties: dict[str, Any]
     plan_required: list[str]
     if role_slot_layout:
+        def role_step_schema(role: str) -> dict[str, Any]:
+            # A fixed role slot must not advertise criteria belonging only to
+            # other roles. Within a role use the registered capability union;
+            # PlanPolicyValidator still checks the chosen capability exactly.
+            allowed_criteria = {
+                key for item in capability_surface if item.get("role") == role
+                for key in item.get("completion_criteria", {})
+            }
+            return {
+                **step_schema,
+                "properties": {
+                    **step_schema["properties"],
+                    "completion_criteria": {
+                        **completion_criteria,
+                        "properties": {key: schema for key, schema in completion_criteria["properties"].items()
+                                       if key in allowed_criteria},
+                    },
+                },
+            }
+        executor_schema = role_step_schema("executor")
         plan_properties = {
-            "retriever_step": step_schema,
-            "primary_executor_step": step_schema,
-            "additional_executor_steps": {"type": "array", "items": step_schema},
-            "summarizer_step": step_schema,
+            "retriever_step": role_step_schema("retriever"),
+            "primary_executor_step": executor_schema,
+            "additional_executor_steps": {"type": "array", "items": executor_schema},
+            "summarizer_step": role_step_schema("summarizer"),
         }
         plan_required = [
             "retriever_step",
@@ -283,14 +303,29 @@ def _operation_argument_contract(op: str) -> dict[str, object]:
                 "min_output": "optional output minimum field",
                 "max_output": "optional output maximum field",
                 "count_output": "optional output count field",
+                "group_fields": "alternative multi-column grouping: authorized column[]; replaces group_field/value_field API",
+                "value_fields": "parallel numeric source column[]; may repeat",
+                "functions": "parallel (sum|mean|min|max|count)[]",
+                "outputs": "parallel distinct output column[]; disjoint from group_fields",
             },
+            "alternatives": [["group_field", "value_field"], ["group_fields", "value_fields", "functions", "outputs"]],
         },
-        "derive_safe": {"required": ["numerator", "denominator", "output", "kind"], "fields": {"numerator": "authorized column", "denominator": "authorized column", "output": "new column", "kind": "difference|ratio|pct_change"}},
+        "derive_safe": {
+            "required": ["numerator", "denominator", "output", "kind"],
+            "alternatives": [["numerator", "denominator", "output", "kind"], ["calculations"]],
+            "fields": {
+                "numerator": "authorized column", "denominator": "authorized column",
+                "output": "new column", "kind": "difference|ratio|pct_change|less_than|greater_than|boolean_change",
+                "calculations": "alternative ordered array of [new_output, kind, left_column, right_column_or_scalar, scale?, decimals?]; previous outputs visible; omit absent trailing optional items instead of using null placeholders; scale/decimals are allowed only for difference/ratio/pct_change; less_than/greater_than/boolean_change use exactly four items",
+            },
+            "semantics": "difference=left-right; ratio=left/right and may use scale=100 for a percentage ratio; pct_change=(left-right)/right*100; ratio and pct_change reject zero denominators; comparisons compare left directly with the right column/scalar; boolean_change(current,prior) yields initial for null prior, new/resolved/still_risk/still_clear; no expression evaluation",
+        },
         "compare_periods": {
             "required": ["period_field", "value_field"],
             "fields": {
                 "period_field": "authorized ordered period column",
                 "value_field": "authorized numeric column",
+                "group_fields": "optional authorized distinct column[]; requires exactly two distinct period rows in each group",
                 "carry_fields": "optional authorized column[]; each must have one invariant value across compared rows",
                 "baseline_period_output": "optional output field",
                 "comparison_period_output": "optional output field",
@@ -359,7 +394,25 @@ def _operation_argument_contract(op: str) -> dict[str, object]:
                 "direction_output": "increasing|decreasing|flat|mixed output field",
             },
         },
-        "join_by_key": {"required": ["right_ref", "left_key", "right_key"], "fields": {"right_ref": "authorized ref", "left_key": "authorized column", "right_key": "authorized column"}},
+        "join_by_key": {
+            "required": ["right_ref", "left_key", "right_key"],
+            "alternatives": [["right_ref", "left_key", "right_key"], ["right_ref", "left_keys", "right_keys"]],
+            "fields": {
+                "right_ref": "authorized RHS ref", "left_key": "current pipeline column", "right_key": "RHS column",
+                "left_keys": "alternative current pipeline key column[]", "right_keys": "parallel RHS key column[]",
+                "right_prefix": "optional prefix for ALL RHS columns including keys; other name collisions rejected",
+            },
+        },
+        "rank": {
+            "required": ["metric", "output"],
+            "fields": {"metric": "finite numeric column", "output": "new integer column", "descending": "optional bool", "tie_break_columns": "optional column[]", "method": "ordinal only"},
+            "semantics": "one-based ordinal rank; ties use tie_break_columns then stable input order; preserve input row order",
+        },
+        "percentile_nearest_rank": {
+            "required": ["value_field", "percentile", "output"],
+            "fields": {"value_field": "finite numeric column", "percentile": "number in (0,100]", "output": "new numeric column", "group_fields": "optional column[]", "sample_count_output": "optional new integer column"},
+            "semantics": "ascending samples at ceil(percentile * count / 100), one-based; preserve selected sample numeric type",
+        },
         "anomaly_check": {"required": ["column", "output"], "fields": {"column": "authorized numeric column", "output": "new boolean column"}},
         "anomaly_zscore": {
             "required": ["period_field", "value_field"],
@@ -2540,7 +2593,10 @@ class RolePathRunner:
                 " This is the one permitted policy repair. Return a complete replacement plan, not a patch and not "
                 "a copy of replan_context.invalid_proposal. Add, remove, or reorder steps when needed to satisfy every "
                 "authority.role_cardinality bound and every reported policy issue. Before returning, count the roles "
-                "in the replacement and verify that every depends_on value names a step in that same replacement."
+                "in the replacement and verify that every depends_on value names a step in that same replacement. "
+                "For completion_criteria_not_supported_by_capability, REMOVE the named unsupported criteria key "
+                "from that step; changing its value to zero does not make it supported. Use only keys declared by "
+                "that step's chosen capability entry, never copy another role's criteria."
             )
         prompt = self._render_prompt(
             role_label="planner",
@@ -2799,6 +2855,8 @@ class RolePathRunner:
         task_goal: str = "",
         artifact_summaries: tuple[dict[str, object], ...] = (),
         expected_claim_count: int | None = None,
+        report_requirements: str = "",
+        repair_context: dict[str, object] | None = None,
     ) -> ClaimSet:
         if expected_claim_count is not None and expected_claim_count < 1:
             raise ValueError("adaptive_expected_claim_count_invalid")
@@ -2851,8 +2909,13 @@ class RolePathRunner:
                 "evidence_is_support_only": True,
                 "one_claim_per_verified_row": True,
             }
+        if report_requirements:
+            payload["report_requirements"] = report_requirements
+        if repair_context is not None:
+            payload["repair_context"] = repair_context
         instruction = (
             "You are StateBus Summarizer. Return a ClaimSet JSON only. Use reference_catalog as typed columns: "
+            "The top-level array key MUST be exactly `claims` (not `claim_set`); the top-level status MUST be `ready`. "
             "supporting_evidence_item_ids may contain only evidence.evidence_id values; supporting_artifact_ref_ids may contain only "
             "artifacts.artifact_ref_id values. Never put an artifact ID in an evidence-ID field, never put an artifact "
             "row or artifact ID in an evidence-ID field, and never invent a reference. Every factual claim must cite at least "
@@ -2862,13 +2925,31 @@ class RolePathRunner:
             "supporting artifact's verified_rows, and use only that artifact's numeric_field_names as numeric_fields keys. "
             "Do not encode or convert period/date/string labels as numbers, and do not assert a numeric value that appears "
             "only in evidence text. "
-            "Do not modify verified numbers. Use the evidence text and verified rows to answer task_goal. claim_type "
+            "Treat numeric_fields as a literal field-by-field copy from the matching verified_rows: values are already "
+            "in their final units and precision. Do not recompute, round, rescale, multiply, or divide them (including "
+            "percentage fields). Do not modify verified numbers. For every report risk label, read the boolean from the same matching "
+            "verified row using the risk field declared in report_requirements. Never infer risk from prose, a locator, a percentage, or a different row. Use the evidence text and verified rows to answer task_goal. claim_type "
             "must be fact, inference, or risk. Claim status may only be ready or "
             "missing_citation. Create one compact claim per verified output row; do not split a row across claims or "
-            "repeat a claim. Keep claim_text to one short sentence and put the exact numeric values in numeric_fields. "
+            "repeat a claim. Keep claim_text compact without omitting required report content; put exact numeric values in numeric_fields. "
             "Use only source evidence IDs that support the claim and never repeat an ID within a claim. Use top-level "
             "status ready because this request contains verified support."
         )
+        if report_requirements:
+            instruction += (
+                " Follow report_requirements explicitly. Required report body content belongs in claim_text; "
+                "claim_id is only an identifier and uncertainty_note is not a substitute for the report body. "
+                "Completeness takes priority over brevity."
+            )
+        if repair_context is not None:
+            instruction += (
+                " repair_context contains a rejected previous_candidate and validation_errors, not authoritative facts. "
+                "Return a complete replacement ClaimSet correcting ALL errors from the verified rows and evidence. "
+                "For report-body errors edit claim_text, not just claim_id. For report_risk errors, copy the boolean from the "
+                "matching verified row's current risk field literally; do not infer it from source prose or recompute it. For "
+                "report_numeric_value errors, copy the matching verified row's numeric_fields literally; do not apply the task formula "
+                "or any unit conversion. Never change verified input values."
+            )
         if expected_claim_count is not None:
             instruction += (
                 " Return exactly claim_contract.expected_claim_count claims and no others. Evidence items are support "

@@ -416,23 +416,97 @@ def _write_ablation_markdown(summary: dict[str, object], path: Path) -> None:
         "",
         f"- Overall: {'PASS' if summary['ok'] else 'INCONCLUSIVE'}",
         f"- Pairs: {summary['denominator']['closed_pairs']}/{summary['denominator']['planned_pairs']} closed",
-        "- Variants: off, on, consumer_off",
+        "- Variants: " + ", ".join(summary["modes"]),
         "",
-        "| Pair | Off | On | Consumer off | Denominator |",
-        "| --- | --- | --- | --- | --- |",
+        "| Pair | " + " | ".join(summary["modes"]) + " | Denominator |",
+        "| --- | " + " | ".join("---" for _ in summary["modes"]) + " | --- |",
     ]
     for report in summary["pairs"]:
         by_mode = {row["variant"]: row for row in report["variants"]}
-        lines.append(
-            "| {pair} | {off} | {on} | {consumer_off} | {denominator} |".format(
-                pair=report["task_id"],
-                off="PASS" if by_mode.get("off", {}).get("ok") else "FAIL",
-                on="PASS" if by_mode.get("on", {}).get("ok") else "FAIL",
-                consumer_off="PASS" if by_mode.get("consumer_off", {}).get("ok") else "FAIL",
-                denominator="CLOSED" if report["denominator_eligible"] else "OPEN",
-            )
-        )
+        statuses = ["PASS" if by_mode.get(mode, {}).get("ok") else "FAIL" for mode in summary["modes"]]
+        lines.append("| " + str(report["task_id"]) + " | " + " | ".join(statuses) + " | "
+                     + ("CLOSED" if report["denominator_eligible"] else "OPEN") + " |")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _semantic_selected_metrics(summary: dict[str, object]) -> dict[str, object]:
+    selections = summary.get("semantic_state_selections", {})
+    selections = selections if isinstance(selections, dict) else {}
+    state_selected_ids: list[str] = []
+    selected_bytes = 0
+    cross_process = False
+    for selection in selections.values():
+        if not isinstance(selection, dict):
+            continue
+        state_selected_ids.extend(str(item) for item in selection.get("selected_candidate_ids", ()))
+        selected_bytes += int(selection.get("selected_evidence_bytes", 0) or 0)
+        producer_pid = int(selection.get("producer_pid", 0) or 0)
+        consumer_pid = int(selection.get("consumer_pid", 0) or 0)
+        cross_process = cross_process or bool(producer_pid and consumer_pid and producer_pid != consumer_pid)
+    publication_receipts = summary.get("state_publication_receipts", {})
+    publication_receipts = publication_receipts if isinstance(publication_receipts, dict) else {}
+    consumer_receipts = summary.get("semantic_consumer_receipts", {})
+    consumer_receipts = consumer_receipts if isinstance(consumer_receipts, dict) else {}
+    release_receipts = summary.get("state_release_reclaim_receipts", {})
+    release_receipts = release_receipts if isinstance(release_receipts, dict) else {}
+    evidence = summary.get("report_evidence_items")
+    evidence = evidence if isinstance(evidence, list) else None
+    downstream_items = [item for item in (evidence or []) if isinstance(item, dict)]
+    downstream_ids = [str(item.get("id", "")) for item in downstream_items if item.get("id")]
+    return {
+        "payload_bytes": sum(int(item.get("size_bytes", 0) or 0) for item in publication_receipts.values() if isinstance(item, dict)),
+        "read_bytes": sum(int(item.get("observed_size_bytes", 0) or 0) for item in consumer_receipts.values() if isinstance(item, dict)),
+        # report_evidence_items is the evidence actually materialized for the
+        # downstream reporting path.  State selection receipts are a useful
+        # lifecycle observation, but their byte count is not a character
+        # count and does not describe the off control's normal evidence path.
+        "selected_ids": list(dict.fromkeys(downstream_ids)) if evidence is not None else None,
+        "selected_evidence_chars": (
+            sum(len(str(item.get("text", ""))) for item in downstream_items)
+            if evidence is not None else None
+        ),
+        "state_selected_ids": list(dict.fromkeys(state_selected_ids)),
+        "state_selected_evidence_bytes": selected_bytes,
+        "cross_process_consumption_observed": cross_process,
+        "release_observed": bool(release_receipts) and all(
+            bool(item.get("owner_released")) and bool(item.get("physical_reclaimed"))
+            for item in release_receipts.values() if isinstance(item, dict)
+        ),
+    }
+
+
+def _semantic_selected_tokens(summary: dict[str, object], selected_ids: list[str] | None, tokenizer_path: str | None) -> int | None:
+    if selected_ids is None:
+        return None
+    if not tokenizer_path or not (Path(tokenizer_path) / "tokenizer.json").is_file():
+        return None
+    evidence = summary.get("report_evidence_items", ())
+    evidence = evidence if isinstance(evidence, list) else []
+    selected = set(selected_ids)
+    texts = [str(item.get("text", "")) for item in evidence if isinstance(item, dict) and str(item.get("id", "")) in selected]
+    if not texts:
+        return 0 if not selected else None
+    from statebus.benchmark.contest_metrics import _tokenizer
+    tokenizer = _tokenizer(tokenizer_path)
+    return sum(len(tokenizer.encode(text, add_special_tokens=False).ids) for text in texts)
+
+
+def _provider_call_count(summary: dict[str, object]) -> int | None:
+    """Count observed role attempts, with legacy event fallback."""
+
+    invocations = summary.get("role_invocations")
+    if isinstance(invocations, list):
+        role_attempts = sum(
+            len(attempts)
+            for invocation in invocations
+            if isinstance(invocation, dict)
+            and isinstance((attempts := invocation.get("attempts")), list)
+        )
+        generations = summary.get("generation_attempts")
+        generation_attempts = len(generations) if isinstance(generations, list) else 0
+        return role_attempts + generation_attempts
+    events = summary.get("provider_invocation_events")
+    return len(events) if isinstance(events, list) else None
 
 
 def _semantic_ablation_row(
@@ -441,6 +515,7 @@ def _semantic_ablation_row(
     mode: str,
     case_summary: dict[str, object] | None = None,
     failure: dict[str, object] | None = None,
+    tokenizer_path: str | None = None,
 ) -> dict[str, object]:
     """Project one matched semantic-state variant without inventing metrics."""
 
@@ -455,6 +530,10 @@ def _semantic_ablation_row(
     selections = selections if isinstance(selections, dict) else {}
     effects = summary.get("downstream_effects", {})
     effects = effects if isinstance(effects, dict) else {}
+    selected_metrics = _semantic_selected_metrics(summary)
+    selected_tokens = _semantic_selected_tokens(summary, selected_metrics["selected_ids"], tokenizer_path)
+    usage = summary.get("usage", {})
+    usage = usage if isinstance(usage, dict) else {}
     terminal = bool(summary.get("runtime_completed"))
     quality = bool(summary.get("ok"))
     disable_reason = str(activation.get("disable_reason", ""))
@@ -499,6 +578,9 @@ def _semantic_ablation_row(
         "task_contract_hash": case.spec.spec_hash,
         "variant": mode,
         "requested_feature_flags": {"semantic_state": mode},
+        "executor_consumer_policy": dict(
+            summary.get("semantic_state_executor_policy", {})
+        ),
         "effective_feature_flags": {
             "semantic_state": effective_mode or "unknown"
         },
@@ -508,7 +590,21 @@ def _semantic_ablation_row(
         "terminal": terminal,
         "quality_pass": quality,
         "ok": bool(terminal and quality and receipt_matches and (active_gate or inactive_gate)),
-        "provider_call_count": len(summary.get("provider_invocation_events", [])),
+        "provider_call_count": _provider_call_count(summary),
+        "provider_prompt_tokens": usage.get("prompt_tokens"),
+        "provider_completion_tokens": usage.get("completion_tokens"),
+        "provider_total_tokens": usage.get("total_tokens"),
+        "e2e_ms": summary.get("elapsed_ms"),
+        "repair": bool(summary.get("planner_policy_repair_used", False)) or bool(telemetry.get("repair_used", 0.0)),
+        "payload_bytes": selected_metrics["payload_bytes"],
+        "read_bytes": selected_metrics["read_bytes"],
+        "cross_process_consumption_observed": selected_metrics["cross_process_consumption_observed"],
+        "release_observed": selected_metrics["release_observed"],
+        "selected_ids": selected_metrics["selected_ids"],
+        "selected_evidence_chars": selected_metrics["selected_evidence_chars"],
+        "selected_evidence_tokens": selected_tokens,
+        "state_selected_ids": selected_metrics["state_selected_ids"],
+        "state_selected_evidence_bytes": selected_metrics["state_selected_evidence_bytes"],
         "semantic_publish_count": float(telemetry.get("semantic_state_publish_count", 0.0)),
         "semantic_consume_count": float(telemetry.get("semantic_state_consume_count", 0.0)),
         "semantic_transfer_count": float(telemetry.get("semantic_state_transfer_count", 0.0)),
@@ -547,6 +643,19 @@ def _semantic_ablation_row(
             "ok": False,
             "activation_status": "environment_failure",
             "failure": failure,
+            "provider_call_count": None,
+            "payload_bytes": None,
+            "read_bytes": None,
+            "cross_process_consumption_observed": None,
+            "release_observed": None,
+            "selected_ids": None,
+            "selected_evidence_chars": None,
+            "selected_evidence_tokens": None,
+            "state_selected_ids": None,
+            "state_selected_evidence_bytes": None,
+            "semantic_publish_count": None,
+            "semantic_consume_count": None,
+            "semantic_transfer_count": None,
         })
     return row
 
@@ -558,6 +667,11 @@ def run_semantic_state_ablation(
     embedding_device: str,
     case_ids: tuple[str, ...] = (),
     max_cases: int = 0,
+    modes: tuple[str, ...] = ("off", "on", "consumer_off"),
+    tokenizer_path: str | None = None,
+    run_name: str | None = None,
+    executor_top_k: int | None = None,
+    executor_budget_bytes: int | None = None,
 ) -> dict[str, object]:
     """Run a small matched off/on/consumer-off SemanticState ablation.
 
@@ -571,14 +685,17 @@ def run_semantic_state_ablation(
         case_ids=case_ids,
         max_cases=max_cases,
     )
-    run_root = output_root / (
+    normalized_modes = tuple(dict.fromkeys(str(mode) for mode in modes))
+    if not normalized_modes or any(mode not in {"off", "on", "consumer_off"} for mode in normalized_modes):
+        raise ValueError(f"semantic_state_ablation_modes_invalid:{','.join(normalized_modes)}")
+    run_root = output_root / (run_name or (
         f"semantic_state_ablation_{time.strftime('%Y%m%d_%H%M%S')}_"
         f"{time.time_ns() % 1_000_000_000:09d}"
-    )
+    ))
     run_root.mkdir(parents=True, exist_ok=False)
     case_root = run_root / "cases"
     case_root.mkdir()
-    modes = ("off", "on", "consumer_off")
+    modes = normalized_modes
     rows: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
     pair_reports: list[dict[str, object]] = []
@@ -599,11 +716,18 @@ def run_semantic_state_ablation(
                     embedding_device=embedding_device,
                     memory_policy="none",
                     semantic_state_mode=mode,
+                    semantic_state_executor_top_k=(
+                        executor_top_k if mode == "on" else None
+                    ),
+                    semantic_state_executor_budget_bytes=(
+                        executor_budget_bytes if mode == "on" else None
+                    ),
                 )
                 row = _semantic_ablation_row(
                     case=case,
                     mode=mode,
                     case_summary=case_summary,
+                    tokenizer_path=tokenizer_path,
                 )
                 row["summary_path"] = str(variant_root / "summary.json")
             except Exception as exc:
@@ -628,11 +752,12 @@ def run_semantic_state_ablation(
                     case=case,
                     mode=mode,
                     failure=failure,
+                    tokenizer_path=tokenizer_path,
                 )
                 traceback.print_exc()
             pair_rows.append(row)
             rows.append(row)
-        expected_modes = {"off", "on", "consumer_off"}
+        expected_modes = set(modes)
         observed_modes = {str(row.get("variant")) for row in pair_rows}
         by_mode = {str(row["variant"]): row for row in pair_rows}
         on_row = by_mode.get("on", {})
@@ -640,29 +765,32 @@ def run_semantic_state_ablation(
         consumer_off_row = by_mode.get("consumer_off", {})
         mode_contract = {
             "off_disabled": (
-                not off_row.get("producer_active", False)
-                and not off_row.get("consumer_active", False)
+                "off" not in expected_modes
+                or (not off_row.get("producer_active", False) and not off_row.get("consumer_active", False))
             ),
-            "on_cross_process_consumer": bool(
-                on_row.get("producer_active", False)
-                and on_row.get("consumer_active", False)
-                and on_row.get("actual_use", False)
+            "on_cross_process_consumer": (
+                "on" not in expected_modes
+                or bool(on_row.get("producer_active", False)
+                        and on_row.get("consumer_active", False)
+                        and on_row.get("actual_use", False)
+                        and on_row.get("cross_process_consumption_observed", False))
             ),
-            "consumer_off_producer_only": bool(
+        }
+        if "consumer_off" in expected_modes:
+            mode_contract["consumer_off_producer_only"] = bool(
                 consumer_off_row.get("producer_active", False)
                 and not consumer_off_row.get("consumer_active", False)
-            ),
-        }
-        activation_statuses = {
-            str(row.get("activation_status", "unknown")) for row in pair_rows
-        }
+            )
+        activation_statuses = {str(row.get("activation_status", "unknown")) for row in pair_rows}
+        inactive_modes = tuple(mode for mode in modes if mode != "off")
         inactive_variant_statuses = {
             str(by_mode.get(mode, {}).get("activation_status", "unknown"))
-            for mode in ("on", "consumer_off")
+            for mode in inactive_modes
         }
         inactive_negative_control = (
-            inactive_variant_statuses == {"inactive_no_semantic_state_payload"}
-            and by_mode.get("off", {}).get("activation_status") == "disabled_control"
+            bool(inactive_modes)
+            and inactive_variant_statuses == {"inactive_no_semantic_state_payload"}
+            and ("off" not in expected_modes or by_mode.get("off", {}).get("activation_status") == "disabled_control")
             and all(row.get("ok", False) for row in pair_rows)
             and all(not row.get("actual_use", False) for row in pair_rows)
         )
@@ -671,10 +799,18 @@ def run_semantic_state_ablation(
         )
         environment_failure = "environment_failure" in activation_statuses
         pair_gate = {
-            "exactly_three_variants": observed_modes == expected_modes,
-            "all_variants_terminal": len(pair_rows) == 3 and all(row["terminal"] for row in pair_rows),
-            "all_variants_quality_pass": len(pair_rows) == 3 and all(row["quality_pass"] for row in pair_rows),
-            "receipt_modes_match": len(pair_rows) == 3 and all(
+            "exact_requested_variants": observed_modes == expected_modes,
+            # Compatibility field for historical three-mode consumers.  The
+            # new two-mode experiment is judged by exact_requested_variants,
+            # rather than being failed for intentionally omitting consumer_off.
+            "exactly_three_variants": (
+                observed_modes == {"off", "on", "consumer_off"}
+                if expected_modes == {"off", "on", "consumer_off"}
+                else True
+            ),
+            "all_variants_terminal": len(pair_rows) == len(modes) and all(row["terminal"] for row in pair_rows),
+            "all_variants_quality_pass": len(pair_rows) == len(modes) and all(row["quality_pass"] for row in pair_rows),
+            "receipt_modes_match": len(pair_rows) == len(modes) and all(
                 row.get("activation_receipt", {}).get("requested_mode") == row.get("variant")
                 for row in pair_rows
             ),
@@ -688,16 +824,10 @@ def run_semantic_state_ablation(
             "variants": pair_rows,
             "gates": pair_gate,
             "activation_class": (
-                "environment_failure"
-                if environment_failure
-                else "inactive_negative_control"
-                if inactive_negative_control
-                else "active"
-                if active_pair
-                else "unclassified"
+                "environment_failure" if environment_failure else
+                "inactive_negative_control" if inactive_negative_control else
+                "active" if active_pair else "unclassified"
             ),
-            # Inactive controls are valid evidence but deliberately excluded
-            # from the active mechanism denominator.
             "denominator_eligible": bool(active_pair and all(pair_gate.values())),
             "negative_control_valid": bool(inactive_negative_control),
         }
@@ -774,9 +904,15 @@ def run_semantic_state_ablation(
         "case_ids": summary["case_ids"],
         "embedding_model_path": embedding_model_path,
         "embedding_device": embedding_device,
+        "executor_consumer_policy": {
+            "top_k": executor_top_k,
+            "budget_bytes": executor_budget_bytes,
+            "scope": "on_variant_only",
+        },
         "provider_profile": "inherited_from_adaptive_formal_case",
         "lane_order": list(modes),
-        "requested_feature_flags": {"semantic_state": "matched_off_on_consumer_off"},
+        "requested_feature_flags": {"semantic_state": "matched_" + "_".join(modes)},
+        "tokenizer_path": tokenizer_path,
     }) + "\n", encoding="utf-8")
     (run_root / "rows.json").write_text(stable_json_dumps(rows) + "\n", encoding="utf-8")
     (run_root / "denominator.json").write_text(stable_json_dumps(denominator) + "\n", encoding="utf-8")

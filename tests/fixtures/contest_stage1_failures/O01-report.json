@@ -1,0 +1,38 @@
+{
+  "verified_rows": [
+    {
+      "error_rate_pct": 1.3114,
+      "event_locator": "events_W01.md#S-A",
+      "exceeds_slo": false,
+      "failed_request_count": 157,
+      "mean_latency_ms": 124.9277,
+      "request_count": 11972,
+      "risk_change": "initial",
+      "site_id": "S-A"
+    },
+    {
+      "error_rate_pct": 2.4928,
+      "event_locator": "events_W01.md#S-B",
+      "exceeds_slo": true,
+      "failed_request_count": 301,
+      "mean_latency_ms": 147.9304,
+      "request_count": 12075,
+      "risk_change": "initial",
+      "site_id": "S-B"
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "ctx-section-2",
+      "evidence_text": "S-A\nS-A W01: A gateway rollout occurred on day two; rollback completed that evening."
+    },
+    {
+      "evidence_id": "ctx-section-3",
+      "evidence_text": "S-B\nS-B W01: A dependency maintenance window occurred on day four; causation has not been established."
+    }
+  ],
+  "raw_responses": [
+    "{\"claims\": [{\"claim_id\": \"claim-1790258754471129285-96928236119b-2-S-A\", \"claim_text\": \"A gateway rollout occurred on day two; rollback completed that evening.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-2\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-O01-execute-analysis-adaptive-attempt-run-1790258754471129285-96928236119b-2\"], \"numeric_fields\": {\"error_rate_pct\": 1.3114, \"failed_request_count\": 157, \"mean_latency_ms\": 124.9277, \"request_count\": 11972}, \"uncertainty_note\": \"\", \"status\": \"ready\"}, {\"claim_id\": \"claim-1790258754471129285-96928236119b-2-S-B\", \"claim_text\": \"A dependency maintenance window occurred on day four; causation has not been established.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-3\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-O01-execute-analysis-adaptive-attempt-run-1790258754471129285-96928236119b-2\"], \"numeric_fields\": {\"error_rate_pct\": 2.4928, \"failed_request_count\": 301, \"mean_latency_ms\": 147.9304, \"request_count\": 12075}, \"uncertainty_note\": \"\", \"status\": \"ready\"}], \"status\": \"ready\"}",
+    "{\"claims\": [{\"claim_id\": \"claim-S-A-W01\", \"claim_text\": \"A gateway rollout occurred on day two; rollback completed that evening.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-2\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-O01-execute-analysis-adaptive-attempt-run-1790258754471129285-96928236119b-2\"], \"numeric_fields\": {\"error_rate_pct\": 1.3114, \"failed_request_count\": 157, \"mean_latency_ms\": 124.9277, \"request_count\": 11972}, \"uncertainty_note\": \"\", \"status\": \"ready\"}, {\"claim_id\": \"claim-S-B-W01\", \"claim_text\": \"A dependency maintenance window occurred on day four; causation has not been established.\", \"claim_type\": \"fact\", \"supporting_evidence_item_ids\": [\"ctx-section-3\"], \"supporting_artifact_ref_ids\": [\"llm-codeact-O01-execute-analysis-adaptive-attempt-run-1790258754471129285-96928236119b-2\"], \"numeric_fields\": {\"error_rate_pct\": 2.4928, \"failed_request_count\": 301, \"mean_latency_ms\": 147.9304, \"request_count\": 12075}, \"uncertainty_note\": \"\", \"status\": \"ready\"}], \"status\": \"ready\"}"
+  ]
+}

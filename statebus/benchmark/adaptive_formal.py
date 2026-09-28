@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import csv
-from math import floor, isclose, isfinite
+from math import ceil, floor, isclose, isfinite
 from pathlib import Path
 import re
 from typing import Callable
@@ -350,6 +350,20 @@ def _operation_for_spec(spec: CanonicalTaskSpec) -> str:
         "groupby_aggregate",
         "detect_outliers",
         "materialize_clean_table",
+        "finance_monthly_review",
+        "service_weekly_review",
+        "finance_v2_monthly_review",
+        "service_v2_weekly_review",
+        "finance_quarterly_review",
+        "finance_period_delta",
+        "finance_budget_review",
+        "finance_budget_status_review",
+        "finance_budget_delta_review",
+        "finance_half_year_review",
+        "service_sequence_review",
+        "service_error_delta",
+        "service_p95_review",
+        "service_multiweek_review",
     }:
         return spec.intent_op
     raise ValueError(f"formal_adaptive_operation_unsupported:{spec.task_family}:{spec.intent_op}")
@@ -366,6 +380,84 @@ def _capability_id(operation: str) -> str:
 
 
 def _output_schema(operation: str, arguments: dict[str, object]) -> tuple[dict[str, str], str]:
+    if operation in {"finance_monthly_review", "finance_v2_monthly_review"}:
+        return {
+            "unit_id": "string", "net_revenue_cny": "integer", "cost_cny": "integer",
+            "profit_cny": "integer", "margin_pct": "number", "below_20_pct": "boolean",
+            "risk_change": "string", "note_locator": "string",
+        }, "array"
+    if operation in {"service_weekly_review", "service_v2_weekly_review"}:
+        return {
+            "site_id": "string", "request_count": "integer", "failed_request_count": "integer",
+            "error_rate_pct": "number", "mean_latency_ms": "number", "exceeds_slo": "boolean",
+            "risk_change": "string", "event_locator": "string",
+        }, "array"
+    if operation == "finance_quarterly_review":
+        schema, shape = _output_schema("finance_monthly_review", arguments)
+        schema.update({f"m{period[-2:]}_margin_pct": "number" for period in arguments["periods"]})
+        return schema, shape
+    if operation == "finance_period_delta":
+        return {
+            "unit_id": "string", "period_from": "string", "period_to": "string",
+            "revenue_from_cny": "integer", "revenue_to_cny": "integer", "delta_cny": "integer",
+            "growth_pct": "number", "decline_rank": "integer", "below_20_pct": "boolean",
+            "risk_change": "string", "note_locator": "string",
+        }, "array"
+    if operation == "finance_budget_review":
+        return {
+            "unit_id": "string", "actual_net_revenue_cny": "integer", "budget_net_revenue_cny": "integer",
+            "variance_cny": "integer", "variance_pct": "number", "attainment_pct": "number",
+            "under_budget": "boolean", "risk_change": "string", "note_locator": "string",
+        }, "array"
+    if operation == "finance_budget_status_review":
+        return {
+            "unit_id": "string", "actual_net_revenue_cny": "integer", "budget_net_revenue_cny": "integer",
+            "variance_cny": "integer", "under_budget": "boolean", "risk_change": "string", "note_locator": "string",
+        }, "array"
+    if operation == "finance_budget_delta_review":
+        return {
+            "unit_id": "string", "current_actual_net_revenue_cny": "integer", "prior_actual_net_revenue_cny": "integer",
+            "current_budget_net_revenue_cny": "integer", "prior_budget_net_revenue_cny": "integer",
+            "current_variance_cny": "integer", "prior_variance_cny": "integer",
+            "current_under_budget": "boolean", "prior_under_budget": "boolean",
+            "risk_change": "string", "note_locator": "string",
+        }, "array"
+    if operation == "finance_half_year_review":
+        return {
+            "unit_id": "string", "half_year_net_revenue_cny": "integer", "half_year_cost_cny": "integer",
+            "half_year_profit_cny": "integer", "half_year_margin_pct": "number",
+            **{f"m{period[-2:]}_{metric}": kind for period in arguments["periods"]
+               for metric, kind in (("net_revenue_cny", "integer"), ("profit_cny", "integer"), ("margin_pct", "number"))},
+            **{f"q{q}_{metric}": "integer" for q in (1, 2) for metric in ("net_revenue_cny", "profit_cny")},
+            "m05_attainment_pct": "number", "m06_attainment_pct": "number",
+            "m05_under_budget": "boolean", "m06_under_budget": "boolean", "budget_risk_change": "string",
+            "below_20_pct": "boolean", "risk_change": "string", "note_locator": "string",
+        }, "array"
+    if operation == "service_sequence_review":
+        schema, shape = _output_schema("service_weekly_review", arguments)
+        schema.update({f"{period.lower()}_error_rate_pct": "number" for period in arguments["periods"]})
+        return schema, shape
+    if operation == "service_error_delta":
+        return {
+            "site_id": "string", "period_from": "string", "period_to": "string",
+            "error_rate_from_pct": "number", "error_rate_to_pct": "number", "error_rate_delta_pp": "number",
+            "deterioration_rank": "integer", "exceeds_slo": "boolean", "risk_change": "string", "event_locator": "string",
+        }, "array"
+    if operation == "service_p95_review":
+        return {
+            "site_id": "string", "period": "string", "sample_count": "integer",
+            "p95_latency_ms": "integer", "exceeds_slo": "boolean", "risk_change": "string",
+            "event_locator": "string",
+        }, "array"
+    if operation == "service_multiweek_review":
+        return {
+            "site_id": "string", "weeks_included": "integer", "request_count": "integer",
+            "failed_request_count": "integer", "error_rate_pct": "number", "mean_latency_ms": "number",
+            **{f"{period.lower()}_error_rate_pct": "number" for period in arguments["periods"]},
+            "w07_p95_latency_ms": "integer", "w08_p95_latency_ms": "integer",
+            "w07_p95_exceeds_slo": "boolean", "w08_p95_exceeds_slo": "boolean", "p95_risk_change": "string",
+            "exceeds_slo": "boolean", "risk_change": "string", "event_locator": "string",
+        }, "array"
     if operation in {
         "extract_narrative_facts",
         "synthesize_narrative_risk",
@@ -478,6 +570,64 @@ def _labeled_fact_semantics(arguments: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _period_review_guidance(operation: str) -> str:
+    """Public period-review invariants shared by both Executor paths.
+
+    The formal operation contract is authoritative, but both lanes benefit
+    from an imperative checklist at both generation and repair time.  This is
+    parameterized by the operation rather than by task IDs so the same rules
+    apply to every current/previous aggregate review.
+    """
+    if operation in {"finance_monthly_review", "finance_v2_monthly_review"}:
+        entity = "unit_id"
+        values = (
+            "net_revenue_cny and cost_cny"
+            if operation == "finance_monthly_review"
+            else "booked_revenue_cny, refund_cny, and cost_cny"
+        )
+        threshold = "(revenue - cost) / revenue < 0.20"
+        threshold_source = "the fixed 0.20 margin threshold from the public formula, not a nonexistent threshold input field"
+        risk = "below_20_pct"
+        locator = "note_locator"
+    elif operation in {"service_weekly_review", "service_v2_weekly_review"}:
+        entity = "site_id"
+        values = (
+            "request_count, failed_request_count, and latency_sum_ms"
+            if operation == "service_weekly_review"
+            else "completed_request_count, final_failed_request_count, and request_latency_sum_ms"
+        )
+        threshold = (
+            "failed / request_count > the current row's slo_error_rate"
+            if operation == "service_weekly_review"
+            else "final_failed / completed_request_count > the current row's slo_error_rate"
+        )
+        threshold_source = "the same site's current input slo_error_rate for BOTH current and prior risk comparisons; bind this threshold once and reuse it, rather than reading an uninitialized prior accumulator field"
+        risk = "exceeds_slo"
+        locator = "event_locator"
+    else:
+        return ""
+    return (
+        "\nExecutor invariants for this period review (apply literally):\n"
+        "- All released CSV, SLO, and locator metadata needed for the calculation is already bound in "
+        "inputs/task.json. Do not read any other released file, infer a path, or use the filesystem to obtain a "
+        "previous period; use is_current and the bound rows only.\n"
+        f"- Group ALL raw rows by {entity} and the boolean is_current before calculating any derived field; "
+        f"sum {values} within each group and emit exactly one current row per {entity}. Never emit one row per raw row.\n"
+        "- Keep period presence separate from a false risk value. A missing previous group is not an all-clear "
+        "previous group: test whether previous rows exist before reading or creating a prior aggregate. "
+        "Only if no previous raw rows exist for the review, set risk_change='initial' for every current entity.\n"
+        f"- Only when previous rows exist, compute prior {risk} from the complete prior aggregate using {threshold}; "
+        "then compare current and prior booleans to choose new, resolved, still_risk, or still_clear. Never read a "
+        "missing derived risk key as false. A missing accumulator threshold or derived field is a code defect, not evidence that previous rows are absent; do not substitute initial, false, zero, or an empty group to hide it.\n"
+        f"- Use {threshold_source}; do not use a stale row variable left over from an earlier loop, and do not "
+        f"invent an entity-specific threshold. Read {locator} from the grouped current rows for that same entity.\n"
+        "- Initialize each accumulator once per entity and period, then add every row's amounts or counts. "
+        "Test prior-group membership before an indexed defaultdict lookup can create a synthetic prior group.\n"
+        f"- Sort all current output rows by {entity}, then write only outputs/result.json. The row count comes from "
+        "the current entities present in the bound input, not from a fixed literal."
+    )
+
+
 def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[str, object]:
     semantics: dict[str, object] = {
         "operation": operation,
@@ -488,8 +638,111 @@ def _operation_semantics(operation: str, arguments: dict[str, object]) -> dict[s
             "non-numeric cell."
         ),
         "output_contract": "Write only the requested JSON object or object array to outputs/result.json.",
+        "period_binding": "Use exact period strings from input rows and declared operation arguments; never invent or normalize their case.",
     }
-    if operation in {"extract_narrative_facts", "synthesize_narrative_risk"}:
+    if operation in {"finance_monthly_review", "finance_v2_monthly_review"}:
+        semantics.update(
+            executor_invariants=_period_review_guidance(operation),
+            numeric_parser="Input amounts are JSON integers, not formatted strings. Use them directly; do not call string methods on numbers.",
+            period_selection="Rows with is_current true are current; false rows are previous. Do not hardcode periods.",
+            formula=(
+                (
+                    "For each unit_id sum net_revenue_cny and cost_cny separately over its rows in each period; "
+                    if operation == "finance_monthly_review"
+                    else "For each unit_id compute row_net_revenue=booked_revenue_cny-refund_cny, then sum row_net_revenue and cost_cny separately over its rows in each period; "
+                )
+                + "profit_cny=revenue-cost; margin_pct=round(100*profit/revenue,4). "
+                "below_20_pct is (revenue-cost)/revenue < 0.20 BEFORE rounding. Previous-period risk uses that period's sums, not "
+                "a derived risk field (raw input rows do not contain below_20_pct); recompute the prior risk from the "
+                "prior raw rows with the same formula. Never read a missing derived field as no prior risk. "
+                "risk_change='initial' for EVERY entity if no prior rows exist; "
+                "otherwise 'new' if current risk and not prior risk, 'resolved' if prior risk and not current risk, "
+                "'still_risk' if both true, 'still_clear' if both false. Notes never determine risk_change. "
+                "Emit one current-period row per unit_id present in the bound current input, sorted by unit_id. "
+                "Take note_locator from the current-period rows for the same unit_id."
+            ),
+        )
+    elif operation in {
+        "finance_quarterly_review", "finance_period_delta", "finance_budget_review",
+        "finance_budget_status_review",
+        "finance_budget_delta_review",
+        "finance_half_year_review", "service_sequence_review", "service_error_delta",
+        "service_p95_review", "service_multiweek_review",
+    }:
+        formulas = {
+            "finance_quarterly_review": "This is a multi-period report with separate scopes. First group by unit_id and month. For each output row, compute net_revenue_cny, cost_cny, profit_cny, margin_pct, below_20_pct, and note_locator ONLY from the rows whose month equals current_period. Compute mMM_margin_pct separately from each listed month and use those fields only for the corresponding month. Never use a single all-period accumulator for current-month fields and never emit a quarterly total in the current-month fields. The current-month numeric fields must exactly match the current_period aggregate. risk_change compares current_period risk against previous_period risk.",
+            "finance_period_delta": "Aggregate period_from and period_to separately by unit_id. revenue_from_cny/revenue_to_cny are their totals; delta_cny=to-from; growth_pct=round(100*delta/from,4). decline_rank is 1-based ascending UNROUNDED growth, ties by unit_id. below_20_pct and risk_change compare the two periods' margins. Emit rows sorted by unit_id, not rank.",
+            "finance_budget_review": "For each unit_id set actual_net_revenue_cny=sum(booked_revenue_cny-refund_cny) over current rows; NEVER subtract cost_cny from this field (cost is not part of net revenue). The joined budget_net_revenue_cny repeats on every raw row: read ONCE per entity/period, never sum repeated budgets. variance_cny=actual-budget; variance_pct=round(100*variance/budget,4); attainment_pct=round(100*actual/budget,4). under_budget is actual<budget (not above budget). risk_change compares current/prior under_budget, or initial if no prior period.",
+            "finance_budget_status_review": "For each unit_id set actual_net_revenue_cny=sum(booked_revenue_cny-refund_cny) over current rows; NEVER subtract cost_cny from this field. Read the joined budget_net_revenue_cny once per entity/period. Emit variance_cny=actual-budget, under_budget=actual<budget, and risk_change from current versus prior under_budget; do not emit percentage fields.",
+            "finance_budget_delta_review": "Compare the current and prior budget periods per unit_id. For each period sum booked_revenue_cny-refund_cny, read one budget_net_revenue_cny, and emit actual revenue, budget, variance_cny, and under_budget for both periods. risk_change compares current_under_budget with prior_under_budget. Emit no percentage fields.",
+            "finance_half_year_review": "Emit each listed month's mMM_net_revenue_cny, mMM_profit_cny and mMM_margin_pct. q1_net_revenue_cny/q1_profit_cny cover months 01-03; q2 equivalents cover 04-06. half_year_net_revenue_cny/cost_cny/profit_cny/margin_pct cover all six months. below_20_pct and risk_change compare current versus previous MONTH margins. For months 05/06, read one budget per entity/month, emit m05/m06_attainment_pct and m05/m06_under_budget; budget_risk_change compares June versus May under_budget. Do not add monthly percentages or count repeated budget values more than once.",
+            "service_sequence_review": "This is a multi-period report with separate scopes. First group by site_id and week. For each output row, compute request_count, failed_request_count, error_rate_pct, mean_latency_ms, exceeds_slo, and event_locator ONLY from rows whose week equals current_period. Compute wNN_error_rate_pct separately from each listed week. Never use a single all-period accumulator for current-week fields and never put multiweek totals or rates in the current-week fields. risk_change compares current_period risk against previous_period risk. Preserve the exact case and type of input period keys when initializing and accessing accumulators.",
+            "service_error_delta": "Aggregate each site in period_from/period_to. Each error rate is round(100*sum(failures)/sum(requests),4); error_rate_delta_pp=round(error_rate_to_pct-error_rate_from_pct,4). deterioration_rank is 1-based descending error_rate_delta_pp, ties by site_id; output sorted by site_id. exceeds_slo/risk_change compare UNROUNDED current/prior error ratios.",
+            "service_p95_review": "Rows are individual request latency samples, not hourly means. For each site/week sort latency_ms; nearest-rank index=(95*n+99)//100-1 (zero-based), p95_latency_ms=sorted_values[index]. sample_count is current site's sample count. exceeds_slo uses p95_latency_ms>sample_p95_latency_ms; risk_change compares previous sample P95 when present. Never compute P95 from hourly latency_sum/request_count.",
+            "service_multiweek_review": "Separate row_kind=hourly from row_kind=latency_sample. For hourly rows emit each week's wNN_error_rate_pct and full-period summed request_count/failed_request_count; error_rate_pct=round(100*all_failures/all_requests,4); mean_latency_ms=round(all_latency_sum/all_requests,4). weeks_included=len(periods). exceeds_slo/risk_change compare current/previous WEEK error ratios. For latency_sample rows independently compute nearest-rank request-sample P95 for W07/W08, emit w07/w08_p95_latency_ms and w07/w08_p95_exceeds_slo; p95_risk_change compares those booleans. Never average weekly rates or weekly P95s.",
+        }
+        semantics.update(
+            periods=arguments.get("periods", []),
+            current_period=str(arguments.get("current_period", "")),
+            previous_period=str(arguments.get("previous_period", "")),
+            period_from=arguments.get("period_from", ""), period_to=arguments.get("period_to", ""),
+            formula=formulas[operation],
+            numeric_parser="All numeric inputs are JSON numbers. Do not use string parsing on them.",
+            finance_definition="For v1 rows use net_revenue_cny; for v2 rows compute booked_revenue_cny-refund_cny. Sum cost_cny. profit=revenue-cost; margin_pct=round(100*profit/revenue,4); margin risk uses UNROUNDED profit/revenue < 0.20.",
+            service_definition="v1 hourly counts are request_count/failed_request_count/latency_sum_ms; v2 are completed_request_count/final_failed_request_count/request_latency_sum_ms. failed_attempt_count is NEVER the error numerator. Ratios use sums, error rate multiplies by 100, mean latency does not. Error risk uses UNROUNDED failures/requests > slo_error_rate.",
+            risk_change_definition=(
+                "initial is allowed ONLY when previous_period is empty/no prior rows exist. "
+                "When a previous period exists, use the complete (prior_risk,current_risk) truth table: "
+                "(false,false)=still_clear; (false,true)=new; (true,false)=resolved; (true,true)=still_risk. "
+                "A false prior risk is NOT a missing prior period. Raw rows never contain derived risk fields."
+            ),
+            executor_invariants=(
+                "All inputs are bound in inputs/task.json. Do not open any other path. Group by entity AND month/week; "
+                "is_current only marks provenance, not input eligibility. Keep every declared period and accumulate ALL raw rows; "
+                "never overwrite an accumulator with the last row. Follow the operation's per-field period scope: current-period fields "
+                "use only the current_period group, while historical fields are computed independently per declared period. "
+                "Derive period keys from the exact values in the bound rows and the declared periods; do not invent, lowercase, or hardcode period tokens. For period-delta operations, use the two declared period_from/period_to values exactly. Initialize every accumulated field before addition. "
+                "Round ALL percentage/rate/margin/mean outputs to FOUR decimal places, not two and not unrounded. "
+                "Emit one row per entity sorted by entity key. Use that entity's current note_locator/event_locator. Null is invalid. Derive period keys from the exact values present in the bound rows and declared periods; preserve case and type."
+            ),
+        )
+    elif operation in {"service_weekly_review", "service_v2_weekly_review"}:
+        semantics.update(
+            executor_invariants=_period_review_guidance(operation),
+            numeric_parser=(
+                "Counts and latency_sum_ms are JSON integers; slo_error_rate is a JSON number read from each site's rows. Never invent a threshold or call string methods on numbers."
+                if operation == "service_weekly_review"
+                else "Counts, final_failed_request_count, failed_attempt_count and request_latency_sum_ms are JSON integers; slo_error_rate is a JSON number read from each site's rows. Never use failed_attempt_count as the error numerator."
+            ),
+            period_selection="Rows with is_current true are current; false rows are previous. Do not hardcode periods.",
+            formula=(
+                (
+                    "For each site_id separately sum request_count, failed_request_count, latency_sum_ms "
+                    if operation == "service_weekly_review"
+                    else "For each site_id separately sum completed_request_count, final_failed_request_count, request_latency_sum_ms "
+                )
+                + "in each period. error_rate_pct=round(100*failed/request,4); "
+                + (
+                    "mean_latency_ms=round(latency_sum_ms/request,4), never average hourly means. "
+                    if operation == "service_weekly_review"
+                    else "mean_latency_ms=round(request_latency_sum_ms/completed_request_count,4), never use failed_attempt_count for error_rate or denominator. "
+                )
+                + (
+                    "exceeds_slo is failed/request > slo_error_rate BEFORE rounding. Prior risk uses "
+                    if operation == "service_weekly_review"
+                    else "exceeds_slo is final_failed/completed_request_count > slo_error_rate BEFORE rounding. Prior risk uses "
+                )
+                + "prior raw rows and the SAME site's CURRENT input slo_error_rate for both periods, not an uninitialized "
+                "prior accumulator threshold; raw input rows do not contain exceeds_slo, so recompute the "
+                "prior risk from the prior raw aggregates instead of reading a derived field. "
+                "risk_change='initial' for EVERY site if no prior rows exist; "
+                "otherwise 'new' if current risk and not prior risk, 'resolved' if prior risk and not current risk, "
+                "'still_risk' if both true, 'still_clear' if both false. Events never determine risk_change. "
+                "Emit one current-period row per site_id present in the bound current input, sorted by site_id. "
+                "Take event_locator from current-period rows for that site_id."
+            ),
+        )
+    elif operation in {"extract_narrative_facts", "synthesize_narrative_risk"}:
         semantics.update(
             **_labeled_fact_semantics(arguments),
             formula=(
@@ -845,11 +1098,263 @@ def _date_month(value: object) -> int:
     return int(parts[1]) if len(parts[0]) == 4 else int(parts[0])
 
 
+_CONTEST_EXTENDED_OPERATIONS = frozenset({
+    "finance_quarterly_review", "finance_period_delta", "finance_budget_review", "finance_budget_status_review", "finance_budget_delta_review",
+    "finance_half_year_review", "service_sequence_review", "service_error_delta",
+    "service_p95_review", "service_multiweek_review",
+})
+
+
+def _contest_periods(arguments: dict[str, object], rows: tuple[dict[str, object], ...]) -> tuple[str, ...]:
+    declared = tuple(str(item) for item in arguments.get("periods", ()) if str(item))
+    if declared:
+        return declared
+    return tuple(dict.fromkeys(str(row.get("month", row.get("week", ""))) for row in rows))
+
+
+def _contest_finance_amount(row: dict[str, object]) -> tuple[int, int]:
+    if "booked_revenue_cny" in row:
+        return int(row["booked_revenue_cny"]) - int(row["refund_cny"]), int(row["cost_cny"])
+    return int(row["net_revenue_cny"]), int(row["cost_cny"])
+
+
+def _contest_finance_aggregate(batch: list[dict[str, object]]) -> tuple[int, int, float, bool]:
+    revenue = sum(_contest_finance_amount(row)[0] for row in batch)
+    cost = sum(_contest_finance_amount(row)[1] for row in batch)
+    if revenue <= 0:
+        raise ValueError("contest_zero_finance_revenue")
+    margin = round(100 * (revenue - cost) / revenue, 4)
+    return revenue, cost, margin, (revenue - cost) / revenue < 0.20
+
+
+def _contest_service_amount(row: dict[str, object]) -> tuple[int, int, int]:
+    if "completed_request_count" in row:
+        return int(row["completed_request_count"]), int(row["final_failed_request_count"]), int(row["request_latency_sum_ms"])
+    return int(row["request_count"]), int(row["failed_request_count"]), int(row["latency_sum_ms"])
+
+
+def _contest_service_aggregate(batch: list[dict[str, object]]) -> tuple[int, int, int, float, float, bool]:
+    requests = sum(_contest_service_amount(row)[0] for row in batch)
+    failures = sum(_contest_service_amount(row)[1] for row in batch)
+    latency = sum(_contest_service_amount(row)[2] for row in batch)
+    if requests <= 0:
+        raise ValueError("contest_zero_service_requests")
+    threshold = float(batch[0]["slo_error_rate"])
+    error = round(100 * failures / requests, 4)
+    mean_latency = round(latency / requests, 4)
+    return requests, failures, latency, error, mean_latency, failures / requests > threshold
+
+
+def _contest_latency_values(batch: list[dict[str, object]]) -> list[int]:
+    return [int(row["latency_ms"]) for row in batch]
+
+
+def _contest_nearest_rank(values: list[float], percentile: float = 0.95) -> float:
+    if not values:
+        raise ValueError("contest_empty_percentile")
+    ordered = sorted(values)
+    rank = max(1, int(ceil(len(ordered) * percentile)))
+    return ordered[rank - 1]
+
+
+def _contest_risk_change(current: bool, previous: bool | None) -> str:
+    return _review_change(current, previous)
+
+
+def _recompute_contest_extended(
+    operation: str,
+    arguments: dict[str, object],
+    rows: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    periods = _contest_periods(arguments, rows)
+    current = str(arguments.get("current_period", periods[-1] if periods else ""))
+    previous = str(arguments.get("previous_period", ""))
+    field = "month" if operation.startswith("finance_") else "week"
+    entity_field = "unit_id" if operation.startswith("finance_") else "site_id"
+    grouped: dict[str, dict[str, list[dict[str, object]]]] = {}
+    for row in rows:
+        period = str(row.get(field, ""))
+        if period in periods:
+            grouped.setdefault(str(row[entity_field]), {}).setdefault(period, []).append(row)
+    entities = sorted(grouped)
+    out: list[dict[str, object]] = []
+    for entity in entities:
+        batches = grouped[entity]
+        now = batches.get(current, [])
+        if not now:
+            continue
+        before = batches.get(previous, []) if previous else []
+        if operation == "finance_quarterly_review":
+            revenue, cost, margin, risk = _contest_finance_aggregate(now)
+            out.append({"unit_id": entity, "net_revenue_cny": revenue, "cost_cny": cost,
+                        "profit_cny": revenue-cost, "margin_pct": margin, "below_20_pct": risk,
+                        "risk_change": _contest_risk_change(risk, _contest_finance_aggregate(before)[3] if before else None),
+                        **{f"m{p[-2:]}_margin_pct": _contest_finance_aggregate(batches[p])[2] for p in periods},
+                        "note_locator": str(now[0]["note_locator"])})
+        elif operation == "finance_half_year_review":
+            total_rev, total_cost, total_margin, _ = _contest_finance_aggregate([r for p in periods for r in batches[p]])
+            month = {p: _contest_finance_aggregate(batches[p]) for p in periods}
+            result = {"unit_id": entity, "half_year_net_revenue_cny": total_rev, "half_year_cost_cny": total_cost,
+                      "half_year_profit_cny": total_rev-total_cost, "half_year_margin_pct": total_margin,
+                      "below_20_pct": month[current][3], "risk_change": _contest_risk_change(month[current][3], month[previous][3]),
+                      "note_locator": str(now[0]["note_locator"])}
+            for p, (revenue, cost, margin, _) in month.items():
+                result.update({f"m{p[-2:]}_net_revenue_cny": revenue, f"m{p[-2:]}_profit_cny": revenue-cost, f"m{p[-2:]}_margin_pct": margin})
+            for q, batch_periods in ((1, periods[:3]), (2, periods[3:])):
+                revenue, cost, _, _ = _contest_finance_aggregate([r for p in batch_periods for r in batches[p]])
+                result.update({f"q{q}_net_revenue_cny": revenue, f"q{q}_profit_cny": revenue-cost})
+            for p in periods[-2:]:
+                budget = int(batches[p][0]["budget_net_revenue_cny"])
+                result[f"m{p[-2:]}_attainment_pct"] = round(100*month[p][0]/budget, 4)
+                result[f"m{p[-2:]}_under_budget"] = month[p][0] < budget
+            result["budget_risk_change"] = _contest_risk_change(result["m06_under_budget"], result["m05_under_budget"])
+            out.append(result)
+        elif operation == "finance_period_delta":
+            from_rev, _, _, from_risk = _contest_finance_aggregate(before)
+            to_rev, _, _, to_risk = _contest_finance_aggregate(now)
+            out.append({"unit_id": entity, "period_from": str(arguments["period_from"]), "period_to": str(arguments["period_to"]),
+                        "revenue_from_cny": from_rev, "revenue_to_cny": to_rev, "delta_cny": to_rev-from_rev,
+                        "growth_pct": round((to_rev-from_rev)/from_rev*100, 4), "below_20_pct": to_risk,
+                        "risk_change": _contest_risk_change(to_risk, from_risk), "note_locator": str(now[0]["note_locator"])})
+        elif operation in {"finance_budget_review", "finance_budget_status_review"}:
+            # Budget review is a revenue-to-budget join. Cost remains in the
+            # published source for other operations but is not part of the
+            # actual net revenue compared with budget.
+            actual = sum(_contest_finance_amount(row)[0] for row in now)
+            budget = int(now[0]["budget_net_revenue_cny"])
+            under = actual < budget
+            prior = (sum(_contest_finance_amount(row)[0] for row in before)
+                     < int(before[0]["budget_net_revenue_cny"])) if before else None
+            result = {"unit_id": entity, "actual_net_revenue_cny": actual, "budget_net_revenue_cny": budget,
+                      "variance_cny": actual-budget, "under_budget": under,
+                      "risk_change": _contest_risk_change(under, prior), "note_locator": str(now[0]["note_locator"])}
+            if operation == "finance_budget_review":
+                result.update({"variance_pct": round(100*(actual-budget)/budget, 4),
+                               "attainment_pct": round(100*actual/budget, 4)})
+            out.append(result)
+        elif operation == "finance_budget_delta_review":
+            current_actual = sum(_contest_finance_amount(row)[0] for row in now)
+            prior_actual = sum(_contest_finance_amount(row)[0] for row in before)
+            current_budget = int(now[0]["budget_net_revenue_cny"])
+            prior_budget = int(before[0]["budget_net_revenue_cny"])
+            current_under = current_actual < current_budget
+            prior_under = prior_actual < prior_budget
+            out.append({"unit_id": entity, "current_actual_net_revenue_cny": current_actual,
+                        "prior_actual_net_revenue_cny": prior_actual,
+                        "current_budget_net_revenue_cny": current_budget,
+                        "prior_budget_net_revenue_cny": prior_budget,
+                        "current_variance_cny": current_actual-current_budget,
+                        "prior_variance_cny": prior_actual-prior_budget,
+                        "current_under_budget": current_under, "prior_under_budget": prior_under,
+                        "risk_change": _contest_risk_change(current_under, prior_under),
+                        "note_locator": str(now[0]["note_locator"])})
+        elif operation in {"service_sequence_review", "service_multiweek_review"}:
+            hourly = {p: [r for r in batches[p] if r.get("row_kind", "hourly") == "hourly"] for p in periods}
+            weeks = {p: _contest_service_aggregate(hourly[p]) for p in periods}
+            total = weeks[current] if operation == "service_sequence_review" else _contest_service_aggregate([r for p in periods for r in hourly[p]])
+            result = {"site_id": entity, "request_count": total[0], "failed_request_count": total[1],
+                      "error_rate_pct": total[3], "mean_latency_ms": total[4],
+                      **{f"{p.lower()}_error_rate_pct": weeks[p][3] for p in periods},
+                      "exceeds_slo": weeks[current][5], "risk_change": _contest_risk_change(weeks[current][5], weeks[previous][5]),
+                      "event_locator": str(now[0]["event_locator"])}
+            if operation == "service_multiweek_review":
+                result["weeks_included"] = len(periods)
+                for p in periods[-2:]:
+                    samples = [r for r in batches[p] if r["row_kind"] == "latency_sample"]
+                    p95 = int(_contest_nearest_rank(_contest_latency_values(samples)))
+                    result[f"{p.lower()}_p95_latency_ms"] = p95
+                    result[f"{p.lower()}_p95_exceeds_slo"] = p95 > float(samples[0]["sample_p95_latency_ms"])
+                result["p95_risk_change"] = _contest_risk_change(result["w08_p95_exceeds_slo"], result["w07_p95_exceeds_slo"])
+            out.append(result)
+        elif operation == "service_error_delta":
+            left = _contest_service_aggregate(before); right = _contest_service_aggregate(now)
+            out.append({"site_id": entity, "period_from": str(arguments["period_from"]), "period_to": str(arguments["period_to"]),
+                        "error_rate_from_pct": left[3], "error_rate_to_pct": right[3], "error_rate_delta_pp": round(right[3]-left[3],4),
+                        "exceeds_slo": right[5], "risk_change": _contest_risk_change(right[5],left[5]), "event_locator": str(now[0]["event_locator"])})
+        elif operation == "service_p95_review":
+            p95 = int(_contest_nearest_rank(_contest_latency_values(now)))
+            threshold = float(now[0]["sample_p95_latency_ms"]); risk = p95 > threshold
+            prior = _contest_nearest_rank(_contest_latency_values(before)) > threshold if before else None
+            out.append({"site_id": entity, "period": current, "sample_count": len(now), "p95_latency_ms": p95,
+                        "exceeds_slo": risk, "risk_change": _contest_risk_change(risk,prior), "event_locator": str(now[0]["event_locator"])})
+    if operation == "finance_period_delta":
+        for rank, row in enumerate(sorted(out, key=lambda r: (r["delta_cny"]/r["revenue_from_cny"], r["unit_id"])), 1):
+            row["decline_rank"] = rank
+    if operation == "service_error_delta":
+        for rank, row in enumerate(sorted(out, key=lambda r: (-r["error_rate_delta_pp"], r["site_id"])), 1):
+            row["deterioration_rank"] = rank
+
+    return tuple(out)
+
+
 def recompute_formal_rows(
     operation: str,
     arguments: dict[str, object],
     rows: tuple[dict[str, object], ...],
 ) -> tuple[dict[str, object], ...]:
+    if operation in _CONTEST_EXTENDED_OPERATIONS:
+        return _recompute_contest_extended(operation, arguments, rows)
+    if operation in {"finance_monthly_review", "service_weekly_review",
+                     "finance_v2_monthly_review", "service_v2_weekly_review"}:
+        finance = operation in {"finance_monthly_review", "finance_v2_monthly_review"}
+        v2 = operation in {"finance_v2_monthly_review", "service_v2_weekly_review"}
+        current = str(arguments["current_period"])
+        previous = str(arguments.get("previous_period", ""))
+        period_key = "month" if finance else "week"
+        group_key = "unit_id" if finance else "site_id"
+        grouped: dict[str, dict[str, list[dict[str, object]]]] = {}
+        for row in rows:
+            period = str(row[period_key])
+            if period in {current, previous}:
+                grouped.setdefault(str(row[group_key]), {}).setdefault(period, []).append(row)
+        current_keys = tuple(sorted(key for key, periods in grouped.items() if current in periods))
+        if not current_keys:
+            raise ValueError(f"formal_review_group_count:{len(grouped)}")
+        output: list[dict[str, object]] = []
+        for key in current_keys:
+            periods = grouped[key]
+            now = periods[current]
+            before = periods.get(previous, ()) if previous else ()
+            if finance:
+                def calculate(batch):
+                    revenue = sum(
+                        int(row["booked_revenue_cny"]) - int(row["refund_cny"])
+                        if v2 else int(row["net_revenue_cny"])
+                        for row in batch
+                    )
+                    cost = sum(int(row["cost_cny"]) for row in batch)
+                    if revenue <= 0:
+                        raise ValueError("formal_review_zero_revenue")
+                    return revenue, cost, round(100 * (revenue - cost) / revenue, 4)
+                revenue, cost, margin = calculate(now)
+                risk = (revenue - cost) * 5 < revenue
+                prior_risk = ((calculate(before)[0] - calculate(before)[1]) * 5 < calculate(before)[0]) if before else None
+                item = {
+                    "unit_id": key, "net_revenue_cny": revenue, "cost_cny": cost,
+                    "profit_cny": revenue - cost, "margin_pct": margin,
+                    "below_20_pct": risk, "risk_change": _review_change(risk, prior_risk),
+                    "note_locator": str(now[0]["note_locator"]),
+                }
+            else:
+                def calculate(batch):
+                    requests = sum(int(row["completed_request_count" if v2 else "request_count"]) for row in batch)
+                    failed = sum(int(row["final_failed_request_count" if v2 else "failed_request_count"]) for row in batch)
+                    latency = sum(int(row["request_latency_sum_ms" if v2 else "latency_sum_ms"]) for row in batch)
+                    if requests <= 0:
+                        raise ValueError("formal_review_zero_requests")
+                    return requests, failed, round(100 * failed / requests, 4), round(latency / requests, 4)
+                requests, failed, error, latency = calculate(now)
+                threshold = float(now[0]["slo_error_rate"])
+                risk = failed / requests > threshold
+                prior_risk = (calculate(before)[1] / calculate(before)[0] > threshold) if before else None
+                item = {
+                    "site_id": key, "request_count": requests, "failed_request_count": failed,
+                    "error_rate_pct": error, "mean_latency_ms": latency,
+                    "exceeds_slo": risk, "risk_change": _review_change(risk, prior_risk),
+                    "event_locator": str(now[0]["event_locator"]),
+                }
+            output.append(item)
+        return tuple(output)
     if operation in {"extract_narrative_facts", "synthesize_narrative_risk"}:
         return (_recompute_public_fact_fields(arguments, rows),)
     if operation == "lookup_table_record":
@@ -1005,6 +1510,16 @@ def recompute_formal_rows(
     raise ValueError(f"formal_recompute_unsupported:{operation}")
 
 
+def _review_change(current: bool, previous: bool | None) -> str:
+    if previous is None:
+        return "initial"
+    if current and not previous:
+        return "new"
+    if previous and not current:
+        return "resolved"
+    return "still_risk" if current else "still_clear"
+
+
 def _rows_equal(
     actual: tuple[dict[str, object], ...],
     expected: tuple[dict[str, object], ...],
@@ -1027,6 +1542,21 @@ def _rows_equal(
             elif actual_value != expected_value:
                 return False
     return True
+
+
+def _mismatched_row_fields(
+    actual: tuple[dict[str, object], ...],
+    expected: tuple[dict[str, object], ...],
+) -> tuple[str, ...]:
+    """Name discrepant public fields without disclosing identities or expected values."""
+    if len(actual) != len(expected) or any(set(left) != set(right) for left, right in zip(actual, expected)):
+        return ()
+    return tuple(sorted({
+        field
+        for left, right in zip(actual, expected)
+        for field in right
+        if not _rows_equal(({field: left[field]},), ({field: right[field]},))
+    }))
 
 
 def build_formal_quality_validator(
@@ -1073,6 +1603,11 @@ def build_formal_quality_validator(
                     errors.append(f"formal_recomputation_failed:{failure_type}")
             elif not any(_rows_equal(context.output_rows, expected) for expected in candidates):
                 errors.append("formal_recomputation_mismatch")
+                if len(candidates) == 1:
+                    errors.extend(
+                        f"formal_recomputation_field_mismatch:{field}"
+                        for field in _mismatched_row_fields(context.output_rows, candidates[0])
+                    )
         minimum = context.completion_criteria.get("min_rows")
         if isinstance(minimum, int) and len(context.output_rows) < minimum:
             errors.append("completion_min_rows_failed")

@@ -7,6 +7,7 @@ OS_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PROFILE="${STATEBUS_PROFILE:-qwen3-32b-gpu2-u050}"
 CONTAINER_NAME="${STATEBUS_CONTAINER_NAME:-statebus-runtime}"
 EMBED_PHYSICAL_GPU="${STATEBUS_EMBED_PHYSICAL_GPU:-1}"
+RUNTIME_PYTHON="${STATEBUS_RUNTIME_PYTHON:-/home/qcrs/statebus/conda-envs/statebus_host/bin/python}"
 
 usage() {
   cat <<'EOF'
@@ -163,6 +164,7 @@ export STATEBUS_G6B2_EMBEDDING_PHYSICAL_GPU="$EMBED_PHYSICAL_GPU"
 export STATEBUS_EMBED_PHYSICAL_GPU="$EMBED_PHYSICAL_GPU"
 export STATEBUS_EMBED_MODEL_PATH="$EMBED_MODEL_PATH"
 export STATEBUS_EMBED_DEVICE="cuda:0"
+export STATEBUS_RUNTIME_PYTHON="$RUNTIME_PYTHON"
 
 # Local vLLM must bypass any host HTTP/SOCKS proxy.  The host may carry a
 # proxy for model downloads or external APIs, but routing 127.0.0.1 through it
@@ -188,6 +190,7 @@ print_config() {
   printf '[statebus] host_config_path=%s\n' "$HOST_LLM_CONFIG_FILE"
   printf '[statebus] container_config_path=%s\n' "$LLM_CONFIG"
   printf '[statebus] container_env=%s\n' "$HOME/statebus/conda-envs/statebus_host"
+  printf '[statebus] runtime_python=%s\n' "$RUNTIME_PYTHON"
 }
 
 print_env() {
@@ -208,7 +211,7 @@ print_env() {
     STATEBUS_G6B2_PROFILE_ID STATEBUS_G6B2_SERVICE_PHYSICAL_GPU \
     STATEBUS_G6B2_EMBEDDING_MODE STATEBUS_G6B2_EMBEDDING_MODEL_PATH \
     STATEBUS_G6B2_EMBEDDING_DEVICE STATEBUS_G6B2_EMBEDDING_PHYSICAL_GPU \
-    STATEBUS_EMBED_PHYSICAL_GPU STATEBUS_EMBED_MODEL_PATH STATEBUS_EMBED_DEVICE \
+    STATEBUS_EMBED_PHYSICAL_GPU STATEBUS_EMBED_MODEL_PATH STATEBUS_EMBED_DEVICE STATEBUS_RUNTIME_PYTHON \
     NO_PROXY no_proxy
   do
     printf 'export %s=%q\n' "$name" "${!name:-}"

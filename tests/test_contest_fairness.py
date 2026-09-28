@@ -21,6 +21,7 @@ from statebus.benchmark.contest_fairness import (
     run_g6a2_correctness_fixture,
     validate_benchmark_manifest,
     validate_root_isolation,
+    _adaptive_runtime_topology_valid,
 )
 from statebus.benchmark.contest_evidence_closure import (
     _AUDIT_DIRS,
@@ -100,6 +101,35 @@ def test_fairness_manifest_accepts_only_declared_lane_differences() -> None:
     lanes = manifest["cases"]["fairness-task"]
     for field in manifest["invariant_fields"]:
         assert len({lane[field] for lane in lanes.values()}) == 1
+
+
+def test_adaptive_topology_accepts_only_recorded_dsl_to_python_replan() -> None:
+    base = {
+        "role_sequence": ["retriever", "executor", "summarizer"],
+        "attempts": [{}, {}, {}, {}],
+        "provider_calls": [{"role": "planner", "attempts": [{"model": "offline"}]}],
+    }
+    valid = {
+        **base,
+        "runtime_replan_history": [{
+            "trigger_reason": "dsl_repair_exhausted:capability_quality_rejected",
+            "selected_capability": "execute_analysis_dsl_v2",
+            "fallback_action": "replace_unexecuted_subgraph",
+        }],
+    }
+    assert _adaptive_runtime_topology_valid(valid) == (
+        True,
+        "controller_planner_dsl_to_python_replan",
+    )
+    invalid = {
+        **base,
+        "runtime_replan_history": [{
+            "trigger_reason": "capability_quality_rejected",
+            "selected_capability": "execute_analysis_dsl_v2",
+            "fallback_action": "replace_unexecuted_subgraph",
+        }],
+    }
+    assert _adaptive_runtime_topology_valid(invalid)[0] is False
 
 
 def test_g5b_actual_use_acceptance_pilot_is_ordered_and_fail_closed(tmp_path: Path) -> None:

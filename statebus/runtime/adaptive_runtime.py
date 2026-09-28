@@ -125,6 +125,9 @@ class AdaptiveRuntimeRequest:
     execute_step: Callable[[PlanStepProposal, CapabilityGrant], AdaptiveStepResult] | None = None
     dispatcher: "AdaptiveCapabilityDispatcher | None" = None
     replan: Callable[[ApprovedPlan, tuple[str, ...], str], ApprovedPlan | None] | None = None
+    replan_for_step: Callable[
+        [ApprovedPlan, tuple[str, ...], PlanStepProposal, str], ApprovedPlan | None
+    ] | None = None
     layer_name: str = "L3"
     runtime_identity: RuntimeIdentity | None = None
     provider_registry: ExecutionProviderRegistry | None = None
@@ -668,6 +671,8 @@ class AdaptiveRuntimeEngine:
             runtime_event_log_path=Path(request.runtime_root) / "telemetry" / "runtime_events.jsonl",
             runtime_fact_log_path=Path(request.runtime_root) / "telemetry" / "runtime_facts.jsonl",
         )
+        if request.dispatcher is not None:
+            request.dispatcher.context.telemetry = telemetry
         supervisor = RuntimeSupervisor()
         dispatches: list[AdaptiveDispatchRecord] = []
         result_admissions: list[AttemptResultAdmissionReceipt] = []
@@ -692,12 +697,16 @@ class AdaptiveRuntimeEngine:
             grant: CapabilityGrant,
             result: AdaptiveStepResult,
         ) -> AttemptResultAdmissionReceipt | None:
-            receipt = session_manager.admit_attempt_result(
-                session_id,
-                step_id=step.step_id,
-                observed_attempt_id=result.attempt_id or attempt_id,
-                invocation_id=result.invocation_id,
-            )
+            with telemetry.measure_phase(
+                "attempt_result_admission", trace_id=request.trace_id, task_id=request.task_id,
+                step_id=step.step_id, attempt_id=result.attempt_id or attempt_id,
+            ):
+                receipt = session_manager.admit_attempt_result(
+                    session_id,
+                    step_id=step.step_id,
+                    observed_attempt_id=result.attempt_id or attempt_id,
+                    invocation_id=result.invocation_id,
+                )
             if receipt.commit_authorized:
                 result_admissions.append(receipt)
                 if request.dispatcher is not None:
@@ -1662,9 +1671,17 @@ class AdaptiveRuntimeEngine:
                 if (
                     step.on_failure == "request_replan"
                     and replan_count < request.envelope.max_replans
-                    and request.replan is not None
+                    and (request.replan_for_step is not None or request.replan is not None)
                 ):
-                    replacement = request.replan(current_plan, tuple(sorted(completed)), error_code)
+                    if request.replan_for_step is not None:
+                        replacement = request.replan_for_step(
+                            current_plan,
+                            tuple(sorted(completed)),
+                            step,
+                            error_code,
+                        )
+                    else:
+                        replacement = request.replan(current_plan, tuple(sorted(completed)), error_code)
                 if replacement is not None and self._valid_replan(request, current_plan, replacement, completed):
                     replan_count += 1
                     plan_replaced = True
@@ -1962,6 +1979,7 @@ class AdaptiveRuntimeEngine:
             return ()
 
         descriptor = request.registry.get(step.capability_id)
+        memory_assist_allowed = step.capability_id in context.memory_assist_capability_ids
         selected: list[tuple[str, ReplayClass]] = []
         seen: set[str] = set()
         for result in context.memory_match_results.values():
@@ -1987,18 +2005,26 @@ class AdaptiveRuntimeEngine:
                     continue
                 mode = match.replay_class
                 if mode == ReplayClass.VALIDATED_REPLAY:
-                    if (
-                        not descriptor.supports_replay
-                        or not bool(getattr(query, "allow_validated_replay", False))
-                        or not AdaptiveRuntimeEngine._procedure_memory_compatible(
+                    procedure_compatible = (
+                        descriptor.supports_replay
+                        and bool(getattr(query, "allow_validated_replay", False))
+                        and AdaptiveRuntimeEngine._procedure_memory_compatible(
                             commit=commit,
                             context=context,
                             step=step,
                             logical_capability=logical_capability,
                             execution_kind=descriptor.execution_kind.value,
                         )
-                    ):
-                        continue
+                    )
+                    if not procedure_compatible:
+                        # A validated-replay match may be downgraded to
+                        # ordinary assist only for an explicitly registered
+                        # consumer capability.  The current Grant remains
+                        # the sole authority and the dispatcher still has to
+                        # perform the verified artifact read.
+                        if not memory_assist_allowed or not bool(getattr(query, "allow_assist", False)):
+                            continue
+                        mode = ReplayClass.ASSIST
                 elif mode == ReplayClass.EXACT_REPLAY:
                     # Exact artifact restoration is outside 09B.  A legacy
                     # exact match may still be used as ordinary context when

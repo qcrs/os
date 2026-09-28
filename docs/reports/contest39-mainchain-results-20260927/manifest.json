@@ -1,0 +1,26 @@
+{
+  "schema_version": "contest39.mainchain.collection_manifest.v1",
+  "collection_date": "2026-09-27",
+  "sources": {
+    "SB-FULL": "/home/qcrs/statebus/os/runs/contest39-sbfull-all-20260927_101009-1987732",
+    "P-TEXT": "/home/qcrs/statebus/os/runs/contest39-ptext-all-20260927_101009-1987732"
+  },
+  "records": 48,
+  "families": [
+    "finance",
+    "service_ops"
+  ],
+  "variants": [
+    "SB-FULL",
+    "P-TEXT"
+  ],
+  "raw_runs_modified": false,
+  "files": [
+    "README.md",
+    "manifest.json",
+    "task_results.jsonl",
+    "task_results.csv",
+    "summary.json",
+    "summary.md"
+  ]
+}
