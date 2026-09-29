@@ -1,6 +1,6 @@
 # FastAPI 与受控作业
 
-Studio 后端入口是 [`src/statebus/studio/app.py`](../../../src/statebus/studio/app.py)，服务默认监听 `127.0.0.1:8765`。[`scripts/run_statebus_studio.sh`](../../../scripts/run_statebus_studio.sh) 负责选择项目 Python：容器内先加载 `docker/activate_statebus_container.sh`，宿主机使用 `$HOME/src/statebus/conda-envs/statebus_host`，并显式设置项目 `PYTHONPATH`、Run/Model 目录和 Embedding device。脚本只复用现有模型服务，不负责重启 vLLM。
+Studio 后端入口是 [`src/statebus/studio/app.py`](../../../src/statebus/studio/app.py)，服务默认监听 `127.0.0.1:8765`。[`scripts/run_statebus_studio.sh`](../../../scripts/run_statebus_studio.sh) 负责选择项目 Python：容器内先加载 `docker/activate_statebus_container.sh`，宿主机使用 `$HOME/statebus/conda-envs/statebus_host`，并显式设置项目 `PYTHONPATH`、Run/Model 目录和 Embedding device。脚本只复用现有模型服务，不负责重启 vLLM。
 
 ```bash
 # 在仓库根目录执行

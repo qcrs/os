@@ -31,4 +31,4 @@ flowchart LR
 
 检索层不负责把 MemoryRef 放进 Agent 输入。它只交付带决策记录的候选；角色可见性、复用级别与实际消费由下一层处理。
 
-相关回归主要位于 [`test_memory_store.py`](../../../tests/test_memory_store.py) 和 [`test_hybrid_memory_query.py`](../../../tests/test_hybrid_memory_query.py)。
+相关回归主要位于 [`tests/unit/memory/test_memory_runtime.py`](../../../tests/unit/memory/test_memory_runtime.py)。

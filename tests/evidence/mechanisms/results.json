@@ -3,10 +3,9 @@
   "raw_root": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416",
   "planned": 24,
   "started": 24,
-  "passed": 23,
+  "passed": 24,
   "status_counts": {
-    "quality_fail": 1,
-    "success": 23
+    "success": 24
   },
   "experiments": {
     "memory": {
@@ -27,7 +26,7 @@
           "passed": 8,
           "provider_requests": 12,
           "provider_tokens": 17581,
-          "task_e2e_ms_sum": 400974.01100600004,
+          "task_e2e_ms_sum": 400974.011006,
           "repairs": 0
         }
       },
@@ -88,8 +87,8 @@
             }
           },
           "e2e_saving_ratio": 0.1264546029138538,
-          "provider_token_saving_ratio": 0.0,
-          "provider_request_saving_ratio": 0.0
+          "provider_token_saving_ratio": 0,
+          "provider_request_saving_ratio": 0
         },
         {
           "task_id": "F02",
@@ -206,8 +205,8 @@
             }
           },
           "e2e_saving_ratio": 0.01614167569889425,
-          "provider_token_saving_ratio": 0.0,
-          "provider_request_saving_ratio": 0.0
+          "provider_token_saving_ratio": 0,
+          "provider_request_saving_ratio": 0
         },
         {
           "task_id": "F07",
@@ -324,8 +323,8 @@
             }
           },
           "e2e_saving_ratio": 0.021784542602477235,
-          "provider_token_saving_ratio": 0.0,
-          "provider_request_saving_ratio": 0.0
+          "provider_token_saving_ratio": 0,
+          "provider_request_saving_ratio": 0
         },
         {
           "task_id": "O02",
@@ -442,8 +441,8 @@
             }
           },
           "e2e_saving_ratio": 0.030157055313046292,
-          "provider_token_saving_ratio": 0.0,
-          "provider_request_saving_ratio": 0.0
+          "provider_token_saving_ratio": 0,
+          "provider_request_saving_ratio": 0
         },
         {
           "task_id": "O07",
@@ -521,7 +520,7 @@
             "passed": 4,
             "provider_requests": 9,
             "provider_tokens": 16886,
-            "task_e2e_ms_sum": 332444.388633
+            "task_e2e_ms_sum": 332444.38863299997
           },
           "on": {
             "planned": 4,
@@ -529,7 +528,7 @@
             "passed": 4,
             "provider_requests": 6,
             "provider_tokens": 9527,
-            "task_e2e_ms_sum": 236734.89907500002
+            "task_e2e_ms_sum": 236734.899075
           }
         },
         "service_ops": {
@@ -561,23 +560,23 @@
           "passed": 4,
           "provider_requests": 21,
           "provider_tokens": 42035,
-          "task_e2e_ms_sum": 614486.3548310001,
+          "task_e2e_ms_sum": 614486.354831,
           "repairs": 1
         },
         "on": {
           "planned": 4,
           "started": 4,
-          "passed": 3,
-          "provider_requests": 20,
-          "provider_tokens": 41297,
-          "task_e2e_ms_sum": 582504.955074,
+          "passed": 4,
+          "provider_requests": 21,
+          "provider_tokens": 42235,
+          "task_e2e_ms_sum": 593435.1871549999,
           "repairs": 1
         }
       },
       "pairs": [
         {
           "task_id": "semantic-holdout-s1",
-          "comparable": false,
+          "comparable": true,
           "off": {
             "experiment": "state",
             "task_id": "semantic-holdout-s1",
@@ -593,9 +592,9 @@
             "reason": null,
             "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s1/off/summary.json",
             "state": {
-              "publish_count": 0.0,
-              "transfer_count": 0.0,
-              "consume_count": 0.0,
+              "publish_count": 0,
+              "transfer_count": 0,
+              "consume_count": 0,
               "payload_bytes": 0,
               "read_bytes": 0,
               "cross_process_consumption_observed": false,
@@ -616,20 +615,20 @@
             "experiment": "state",
             "task_id": "semantic-holdout-s1",
             "variant": "on",
-            "status": "quality_fail",
-            "quality": false,
-            "e2e_ms": 122069.241003,
-            "provider_requests": 4,
-            "provider_prompt_tokens": 7520,
-            "provider_completion_tokens": 1018,
-            "provider_tokens": 8538,
+            "status": "success",
+            "quality": true,
+            "e2e_ms": 132999.473084,
+            "provider_requests": 5,
+            "provider_prompt_tokens": 8381,
+            "provider_completion_tokens": 1095,
+            "provider_tokens": 9476,
             "repair": 0,
-            "reason": "output_validation_failed",
-            "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s1/on/summary.json",
+            "reason": null,
+            "source_path": "/home/qcrs/statebus/os/runs/smoke-mechanisms-live-20260928_174645-3579687/state/ablation/cases/semantic-holdout-s1/on/summary.json",
             "state": {
-              "publish_count": 2.0,
-              "transfer_count": 2.0,
-              "consume_count": 2.0,
+              "publish_count": 2,
+              "transfer_count": 2,
+              "consume_count": 2,
               "payload_bytes": 73728,
               "read_bytes": 73728,
               "cross_process_consumption_observed": true,
@@ -638,17 +637,16 @@
                 "ctx-section-4",
                 "ctx-section-2",
                 "ctx-section-1",
-                "ctx-section-5",
-                "ctx-section-6"
+                "ctx-section-5"
               ],
-              "selected_evidence_chars": 1184,
-              "selected_evidence_tokens": 191,
-              "behavioral_effect": "no_effect"
+              "selected_evidence_chars": 954,
+              "selected_evidence_tokens": 153,
+              "behavioral_effect": "changed"
             }
           },
-          "e2e_saving_ratio": null,
-          "provider_token_saving_ratio": null,
-          "provider_request_saving_ratio": null
+          "e2e_saving_ratio": -0.2782971926998634,
+          "provider_token_saving_ratio": -0.25261070720423,
+          "provider_request_saving_ratio": -0.25
         },
         {
           "task_id": "semantic-holdout-s5",
@@ -668,9 +666,9 @@
             "reason": null,
             "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s5/off/summary.json",
             "state": {
-              "publish_count": 0.0,
-              "transfer_count": 0.0,
-              "consume_count": 0.0,
+              "publish_count": 0,
+              "transfer_count": 0,
+              "consume_count": 0,
               "payload_bytes": 0,
               "read_bytes": 0,
               "cross_process_consumption_observed": false,
@@ -700,9 +698,9 @@
             "reason": null,
             "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s5/on/summary.json",
             "state": {
-              "publish_count": 3.0,
-              "transfer_count": 3.0,
-              "consume_count": 3.0,
+              "publish_count": 3,
+              "transfer_count": 3,
+              "consume_count": 3,
               "payload_bytes": 49152,
               "read_bytes": 49152,
               "cross_process_consumption_observed": true,
@@ -719,7 +717,7 @@
           },
           "e2e_saving_ratio": -0.019117844767296877,
           "provider_token_saving_ratio": 0.0012762336925694838,
-          "provider_request_saving_ratio": 0.0
+          "provider_request_saving_ratio": 0
         },
         {
           "task_id": "semantic-holdout-s4",
@@ -739,9 +737,9 @@
             "reason": null,
             "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s4/off/summary.json",
             "state": {
-              "publish_count": 0.0,
-              "transfer_count": 0.0,
-              "consume_count": 0.0,
+              "publish_count": 0,
+              "transfer_count": 0,
+              "consume_count": 0,
               "payload_bytes": 0,
               "read_bytes": 0,
               "cross_process_consumption_observed": false,
@@ -771,9 +769,9 @@
             "reason": null,
             "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s4/on/summary.json",
             "state": {
-              "publish_count": 2.0,
-              "transfer_count": 2.0,
-              "consume_count": 2.0,
+              "publish_count": 2,
+              "transfer_count": 2,
+              "consume_count": 2,
               "payload_bytes": 49152,
               "read_bytes": 49152,
               "cross_process_consumption_observed": true,
@@ -810,9 +808,9 @@
             "reason": null,
             "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s8/off/summary.json",
             "state": {
-              "publish_count": 0.0,
-              "transfer_count": 0.0,
-              "consume_count": 0.0,
+              "publish_count": 0,
+              "transfer_count": 0,
+              "consume_count": 0,
               "payload_bytes": 0,
               "read_bytes": 0,
               "cross_process_consumption_observed": false,
@@ -842,9 +840,9 @@
             "reason": null,
             "source_path": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s8/on/summary.json",
             "state": {
-              "publish_count": 3.0,
-              "transfer_count": 3.0,
-              "consume_count": 3.0,
+              "publish_count": 3,
+              "transfer_count": 3,
+              "consume_count": 3,
               "payload_bytes": 49152,
               "read_bytes": 49152,
               "cross_process_consumption_observed": true,
@@ -861,7 +859,7 @@
           },
           "e2e_saving_ratio": -0.01150524384460126,
           "provider_token_saving_ratio": -0.0021854248970328656,
-          "provider_request_saving_ratio": 0.0
+          "provider_request_saving_ratio": 0
         }
       ]
     }
@@ -878,7 +876,7 @@
     "model": "qwen3-32b",
     "base_url": "http://127.0.0.1:53334/v1",
     "max_context": 8192,
-    "provider_timeout_s": 480.0,
+    "provider_timeout_s": 480,
     "embedding_mode": "local",
     "embedding_model": "/statebus/models/Qwen3-Embedding-0.6B",
     "embedding_device": "cuda:0",
@@ -1061,5 +1059,17 @@
     "wire_bytes_not_inferred": true,
     "state_no_effect_is_not_business_benefit": true,
     "task_e2e_ms_sum_is_not_batch_wall_clock": true
-  }
+  },
+  "report_kind": "current_mechanism_evidence",
+  "provenance": {
+    "base_collection": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416",
+    "replacement": {
+      "task_id": "semantic-holdout-s1",
+      "variant": "on",
+      "source": "/home/qcrs/statebus/os/runs/smoke-mechanisms-live-20260928_174645-3579687/state/ablation/cases/semantic-holdout-s1/on/summary.json",
+      "replaces": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s1/on/summary.json"
+    },
+    "raw_runs_unchanged": true
+  },
+  "quality_pass_rate": 1
 }

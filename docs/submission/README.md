@@ -1,8 +1,3 @@
-# Submission Materials
+# 提交材料
 
-Place the final project description, innovation statement, member contribution
-statement, and AI/third-party tool statement here. Existing PDF/DOCX materials
-at the checkout root are preserved until the submission package is reviewed.
-
-The root-level original commitment form remains unchanged; its final copy can
-be placed at the required root path after the document inventory is complete.
+本目录保存最终项目说明、创新点、成员贡献和工具声明等提交文件。技术事实应引用当前 `os` 的源码、精选 evidence 和报告路径；不要把 `project/` 历史运行材料当成当前 checkout 的结果。

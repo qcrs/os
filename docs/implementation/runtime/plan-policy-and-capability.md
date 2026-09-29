@@ -57,4 +57,4 @@ dispatch 前，Runtime 再根据当前 Ref Registry 和 ApprovedPlan 复核 Gran
 和预算。LLM Python capability 同时在 envelope 中启用 `allow_llm_python`，由 Planner 在已登记
 执行面中选择。
 
-主要类型位于 [`src/statebus/contracts/adaptive.py`](../../../src/statebus/contracts/adaptive.py)，能力表与校验测试可参考 [`test_adaptive_capability_surface.py`](../../../tests/test_adaptive_capability_surface.py) 和 [`test_adaptive_mainline_integration.py`](../../../tests/test_adaptive_mainline_integration.py)。
+主要类型位于 [`src/statebus/contracts/adaptive.py`](../../../src/statebus/contracts/adaptive.py)，能力表与校验测试可参考 [`tests/integration/runtime/test_adaptive_dispatcher.py`](../../../tests/integration/runtime/test_adaptive_dispatcher.py) 和 [`tests/unit/runtime/test_runtime_identity.py`](../../../tests/unit/runtime/test_runtime_identity.py)。

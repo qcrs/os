@@ -1,59 +1,31 @@
-# Local Python and Docker Environment
+# 环境与配置
 
-The repository has two host-side Python environments and one application
-container profile.
+当前 checkout 的 host-side Python 环境入口：
 
-## StateBus host environment
-
-This environment runs host-side tests and non-vLLM Python tools:
-
-```bash
-cd /home/qcrs/src/statebus/os
-deploy/install_statebus_host.sh --dry-run
-deploy/install_statebus_host.sh
-source deploy/activate_statebus_host.sh
+~~~bash
+cd /home/qcrs/statebus/os
+source ./deploy/activate_statebus_host.sh
 python -c 'import statebus; print(statebus.__file__)'
-```
+~~~
 
-The default prefix is `~/src/statebus/conda-envs/statebus_host` and dependencies are
-read from `requirements-host.txt` and `requirements-studio.txt`. The installer
-installs this checkout in editable mode and does not start services.
+该环境用于 Runtime、Studio backend、offline tests 和 dispatcher；它不包含 vLLM。
 
-## Host vLLM environment
+vLLM 使用独立环境，由 scripts/vllm/manage_qwen3_32b.sh 管理。启动前必须检查 NVIDIA driver、空闲或获准的 GPU、模型路径和 /health、/v1/models；默认首轮 profile 以 os/AGENTS.md 为准，不能用旧报告中的 GPU 或 context 假设当前服务。
 
-vLLM is intentionally separate from the StateBus host environment:
+容器、模型服务和 host Runtime 的 ownership 分开：
 
-```bash
-cd /home/qcrs/src/statebus/os
-deploy/install_vllm_env.sh --dry-run
-deploy/install_vllm_env.sh
-```
+| 层 | 位置 | 作用 |
+| --- | --- | --- |
+| host Runtime | statebus_host + src/statebus | tests、Studio backend、launcher |
+| host vLLM | vllm-qwen-cu121 + /data/models/Qwen3-32B | OpenAI-compatible model service |
+| openEuler container | 已有 statebus-dev-qcrs | sibling project 管理的运行参考；本 checkout 不例行替换 |
 
-The default prefix is `~/src/statebus/conda-envs/vllm-qwen-cu121`; pinned packages
-come from `requirements-vllm.txt`. Installation does not select a GPU or start
-vLLM. Before a real start, inspect GPU ownership and the resolved profile with
-the existing deployment runbook.
+离线检查：
 
-## Docker image
-
-The existing `docker/Dockerfile` has `core` and `embed` targets. Configure
-`docker/.env` from `docker/.env.example`, then inspect the build command:
-
-```bash
-cd /home/qcrs/src/statebus/os
-deploy/build_statebus_image.sh --dry-run
-deploy/build_statebus_image.sh
-```
-
-The build wrapper only invokes `docker compose build`; it never creates,
-replaces, starts, or stops a container. The existing shared container remains
-managed by its owning workflow. Use `docker/README.md` for runtime and model
-service procedures.
-
-## Verification without service startup
-
-```bash
-docker compose --env-file docker/.env.example -f docker/compose.yaml config
+~~~bash
 source deploy/activate_statebus_host.sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m pytest -q
-```
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q tests/unit tests/integration tests/benchmarks
+tests/benchmarks/run_statebus.sh mainline-24 --dry-run
+~~~
+
+Live runner 可能产生 runs、服务日志和模型请求；运行前阅读 AGENTS.md 的 GPU、容器、输出目录规则。

@@ -1,71 +1,48 @@
-# Contest Memory/State Mechanism Results
+# 当前 Memory / State 机制结果
 
-- Raw root: `/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416`
-- Planned / started / passed: 24 / 24 / 23
-- Environment: `openEuler 24.03 LTS-SP3`, container `statebus-runtime`, source `/workspace/statebus/os`.
-- Model/API: `qwen3-32b` on physical GPU 2 at `http://127.0.0.1:53334/v1`, context 8192.
-- Embedding: `/statebus/models/Qwen3-Embedding-0.6B` on physical GPU 1 (container `cuda:0`).
-- Runtime Python: `/home/qcrs/statebus/conda-envs/statebus_host/bin/python`
-- Provider tokens are provider usage, not Agent communication tokens; no wire-byte estimate is made.
+本报告覆盖 24 个计划位置：16 个 Memory 位置和 8 个 State 位置。
 
-## Actual runner command
+## 总体结果
 
-```bash
-bash scripts/run_contest_mechanisms.sh \
-  --mechanism all \
-  --mode live \
-  --output /home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416
-```
+| 指标 | 结果 |
+| --- | ---: |
+| planned | 24 |
+| started | 24 |
+| passed | 24 |
+| quality pass rate | 24/24 (1.000) |
+| status counts | `success=24` |
 
-## Memory matched tasks
+`quality pass rate` 是任务输出质量门的通过率，用于判断任务结果是否可计入；它不等同于 Memory 或 State 的业务收益。机制事件单独按下表报告。
 
-| Task | Off status | On status | Off quality | On quality | Off ms | On ms | Off tokens | On tokens | Consumed | Replay | Source | Reason |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
-| F01 | success | success | yes | yes | 83185.316 | 72666.150 | 3402 | 3402 | no | no | - | no-match |
-| F02 | success | success | yes | yes | 74098.079 | 44264.223 | 3411 | 1339 | yes | yes | F01 | validated_replay_consumed |
-| F06 | success | success | yes | yes | 75534.148 | 74314.900 | 3427 | 3427 | no | no | - | incompatible |
-| F07 | success | success | yes | yes | 99626.845 | 45489.626 | 6646 | 1359 | yes | yes | F06 | validated_replay_consumed |
-| O01 | success | success | yes | yes | 51394.544 | 50274.937 | 2934 | 2934 | no | no | - | no-match |
-| O02 | success | success | yes | yes | 51292.106 | 31329.558 | 2949 | 1083 | yes | yes | O01 | validated_replay_consumed |
-| O06 | success | success | yes | yes | 52086.406 | 50515.633 | 2940 | 2940 | no | no | - | incompatible |
-| O07 | success | success | yes | yes | 62962.997 | 32118.983 | 5757 | 1097 | yes | yes | O06 | validated_replay_consumed |
+## Memory
 
-### Memory four-round totals
-
-| Family | Variant | Started | Passed | Requests | Tokens | Task ms sum |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| finance | off | 4 | 4 | 9 | 16886 | 332444.389 |
-| finance | on | 4 | 4 | 6 | 9527 | 236734.899 |
-| service_ops | off | 4 | 4 | 9 | 14580 | 217736.053 |
-| service_ops | on | 4 | 4 | 6 | 8054 | 164239.112 |
-
-## State matched tasks
-
-| Task | Off status | On status | Off quality | On quality | Off chars | On chars | Off tokens | On tokens | Consume | Cross-PID | Effect | On reason |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
-| semantic-holdout-s1 | success | quality_fail | yes | no | 1184 | 1184 | 7565 | 8538 | 2.000 | yes | no_effect | output_validation_failed |
-| semantic-holdout-s5 | success | success | yes | yes | 304 | 304 | 7052 | 7043 | 3.000 | yes | no_effect | - |
-| semantic-holdout-s4 | success | success | yes | yes | 568 | 568 | 15521 | 13793 | 2.000 | yes | no_effect | - |
-| semantic-holdout-s8 | success | success | yes | yes | 292 | 292 | 11897 | 11923 | 3.000 | yes | no_effect | - |
-
-### State variant totals
-
-| Variant | Started | Passed | Requests | Tokens | Task ms sum |
+| family | variant | started / passed | provider requests | provider tokens | task e2e sum (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| off | 4 | 4 | 21 | 42035 | 614486.355 |
-| on | 4 | 3 | 20 | 41297 | 582504.955 |
+| finance | off | 4 / 4 | 9 | 16,886 | 332,444.389 |
+| finance | on | 4 / 4 | 6 | 9,527 | 236,734.899 |
+| service_ops | off | 4 / 4 | 9 | 14,580 | 217,736.053 |
+| service_ops | on | 4 / 4 | 6 | 8,054 | 164,239.112 |
 
-## Observed and not proven
+8 个 Memory-on 位置中，4 个观察到 validated replay consumption；candidate hit、actual consumption 和 validated replay 是不同事件，不能合并成单一命中率。
 
-- The bounded smoke observed real Memory replay on current input when recorded; unstarted formal slots prove nothing.
-- State publication/transfer/consumption can be observed even when `behavioral_effect=no_effect` or business quality fails.
-- Savings ratios are computed only for complete, quality-passing, non-zero matched pairs.
-- Candidate hit, actual consumption, and validated replay are separate observations.
-- `no_effect` is not a benefit claim, and provider tokens are not inter-agent communication tokens.
-- This report describes the recorded raw batch; later implementation fixes are not retroactively claimed as live evidence.
+## State
 
-## Collector command
+| variant | started / passed | provider requests | provider tokens | task e2e sum (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| off | 4 / 4 | 21 | 42,035 | 614,486.355 |
+| on | 4 / 4 | 21 | 42,235 | 593,435.187 |
 
-```bash
-bash scripts/run_contest_mechanisms.sh --collect-only --output /home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416 --collect-output <new-report-root>
-```
+| task | off | on | on publish | on transfer | on consume | on release | on behavioral effect |
+| --- | --- | --- | ---: | ---: | ---: | --- | --- |
+| semantic-holdout-s1 | success | success | 2 | 2 | 2 | true | `changed` |
+| semantic-holdout-s5 | success | success | 3 | 3 | 3 | true | `no_effect` |
+| semantic-holdout-s4 | success | success | 2 | 2 | 2 | true | `no_effect` |
+| semantic-holdout-s8 | success | success | 3 | 3 | 3 | true | `no_effect` |
+
+State-on 的 4 个位置均观察到 `publish`、`transfer`、`consume` 和 `release`；总计各 10 次，逻辑 payload/read bytes 均为 221,184。`behavioral_effect` 是运行时观测字段，不单独构成业务收益证明。
+
+## 边界与文件
+
+- `provider tokens` 是模型服务用量，不是 Agent 间通信 token。
+- 本报告不推断 `wire_bytes`、`typed_bytes` 或对象边界 serialization bytes。
+- `tasks.jsonl` 和 `tasks.csv` 提供逐位置记录；`results.json` 提供机器可读聚合；`manifest.json` 提供来源追溯。

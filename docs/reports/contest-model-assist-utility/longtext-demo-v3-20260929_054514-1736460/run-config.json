@@ -1,7 +1,0 @@
-{
-  "suite_revision": "longtext-demo-v3",
-  "mode": "formal",
-  "phase": "all",
-  "wall_budget_s": 5400.0,
-  "poll_interval_s": 60.0
-}

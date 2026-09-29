@@ -47,4 +47,4 @@ candidate discovered
 
 不兼容拒绝不是任务失败。Runtime 记录 reasons，然后沿当前任务的检索/执行路径重新计算。`recipe_recomputed`、skipped step 和 skipped LLM call 使正向复用与负向拒绝都可以在同一套事件里解释。
 
-消费记录的构造与效果分类主要位于 [`state_consumption.py`](../../../src/statebus/runtime/state_consumption.py) 和 [`adaptive_dispatcher.py`](../../../src/statebus/runtime/adaptive_dispatcher.py)。记忆真实性回归可从 [`test_memory_runtime.py`](../../../tests/unit/memory/test_memory_runtime.py) 与 [`test_adaptive_formal_compare.py`](../../../tests/test_adaptive_formal_compare.py) 阅读。
+消费记录的构造与效果分类主要位于 [`state_consumption.py`](../../../src/statebus/runtime/state_consumption.py) 和 [`adaptive_dispatcher.py`](../../../src/statebus/runtime/adaptive_dispatcher.py)。记忆真实性回归可从 [`tests/unit/memory/test_memory_runtime.py`](../../../tests/unit/memory/test_memory_runtime.py) 与 [`tests/benchmarks/mechanisms/test_contest_mechanisms.py`](../../../tests/benchmarks/mechanisms/test_contest_mechanisms.py) 阅读。

@@ -37,4 +37,4 @@ suite revision：`longtext-demo-v3`
 
 `summary.json` 的最终聚合字段为 `demo_completed=true`、`standard_restored=true`、`business_quality_passed=true`。这表示 28 个独立 utility 位置均完成且通过业务质量或正确 abstention gate；它仍不构成 48 项主链的新结果。
 
-机器可读聚合结果见 `metrics.json`，逐项报告见 `report.md`。原始完整目录保存在 `docs/reports/contest-model-assist-utility/longtext-demo-v3-20260929_104844-2545919/`。
+机器可读聚合结果见 `metrics.json`，逐项报告见 `report.md`。原始完整目录保存在 `runs/contest-model-assist-utility/longtext-demo-v3-20260929_104844-2545919/`。

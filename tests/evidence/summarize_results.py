@@ -10,8 +10,6 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
-
-
 def _load(relative_path: str) -> dict[str, Any]:
     return json.loads((ROOT / relative_path).read_text(encoding="utf-8"))
 

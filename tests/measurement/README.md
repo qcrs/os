@@ -1,6 +1,3 @@
-# Measurement namespace
+# Measurement 兼容目录
 
-This directory is retained as a compatibility namespace for older checkout
-layouts. Active offline tests live under `tests/unit/` and `tests/integration/`;
-benchmark and experiment contracts live under `tests/benchmarks/`. No test
-module is collected from this directory.
+`tests/measurement/` 保留旧 checkout 布局的兼容命名。当前离线测试位于 `tests/unit/` 和 `tests/integration/`，benchmark contract 位于 `tests/benchmarks/`；本目录不承载默认 pytest collection。

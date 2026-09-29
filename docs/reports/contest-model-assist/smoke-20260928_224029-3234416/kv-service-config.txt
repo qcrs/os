@@ -1,7 +1,0 @@
-模式=kv
-模型=/data/models/Qwen3-32B
-API地址=http://127.0.0.1:53334/v1
-健康地址=http://127.0.0.1:53334/statebus/kv/health
-物理GPU=2
-运行目录=/home/qcrs/statebus/work/vllm-qwen3-32b-kv-gpu2
-日志文件=/home/qcrs/statebus/work/vllm-qwen3-32b-kv-gpu2/service.log

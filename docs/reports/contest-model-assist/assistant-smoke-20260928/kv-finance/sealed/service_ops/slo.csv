@@ -1,5 +1,0 @@
-site_id,slo_error_rate,sample_p95_latency_ms
-S-A,0.02,500
-S-B,0.02,500
-S-C,0.02,500
-S-D,0.02,500

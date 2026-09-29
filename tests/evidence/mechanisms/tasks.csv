@@ -16,7 +16,7 @@ memory,O02,on,success,True,31329.558131,1,1083,0,,/home/qcrs/statebus/os/runs/co
 memory,O06,on,success,True,50515.633251,2,2940,0,,/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/memory/service_ops/on/slots/O06
 memory,O07,on,success,True,32118.983151,1,1097,0,,/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/memory/service_ops/on/slots/O07
 state,semantic-holdout-s1,off,success,True,104044.250307,4,7565,0,,/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s1/off/summary.json
-state,semantic-holdout-s1,on,quality_fail,False,122069.241003,4,8538,0,output_validation_failed,/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s1/on/summary.json
+state,semantic-holdout-s1,on,success,True,132999.473084,5,9476,0,,/home/qcrs/statebus/os/runs/smoke-mechanisms-live-20260928_174645-3579687/state/ablation/cases/semantic-holdout-s1/on/summary.json
 state,semantic-holdout-s5,off,success,True,98515.81692,4,7052,0,,/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s5/off/summary.json
 state,semantic-holdout-s5,on,success,True,100399.227015,4,7043,0,,/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s5/on/summary.json
 state,semantic-holdout-s4,off,success,True,226754.750627,7,15521,1,,/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s4/off/summary.json

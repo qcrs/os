@@ -1,336 +1,95 @@
-<div align="center">
-
 # StateBus
 
-**面向多 Agent 工作流的类型化状态传递运行时**
+StateBus 是面向多 Agent 工作流的 Python Runtime。`Runtime` 编译任务、批准计划、调度角色、验证产物，并记录 `State`、`Memory`、`Artifact` 和 telemetry 的生命周期。
 
-让 Planner、Retriever、Executor 与 Summarizer 传递可验证、可追踪、可释放的状态，
-而不是不断复制越来越长的文本上下文。
+当前源码位于 `src/`：
 
-<p><img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11"> <img src="https://img.shields.io/badge/Control-UDS%20%2B%20Protobuf-2F6F61" alt="UDS and Protobuf"> <img src="https://img.shields.io/badge/vLLM-0.9.2-4B5563" alt="vLLM 0.9.2"> <img src="https://img.shields.io/badge/Model-Qwen3--32B-8A4F2D" alt="Qwen3-32B"> <img src="https://img.shields.io/badge/Status-Active%20Implementation-2563EB" alt="Active implementation"></p>
+```text
+src/statebus/       Python Runtime、contracts、state、memory、benchmark、Studio backend
+src/studio-ui/      React/TypeScript Studio frontend
+tasks/              任务定义和运行输入
+tests/              单元、集成、benchmark contract、精选 evidence
+scripts/            服务、运行和实验入口
+docs/               架构、实现、实验、设计和报告索引
+```
 
-<p><a href="#快速开始">快速开始</a> · <a href="#系统架构">系统架构</a> · <a href="#核心能力">核心能力</a> · <a href="#实验结果总览">实验结果</a> · <a href="#项目目录">项目目录</a> · <a href="#实现文档">实现文档</a></p>
+## 从哪里开始
 
-</div>
+| 目的 | 入口 |
+| --- | --- |
+| 了解文档结构 | [`docs/README.md`](docs/README.md) |
+| 查看系统组成和代码归属 | [`docs/architecture/README.md`](docs/architecture/README.md) |
+| 追踪一次任务 | [`docs/implementation/README.md`](docs/implementation/README.md) |
+| 复现实验或核对结果 | [`docs/experiments/README.md`](docs/experiments/README.md) |
+| 查看稳定命令 | [`scripts/README.md`](scripts/README.md)、[`tests/benchmarks/README.md`](tests/benchmarks/README.md) |
+| 查看部署边界 | [`docker/README.md`](docker/README.md)、[`AGENTS.md`](AGENTS.md) |
 
----
+## Runtime 主链
 
-## StateBus 是什么
-
-多 Agent 系统经常把所有中间结果重新拼成 prompt：计划、证据、表格、执行输出和
-历史记忆都以文本重复传递。这样做容易产生三个问题：上下文不断膨胀、状态来源难以
-审计、Agent 输出被误当成已经授权的事实。
-
-StateBus 把任务执行拆成两部分：
-
-- Agent 负责提出计划、检索意图、候选选择和总结；
-- Runtime 负责编译任务、批准计划、验证状态、管理引用、执行代码和提交记忆。
-
-> Agent 产生候选，Runtime 决定候选何时获得下游资格。
-
-状态不再是一个跨角色共享的可写字典，而是带身份、摘要、生命周期和消费回执的对象。
-
-## 系统架构
-
-[![StateBus 系统总体架构](docs/contracts/StateBus_系统架构图.svg)](docs/contracts/StateBus_系统架构图.svg)
-
-控制面只传任务身份、能力授权、状态引用和运行事件；大对象保留在数据面。跨任务知识
-经过兼容门后进入记忆面。模型侧能力默认关闭，只在对应运行模式下参与证据选择、执行
-授权或 prefill 复用。
-
-## 可信对象主链
+Runtime 让角色生成候选，让合同和策略决定候选何时可以进入下一步。典型对象关系如下：
 
 ```mermaid
 flowchart LR
-    TS[CanonicalTaskSpec] --> PP[PlanProposal]
-    PP -->|PlanPolicy| AP[ApprovedPlan]
-    AP --> ER[EvidenceRequest]
-    ER --> EP[CanonicalEvidencePack]
-    EP --> SR[SemanticStateRef]
-    EP --> EX[Executor Choice]
-    SR --> EX
-    EX --> AC[Artifact Candidate]
-    AC -->|Validators| AV[Artifact Verified]
-    AV --> CS[ClaimSet]
-    CS --> MC[Memory Commit Candidate]
-    MC -->|Commit Gate| MR[MemoryRef Committed]
+    T[Task input] --> C[Task compiler]
+    C --> P[PlanProposal]
+    P --> A[PlanPolicy / ApprovedPlan]
+    A --> R[Retriever / EvidencePack]
+    R --> S[SemanticStateRef]
+    R --> E[Executor]
+    S --> E
+    E --> X[Artifact candidate]
+    X --> V[Validator / verified Artifact]
+    V --> U[Summarizer / ClaimSet]
+    U --> M[Memory commit]
 ```
 
-图中的箭头表示对象经过 Runtime 校验后获得新的可见性。`candidate`、`approved`、
-`consumed`、`verified` 和 `committed` 分别对应明确的状态提升条件。
+控制面使用 typed messages 和 UDS transport 传递身份、授权、引用和运行事件；较大的 state、artifact 和 workspace 内容由数据面或持久化 store 保存。`StateRef`、`ArtifactRef` 和 `MemoryRef` 的读取、消费和释放都带有当前 task、step、attempt 和 grant 约束。
 
-## 核心能力
+## 三条结果链
 
-| 能力 | 当前实现 | 运行规则 |
-|:--|:--|:--|
-| 任务编译 | `CanonicalTaskSpec`、稳定 ID、输入摘要和兼容签名 | 正式任务在执行前统一编译 |
-| 计划授权 | Planner 提案、PlanPolicy、CapabilityGrant | PlanPolicy 负责批准和收窄计划 |
-| 类型化控制面 | Typed Protobuf、UDS、ACK、心跳和终态事件 | attempt 身份隔离晚到结果 |
-| 非文本状态 | shared memory、mmap、CAS、sidecar 和 Ref Registry | Ref 校验 schema、hash、lease 和消费者授权 |
-| 证据链 | EvidencePack、locator、hydration、provenance | 结论引用已授权且可回溯的证据 |
-| CodeAct | 受限 Python、Transform DSL、Workspace、ArtifactRef | 产物通过 Validator 后进入 verified |
-| 共享记忆 | SQLite/FTS、向量检索、兼容判断和 replay gate | 候选经兼容判断与真实消费后产生复用 |
-| 可观测性 | Runtime events、task metrics、ledger 和 run artifacts | 指标保留 task、step、attempt 和 trace 维度 |
-| Studio | 作业管理、事件流、结果和 artifact API | 页面状态从持久化运行事实重建 |
+结果页面必须按不同分母阅读：
 
-### 模型侧状态路径
+| 结果链 | 当前范围 | 当前精选结果 |
+| --- | --- | --- |
+| 主链 `SB-FULL` / `P-TEXT` | finance 12 轮 + service_ops 12 轮；两种 variant 共 24 轮、48 个任务位置 | 48/48 通过质量门；24/24 配对质量一致 |
+| Memory / State 机制实验 | 16 个 Memory 位置 + 8 个 State 位置，共 24 个计划位置 | 当前汇总 24/24 通过质量门；State-on 观测到 `publish/transfer/consume/release`，其中 `semantic-holdout-s1` 的 `behavioral_effect=changed` |
+| APC / 显式 KV / Logit utility | APC 8、KV 8、Logit 12，共 28 个计分位置 | APC 8/8、KV 8/8；Logit 9 个 resolved case 通过、3 个正确 `abstention` |
 
-模型侧能力是主链旁路，不取代 TaskSpec、EvidencePack、Artifact 或质量门。
+精选 evidence：[`tests/evidence/mainline/`](tests/evidence/mainline/)、[`tests/evidence/mechanisms/`](tests/evidence/mechanisms/)、[`tests/evidence/model-assist/`](tests/evidence/model-assist/)。主链的 `provider tokens` 是模型服务用量，不是 Agent 间通信 token；当前主链没有采集 `wire_bytes`、`typed_bytes` 或对象边界 serialization bytes。State 的 publish/transfer/consume/release 事件也不能单独证明业务收益。
 
-| 路径 | 解决的问题 | 默认状态 |
-|:--|:--|:--|
-| Embedding State | 跨进程传递稠密 query/candidate matrix，选择证据 | 按状态层配置 |
-| Logit Gate | 用闭集候选概率决定执行、重查或结束调度 | `off` |
-| Engine-Local Prefix Reuse | 将共同证据放到 token position 0，由同一 vLLM engine 自动复用 | `independent` / `off` |
-| Explicit KV Continuation | 同一 Worker 内从 Producer 向 Consumer 继承已计算 parent KV | `off` |
+## 快速检查
 
-Prefix 是多个完整请求之间的自动 block 命中；显式 KV 是同一任务相邻角色之间的 handle
-传递。两者都只改变重复 prefill 的物理来源，不改变业务事实和输出合同。
-
-## 实验结果总览
-
-统一实验使用单张 NVIDIA A100 80GB、Qwen3-32B 和离线确定性任务。正式任务覆盖 20 个
-连续任务与五类 25 个独立 case；Prefix、Logit 和显式 KV 使用各自的专项任务与统计分母。
-
-| 机制 | 主要结果 | 正确性 |
-|:--|:--|:--|
-| 完整 StateBus | 总 Token `33,974 -> 17,870`，下降 `47.40%`；wire `36,069 -> 12,677 B`，下降 `64.85%` | 10/10 |
-| 结构化通信 | control bytes 下降 `83.05%`；wire bytes 下降 `68.95%` | 10/10 |
-| Embedding 状态 | raw evidence 下降 `84.04%`；总 Token 下降 `49.16%` | 9/9 状态跨 PID 消费并改变选择 |
-| Logit Gate | Validator `8/12 -> 12/12`；歧义任务 `3/5 -> 5/5`；错误放行 `2 -> 0` | 19/19 状态消费并释放 |
-| 共享记忆 | 配对耗时下降 `18.49%`；Token 下降 `23.75%` | 连续任务 20/20；7/20 查询 actual-use |
-| CodeAct | 五类任务总体正确率 `56% -> 100%`，即 `14/25 -> 25/25` | 五类全部通过 |
-| 显式 KV | computed prefill 下降 `85.22%`；TTFT 下降 `61.62%`；完整主链下降 `5.69%` | A/B 质量等价 10/10 |
-| Prefix | block hit rate `0% -> 78.02%`；平均 TTFT 下降 `68.7%`；端到端下降 `43.0%` | 40/40 请求合同通过 |
-
-完整任务、逐项数据、统计公式与原始日志路径见[实验结果总览](docs/experiments/README.md)。
-
-## 运行模式
-
-| 模型服务 | 普通主链 | Logit | Prefix | 显式 KV |
-|:--|:--:|:--:|:--:|:--:|
-| 外部 OpenAI-compatible API | 支持 | 由服务端 logprobs 能力决定 | 由远端服务管理 | 标准 API 路径 |
-| 本地 vLLM `standard` | 支持 | 支持 | 支持 APC 与 metrics | 关闭 |
-| 本地 vLLM `kv` | 支持实验角色调用 | 独立运行 | APC 显式关闭 | 支持 |
-
-本地推理环境固定在 [requirements-vllm.txt](requirements-vllm.txt)，当前对应 Python
-3.11、vLLM 0.9.2、PyTorch 2.7.0 和 Transformers 4.52.4。StateBus 没有修改或
-内置 vLLM 源码；显式 KV 作为仓库内插件通过 vLLM 扩展入口加载。
-
-## 快速开始
-
-详细配置见 [Docker 与模型服务启动说明](docker/README.md)。下面只保留最短路径。
-
-### 1. 选择模型服务
-
-使用外部 API：
+不启动服务的入口检查：
 
 ```bash
-cp deploy/statebus_llm.yaml.example deploy/statebus_llm.yaml.local
-cp deploy/statebus_llm.env.example deploy/statebus_llm.env.local
-```
-
-修改本地 YAML 中的 `base_url`、模型名和角色参数，并在 env 文件中填写 API Key。
-
-使用宿主机 vLLM 和 StateBus Embedding 容器：
-
-```bash
-scripts/start_statebus.sh qwen3-32b-gpu2-u050
-```
-
-可用 profile 和解析后的地址、GPU、context、Embedding 位置：
-
-```bash
-scripts/start_statebus.sh --list-profiles
-scripts/start_statebus.sh qwen3-8b-gpu0-u050 --print-config
-scripts/start_statebus.sh qwen3-32b-gpu2-u050 --print-config
-```
-
-默认 profile 固定为 `/data/models/Qwen3-32B`、物理 GPU2、
-`http://127.0.0.1:53334/v1`、8192 token context；容器默认名为
-`statebus-runtime`，只映射 Embedding 物理 GPU1，容器内显示为 `cuda:0`。
-8B profile 使用 `/data/models/Qwen3-8B`、物理 GPU0 和 4096 context。
-脚本会复用已经健康且模型匹配的服务，不会停止或重启它。
-如需显式指定 Embedding 物理卡和容器名：
-
-```bash
-scripts/start_statebus.sh qwen3-32b-gpu2-u050 \
-  --embedding-gpu 1 --container-name statebus-runtime
-```
-如需查看解析后的模型地址和参数：
-
-```bash
-source deploy/activate_statebus_local_vllm_profile.sh qwen3-32b-gpu2-u050
-scripts/vllm/manage_qwen3_32b.sh print-config
-```
-
-依赖安装与显式 KV 模式切换见[部署说明](docker/README.md#固定的推理环境)。
-
-### 2. 准备应用容器
-
-```bash
-cp docker/.env.example docker/.env
-sed -i "s/^STATEBUS_UID=.*/STATEBUS_UID=$(id -u)/" docker/.env
-sed -i "s/^STATEBUS_GID=.*/STATEBUS_GID=$(id -g)/" docker/.env
-```
-
-使用已有镜像启动，不重新构建：
-
-```bash
-docker compose \
-  --env-file docker/.env \
-  -f docker/compose.yaml \
-  up -d --no-build
-```
-
-### 3. 运行 Smoke
-
-```bash
-docker compose \
-  --env-file docker/.env \
-  -f docker/compose.yaml \
-  exec statebus-dev bash
-```
-
-容器内执行：
-
-```bash
-source /usr/local/bin/activate_statebus_container.sh
-python -m statebus.runtime.smoke --role-path-mode local_vllm
-```
-
-外部 API 模式将 `local_vllm` 替换为 `api`，并在 `docker/.env` 中把
-`STATEBUS_LLM_CONFIG_FILE` 指向 `deploy/statebus_llm.yaml.local` 的容器路径。
-
-### 4. 启动 Studio
-
-```bash
-source /usr/local/bin/activate_statebus_container.sh
-scripts/run_statebus_studio.sh
-```
-
-Studio 服务默认监听 `http://127.0.0.1:8765`。
-
-## 常用开关
-
-普通主链保持全部关闭：
-
-```dotenv
-STATEBUS_PREFIX_ALIGNMENT_MODE=independent
-STATEBUS_PREFIX_POLICY=off
-STATEBUS_LOGIT_GATE_MODE=off
-STATEBUS_ENGINE_LOCAL_KV_MODE=off
-```
-
-| 配置 | 可选值 |
-|:--|:--|
-| `STATEBUS_PREFIX_ALIGNMENT_MODE` | `independent`、`shared_evidence_prefix` |
-| `STATEBUS_PREFIX_POLICY` | `off`、`observe`、`on` |
-| `STATEBUS_LOGIT_GATE_MODE` | `off`、`telemetry`、`retry_once` |
-| `STATEBUS_ENGINE_LOCAL_KV_MODE` | `off`、`full_replay`、`continuation` |
-
-修改 `docker/.env` 后使用 `--no-build --force-recreate` 让容器读取新配置。
-
-## 项目目录
-
-```text
-src/statebus/
-  benchmark/              离线任务、正式任务族、runner 与指标聚合
-  contracts/              Task、Plan、Evidence、Ref、Artifact 等数据合同
-  control/                Typed Protobuf、UDS 和 Worker transport
-  integrations/vllm_kv/  显式 KV Connector、Middleware 与 Worker Extension
-  memory/                 SQLite/FTS、向量检索、兼容与提交
-  provenance/             证据来源、locator 和 lineage
-  refs/                   Ref Registry 与解析规则
-  retrieval/              证据检索、投影和 hydration
-  runtime/                编译、调度、角色路径、Gate、执行和重放
-  state/                  shared memory、mmap、CAS 与状态生命周期
-  studio/                 Studio API、作业和运行事实重建
-
-tests/                    合同、Runtime、状态、模型侧路径和基准回归
-docs/implementation/      当前源码对应的实现手册
-deploy/                   Host、API 和 vLLM 环境配置
-docker/                   openEuler 应用容器配置
-scripts/                  启动、诊断和实验入口
-src/studio-ui/             Studio 前端源码
-```
-
-源码现在位于 `src/`，重构分支的目录映射和迁移状态见
-[`docs/architecture/directory-map.md`](docs/architecture/directory-map.md)。第一阶段保留上面的
-旧路径，避免在没有完成导入和打包校验前破坏可运行环境；`src/` 目录先作为目标源码布局索引。
-
-### 任务与数据位置
-
-| 内容 | 目录 |
-|:--|:--|
-| Operating / Financial 连续任务 | `src/statebus/benchmark/samples/continuous_task_families/` |
-| 五类 25 个正式 case | `src/statebus/benchmark/samples/formal_financial_family/`、`tasks/formal/` |
-| Embedding 与 Logit 专项任务 | `src/statebus/benchmark/samples/semantic_holdout/`、`src/statebus/benchmark/samples/logit_retry_challenge/` |
-| Prefix 任务 | `src/statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/` |
-| 显式 KV 任务 | `src/statebus/benchmark/samples/engine_local_kv_continuation/`、`src/statebus/benchmark/samples/engine_local_kv_mainline_10round/` |
-| CSV 数据 | `datasets/operating_metrics/` |
-
-任务 ID、Gold 和 Validator 规则见[基准任务与数据集目录](docs/implementation/benchmark-task-and-dataset-catalog.md)。
-
-## 开发与验证
-
-宿主机开发环境：
-
-```bash
-source deploy/activate_statebus_host.sh
-python -m pytest -q
-python -m statebus.runtime.smoke
-```
-
-### 重构后的稳定入口
-
-实验入口统一由 `tests/benchmarks/run_statebus.sh` 路由：
-
-```bash
-tests/benchmarks/run_statebus.sh smoke --dry-run
+cd /home/qcrs/statebus/os
+source ./deploy/activate_statebus_host.sh
+python -c 'import statebus; print(statebus.__file__)'
+tests/benchmarks/run_statebus.sh --help
 tests/benchmarks/run_statebus.sh mainline-24 --dry-run
 tests/benchmarks/run_statebus.sh mainline-mechanisms --dry-run
-tests/benchmarks/run_statebus.sh apc --dry-run
-tests/benchmarks/run_statebus.sh kv --dry-run
-tests/benchmarks/run_statebus.sh logit --dry-run
 tests/benchmarks/run_statebus.sh utility --dry-run
 ```
 
-`mainline-24` 是完整主链路（两个 12 轮 family），`mainline-mechanisms` 是主链机制消融，
-APC/KV/Logit 是专项机制验证，`utility` 是独立的 `longtext-demo-v3` 展示链。
-后三类结果不能写成 24 轮主链默认收益。证据索引见
-[`docs/experiments/evidence-index.md`](docs/experiments/evidence-index.md)。
-
-本地 Python 环境和 Docker 镜像构建入口见
-[`docs/implementation/environment.md`](docs/implementation/environment.md)：
+离线回归测试：
 
 ```bash
-deploy/install_statebus_host.sh
-deploy/install_vllm_env.sh
-deploy/build_statebus_image.sh --dry-run
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q tests/unit tests/integration tests/benchmarks
 ```
 
-只验证 Docker 配置，不构建或启动容器：
+实时主链、机制实验和 utility suite 都需要已获准的服务环境。runner 会检查环境，但不会替用户启动或重启 vLLM；GPU、容器和服务边界见 [`AGENTS.md`](AGENTS.md) 与 [`docker/README.md`](docker/README.md)。
 
-```bash
-docker compose \
-  --env-file docker/.env.example \
-  -f docker/compose.yaml \
-  config
+## 运行入口
+
+```text
+src/statebus/benchmark/contest_dsl_mainline.py       主链实现
+src/statebus/benchmark/contest_mechanisms.py         Memory / State 机制实现
+src/statebus/benchmark/model_assist_utility/         APC / KV / Logit utility 实现
+scripts/run_contest_dsl_mainchains.sh                主链 launcher
+scripts/run_contest_mechanisms.sh                    机制 launcher
+scripts/experiments/contest_model_assist/             utility launcher
+tests/benchmarks/run_statebus.sh                     稳定 dispatcher
+tests/evidence/summarize_results.py                  evidence 汇总
 ```
 
-## 实现文档
-
-| 主题 | 文档 |
-|:--|:--|
-| 总入口 | [StateBus 实现手册](docs/implementation/README.md) |
-| 系统分层 | [系统架构](docs/implementation/01-system-architecture.md) |
-| 任务与控制面 | [任务合同与控制面](docs/implementation/02-task-contract-and-control-plane.md) |
-| 非文本状态 | [语义状态与数据面](docs/implementation/03-semantic-state-and-data-plane.md) |
-| CodeAct 与产物 | [CodeAct、Artifact 与质量门](docs/implementation/05-codeact-artifact-and-quality.md) |
-| 端到端走读 | [端到端任务](docs/implementation/07-end-to-end-task-walkthrough.md) |
-| 模型侧能力 | [模型侧状态路径](docs/implementation/runtime/model-state-paths.md) |
-| 实验与数据 | [实验结果总览](docs/experiments/README.md)、[任务与数据集目录](docs/implementation/benchmark-task-and-dataset-catalog.md) |
-| 可观测与恢复 | [Telemetry 与失败恢复](docs/implementation/08-observability-and-recovery.md) |
-| 代码地图 | [扩展与代码地图](docs/implementation/09-code-map-and-extension-guide.md) |
-| 部署运行 | [Docker 与模型服务](docker/README.md) |
+`project/` 是历史运行参考库，不是本 checkout 的源码入口。本 README 只描述 `/home/qcrs/statebus/os` 的当前文件、当前 runner 和精选 evidence；完整 raw run 保留在 `runs/`。

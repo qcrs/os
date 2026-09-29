@@ -1,30 +1,18 @@
-# Tests and Verification
-
-This directory contains correctness tests, benchmark entry points, and curated
-verification evidence.
+# 测试与证据
 
 ```text
-tests/
-├── unit/          # Small offline contracts, runtime, memory, CodeAct, and mechanism tests
-├── integration/   # Minimal runtime/mainline and Studio integration tests
-├── benchmarks/    # Mainline, mechanism, and longtext utility validation
-├── measurement/   # Reserved compatibility namespace; active tests are elsewhere
-└── evidence/      # Curated mainline, mechanism, and APC/KV/Logit results
+tests/unit/          离线合同、Runtime、Memory、CodeAct、Logit/APC/KV
+tests/integration/   Runtime、固定主链和 Studio 组合测试
+tests/benchmarks/    主链、机制和 utility contract tests 及 dispatcher
+tests/evidence/      三条精选结果链的 Markdown/JSON 聚合
+tests/measurement/   旧目录布局兼容入口；不承载默认测试
 ```
 
-The refactoring branch keeps only the high-value offline regression set. The
-historical MRR and contest-stage tests remain available on the backup branch;
-they are not part of the default delivery tree.
-
-Run the offline regression with:
+离线回归：
 
 ```bash
 source deploy/activate_statebus_host.sh
-python -m pytest -q tests/unit tests/integration tests/benchmarks
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q tests/unit tests/integration tests/benchmarks
 ```
 
-Use `tests/benchmarks/run_statebus.sh --help` for the stable experiment
-entry point. `tests/evidence/` distinguishes the 48-task mainline, mechanism
-ablations, and the independent APC/KV/Logit utility chain. It intentionally
-contains result aggregates only; service logs and failed runs remain in the
-report archive.
+benchmark 入口使用 [`benchmarks/run_statebus.sh`](benchmarks/run_statebus.sh)。`tests/evidence/` 不是通用测试目录；它保存 mainline、mechanisms 和 model-assist 的精选结果，raw run 和服务日志仍在 `runs/`。

@@ -1,8 +1,0 @@
-{
-  "passed": true,
-  "errors": [],
-  "expected_row_count": 4,
-  "scorer": "decimal_raw_csv_v1",
-  "task_profile": "mechanism_simple_v2",
-  "expected_rows_used_for_execution": false
-}

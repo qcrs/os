@@ -1,0 +1,27 @@
+{
+  "schema_version": "statebus.contest_mechanism_evidence_manifest.v1",
+  "report_kind": "current_mechanism_evidence",
+  "records": 24,
+  "experiments": [
+    "memory",
+    "state"
+  ],
+  "planned_positions": {
+    "memory": 16,
+    "state": 8
+  },
+  "sources": {
+    "base_collection": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416",
+    "semantic_holdout_s1_on": "/home/qcrs/statebus/os/runs/smoke-mechanisms-live-20260928_174645-3579687/state/ablation/cases/semantic-holdout-s1/on/summary.json",
+    "replaced_source": "/home/qcrs/statebus/os/runs/contest-mechanisms-20260927_171109-3234416/state/ablation/cases/semantic-holdout-s1/on/summary.json"
+  },
+  "raw_runs_unchanged": true,
+  "files": [
+    "manifest.json",
+    "results.json",
+    "results.md",
+    "tasks.csv",
+    "tasks.jsonl"
+  ],
+  "derivation": "按固定 24-slot plan 生成当前机制 evidence；结果正文和机器聚合只保留当前 24/24 口径。"
+}

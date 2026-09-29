@@ -1,28 +1,18 @@
-# Evidence Index
+# Evidence 索引
 
-Evidence is separated by protocol and denominator.
+`tests/evidence/` 只保留可直接阅读或机器处理的精选聚合；逐 slot 运行树、服务日志和失败目录仍在 `runs/` 的 raw run 中。
 
-| Evidence class | Target directory | Meaning |
-| --- | --- | --- |
-| Complete mainline | `tests/evidence/mainline-24/` | The 24-round continuous mainline and its matched comparison |
-| Mainline ablation | `tests/evidence/mainline-mechanisms/` | Mechanism comparisons on the mainline |
-| APC | `tests/evidence/specialized/apc/` | APC or prefix utility phase |
-| KV | `tests/evidence/specialized/kv/` | Explicit KV replay/continuation phase |
-| Logit | `tests/evidence/specialized/logit/` | Logit gate phase |
-| Long-text utility | `tests/evidence/utility/longtext-demo-v3/` | Independent 28-slot display chain |
+| evidence | 分母 | 入口 | 主要字段 |
+| --- | ---: | --- | --- |
+| [`mainline/`](../../tests/evidence/mainline/) | 48 个任务、24 对 | `run_statebus.sh mainline-24` | quality、provider request/token、message、state、memory |
+| [`mechanisms/`](../../tests/evidence/mechanisms/) | 24 个计划位置 | `run_statebus.sh mainline-mechanisms` | 24/24 质量门通过；Memory off/on、State off/on、机制生命周期 |
+| [`model-assist/`](../../tests/evidence/model-assist/) | APC 8、KV 8、Logit 12 | `run_statebus.sh apc|kv|logit|utility` | prefix hit、computed prefill、TTFT、logical input、正确 abstention |
 
-Every published evidence set uses the longtext template: `README.md`,
-`summary.md`, `metrics.json`, `commands.md`, `execution-manifest.env`,
-`selected-slots/`, `failures/`, and `service/` when service switching occurs.
+统一汇总：
 
-The complete raw run remains under its original report path or a separately
-archived artifact. A curated evidence directory must record the source run ID,
-revision, command, and checksum rather than silently copying an entire history.
+```bash
+python tests/evidence/summarize_results.py
+python tests/evidence/summarize_results.py --json
+```
 
-## Current material
-
-The target `tests/evidence/utility/longtext-demo-v3/` now contains the curated
-utility package copied from
-`docs/reports/contest-model-assist-utility/longtext-demo-v3-20260929_104844-2545919/`.
-The original top-level curated files are retained during this first phase for
-backward compatibility.
+每条记录应能从 `tasks.jsonl`/`tasks.csv` 追溯到 `results.json` 或 `metrics.json`，再通过报告中的 raw run ID 追溯到完整运行材料。不要把 `provider tokens` 当成通信 token，也不要把 State 生命周期事件当成业务收益。

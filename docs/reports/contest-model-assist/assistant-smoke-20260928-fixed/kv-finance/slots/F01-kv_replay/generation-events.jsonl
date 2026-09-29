@@ -1,2 +1,0 @@
-{"event": "started", "repair": false, "stage": "initial", "validation_errors": [], "previous_program_hash": null}
-{"event": "started", "repair": true, "stage": "quality_validation", "validation_errors": ["schema:0:missing=cost_cny:unexpected=summed_cost_cny", "schema:1:missing=cost_cny:unexpected=summed_cost_cny", "schema:2:missing=cost_cny:unexpected=summed_cost_cny", "schema:3:missing=cost_cny:unexpected=summed_cost_cny"], "previous_program_hash": "b81a05fe9711b5268ae912797b9a11a196061081495b90ec1179ebc11af4c5a2"}

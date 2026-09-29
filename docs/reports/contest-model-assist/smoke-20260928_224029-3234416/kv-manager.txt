@@ -1,2 +1,0 @@
-进程=运行中 pid=571404 mode=kv
-端点=健康 url=http://127.0.0.1:53334/statebus/kv/health
