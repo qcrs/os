@@ -25,6 +25,19 @@
 
 8 个 Memory-on 位置中，4 个观察到 validated replay consumption；candidate hit、actual consumption 和 validated replay 是不同事件，不能合并成单一命中率。
 
+逐任务 off/on 对照：
+
+| task | quality | provider tokens off -> on | requests off -> on | e2e ms off -> on |
+| --- | --- | ---: | ---: | ---: |
+| F01 | 通过 -> 通过 | 3,402 -> 3,402 | 2 -> 2 | 83,185 -> 72,666 |
+| F02 | 通过 -> 通过 | 3,411 -> 1,339 | 2 -> 1 | 74,098 -> 44,264 |
+| F06 | 通过 -> 通过 | 3,427 -> 3,427 | 2 -> 2 | 75,534 -> 74,315 |
+| F07 | 通过 -> 通过 | 6,646 -> 1,359 | 3 -> 1 | 99,627 -> 45,490 |
+| O01 | 通过 -> 通过 | 2,934 -> 2,934 | 2 -> 2 | 51,395 -> 50,275 |
+| O02 | 通过 -> 通过 | 2,949 -> 1,083 | 2 -> 1 | 51,292 -> 31,330 |
+| O06 | 通过 -> 通过 | 2,940 -> 2,940 | 2 -> 2 | 52,086 -> 50,516 |
+| O07 | 通过 -> 通过 | 5,757 -> 1,097 | 3 -> 1 | 62,963 -> 32,119 |
+
 ## State
 
 | variant | started / passed | provider requests | provider tokens | task e2e sum (ms) |
@@ -40,6 +53,8 @@
 | semantic-holdout-s8 | success | success | 3 | 3 | 3 | true | `no_effect` |
 
 State-on 的 4 个位置均观察到 `publish`、`transfer`、`consume` 和 `release`；总计各 10 次，逻辑 payload/read bytes 均为 221,184。`behavioral_effect` 是运行时观测字段，不单独构成业务收益证明。
+
+`semantic-holdout-s1` 的 on 记录来自最新单独重跑 `runs/smoke-mechanisms-live-20260928_174645-3579687`，状态为 `success`，不是早期的 `quality_fail` 记录；其 `publish=2`、`transfer=2`、`consume=2`、`release=true`、`behavioral_effect=changed`。
 
 ## 边界与文件
 

@@ -1,106 +1,98 @@
 # 实验与证据
 
-本页只汇总当前精选 evidence 的三条结果链。每条链使用自己的任务、条件和分母；`provider tokens`、logical tokens、消息文本、state bytes、KV bytes 和 `task_wall_ms` 不能互换。
+本页按 proposal 约定展示“主实验、机制实验、模型侧专项”三层结果。每个对照都同时回答质量是否保持、实际少做了什么、为此付出了什么成本。每条链使用自己的任务、条件和分母；`provider tokens`、Agent 文本通信、state bytes、KV bytes 和 `task_e2e_ms` 不能互换。
 
 ## 结果地图
 
 ```mermaid
 flowchart LR
-    A[主链 24 轮 / 48 任务] --> B[mainline evidence]
-    C[Memory + State 24 位置] --> D[mechanisms evidence]
-    E[APC 8 + KV 8 + Logit 12] --> F[model-assist evidence]
+    A[主实验：24 轮 / 48 任务] --> A1[SB-FULL vs P-TEXT]
+    B[机制实验：24 个位置] --> B1[Memory off/on]
+    B --> B2[State off/on]
+    C[模型侧专项：28 个位置] --> C1[APC 8]
+    C --> C2[KV 8]
+    C --> C3[Logit 12]
 ```
 
-## 主链：24 轮、48 个任务位置
+## 一、主实验：完整产品对比
 
-实现和入口：
+`SB-FULL` 与 `P-TEXT` 使用同一批 finance 12 轮、`service_ops` 12 轮任务，共 24 对、48 个任务位置。两侧均由同一质量门判断，失败、repair 和额外请求都保留在分母。当前 evidence 的 collection date 为 `2026-09-27`。
 
-```text
-src/statebus/benchmark/contest_dsl_mainline.py
-scripts/run_contest_dsl_mainchains.sh
-tests/benchmarks/run_statebus.sh mainline-24
-tests/evidence/mainline/
-```
+实现和入口：`src/statebus/benchmark/contest_dsl_mainline.py`、`scripts/run_contest_dsl_mainchains.sh`、`tests/benchmarks/run_statebus.sh mainline-24`、[`tests/evidence/mainline/`](../../tests/evidence/mainline/)。
 
-`SB-FULL` 和 `P-TEXT` 都运行 finance 12 轮与 service_ops 12 轮，共 24 对配对任务。精选结果（collection date `2026-09-27`）为：
+| 指标 | `SB-FULL` | `P-TEXT` | `SB-FULL` 相对变化 |
+| --- | ---: | ---: | ---: |
+| 质量通过 | 24/24 | 24/24 | 保持 |
+| provider requests | 41 | 60 | `-31.67%` |
+| provider prompt tokens | 60,544 | 103,534 | `-41.52%` |
+| provider completion tokens | 13,636 | 18,168 | `-24.94%` |
+| provider total tokens | 74,180 | 121,702 | `-39.05%` |
+| Executor generations | 17 | 36 | `-52.78%` |
+| Executor repairs | 5 | 12 | `-58.33%` |
+| 24 个任务总耗时 | 1,543.3 s | 2,043.4 s | `-24.48%` |
 
-| 字段 | 结果 |
-| --- | ---: |
-| planned / started / passed | 48 / 48 / 48 |
-| quality pass rate | 1.0 |
-| SB-FULL / P-TEXT quality match | 24 / 24 |
-| provider requests | 101 |
-| provider prompt / completion / total tokens | 164,078 / 31,804 / 195,882 |
-| Runtime message count | 197 |
-| observed state publish / transfer / consume / release | 24 / 24 / 24 / 24 |
-| observed state payload/read bytes | 491,520 / 491,520 |
-| Memory query / candidate / actual consumption / replay | 24 / 132 / 12 / 12 |
-| skipped executor generation | 12 |
+按 family 展开，finance 的 provider tokens 为 `44,968 -> 75,275`、任务总耗时为 `927.1 s -> 1,266.4 s`（`-26.79%`）；`service_ops` 为 `29,212 -> 46,427`、`616.2 s -> 777.0 s`（`-20.69%`）。两组都 `12/12` 通过。
 
-`P-TEXT` 与 `SB-FULL` 的 provider token/request 差异是产品级描述性对照。两个 variant 的 backend、validator、output contract 等条件没有被收敛为单一协议因果实验，因此文档不把差异写成“协议格式单独造成”。`wire_bytes`、`typed_bytes`、对象边界 serialization bytes 和 avoided provider tokens 在 evidence 中是未观测量。
+这是一张完整产品级对照表，不是 typed protocol 的单机制因果表：当前两个 variant 的执行责任和机制开关并不完全相同。不能把全部 token 或时间差额直接写成“协议格式造成”。`P-TEXT` 记录了 `780,825` text bytes 和 108 条 UTF-8 text carrier；`SB-FULL` 记录了 89 条 in-process typed carrier。当前没有等价的 `wire_bytes`、`typed_bytes` 或对象边界 serialization bytes，因此不写伪造的字节节省比例。
 
-主链中的 State downstream effect 当前汇总为 `no_effect`；publish/transfer/consume/release 证明生命周期事件发生，不等于业务收益。Memory 的 `queries_with_candidate`、`actual_consumption`、`replay_count`、`skipped_executor_generation` 是不同事件，不能合并为一个命中率。
+SB-FULL 另外观察到 `publish/transfer/consume/release=24/24/24/24`、逻辑 payload/read bytes `491,520/491,520`，但 State 生命周期发生不等于业务收益。
 
-## Memory / State 机制实验：24 个计划位置
+## 二、机制实验：Memory 和非文本 State
 
-实现和入口：
+实现和入口：`src/statebus/benchmark/contest_mechanisms.py`、`src/statebus/benchmark/memory_ablation.py`、`scripts/run_contest_mechanisms.sh`、`tests/benchmarks/run_statebus.sh mainline-mechanisms`、[`tests/evidence/mechanisms/`](../../tests/evidence/mechanisms/)。固定分母为 24 个位置：Memory 16 个、State 8 个；汇总为 `planned=24`、`started=24`、`passed=24`、`quality pass rate=24/24`。
 
-```text
-src/statebus/benchmark/contest_mechanisms.py
-src/statebus/benchmark/memory_ablation.py
-scripts/run_contest_mechanisms.sh
-tests/benchmarks/run_statebus.sh mainline-mechanisms
-tests/evidence/mechanisms/
-```
+### Memory：同一任务 off/on
 
-当前结果见 [`../../tests/evidence/mechanisms/`](../../tests/evidence/mechanisms/)：`planned=24`、`started=24`、`passed=24`，质量门通过率为 `24/24`。State-on 的 4 个位置均观察到 `publish`、`transfer`、`consume` 和 `release`；`semantic-holdout-s1` 的 `behavioral_effect=changed`。质量门用于确认任务输出有效，不等同于机制收益。
+| family | off quality | on quality | provider requests | provider tokens | task e2e sum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| finance | 4/4 | 4/4 | `9 -> 6` | `16,886 -> 9,527` | `332.4 s -> 236.7 s` |
+| `service_ops` | 4/4 | 4/4 | `9 -> 6` | `14,580 -> 8,054` | `217.7 s -> 164.2 s` |
+| **合计** | **8/8** | **8/8** | **18 -> 12** | **31,466 -> 17,581** | **550.2 s -> 401.0 s** |
 
-### Memory
+合计观察为 requests `-33.33%`、provider tokens `-44.12%`、任务耗时总和 `-27.12%`；8 个 Memory-on 位置中 4 个进入 validated replay。candidate hit、compatible/degraded、actual consumption、validated replay 和 skipped Executor generation 分开计数，不能合并成一个“命中率”。
 
-Memory 对照使用 off/on 成对任务。四轮汇总如下：
+| task | quality | provider tokens off -> on | requests off -> on | e2e ms off -> on |
+| --- | --- | ---: | ---: | ---: |
+| F01 | 通过 -> 通过 | 3,402 -> 3,402 | 2 -> 2 | 83,185 -> 72,666 |
+| F02 | 通过 -> 通过 | 3,411 -> 1,339 | 2 -> 1 | 74,098 -> 44,264 |
+| F06 | 通过 -> 通过 | 3,427 -> 3,427 | 2 -> 2 | 75,534 -> 74,315 |
+| F07 | 通过 -> 通过 | 6,646 -> 1,359 | 3 -> 1 | 99,627 -> 45,490 |
+| O01 | 通过 -> 通过 | 2,934 -> 2,934 | 2 -> 2 | 51,395 -> 50,275 |
+| O02 | 通过 -> 通过 | 2,949 -> 1,083 | 2 -> 1 | 51,292 -> 31,330 |
+| O06 | 通过 -> 通过 | 2,940 -> 2,940 | 2 -> 2 | 52,086 -> 50,516 |
+| O07 | 通过 -> 通过 | 5,757 -> 1,097 | 3 -> 1 | 62,963 -> 32,119 |
 
-| family | variant | started / passed | requests | provider tokens | task wall sum (ms) |
-| --- | --- | ---: | ---: | ---: | ---: |
-| finance | off | 4 / 4 | 9 | 16,886 | 332,444.389 |
-| finance | on | 4 / 4 | 6 | 9,527 | 236,734.899 |
-| service_ops | off | 4 / 4 | 9 | 14,580 | 217,736.053 |
-| service_ops | on | 4 / 4 | 6 | 8,054 | 164,239.112 |
+### State：状态是否真的被下游消费
 
-报告分别记录 `candidate`、兼容性、`actual consumption`、`validated replay`、跳过 executor generation 和 replay class。只有进入当前角色输入并产生 consumption/effect receipt 的记录才算 actual consumption；candidate hit 不是复用证明。
+| 指标 | off | on | 变化 |
+| --- | ---: | ---: | ---: |
+| quality | 4/4 | 4/4 | 保持 |
+| provider requests | 21 | 21 | 0 |
+| provider tokens | 42,035 | 42,235 | `+0.48%` |
+| task e2e sum | 614.5 s | 593.4 s | `-3.43%` |
+| publish / transfer / consume | 0 / 0 / 0 | 10 / 10 / 10 | on 侧均发生 |
+| release | false | true（4/4） | 生命周期闭合 |
 
-### State
+| task | off | on | on publish / transfer / consume | release | behavioral effect |
+| --- | --- | --- | ---: | --- | --- |
+| `semantic-holdout-s1` | success | success | 2 / 2 / 2 | true | `changed` |
+| `semantic-holdout-s5` | success | success | 3 / 3 / 3 | true | `no_effect` |
+| `semantic-holdout-s4` | success | success | 2 / 2 / 2 | true | `no_effect` |
+| `semantic-holdout-s8` | success | success | 3 / 3 / 3 | true | `no_effect` |
 
-State 当前汇总按 4 个 off/on 配对报告：off/on 均为 `4/4` 通过，on 侧合计 `publish=10`、`transfer=10`、`consume=10`、`release=true`（每个位置均释放）。`behavioral_effect` 是运行时观测字段，不单独构成业务收益证明。
+`semantic-holdout-s1` 的 on 记录来自最新单独重跑 `runs/smoke-mechanisms-live-20260928_174645-3579687`，不是早期 `quality_fail` 记录。它证明本题的跨进程状态消费和选择变化；其他三题如实保留 `no_effect`，不把机制接线写成普遍业务收益。
 
-## APC / 显式 KV / Logit utility：28 个计分位置
+## 三、模型侧专项：APC、显式 KV、Logit
 
-该 suite 是独立的 long-text 链，只有显式选择 utility phase/profile 时才运行，不是主链新的 24 轮，也不改变 `mainline` 分母。
+该 suite 是独立的 long-text utility 链，分母为 APC 8、KV 8、Logit 12，共 28 个计分位置；它不是主链新的 24 轮，也不改变主链分母。
 
-实现和入口：
+| 模块 | 对照 | 机制指标对比 | 质量 / 结论 |
+| --- | --- | --- | --- |
+| APC（8） | `apc_on_independent -> apc_on_shared` | consumer TTFT `2540.2 -> 264.3 ms`（`-89.59%`）；hit tokens `48 -> 5,168`；完整 task wall 平均 `-4.29%` | `8/8` 完成；同一 vLLM engine 的 engine-local prefix cache |
+| 显式 KV（8） | `full_replay -> continuation` | consumer computed prefill `5666.5 -> 545.5`（`-90.37%`）；consumer TTFT `2570.6 -> 1005.7 ms`（`-60.88%`）；完整 task wall `-3.58%` | `8/8` 完成；store/load 开销仍存在 |
+| Logit（12） | `full -> compact/selective` | resolved case logical input 平均 `-75.21%`；provider request wall compact/selective `-17.18%/-18.51%` | 9 个 resolved case 通过，3 个正确 `abstention`；正确拒答是质量门的一部分 |
 
-```text
-src/statebus/benchmark/model_assist_utility/
-src/statebus/integrations/vllm_kv/
-src/statebus/runtime/prefix_feedback.py
-src/statebus/runtime/prefix_identity.py
-src/statebus/runtime/logit_gate.py
-scripts/experiments/contest_model_assist/run_utility_suite.sh
-tests/benchmarks/run_statebus.sh apc|kv|logit|utility
-tests/evidence/model-assist/
-```
-
-当前计分分母和质量字段：
-
-| 模块 | 位置 | 结果 |
-| --- | ---: | --- |
-| APC | 8 | 8/8 完成并通过 |
-| KV | 8 | 8/8 完成并通过 |
-| Logit | 12 | 9 个 resolved case 通过，3 个正确 `abstention` |
-| 合计 | 28 | `demo_completed=true`、`standard_restored=true`、`business_quality_passed=true` |
-
-精选 summary 的局部指标为：APC consumer TTFT `2540.2 -> 264.3 ms`，观测命中 token `48 -> 5168`；KV consumer computed prefill `5666.5 -> 545.5 tokens`、consumer TTFT `2570.6 -> 1005.7 ms`；Logit resolved case logical input 平均减少 `75.21%`，compact/selective provider request wall 方向性下降 `17.18%/18.51%`。完整 `task_wall_ms` 包含 Runtime、producer/consumer、服务切换和清理成本，不能用局部 prefill 降幅替代端到端结论。
-
-APC 是同一 vLLM engine 的 engine-local prefix cache；显式 KV 是 producer capture 到 consumer load 的 handle 路径；Logit 的正确拒答是质量门的一部分。三者都不表示跨进程 hidden-state 或 KV tensor 的任意传输。
+完整 task wall 包含 Runtime、producer/consumer、服务切换和清理成本；局部 prefill 或 TTFT 降幅不能替代端到端结论。APC 是 engine-local cache，KV 是同一 Worker 的 handle continuation；两者都不是跨进程 hidden-state/KV tensor 任意传输。Logit 是协作过程诊断，不是业务正确概率。
 
 ## 证据、分母和复现
 
@@ -112,7 +104,7 @@ python tests/evidence/summarize_results.py --json
 精选文件：
 
 - [`tests/evidence/mainline/results.md`](../../tests/evidence/mainline/results.md)、`results.json`、`tasks.csv`、`tasks.jsonl`；
-- [`../../tests/evidence/mechanisms/results.md`](../../tests/evidence/mechanisms/results.md)、`results.json`、`tasks.csv`、`tasks.jsonl`；
+- [`tests/evidence/mechanisms/results.md`](../../tests/evidence/mechanisms/results.md)、`results.json`、`tasks.csv`、`tasks.jsonl`、`manifest.json`；
 - [`tests/evidence/model-assist/summary.md`](../../tests/evidence/model-assist/summary.md)、`report.md`、`metrics.json`。
 
-完整 raw run 和服务材料按结果中的 run ID 保存在 [`runs/`](../../runs/)。`null` 表示未观测，`0` 表示实际为零；`unavailable`、`blocked`、`not_started` 不应从分母删除。
+完整 raw run 位于 [`runs/`](../../runs/)。`null` 表示未观测，`0` 表示实际为零；`unavailable`、`blocked`、`not_started` 不应从分母删除。产品级对照、机制因果对照和 utility 机制证明必须分开引用。
