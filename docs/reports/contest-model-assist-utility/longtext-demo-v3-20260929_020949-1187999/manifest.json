@@ -1,0 +1,27 @@
+{
+  "schema_version": "statebus.model_assist_utility.taskpack.v1",
+  "suite_revision": "longtext-demo-v3",
+  "seed": 20260928,
+  "block_size": 16,
+  "max_model_len": 8192,
+  "executor_max_tokens": 512,
+  "summarizer_max_tokens": 384,
+  "temperature": 0.0,
+  "generation_seed": 7,
+  "enable_thinking": false,
+  "tokenization": "local Qwen3 chat template with enable_thinking=false",
+  "case_ids": [
+    "MU-ORION-4K-COST",
+    "MU-NOVA-4K-DELIVERY",
+    "MU-ORION-6K-COST",
+    "MU-NOVA-6K-DELIVERY"
+  ],
+  "logit_case_ids": [
+    "MU-LOGIT-EASY-NOVA-OTD",
+    "MU-LOGIT-AMBIGUITY-ORION-COST",
+    "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY",
+    "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS"
+  ],
+  "plan_count": 28,
+  "gold_path": "gold.json"
+}

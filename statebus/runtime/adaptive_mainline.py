@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -53,7 +54,12 @@ from statebus.runtime.adaptive_runtime import (
 )
 from statebus.runtime.provider_registry import ExecutionProviderRegistry
 from statebus.contracts import ProviderRuntimeFacts
-from statebus.runtime.role_providers import BoundProviderHandler, ProviderStateReadFacade, ProviderRequest
+from statebus.runtime.role_providers import (
+    BoundProviderHandler,
+    ExecutorCandidateReviewBinding,
+    ProviderRequest,
+    ProviderStateReadFacade,
+)
 from statebus.runtime.memory_projection import (
     MemoryProjectionSpec,
     build_memory_commit,
@@ -132,6 +138,8 @@ class AdaptiveMainlineBindings:
     memory_assist_capability_ids: tuple[str, ...] = ()
     builtin_handlers: dict[str, BuiltinHandler] = field(default_factory=dict)
     bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
+    executor_candidate_review: ExecutorCandidateReviewBinding | None = None
+    executor_candidate_review_enabled: bool = False
     provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
     provider_invocation_evidence: dict[str, dict[str, str]] = field(default_factory=dict)
     # Per-step route requests for matched routing lanes.  Empty means the
@@ -401,6 +409,11 @@ class AdaptiveMainlineRunner:
             memory_assist_capability_ids=bindings.memory_assist_capability_ids,
             builtin_handlers=bindings.builtin_handlers,
             bound_provider_handlers=bindings.bound_provider_handlers,
+            executor_candidate_review=bindings.executor_candidate_review,
+            executor_candidate_review_enabled=(
+                bindings.executor_candidate_review_enabled
+                and os.environ.get("STATEBUS_MODEL_ASSIST_UTILITY_ENABLED") == "1"
+            ),
             provider_state_reader_factory=bindings.provider_state_reader_factory,
             provider_invocation_evidence=bindings.provider_invocation_evidence,
             requested_routes_by_step=dict(bindings.requested_routes_by_step),

@@ -1,0 +1,49 @@
+{
+  "schema_version": "statebus.model_assist_utility.case_definitions.v1",
+  "cases": [
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "company": "Orion Factory Systems",
+      "business": "approved sample expedited cost and exception analysis",
+      "length_class": "4k",
+      "target_min_tokens": 4096,
+      "target_max_tokens": 4352,
+      "question": "For the approved sample cohort, compare 2026Q1 and 2026Q3 expedited fees and exception counts, report the delta and covered record counts, and cite the active scope rule.",
+      "executor_contract": "Return a JSON TransformProgram with filter, aggregate, and derive operations. Select the approved sample cohort and effective rule from the dossier; do not copy a precomputed answer.",
+      "summarizer_contract": "Return a compact JSON report with q1_fee_usd, q3_fee_usd, fee_delta_usd, q1_exception_count, q3_exception_count, q1_covered_record_count, q3_covered_record_count, covered_record_count, and 2-3 source citations."
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "company": "Nova Retail Logistics",
+      "business": "approved sample weighted delivery rate analysis",
+      "length_class": "4k",
+      "target_min_tokens": 4096,
+      "target_max_tokens": 4352,
+      "question": "For the approved sample cohort, calculate weighted on-time delivery for 2026Q1 and 2026Q3, the percentage-point change, numerator and denominator, and the active scope rule.",
+      "executor_contract": "Return a JSON TransformProgram that filters the effective approved cohort and aggregates committed and on_time orders. Never average row percentages or use the company-wide rate.",
+      "summarizer_contract": "Return a compact JSON report with q1_on_time, q1_committed, q1_rate_pct, q3_on_time, q3_committed, q3_rate_pct, delta_pp, q1_covered_record_count, q3_covered_record_count, covered_record_count, and 2-3 source citations."
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "company": "Orion Factory Systems",
+      "business": "approved sample expedited cost and exception analysis",
+      "length_class": "6k",
+      "target_min_tokens": 6144,
+      "target_max_tokens": 6400,
+      "question": "For the approved sample cohort, compare 2026Q1 and 2026Q3 expedited fees and exception counts, report the delta and covered record counts, and cite the active scope rule.",
+      "executor_contract": "Return a JSON TransformProgram with filter, aggregate, and derive operations. Select the approved sample cohort and effective rule from the dossier; do not copy a precomputed answer.",
+      "summarizer_contract": "Return a compact JSON report with q1_fee_usd, q3_fee_usd, fee_delta_usd, q1_exception_count, q3_exception_count, q1_covered_record_count, q3_covered_record_count, covered_record_count, and 2-3 source citations."
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "company": "Nova Retail Logistics",
+      "business": "approved sample weighted delivery rate analysis",
+      "length_class": "6k",
+      "target_min_tokens": 6144,
+      "target_max_tokens": 6400,
+      "question": "For the approved sample cohort, calculate weighted on-time delivery for 2026Q1 and 2026Q3, the percentage-point change, numerator and denominator, and the active scope rule.",
+      "executor_contract": "Return a JSON TransformProgram that filters the effective approved cohort and aggregates committed and on_time orders. Never average row percentages or use the company-wide rate.",
+      "summarizer_contract": "Return a compact JSON report with q1_on_time, q1_committed, q1_rate_pct, q3_on_time, q3_committed, q3_rate_pct, delta_pp, q1_covered_record_count, q3_covered_record_count, covered_record_count, and 2-3 source citations."
+    }
+  ]
+}

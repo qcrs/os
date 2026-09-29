@@ -1,0 +1,152 @@
+{
+  "schema_version": "statebus.model_assist_utility.record.v1",
+  "suite_revision": "longtext-demo-v3",
+  "run_id": "longtext-demo-v3-20260929_061721-1819515",
+  "slot_id": "MU-NOVA-6K-CALIBRATION-DELIVERY:apc_on_shared",
+  "module": "apc",
+  "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+  "condition": "apc_on_shared",
+  "scored": false,
+  "warmup_namespace": "calibration-only",
+  "status": "failed",
+  "business_quality": "failed",
+  "quality_errors": [
+    "report_not_object"
+  ],
+  "layout": "shared",
+  "token_identity": {
+    "actual_role_lcp_tokens": 0,
+    "actual_role_lcp_digest": "",
+    "compiled_prefix_tokens": 6220,
+    "compiled_prefix_digest": "6aa8ebe406ab5c6ad63567846716d83b2e4a7ccbfee281a31fea02415b89f32d",
+    "source_digest": "598ba3b7301d1f7f8b6f4aec011d15a48b1ee17de3af5761497678a98a932c4a",
+    "input_tokens_exact": 6593
+  },
+  "cache_namespace": "mu-b24db8320640ccfeeb5cb8fdf88cab2c",
+  "namespace_prefix_token_count": 6220,
+  "namespace_prefix_token_digest": "709c6e6dd3a4c11b8b2b6c10eb2c0d5e29f7a49481aaac199767e456e652e494",
+  "namespace_pair_contract": {
+    "different_values": true,
+    "equal_prefix_token_counts": true,
+    "condition_scoped": true
+  },
+  "shared_template_prefix_may_hit_across_conditions": true,
+  "role_visibility": {
+    "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+    "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+  },
+  "provider_requests": [
+    {
+      "status": "response",
+      "request_wall_ms": 17672.661402,
+      "ttft_ms": 2258.640507,
+      "token_event_count": 316,
+      "usage": {
+        "prompt_tokens": 6593,
+        "completion_tokens": 317,
+        "total_tokens": 6910
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"operations\": [\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"status\",\n        \"value\": \"APPROVED\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"scope\",\n        \"value\": \"approved_sample_cohort\"\n      }\n    },\n    {\n      \"op\": \"filter_in\",\n      \"arguments\": {\n        \"column\": \"quarter\",\n        \"value\": [\"2026Q1\", \"2026Q3\"]\n      }\n    },\n    {\n      \"op\": \"aggregate_grouped\",\n      \"arguments\": {\n        \"group_fields\": [\"quarter\"],\n        \"value_fields\": [\"on_time_orders\", \"committed_orders\", \"on_time_orders\"],\n        \"functions\": [\"sum\", \"sum\", \"count\"],\n        \"outputs\": [\"on_time\", \"committed\", \"record_count\"]\n      }\n    }\n  ],\n  \"source_locators\": [\n    \"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0045\"\n  ]\n}",
+      "role": "executor",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+      "prompt_tokens_exact": 6593,
+      "prompt_token_digest": "ae76b301def7137e2b3ab9b3c3796990389a40d232fe10f195691d6e998ce4ad"
+    }
+  ],
+  "runtime": {
+    "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+    "runtime_completed": false,
+    "plan_replaced": false,
+    "approved_plan_hash": "dd06be02733b87d56a193ac3cf8b3502e3bab4ba11570704ef0a6d5c1a28f8cb",
+    "attempts": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "owner_role": "retriever",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "1b7c3b0756dccf22884aa1fc76b151c75cefdfe854177b71d505117c55e7a0c9",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "83bcc92a035dd4efa81c01a2d5543b0604965ea799c854d18c9c0ff154cf3be5",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "fe874c753bba9b29856b9a129c6136ca4037f32a36814d43100944e438fe3cf4"
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "owner_role": "executor",
+        "state": "FAILED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "de02ea75f0a7cd14e0f5f25e9edf7d67a7cb79a85689b9ab7f1f624574251042",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "83bcc92a035dd4efa81c01a2d5543b0604965ea799c854d18c9c0ff154cf3be5",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "923a6abfb2e9ce7ac1d1d3a00d2b49932c25c4290ceda7c45ed68fba2e05e2e3"
+      }
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+        "verification_state": "candidate",
+        "row_count": 55
+      }
+    ],
+    "artifact_verification_receipt_hashes": [],
+    "claim_validation_reports": [],
+    "candidate_review_records": [],
+    "dispatches": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "state": "FAILED",
+        "error_code": "capability_quality_rejected"
+      }
+    ]
+  },
+  "runtime_error": null,
+  "executor_artifact": {
+    "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+    "step_id": "execute",
+    "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+    "verification_state": "candidate",
+    "row_count": 55
+  },
+  "summarizer_claim_sets": [],
+  "output": null,
+  "metrics_delta": {
+    "schema_version": "statebus.vllm_prefix_cache_counter_delta.v2",
+    "available": true,
+    "valid": true,
+    "observed_query_token_delta": 6593.0,
+    "observed_hit_token_delta": 0.0,
+    "observed_token_hit_rate": 0.0,
+    "counter_unit": "tokens",
+    "counter_series_digest": "ddba8d41619acd5168f6ed3e1651641231466012aaeb3ad8291d5f191e6d9fb6",
+    "unavailable_reason": "",
+    "service_lifetime_hit_rate_before": 0.004830188679245283,
+    "service_lifetime_hit_rate_after": 0.002420941140868513,
+    "sample_interval_ms": 17801.88975,
+    "exclusive_interval": true,
+    "pollution_detected": false,
+    "request_count": 1,
+    "retry_count": 0,
+    "window_scope": "task",
+    "claim_boundary": "task_window_token_counter_delta_only_for_matching_monotonic_labeled_counters_in_one_exclusive_retry_free_interval"
+  },
+  "mechanism_available": true,
+  "prefix_contract_ok": false,
+  "consumer_ttft_ms": null,
+  "ttft_status": "unavailable_no_nonempty_content",
+  "task_wall_ms": 17834.450137
+}

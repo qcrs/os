@@ -1,0 +1,21 @@
+{
+  "case_id": "MU-NOVA-4K-DELIVERY",
+  "rules": [
+    {
+      "rule_id": "R-NOV-SAMPLE-2026",
+      "effective_from": "2026-01-01",
+      "effective_to": "2026-12-31",
+      "eligible_scope": "approved_sample_cohort",
+      "status_policy": "include approved; exclude cancelled and pending",
+      "source_locator": "rules/mu-nova-4k-delivery_active_scope_rules.json#R-2026-sample"
+    },
+    {
+      "rule_id": "R-NOV-HISTORICAL-2025",
+      "effective_from": "2025-01-01",
+      "effective_to": "2025-12-31",
+      "eligible_scope": "legacy_scope",
+      "status_policy": "legacy records are not eligible",
+      "source_locator": "rules/mu-nova-4k-delivery_active_scope_rules.json#R-2025-legacy"
+    }
+  ]
+}

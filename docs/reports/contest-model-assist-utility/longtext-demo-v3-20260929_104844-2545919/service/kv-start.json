@@ -1,0 +1,13 @@
+{
+  "command": [
+    "setsid",
+    "--wait",
+    "env",
+    "STATEBUS_VLLM_ENV_FILE=/home/qcrs/statebus/os/docs/reports/contest-model-assist-utility/longtext-demo-v3-20260929_104844-2545919/service/vllm.env.kv.local",
+    "/home/qcrs/statebus/os/scripts/vllm/manage_qwen3_32b.sh",
+    "start"
+  ],
+  "returncode": 0,
+  "stdout": "正在启动 vLLM：pid=2592036 mode=kv log=/home/qcrs/statebus/os/docs/reports/contest-model-assist-utility/longtext-demo-v3-20260929_104844-2545919/service/kv-runtime-longtext-demo-v3-20260929_104844-2545919/service.log\nvLLM 健康检查通过：http://127.0.0.1:53334/statebus/kv/health\n",
+  "elapsed_ms": 68795.003333
+}

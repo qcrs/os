@@ -1,0 +1,358 @@
+{
+  "manifest": {
+    "schema_version": "statebus.model_assist_utility.taskpack.v1",
+    "suite_revision": "longtext-demo-v3",
+    "seed": 20260928,
+    "block_size": 16,
+    "max_model_len": 8192,
+    "executor_max_tokens": 512,
+    "summarizer_max_tokens": 384,
+    "temperature": 0.0,
+    "generation_seed": 7,
+    "enable_thinking": false,
+    "case_ids": [
+      "MU-ORION-4K-COST",
+      "MU-NOVA-4K-DELIVERY",
+      "MU-ORION-6K-COST",
+      "MU-NOVA-6K-DELIVERY"
+    ],
+    "logit_case_ids": [
+      "MU-LOGIT-EASY-NOVA-OTD",
+      "MU-LOGIT-AMBIGUITY-ORION-COST",
+      "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY",
+      "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS"
+    ],
+    "plan_count": 28,
+    "gold_path": "gold.json"
+  },
+  "plan": [
+    {
+      "ordinal": 0,
+      "module": "apc",
+      "case_id": "MU-ORION-4K-COST",
+      "condition": "apc_on_independent",
+      "gate": true
+    },
+    {
+      "ordinal": 1,
+      "module": "apc",
+      "case_id": "MU-ORION-4K-COST",
+      "condition": "apc_on_shared",
+      "gate": true
+    },
+    {
+      "ordinal": 2,
+      "module": "apc",
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "condition": "apc_on_shared",
+      "gate": false
+    },
+    {
+      "ordinal": 3,
+      "module": "apc",
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "condition": "apc_on_independent",
+      "gate": false
+    },
+    {
+      "ordinal": 4,
+      "module": "apc",
+      "case_id": "MU-ORION-6K-COST",
+      "condition": "apc_on_independent",
+      "gate": false
+    },
+    {
+      "ordinal": 5,
+      "module": "apc",
+      "case_id": "MU-ORION-6K-COST",
+      "condition": "apc_on_shared",
+      "gate": false
+    },
+    {
+      "ordinal": 6,
+      "module": "apc",
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "condition": "apc_on_shared",
+      "gate": false
+    },
+    {
+      "ordinal": 7,
+      "module": "apc",
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "condition": "apc_on_independent",
+      "gate": false
+    },
+    {
+      "ordinal": 8,
+      "module": "logit",
+      "case_id": "MU-LOGIT-EASY-NOVA-OTD",
+      "condition": "compact_once",
+      "gate": true
+    },
+    {
+      "ordinal": 9,
+      "module": "logit",
+      "case_id": "MU-LOGIT-EASY-NOVA-OTD",
+      "condition": "full_context_once",
+      "gate": true
+    },
+    {
+      "ordinal": 10,
+      "module": "logit",
+      "case_id": "MU-LOGIT-EASY-NOVA-OTD",
+      "condition": "logit_selective",
+      "gate": true
+    },
+    {
+      "ordinal": 11,
+      "module": "logit",
+      "case_id": "MU-LOGIT-AMBIGUITY-ORION-COST",
+      "condition": "compact_once",
+      "gate": false
+    },
+    {
+      "ordinal": 12,
+      "module": "logit",
+      "case_id": "MU-LOGIT-AMBIGUITY-ORION-COST",
+      "condition": "full_context_once",
+      "gate": false
+    },
+    {
+      "ordinal": 13,
+      "module": "logit",
+      "case_id": "MU-LOGIT-AMBIGUITY-ORION-COST",
+      "condition": "logit_selective",
+      "gate": false
+    },
+    {
+      "ordinal": 14,
+      "module": "logit",
+      "case_id": "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY",
+      "condition": "compact_once",
+      "gate": false
+    },
+    {
+      "ordinal": 15,
+      "module": "logit",
+      "case_id": "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY",
+      "condition": "full_context_once",
+      "gate": false
+    },
+    {
+      "ordinal": 16,
+      "module": "logit",
+      "case_id": "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY",
+      "condition": "logit_selective",
+      "gate": false
+    },
+    {
+      "ordinal": 17,
+      "module": "logit",
+      "case_id": "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS",
+      "condition": "compact_once",
+      "gate": false
+    },
+    {
+      "ordinal": 18,
+      "module": "logit",
+      "case_id": "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS",
+      "condition": "full_context_once",
+      "gate": false
+    },
+    {
+      "ordinal": 19,
+      "module": "logit",
+      "case_id": "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS",
+      "condition": "logit_selective",
+      "gate": false
+    },
+    {
+      "ordinal": 20,
+      "module": "kv",
+      "case_id": "MU-ORION-4K-COST",
+      "condition": "full_replay",
+      "gate": true
+    },
+    {
+      "ordinal": 21,
+      "module": "kv",
+      "case_id": "MU-ORION-4K-COST",
+      "condition": "continuation",
+      "gate": true
+    },
+    {
+      "ordinal": 22,
+      "module": "kv",
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "condition": "continuation",
+      "gate": false
+    },
+    {
+      "ordinal": 23,
+      "module": "kv",
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "condition": "full_replay",
+      "gate": false
+    },
+    {
+      "ordinal": 24,
+      "module": "kv",
+      "case_id": "MU-ORION-6K-COST",
+      "condition": "full_replay",
+      "gate": false
+    },
+    {
+      "ordinal": 25,
+      "module": "kv",
+      "case_id": "MU-ORION-6K-COST",
+      "condition": "continuation",
+      "gate": false
+    },
+    {
+      "ordinal": 26,
+      "module": "kv",
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "condition": "continuation",
+      "gate": false
+    },
+    {
+      "ordinal": 27,
+      "module": "kv",
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "condition": "full_replay",
+      "gate": false
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "company": "Orion Factory Systems",
+      "business": "approved sample expedited cost and exception analysis",
+      "length_class": "4k",
+      "target_prefix_tokens": 4192,
+      "prefix_token_digest": "0379f6d64b4848397b90f359656a88d8963a98ab6a02d1cdadda1e10a79e8663",
+      "source_digest": "6ef31b1fbc46d7eb7d0a376b57d47baa6f1a6d4ae139abe0fbbddaaa2b9108e0",
+      "source_row_count": 39,
+      "rule_count": 2,
+      "role_visibility": {
+        "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+        "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+      }
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "company": "Nova Retail Logistics",
+      "business": "approved sample weighted delivery rate analysis",
+      "length_class": "4k",
+      "target_prefix_tokens": 4176,
+      "prefix_token_digest": "e767a054ed5d07836f1826d20513143c6a930e2d3c5e1dbb5d18ca254c05d6aa",
+      "source_digest": "55eb4c12736fe62380c283c3f29307fb29f494623665eb8e31db96ab6371610b",
+      "source_row_count": 40,
+      "rule_count": 2,
+      "role_visibility": {
+        "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+        "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+      }
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "company": "Orion Factory Systems",
+      "business": "approved sample expedited cost and exception analysis",
+      "length_class": "6k",
+      "target_prefix_tokens": 6160,
+      "prefix_token_digest": "c492cd77c5332d86ce59c5f96984a1c25c62192683200ca7ed21943a649a8472",
+      "source_digest": "38808fadebab4ea6b75651d62189b33ee443b6eb67320c6f95a5db8beaa83db1",
+      "source_row_count": 59,
+      "rule_count": 2,
+      "role_visibility": {
+        "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+        "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+      }
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "company": "Nova Retail Logistics",
+      "business": "approved sample weighted delivery rate analysis",
+      "length_class": "6k",
+      "target_prefix_tokens": 6160,
+      "prefix_token_digest": "4e8c417f9303538031117e9dcc188097995fbbecb38f25f8d8e5b682f82b8096",
+      "source_digest": "0b38ac5bb6b22208047319766beb74606aca1e9fb65368f37eb460cfb00481f1",
+      "source_row_count": 61,
+      "rule_count": 2,
+      "role_visibility": {
+        "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+        "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+      }
+    }
+  ],
+  "logit_cases": [
+    {
+      "case_id": "MU-LOGIT-EASY-NOVA-OTD",
+      "group": "easy",
+      "question": "Choose the evidence bundle that computes Nova cohort OTD.",
+      "compact_view": "A is the approved sample ledger with committed/on_time rows; B is an overall company review percentage.",
+      "full_view": "The sample ledger contains Q1/Q3 cohort rows and the active denominator rule. The overall review has no cohort denominator.",
+      "candidates": [
+        {
+          "candidate_id": "sample_ledger",
+          "label": "approved cohort ledger"
+        },
+        {
+          "candidate_id": "operating_review",
+          "label": "company overall review"
+        }
+      ]
+    },
+    {
+      "case_id": "MU-LOGIT-AMBIGUITY-ORION-COST",
+      "group": "semantic_ambiguity",
+      "question": "Choose the evidence bundle for Orion approved sample expedited fees.",
+      "compact_view": "A is current sample ledger; B is historical scope material. Both are authorized and use similar titles.",
+      "full_view": "The current bundle carries the 2026 effective rule, approval exceptions, and row locators; historical material is out of scope.",
+      "candidates": [
+        {
+          "candidate_id": "orion_current_ledger",
+          "label": "current sample ledger"
+        },
+        {
+          "candidate_id": "orion_historical_scope",
+          "label": "historical scope"
+        }
+      ]
+    },
+    {
+      "case_id": "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY",
+      "group": "semantic_ambiguity",
+      "question": "Choose the evidence bundle for Nova weighted delivery.",
+      "compact_view": "A is a report overall rate; B is a cohort ledger with committed and on_time counts.",
+      "full_view": "Only the cohort ledger contains the valid denominator and effective scope needed for weighted delivery.",
+      "candidates": [
+        {
+          "candidate_id": "nova_overall_rate",
+          "label": "overall rate"
+        },
+        {
+          "candidate_id": "nova_delivery_ledger",
+          "label": "cohort delivery ledger"
+        }
+      ]
+    },
+    {
+      "case_id": "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS",
+      "group": "unresolved",
+      "question": "Decide whether the conflicting Orion Q3 exception is eligible.",
+      "compact_view": "A and B are authorized records for the same exception, but the final approval signature is missing.",
+      "full_view": "The expanded view confirms the records conflict and no final sign-off exists; the correct result is insufficient evidence.",
+      "candidates": [
+        {
+          "candidate_id": "include_exception",
+          "label": "include"
+        },
+        {
+          "candidate_id": "exclude_exception",
+          "label": "exclude"
+        }
+      ]
+    }
+  ]
+}

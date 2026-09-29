@@ -1,0 +1,87 @@
+{
+  "schema_version": "statebus.model_assist_utility.gold.v1",
+  "cases": {
+    "MU-ORION-4K-COST": {
+      "q1_fee_usd": 24828,
+      "q3_fee_usd": 20104,
+      "fee_delta_usd": -4724,
+      "q1_exception_count": 16,
+      "q3_exception_count": 36,
+      "q1_covered_record_count": 16,
+      "q3_covered_record_count": 13,
+      "covered_record_count": 29,
+      "rule_id": "R-ORI-SAMPLE-2026"
+    },
+    "MU-NOVA-4K-DELIVERY": {
+      "q1_on_time": 1620,
+      "q1_committed": 1673,
+      "q1_rate_pct": 96.832,
+      "q3_on_time": 1363,
+      "q3_committed": 1426,
+      "q3_rate_pct": 95.582,
+      "delta_pp": -1.25,
+      "q1_covered_record_count": 16,
+      "q3_covered_record_count": 14,
+      "covered_record_count": 30,
+      "rule_id": "R-NOV-SAMPLE-2026"
+    },
+    "MU-ORION-6K-COST": {
+      "q1_fee_usd": 39052,
+      "q3_fee_usd": 40394,
+      "fee_delta_usd": 1342,
+      "q1_exception_count": 22,
+      "q3_exception_count": 66,
+      "q1_covered_record_count": 23,
+      "q3_covered_record_count": 23,
+      "covered_record_count": 46,
+      "rule_id": "R-ORI-SAMPLE-2026"
+    },
+    "MU-NOVA-6K-DELIVERY": {
+      "q1_on_time": 2309,
+      "q1_committed": 2383,
+      "q1_rate_pct": 96.8947,
+      "q3_on_time": 2233,
+      "q3_committed": 2341,
+      "q3_rate_pct": 95.3866,
+      "delta_pp": -1.5081,
+      "q1_covered_record_count": 23,
+      "q3_covered_record_count": 23,
+      "covered_record_count": 46,
+      "rule_id": "R-NOV-SAMPLE-2026"
+    }
+  },
+  "calibration_case": {
+    "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+    "gold": {
+      "q1_on_time": 2108,
+      "q1_committed": 2169,
+      "q1_rate_pct": 97.1876,
+      "q3_on_time": 2374,
+      "q3_committed": 2493,
+      "q3_rate_pct": 95.2266,
+      "delta_pp": -1.961,
+      "q1_covered_record_count": 21,
+      "q3_covered_record_count": 24,
+      "covered_record_count": 45,
+      "rule_id": "R-NOV-SAMPLE-2026"
+    }
+  },
+  "logit": {
+    "MU-LOGIT-EASY-NOVA-OTD": {
+      "candidate": "sample_ledger",
+      "outcome": "select"
+    },
+    "MU-LOGIT-AMBIGUITY-ORION-COST": {
+      "candidate": "orion_current_ledger",
+      "outcome": "select"
+    },
+    "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY": {
+      "candidate": "nova_delivery_ledger",
+      "outcome": "select"
+    },
+    "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS": {
+      "candidate": "insufficient_evidence",
+      "outcome": "abstain"
+    }
+  }
+}

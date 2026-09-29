@@ -1,0 +1,305 @@
+{
+  "schema_version": "statebus.model_assist_utility.record.v1",
+  "suite_revision": "longtext-demo-v3",
+  "run_id": "longtext-demo-v3-20260929_104844-2545919",
+  "slot_id": "MU-ORION-4K-COST:apc_on_shared",
+  "module": "apc",
+  "case_id": "MU-ORION-4K-COST",
+  "condition": "apc_on_shared",
+  "scored": true,
+  "warmup_namespace": "scored",
+  "status": "completed",
+  "business_quality": "passed",
+  "quality_errors": [],
+  "layout": "shared",
+  "token_identity": {
+    "actual_role_lcp_tokens": 4111,
+    "actual_role_lcp_digest": "3d160a8e836ccc395a0f00c23b3a2e06261d50adf415f13fcea1b1f3afa2cf8e",
+    "compiled_prefix_tokens": 4109,
+    "compiled_prefix_digest": "73e426ce24057e8b083ea10acdafff8913781a450202d2b0819469de85c94b00",
+    "source_digest": "e387268c7b730c790dd9748127ff347b5bfae1eb386b98087c8dd344b9dd7629",
+    "input_tokens_exact": 9431
+  },
+  "cache_namespace": "mu-5bbccea79ee95ec23212ba2afacbb30b",
+  "namespace_prefix_token_count": 4109,
+  "namespace_prefix_token_digest": "16ee19540548ae0be7326da4e96eeaa910d7c1573f6f0c6fd96ce10c02fa1568",
+  "namespace_pair_contract": {
+    "different_values": true,
+    "equal_prefix_token_counts": true,
+    "condition_scoped": true
+  },
+  "shared_template_prefix_may_hit_across_conditions": true,
+  "role_visibility": {
+    "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+    "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+  },
+  "provider_requests": [
+    {
+      "status": "response",
+      "request_wall_ms": 34730.991767,
+      "ttft_ms": 1949.700653,
+      "token_event_count": 493,
+      "usage": {
+        "prompt_tokens": 4825,
+        "completion_tokens": 494,
+        "total_tokens": 5319
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"operations\": [\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"status\",\n        \"value\": \"APPROVED\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"scope\",\n        \"value\": \"approved_sample_cohort\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"effective_rule_id\",\n        \"value\": \"R-ORI-SAMPLE-2026\"\n      }\n    },\n    {\n      \"op\": \"filter_in\",\n      \"arguments\": {\n        \"column\": \"quarter\",\n        \"values\": [\n          \"2026Q1\",\n          \"2026Q3\"\n        ]\n      }\n    },\n    {\n      \"op\": \"aggregate_grouped\",\n      \"arguments\": {\n        \"group_fields\": [\n          \"quarter\"\n        ],\n        \"value_fields\": [\n          \"expedited_fee_usd\",\n          \"exception_count\",\n          \"expedited_fee_usd\"\n        ],\n        \"functions\": [\n          \"sum\",\n          \"sum\",\n          \"count\"\n        ],\n        \"outputs\": [\n          \"fee_usd\",\n          \"exception_count\",\n          \"record_count\"\n        ]\n      }\n    },\n    {\n      \"op\": \"derive_safe\",\n      \"arguments\": {\n        \"calculations\": [\n          [\n            \"fee_per_record\",\n            \"ratio\",\n            \"fee_usd\",\n            \"record_count\",\n            1,\n            2\n          ]\n        ]\n      }\n    },\n    {\n      \"op\": \"select\",\n      \"arguments\": {\n        \"columns\": [\n          \"quarter\",\n          \"fee_usd\",\n          \"exception_count\",\n          \"record_count\",\n          \"fee_per_record\"\n        ]\n      }\n    }\n  ],\n  \"source_locators\": [\n    \"rules/mu-orion-4k-cost_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0001\",\n    \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0018\",\n    \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0035\"\n  ]\n}",
+      "role": "executor",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2",
+      "prompt_tokens_exact": 4825,
+      "prompt_token_digest": "8d3d5f14f42205bbad06e5fd92fac6f6527d643ba7c63c595e8a784a492014f5"
+    },
+    {
+      "status": "response",
+      "request_wall_ms": 13118.735668,
+      "ttft_ms": 241.48021,
+      "token_event_count": 199,
+      "usage": {
+        "prompt_tokens": 4606,
+        "completion_tokens": 200,
+        "total_tokens": 4806
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"q1_fee_usd\": 24828,\n  \"q3_fee_usd\": 20104,\n  \"fee_delta_usd\": -4724,\n  \"q1_exception_count\": 16,\n  \"q3_exception_count\": 36,\n  \"q1_covered_record_count\": 16,\n  \"q3_covered_record_count\": 13,\n  \"covered_record_count\": 29,\n  \"rule_id\": \"R-ORI-SAMPLE-2026\",\n  \"citations\": [\n    \"rules/mu-orion-4k-cost_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0002\",\n    \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0018\"\n  ]\n}",
+      "role": "summarizer",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+      "prompt_tokens_exact": 4606,
+      "prompt_token_digest": "913246b10ccc67e0831d04dd32478c8a4df11ba589cd76f5cb3f5dc00e047af8"
+    }
+  ],
+  "repair_requests": [],
+  "runtime": {
+    "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+    "runtime_completed": true,
+    "plan_replaced": false,
+    "approved_plan_hash": "8a6d3dc123bd27b64e0e84c2be015c7c825df60e3a83b3f5112aa8ab4113c907",
+    "attempts": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-1",
+        "owner_role": "retriever",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "9a57ea65264de1afb7cd17c8747172252079f36b985d7dcf16b01021424444f5",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "c73089327ac0258b9b0e67a5f2f9c70ad026cadd48fee9e9d6bbbb147663252c",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "fe0ce82b69aaafffb8895fb1a0be45ecbdff1c69d978fc89425afe6d03a8da8e"
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2",
+        "owner_role": "executor",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "dda0b479b5da2586a59948407ed9cc24db07395e9b4c235f480c8f93fe280394",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "c73089327ac0258b9b0e67a5f2f9c70ad026cadd48fee9e9d6bbbb147663252c",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "9615b4085c5e2c7aa5a229f694711a0475c80d7a89bef8a8d42781307b1232d2"
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+        "owner_role": "summarizer",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "729c9cc015f5ee73718da997cd61a0497786f37d87d578a16d3552e8ac3a793b",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "c73089327ac0258b9b0e67a5f2f9c70ad026cadd48fee9e9d6bbbb147663252c",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "5f9071ff7684043e137cb0a2851e7f0435efff0fe57c5044283a77befc494c80"
+      }
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "projection-utility-MU-ORION-4K-COST_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2",
+        "step_id": "execute",
+        "blob_hash": "dfb16cf50d917ca2c85606350479805334c5773ce774bcffe3917ed20475f522",
+        "verification_state": "candidate",
+        "row_count": 35
+      },
+      {
+        "artifact_id": "dsl-utility-MU-ORION-4K-COST_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2",
+        "step_id": "execute",
+        "blob_hash": "14d4004ea114df84ad3189d19142629a697ee69016cdeeb91454b46266b58853",
+        "verification_state": "verified",
+        "row_count": 2
+      },
+      {
+        "artifact_id": "claimset-utility-MU-ORION-4K-COST_apc_on_shared-summarize-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+        "step_id": "summarize",
+        "blob_hash": "ad323fa85528c51acb367a73fdba892b7b9f8a6b41fbb9773be242489d391baa",
+        "verification_state": "verified",
+        "row_count": 1
+      }
+    ],
+    "artifact_verification_receipt_hashes": [
+      "2cd8e7ea002ba33590c35c9358b25f9793046c2485eceed15cee77c587d552e9",
+      "cdc42ae786db253e913ca2b34d0ce801faf1a341c252193d96b530c40e3b6358"
+    ],
+    "claim_validation_reports": [
+      {
+        "claim_set": {
+          "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+          "task_id": "utility-MU-ORION-4K-COST_apc_on_shared",
+          "claims": [
+            {
+              "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+              "claim_text": "{\"citations\": [\"rules/mu-orion-4k-cost_active_scope_rules.json#R-2026-sample\", \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0002\", \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0018\"], \"covered_record_count\": 29, \"fee_delta_usd\": -4724, \"q1_covered_record_count\": 16, \"q1_exception_count\": 16, \"q1_fee_usd\": 24828, \"q3_covered_record_count\": 13, \"q3_exception_count\": 36, \"q3_fee_usd\": 20104, \"rule_id\": \"R-ORI-SAMPLE-2026\"}",
+              "claim_type": "fact",
+              "supporting_evidence_item_ids": [
+                "utility-MU-ORION-4K-COST_apc_on_shared:fact:0000",
+                "utility-MU-ORION-4K-COST_apc_on_shared:row:00001",
+                "utility-MU-ORION-4K-COST_apc_on_shared:row:00017"
+              ],
+              "supporting_artifact_ref_ids": [
+                "dsl-utility-MU-ORION-4K-COST_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2"
+              ],
+              "citation_locators": [
+                "rules/mu-orion-4k-cost_active_scope_rules.json#R-2026-sample",
+                "ledger/mu-orion-4k-cost_sample_ledger.json#row-0002",
+                "ledger/mu-orion-4k-cost_sample_ledger.json#row-0018"
+              ],
+              "numeric_fields": {
+                "artifact_0_exception_count": 16.0,
+                "artifact_0_fee_per_record": 1551.75,
+                "artifact_0_fee_usd": 24828.0,
+                "artifact_0_record_count": 16.0,
+                "artifact_1_exception_count": 36.0,
+                "artifact_1_fee_per_record": 1546.46,
+                "artifact_1_fee_usd": 20104.0,
+                "artifact_1_record_count": 13.0
+              },
+              "uncertainty_note": "",
+              "status": "ready"
+            }
+          ],
+          "status": "ready",
+          "schema_version": "statebus.claim_set.v1"
+        },
+        "claim_set_hash": "ad323fa85528c51acb367a73fdba892b7b9f8a6b41fbb9773be242489d391baa",
+        "claim_validation": {
+          "ok": true,
+          "status": "ready",
+          "errors": []
+        }
+      }
+    ],
+    "candidate_review_records": [],
+    "dispatches": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-1",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+        "state": "COMPLETED",
+        "error_code": ""
+      }
+    ]
+  },
+  "runtime_error": null,
+  "executor_artifact": {
+    "artifact_id": "projection-utility-MU-ORION-4K-COST_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2",
+    "step_id": "execute",
+    "blob_hash": "dfb16cf50d917ca2c85606350479805334c5773ce774bcffe3917ed20475f522",
+    "verification_state": "candidate",
+    "row_count": 35
+  },
+  "summarizer_claim_sets": [
+    {
+      "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+      "task_id": "utility-MU-ORION-4K-COST_apc_on_shared",
+      "claims": [
+        {
+          "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-3",
+          "claim_text": "{\"citations\": [\"rules/mu-orion-4k-cost_active_scope_rules.json#R-2026-sample\", \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0002\", \"ledger/mu-orion-4k-cost_sample_ledger.json#row-0018\"], \"covered_record_count\": 29, \"fee_delta_usd\": -4724, \"q1_covered_record_count\": 16, \"q1_exception_count\": 16, \"q1_fee_usd\": 24828, \"q3_covered_record_count\": 13, \"q3_exception_count\": 36, \"q3_fee_usd\": 20104, \"rule_id\": \"R-ORI-SAMPLE-2026\"}",
+          "claim_type": "fact",
+          "supporting_evidence_item_ids": [
+            "utility-MU-ORION-4K-COST_apc_on_shared:fact:0000",
+            "utility-MU-ORION-4K-COST_apc_on_shared:row:00001",
+            "utility-MU-ORION-4K-COST_apc_on_shared:row:00017"
+          ],
+          "supporting_artifact_ref_ids": [
+            "dsl-utility-MU-ORION-4K-COST_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_104844-2545919-2"
+          ],
+          "citation_locators": [
+            "rules/mu-orion-4k-cost_active_scope_rules.json#R-2026-sample",
+            "ledger/mu-orion-4k-cost_sample_ledger.json#row-0002",
+            "ledger/mu-orion-4k-cost_sample_ledger.json#row-0018"
+          ],
+          "numeric_fields": {
+            "artifact_0_exception_count": 16.0,
+            "artifact_0_fee_per_record": 1551.75,
+            "artifact_0_fee_usd": 24828.0,
+            "artifact_0_record_count": 16.0,
+            "artifact_1_exception_count": 36.0,
+            "artifact_1_fee_per_record": 1546.46,
+            "artifact_1_fee_usd": 20104.0,
+            "artifact_1_record_count": 13.0
+          },
+          "uncertainty_note": "",
+          "status": "ready"
+        }
+      ],
+      "status": "ready",
+      "schema_version": "statebus.claim_set.v1"
+    }
+  ],
+  "output": {
+    "citations": [
+      "rules/mu-orion-4k-cost_active_scope_rules.json#R-2026-sample",
+      "ledger/mu-orion-4k-cost_sample_ledger.json#row-0002",
+      "ledger/mu-orion-4k-cost_sample_ledger.json#row-0018"
+    ],
+    "covered_record_count": 29,
+    "fee_delta_usd": -4724,
+    "q1_covered_record_count": 16,
+    "q1_exception_count": 16,
+    "q1_fee_usd": 24828,
+    "q3_covered_record_count": 13,
+    "q3_exception_count": 36,
+    "q3_fee_usd": 20104,
+    "rule_id": "R-ORI-SAMPLE-2026"
+  },
+  "metrics_delta": {
+    "schema_version": "statebus.vllm_prefix_cache_counter_delta.v2",
+    "available": true,
+    "valid": true,
+    "observed_query_token_delta": 9431.0,
+    "observed_hit_token_delta": 4096.0,
+    "observed_token_hit_rate": 0.43431237408546286,
+    "counter_unit": "tokens",
+    "counter_series_digest": "2ed22d937071eccf131af7fd33e9ad0b6d279b1eb134611eaa32d51541bf7eae",
+    "unavailable_reason": "",
+    "service_lifetime_hit_rate_before": 0.11992671145411138,
+    "service_lifetime_hit_rate_after": 0.1666456573805622,
+    "sample_interval_ms": 47981.44377,
+    "exclusive_interval": true,
+    "pollution_detected": false,
+    "request_count": 2,
+    "retry_count": 0,
+    "window_scope": "task",
+    "claim_boundary": "task_window_token_counter_delta_only_for_matching_monotonic_labeled_counters_in_one_exclusive_retry_free_interval"
+  },
+  "mechanism_available": true,
+  "prefix_contract_ok": true,
+  "consumer_ttft_ms": 241.48021,
+  "ttft_status": "measured_streaming",
+  "task_wall_ms": 48002.336738
+}

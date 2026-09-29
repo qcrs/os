@@ -1,0 +1,6 @@
+{
+  "suite_revision": "longtext-demo-v3",
+  "wall_budget_s": 5400.0,
+  "poll_interval_s": 60.0,
+  "phase": "all"
+}

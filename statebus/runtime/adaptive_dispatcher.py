@@ -69,6 +69,8 @@ from statebus.runtime.provider_registry import (
     ProviderBindingError,
 )
 from statebus.runtime.role_providers import (
+    ExecutorCandidateReviewBinding,
+    ExecutorCandidateReviewDecision,
     ProviderCandidate,
     ProviderRequest,
     ProviderStateReadFacade,
@@ -76,7 +78,7 @@ from statebus.runtime.role_providers import (
     detach_provider_candidate,
 )
 from statebus.runtime.transform_dsl import TransformDslInterpreter, TransformProgramError
-from statebus.runtime.telemetry import TelemetryEmitter
+from statebus.runtime.telemetry import TelemetryEmitter, TelemetryEvent
 from statebus.runtime.execution_routing import resolve_execution_route
 from statebus.runtime.claims import ClaimSetValidator
 from statebus.runtime.workspace import ArtifactLifecycleManager
@@ -250,6 +252,9 @@ class AdaptiveDispatchContext:
     # Disjoint from legacy BuiltinHandler: bound providers receive the full
     # BoundCapabilityGrant through ProviderRequest and return a candidate.
     bound_provider_handlers: dict[str, BoundProviderHandler] = field(default_factory=dict)
+    executor_candidate_review: ExecutorCandidateReviewBinding | None = None
+    executor_candidate_review_enabled: bool = False
+    executor_candidate_review_records: list[dict[str, object]] = field(default_factory=list)
     planner_handoffs: dict[str, PlannerHandoff] = field(default_factory=dict)
     provider_registry: ExecutionProviderRegistry | None = None
     provider_state_reader_factory: Callable[[ProviderRequest], ProviderStateReadFacade | None] | None = None
@@ -797,6 +802,67 @@ class AdaptiveCapabilityDispatcher:
         }[role]
         if candidate.candidate_kind not in {expected_kind, "failure", "diagnostic"}:
             raise AdaptiveDispatchError("provider_candidate_payload_type_mismatch")
+        review_binding = self.context.executor_candidate_review
+        review_candidate = (
+            candidate.candidate_kind == "executor_program"
+            or (
+                candidate.candidate_kind == "failure"
+                and candidate.error_code == "model_assist_insufficient_evidence"
+            )
+        )
+        if (
+            role == "executor"
+            and review_candidate
+            and self.context.executor_candidate_review_enabled
+            and review_binding is not None
+            and envelope.domain_pack_id == review_binding.suite_id
+            and step.capability_id == review_binding.capability_id
+        ):
+            decision = review_binding.review(request, candidate)
+            if not isinstance(decision, ExecutorCandidateReviewDecision):
+                raise AdaptiveDispatchError("executor_candidate_review_decision_invalid")
+            review_record = {
+                "suite_id": review_binding.suite_id,
+                "capability_id": review_binding.capability_id,
+                "step_id": step.step_id,
+                "attempt_id": bound_grant.grant.attempt_id,
+                "grant_hash": bound_grant.grant.grant_hash,
+                "candidate_kind": candidate.candidate_kind,
+                "candidate_diagnostics": [[key, value] for key, value in candidate.diagnostics],
+                "action": decision.action,
+                "reason": decision.reason,
+                "diagnostics": [[key, value] for key, value in decision.diagnostics],
+            }
+            self.context.executor_candidate_review_records.append(review_record)
+            if self.context.telemetry is not None:
+                self.context.telemetry.emit(TelemetryEvent.create(
+                    trace_id=runtime_identity.trace_id,
+                    task_id=bound_grant.grant.task_id,
+                    step_id=step.step_id,
+                    attempt_id=bound_grant.grant.attempt_id,
+                    event_type="EXECUTOR_CANDIDATE_REVIEW",
+                    role="runtime_driver",
+                    payload={
+                        "action": decision.action,
+                        "reason": decision.reason,
+                        "grant_hash": bound_grant.grant.grant_hash,
+                    },
+                    metrics={"executor_candidate_review_count": 1.0},
+                ))
+            if decision.action == "request_evidence_recheck":
+                return AdaptiveStepResult(
+                    grant_hash=bound_grant.grant.grant_hash,
+                    success=False,
+                    attempt_id=bound_grant.grant.attempt_id,
+                    error_code="model_assist_review_required",
+                )
+            if decision.action == "abstain":
+                return AdaptiveStepResult(
+                    grant_hash=bound_grant.grant.grant_hash,
+                    success=False,
+                    attempt_id=bound_grant.grant.attempt_id,
+                    error_code="need_more_evidence",
+                )
         if candidate.candidate_kind == "failure":
             timed_out = candidate.error_code in {
                 "planner_timeout",

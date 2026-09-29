@@ -1,0 +1,17 @@
+{
+  "env_file": "/home/qcrs/statebus/os/docs/reports/contest-model-assist-utility/longtext-demo-v3-20260929_061721-1819515/service/vllm.env.kv.local",
+  "status": {
+    "command": [
+      "env",
+      "STATEBUS_VLLM_ENV_FILE=/home/qcrs/statebus/os/docs/reports/contest-model-assist-utility/longtext-demo-v3-20260929_061721-1819515/service/vllm.env.kv.local",
+      "/home/qcrs/statebus/os/scripts/vllm/manage_qwen3_32b.sh",
+      "status"
+    ],
+    "returncode": 0,
+    "stdout": "进程=运行中 pid=2361370 mode=kv\n端点=健康 url=http://127.0.0.1:53334/statebus/kv/health\n",
+    "elapsed_ms": 81.823494
+  },
+  "pid": 2361370,
+  "mode": "kv",
+  "healthy": true
+}

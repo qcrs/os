@@ -1,0 +1,11 @@
+{
+  "command": [
+    "env",
+    "STATEBUS_VLLM_ENV_FILE=/home/qcrs/statebus/os/deploy/vllm.env.local",
+    "/home/qcrs/statebus/os/scripts/vllm/manage_qwen3_32b.sh",
+    "stop"
+  ],
+  "returncode": 0,
+  "stdout": "已停止托管的 vLLM：pid=2318210\n",
+  "elapsed_ms": 3028.67995
+}

@@ -1,0 +1,196 @@
+{
+  "schema_version": "statebus.model_assist_utility.record.v1",
+  "suite_revision": "longtext-demo-v3",
+  "run_id": "longtext-demo-v3-20260929_061721-1819515",
+  "slot_id": "MU-NOVA-6K-CALIBRATION-DELIVERY:apc_on_shared",
+  "module": "apc",
+  "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+  "condition": "apc_on_shared",
+  "scored": false,
+  "warmup_namespace": "calibration-only",
+  "status": "failed",
+  "business_quality": "failed",
+  "quality_errors": [
+    "report_not_object"
+  ],
+  "layout": "shared",
+  "token_identity": {
+    "actual_role_lcp_tokens": 6222,
+    "actual_role_lcp_digest": "cd54d57f8e2fbabf7d60c809d4c26f0b5f5d1340f65169ff89f976c832210a02",
+    "compiled_prefix_tokens": 6220,
+    "compiled_prefix_digest": "6aa8ebe406ab5c6ad63567846716d83b2e4a7ccbfee281a31fea02415b89f32d",
+    "source_digest": "598ba3b7301d1f7f8b6f4aec011d15a48b1ee17de3af5761497678a98a932c4a",
+    "input_tokens_exact": 13344
+  },
+  "cache_namespace": "mu-ac624ba8ababfc959ea7463bce5ccc76",
+  "namespace_prefix_token_count": 6220,
+  "namespace_prefix_token_digest": "0316f00b6bcc5aa4a632639845cd2536091dab972a010d089ef4b64847042992",
+  "namespace_pair_contract": {
+    "different_values": true,
+    "equal_prefix_token_counts": true,
+    "condition_scoped": true
+  },
+  "shared_template_prefix_may_hit_across_conditions": true,
+  "role_visibility": {
+    "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+    "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+  },
+  "provider_requests": [
+    {
+      "status": "response",
+      "request_wall_ms": 24926.953746,
+      "ttft_ms": 2698.153993,
+      "token_event_count": 451,
+      "usage": {
+        "prompt_tokens": 6761,
+        "completion_tokens": 452,
+        "total_tokens": 7213
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"operations\": [\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"status\",\n        \"value\": \"APPROVED\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"scope\",\n        \"value\": \"approved_sample_cohort\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"effective_rule_id\",\n        \"value\": \"R-NOV-SAMPLE-2026\"\n      }\n    },\n    {\n      \"op\": \"filter_in\",\n      \"arguments\": {\n        \"column\": \"quarter\",\n        \"values\": [\"2026Q1\", \"2026Q3\"]\n      }\n    },\n    {\n      \"op\": \"aggregate_grouped\",\n      \"arguments\": {\n        \"group_fields\": [\"quarter\"],\n        \"value_fields\": [\"on_time_orders\", \"committed_orders\", \"on_time_orders\"],\n        \"functions\": [\"sum\", \"sum\", \"count\"],\n        \"outputs\": [\"on_time\", \"committed\", \"record_count\"]\n      }\n    },\n    {\n      \"op\": \"derive_safe\",\n      \"arguments\": {\n        \"calculations\": [\n          [\"rate_pct\", \"ratio\", \"on_time\", \"committed\", 100, 4]\n        ]\n      }\n    },\n    {\n      \"op\": \"select\",\n      \"arguments\": {\n        \"columns\": [\"quarter\", \"on_time\", \"committed\", \"record_count\", \"rate_pct\"]\n      }\n    }\n  ],\n  \"source_locators\": [\n    \"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0045\"\n  ]\n}",
+      "role": "executor",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+      "prompt_tokens_exact": 6761,
+      "prompt_token_digest": "07258c5b7ada9dd7e6d2ed95a375de1bb4b79d14ccc01746ef26dbeb0778c158"
+    },
+    {
+      "status": "response",
+      "request_wall_ms": 11757.113694,
+      "ttft_ms": 206.772681,
+      "token_event_count": 236,
+      "usage": {
+        "prompt_tokens": 6583,
+        "completion_tokens": 237,
+        "total_tokens": 6820
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"q1_on_time\": 2108,\n  \"q1_committed\": 2169,\n  \"q1_rate_pct\": 97.19,\n  \"q3_on_time\": 2374,\n  \"q3_committed\": 2493,\n  \"q3_rate_pct\": 95.23,\n  \"delta_pp\": -1.96,\n  \"q1_covered_record_count\": 21,\n  \"q3_covered_record_count\": 24,\n  \"covered_record_count\": 45,\n  \"source_citations\": [\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\",\n    \"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\"\n  ],\n  \"active_scope_rule\": \"R-NOV-SAMPLE-2026\"\n}",
+      "role": "summarizer",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+      "prompt_tokens_exact": 6583,
+      "prompt_token_digest": "10f7f8f37a1599d48627d058f69228ee27481c2e15dd644e527cd2b17cce51ff"
+    }
+  ],
+  "repair_requests": [],
+  "runtime": {
+    "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+    "runtime_completed": false,
+    "plan_replaced": false,
+    "approved_plan_hash": "dd06be02733b87d56a193ac3cf8b3502e3bab4ba11570704ef0a6d5c1a28f8cb",
+    "attempts": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "owner_role": "retriever",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "06b4cc96166a2f7f8a9403dd0f45ac4e47146f3f63cdf1b02069f6be2f709154",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "30af74dfa7e699a539efeb582d4f90153345485d7cd273aedef1f733078217ee",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "fe874c753bba9b29856b9a129c6136ca4037f32a36814d43100944e438fe3cf4"
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "owner_role": "executor",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "7ceaba35662595a7f675cacba5df1c201d6b992ff48b8bd3da1312c715145a60",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "30af74dfa7e699a539efeb582d4f90153345485d7cd273aedef1f733078217ee",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "9b9500b32c4b882638468d524b3324b358383ad13b94c81f80eb7fc5d3282900"
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "owner_role": "summarizer",
+        "state": "FAILED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "0c486e4e5486a510b71d594b4ecaa85ed99b9ddca142e23b3af09f7d2110d345",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "30af74dfa7e699a539efeb582d4f90153345485d7cd273aedef1f733078217ee"
+      }
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+        "verification_state": "candidate",
+        "row_count": 55
+      },
+      {
+        "artifact_id": "dsl-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "cf501f388db7b60097f9cc0e1f1a724ee853f9bfc92744265ec530c95b61c4eb",
+        "verification_state": "verified",
+        "row_count": 2
+      }
+    ],
+    "artifact_verification_receipt_hashes": [
+      "2f46520f47a8f790d930622fa9b68448380992f39db28842872495e4d7048f33"
+    ],
+    "claim_validation_reports": [],
+    "candidate_review_records": [],
+    "dispatches": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "state": "FAILED",
+        "error_code": "summarizer_candidate_invalid:ValueError"
+      }
+    ]
+  },
+  "runtime_error": null,
+  "executor_artifact": {
+    "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+    "step_id": "execute",
+    "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+    "verification_state": "candidate",
+    "row_count": 55
+  },
+  "summarizer_claim_sets": [],
+  "output": null,
+  "metrics_delta": {
+    "schema_version": "statebus.vllm_prefix_cache_counter_delta.v2",
+    "available": true,
+    "valid": true,
+    "observed_query_token_delta": 13344.0,
+    "observed_hit_token_delta": 6208.0,
+    "observed_token_hit_rate": 0.46522781774580335,
+    "counter_unit": "tokens",
+    "counter_series_digest": "7ca914c988271a86c3d2071bfd35c1e209fa77c4841dbb98c19e2a73392ffc4a",
+    "unavailable_reason": "",
+    "service_lifetime_hit_rate_before": 0.1271775555986374,
+    "service_lifetime_hit_rate_after": 0.21839801015146307,
+    "sample_interval_ms": 36884.003512,
+    "exclusive_interval": true,
+    "pollution_detected": false,
+    "request_count": 2,
+    "retry_count": 0,
+    "window_scope": "task",
+    "claim_boundary": "task_window_token_counter_delta_only_for_matching_monotonic_labeled_counters_in_one_exclusive_retry_free_interval"
+  },
+  "mechanism_available": true,
+  "prefix_contract_ok": true,
+  "consumer_ttft_ms": 206.772681,
+  "ttft_status": "measured_streaming",
+  "task_wall_ms": 36927.608079
+}

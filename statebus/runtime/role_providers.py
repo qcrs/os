@@ -216,6 +216,36 @@ class ProviderCandidate:
                 raise ProviderAuthorityError("provider_candidate_diagnostic_scalar_required")
 
 
+@dataclass(frozen=True)
+class ExecutorCandidateReviewDecision:
+    action: Literal["continue", "request_evidence_recheck", "abstain"]
+    reason: str = ""
+    diagnostics: tuple[tuple[str, DiagnosticScalar], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.action not in {"continue", "request_evidence_recheck", "abstain"}:
+            raise ProviderAuthorityError("executor_candidate_review_action_invalid")
+        for key, value in self.diagnostics:
+            if not isinstance(key, str) or not isinstance(value, (str, int, float, bool, type(None))):
+                raise ProviderAuthorityError("executor_candidate_review_diagnostic_scalar_required")
+
+
+ExecutorCandidateReviewHandler = Callable[
+    [ProviderRequest, ProviderCandidate], ExecutorCandidateReviewDecision
+]
+
+
+@dataclass(frozen=True)
+class ExecutorCandidateReviewBinding:
+    suite_id: str
+    capability_id: str
+    review: ExecutorCandidateReviewHandler
+
+    def __post_init__(self) -> None:
+        if not self.suite_id.strip() or not self.capability_id.strip():
+            raise ProviderAuthorityError("executor_candidate_review_scope_required")
+
+
 class BoundProviderHandler(Protocol):
     def __call__(self, request: ProviderRequest) -> ProviderCandidate: ...
 

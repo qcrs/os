@@ -1,0 +1,105 @@
+{
+  "schema_version": "statebus.model_assist_utility.necessity.v1",
+  "checks": [
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "active_rule_changes_program_semantics",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "all_rows_have_locator",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "active_rule_changes_program_semantics",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "all_rows_have_locator",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "active_rule_changes_program_semantics",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "all_rows_have_locator",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "active_rule_changes_program_semantics",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "all_rows_have_locator",
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "schema_version": "statebus.model_assist_utility.gold.v1",
+  "cases": {
+    "MU-ORION-4K-COST": {
+      "q1_fee_usd": 26690,
+      "q3_fee_usd": 25562,
+      "fee_delta_usd": -1128,
+      "q1_exception_count": 16,
+      "q3_exception_count": 46,
+      "q1_covered_record_count": 17,
+      "q3_covered_record_count": 16,
+      "covered_record_count": 33,
+      "rule_id": "R-ORI-SAMPLE-2026"
+    },
+    "MU-NOVA-4K-DELIVERY": {
+      "q1_on_time": 1705,
+      "q1_committed": 1759,
+      "q1_rate_pct": 96.9301,
+      "q3_on_time": 1631,
+      "q3_committed": 1708,
+      "q3_rate_pct": 95.4918,
+      "delta_pp": -1.4383,
+      "q1_covered_record_count": 17,
+      "q3_covered_record_count": 17,
+      "covered_record_count": 34,
+      "rule_id": "R-NOV-SAMPLE-2026"
+    },
+    "MU-ORION-6K-COST": {
+      "q1_fee_usd": 45522,
+      "q3_fee_usd": 42066,
+      "fee_delta_usd": -3456,
+      "q1_exception_count": 26,
+      "q3_exception_count": 70,
+      "q1_covered_record_count": 26,
+      "q3_covered_record_count": 24,
+      "covered_record_count": 50,
+      "rule_id": "R-ORI-SAMPLE-2026"
+    },
+    "MU-NOVA-6K-DELIVERY": {
+      "q1_on_time": 2718,
+      "q1_committed": 2802,
+      "q1_rate_pct": 97.0021,
+      "q3_on_time": 2426,
+      "q3_committed": 2543,
+      "q3_rate_pct": 95.3991,
+      "delta_pp": -1.603,
+      "q1_covered_record_count": 27,
+      "q3_covered_record_count": 25,
+      "covered_record_count": 52,
+      "rule_id": "R-NOV-SAMPLE-2026"
+    }
+  },
+  "logit": {
+    "MU-LOGIT-EASY-NOVA-OTD": {
+      "candidate": "sample_ledger",
+      "outcome": "select"
+    },
+    "MU-LOGIT-AMBIGUITY-ORION-COST": {
+      "candidate": "orion_current_ledger",
+      "outcome": "select"
+    },
+    "MU-LOGIT-AMBIGUITY-NOVA-DELIVERY": {
+      "candidate": "nova_delivery_ledger",
+      "outcome": "select"
+    },
+    "MU-LOGIT-UNRESOLVED-ORION-EXCEPTIONS": {
+      "candidate": "insufficient_evidence",
+      "outcome": "abstain"
+    }
+  }
+}

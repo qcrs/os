@@ -1,0 +1,307 @@
+{
+  "schema_version": "statebus.model_assist_utility.record.v1",
+  "suite_revision": "longtext-demo-v3",
+  "run_id": "longtext-demo-v3-20260929_061721-1819515",
+  "slot_id": "MU-NOVA-6K-DELIVERY:apc_on_independent",
+  "module": "apc",
+  "case_id": "MU-NOVA-6K-DELIVERY",
+  "condition": "apc_on_independent",
+  "scored": true,
+  "warmup_namespace": "scored",
+  "status": "completed",
+  "business_quality": "passed",
+  "quality_errors": [],
+  "layout": "independent",
+  "token_identity": {
+    "actual_role_lcp_tokens": 48,
+    "actual_role_lcp_digest": "55c69a3b58af2bc96a82d41d8eb81b6a19e158ff0e4289b09555d56a54e3ab90",
+    "compiled_prefix_tokens": 6202,
+    "compiled_prefix_digest": "4a6b6f4df0278f9d64208358f203046978b740b0ba43abdad52c9ac25b82851a",
+    "source_digest": "54b340ad07c9ca391ab8a3b10b2d41df56f93deff086d82c835ccd62d2441e14",
+    "input_tokens_exact": 13416
+  },
+  "cache_namespace": "mu-83ae0580bebfa17fabd5e41edef352fe",
+  "namespace_prefix_token_count": 6202,
+  "namespace_prefix_token_digest": "6567c48e2b318d19f5ff320178f8db235279b41308136027998c634e2bdba0f5",
+  "namespace_pair_contract": {
+    "different_values": true,
+    "equal_prefix_token_counts": true,
+    "condition_scoped": true
+  },
+  "shared_template_prefix_may_hit_across_conditions": true,
+  "role_visibility": {
+    "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+    "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+  },
+  "provider_requests": [
+    {
+      "status": "response",
+      "request_wall_ms": 24087.477224,
+      "ttft_ms": 2330.641543,
+      "token_event_count": 443,
+      "usage": {
+        "prompt_tokens": 6735,
+        "completion_tokens": 444,
+        "total_tokens": 7179
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"operations\": [\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"status\",\n        \"value\": \"APPROVED\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"scope\",\n        \"value\": \"approved_sample_cohort\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"effective_rule_id\",\n        \"value\": \"R-NOV-SAMPLE-2026\"\n      }\n    },\n    {\n      \"op\": \"filter_in\",\n      \"arguments\": {\n        \"column\": \"quarter\",\n        \"values\": [\"2026Q1\", \"2026Q3\"]\n      }\n    },\n    {\n      \"op\": \"aggregate_grouped\",\n      \"arguments\": {\n        \"group_fields\": [\"quarter\"],\n        \"value_fields\": [\"on_time_orders\", \"committed_orders\", \"on_time_orders\"],\n        \"functions\": [\"sum\", \"sum\", \"count\"],\n        \"outputs\": [\"on_time\", \"committed\", \"record_count\"]\n      }\n    },\n    {\n      \"op\": \"derive_safe\",\n      \"arguments\": {\n        \"calculations\": [\n          [\"rate_pct\", \"ratio\", \"on_time\", \"committed\", 100, 4]\n        ]\n      }\n    },\n    {\n      \"op\": \"select\",\n      \"arguments\": {\n        \"columns\": [\"quarter\", \"on_time\", \"committed\", \"record_count\", \"rate_pct\"]\n      }\n    }\n  ],\n  \"source_locators\": [\n    \"rules/mu-nova-6k-delivery_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0002\",\n    \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0030\",\n    \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0050\"\n  ]\n}",
+      "role": "executor",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+      "prompt_tokens_exact": 6735,
+      "prompt_token_digest": "9935acbb3b9bd97fc8b3efc417a9afd40b01e861f70d603886426a395b061f1c"
+    },
+    {
+      "status": "response",
+      "request_wall_ms": 13771.475107,
+      "ttft_ms": 2303.095391,
+      "token_event_count": 234,
+      "usage": {
+        "prompt_tokens": 6681,
+        "completion_tokens": 235,
+        "total_tokens": 6916
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"q1_on_time\": 2309,\n  \"q1_committed\": 2383,\n  \"q1_rate_pct\": 96.8947,\n  \"q3_on_time\": 2233,\n  \"q3_committed\": 2341,\n  \"q3_rate_pct\": 95.3866,\n  \"delta_pp\": -1.5081,\n  \"q1_covered_record_count\": 23,\n  \"q3_covered_record_count\": 23,\n  \"covered_record_count\": 46,\n  \"rule_id\": \"R-NOV-SAMPLE-2026\",\n  \"citations\": [\n    \"rules/mu-nova-6k-delivery_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0002\",\n    \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0003\"\n  ]\n}",
+      "role": "summarizer",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+      "prompt_tokens_exact": 6681,
+      "prompt_token_digest": "bb5d9224ce1001f91654d1d3e8ad121ee28c765aba5ef84593e8c9422c57e94f"
+    }
+  ],
+  "repair_requests": [],
+  "runtime": {
+    "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+    "runtime_completed": true,
+    "plan_replaced": false,
+    "approved_plan_hash": "fb533b247ce53fe9b1e7e644527bc11a9161f43969de23b3726f277431f50347",
+    "attempts": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "owner_role": "retriever",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "a6af5d7addd8fcbb1f41e255c06c54cdfa95e0b7d3dbd3468eab4b00d4270719",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "35cd8781db1282d52b622b0bedae72d195ed9dace682ffe898cb8fa239195f29",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "43a9fe4651147e4002bcc5f5f76930041d6f7ebe456e10a4050d443188a251e8"
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "owner_role": "executor",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "4ffee9a948d55e605f20e9314f6a8b9b10754ba1fc04bce65c1e0045f0698667",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "35cd8781db1282d52b622b0bedae72d195ed9dace682ffe898cb8fa239195f29",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "305b5e104c9248f83daf611463360b0925fdc9c54032f969b5339d88ed399ffa"
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "owner_role": "summarizer",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "537a8860d1213c1ea794002b8bb2478de804ec3746ace5f43ad1c3b5a96d90e6",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "35cd8781db1282d52b622b0bedae72d195ed9dace682ffe898cb8fa239195f29",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "fed012d0ba46e80495e7885f988b5e1e9e1fb675d7371dcbee555a4cd4e2f84b"
+      }
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "projection-utility-MU-NOVA-6K-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "63d574a900b3e075e5c09e3dd6197d02e69724e5a63ba5c67494496fdb974fe7",
+        "verification_state": "candidate",
+        "row_count": 56
+      },
+      {
+        "artifact_id": "dsl-utility-MU-NOVA-6K-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "5ce5b4b16d604bd9b2ffb6f6bd4d920bdf3807f6056acb1ce075e9cfe8ee8e93",
+        "verification_state": "verified",
+        "row_count": 2
+      },
+      {
+        "artifact_id": "claimset-utility-MU-NOVA-6K-DELIVERY_apc_on_independent-summarize-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "step_id": "summarize",
+        "blob_hash": "48a1cc26702ae4811a2d80105017d0b404a370c192c247bfd389ff757c62aad9",
+        "verification_state": "verified",
+        "row_count": 1
+      }
+    ],
+    "artifact_verification_receipt_hashes": [
+      "6bad5748fcc5b0466ba81140290c5d471b369ae83cc71a59c4a6deadafa408e9",
+      "db2b1a77566eef4e36e3acb6b525df7444b774a2705a6f99440f950ac9479f5c"
+    ],
+    "claim_validation_reports": [
+      {
+        "claim_set": {
+          "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+          "task_id": "utility-MU-NOVA-6K-DELIVERY_apc_on_independent",
+          "claims": [
+            {
+              "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+              "claim_text": "{\"citations\": [\"rules/mu-nova-6k-delivery_active_scope_rules.json#R-2026-sample\", \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0002\", \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0003\"], \"covered_record_count\": 46, \"delta_pp\": -1.5081, \"q1_committed\": 2383, \"q1_covered_record_count\": 23, \"q1_on_time\": 2309, \"q1_rate_pct\": 96.8947, \"q3_committed\": 2341, \"q3_covered_record_count\": 23, \"q3_on_time\": 2233, \"q3_rate_pct\": 95.3866, \"rule_id\": \"R-NOV-SAMPLE-2026\"}",
+              "claim_type": "fact",
+              "supporting_evidence_item_ids": [
+                "utility-MU-NOVA-6K-DELIVERY_apc_on_independent:fact:0000",
+                "utility-MU-NOVA-6K-DELIVERY_apc_on_independent:row:00001",
+                "utility-MU-NOVA-6K-DELIVERY_apc_on_independent:row:00002"
+              ],
+              "supporting_artifact_ref_ids": [
+                "dsl-utility-MU-NOVA-6K-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2"
+              ],
+              "citation_locators": [
+                "rules/mu-nova-6k-delivery_active_scope_rules.json#R-2026-sample",
+                "ledger/mu-nova-6k-delivery_sample_ledger.json#row-0002",
+                "ledger/mu-nova-6k-delivery_sample_ledger.json#row-0003"
+              ],
+              "numeric_fields": {
+                "artifact_0_committed": 2383.0,
+                "artifact_0_on_time": 2309.0,
+                "artifact_0_rate_pct": 96.8947,
+                "artifact_0_record_count": 23.0,
+                "artifact_1_committed": 2341.0,
+                "artifact_1_on_time": 2233.0,
+                "artifact_1_rate_pct": 95.3866,
+                "artifact_1_record_count": 23.0
+              },
+              "uncertainty_note": "",
+              "status": "ready"
+            }
+          ],
+          "status": "ready",
+          "schema_version": "statebus.claim_set.v1"
+        },
+        "claim_set_hash": "48a1cc26702ae4811a2d80105017d0b404a370c192c247bfd389ff757c62aad9",
+        "claim_validation": {
+          "ok": true,
+          "status": "ready",
+          "errors": []
+        }
+      }
+    ],
+    "candidate_review_records": [],
+    "dispatches": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "state": "COMPLETED",
+        "error_code": ""
+      }
+    ]
+  },
+  "runtime_error": null,
+  "executor_artifact": {
+    "artifact_id": "projection-utility-MU-NOVA-6K-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+    "step_id": "execute",
+    "blob_hash": "63d574a900b3e075e5c09e3dd6197d02e69724e5a63ba5c67494496fdb974fe7",
+    "verification_state": "candidate",
+    "row_count": 56
+  },
+  "summarizer_claim_sets": [
+    {
+      "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+      "task_id": "utility-MU-NOVA-6K-DELIVERY_apc_on_independent",
+      "claims": [
+        {
+          "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+          "claim_text": "{\"citations\": [\"rules/mu-nova-6k-delivery_active_scope_rules.json#R-2026-sample\", \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0002\", \"ledger/mu-nova-6k-delivery_sample_ledger.json#row-0003\"], \"covered_record_count\": 46, \"delta_pp\": -1.5081, \"q1_committed\": 2383, \"q1_covered_record_count\": 23, \"q1_on_time\": 2309, \"q1_rate_pct\": 96.8947, \"q3_committed\": 2341, \"q3_covered_record_count\": 23, \"q3_on_time\": 2233, \"q3_rate_pct\": 95.3866, \"rule_id\": \"R-NOV-SAMPLE-2026\"}",
+          "claim_type": "fact",
+          "supporting_evidence_item_ids": [
+            "utility-MU-NOVA-6K-DELIVERY_apc_on_independent:fact:0000",
+            "utility-MU-NOVA-6K-DELIVERY_apc_on_independent:row:00001",
+            "utility-MU-NOVA-6K-DELIVERY_apc_on_independent:row:00002"
+          ],
+          "supporting_artifact_ref_ids": [
+            "dsl-utility-MU-NOVA-6K-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2"
+          ],
+          "citation_locators": [
+            "rules/mu-nova-6k-delivery_active_scope_rules.json#R-2026-sample",
+            "ledger/mu-nova-6k-delivery_sample_ledger.json#row-0002",
+            "ledger/mu-nova-6k-delivery_sample_ledger.json#row-0003"
+          ],
+          "numeric_fields": {
+            "artifact_0_committed": 2383.0,
+            "artifact_0_on_time": 2309.0,
+            "artifact_0_rate_pct": 96.8947,
+            "artifact_0_record_count": 23.0,
+            "artifact_1_committed": 2341.0,
+            "artifact_1_on_time": 2233.0,
+            "artifact_1_rate_pct": 95.3866,
+            "artifact_1_record_count": 23.0
+          },
+          "uncertainty_note": "",
+          "status": "ready"
+        }
+      ],
+      "status": "ready",
+      "schema_version": "statebus.claim_set.v1"
+    }
+  ],
+  "output": {
+    "citations": [
+      "rules/mu-nova-6k-delivery_active_scope_rules.json#R-2026-sample",
+      "ledger/mu-nova-6k-delivery_sample_ledger.json#row-0002",
+      "ledger/mu-nova-6k-delivery_sample_ledger.json#row-0003"
+    ],
+    "covered_record_count": 46,
+    "delta_pp": -1.5081,
+    "q1_committed": 2383,
+    "q1_covered_record_count": 23,
+    "q1_on_time": 2309,
+    "q1_rate_pct": 96.8947,
+    "q3_committed": 2341,
+    "q3_covered_record_count": 23,
+    "q3_on_time": 2233,
+    "q3_rate_pct": 95.3866,
+    "rule_id": "R-NOV-SAMPLE-2026"
+  },
+  "metrics_delta": {
+    "schema_version": "statebus.vllm_prefix_cache_counter_delta.v2",
+    "available": true,
+    "valid": true,
+    "observed_query_token_delta": 13416.0,
+    "observed_hit_token_delta": 48.0,
+    "observed_token_hit_rate": 0.0035778175313059034,
+    "counter_unit": "tokens",
+    "counter_series_digest": "2b910e582870aeb1684a14831a5fa3a6a463a52501d0b56702fceb5f64655934",
+    "unavailable_reason": "",
+    "service_lifetime_hit_rate_before": 0.2704135206760338,
+    "service_lifetime_hit_rate_after": 0.23884808351923534,
+    "sample_interval_ms": 38017.473185,
+    "exclusive_interval": true,
+    "pollution_detected": false,
+    "request_count": 2,
+    "retry_count": 0,
+    "window_scope": "task",
+    "claim_boundary": "task_window_token_counter_delta_only_for_matching_monotonic_labeled_counters_in_one_exclusive_retry_free_interval"
+  },
+  "mechanism_available": true,
+  "prefix_contract_ok": true,
+  "consumer_ttft_ms": 2303.095391,
+  "ttft_status": "measured_streaming",
+  "task_wall_ms": 38034.199879
+}

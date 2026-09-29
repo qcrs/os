@@ -1,0 +1,310 @@
+{
+  "schema_version": "statebus.model_assist_utility.record.v1",
+  "suite_revision": "longtext-demo-v3",
+  "run_id": "longtext-demo-v3-20260929_061721-1819515",
+  "slot_id": "MU-NOVA-6K-CALIBRATION-DELIVERY:apc_on_independent",
+  "module": "apc",
+  "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+  "condition": "apc_on_independent",
+  "scored": false,
+  "warmup_namespace": "calibration-only",
+  "status": "completed",
+  "business_quality": "failed",
+  "quality_errors": [
+    "missing:rule_id",
+    "rule_citation_missing"
+  ],
+  "layout": "independent",
+  "token_identity": {
+    "actual_role_lcp_tokens": 48,
+    "actual_role_lcp_digest": "945acf28db8d4b602fe932b768d5f7ab4c5724acd0b289bfc3c98da183f85938",
+    "compiled_prefix_tokens": 6220,
+    "compiled_prefix_digest": "6aa8ebe406ab5c6ad63567846716d83b2e4a7ccbfee281a31fea02415b89f32d",
+    "source_digest": "598ba3b7301d1f7f8b6f4aec011d15a48b1ee17de3af5761497678a98a932c4a",
+    "input_tokens_exact": 13289
+  },
+  "cache_namespace": "mu-f0aedc1abb1a73c8bca110fecdaee898",
+  "namespace_prefix_token_count": 6220,
+  "namespace_prefix_token_digest": "5a9f002d6008f4d31d84223167ece8d4c12c62d7f39c2b90133f453d9f7a4e5d",
+  "namespace_pair_contract": {
+    "different_values": true,
+    "equal_prefix_token_counts": true,
+    "condition_scoped": true
+  },
+  "shared_template_prefix_may_hit_across_conditions": true,
+  "role_visibility": {
+    "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+    "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+  },
+  "provider_requests": [
+    {
+      "status": "response",
+      "request_wall_ms": 24620.916093,
+      "ttft_ms": 2509.863345,
+      "token_event_count": 451,
+      "usage": {
+        "prompt_tokens": 6733,
+        "completion_tokens": 452,
+        "total_tokens": 7185
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"operations\": [\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"status\",\n        \"value\": \"APPROVED\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"scope\",\n        \"value\": \"approved_sample_cohort\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"effective_rule_id\",\n        \"value\": \"R-NOV-SAMPLE-2026\"\n      }\n    },\n    {\n      \"op\": \"filter_in\",\n      \"arguments\": {\n        \"column\": \"quarter\",\n        \"values\": [\"2026Q1\", \"2026Q3\"]\n      }\n    },\n    {\n      \"op\": \"aggregate_grouped\",\n      \"arguments\": {\n        \"group_fields\": [\"quarter\"],\n        \"value_fields\": [\"on_time_orders\", \"committed_orders\", \"on_time_orders\"],\n        \"functions\": [\"sum\", \"sum\", \"count\"],\n        \"outputs\": [\"on_time\", \"committed\", \"record_count\"]\n      }\n    },\n    {\n      \"op\": \"derive_safe\",\n      \"arguments\": {\n        \"calculations\": [\n          [\"rate_pct\", \"ratio\", \"on_time\", \"committed\", 100, 4]\n        ]\n      }\n    },\n    {\n      \"op\": \"select\",\n      \"arguments\": {\n        \"columns\": [\"quarter\", \"on_time\", \"committed\", \"record_count\", \"rate_pct\"]\n      }\n    }\n  ],\n  \"source_locators\": [\n    \"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0055\"\n  ]\n}",
+      "role": "executor",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+      "prompt_tokens_exact": 6733,
+      "prompt_token_digest": "8cbd69d1f62424dd45f789d4e11727cc9de906e1445bce7f2ed034d275b826f8"
+    },
+    {
+      "status": "response",
+      "request_wall_ms": 13896.01754,
+      "ttft_ms": 2221.136115,
+      "token_event_count": 239,
+      "usage": {
+        "prompt_tokens": 6556,
+        "completion_tokens": 240,
+        "total_tokens": 6796
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"q1_on_time\": 2108,\n  \"q1_committed\": 2169,\n  \"q1_rate_pct\": 97.1876,\n  \"q3_on_time\": 2374,\n  \"q3_committed\": 2493,\n  \"q3_rate_pct\": 95.2266,\n  \"delta_pp\": -1.961,\n  \"q1_covered_record_count\": 21,\n  \"q3_covered_record_count\": 24,\n  \"covered_record_count\": 45,\n  \"active_scope_rule\": \"R-NOV-SAMPLE-2026\",\n  \"citations\": [\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0055\"\n  ]\n}",
+      "role": "summarizer",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+      "prompt_tokens_exact": 6556,
+      "prompt_token_digest": "3db0120b853067de8aa28b25f6c4b848f8ae8bfa08063ad07944aa2ae5215b54"
+    }
+  ],
+  "repair_requests": [],
+  "runtime": {
+    "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+    "runtime_completed": true,
+    "plan_replaced": false,
+    "approved_plan_hash": "70812a2115011179fb1d0350b1bc383903a50a68bf9b0466b20cd86ebf0c4693",
+    "attempts": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "owner_role": "retriever",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "1885cbb746bda05f6c29af39720cd3b523304cdfa58316bd6fcfc2d54e875925",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "0a267c6c2fa0f5aafc6c0ef287fe7bf150dec66f556b2fc8a9b0ead3cde87aed",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "000aa60667dc6103697ed21acf4ac4f3afeab9fe9f9cbbe4a21e7f2f6835589a"
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "owner_role": "executor",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "384e980416175ecd654ae0f837d7e941ef37b2a71c5fa7e224f415c1fc2f5526",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "0a267c6c2fa0f5aafc6c0ef287fe7bf150dec66f556b2fc8a9b0ead3cde87aed",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "9b9500b32c4b882638468d524b3324b358383ad13b94c81f80eb7fc5d3282900"
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "owner_role": "summarizer",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "712e654f6debd2dc1d31bc12a81cf0411f1540857336c16339be7fac8642cabe",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "0a267c6c2fa0f5aafc6c0ef287fe7bf150dec66f556b2fc8a9b0ead3cde87aed",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "a1ddcdf99c5204104d60b669e7e0c88a32ea13c3da0e7628175083cfd0213b28"
+      }
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+        "verification_state": "candidate",
+        "row_count": 55
+      },
+      {
+        "artifact_id": "dsl-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "cf501f388db7b60097f9cc0e1f1a724ee853f9bfc92744265ec530c95b61c4eb",
+        "verification_state": "verified",
+        "row_count": 2
+      },
+      {
+        "artifact_id": "claimset-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent-summarize-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "step_id": "summarize",
+        "blob_hash": "8f78e097a2c440c39b8d2afa24d7bb31f1eea48eac7563f56dab62d90a049179",
+        "verification_state": "verified",
+        "row_count": 1
+      }
+    ],
+    "artifact_verification_receipt_hashes": [
+      "c3bc67054267adb5c02ec88de3ed02956ef26cdc3954f2f47f0c18cbb363e95c",
+      "c998e30e228f57e941c0d4ad4d4d1507a7f62d84cdc58aff70a3fae137d2b034"
+    ],
+    "claim_validation_reports": [
+      {
+        "claim_set": {
+          "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+          "task_id": "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent",
+          "claims": [
+            {
+              "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+              "claim_text": "{\"active_scope_rule\": \"R-NOV-SAMPLE-2026\", \"citations\": [\"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0055\"], \"covered_record_count\": 45, \"delta_pp\": -1.961, \"q1_committed\": 2169, \"q1_covered_record_count\": 21, \"q1_on_time\": 2108, \"q1_rate_pct\": 97.1876, \"q3_committed\": 2493, \"q3_covered_record_count\": 24, \"q3_on_time\": 2374, \"q3_rate_pct\": 95.2266}",
+              "claim_type": "fact",
+              "supporting_evidence_item_ids": [
+                "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent:row:00000",
+                "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent:row:00027",
+                "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent:row:00054"
+              ],
+              "supporting_artifact_ref_ids": [
+                "dsl-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2"
+              ],
+              "citation_locators": [
+                "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001",
+                "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028",
+                "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0055"
+              ],
+              "numeric_fields": {
+                "artifact_0_committed": 2169.0,
+                "artifact_0_on_time": 2108.0,
+                "artifact_0_rate_pct": 97.1876,
+                "artifact_0_record_count": 21.0,
+                "artifact_1_committed": 2493.0,
+                "artifact_1_on_time": 2374.0,
+                "artifact_1_rate_pct": 95.2266,
+                "artifact_1_record_count": 24.0
+              },
+              "uncertainty_note": "",
+              "status": "ready"
+            }
+          ],
+          "status": "ready",
+          "schema_version": "statebus.claim_set.v1"
+        },
+        "claim_set_hash": "8f78e097a2c440c39b8d2afa24d7bb31f1eea48eac7563f56dab62d90a049179",
+        "claim_validation": {
+          "ok": true,
+          "status": "ready",
+          "errors": []
+        }
+      }
+    ],
+    "candidate_review_records": [],
+    "dispatches": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "state": "COMPLETED",
+        "error_code": ""
+      }
+    ]
+  },
+  "runtime_error": null,
+  "executor_artifact": {
+    "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+    "step_id": "execute",
+    "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+    "verification_state": "candidate",
+    "row_count": 55
+  },
+  "summarizer_claim_sets": [
+    {
+      "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+      "task_id": "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent",
+      "claims": [
+        {
+          "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+          "claim_text": "{\"active_scope_rule\": \"R-NOV-SAMPLE-2026\", \"citations\": [\"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0055\"], \"covered_record_count\": 45, \"delta_pp\": -1.961, \"q1_committed\": 2169, \"q1_covered_record_count\": 21, \"q1_on_time\": 2108, \"q1_rate_pct\": 97.1876, \"q3_committed\": 2493, \"q3_covered_record_count\": 24, \"q3_on_time\": 2374, \"q3_rate_pct\": 95.2266}",
+          "claim_type": "fact",
+          "supporting_evidence_item_ids": [
+            "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent:row:00000",
+            "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent:row:00027",
+            "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent:row:00054"
+          ],
+          "supporting_artifact_ref_ids": [
+            "dsl-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_independent-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2"
+          ],
+          "citation_locators": [
+            "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001",
+            "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028",
+            "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0055"
+          ],
+          "numeric_fields": {
+            "artifact_0_committed": 2169.0,
+            "artifact_0_on_time": 2108.0,
+            "artifact_0_rate_pct": 97.1876,
+            "artifact_0_record_count": 21.0,
+            "artifact_1_committed": 2493.0,
+            "artifact_1_on_time": 2374.0,
+            "artifact_1_rate_pct": 95.2266,
+            "artifact_1_record_count": 24.0
+          },
+          "uncertainty_note": "",
+          "status": "ready"
+        }
+      ],
+      "status": "ready",
+      "schema_version": "statebus.claim_set.v1"
+    }
+  ],
+  "output": {
+    "active_scope_rule": "R-NOV-SAMPLE-2026",
+    "citations": [
+      "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001",
+      "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028",
+      "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0055"
+    ],
+    "covered_record_count": 45,
+    "delta_pp": -1.961,
+    "q1_committed": 2169,
+    "q1_covered_record_count": 21,
+    "q1_on_time": 2108,
+    "q1_rate_pct": 97.1876,
+    "q3_committed": 2493,
+    "q3_covered_record_count": 24,
+    "q3_on_time": 2374,
+    "q3_rate_pct": 95.2266
+  },
+  "metrics_delta": {
+    "schema_version": "statebus.vllm_prefix_cache_counter_delta.v2",
+    "available": true,
+    "valid": true,
+    "observed_query_token_delta": 13289.0,
+    "observed_hit_token_delta": 48.0,
+    "observed_token_hit_rate": 0.003612009933027316,
+    "counter_unit": "tokens",
+    "counter_series_digest": "51facd3b91d6aa225d0beb935ba357eb120446e2d855a515a5e85fee88a21cc9",
+    "unavailable_reason": "",
+    "service_lifetime_hit_rate_before": 0.19914102901218336,
+    "service_lifetime_hit_rate_after": 0.1271775555986374,
+    "sample_interval_ms": 38699.496402,
+    "exclusive_interval": true,
+    "pollution_detected": false,
+    "request_count": 2,
+    "retry_count": 0,
+    "window_scope": "task",
+    "claim_boundary": "task_window_token_counter_delta_only_for_matching_monotonic_labeled_counters_in_one_exclusive_retry_free_interval"
+  },
+  "mechanism_available": true,
+  "prefix_contract_ok": true,
+  "consumer_ttft_ms": 2221.136115,
+  "ttft_status": "measured_streaming",
+  "task_wall_ms": 38741.402095
+}

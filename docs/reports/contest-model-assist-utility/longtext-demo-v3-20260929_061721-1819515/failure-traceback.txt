@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/home/qcrs/statebus/os/statebus/benchmark/model_assist_utility/runner.py", line 3512, in run_execute
+    summary_payload = runner.run_live(phase=phase, smoke_only=mode == "smoke")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/qcrs/statebus/os/statebus/benchmark/model_assist_utility/runner.py", line 3177, in run_live
+    self.record({"event": "smoke_gate", "module": "kv", "passed": kv_gate_passed, "positions": [item["slot_id"] for item in gate_results]})
+                                                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/qcrs/statebus/os/statebus/benchmark/model_assist_utility/runner.py", line 3177, in <listcomp>
+    self.record({"event": "smoke_gate", "module": "kv", "passed": kv_gate_passed, "positions": [item["slot_id"] for item in gate_results]})
+                                                                                                ~~~~^^^^^^^^^^^
+KeyError: 'slot_id'

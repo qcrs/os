@@ -1,0 +1,307 @@
+{
+  "schema_version": "statebus.model_assist_utility.record.v1",
+  "suite_revision": "longtext-demo-v3",
+  "run_id": "longtext-demo-v3-20260929_061721-1819515",
+  "slot_id": "MU-NOVA-6K-CALIBRATION-DELIVERY:apc_on_shared",
+  "module": "apc",
+  "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+  "condition": "apc_on_shared",
+  "scored": false,
+  "warmup_namespace": "calibration-only",
+  "status": "completed",
+  "business_quality": "passed",
+  "quality_errors": [],
+  "layout": "shared",
+  "token_identity": {
+    "actual_role_lcp_tokens": 6222,
+    "actual_role_lcp_digest": "9eae0be1ad4c866b9d39d16b09ae1105366785aca3225695a7f3c4f267c623f6",
+    "compiled_prefix_tokens": 6220,
+    "compiled_prefix_digest": "6aa8ebe406ab5c6ad63567846716d83b2e4a7ccbfee281a31fea02415b89f32d",
+    "source_digest": "598ba3b7301d1f7f8b6f4aec011d15a48b1ee17de3af5761497678a98a932c4a",
+    "input_tokens_exact": 13513
+  },
+  "cache_namespace": "mu-a6ccbdb3aca9e0ff791cef136dbf7a5b",
+  "namespace_prefix_token_count": 6220,
+  "namespace_prefix_token_digest": "1a01c9909a2e88b7cac33781374be4f7e9a0dab4c4a9f10d254044e873bc8580",
+  "namespace_pair_contract": {
+    "different_values": true,
+    "equal_prefix_token_counts": true,
+    "condition_scoped": true
+  },
+  "shared_template_prefix_may_hit_across_conditions": true,
+  "role_visibility": {
+    "executor": "shared dossier plus executor suffix; Gold and final answer hidden",
+    "summarizer": "shared dossier plus verified artifact suffix; Gold hidden"
+  },
+  "provider_requests": [
+    {
+      "status": "response",
+      "request_wall_ms": 24896.179364,
+      "ttft_ms": 2705.522823,
+      "token_event_count": 451,
+      "usage": {
+        "prompt_tokens": 6781,
+        "completion_tokens": 452,
+        "total_tokens": 7233
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"operations\": [\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"status\",\n        \"value\": \"APPROVED\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"scope\",\n        \"value\": \"approved_sample_cohort\"\n      }\n    },\n    {\n      \"op\": \"filter_eq\",\n      \"arguments\": {\n        \"column\": \"effective_rule_id\",\n        \"value\": \"R-NOV-SAMPLE-2026\"\n      }\n    },\n    {\n      \"op\": \"filter_in\",\n      \"arguments\": {\n        \"column\": \"quarter\",\n        \"values\": [\"2026Q1\", \"2026Q3\"]\n      }\n    },\n    {\n      \"op\": \"aggregate_grouped\",\n      \"arguments\": {\n        \"group_fields\": [\"quarter\"],\n        \"value_fields\": [\"on_time_orders\", \"committed_orders\", \"on_time_orders\"],\n        \"functions\": [\"sum\", \"sum\", \"count\"],\n        \"outputs\": [\"on_time\", \"committed\", \"record_count\"]\n      }\n    },\n    {\n      \"op\": \"derive_safe\",\n      \"arguments\": {\n        \"calculations\": [\n          [\"rate_pct\", \"ratio\", \"on_time\", \"committed\", 100, 4]\n        ]\n      }\n    },\n    {\n      \"op\": \"select\",\n      \"arguments\": {\n        \"columns\": [\"quarter\", \"on_time\", \"committed\", \"record_count\", \"rate_pct\"]\n      }\n    }\n  ],\n  \"source_locators\": [\n    \"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0028\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0045\"\n  ]\n}",
+      "role": "executor",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+      "prompt_tokens_exact": 6781,
+      "prompt_token_digest": "58291869422143519e7550933a9e7dfe31b7e87c9da82c676c772aa07b90d2d4"
+    },
+    {
+      "status": "response",
+      "request_wall_ms": 11982.154011,
+      "ttft_ms": 280.618268,
+      "token_event_count": 239,
+      "usage": {
+        "prompt_tokens": 6732,
+        "completion_tokens": 240,
+        "total_tokens": 6972
+      },
+      "finish_reason": "stop",
+      "text": "{\n  \"q1_on_time\": 2108,\n  \"q1_committed\": 2169,\n  \"q1_rate_pct\": 97.1876,\n  \"q3_on_time\": 2374,\n  \"q3_committed\": 2493,\n  \"q3_rate_pct\": 95.2266,\n  \"delta_pp\": -1.961,\n  \"q1_covered_record_count\": 21,\n  \"q3_covered_record_count\": 24,\n  \"covered_record_count\": 45,\n  \"rule_id\": \"R-NOV-SAMPLE-2026\",\n  \"citations\": [\n    \"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\",\n    \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0025\"\n  ]\n}",
+      "role": "summarizer",
+      "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+      "prompt_tokens_exact": 6732,
+      "prompt_token_digest": "c60459f4c89e5f1e732c2018986e1f990fa9bfa1f17dada1f92cc7d1038e792f"
+    }
+  ],
+  "repair_requests": [],
+  "runtime": {
+    "execution_path": "RuntimeDriver.run_mode(adaptive_bounded)->AdaptiveMainlineRunner->AdaptiveRuntimeEngine->AdaptiveCapabilityDispatcher",
+    "runtime_completed": true,
+    "plan_replaced": false,
+    "approved_plan_hash": "dd06be02733b87d56a193ac3cf8b3502e3bab4ba11570704ef0a6d5c1a28f8cb",
+    "attempts": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "owner_role": "retriever",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "9f802e5a684c7900912f86808ff0f108e576dc41ead28397ba899061d291d6ee",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "e3d4e975a908f10d4860c9f5fe06d8a14ebf261fb8765813390015e1007d90ce",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "fe874c753bba9b29856b9a129c6136ca4037f32a36814d43100944e438fe3cf4"
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "owner_role": "executor",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "aceafb3a29884ee3835d90cbfd557e3f5d647601c4a680b142e19fc8f5c09bd5",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "e3d4e975a908f10d4860c9f5fe06d8a14ebf261fb8765813390015e1007d90ce",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "9b9500b32c4b882638468d524b3324b358383ad13b94c81f80eb7fc5d3282900"
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "owner_role": "summarizer",
+        "state": "COMPLETED",
+        "lifecycle_origin": "LOCAL_RUNTIME",
+        "resource_handle_count": 2,
+        "resource_handle_hash": "defee57e87e228a0b55c055ea2653e2ffc3788b150b5883e214a002a8b2174fb",
+        "workspace_dir_count": 1,
+        "workspace_dir_hash": "e3d4e975a908f10d4860c9f5fe06d8a14ebf261fb8765813390015e1007d90ce",
+        "validator_report_hash_count": 1,
+        "validator_report_hash_hash": "2efa79b6271289a92c45b8638d445e33c2af131f43a4a773729d12afb9ddd023"
+      }
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+        "verification_state": "candidate",
+        "row_count": 55
+      },
+      {
+        "artifact_id": "dsl-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "step_id": "execute",
+        "blob_hash": "cf501f388db7b60097f9cc0e1f1a724ee853f9bfc92744265ec530c95b61c4eb",
+        "verification_state": "verified",
+        "row_count": 2
+      },
+      {
+        "artifact_id": "claimset-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-summarize-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "step_id": "summarize",
+        "blob_hash": "ecbe7fa713187c311899e5725dec91333fa4d15c26c9bfe25681cc7787007a4e",
+        "verification_state": "verified",
+        "row_count": 1
+      }
+    ],
+    "artifact_verification_receipt_hashes": [
+      "7b5dc9f1711acb029fda6d017355d74933f8be6e46a7c630f820c2fe9f597d0d",
+      "b19c24593a8e730d2e76c7ba31874a11e85300619573a5bea985d25f072968d4"
+    ],
+    "claim_validation_reports": [
+      {
+        "claim_set": {
+          "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+          "task_id": "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared",
+          "claims": [
+            {
+              "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+              "claim_text": "{\"citations\": [\"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0025\"], \"covered_record_count\": 45, \"delta_pp\": -1.961, \"q1_committed\": 2169, \"q1_covered_record_count\": 21, \"q1_on_time\": 2108, \"q1_rate_pct\": 97.1876, \"q3_committed\": 2493, \"q3_covered_record_count\": 24, \"q3_on_time\": 2374, \"q3_rate_pct\": 95.2266, \"rule_id\": \"R-NOV-SAMPLE-2026\"}",
+              "claim_type": "fact",
+              "supporting_evidence_item_ids": [
+                "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared:fact:0000",
+                "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared:row:00000",
+                "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared:row:00024"
+              ],
+              "supporting_artifact_ref_ids": [
+                "dsl-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2"
+              ],
+              "citation_locators": [
+                "rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample",
+                "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001",
+                "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0025"
+              ],
+              "numeric_fields": {
+                "artifact_0_committed": 2169.0,
+                "artifact_0_on_time": 2108.0,
+                "artifact_0_rate_pct": 97.1876,
+                "artifact_0_record_count": 21.0,
+                "artifact_1_committed": 2493.0,
+                "artifact_1_on_time": 2374.0,
+                "artifact_1_rate_pct": 95.2266,
+                "artifact_1_record_count": 24.0
+              },
+              "uncertainty_note": "",
+              "status": "ready"
+            }
+          ],
+          "status": "ready",
+          "schema_version": "statebus.claim_set.v1"
+        },
+        "claim_set_hash": "ecbe7fa713187c311899e5725dec91333fa4d15c26c9bfe25681cc7787007a4e",
+        "claim_validation": {
+          "ok": true,
+          "status": "ready",
+          "errors": []
+        }
+      }
+    ],
+    "candidate_review_records": [],
+    "dispatches": [
+      {
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-1",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+        "state": "COMPLETED",
+        "error_code": ""
+      },
+      {
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+        "state": "COMPLETED",
+        "error_code": ""
+      }
+    ]
+  },
+  "runtime_error": null,
+  "executor_artifact": {
+    "artifact_id": "projection-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2",
+    "step_id": "execute",
+    "blob_hash": "3caa16b59cd23d3668e2bc561fb4a5d018dbc2179fef39492ee8b7a7fd964746",
+    "verification_state": "candidate",
+    "row_count": 55
+  },
+  "summarizer_claim_sets": [
+    {
+      "claim_set_id": "utility-claim-set-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+      "task_id": "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared",
+      "claims": [
+        {
+          "claim_id": "utility-claim-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-3",
+          "claim_text": "{\"citations\": [\"rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001\", \"ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0025\"], \"covered_record_count\": 45, \"delta_pp\": -1.961, \"q1_committed\": 2169, \"q1_covered_record_count\": 21, \"q1_on_time\": 2108, \"q1_rate_pct\": 97.1876, \"q3_committed\": 2493, \"q3_covered_record_count\": 24, \"q3_on_time\": 2374, \"q3_rate_pct\": 95.2266, \"rule_id\": \"R-NOV-SAMPLE-2026\"}",
+          "claim_type": "fact",
+          "supporting_evidence_item_ids": [
+            "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared:fact:0000",
+            "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared:row:00000",
+            "utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared:row:00024"
+          ],
+          "supporting_artifact_ref_ids": [
+            "dsl-utility-MU-NOVA-6K-CALIBRATION-DELIVERY_apc_on_shared-execute-adaptive-attempt-longtext-demo-v3-20260929_061721-1819515-2"
+          ],
+          "citation_locators": [
+            "rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample",
+            "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001",
+            "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0025"
+          ],
+          "numeric_fields": {
+            "artifact_0_committed": 2169.0,
+            "artifact_0_on_time": 2108.0,
+            "artifact_0_rate_pct": 97.1876,
+            "artifact_0_record_count": 21.0,
+            "artifact_1_committed": 2493.0,
+            "artifact_1_on_time": 2374.0,
+            "artifact_1_rate_pct": 95.2266,
+            "artifact_1_record_count": 24.0
+          },
+          "uncertainty_note": "",
+          "status": "ready"
+        }
+      ],
+      "status": "ready",
+      "schema_version": "statebus.claim_set.v1"
+    }
+  ],
+  "output": {
+    "citations": [
+      "rules/mu-nova-6k-calibration-delivery_active_scope_rules.json#R-2026-sample",
+      "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0001",
+      "ledger/mu-nova-6k-calibration-delivery_sample_ledger.json#row-0025"
+    ],
+    "covered_record_count": 45,
+    "delta_pp": -1.961,
+    "q1_committed": 2169,
+    "q1_covered_record_count": 21,
+    "q1_on_time": 2108,
+    "q1_rate_pct": 97.1876,
+    "q3_committed": 2493,
+    "q3_covered_record_count": 24,
+    "q3_on_time": 2374,
+    "q3_rate_pct": 95.2266,
+    "rule_id": "R-NOV-SAMPLE-2026"
+  },
+  "metrics_delta": {
+    "schema_version": "statebus.vllm_prefix_cache_counter_delta.v2",
+    "available": true,
+    "valid": true,
+    "observed_query_token_delta": 13513.0,
+    "observed_hit_token_delta": 6208.0,
+    "observed_token_hit_rate": 0.4594094575593873,
+    "counter_unit": "tokens",
+    "counter_series_digest": "941b73cfc5a35d6b5553fb0c7f69887e4f81eb60888f30b9b43637bd44afdad3",
+    "unavailable_reason": "",
+    "service_lifetime_hit_rate_before": 0.004741443176766928,
+    "service_lifetime_hit_rate_after": 0.23220169560549406,
+    "sample_interval_ms": 37068.477398,
+    "exclusive_interval": true,
+    "pollution_detected": false,
+    "request_count": 2,
+    "retry_count": 0,
+    "window_scope": "task",
+    "claim_boundary": "task_window_token_counter_delta_only_for_matching_monotonic_labeled_counters_in_one_exclusive_retry_free_interval"
+  },
+  "mechanism_available": true,
+  "prefix_contract_ok": true,
+  "consumer_ttft_ms": 280.618268,
+  "ttft_status": "measured_streaming",
+  "task_wall_ms": 37095.228243
+}

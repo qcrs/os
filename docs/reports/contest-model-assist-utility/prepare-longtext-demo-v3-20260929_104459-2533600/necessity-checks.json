@@ -1,0 +1,165 @@
+{
+  "schema_version": "statebus.model_assist_utility.necessity.v1",
+  "checks": [
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "remove_late_row_changes_covered_record_count",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "active_rule_changes_program_semantics",
+      "baseline_eligible_record_count": 29,
+      "changed_rule_eligible_record_count": 0,
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-4K-COST",
+      "check": "executor_and_summarizer_citations_resolve",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "remove_late_row_changes_covered_record_count",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "active_rule_changes_program_semantics",
+      "baseline_eligible_record_count": 30,
+      "changed_rule_eligible_record_count": 0,
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-4K-DELIVERY",
+      "check": "executor_and_summarizer_citations_resolve",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "remove_late_row_changes_covered_record_count",
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "active_rule_changes_program_semantics",
+      "baseline_eligible_record_count": 46,
+      "changed_rule_eligible_record_count": 0,
+      "passed": true
+    },
+    {
+      "case_id": "MU-ORION-6K-COST",
+      "check": "executor_and_summarizer_citations_resolve",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "remove_late_row_changes_covered_record_count",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "active_rule_changes_program_semantics",
+      "baseline_eligible_record_count": 46,
+      "changed_rule_eligible_record_count": 0,
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-DELIVERY",
+      "check": "executor_and_summarizer_citations_resolve",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+      "check": "remove_early_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+      "check": "remove_middle_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+      "check": "remove_late_relevant_row",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+      "check": "remove_late_row_changes_covered_record_count",
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+      "check": "active_rule_changes_program_semantics",
+      "baseline_eligible_record_count": 45,
+      "changed_rule_eligible_record_count": 0,
+      "passed": true
+    },
+    {
+      "case_id": "MU-NOVA-6K-CALIBRATION-DELIVERY",
+      "check": "executor_and_summarizer_citations_resolve",
+      "passed": true
+    }
+  ]
+}
