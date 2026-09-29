@@ -1,0 +1,94 @@
+{
+  "claimset-F01-summarize-adaptive-attempt-dsl-e11733e2a579-3": {
+    "claim_set_id": "claims-adaptive-attempt-dsl-e11733e2a579-3",
+    "task_id": "F01",
+    "claims": [
+      {
+        "claim_id": "0",
+        "claim_text": "cost_cny=510696 period=2026-01 profit_cny=97279 revenue_cny=607975 unit_id=U-A. U-A 2026-01: A partner promotion was active; rebates are already deducted from net revenue.",
+        "claim_type": "fact",
+        "supporting_evidence_item_ids": [
+          "ctx-notes_2026-01.md#U-A"
+        ],
+        "supporting_artifact_ref_ids": [
+          "dsl-F01-execute-adaptive-attempt-dsl-e11733e2a579-2"
+        ],
+        "citation_locators": [
+          "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-A', start_char=36, end_char=127, extractor_version='chunker-v1')"
+        ],
+        "numeric_fields": {
+          "cost_cny": 510696.0,
+          "profit_cny": 97279.0,
+          "revenue_cny": 607975.0
+        },
+        "uncertainty_note": "",
+        "status": "ready"
+      },
+      {
+        "claim_id": "1",
+        "claim_text": "cost_cny=471961 period=2026-01 profit_cny=140981 revenue_cny=612942 unit_id=U-B. U-B 2026-01: Expedited shipments increased fulfillment cost; figures include these invoices.",
+        "claim_type": "fact",
+        "supporting_evidence_item_ids": [
+          "ctx-notes_2026-01.md#U-B"
+        ],
+        "supporting_artifact_ref_ids": [
+          "dsl-F01-execute-adaptive-attempt-dsl-e11733e2a579-2"
+        ],
+        "citation_locators": [
+          "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-B', start_char=136, end_char=228, extractor_version='chunker-v1')"
+        ],
+        "numeric_fields": {
+          "cost_cny": 471961.0,
+          "profit_cny": 140981.0,
+          "revenue_cny": 612942.0
+        },
+        "uncertainty_note": "",
+        "status": "ready"
+      },
+      {
+        "claim_id": "2",
+        "claim_text": "cost_cny=507127 period=2026-01 profit_cny=111326 revenue_cny=618453 unit_id=U-C. U-C 2026-01: Supplier prices changed during the month; contract renewal remains under review.",
+        "claim_type": "fact",
+        "supporting_evidence_item_ids": [
+          "ctx-notes_2026-01.md#U-C"
+        ],
+        "supporting_artifact_ref_ids": [
+          "dsl-F01-execute-adaptive-attempt-dsl-e11733e2a579-2"
+        ],
+        "citation_locators": [
+          "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-C', start_char=237, end_char=330, extractor_version='chunker-v1')"
+        ],
+        "numeric_fields": {
+          "cost_cny": 507127.0,
+          "profit_cny": 111326.0,
+          "revenue_cny": 618453.0
+        },
+        "uncertainty_note": "",
+        "status": "ready"
+      },
+      {
+        "claim_id": "3",
+        "claim_text": "cost_cny=431382 period=2026-01 profit_cny=193815 revenue_cny=625197 unit_id=U-D. U-D 2026-01: Direct-channel orders increased; no revenue recognition policy changed.",
+        "claim_type": "fact",
+        "supporting_evidence_item_ids": [
+          "ctx-notes_2026-01.md#U-D"
+        ],
+        "supporting_artifact_ref_ids": [
+          "dsl-F01-execute-adaptive-attempt-dsl-e11733e2a579-2"
+        ],
+        "citation_locators": [
+          "TextSpanLocator(locator_type='text_span', source_doc_hash='59e32148bb9b4f4818975bd59ca6ab6bf6ef67371a25e387b6a60143dbde5b52', canonical_text_id='notes_2026-01.md#U-D', start_char=339, end_char=423, extractor_version='chunker-v1')"
+        ],
+        "numeric_fields": {
+          "cost_cny": 431382.0,
+          "profit_cny": 193815.0,
+          "revenue_cny": 625197.0
+        },
+        "uncertainty_note": "",
+        "status": "ready"
+      }
+    ],
+    "status": "ready",
+    "schema_version": "statebus.claim_set.v1"
+  }
+}

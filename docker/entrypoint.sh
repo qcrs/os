@@ -16,6 +16,6 @@ mkdir -p \
   "${STATEBUS_WORK_DIR}" \
   "${STATEBUS_WORKSPACES_DIR}"
 
-cd /workspace/statebus/project
+cd /workspace/statebus/os
 
 exec "$@"

@@ -10,17 +10,17 @@ Artifact truth.
 
 Production:
 
-- `statebus/contracts/artifact.py`
-- `statebus/contracts/__init__.py`
-- `statebus/runtime/artifact_verification.py`
-- `statebus/runtime/__init__.py`
-- `statebus/runtime/workspace.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/runtime/adaptive_mainline.py`
-- `statebus/runtime/transform_dsl.py`
-- `statebus/runtime/evidence_projection.py`
-- `statebus/runtime/llm_codeact.py`
+- `src/statebus/contracts/artifact.py`
+- `src/statebus/contracts/__init__.py`
+- `src/statebus/runtime/artifact_verification.py`
+- `src/statebus/runtime/__init__.py`
+- `src/statebus/runtime/workspace.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/runtime/adaptive_mainline.py`
+- `src/statebus/runtime/transform_dsl.py`
+- `src/statebus/runtime/evidence_projection.py`
+- `src/statebus/runtime/llm_codeact.py`
 
 Tests:
 
@@ -107,9 +107,9 @@ Runtime gate outside this Slice.
 ## Tests actually run
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
-STATEBUS_LLM_CONFIG_FILE=/home/qcrs/statebus/os/deploy/statebus_llm.yaml.local
-PYTHONPATH=/home/qcrs/statebus/os
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
+STATEBUS_LLM_CONFIG_FILE=/home/qcrs/src/statebus/os/deploy/statebus_llm.yaml.local
+PYTHONPATH=/home/qcrs/src/statebus/os
 PYTHONDONTWRITEBYTECODE=1
 
 python -m pytest -q tests/test_mrr_08_artifact_truth.py

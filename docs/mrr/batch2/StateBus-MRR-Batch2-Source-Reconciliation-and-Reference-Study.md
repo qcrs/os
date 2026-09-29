@@ -30,11 +30,11 @@ branch: feat/mrr-04-capability-provider-binding
 ### Files
 
 ```text
-statebus/control/messages.py
-statebus/control/schema.py
-statebus/control/statebus_control.proto
-statebus/control/transport.py
-statebus/control/subprocess_worker.py
+src/statebus/control/messages.py
+src/statebus/control/schema.py
+src/statebus/control/statebus_control.proto
+src/statebus/control/transport.py
+src/statebus/control/subprocess_worker.py
 ```
 
 ### Typed protocol

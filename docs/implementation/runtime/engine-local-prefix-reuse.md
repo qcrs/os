@@ -234,7 +234,7 @@ Formal 25-case 质量检查中 L0、L1、L2、L3 均为 `25/25`。40 个专项�
 原始汇总位于：
 
 ```text
-/home/qcrs/statebus/runs/targeted_prefix_alignment_repeats_json_contract_20260714/repeat_summary.json
+/home/qcrs/src/statebus/runs/targeted_prefix_alignment_repeats_json_contract_20260714/repeat_summary.json
 ```
 
 ## 运行状态处理
@@ -255,17 +255,17 @@ canonical intersection 只序列化 Executor 与 Summarizer 已共同获权且 d
 
 | 文件 | 职责 |
 |:--|:--|
-| `statebus/contracts/prefix.py` | 标准前缀、精确 Token 身份、意图和观测合同 |
-| `statebus/runtime/prefix_identity.py` | 可见性交集、稳定渲染、Token LCP 与 block 对齐 |
-| `statebus/runtime/role_path.py` | 共同信封、后缀编译和最终请求审计 |
-| `statebus/runtime/smoke.py` | 运行时共同前缀、metrics 窗口和审计落盘 |
-| `statebus/runtime/vllm_metrics.py` | Prometheus counter 解析与前后窗口 delta |
-| `statebus/runtime/prefix_feedback.py` | 预测值与观测值的滑动窗口校准 |
-| `statebus/benchmark/kv_prefix_schedule.py` | 依赖感知的语料亲和调度 |
-| `statebus/benchmark/kv_prefix_experiment.py` | Shared/Independent 对照实验 |
+| `src/statebus/contracts/prefix.py` | 标准前缀、精确 Token 身份、意图和观测合同 |
+| `src/statebus/runtime/prefix_identity.py` | 可见性交集、稳定渲染、Token LCP 与 block 对齐 |
+| `src/statebus/runtime/role_path.py` | 共同信封、后缀编译和最终请求审计 |
+| `src/statebus/runtime/smoke.py` | 运行时共同前缀、metrics 窗口和审计落盘 |
+| `src/statebus/runtime/vllm_metrics.py` | Prometheus counter 解析与前后窗口 delta |
+| `src/statebus/runtime/prefix_feedback.py` | 预测值与观测值的滑动窗口校准 |
+| `src/statebus/benchmark/kv_prefix_schedule.py` | 依赖感知的语料亲和调度 |
+| `src/statebus/benchmark/kv_prefix_experiment.py` | Shared/Independent 对照实验 |
 
-回归测试集中在 `tests/test_prefix_render_identity.py`、
+回归测试集中在 `tests/unit/mechanisms/test_prefix_render_identity.py`、
 `tests/test_prefix_dependency_schedule.py`、`tests/test_prefix_metrics_observation.py`、
-`tests/test_prefix_feedback.py` 和 `tests/test_kv_prefix_control_plane.py`。
+`tests/test_prefix_feedback.py` 和 `tests/benchmarks/mechanisms/test_kv_prefix_control_plane.py`。
 
 Prefix、Logit 与显式 KV 在主链中的位置见[模型侧状态路径](model-state-paths.md)。

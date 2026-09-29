@@ -29,16 +29,16 @@ Worker 租约和异常隔离均形成可观察事实。
 
 | 模块 | 主要实现 | 进程内责任 |
 |:--|:--|:--|
-| 任务编译 | [`compiler.py`](../../../statebus/runtime/compiler.py) | 规范化任务并拒绝不合格 formal 输入 |
-| 计划与调度 | [`plan_policy.py`](../../../statebus/runtime/plan_policy.py)、[`adaptive_dispatcher.py`](../../../statebus/runtime/adaptive_dispatcher.py) | 批准计划、路由 capability、构造角色输入 |
-| Worker 会话 | [`driver.py`](../../../statebus/runtime/driver.py)、[`supervisor.py`](../../../statebus/runtime/supervisor.py) | 管理 step/attempt、超时、终态和 GC |
-| 控制传输 | [`messages.py`](../../../statebus/control/messages.py)、[`transport.py`](../../../statebus/control/transport.py) | Protobuf 编解码、长度帧、UDS 收发 |
-| 状态存储 | [`store.py`](../../../statebus/state/store.py)、[`semantic_state.py`](../../../statebus/state/semantic_state.py) | 选择载体、发布/解析数值状态、管理 lease |
-| 模型侧布局 | [`prefix_identity.py`](../../../statebus/runtime/prefix_identity.py)、[`role_path.py`](../../../statebus/runtime/role_path.py) | 共同证据交集、position-0 prompt、exact-token identity |
-| 显式 KV sideband | [`statebus/integrations/vllm_kv`](../../../statebus/integrations/vllm_kv/) | loopback 私有 API、paged KV capture/load、bounded registry |
-| 产物工作区 | [`workspace.py`](../../../statebus/runtime/workspace.py) | attempt 隔离目录、候选产物和生命周期 |
-| 记忆索引 | [`statebus/memory`](../../../statebus/memory/) | metadata/FTS、向量、兼容与提交 |
-| 事实记录 | [`telemetry.py`](../../../statebus/runtime/telemetry.py)、[`ledger.py`](../../../statebus/runtime/ledger.py) | 事件、指标、Replay 决策与关联摘要 |
+| 任务编译 | [`compiler.py`](../../../src/statebus/runtime/compiler.py) | 规范化任务并拒绝不合格 formal 输入 |
+| 计划与调度 | [`plan_policy.py`](../../../src/statebus/runtime/plan_policy.py)、[`adaptive_dispatcher.py`](../../../src/statebus/runtime/adaptive_dispatcher.py) | 批准计划、路由 capability、构造角色输入 |
+| Worker 会话 | [`driver.py`](../../../src/statebus/runtime/driver.py)、[`supervisor.py`](../../../src/statebus/runtime/supervisor.py) | 管理 step/attempt、超时、终态和 GC |
+| 控制传输 | [`messages.py`](../../../src/statebus/control/messages.py)、[`transport.py`](../../../src/statebus/control/transport.py) | Protobuf 编解码、长度帧、UDS 收发 |
+| 状态存储 | [`store.py`](../../../src/statebus/state/store.py)、[`semantic_state.py`](../../../src/statebus/state/semantic_state.py) | 选择载体、发布/解析数值状态、管理 lease |
+| 模型侧布局 | [`prefix_identity.py`](../../../src/statebus/runtime/prefix_identity.py)、[`role_path.py`](../../../src/statebus/runtime/role_path.py) | 共同证据交集、position-0 prompt、exact-token identity |
+| 显式 KV sideband | [`src/statebus/integrations/vllm_kv`](../../../src/statebus/integrations/vllm_kv/) | loopback 私有 API、paged KV capture/load、bounded registry |
+| 产物工作区 | [`workspace.py`](../../../src/statebus/runtime/workspace.py) | attempt 隔离目录、候选产物和生命周期 |
+| 记忆索引 | [`src/statebus/memory`](../../../src/statebus/memory/) | metadata/FTS、向量、兼容与提交 |
+| 事实记录 | [`telemetry.py`](../../../src/statebus/runtime/telemetry.py)、[`ledger.py`](../../../src/statebus/runtime/ledger.py) | 事件、指标、Replay 决策与关联摘要 |
 
 数据载体按对象生命周期选择。`DENSE_SEMANTIC_STATE` 和 `EMBEDDING_STATE` 默认偏向 shared memory，适合短期同机跨进程读取；EvidencePack、HydrateManifest、MemoryMatch 和 MemoryCommit 偏向 CAS sidecar/mmap，便于 hash 与回放；ExecutionArtifact 进入 workspace root，只有验证后才可能复制或登记为长期对象。
 

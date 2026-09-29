@@ -1,6 +1,6 @@
 # Run 事实重建与访问控制
 
-Studio 的动态流程来自真实 Run。[`task_flow.py`](../../../statebus/studio/task_flow.py) 在指定
+Studio 的动态流程来自真实 Run。[`task_flow.py`](../../../src/statebus/studio/task_flow.py) 在指定
 Run 根目录中发现 case `summary.json` 与 `planner_trace.json`，把 Runtime 已写出的对象重建为
 `TaskFlow`。完整 summary 提供终态视图，运行中的 Planner trace 提供已批准计划。
 
@@ -39,7 +39,7 @@ recipe 配置。子进程通过 `create_subprocess_exec` 启动。
 和 accent，执行命令由服务端固定映射。
 
 固定证据与实时 Run 分开存储。`/evidence/current` 读取
-[`evidence_snapshot_20260726.json`](../../../statebus/studio/data/evidence_snapshot_20260726.json)，
+[`evidence_snapshot_20260726.json`](../../../src/statebus/studio/data/evidence_snapshot_20260726.json)，
 Live 页读取 `$STATEBUS_STUDIO_RUNS_DIR/<run-id>`。Run 完成后保留独立运行目录，证据快照通过
 发布步骤更新。
 

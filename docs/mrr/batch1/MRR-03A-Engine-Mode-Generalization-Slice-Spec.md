@@ -79,11 +79,11 @@ The current source does not show a technical need for a second engine.
 ## 4. Exact Source Files to Read
 
 ```text
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/session.py
-statebus/runtime/supervisor.py
-statebus/runtime/driver.py
-statebus/contracts/adaptive.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/session.py
+src/statebus/runtime/supervisor.py
+src/statebus/runtime/driver.py
+src/statebus/contracts/adaptive.py
 tests/test_adaptive_driver.py
 tests/test_adaptive_mainline_integration.py
 ```
@@ -91,8 +91,8 @@ tests/test_adaptive_mainline_integration.py
 Read for compatibility but do not modify:
 
 ```text
-statebus/runtime/smoke.py
-statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/smoke.py
+src/statebus/runtime/adaptive_mainline.py
 ```
 
 unless request mode validation is factored in a narrowly scoped change.
@@ -104,14 +104,14 @@ unless request mode validation is factored in a narrowly scoped change.
 Primary production:
 
 ```text
-MODIFY statebus/runtime/adaptive_runtime.py
-MODIFY statebus/runtime/driver.py
+MODIFY src/statebus/runtime/adaptive_runtime.py
+MODIFY src/statebus/runtime/driver.py
 ```
 
 Conditional:
 
 ```text
-MODIFY statebus/runtime/adaptive_mainline.py
+MODIFY src/statebus/runtime/adaptive_mainline.py
 ```
 
 only if a shared mode-validation helper is required.

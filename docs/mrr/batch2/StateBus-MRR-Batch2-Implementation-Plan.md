@@ -120,53 +120,53 @@ Execution can happen more than once. Commit/admission must be at-most-one-curren
 
 ## 5. File-Level Reconciliation Map
 
-### `statebus/control/messages.py`
+### `src/statebus/control/messages.py`
 `EXTEND`
 
 Add Batch 2 header fields; strict identity helpers only if required.
 
-### `statebus/control/statebus_control.proto`
+### `src/statebus/control/statebus_control.proto`
 `EXTEND`
 
 Additive field numbers only.
 
-### `statebus/control/schema.py`
+### `src/statebus/control/schema.py`
 `EXTEND`
 
 Mirror new additive fields for current dynamic schema mechanism.
 Do not redesign codegen in the same slice.
 
-### `statebus/control/subprocess_worker.py`
+### `src/statebus/control/subprocess_worker.py`
 `EXTEND`
 
 Reject missing required invocation scope; echo request scope; do not become the Runtime authority.
 
-### `statebus/control/transport.py`
+### `src/statebus/control/transport.py`
 `EXTEND` in 05B/06B only
 
 Use response admission; represent local transport timeout as transport outcome, not fake worker result.
 
-### `statebus/control/admission.py`
+### `src/statebus/control/admission.py`
 `ADD` in 05B
 
 Small, explicit physical response validator/receipt.
 
-### `statebus/runtime/adaptive_dispatcher.py`
+### `src/statebus/runtime/adaptive_dispatcher.py`
 `EXTEND`
 
 Construct physical request from Runtime/BoundGrant scope and consume only admitted response.
 
-### `statebus/runtime/adaptive_runtime.py`
+### `src/statebus/runtime/adaptive_runtime.py`
 `EXTEND`
 
 Pass exact Runtime identity to physical construction as needed; activate/settle Attempts; remove synthetic ACK/RUN_START; enforce result admission.
 
-### `statebus/runtime/session.py`
+### `src/statebus/runtime/session.py`
 `EXTEND` in 06A/06B
 
 Own active attempt per Step and atomic-ish activation/settlement invariants.
 
-### `statebus/runtime/supervisor.py`
+### `src/statebus/runtime/supervisor.py`
 `REFACTOR` narrowly in 06A
 
 Attempt-scoped operational key instead of step-only key.
@@ -174,10 +174,10 @@ Attempt-scoped operational key instead of step-only key.
 ### DO NOT TOUCH
 
 ```text
-statebus/state/**
-statebus/memory/**
-statebus/runtime/workspace.py
-statebus/runtime/replay.py
+src/statebus/state/**
+src/statebus/memory/**
+src/statebus/runtime/workspace.py
+src/statebus/runtime/replay.py
 deploy/**
 docker/**
 scripts/**
@@ -401,7 +401,7 @@ No Slice may depend on a hidden manual migration.
 Codex must stop and report `DESIGN_CONFLICT` if any of the following appears:
 
 1. Current branch source differs materially from `a8345d60f3a6e7078dda22e271e9d1ab02a931fd` in a touched authority seam.
-2. A required change needs modifying `statebus/state/**`, `statebus/memory/**`, artifact/replay, scheduler or deployment.
+2. A required change needs modifying `src/statebus/state/**`, `src/statebus/memory/**`, artifact/replay, scheduler or deployment.
 3. The only way to pass tests is to synthesize missing identity/ACK/result.
 4. Supporting compatibility requires accepting a request with unknown/missing Batch 2 authority fields on the canonical path.
 5. A generic event/scheduler/plugin framework becomes “necessary” without a concrete source call site.

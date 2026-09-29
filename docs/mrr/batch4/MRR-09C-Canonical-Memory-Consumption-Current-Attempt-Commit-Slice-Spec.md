@@ -133,10 +133,10 @@ The strict/history `runtime/replay.py` lane remains non-canonical.
 ## Likely production files
 
 ```text
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/adaptive_runtime.py
-statebus/memory/models.py
-statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/memory/models.py
+src/statebus/runtime/adaptive_mainline.py
 ```
 
 ## Non-goals

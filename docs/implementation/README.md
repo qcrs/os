@@ -1,6 +1,6 @@
 # StateBus 实现手册
 
-本手册对应当前 `statebus/` 源码，说明对象、调用、存储、验证和恢复流程。实验总览回答
+本手册对应当前 `src/statebus/` 源码，说明对象、调用、存储、验证和恢复流程。实验总览回答
 “结果是多少”，这里回答“请求经过哪些模块、状态如何取得下游资格、证据落在哪里”。
 
 ## 系统总图
@@ -163,11 +163,11 @@ one-shot 消费和显式释放。
 
 实现事实以当前源码和测试为准：
 
-- [`statebus/runtime`](../../statebus/runtime/)：编译、调度、Gate、执行、重放和遥测；
-- [`statebus/control`](../../statebus/control/)：typed Protobuf、UDS 和 Worker transport；
-- [`statebus/state`](../../statebus/state/) 与 [`statebus/refs`](../../statebus/refs/)：物理状态、Ref 和生命周期；
-- [`statebus/integrations/vllm_kv`](../../statebus/integrations/vllm_kv/)：显式 KV sideband；
-- [`statebus/memory`](../../statebus/memory/)：检索、兼容和提交；
+- [`src/statebus/runtime`](../../src/statebus/runtime/)：编译、调度、Gate、执行、重放和遥测；
+- [`src/statebus/control`](../../src/statebus/control/)：typed Protobuf、UDS 和 Worker transport；
+- [`src/statebus/state`](../../src/statebus/state/) 与 [`src/statebus/refs`](../../src/statebus/refs/)：物理状态、Ref 和生命周期；
+- [`src/statebus/integrations/vllm_kv`](../../src/statebus/integrations/vllm_kv/)：显式 KV sideband；
+- [`src/statebus/memory`](../../src/statebus/memory/)：检索、兼容和提交；
 - [`tests`](../../tests/)：合同和行为回归。
 
 实验数字按各自任务和统计分母记录：

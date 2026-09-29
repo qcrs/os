@@ -40,7 +40,7 @@ services:
     environment:
       HOME: /statebus/home
       PROJECT_ROOT: /workspace/statebus/os
-      PYTHONPATH: /workspace/statebus/os
+      PYTHONPATH: /workspace/statebus/os/src
       STATEBUS_HOME: /statebus
       STATEBUS_ENV_PREFIX: container-python
       STATEBUS_MODELS_DIR: /statebus/models

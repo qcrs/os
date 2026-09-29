@@ -32,7 +32,11 @@ statebus-benchmark = "statebus.benchmark.live_runner:main"
 include-package-data = true
 py-modules = []
 
+[tool.setuptools.package-dir]
+"" = "src"
+
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["statebus*"]
 
 [tool.setuptools.package-data]

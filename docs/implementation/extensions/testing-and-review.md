@@ -5,30 +5,26 @@ StateBus 将合同、控制面、状态、模型侧复用、执行、记忆和�
 
 | 模块 | 回归入口 |
 |:--|:--|
-| TaskSpec / Ref 合同 | `test_contracts_and_refs.py`、`test_adaptive_contracts.py`、`test_runtime_and_benchmark.py` |
-| PlanPolicy / capability | `test_adaptive_planner_policy.py`、`test_adaptive_capability_surface.py`、`test_adaptive_mainline_integration.py` |
-| Protobuf / UDS / subprocess | `test_control_plane.py`、`test_uds_loopback.py`、`test_subprocess_executor.py` |
-| SemanticState / backend | `test_state_materialization.py`、`test_embedding_state_consumer.py`、`test_control_plane.py` |
-| LogitState / Retry Gate | `test_logit_state.py`、`test_logit_gate.py`、`test_logit_retry_challenge.py` |
-| Prefix layout / identity / observation | `test_prefix_render_identity.py`、`test_prefix_dependency_schedule.py`、`test_prefix_metrics_observation.py`、`test_prefix_feedback.py`、`test_kv_prefix_control_plane.py` |
-| 显式 KV contract / Worker / 主链接入 | `test_engine_local_kv_*.py`；至少覆盖 registry/connector、middleware/client、Worker extension、role client、task compiler 与 suite aggregation |
-| Hydration / retrieval | `test_provenance_and_evidence.py`、`test_retrieval_pipeline.py`、`test_evidence_projection.py` |
-| Memory / Replay | `test_memory_store.py`、`test_hybrid_memory_query.py`、`test_memory_runtime.py`、`test_replay.py` |
-| CodeAct | `test_llm_codeact_policy.py`、`test_llm_codeact_sandbox.py`、`test_adaptive_codeact_integration.py` |
-| Transform DSL | `test_transform_dsl.py`、相关 capability validator 测试 |
-| Telemetry / metrics | `test_metric_aggregation.py`、`test_runtime_persistence_breakdown.py` |
-| Studio | `test_studio_api.py`，前端 `npm run typecheck` 与 `npm run build` |
+| TaskSpec / Ref 合同 | `tests/unit/contracts/test_contracts_and_refs.py` |
+| Runtime identity / lifecycle | `tests/unit/runtime/test_runtime_identity.py`、`test_runtime_session_and_ledger.py` |
+| Protobuf / subprocess | `tests/unit/runtime/test_control_plane.py`、`test_subprocess_executor.py` |
+| Semantic state / memory / replay | `tests/unit/runtime/test_state_materialization.py`、`tests/unit/memory/test_memory_runtime.py`、`tests/unit/runtime/test_replay.py`、`test_replay_gate.py` |
+| CodeAct | `tests/unit/codeact/test_llm_codeact_policy.py`、`test_llm_codeact_sandbox.py` |
+| Transform DSL | `tests/unit/runtime/test_transform_dsl.py` |
+| Logit / Prefix / KV | `tests/unit/mechanisms/test_logit_state.py`、`test_logit_gate.py`、`test_prefix_render_identity.py`、`test_engine_local_kv_role_client.py` |
+| Mainline / Studio integration | `tests/integration/runtime/test_adaptive_driver.py`、`test_adaptive_dispatcher.py`、`test_fixed_canonical_mainline.py`、`tests/integration/studio/test_studio_api.py` |
+| Utility / mechanism benchmark contracts | `tests/benchmarks/utility/`、`tests/benchmarks/mechanisms/` |
 
 常用 deterministic 入口：
 
 ```bash
 source deploy/activate_statebus_host.sh
-python -m pytest -q tests/test_control_plane.py tests/test_contracts_and_refs.py
-python -m pytest -q tests/test_prefix_render_identity.py tests/test_prefix_metrics_observation.py
-python -m pytest -q tests/test_engine_local_kv_role_client.py tests/test_engine_local_kv_registry_connector.py
-python -m pytest -q tests/test_studio_api.py
+python -m pytest -q tests/unit/runtime/test_control_plane.py tests/unit/contracts/test_contracts_and_refs.py
+python -m pytest -q tests/unit/mechanisms/test_prefix_render_identity.py tests/unit/mechanisms/test_logit_gate.py
+python -m pytest -q tests/unit/mechanisms/test_engine_local_kv_role_client.py
+python -m pytest -q tests/integration/studio/test_studio_api.py
 
-cd studio-ui
+cd src/studio-ui
 npm run typecheck
 npm run build
 ```

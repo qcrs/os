@@ -32,26 +32,26 @@ issue a grant, create an Attempt, or replace Runtime authority.
 - `deploy/activate_statebus_host.sh`
 - `deploy/activate_statebus_local_vllm_profile.sh`
 - `scripts/vllm/start_qwen3_32b.sh`
-- `/home/qcrs/statebus/project/docs/reference/题目.md`
+- `/home/qcrs/src/statebus/project/docs/reference/题目.md`
 - `docs/mrr/batch2/StateBus-MRR-Batch2-Readiness-Review.md`
 - `docs/mrr/batch2/StateBus-MRR-Batch2-Implementation-Plan.md`
 - `docs/mrr/batch2/MRR-05B-Physical-Response-Correlation-Admission-Slice-Spec.md`
-- `statebus/control/messages.py`
-- `statebus/control/transport.py`
-- `statebus/control/subprocess_worker.py`
-- `statebus/control/__init__.py`
-- `statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/control/messages.py`
+- `src/statebus/control/transport.py`
+- `src/statebus/control/subprocess_worker.py`
+- `src/statebus/control/__init__.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
 - Relevant subprocess, control-plane, invocation-wire, and adaptive integration tests.
 
 ## Files changed
 
 Production:
 
-- Added `statebus/control/admission.py`.
-- Modified `statebus/control/__init__.py` for admission exports.
-- Modified `statebus/control/transport.py` to admit a complete response sequence
+- Added `src/statebus/control/admission.py`.
+- Modified `src/statebus/control/__init__.py` for admission exports.
+- Modified `src/statebus/control/transport.py` to admit a complete response sequence
   before returning it.
-- Modified `statebus/runtime/adaptive_dispatcher.py` to retain admission receipts
+- Modified `src/statebus/runtime/adaptive_dispatcher.py` to retain admission receipts
   and require one admitted terminal before semantic selection consumption.
 
 Tests:
@@ -106,7 +106,7 @@ source ./deploy/activate_statebus_host.sh
 Final focused set:
 
 ```text
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m pytest -q \
   --basetemp=/tmp/mrr-05b-final \
   tests/test_control_response_admission.py \
   tests/test_subprocess_executor.py \

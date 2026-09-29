@@ -56,4 +56,4 @@ CapabilityGrant；未通过项返回对应类型、状态、路径、hash 或授
 Prefix hit 与显式 KV load 也使用独立指标。Prefix 记录任务窗口内 APC query/hit Token counter
 delta；显式 KV 记录 capture/load/release、scheduler proof 和 Worker forward proof。
 
-主要模型位于 [`statebus/refs/models.py`](../../../statebus/refs/models.py)、[`statebus/contracts/models.py`](../../../statebus/contracts/models.py)、[`statebus/contracts/logit.py`](../../../statebus/contracts/logit.py)、[`statebus/contracts/prefix.py`](../../../statebus/contracts/prefix.py)、[`statebus/contracts/engine_local_kv.py`](../../../statebus/contracts/engine_local_kv.py) 和 [`statebus/memory/models.py`](../../../statebus/memory/models.py)。
+主要模型位于 [`src/statebus/refs/models.py`](../../../src/statebus/refs/models.py)、[`src/statebus/contracts/models.py`](../../../src/statebus/contracts/models.py)、[`src/statebus/contracts/logit.py`](../../../src/statebus/contracts/logit.py)、[`src/statebus/contracts/prefix.py`](../../../src/statebus/contracts/prefix.py)、[`src/statebus/contracts/engine_local_kv.py`](../../../src/statebus/contracts/engine_local_kv.py) 和 [`src/statebus/memory/models.py`](../../../src/statebus/memory/models.py)。

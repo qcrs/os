@@ -56,12 +56,12 @@ statebus.runtime.adaptive_runtime.AdaptiveRuntimeEngine.run
 ## Files to read
 
 ```text
-statebus/runtime/session.py
-statebus/runtime/supervisor.py
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_dispatcher.py
-statebus/control/transport.py
-statebus/control/subprocess_worker.py
+src/statebus/runtime/session.py
+src/statebus/runtime/supervisor.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/control/transport.py
+src/statebus/control/subprocess_worker.py
 ```
 
 ## Expected production files changed
@@ -69,9 +69,9 @@ statebus/control/subprocess_worker.py
 Preferred:
 
 ```text
-statebus/runtime/session.py
-statebus/runtime/supervisor.py
-statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/session.py
+src/statebus/runtime/supervisor.py
+src/statebus/runtime/adaptive_runtime.py
 ```
 
 Potentially `adaptive_dispatcher.py` only if a small lifecycle observer hook is required.

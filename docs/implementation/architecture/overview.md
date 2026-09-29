@@ -88,4 +88,4 @@ flowchart TB
 `SemanticStateRef` 语义一致的情况下从 shared memory 切换到 mmap；Executor 新增 DSL 操作时，
 CapabilityGrant 和 Artifact Validator 继续执行原有职责。
 
-相关源码入口：[`statebus/runtime`](../../../statebus/runtime/)、[`statebus/control`](../../../statebus/control/)、[`statebus/state`](../../../statebus/state/)、[`statebus/memory`](../../../statebus/memory/) 和 [`statebus/integrations/vllm_kv`](../../../statebus/integrations/vllm_kv/)。模型侧四条路径的职责见[模型侧状态路径](../runtime/model-state-paths.md)。
+相关源码入口：[`src/statebus/runtime`](../../../src/statebus/runtime/)、[`src/statebus/control`](../../../src/statebus/control/)、[`src/statebus/state`](../../../src/statebus/state/)、[`src/statebus/memory`](../../../src/statebus/memory/) 和 [`src/statebus/integrations/vllm_kv`](../../../src/statebus/integrations/vllm_kv/)。模型侧四条路径的职责见[模型侧状态路径](../runtime/model-state-paths.md)。

@@ -82,8 +82,8 @@ Static recipe compilation should not be added into this LLM-heavy class.
 Two explicit topology helpers exist:
 
 ```text
-statebus/runtime/driver.py::build_default_workflow
-statebus/runtime/smoke.py::_workflow_template
+src/statebus/runtime/driver.py::build_default_workflow
+src/statebus/runtime/smoke.py::_workflow_template
 ```
 
 and `run_smoke()` has additional implicit sequencing.
@@ -107,16 +107,16 @@ Therefore provenance is incomplete even though final policy validation still occ
 ## 4. Exact Source Files to Read
 
 ```text
-statebus/runtime/compiler.py
-statebus/runtime/role_path.py
-statebus/runtime/adaptive_plan_compiler.py
-statebus/runtime/plan_policy.py
-statebus/runtime/adaptive_mainline.py
-statebus/runtime/domain_packs.py
-statebus/runtime/driver.py
-statebus/runtime/smoke.py
-statebus/contracts/adaptive.py
-statebus/contracts/__init__.py
+src/statebus/runtime/compiler.py
+src/statebus/runtime/role_path.py
+src/statebus/runtime/adaptive_plan_compiler.py
+src/statebus/runtime/plan_policy.py
+src/statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/domain_packs.py
+src/statebus/runtime/driver.py
+src/statebus/runtime/smoke.py
+src/statebus/contracts/adaptive.py
+src/statebus/contracts/__init__.py
 tests/test_adaptive_planner_policy.py
 tests/test_adaptive_mainline_integration.py
 ```
@@ -128,17 +128,17 @@ tests/test_adaptive_mainline_integration.py
 Primary production files:
 
 ```text
-ADD    statebus/runtime/static_role_recipe.py
-ADD    statebus/contracts/plan_provenance.py
-MODIFY statebus/contracts/__init__.py
-MODIFY statebus/runtime/adaptive_mainline.py
-MODIFY statebus/runtime/plan_policy.py
+ADD    src/statebus/runtime/static_role_recipe.py
+ADD    src/statebus/contracts/plan_provenance.py
+MODIFY src/statebus/contracts/__init__.py
+MODIFY src/statebus/runtime/adaptive_mainline.py
+MODIFY src/statebus/runtime/plan_policy.py
 ```
 
 Optional only if imports demand it:
 
 ```text
-MODIFY statebus/runtime/__init__.py
+MODIFY src/statebus/runtime/__init__.py
 ```
 
 Tests:
@@ -153,10 +153,10 @@ EXTEND tests/test_adaptive_mainline_integration.py
 ### Must not change in this slice
 
 ```text
-statebus/runtime/compiler.py
-statebus/runtime/role_path.py
-statebus/runtime/driver.py
-statebus/runtime/smoke.py
+src/statebus/runtime/compiler.py
+src/statebus/runtime/role_path.py
+src/statebus/runtime/driver.py
+src/statebus/runtime/smoke.py
 ```
 
 They are source references and legacy compatibility, not target owners for this slice.

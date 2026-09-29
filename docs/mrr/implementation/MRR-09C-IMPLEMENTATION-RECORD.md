@@ -11,9 +11,9 @@ through the current Attempt's normal `AttemptResultAdmissionReceipt` authority.
 
 Production:
 
-- `statebus/memory/models.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/runtime/adaptive_runtime.py`
+- `src/statebus/memory/models.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/runtime/adaptive_runtime.py`
 
 Tests and evidence:
 

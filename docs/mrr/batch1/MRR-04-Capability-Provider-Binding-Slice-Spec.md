@@ -98,13 +98,13 @@ Do not reuse those types as generic Runtime execution-provider identity.
 ## 4. Exact Source Files to Read
 
 ```text
-statebus/contracts/adaptive.py
-statebus/runtime/capability_registry.py
-statebus/runtime/domain_packs.py
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/adaptive_mainline.py
-statebus/integrations/llm.py
+src/statebus/contracts/adaptive.py
+src/statebus/runtime/capability_registry.py
+src/statebus/runtime/domain_packs.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/adaptive_mainline.py
+src/statebus/integrations/llm.py
 tests/test_adaptive_capability_surface.py
 tests/test_adaptive_driver.py
 tests/test_adaptive_dispatcher.py
@@ -118,15 +118,15 @@ tests/test_adaptive_mainline_integration.py
 Primary production target, keep <=6 where possible:
 
 ```text
-ADD    statebus/contracts/provider_binding.py
-ADD    statebus/runtime/provider_registry.py
-MODIFY statebus/contracts/__init__.py
-MODIFY statebus/runtime/capability_registry.py
-MODIFY statebus/runtime/adaptive_runtime.py
-MODIFY statebus/runtime/adaptive_dispatcher.py
+ADD    src/statebus/contracts/provider_binding.py
+ADD    src/statebus/runtime/provider_registry.py
+MODIFY src/statebus/contracts/__init__.py
+MODIFY src/statebus/runtime/capability_registry.py
+MODIFY src/statebus/runtime/adaptive_runtime.py
+MODIFY src/statebus/runtime/adaptive_dispatcher.py
 ```
 
-`statebus/contracts/adaptive.py` change is allowed only for additive compatibility fields on `CapabilityGrant`; if that makes seven primary files, place binding metadata in a new grant wrapper first and defer schema bump.
+`src/statebus/contracts/adaptive.py` change is allowed only for additive compatibility fields on `CapabilityGrant`; if that makes seven primary files, place binding metadata in a new grant wrapper first and defer schema bump.
 
 Tests:
 

@@ -28,9 +28,9 @@ deploy/statebus_llm.env.local
 deploy/statebus_llm.yaml.local
 deploy/vllm.env.local
 docker/.env
-studio-ui/node_modules/
-studio-ui/dist/
-studio-ui/*.tsbuildinfo
+src/studio-ui/node_modules/
+src/studio-ui/dist/
+src/studio-ui/*.tsbuildinfo
 docs/**/*.xml
 docs/**/*.drawio
 *.pptx

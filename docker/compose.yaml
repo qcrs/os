@@ -20,9 +20,9 @@ services:
     tty: true
     network_mode: host
     shm_size: 1g
-    working_dir: /workspace/statebus/project
+    working_dir: /workspace/statebus/os
     volumes:
-      - ..:/workspace/statebus/project
+      - ..:/workspace/statebus/os
       - ${HOME}/statebus/models:/statebus/models
       - ${HOME}/statebus/caches:/statebus/caches
       - ${HOME}/statebus/logs:/statebus/logs
@@ -53,8 +53,8 @@ services:
       HUGGINGFACE_HUB_CACHE: /statebus/caches/hf/hub
       TRANSFORMERS_CACHE: /statebus/caches/hf/transformers
       SENTENCE_TRANSFORMERS_HOME: /statebus/caches/hf/sentence_transformers
-      STATEBUS_LLM_CONFIG_FILE: ${STATEBUS_LLM_CONFIG_FILE:-/workspace/statebus/project/deploy/statebus_llm.local_vllm.example}
-      STATEBUS_LLM_ENV_FILE: /workspace/statebus/project/deploy/statebus_llm.env.local
+      STATEBUS_LLM_CONFIG_FILE: ${STATEBUS_LLM_CONFIG_FILE:-/workspace/statebus/os/deploy/statebus_llm.local_vllm.example}
+      STATEBUS_LLM_ENV_FILE: /workspace/statebus/os/deploy/statebus_llm.env.local
       STATEBUS_LOCAL_VLLM_BASE_URL: ${STATEBUS_LOCAL_VLLM_BASE_URL:-http://127.0.0.1:53334/v1}
       STATEBUS_LOCAL_VLLM_HEALTH_URL: ${STATEBUS_LOCAL_VLLM_HEALTH_URL:-http://127.0.0.1:53334/health}
       STATEBUS_VLLM_METRICS_URL: ${STATEBUS_VLLM_METRICS_URL:-http://127.0.0.1:53334/metrics}

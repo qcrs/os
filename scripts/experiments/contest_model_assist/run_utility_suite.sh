@@ -12,5 +12,5 @@ if [[ ! -x "$PYTHON" ]]; then
 fi
 
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH="$ROOT${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:${PYTHONPATH}}"
 exec "$PYTHON" "$SCRIPT_DIR/run_utility_suite.py" "$@"

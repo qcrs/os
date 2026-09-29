@@ -154,7 +154,7 @@ cp deploy/statebus_llm.env.example deploy/statebus_llm.env.local
 在 `deploy/statebus_llm.env.local` 中填写 API Key。然后把 `docker/.env` 改为：
 
 ```dotenv
-STATEBUS_LLM_CONFIG_FILE=/workspace/statebus/project/deploy/statebus_llm.yaml.local
+STATEBUS_LLM_CONFIG_FILE=/workspace/statebus/os/deploy/statebus_llm.yaml.local
 ```
 
 外部 API 路径无需启动本地 vLLM。远端服务负责 Prefix cache；StateBus 使用标准 API
@@ -199,7 +199,7 @@ scripts/vllm/manage_qwen3_32b.sh stop
 应用容器继续使用 `docker/.env.example` 中的默认配置即可：
 
 ```dotenv
-STATEBUS_LLM_CONFIG_FILE=/workspace/statebus/project/deploy/statebus_llm.local_vllm.example
+STATEBUS_LLM_CONFIG_FILE=/workspace/statebus/os/deploy/statebus_llm.local_vllm.example
 ```
 
 ## 6. Runtime 开关

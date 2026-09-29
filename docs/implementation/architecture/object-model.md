@@ -76,4 +76,4 @@ Summarizer 读取 verified 对象。每种对象均记录 producer、validator�
 生命周期，由 vLLM Worker-local registry 管理。其对象关系见[Ref 类型职责](../state/ref-boundaries.md)
 和[显式 KV Continuation](../runtime/engine-local-kv-continuation.md)。
 
-主要类型位于 [`statebus/contracts/models.py`](../../../statebus/contracts/models.py)、[`statebus/contracts/adaptive.py`](../../../statebus/contracts/adaptive.py)、[`statebus/refs/models.py`](../../../statebus/refs/models.py) 和 [`statebus/memory/models.py`](../../../statebus/memory/models.py)。
+主要类型位于 [`src/statebus/contracts/models.py`](../../../src/statebus/contracts/models.py)、[`src/statebus/contracts/adaptive.py`](../../../src/statebus/contracts/adaptive.py)、[`src/statebus/refs/models.py`](../../../src/statebus/refs/models.py) 和 [`src/statebus/memory/models.py`](../../../src/statebus/memory/models.py)。

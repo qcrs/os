@@ -1,0 +1,137 @@
+{
+  "configuration": {
+    "base_url": "http://127.0.0.1:53334/v1",
+    "codeact_fallback_enabled": false,
+    "embedding_device": "cuda:0",
+    "embedding_mode": "local",
+    "embedding_model": "/statebus/models/Qwen3-Embedding-0.6B",
+    "max_context": 8192,
+    "memory_enabled": false,
+    "mode": "live",
+    "model": "qwen3-32b",
+    "planned_generation_upper_bound_per_position": 3,
+    "profile": "mechanism_simple_v2",
+    "provider_timeout_s": 480.0,
+    "semantic_state_mode": "on",
+    "tokenizer_path": "/data/models/Qwen3-32B",
+    "variant": "SB-FULL"
+  },
+  "created_at": "2026-09-28T14:54:33Z",
+  "executed": true,
+  "family": "finance",
+  "kv_server_launcher": "/workspace/statebus/os/scripts/experiments/engine_local_kv/start_engine_local_kv_probe_service.sh",
+  "output": "/workspace/statebus/os/docs/reports/contest-model-assist/formal-20260928_224955-3234416/kv-finance",
+  "phase": "kv",
+  "positions": [
+    {
+      "error": null,
+      "family": "finance",
+      "phase": "standard",
+      "profile": "logit",
+      "slot_root": null,
+      "status": "not_started",
+      "task_id": "F01"
+    },
+    {
+      "error": null,
+      "family": "finance",
+      "phase": "standard",
+      "profile": "apc",
+      "slot_root": null,
+      "status": "not_started",
+      "task_id": "F01"
+    },
+    {
+      "error": null,
+      "family": "service_ops",
+      "phase": "standard",
+      "profile": "apc",
+      "slot_root": null,
+      "status": "not_started",
+      "task_id": "O01"
+    },
+    {
+      "error": null,
+      "family": "service_ops",
+      "phase": "standard",
+      "profile": "logit",
+      "slot_root": null,
+      "status": "not_started",
+      "task_id": "O01"
+    },
+    {
+      "error": null,
+      "family": "finance",
+      "phase": "kv",
+      "profile": "kv_replay",
+      "slot_root": null,
+      "status": "selected",
+      "task_id": "F01"
+    },
+    {
+      "error": null,
+      "family": "finance",
+      "phase": "kv",
+      "profile": "kv_continuation",
+      "slot_root": null,
+      "status": "selected",
+      "task_id": "F01"
+    },
+    {
+      "error": null,
+      "family": "service_ops",
+      "phase": "kv",
+      "profile": "kv_continuation",
+      "slot_root": null,
+      "status": "not_started",
+      "task_id": "O01"
+    },
+    {
+      "error": null,
+      "family": "service_ops",
+      "phase": "kv",
+      "profile": "kv_replay",
+      "slot_root": null,
+      "status": "not_started",
+      "task_id": "O01"
+    }
+  ],
+  "schema_version": "statebus.contest_model_assist_probe_plan.v1",
+  "selected_positions": [
+    {
+      "error": null,
+      "family": "finance",
+      "phase": "kv",
+      "profile": "kv_replay",
+      "slot_root": null,
+      "status": "selected",
+      "task_id": "F01"
+    },
+    {
+      "error": null,
+      "family": "finance",
+      "phase": "kv",
+      "profile": "kv_continuation",
+      "slot_root": null,
+      "status": "selected",
+      "task_id": "F01"
+    }
+  ],
+  "source_identity": {
+    "branch": "git_unavailable_in_runtime",
+    "dirty": "unknown",
+    "head": "git_unavailable_in_runtime"
+  },
+  "source_label": "candidate",
+  "source_paths": {
+    "contest_dsl_mainline": "/workspace/statebus/os/statebus/benchmark/contest_dsl_mainline.py",
+    "contest_model_assist": "/workspace/statebus/os/statebus/benchmark/contest_model_assist.py",
+    "kv_client": "/workspace/statebus/os/statebus/integrations/vllm_kv/client.py",
+    "kv_middleware": "/workspace/statebus/os/statebus/integrations/vllm_kv/middleware.py",
+    "kv_role_client": "/workspace/statebus/os/statebus/integrations/vllm_kv/role_client.py",
+    "model_assist_policy": "/workspace/statebus/os/statebus/runtime/model_assist.py",
+    "statebus": "/workspace/statebus/os/statebus/__init__.py",
+    "tokenizer_client": "/workspace/statebus/os/statebus/integrations/vllm_kv/tokenizer_client.py"
+  },
+  "source_root": "/workspace/statebus/os"
+}

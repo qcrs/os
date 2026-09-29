@@ -82,10 +82,10 @@ Knowing only `ref_id` is therefore insufficient on the canonical product path.
 
 Relevant seams:
 
-- `statebus/refs/models.py:50`
-- `statebus/contracts/state_access.py:19`
-- `statebus/runtime/adaptive_dispatcher.py:330`
-- `statebus/control/subprocess_worker.py:206`
+- `src/statebus/refs/models.py:50`
+- `src/statebus/contracts/state_access.py:19`
+- `src/statebus/runtime/adaptive_dispatcher.py:330`
+- `src/statebus/control/subprocess_worker.py:206`
 
 ### 2. StateAccessGrant remains derived
 
@@ -101,9 +101,9 @@ the wire contract; the canonical issuance call chain remains Runtime-owned.
 
 Relevant seams:
 
-- `statebus/runtime/adaptive_runtime.py:234`
-- `statebus/runtime/adaptive_runtime.py:291`
-- `statebus/contracts/provider_binding.py:302`
+- `src/statebus/runtime/adaptive_runtime.py:234`
+- `src/statebus/runtime/adaptive_runtime.py:291`
+- `src/statebus/contracts/provider_binding.py:302`
 
 ### 3. Capability input authority has one root allowlist
 
@@ -111,7 +111,7 @@ For `CAPABILITY_INPUT`, `issue_read()` directly requires membership in the
 existing `CapabilityGrant.input_ref_ids`. There is no independent State input
 allowlist or State-owned capability decision.
 
-Relevant seam: `statebus/runtime/adaptive_runtime.py:303`.
+Relevant seam: `src/statebus/runtime/adaptive_runtime.py:303`.
 
 ### 4. RUNTIME_INTERMEDIATE is constrained
 
@@ -136,10 +136,10 @@ entry point.
 
 Relevant seams:
 
-- `statebus/runtime/adaptive_runtime.py:259`
-- `statebus/runtime/adaptive_runtime.py:306`
-- `statebus/runtime/adaptive_runtime.py:1499`
-- `statebus/runtime/adaptive_dispatcher.py:394`
+- `src/statebus/runtime/adaptive_runtime.py:259`
+- `src/statebus/runtime/adaptive_runtime.py:306`
+- `src/statebus/runtime/adaptive_runtime.py:1499`
+- `src/statebus/runtime/adaptive_dispatcher.py:394`
 
 ### 5. Ref identity is immutable after publication
 
@@ -151,7 +151,7 @@ does not replace, release, rename, or add a generation to the prior object.
 The existing immutable publication evidence verifies that the original handle,
 payload, and metadata remain unchanged after a duplicate attempt.
 
-Relevant seam: `statebus/state/store.py:229`.
+Relevant seam: `src/statebus/state/store.py:229`.
 
 ### 6. Local and worker paths enforce the same authority semantics
 
@@ -167,9 +167,9 @@ issued from the same Runtime authority object.
 
 Relevant seams:
 
-- `statebus/runtime/adaptive_runtime.py:346`
-- `statebus/runtime/adaptive_dispatcher.py:436`
-- `statebus/runtime/adaptive_dispatcher.py:531`
+- `src/statebus/runtime/adaptive_runtime.py:346`
+- `src/statebus/runtime/adaptive_dispatcher.py:436`
+- `src/statebus/runtime/adaptive_dispatcher.py:531`
 
 ### 7. Worker admission precedes physical acquisition
 
@@ -188,10 +188,10 @@ UDS/protobuf worker acquisition.
 
 Relevant seams:
 
-- `statebus/control/subprocess_worker.py:206`
-- `statebus/control/subprocess_worker.py:244`
-- `statebus/control/subprocess_worker.py:292`
-- `statebus/state/semantic_state.py:306`
+- `src/statebus/control/subprocess_worker.py:206`
+- `src/statebus/control/subprocess_worker.py:244`
+- `src/statebus/control/subprocess_worker.py:292`
+- `src/statebus/state/semantic_state.py:306`
 
 ### 8. Settlement revokes new authority only
 
@@ -203,7 +203,7 @@ The worker does not consult a second active-Attempt registry after dispatch and
 does not attempt mid-flight mapping revocation. Already-dispatched physical
 work remains subject to the frozen Batch 2 stale-result admission fence.
 
-Relevant seam: `statebus/runtime/adaptive_runtime.py:243`.
+Relevant seam: `src/statebus/runtime/adaptive_runtime.py:243`.
 
 ### 9. Lifetime remains outside 07A
 

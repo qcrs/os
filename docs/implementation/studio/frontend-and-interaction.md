@@ -1,8 +1,8 @@
 # React 前端与交互状态
 
-前端位于 [`studio-ui`](../../../studio-ui/)，技术栈是 React、TypeScript、React Router、React Flow、ECharts 与 Lucide。一级页面只有“实验与证据”和“任务演示”，数据集、完整记录和技术细节通过抽屉展开，避免把产品拆成过多导航页。
+前端位于 [`studio-ui`](../../../src/studio-ui/)，技术栈是 React、TypeScript、React Router、React Flow、ECharts 与 Lucide。一级页面只有“实验与证据”和“任务演示”，数据集、完整记录和技术细节通过抽屉展开，避免把产品拆成过多导航页。
 
-[`AppShell`](../../../studio-ui/src/components/AppShell.tsx) 提供全局导航与健康状态，每 15 秒刷新 vLLM、Embedding 和单 Worker 队列。Live 页采用更紧凑的 shell，让流程、当前 Agent 和最终结果尽量在一屏内展示；左侧 recipe 栏可收起，为大屏展示释放空间。
+[`AppShell`](../../../src/studio-ui/src/components/AppShell.tsx) 提供全局导航与健康状态，每 15 秒刷新 vLLM、Embedding 和单 Worker 队列。Live 页采用更紧凑的 shell，让流程、当前 Agent 和最终结果尽量在一屏内展示；左侧 recipe 栏可收起，为大屏展示释放空间。
 
 Evidence 页从 `/api/v1/evidence/current` 读取固定结构化快照，再绘制总 Token、wire bytes、总耗时、质量、结构化通信、非文本状态、记忆漏斗和能力覆盖。它不扫描最新 Run，也不在浏览器中重新计算实验数字。任务与数据抽屉来自 catalog，便于解释任务族、字段和 Validator，但不会在运行前泄露 golden answer。
 
@@ -22,7 +22,7 @@ flowchart TD
     TF --> OUT[answer + quality dock]
 ```
 
-[`AgentFlowCanvas`](../../../studio-ui/src/components/AgentFlowCanvas.tsx) 使用 React Flow 绘制 Planner、Retriever、Executor、Summarizer 和类型化对象节点。节点状态来自真实 step/event，分为 waiting、active、done、error；连接线在 active 时动画，完成后呈验证态。画布展示的是对象交接，不伪造模型逐 Token 思维过程。
+[`AgentFlowCanvas`](../../../src/studio-ui/src/components/AgentFlowCanvas.tsx) 使用 React Flow 绘制 Planner、Retriever、Executor、Summarizer 和类型化对象节点。节点状态来自真实 step/event，分为 waiting、active、done、error；连接线在 active 时动画，完成后呈验证态。画布展示的是对象交接，不伪造模型逐 Token 思维过程。
 
 当前 Agent inspector 展示输入对象、Ref、结构化数据、转换摘要、模型与 Token、输出对象/hash 和 Validator。Executor 额外显示 Python/DSL 程序链：生成/选择、Policy、sandbox/解释器、Artifact 与质量结果。用户点击某个 Agent 后关闭自动跟随；重新启用 auto-follow 时随当前运行角色切换。
 

@@ -30,7 +30,7 @@ from statebus.integrations.vllm_kv.client import VllmKVClient
 SUITE_SCHEMA_VERSION = "statebus.engine_local_kv_mainline_suite.v1"
 DEFAULT_MANIFEST = (
     REPO_ROOT
-    / "statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json"
+    / "src/statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json"
 )
 MEASURED_MODES = ("full_replay", "continuation")
 METRIC_FIELDS = (

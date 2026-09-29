@@ -1,0 +1,756 @@
+{
+  "completed": true,
+  "manifest_path": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/runtime/adaptive_mainline_manifest.json",
+  "grants": [
+    {
+      "grant": {
+        "grant_id": "grant-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1",
+        "task_id": "F01",
+        "session_id": "dsl-c01fa4aaf1c7",
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-1",
+        "capability_id": "dsl-retrieve",
+        "capability_version": "v1",
+        "input_ref_ids": [],
+        "output_contract_version": "dsl-evidence-v1",
+        "workspace_root_id": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/workspaces/F01",
+        "max_runtime_ms": 20000,
+        "expires_at_ns": 1790601770272620497,
+        "approved_plan_hash": "0506bdfbea4ca998c0566fb933bdc4767a66dadc8b1aa1029017133ff223a60f",
+        "schema_version": "statebus.capability_grant.v1",
+        "memory_ref_ids": []
+      },
+      "execution_binding": {
+        "binding_id": "binding-adaptive-attempt-dsl-c01fa4aaf1c7-1-legacy-dsl-retrieve-retrieval_adapter",
+        "task_id": "F01",
+        "session_id": "dsl-c01fa4aaf1c7",
+        "step_id": "retrieve",
+        "attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-1",
+        "approved_plan_hash": "0506bdfbea4ca998c0566fb933bdc4767a66dadc8b1aa1029017133ff223a60f",
+        "logical_capability_id": "dsl-retrieve",
+        "logical_capability_version": "v1",
+        "semantic_contract_hash": "d76460d6373e57ea7b8a4ffe821102f00501bc6c6bf10bd870084d4743efd915",
+        "provider_registry_digest": "fd498885c661b2aa3aec258545aeab5ef5640944efa387626b2ddd3674c8966b",
+        "provider_runtime_facts_digest": "029683a993d06f9d18f78550b5471df8d3431a9809bbdc4911f309d901594d93",
+        "eligibility_projection_hash": "9a8e55bd0b4e4c4fe5ce5890b13143e6d0f810ec388ee73ad43533a6e2eaed07",
+        "selected_provider_id": "legacy-dsl-retrieve-retrieval_adapter",
+        "selected_provider_version": "v1",
+        "selected_provider_kind": "legacy_execution_provider",
+        "selected_implementation_kind": "retrieval_adapter",
+        "binding_policy_version": "statebus.execution_binding.stable_provider_id.v1",
+        "reason_code": "stable_provider_id_order",
+        "schema_version": "statebus.execution_binding_receipt.v1"
+      },
+      "schema_version": "statebus.bound_capability_grant.v1"
+    },
+    {
+      "grant": {
+        "grant_id": "grant-F01-execute-adaptive-attempt-dsl-c01fa4aaf1c7-2",
+        "task_id": "F01",
+        "session_id": "dsl-c01fa4aaf1c7",
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-2",
+        "capability_id": "dsl-execute",
+        "capability_version": "v1",
+        "input_ref_ids": [
+          "source:source",
+          "evidence:F01:retrieve:adaptive-attempt-dsl-c01fa4aaf1c7-1"
+        ],
+        "output_contract_version": "mechanism_simple_v2.finance_simple_summary_v1",
+        "workspace_root_id": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/workspaces/F01",
+        "max_runtime_ms": 600000,
+        "expires_at_ns": 1790602365356771144,
+        "approved_plan_hash": "0506bdfbea4ca998c0566fb933bdc4767a66dadc8b1aa1029017133ff223a60f",
+        "schema_version": "statebus.capability_grant.v1",
+        "memory_ref_ids": []
+      },
+      "execution_binding": {
+        "binding_id": "binding-adaptive-attempt-dsl-c01fa4aaf1c7-2-legacy-dsl-execute-transform_dsl",
+        "task_id": "F01",
+        "session_id": "dsl-c01fa4aaf1c7",
+        "step_id": "execute",
+        "attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-2",
+        "approved_plan_hash": "0506bdfbea4ca998c0566fb933bdc4767a66dadc8b1aa1029017133ff223a60f",
+        "logical_capability_id": "dsl-execute",
+        "logical_capability_version": "v1",
+        "semantic_contract_hash": "a9446ff15e9ea09675ae00821514e56314fca1c0a1bac097d5d254f783df640b",
+        "provider_registry_digest": "fd498885c661b2aa3aec258545aeab5ef5640944efa387626b2ddd3674c8966b",
+        "provider_runtime_facts_digest": "029683a993d06f9d18f78550b5471df8d3431a9809bbdc4911f309d901594d93",
+        "eligibility_projection_hash": "916819530d07f0357e2d6974ed9af5e136580af488d5bafafc472a6e12bd1a86",
+        "selected_provider_id": "legacy-dsl-execute-transform_dsl",
+        "selected_provider_version": "v1",
+        "selected_provider_kind": "legacy_execution_provider",
+        "selected_implementation_kind": "transform_dsl",
+        "binding_policy_version": "statebus.execution_binding.stable_provider_id.v1",
+        "reason_code": "stable_provider_id_order",
+        "schema_version": "statebus.execution_binding_receipt.v1"
+      },
+      "schema_version": "statebus.bound_capability_grant.v1"
+    },
+    {
+      "grant": {
+        "grant_id": "grant-F01-summarize-adaptive-attempt-dsl-c01fa4aaf1c7-3",
+        "task_id": "F01",
+        "session_id": "dsl-c01fa4aaf1c7",
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-3",
+        "capability_id": "dsl-report",
+        "capability_version": "v1",
+        "input_ref_ids": [
+          "evidence:F01:retrieve:adaptive-attempt-dsl-c01fa4aaf1c7-1",
+          "dsl-F01-execute-adaptive-attempt-dsl-c01fa4aaf1c7-2"
+        ],
+        "output_contract_version": "dsl-report-v1",
+        "workspace_root_id": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/workspaces/F01",
+        "max_runtime_ms": 600000,
+        "expires_at_ns": 1790602408739823461,
+        "approved_plan_hash": "0506bdfbea4ca998c0566fb933bdc4767a66dadc8b1aa1029017133ff223a60f",
+        "schema_version": "statebus.capability_grant.v1",
+        "memory_ref_ids": []
+      },
+      "execution_binding": {
+        "binding_id": "binding-adaptive-attempt-dsl-c01fa4aaf1c7-3-legacy-dsl-report-runtime_builtin",
+        "task_id": "F01",
+        "session_id": "dsl-c01fa4aaf1c7",
+        "step_id": "summarize",
+        "attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-3",
+        "approved_plan_hash": "0506bdfbea4ca998c0566fb933bdc4767a66dadc8b1aa1029017133ff223a60f",
+        "logical_capability_id": "dsl-report",
+        "logical_capability_version": "v1",
+        "semantic_contract_hash": "83b01765a9f642eef1671002e19c0076a2d556d9ad3bb5018f88831c3b8d8b77",
+        "provider_registry_digest": "fd498885c661b2aa3aec258545aeab5ef5640944efa387626b2ddd3674c8966b",
+        "provider_runtime_facts_digest": "029683a993d06f9d18f78550b5471df8d3431a9809bbdc4911f309d901594d93",
+        "eligibility_projection_hash": "2311d1d354a65b52ba525f287a8eed218144a363d0070adcc0cd8c7bf0804711",
+        "selected_provider_id": "legacy-dsl-report-runtime_builtin",
+        "selected_provider_version": "v1",
+        "selected_provider_kind": "legacy_execution_provider",
+        "selected_implementation_kind": "runtime_builtin",
+        "binding_policy_version": "statebus.execution_binding.stable_provider_id.v1",
+        "reason_code": "stable_provider_id_order",
+        "schema_version": "statebus.execution_binding_receipt.v1"
+      },
+      "schema_version": "statebus.bound_capability_grant.v1"
+    }
+  ],
+  "memory_commit": {
+    "attempted": false,
+    "committed": false,
+    "reason": "memory_commit_disabled",
+    "memory_id": "",
+    "artifact_ref_id": "",
+    "artifact_hash": "",
+    "quality_report_hash": "",
+    "input_lineage_hashes": [],
+    "output_contract_version": "",
+    "validator_digest": "",
+    "benchmark_gold_used": false,
+    "memory_admission_receipt_hash": ""
+  },
+  "memory_queries": {},
+  "memory_matches": {},
+  "memory_reads": {},
+  "memory_consumption": [],
+  "recipes": {
+    "dsl-F01-execute-adaptive-attempt-dsl-c01fa4aaf1c7-2": {
+      "recipe_id": "dsl-execute:transform_dsl",
+      "recipe_version": "v1",
+      "step_ids": [
+        "execute"
+      ],
+      "operation_names": [
+        "aggregate_grouped",
+        "derive_safe",
+        "sort",
+        "select"
+      ],
+      "execution_kind": "transform_dsl",
+      "capability_id": "dsl-execute",
+      "capability_version": "v1",
+      "output_contract_version": "mechanism_simple_v2.finance_simple_summary_v1",
+      "input_schema_digest": "7c29d8cfc6dbac18dd0942d749d6368eac82e94fb1faa2a50c56f953493e534e",
+      "validator_digest": "4b7fb5698eca37dfd55ce0a6f0423c1b66565ad266677da1bf5adbd0b92d7104",
+      "runtime_signature_hash": "d4d04390d6a741bce5eef4b91b09925a17d2e4652ed8ee0b07c735ff8bf91c54",
+      "operations": [
+        {
+          "op": "aggregate_grouped",
+          "arguments": {
+            "functions": [
+              "sum",
+              "sum",
+              "sum"
+            ],
+            "group_fields": [
+              "period",
+              "unit_id"
+            ],
+            "outputs": [
+              "summed_gross_cny",
+              "summed_refund_cny",
+              "cost_cny"
+            ],
+            "value_fields": [
+              "gross_cny",
+              "refund_cny",
+              "cost_cny"
+            ]
+          }
+        },
+        {
+          "op": "derive_safe",
+          "arguments": {
+            "calculations": [
+              [
+                "revenue_cny",
+                "difference",
+                "summed_gross_cny",
+                "summed_refund_cny"
+              ],
+              [
+                "profit_cny",
+                "difference",
+                "revenue_cny",
+                "cost_cny"
+              ]
+            ]
+          }
+        },
+        {
+          "op": "sort",
+          "arguments": {
+            "columns": [
+              "period",
+              "unit_id"
+            ]
+          }
+        },
+        {
+          "op": "select",
+          "arguments": {
+            "columns": [
+              "period",
+              "unit_id",
+              "revenue_cny",
+              "cost_cny",
+              "profit_cny"
+            ]
+          }
+        }
+      ],
+      "source_program_hash": "5c037fbe8d1a387b6bd271c35ada1edc15dc6110e9cd00d598f15ec825c040e4",
+      "input_artifact_refs": [
+        "source:source"
+      ],
+      "input_artifact_hashes": [
+        "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac"
+      ]
+    }
+  },
+  "state_consumers": {
+    "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1": {
+      "schema_version": "statebus.semantic_consumer_receipt.v1",
+      "trace_id": "dsl-c01fa4aaf1c7",
+      "task_id": "F01",
+      "run_id": "dsl-c01fa4aaf1c7",
+      "session_id": "dsl-c01fa4aaf1c7",
+      "step_id": "retrieve",
+      "attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-1",
+      "invocation_id": "invocation-3d8c93ee5b99487298b8f614ab9c2866",
+      "execution_binding_hash": "5f282588e684f473e3c5e9ae4dce58f91dedc9e226263bb5be8d4dbe78cf31cc",
+      "capability_grant_hash": "e04a8dfd56c054946980128a7faf0554d13f34f879a3b153b3b4700dc342cc45",
+      "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+      "state_identity_hash": "98f05a83881e3099ebc344d180650105ed0ed5d2c487f42518b58fc355335988",
+      "state_access_grant_hash": "df33f1d2472fd22eb9b3e57c2036076501c9fc6d4fc6ceae042295ea869b1e8f",
+      "grant_id": "grant-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1",
+      "binding_id": "binding-adaptive-attempt-dsl-c01fa4aaf1c7-1-legacy-dsl-retrieve-retrieval_adapter",
+      "binding_hash": "5f282588e684f473e3c5e9ae4dce58f91dedc9e226263bb5be8d4dbe78cf31cc",
+      "descriptor_identity": {
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+        "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+        "state_identity_hash": "98f05a83881e3099ebc344d180650105ed0ed5d2c487f42518b58fc355335988",
+        "storage_kind": "mmap_file",
+        "size_bytes": 20480,
+        "shape": [
+          5,
+          1024
+        ],
+        "dtype": "float32",
+        "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "manifest_id": "semantic-manifest-F01",
+        "manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+        "encoder_hash": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+        "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+        "cache_epoch": "dsl-c01fa4aaf1c7:adaptive-attempt-dsl-c01fa4aaf1c7-1",
+        "binding_id": "binding-adaptive-attempt-dsl-c01fa4aaf1c7-1-legacy-dsl-retrieve-retrieval_adapter",
+        "handle_identity": {
+          "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+          "object_kind": "DENSE_SEMANTIC_STATE",
+          "storage_kind": "mmap_file",
+          "size_bytes": 20480,
+          "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+          "decision": {
+            "object_kind": "DENSE_SEMANTIC_STATE",
+            "selected": "mmap_file",
+            "preferred": "mmap_file",
+            "fallback_used": false,
+            "reason": "preferred_storage_selected"
+          },
+          "shared_memory_name": "",
+          "memfd_name": "",
+          "memfd_descriptor_available": false,
+          "mmap_path": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/runtime/state/mmap/semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1.bin",
+          "root_id": "state_root",
+          "contract_metadata": {
+            "dense_semantic_state": {
+              "schema_version": "statebus.dense_semantic_state.v1",
+              "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+              "state_kind": "DENSE_SEMANTIC_STATE",
+              "storage_kind": "",
+              "dtype": "float32",
+              "byte_order": "little",
+              "shape": [
+                5,
+                1024
+              ],
+              "row_layout": "query_then_candidates",
+              "normalized": true,
+              "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+              "encoder_revision": "retriever-fanout-v1",
+              "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+              "source_text_hashes": [
+                "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+                "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+                "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+                "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+                "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+              ],
+              "hydrate_manifest_id": "semantic-manifest-F01",
+              "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+              "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+              "size_bytes": 20480,
+              "owner_session_id": "dsl-c01fa4aaf1c7",
+              "lease_expires_at_ns": 1790601824212337390,
+              "producer_pid": 395613
+            }
+          }
+        },
+        "socket_session_identity": {
+          "socket_path": "/tmp/statebus-uds-0/7028e205f392ed2b4e109fde.sock",
+          "session_id": "dsl-c01fa4aaf1c7"
+        }
+      },
+      "handle_identity": {
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+        "object_kind": "DENSE_SEMANTIC_STATE",
+        "storage_kind": "mmap_file",
+        "size_bytes": 20480,
+        "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "decision": {
+          "object_kind": "DENSE_SEMANTIC_STATE",
+          "selected": "mmap_file",
+          "preferred": "mmap_file",
+          "fallback_used": false,
+          "reason": "preferred_storage_selected"
+        },
+        "shared_memory_name": "",
+        "memfd_name": "",
+        "memfd_descriptor_available": false,
+        "mmap_path": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/runtime/state/mmap/semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1.bin",
+        "root_id": "state_root",
+        "contract_metadata": {
+          "dense_semantic_state": {
+            "schema_version": "statebus.dense_semantic_state.v1",
+            "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+            "state_kind": "DENSE_SEMANTIC_STATE",
+            "storage_kind": "",
+            "dtype": "float32",
+            "byte_order": "little",
+            "shape": [
+              5,
+              1024
+            ],
+            "row_layout": "query_then_candidates",
+            "normalized": true,
+            "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+            "encoder_revision": "retriever-fanout-v1",
+            "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+            "source_text_hashes": [
+              "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+              "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+              "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+              "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+              "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+            ],
+            "hydrate_manifest_id": "semantic-manifest-F01",
+            "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+            "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+            "size_bytes": 20480,
+            "owner_session_id": "dsl-c01fa4aaf1c7",
+            "lease_expires_at_ns": 1790601824212337390,
+            "producer_pid": 395613
+          }
+        }
+      },
+      "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+      "manifest_id": "semantic-manifest-F01",
+      "manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+      "encoder_hash": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+      "cache_epoch": "dsl-c01fa4aaf1c7:adaptive-attempt-dsl-c01fa4aaf1c7-1",
+      "observed_size_bytes": 20480,
+      "observed_shape": [
+        5,
+        1024
+      ],
+      "observed_dtype": "float32",
+      "observed_blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+      "producer_pid": 395613,
+      "consumer_pid": 395797,
+      "read_started_at_ns": 1790601765181249145,
+      "read_completed_at_ns": 1790601765182422483,
+      "selected_candidate_ids": [
+        "ctx-notes_2026-01.md#U-B",
+        "ctx-notes_2026-01.md#U-D",
+        "ctx-notes_2026-01.md#U-C",
+        "ctx-notes_2026-01.md#U-A"
+      ],
+      "selected_row_indices": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "selected_evidence_bytes": 360,
+      "selected_ids": [
+        "ctx-notes_2026-01.md#U-B",
+        "ctx-notes_2026-01.md#U-D",
+        "ctx-notes_2026-01.md#U-C",
+        "ctx-notes_2026-01.md#U-A"
+      ],
+      "selected_rows": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "selected_bytes": 360,
+      "input_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+      "output_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+      "downstream_ref_ids": [
+        "evidence:F01:retrieve:adaptive-attempt-dsl-c01fa4aaf1c7-1"
+      ],
+      "behavioral_effect": "no_effect",
+      "pin_id": "state-pin-bae403adec4e4849aada3385de5a52a2",
+      "release_status": "pending_response_admission",
+      "response_admission_hash": "364add64a40ac114f04aaa93c105df566188879f492ba6c04ac9c7f1254883bc",
+      "downstream_ref": "evidence:F01:retrieve:adaptive-attempt-dsl-c01fa4aaf1c7-1",
+      "receipt_status": "observed"
+    }
+  },
+  "state_publications": {
+    "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1": {
+      "ref": {
+        "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+        "state_kind": "DENSE_SEMANTIC_STATE",
+        "storage_kind": "mmap_file",
+        "length": 20480,
+        "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "manifest_id": "semantic-manifest-F01",
+        "channel": "semantic_state",
+        "source_doc_hashes": [
+          "be3caacd91d8ae084234d3e62c304b8090b46221cdbf2ed2b149c087727c8740"
+        ],
+        "compatibility_hint": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+        "exact_replay_ready": false,
+        "metadata": {
+          "schema_version": "statebus.dense_semantic_state.v1",
+          "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+          "state_kind": "DENSE_SEMANTIC_STATE",
+          "storage_kind": "mmap_file",
+          "dtype": "float32",
+          "byte_order": "little",
+          "shape": [
+            5,
+            1024
+          ],
+          "row_layout": "query_then_candidates",
+          "normalized": true,
+          "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+          "encoder_revision": "retriever-fanout-v1",
+          "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+          "source_text_hashes": [
+            "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+            "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+            "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+            "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+            "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+          ],
+          "hydrate_manifest_id": "semantic-manifest-F01",
+          "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+          "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+          "size_bytes": 20480,
+          "owner_session_id": "dsl-c01fa4aaf1c7",
+          "lease_expires_at_ns": 1790601824212337390,
+          "producer_pid": 395613
+        }
+      },
+      "handle": {
+        "ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+        "object_kind": "DENSE_SEMANTIC_STATE",
+        "storage_kind": "mmap_file",
+        "size_bytes": 20480,
+        "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "decision": {
+          "object_kind": "DENSE_SEMANTIC_STATE",
+          "selected": "mmap_file",
+          "preferred": "mmap_file",
+          "fallback_used": false,
+          "reason": "preferred_storage_selected"
+        },
+        "metadata_path": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/runtime/state/metadata/semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1.json",
+        "shared_memory_name": "",
+        "memfd_name": "",
+        "memfd_fd": null,
+        "mmap_path": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/runtime/state/mmap/semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1.bin",
+        "inline_payload": "b''",
+        "root_id": "state_root",
+        "contract_metadata": {
+          "dense_semantic_state": {
+            "schema_version": "statebus.dense_semantic_state.v1",
+            "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+            "state_kind": "DENSE_SEMANTIC_STATE",
+            "storage_kind": "",
+            "dtype": "float32",
+            "byte_order": "little",
+            "shape": [
+              5,
+              1024
+            ],
+            "row_layout": "query_then_candidates",
+            "normalized": true,
+            "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+            "encoder_revision": "retriever-fanout-v1",
+            "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+            "source_text_hashes": [
+              "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+              "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+              "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+              "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+              "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+            ],
+            "hydrate_manifest_id": "semantic-manifest-F01",
+            "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+            "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+            "size_bytes": 20480,
+            "owner_session_id": "dsl-c01fa4aaf1c7",
+            "lease_expires_at_ns": 1790601824212337390,
+            "producer_pid": 395613
+          }
+        }
+      },
+      "contract": {
+        "state_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+        "shape": [
+          5,
+          1024
+        ],
+        "encoder_id": "sentence-transformers:Qwen3-Embedding-0.6B",
+        "encoder_revision": "retriever-fanout-v1",
+        "encoder_signature": "ff416d1a91a5b4e980db409e5d5ac80dfa772deefa122fe1dd3fb23711e76803",
+        "source_text_hashes": [
+          "445525f9f1129cd28de0a2a0d79999ff945bca320a3fcdc6bc30324a1972b58f",
+          "410455daf727413f6c23d0cea99e96b1f23374d6c2c65417104eb7ad2601d769",
+          "e9db9238848fc4fb7c40f093b576cd28da83f8778ea4f302ff1210b85a9318e4",
+          "cf6cb85ec0a611e5ef228b9be649d6d05089e7db7ecd8a68fa0e3d4bf4f26c01",
+          "fb3fdfd321fda1a8a3cf425d1cba58ce7c673581535a667bc8c60f0aa0ce3424"
+        ],
+        "hydrate_manifest_id": "semantic-manifest-F01",
+        "hydrate_manifest_hash": "d18e0cc65c20df2a32b9c51fd521ac14644060969ba5a9809dd4262330952c42",
+        "blob_hash": "801aaa54aa42a5a1d924268510bb698cb3f44c9c89e332a6d14ceabb25a1bc60",
+        "size_bytes": 20480,
+        "owner_session_id": "dsl-c01fa4aaf1c7",
+        "lease_expires_at_ns": 1790601824212337390,
+        "producer_pid": 395613,
+        "storage_kind": "mmap_file",
+        "dtype": "float32",
+        "byte_order": "little",
+        "row_layout": "query_then_candidates",
+        "normalized": true,
+        "schema_version": "statebus.dense_semantic_state.v1"
+      },
+      "manifest_path": "/workspace/statebus/os/docs/reports/contest-model-assist/assistant-smoke-20260928-fixed/kv-finance/slots/F01-kv_replay/runtime/state/manifests/semantic-manifest-F01.json"
+    }
+  },
+  "state_release_receipts": {
+    "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1": {
+      "schema_version": "statebus.state_release_reclaim.v1",
+      "producer_task_id": "F01",
+      "producer_session_id": "dsl-c01fa4aaf1c7",
+      "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+      "owner_session_id": "dsl-c01fa4aaf1c7",
+      "producer_step_id": "retrieve",
+      "producer_attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-1",
+      "grant_hash": "e04a8dfd56c054946980128a7faf0554d13f34f879a3b153b3b4700dc342cc45",
+      "lease_id": "",
+      "lease_expires_at_ns": 1790601770272620497,
+      "owner_released": true,
+      "live_pin_count": 0,
+      "released_pin_ids": [
+        "state-pin-4a3a236e09cf45fda27c49aa3082ecbc",
+        "state-pin-bae403adec4e4849aada3385de5a52a2"
+      ],
+      "physical_reclaimed": true,
+      "released_at_ns": 1790601847723594841,
+      "release_status": "reclaimed",
+      "response_admitted_at_ns": 1790601765348248853,
+      "downstream_effect_completed_at_ns": 1790601765350365050,
+      "worker_pin_released_at_ns": 1790601765350936876,
+      "runtime_pin_released_at_ns": 1790601765350945878,
+      "owner_released_at_ns": 1790601847723576311,
+      "physical_reclaimed_at_ns": 1790601847723578408,
+      "release_after_response_admission": true
+    }
+  },
+  "state_effects": {
+    "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1": {
+      "state_ref_id": "semantic-F01-retrieve-adaptive-attempt-dsl-c01fa4aaf1c7-1-1",
+      "downstream_ref_ids": [
+        "evidence:F01:retrieve:adaptive-attempt-dsl-c01fa4aaf1c7-1"
+      ],
+      "before_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+      "after_decision_surface_hash": "ddf48c4536a4d42e49b4e428d287b1df1b402a7e5c25c75cd62db37d85765913",
+      "effect_scope": "ordered_semantic_candidate_selection_not_quality_or_causal_gain",
+      "before_selected_candidate_ids": [
+        "ctx-notes_2026-01.md#U-B",
+        "ctx-notes_2026-01.md#U-D",
+        "ctx-notes_2026-01.md#U-C",
+        "ctx-notes_2026-01.md#U-A"
+      ],
+      "after_selected_candidate_ids": [
+        "ctx-notes_2026-01.md#U-B",
+        "ctx-notes_2026-01.md#U-D",
+        "ctx-notes_2026-01.md#U-C",
+        "ctx-notes_2026-01.md#U-A"
+      ],
+      "candidate_pool_hash": "46037a402a83370154ed1a119009cb1bc54e7b85f8b354b7bc26423bbaeeebe6",
+      "downstream_input_hash": "cc8511dca0acbb2b9dc8cc8b4d66e4bb9fba64496f41fbc802b04516c0292d9d",
+      "behavioral_effect": "no_effect",
+      "response_admitted": true,
+      "completed_at_ns": 1790601765350365050
+    }
+  },
+  "activation": {
+    "semantic_state": {
+      "component": "semantic_state",
+      "requested_mode": "on",
+      "effective_mode": "on",
+      "producer_active": true,
+      "consumer_active": true,
+      "publish_count": 1,
+      "consume_count": 1,
+      "transfer_count": 1,
+      "disable_reason": ""
+    }
+  },
+  "quality": {
+    "6075ffa337927cea600859a5065a8660471ac48845188f7442343a8de5cd8b60": {
+      "capability_id": "dsl-execute",
+      "validator_id": "contest-dsl-raw",
+      "input_artifact_hashes": [
+        "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac"
+      ],
+      "output_artifact_hash": "7c654f98ae683da464813dd1d2670aa529924629b54336735fb5444a460505b4",
+      "schema_passed": false,
+      "recomputation_passed": false,
+      "provenance_passed": true,
+      "completion_criteria_passed": false,
+      "verified": false,
+      "recomputation_evaluated": true,
+      "error_codes": [
+        "schema:0:missing=cost_cny:unexpected=summed_cost_cny",
+        "schema:1:missing=cost_cny:unexpected=summed_cost_cny",
+        "schema:2:missing=cost_cny:unexpected=summed_cost_cny",
+        "schema:3:missing=cost_cny:unexpected=summed_cost_cny"
+      ],
+      "numeric_differences": {},
+      "schema_version": "statebus.capability_quality_report.v1"
+    },
+    "b2b31c4c542cca02440d66aeaa9be9e5bb34a1d270867bd22edd340ccd6692b7": {
+      "capability_id": "dsl-execute",
+      "validator_id": "contest-dsl-raw",
+      "input_artifact_hashes": [
+        "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac"
+      ],
+      "output_artifact_hash": "3b4d093b019198a09a25a7264b967e8b25ea719ef2e7608a29591a4f1a9f1b7a",
+      "schema_passed": true,
+      "recomputation_passed": true,
+      "provenance_passed": true,
+      "completion_criteria_passed": true,
+      "verified": true,
+      "recomputation_evaluated": true,
+      "error_codes": [],
+      "numeric_differences": {},
+      "schema_version": "statebus.capability_quality_report.v1"
+    }
+  },
+  "artifact_receipts": {
+    "source:source": {
+      "artifact_id": "source:source",
+      "runtime_task_id": "F01",
+      "run_id": "dsl-c01fa4aaf1c7",
+      "session_id": "dsl-c01fa4aaf1c7",
+      "producer_step_id": "controller-source",
+      "producer_attempt_id": "controller-source",
+      "execution_binding_hash": "89017e95afd643940c00fa5b0645cf6e20ffed4214e103817943e6e235adf656",
+      "capability_grant_hash": "89017e95afd643940c00fa5b0645cf6e20ffed4214e103817943e6e235adf656",
+      "candidate_blob_hash": "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac",
+      "candidate_size_bytes": 2113,
+      "validator_ids": [],
+      "validator_report_hashes": [],
+      "decision": "VERIFIED",
+      "reason": "controller_bound_released_source",
+      "schema_version": "statebus.artifact_verification_receipt.v1"
+    },
+    "dsl-F01-execute-adaptive-attempt-dsl-c01fa4aaf1c7-2": {
+      "artifact_id": "dsl-F01-execute-adaptive-attempt-dsl-c01fa4aaf1c7-2",
+      "runtime_task_id": "F01",
+      "run_id": "dsl-c01fa4aaf1c7",
+      "session_id": "dsl-c01fa4aaf1c7",
+      "producer_step_id": "execute",
+      "producer_attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-2",
+      "execution_binding_hash": "7b5d16d2711f98efed09a98f8c8a47bf2da6a27bbe0886fde788ecca58af6bee",
+      "capability_grant_hash": "04a6c4dddf24994a55af117bc6ce659c957e65ae852be0f569a755011bdd1f76",
+      "candidate_blob_hash": "3b4d093b019198a09a25a7264b967e8b25ea719ef2e7608a29591a4f1a9f1b7a",
+      "candidate_size_bytes": 384,
+      "validator_ids": [
+        "contest-dsl-raw"
+      ],
+      "validator_report_hashes": [
+        "6075ffa337927cea600859a5065a8660471ac48845188f7442343a8de5cd8b60",
+        "b2b31c4c542cca02440d66aeaa9be9e5bb34a1d270867bd22edd340ccd6692b7"
+      ],
+      "decision": "VERIFIED",
+      "reason": "active_attempt_candidate_validated",
+      "schema_version": "statebus.artifact_verification_receipt.v1"
+    },
+    "claimset-F01-summarize-adaptive-attempt-dsl-c01fa4aaf1c7-3": {
+      "artifact_id": "claimset-F01-summarize-adaptive-attempt-dsl-c01fa4aaf1c7-3",
+      "runtime_task_id": "F01",
+      "run_id": "dsl-c01fa4aaf1c7",
+      "session_id": "dsl-c01fa4aaf1c7",
+      "producer_step_id": "summarize",
+      "producer_attempt_id": "adaptive-attempt-dsl-c01fa4aaf1c7-3",
+      "execution_binding_hash": "9d4aab8aadc4ddb48bfbc927d1e4a454f0ab583a0a3a4fa1f63a38576489e165",
+      "capability_grant_hash": "5af60c9eb73f51ad779945cee5cd9465dcc18e5d19c2c03b1f37222b200ae8df",
+      "candidate_blob_hash": "4b83d05da52179ea175aa38d8f1e93d16db48a85fb095fb25b15a98bd3b899a1",
+      "candidate_size_bytes": 3131,
+      "validator_ids": [
+        "claim_set_validator"
+      ],
+      "validator_report_hashes": [
+        "caa4313eca631bd3ad2fa08213d2487c070e8da8d6e36c28467dfad01af7af7e"
+      ],
+      "decision": "VERIFIED",
+      "reason": "active_attempt_candidate_validated",
+      "schema_version": "statebus.artifact_verification_receipt.v1"
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 Planner 输出 `PlanProposal`。一个 proposal 由多个 `PlanStepProposal` 组成，每步声明 role、
 capability、goal、依赖、输入 Ref 及类型、输出合同、完成条件、失败策略和必需字段。Runtime
-用 [`PlanPolicyValidator`](../../../statebus/runtime/plan_policy.py) 将候选计划映射到当前任务
+用 [`PlanPolicyValidator`](../../../src/statebus/runtime/plan_policy.py) 将候选计划映射到当前任务
 envelope 和 capability registry。
 
 ```mermaid
@@ -57,4 +57,4 @@ dispatch 前，Runtime 再根据当前 Ref Registry 和 ApprovedPlan 复核 Gran
 和预算。LLM Python capability 同时在 envelope 中启用 `allow_llm_python`，由 Planner 在已登记
 执行面中选择。
 
-主要类型位于 [`statebus/contracts/adaptive.py`](../../../statebus/contracts/adaptive.py)，能力表与校验测试可参考 [`test_adaptive_capability_surface.py`](../../../tests/test_adaptive_capability_surface.py) 和 [`test_adaptive_mainline_integration.py`](../../../tests/test_adaptive_mainline_integration.py)。
+主要类型位于 [`src/statebus/contracts/adaptive.py`](../../../src/statebus/contracts/adaptive.py)，能力表与校验测试可参考 [`test_adaptive_capability_surface.py`](../../../tests/test_adaptive_capability_surface.py) 和 [`test_adaptive_mainline_integration.py`](../../../tests/test_adaptive_mainline_integration.py)。

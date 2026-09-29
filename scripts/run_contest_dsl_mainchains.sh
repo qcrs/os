@@ -82,7 +82,7 @@ args=(--profile mechanism_simple_v2 --variant "$variant" --rounds 12 --mode live
 cd "$ROOT"
 container_env=(
   -e "PYTHONDONTWRITEBYTECODE=1"
-  -e "PYTHONPATH=$CONTAINER_SOURCE"
+      -e "PYTHONPATH=$CONTAINER_SOURCE/src"
   -e "PROJECT_ROOT=$CONTAINER_SOURCE"
   -e "STATEBUS_LLM_CONFIG_FILE=$CONTAINER_SOURCE/deploy/statebus_llm.g6b2-qwen3-32b.example"
 )
@@ -98,13 +98,13 @@ if [[ "$model_assist_profile" != off ]]; then
 fi
 if ((dry_run)); then
   for current in "${families[@]}"; do
-    printf '\nHOST_SOURCE_ROOT=%s\nCONTAINER_SOURCE_ROOT=%s\nPYTHONPATH=%s\nPROJECT_ROOT=%s\nLLM_CONFIG=%s\nHOST_OUTPUT=%s/%s\nCONTAINER_OUTPUT=%s/%s\nCOMMAND=' \
+    printf '\nHOST_SOURCE_ROOT=%s\nCONTAINER_SOURCE_ROOT=%s\nPYTHONPATH=%s/src\nPROJECT_ROOT=%s\nLLM_CONFIG=%s\nHOST_OUTPUT=%s/%s\nCONTAINER_OUTPUT=%s/%s\nCOMMAND=' \
       "$ROOT" "$CONTAINER_SOURCE" "$CONTAINER_SOURCE" "$CONTAINER_SOURCE" \
       "$CONTAINER_SOURCE/deploy/statebus_llm.g6b2-qwen3-32b.example" "$output" "$current" "$container_output" "$current"
     printf '%q ' docker exec -w "$CONTAINER_SOURCE" "${container_env[@]}" "$container" "$PYTHON" -m statebus.benchmark.contest_dsl_mainline \
       "${args[@]}" --family "$current" --output "$container_output/$current"
     printf '\n'
-    PYTHONPATH="$ROOT" PROJECT_ROOT="$ROOT" STATEBUS_LLM_CONFIG_FILE="$ROOT/deploy/statebus_llm.g6b2-qwen3-32b.example" \
+    PYTHONPATH="$ROOT/src" PROJECT_ROOT="$ROOT" STATEBUS_LLM_CONFIG_FILE="$ROOT/deploy/statebus_llm.g6b2-qwen3-32b.example" \
       "$PYTHON" -m statebus.benchmark.contest_dsl_mainline "${args[@]}" --family "$current" \
       --output "$container_output/$current" --dry-run
   done
@@ -130,7 +130,7 @@ docker exec -w "$CONTAINER_SOURCE" \
   --output "$container_output/embedding-preflight.json" --model qwen3-32b \
   --base-url http://127.0.0.1:53334/v1 \
   --embedding-model-path /statebus/models/Qwen3-Embedding-0.6B --gpu-uuid "$gpu_uuid" \
-  --expected-source-root "$CONTAINER_SOURCE" \
+  --expected-source-root "$CONTAINER_SOURCE/src" \
   > "$output/embedding-preflight.log" 2>&1
 trap 'echo "Interrupted; preserve $output (no automatic retry)." >&2; exit 130' INT
 trap 'echo "Terminated; preserve $output (no automatic retry)." >&2; exit 143' TERM

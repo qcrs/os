@@ -110,12 +110,12 @@ No generation.
 ## Likely production files
 
 ```text
-statebus/memory/models.py
-statebus/memory/store.py
-statebus/contracts/*memory*
-statebus/contracts/__init__.py
-statebus/runtime/adaptive_mainline.py
-statebus/runtime/memory_admission.py  # optional
+src/statebus/memory/models.py
+src/statebus/memory/store.py
+src/statebus/contracts/*memory*
+src/statebus/contracts/__init__.py
+src/statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/memory_admission.py  # optional
 ```
 
 ## Explicit non-goals

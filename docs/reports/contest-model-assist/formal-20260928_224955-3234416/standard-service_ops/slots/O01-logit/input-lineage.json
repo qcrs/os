@@ -1,0 +1,55 @@
+{
+  "files": {
+    "service_ops/dictionary_v1.md": "92ab5e20980e5ad67ecedee698fff4b5feec1920217fbfa3edc76bdff497bc40",
+    "service_ops/events_W01.md": "1f8f300550b829c48f367835f8e8e78ed14f6f6eedd062dc7ee6d47d0fcc370e",
+    "service_ops/hourly_W01.csv": "6fe9dd590f7bcc041a3c9f4198b2aa896c33ff5727fc01fe22f333df74b8d217"
+  },
+  "history": {},
+  "artifacts": {
+    "source:source": {
+      "artifact_id": "source:source",
+      "task_id": "O01",
+      "step_id": "controller-source",
+      "artifact_type": "json",
+      "root_id": "/workspace/statebus/os/docs/reports/contest-model-assist/formal-20260928_224955-3234416/standard-service_ops/slots/O01-logit/source",
+      "relpath": "source.json",
+      "blob_hash": "23804d42164aaaf9b85104dbc41759100c9cebb31921bd8330b95005e5be0618",
+      "size_bytes": 46369,
+      "produced_by": "released-input-binding",
+      "verification_state": "verified",
+      "replay_ready": false,
+      "workspace_relpath": "source.json",
+      "manifest_hash": "bfecac97546eb57b80c261b8144a9df359c5d10cf6c6449bade375b578cd6701",
+      "metadata": {
+        "session_id": "dsl-d8f4425e948b",
+        "attempt_id": "controller-source",
+        "grant_hash": "65c7b194fe325c523623bffa2ebfa6c1cce74acef6429edba9280dc894582c36",
+        "source_files": {
+          "service_ops/dictionary_v1.md": "92ab5e20980e5ad67ecedee698fff4b5feec1920217fbfa3edc76bdff497bc40",
+          "service_ops/events_W01.md": "1f8f300550b829c48f367835f8e8e78ed14f6f6eedd062dc7ee6d47d0fcc370e",
+          "service_ops/hourly_W01.csv": "6fe9dd590f7bcc041a3c9f4198b2aa896c33ff5727fc01fe22f333df74b8d217"
+        },
+        "artifact_verification_receipt_hash": "63d7e073e4be6fc4bcd9b7478170d1276b211d12d4cc8979af3b5742b95ccf65"
+      }
+    }
+  },
+  "verification_receipts": {
+    "source:source": {
+      "artifact_id": "source:source",
+      "runtime_task_id": "O01",
+      "run_id": "dsl-d8f4425e948b",
+      "session_id": "dsl-d8f4425e948b",
+      "producer_step_id": "controller-source",
+      "producer_attempt_id": "controller-source",
+      "execution_binding_hash": "65c7b194fe325c523623bffa2ebfa6c1cce74acef6429edba9280dc894582c36",
+      "capability_grant_hash": "65c7b194fe325c523623bffa2ebfa6c1cce74acef6429edba9280dc894582c36",
+      "candidate_blob_hash": "23804d42164aaaf9b85104dbc41759100c9cebb31921bd8330b95005e5be0618",
+      "candidate_size_bytes": 46369,
+      "validator_ids": [],
+      "validator_report_hashes": [],
+      "decision": "VERIFIED",
+      "reason": "controller_bound_released_source",
+      "schema_version": "statebus.artifact_verification_receipt.v1"
+    }
+  }
+}

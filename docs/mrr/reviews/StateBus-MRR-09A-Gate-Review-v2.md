@@ -82,7 +82,7 @@ ArtifactVerificationReceipt(X)
 The remaining production seam is:
 
 ```text
-statebus/runtime/adaptive_mainline.py:_commit_verified_memory()
+src/statebus/runtime/adaptive_mainline.py:_commit_verified_memory()
 ```
 
 At the Memory construction point, the method derives the Memory projection

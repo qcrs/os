@@ -93,10 +93,10 @@ args=(--mechanism "$mechanism" --mode "${mode/dry-run/offline}" --output "$conta
 for id in "${task_ids[@]}"; do args+=(--task-id "$id"); done
 for id in "${case_ids[@]}"; do args+=(--case-id "$id"); done
 if [[ "$mode" == dry-run ]]; then
-  printf 'HOST_OUTPUT=%s\nCOMMAND=' "$output"
+  printf 'HOST_OUTPUT=%s\nPYTHONPATH=%s/src\nCOMMAND=' "$output" "$ROOT"
   printf '%q ' docker exec -w "$CONTAINER_SOURCE" "$container" "$PYTHON" -m statebus.benchmark.contest_mechanisms "${args[@]}"
   printf '\n'
-  "$PYTHON" -m statebus.benchmark.contest_mechanisms "${args[@]}" --dry-run
+  PYTHONPATH="$ROOT/src" "$PYTHON" -m statebus.benchmark.contest_mechanisms "${args[@]}" --dry-run
   exit 0
 fi
 [[ ! -e "$output" ]] || { echo "Refusing existing output: $output" >&2; exit 2; }

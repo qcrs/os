@@ -42,9 +42,9 @@ Summarizer 基于 EvidencePack 与 verified Artifact 组织结论。
 | [Executor](executor.md) | 闭集选择、TransformProgram 或受限 Python 候选 | `LogitGateReceipt`、verified `ExecutionArtifactRef` | 获准能力执行与产物生成 |
 | [Summarizer](summarizer.md) | `ClaimSet` 候选、可复用步骤描述 | validated `ClaimSet`、受控的记忆提交输入 | 引用组织、结论生成与写回提案 |
 
-源码中的 [role_contract.py](../../../statebus/runtime/role_contract.py) 为四个角色定义必需遥测键、
+源码中的 [role_contract.py](../../../src/statebus/runtime/role_contract.py) 为四个角色定义必需遥测键、
 预期产物和访问范围，用于还原完整角色图。具体任务执行由
-[adaptive_mainline.py](../../../statebus/runtime/adaptive_mainline.py)、
-[adaptive_runtime.py](../../../statebus/runtime/adaptive_runtime.py) 和
-[adaptive_dispatcher.py](../../../statebus/runtime/adaptive_dispatcher.py) 共同编排；角色合同与计划、
+[adaptive_mainline.py](../../../src/statebus/runtime/adaptive_mainline.py)、
+[adaptive_runtime.py](../../../src/statebus/runtime/adaptive_runtime.py) 和
+[adaptive_dispatcher.py](../../../src/statebus/runtime/adaptive_dispatcher.py) 共同编排；角色合同与计划、
 授权、对象状态和遥测共同构成运行事实。

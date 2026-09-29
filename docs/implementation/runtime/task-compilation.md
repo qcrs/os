@@ -1,6 +1,6 @@
 # 任务编译与正式任务合同
 
-[`TaskCompiler`](../../../statebus/runtime/compiler.py) 是 Runtime 的任务入口。它把调用方请求
+[`TaskCompiler`](../../../src/statebus/runtime/compiler.py) 是 Runtime 的任务入口。它把调用方请求
 收敛为 `CanonicalTaskSpec`，让 Planner、Retriever、Executor、Summarizer 和 Replay Gate
 使用同一个任务事实面；执行计划在后续 Planner 阶段生成。
 
@@ -45,8 +45,8 @@ flowchart TD
 任务合同保存任务族定义的参数；自由 Python、文件路径和 shell 由后续 capability 与 workspace
 策略管理。编译成功后任务进入 Planner 阶段，执行资格再由 PlanPolicy 和 CapabilityGrant 签发。
 
-与 task spec 分开的 [`RuntimeCompatibilitySignature`](../../../statebus/contracts/models.py) 保存
+与 task spec 分开的 [`RuntimeCompatibilitySignature`](../../../src/statebus/contracts/models.py) 保存
 OS、Python、依赖、工具注册表、Prompt bundle 和 extractor bundle 摘要。运行签名变化时，
 历史记忆按兼容判断进入 assist、validated replay 或当前任务重算。
 
-正式任务样本和任务族在 [`statebus/benchmark/samples`](../../../statebus/benchmark/samples/)；相关合同回归可从 [`test_runtime_and_benchmark.py`](../../../tests/test_runtime_and_benchmark.py) 与 [`test_contracts_and_refs.py`](../../../tests/test_contracts_and_refs.py) 开始阅读。
+正式任务样本和任务族在 [`src/statebus/benchmark/samples`](../../../src/statebus/benchmark/samples/)；相关合同回归可从 [`test_runtime_and_benchmark.py`](../../../tests/test_runtime_and_benchmark.py) 与 [`test_contracts_and_refs.py`](../../../tests/unit/contracts/test_contracts_and_refs.py) 开始阅读。

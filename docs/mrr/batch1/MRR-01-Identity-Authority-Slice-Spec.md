@@ -48,7 +48,7 @@ Benchmark adapters MUST NOT become provider or attempt authority.
 
 ### 3.1 Existing identity fields
 
-`statebus/runtime/session.py`
+`src/statebus/runtime/session.py`
 
 - `RuntimeTaskSession`
   - `session_id`
@@ -125,14 +125,14 @@ in envelope/request/session rather than a single explicit task-contract identity
 Mandatory before editing:
 
 ```text
-statebus/runtime/session.py
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_mainline.py
-statebus/runtime/driver.py
-statebus/runtime/workspace.py
-statebus/runtime/smoke.py
-statebus/contracts/adaptive.py
-statebus/contracts/__init__.py
+src/statebus/runtime/session.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/driver.py
+src/statebus/runtime/workspace.py
+src/statebus/runtime/smoke.py
+src/statebus/contracts/adaptive.py
+src/statebus/contracts/__init__.py
 tests/test_adaptive_driver.py
 tests/test_adaptive_mainline_integration.py
 ```
@@ -140,8 +140,8 @@ tests/test_adaptive_mainline_integration.py
 Reference-only:
 
 ```text
-statebus/refs/models.py
-statebus/state/*
+src/statebus/refs/models.py
+src/statebus/state/*
 ```
 
 Do not modify State/Memory in this slice.
@@ -153,12 +153,12 @@ Do not modify State/Memory in this slice.
 Primary production files, target maximum 6:
 
 ```text
-ADD    statebus/contracts/identity.py
-MODIFY statebus/contracts/__init__.py
-ADD    statebus/runtime/identity.py
-MODIFY statebus/runtime/adaptive_mainline.py
-MODIFY statebus/runtime/adaptive_runtime.py
-MODIFY statebus/runtime/driver.py
+ADD    src/statebus/contracts/identity.py
+MODIFY src/statebus/contracts/__init__.py
+ADD    src/statebus/runtime/identity.py
+MODIFY src/statebus/runtime/adaptive_mainline.py
+MODIFY src/statebus/runtime/adaptive_runtime.py
+MODIFY src/statebus/runtime/driver.py
 ```
 
 Tests:
@@ -172,10 +172,10 @@ EXTEND tests/test_adaptive_mainline_integration.py
 ### Explicitly not expected to change
 
 ```text
-statebus/runtime/workspace.py
-statebus/runtime/smoke.py
-statebus/state/*
-statebus/memory/*
+src/statebus/runtime/workspace.py
+src/statebus/runtime/smoke.py
+src/statebus/state/*
+src/statebus/memory/*
 ```
 
 If implementation requires those for correctness, stop and report scope expansion before editing them.
@@ -186,14 +186,14 @@ If implementation requires those for correctness, stop and report scope expansio
 
 ### New
 
-`statebus/contracts/identity.py`
+`src/statebus/contracts/identity.py`
 
 ```text
 TaskContractIdentity
 RuntimeIdentity
 ```
 
-`statebus/runtime/identity.py`
+`src/statebus/runtime/identity.py`
 
 ```text
 validate_runtime_id_component(...)

@@ -59,7 +59,7 @@ Prefix 类机制记录 position-0 Token identity、完整 block 与 task-local c
 
 ## 新增 Studio recipe
 
-在 [`recipes.py`](../../../statebus/studio/recipes.py) 增加公开描述，并在 `build_command()` 中
+在 [`recipes.py`](../../../src/statebus/studio/recipes.py) 增加公开描述，并在 `build_command()` 中
 返回固定 argv。浏览器提交 recipe ID，服务端完成命令映射；新 runner 的 summary 布局由
 `task_flow.py` 适配后交给 React 展示。
 

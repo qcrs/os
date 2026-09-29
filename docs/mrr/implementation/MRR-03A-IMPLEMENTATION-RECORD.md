@@ -10,7 +10,7 @@ through the same `AdaptiveRuntimeEngine` without invoking the legacy strict
 
 ## Files changed
 
-- `statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_runtime.py`
 - `tests/test_canonical_runtime_modes.py`
 - `artifacts/mrr-03a/strict_same_engine_session.json`
 - `artifacts/mrr-03a/no_legacy_driver_call.txt`
@@ -35,8 +35,8 @@ The canonical strict test uses the existing ApprovedPlan projection,
 All tests used:
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_canonical_runtime_modes.py \
   tests/test_adaptive_driver.py::test_driver_executes_approved_nonfixed_dag_with_one_grant_per_step \
   tests/test_adaptive_driver.py::test_shadow_plan_never_dispatches_role_work

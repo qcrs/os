@@ -112,7 +112,7 @@ container_exec() {
     -e NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}" \
     -e no_proxy="${no_proxy:-127.0.0.1,localhost}" \
     -e PROJECT_ROOT="$CONTAINER_ROOT" \
-    -e PYTHONPATH="$CONTAINER_ROOT" \
+    -e PYTHONPATH="$CONTAINER_ROOT/src" \
     -e STATEBUS_CONTAINER_NAME="$CONTAINER_NAME" \
     -e STATEBUS_B2_CONTAINER_NAME="$CONTAINER_NAME" \
     -e STATEBUS_LLM_CONFIG_FILE="$(container_llm_config_file)" \
@@ -255,7 +255,7 @@ verify_mount() {
   warn_stale_env STATEBUS_VLLM_MAX_NUM_BATCHED_TOKENS "$expected_batch"
   warn_stale_env STATEBUS_VLLM_GPU_MEMORY_UTILIZATION "$expected_util"
 
-  docker exec "$CONTAINER_NAME" test -f "$CONTAINER_ROOT/statebus/benchmark/g6b2_live_validation.py"
+  docker exec "$CONTAINER_NAME" test -f "$CONTAINER_ROOT/src/statebus/benchmark/g6b2_live_validation.py"
   docker exec "$CONTAINER_NAME" test -f "$llm_config" || {
     printf 'StateBus container LLM config missing: %s\n' "$llm_config" >&2
     return 1

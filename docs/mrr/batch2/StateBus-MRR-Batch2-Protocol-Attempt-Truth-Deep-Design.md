@@ -75,7 +75,7 @@ Its job is projection and correlation.
 ## 3. Source-backed Current Runtime Map
 
 ```text
-statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/adaptive_mainline.py
 AdaptiveMainlineRunner.run()
     │
     ├─ resolve/validate RuntimeIdentity
@@ -84,7 +84,7 @@ AdaptiveMainlineRunner.run()
     └─ construct AdaptiveRuntimeRequest
             │
             ▼
-statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_runtime.py
 AdaptiveRuntimeEngine.run()
     │
     ├─ RuntimeSessionManager.start()
@@ -119,7 +119,7 @@ AdaptiveRuntimeEngine.run()
 The current real subprocess control path is not the universal outer provider boundary. It is used inside the adaptive dispatcher for semantic-state selection.
 
 ```text
-statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/adaptive_dispatcher.py
 AdaptiveCapabilityDispatcher._consume_retrieval_semantic_state()
     │
     ├─ publish dense semantic state
@@ -128,7 +128,7 @@ AdaptiveCapabilityDispatcher._consume_retrieval_semantic_state()
     └─ SubprocessExecutorTransport.execute()
              │
              ▼
-statebus/control/transport.py
+src/statebus/control/transport.py
 SubprocessExecutorTransport.exchange_sequence()
     │
     ├─ bind/listen UDS
@@ -137,7 +137,7 @@ SubprocessExecutorTransport.exchange_sequence()
     └─ receive typed frames
              │
              ▼
-statebus/control/subprocess_worker.py
+src/statebus/control/subprocess_worker.py
 run()
     │
     ├─ receive ExecRequest
@@ -792,10 +792,10 @@ Deferred. Prefer future one-publication-one-ref-id immutability; add generation 
 ### KEEP
 
 ```text
-statebus/contracts/identity.py
-statebus/contracts/provider_binding.py
-statebus/runtime/provider_registry.py
-statebus/runtime/capability_registry.py
+src/statebus/contracts/identity.py
+src/statebus/contracts/provider_binding.py
+src/statebus/runtime/provider_registry.py
+src/statebus/runtime/capability_registry.py
 ```
 
 They are upstream authority.
@@ -803,16 +803,16 @@ They are upstream authority.
 ### EXTEND — Batch 2
 
 ```text
-statebus/control/messages.py
-statebus/control/statebus_control.proto
-statebus/control/schema.py
-statebus/control/transport.py
-statebus/control/subprocess_worker.py
+src/statebus/control/messages.py
+src/statebus/control/statebus_control.proto
+src/statebus/control/schema.py
+src/statebus/control/transport.py
+src/statebus/control/subprocess_worker.py
 
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/session.py
-statebus/runtime/supervisor.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/session.py
+src/statebus/runtime/supervisor.py
 ```
 
 Not every file changes in every slice.
@@ -820,7 +820,7 @@ Not every file changes in every slice.
 ### ADD
 
 ```text
-statebus/control/admission.py
+src/statebus/control/admission.py
 ```
 
 Only if the implementation follows the recommended narrow response-admission seam.
@@ -840,10 +840,10 @@ Focused protocol, subprocess, session/supervisor and adaptive runtime tests.
 ### DO NOT TOUCH in Batch 2
 
 ```text
-statebus/state/**
-statebus/memory/**
-statebus/runtime/workspace.py
-statebus/runtime/replay.py
+src/statebus/state/**
+src/statebus/memory/**
+src/statebus/runtime/workspace.py
+src/statebus/runtime/replay.py
 deploy/**
 docker/**
 scripts/**

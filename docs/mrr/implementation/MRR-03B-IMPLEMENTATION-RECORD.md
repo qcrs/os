@@ -13,9 +13,9 @@ control-flow integration only, not Fixed feature parity.
 
 Production:
 
-- Added `statebus/runtime/fixed_mainline.py`.
-- Modified `statebus/runtime/adaptive_mainline.py`.
-- Modified `statebus/runtime/driver.py`.
+- Added `src/statebus/runtime/fixed_mainline.py`.
+- Modified `src/statebus/runtime/adaptive_mainline.py`.
+- Modified `src/statebus/runtime/driver.py`.
 
 Tests and evidence:
 
@@ -48,8 +48,8 @@ Memory commit is explicitly disabled for the Fixed compatibility bridge.
 All tests used the requested host environment:
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_fixed_canonical_mainline.py \
   tests/test_adaptive_mainline_integration.py::test_product_adaptive_mainline_owns_runtime_infrastructure_and_role_records
 ```

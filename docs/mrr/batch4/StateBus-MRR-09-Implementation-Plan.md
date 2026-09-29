@@ -59,12 +59,12 @@ Batch 4 Gate Review
 ### Likely production files
 
 ```text
-statebus/memory/models.py
-statebus/memory/store.py
-statebus/contracts/*memory*
-statebus/contracts/__init__.py
-statebus/runtime/adaptive_mainline.py
-statebus/runtime/memory_admission.py   # optional narrow authority module
+src/statebus/memory/models.py
+src/statebus/memory/store.py
+src/statebus/contracts/*memory*
+src/statebus/contracts/__init__.py
+src/statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/memory_admission.py   # optional narrow authority module
 ```
 
 ### Explicit non-goals
@@ -116,12 +116,12 @@ Memory unit retains required metadata; no performance claim.
 ### Likely production files
 
 ```text
-statebus/contracts/adaptive.py
-statebus/contracts/*memory*
-statebus/memory/store.py
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/replay_eligibility.py   # optional narrow module
+src/statebus/contracts/adaptive.py
+src/statebus/contracts/*memory*
+src/statebus/memory/store.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/replay_eligibility.py   # optional narrow module
 ```
 
 Do not make `runtime/replay.py` canonical.
@@ -199,10 +199,10 @@ True exact Artifact replay is out of MRR-09C.
 ### Likely production files
 
 ```text
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/adaptive_runtime.py
-statebus/memory/models.py
-statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/memory/models.py
+src/statebus/runtime/adaptive_mainline.py
 ```
 
 ### Primary tests

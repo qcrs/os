@@ -28,13 +28,13 @@ data and do not mutate the outer semantic Step.
 ## Files read
 
 - `docs/mrr/batch2/MRR-06A-Attempt-Authority-Lifecycle-Origin-Truth-Slice-Spec.md`
-- `statebus/runtime/session.py`
-- `statebus/runtime/supervisor.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/runtime/driver.py`
-- `statebus/control/transport.py`
-- `statebus/control/subprocess_worker.py`
+- `src/statebus/runtime/session.py`
+- `src/statebus/runtime/supervisor.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/runtime/driver.py`
+- `src/statebus/control/transport.py`
+- `src/statebus/control/subprocess_worker.py`
 - `tests/test_adaptive_driver.py`
 - `tests/test_adaptive_mainline_integration.py`
 - `tests/test_runtime_session_and_ledger.py`
@@ -49,12 +49,12 @@ downstream context and kept unchanged.
 
 Production:
 
-- Modified `statebus/runtime/session.py`.
-- Modified `statebus/runtime/supervisor.py`.
-- Modified `statebus/runtime/adaptive_runtime.py`.
-- Modified `statebus/runtime/adaptive_dispatcher.py`.
-- Modified `statebus/runtime/driver.py`.
-- Modified `statebus/runtime/__init__.py` to export `LifecycleOrigin`.
+- Modified `src/statebus/runtime/session.py`.
+- Modified `src/statebus/runtime/supervisor.py`.
+- Modified `src/statebus/runtime/adaptive_runtime.py`.
+- Modified `src/statebus/runtime/adaptive_dispatcher.py`.
+- Modified `src/statebus/runtime/driver.py`.
+- Modified `src/statebus/runtime/__init__.py` to export `LifecycleOrigin`.
 
 Tests:
 
@@ -107,7 +107,7 @@ source ./deploy/activate_statebus_host.sh
 Focused MRR-06A set:
 
 ```text
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:tests python -m pytest -q \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests python -m pytest -q \
   --basetemp=/tmp/mrr-06a-targeted \
   tests/test_mrr_06a_attempt_lifecycle.py \
   tests/test_adaptive_driver.py \

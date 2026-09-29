@@ -1,0 +1,30 @@
+[
+  {
+    "cost_cny": 510696,
+    "period": "2026-01",
+    "profit_cny": 97279,
+    "revenue_cny": 607975,
+    "unit_id": "U-A"
+  },
+  {
+    "cost_cny": 471961,
+    "period": "2026-01",
+    "profit_cny": 140981,
+    "revenue_cny": 612942,
+    "unit_id": "U-B"
+  },
+  {
+    "cost_cny": 507127,
+    "period": "2026-01",
+    "profit_cny": 111326,
+    "revenue_cny": 618453,
+    "unit_id": "U-C"
+  },
+  {
+    "cost_cny": 431382,
+    "period": "2026-01",
+    "profit_cny": 193815,
+    "revenue_cny": 625197,
+    "unit_id": "U-D"
+  }
+]

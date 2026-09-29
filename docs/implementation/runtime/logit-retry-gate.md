@@ -220,7 +220,7 @@ stateDiagram-v2
 原始汇总位于：
 
 ```text
-/home/qcrs/statebus/runs/logit_retry_challenge_20260727_222823/summary.json
+/home/qcrs/src/statebus/runs/logit_retry_challenge_20260727_222823/summary.json
 ```
 
 ### 成本
@@ -254,13 +254,13 @@ export STATEBUS_LOGIT_GATE_MODE=retry_once
 
 | 文件 | 职责 |
 |:--|:--|
-| `statebus/contracts/logit.py` | candidate surface、概率语义、Producer/Gate receipts |
-| `statebus/runtime/logit_state.py` | exact choice token 定位、概率提取与 float32 序列化 |
-| `statebus/state/logit_state.py` | 发布、解析、Gate 计算、释放和 tombstone |
-| `statebus/runtime/logit_gate.py` | 独立 Worker 调用和 Runtime 交叉验证 |
-| `statebus/runtime/role_path.py` | 闭集 schema、首次选择和 recheck prompt |
-| `statebus/control/subprocess_worker.py` | `logit_gate_v1` 的独立 PID 消费 |
-| `statebus/runtime/smoke.py` | 三种模式、业务 dispatch 边界和审计落盘 |
-| `statebus/benchmark/logit_retry_challenge.py` | 12-case challenge、AB/BA 和配对汇总 |
+| `src/statebus/contracts/logit.py` | candidate surface、概率语义、Producer/Gate receipts |
+| `src/statebus/runtime/logit_state.py` | exact choice token 定位、概率提取与 float32 序列化 |
+| `src/statebus/state/logit_state.py` | 发布、解析、Gate 计算、释放和 tombstone |
+| `src/statebus/runtime/logit_gate.py` | 独立 Worker 调用和 Runtime 交叉验证 |
+| `src/statebus/runtime/role_path.py` | 闭集 schema、首次选择和 recheck prompt |
+| `src/statebus/control/subprocess_worker.py` | `logit_gate_v1` 的独立 PID 消费 |
+| `src/statebus/runtime/smoke.py` | 三种模式、业务 dispatch 边界和审计落盘 |
+| `src/statebus/benchmark/logit_retry_challenge.py` | 12-case challenge、AB/BA 和配对汇总 |
 
-主要回归位于 `tests/test_logit_gate.py`、`tests/test_logit_state.py` 和 `tests/test_logit_retry_challenge.py`。完整挑战走读见 [Logit Retry Gate 受控挑战](../walkthrough/logit-retry-challenge.md)，与 Prefix/KV 的位置关系见 [模型侧状态路径](model-state-paths.md)。
+主要回归位于 `tests/unit/mechanisms/test_logit_gate.py`、`tests/unit/mechanisms/test_logit_state.py` 和 `tests/benchmarks/mechanisms/test_logit_retry_challenge.py`。完整挑战走读见 [Logit Retry Gate 受控挑战](../walkthrough/logit-retry-challenge.md)，与 Prefix/KV 的位置关系见 [模型侧状态路径](model-state-paths.md)。

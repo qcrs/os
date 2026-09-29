@@ -12,12 +12,12 @@ additive compatibility bridge.
 
 Production:
 
-- Added `statebus/contracts/provider_binding.py`.
-- Added `statebus/runtime/provider_registry.py`.
-- Modified `statebus/contracts/__init__.py`.
-- Modified `statebus/runtime/capability_registry.py`.
-- Modified `statebus/runtime/adaptive_runtime.py`.
-- Modified `statebus/runtime/adaptive_dispatcher.py`.
+- Added `src/statebus/contracts/provider_binding.py`.
+- Added `src/statebus/runtime/provider_registry.py`.
+- Modified `src/statebus/contracts/__init__.py`.
+- Modified `src/statebus/runtime/capability_registry.py`.
+- Modified `src/statebus/runtime/adaptive_runtime.py`.
+- Modified `src/statebus/runtime/adaptive_dispatcher.py`.
 
 Tests and evidence:
 
@@ -65,8 +65,8 @@ scheduler, protocol, worker, or LLM provider source was changed.
 All tests used the requested host environment:
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_provider_binding_reconciliation.py \
   tests/test_fixed_canonical_mainline.py::test_fixed_mainline_completes_through_runtime_grants_without_legacy_paths \
   tests/test_adaptive_driver.py::test_driver_executes_approved_nonfixed_dag_with_one_grant_per_step

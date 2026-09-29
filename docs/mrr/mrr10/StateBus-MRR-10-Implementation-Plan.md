@@ -162,14 +162,14 @@ logical task input 分别运行 legacy comparator 和 canonical facade。
 
 | File / area | Planned responsibility | Forbidden change |
 | --- | --- | --- |
-| `statebus/runtime/role_path.py` or a narrow role-provider helper module | pure prompt/parser/candidate helpers；legacy wrapper remains | full graph execution、Attempt/commit authority |
-| `statebus/runtime/adaptive_dispatcher.py` | binding-aware one-step provider invocation；existing validation/State/Artifact/Memory gates | provider selection or plan sequencing |
-| `statebus/runtime/adaptive_mainline.py` | wire selected role provider implementations into existing context | new fixed runtime or duplicate commit path |
-| `statebus/runtime/fixed_mainline.py` | authority-free fixed request facade；real adapter bindings | direct role execution or fake success refs as Mechanism Gate |
-| `statebus/integrations/llm.py` | bound-provider client resolution and single-call request helper | role-based provider override/fallback |
+| `src/statebus/runtime/role_path.py` or a narrow role-provider helper module | pure prompt/parser/candidate helpers；legacy wrapper remains | full graph execution、Attempt/commit authority |
+| `src/statebus/runtime/adaptive_dispatcher.py` | binding-aware one-step provider invocation；existing validation/State/Artifact/Memory gates | provider selection or plan sequencing |
+| `src/statebus/runtime/adaptive_mainline.py` | wire selected role provider implementations into existing context | new fixed runtime or duplicate commit path |
+| `src/statebus/runtime/fixed_mainline.py` | authority-free fixed request facade；real adapter bindings | direct role execution or fake success refs as Mechanism Gate |
+| `src/statebus/integrations/llm.py` | bound-provider client resolution and single-call request helper | role-based provider override/fallback |
 | targeted tests | Source/Mechanism/Integration/Parity assertions | benchmark migration or dozens of duplicative tests |
-| `statebus/runtime/smoke.py` | no MRR-10 change unless a minimal comparator-only import separation is strictly required | canonical entry rewrite, sequencing cleanup, deletion |
-| `statebus/benchmark/fixed_answer_runner.py` | no MRR-10 change | MRR-11 work |
+| `src/statebus/runtime/smoke.py` | no MRR-10 change unless a minimal comparator-only import separation is strictly required | canonical entry rewrite, sequencing cleanup, deletion |
+| `src/statebus/benchmark/fixed_answer_runner.py` | no MRR-10 change | MRR-11 work |
 
 如果实现发现必须修改 `AdaptiveMainlineBindings`，应只增加/收紧 provider
 execution wiring；不得增加新的 scheduler、session、plan、memory 或 commit

@@ -7,21 +7,21 @@
 
 本轮读取并交叉检查了：
 
-- `statebus/runtime/role_path.py`
-- `statebus/runtime/smoke.py`
-- `statebus/runtime/driver.py`
-- `statebus/runtime/compiler.py`
-- `statebus/runtime/static_role_recipe.py`
-- `statebus/runtime/fixed_mainline.py`
-- `statebus/runtime/adaptive_mainline.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/runtime/provider_registry.py`
-- `statebus/runtime/retrieval_adapter.py`
-- `statebus/runtime/domain_packs.py`
-- `statebus/runtime/logit_gate.py`
-- `statebus/integrations/llm.py`
-- `statebus/benchmark/fixed_answer_runner.py`
+- `src/statebus/runtime/role_path.py`
+- `src/statebus/runtime/smoke.py`
+- `src/statebus/runtime/driver.py`
+- `src/statebus/runtime/compiler.py`
+- `src/statebus/runtime/static_role_recipe.py`
+- `src/statebus/runtime/fixed_mainline.py`
+- `src/statebus/runtime/adaptive_mainline.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/runtime/provider_registry.py`
+- `src/statebus/runtime/retrieval_adapter.py`
+- `src/statebus/runtime/domain_packs.py`
+- `src/statebus/runtime/logit_gate.py`
+- `src/statebus/integrations/llm.py`
+- `src/statebus/benchmark/fixed_answer_runner.py`
 
 冻结 authority 仍来自 MRR-01 至 MRR-09：`RuntimeIdentity`、
 `TaskContractIdentity`、`PlanProposal`、`PlanNormalizationReceipt`、

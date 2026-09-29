@@ -8,14 +8,14 @@
 
 | 任务组 | 数量与执行关系 | 任务定义 | 数据位置 |
 |:--|:--|:--|:--|
-| E2 Operating | 10 轮连续链 | `statebus/benchmark/samples/continuous_task_families/formal_operating_metrics/manifest.json` | `datasets/operating_metrics/` 与 manifest 同目录的 drift fixture |
-| E2 Financial | 10 轮连续链 | `statebus/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json` | `statebus/benchmark/samples/continuous_task_families/cross_period_financial/` |
-| E5 五类能力 | 25 个独立 case | `statebus/benchmark/task_registry.py` | `statebus/benchmark/samples/formal_financial_family/` 与 `tasks/formal/*/samples/` |
-| E4 Embedding holdout | 4 个独立 case | `statebus/benchmark/samples/semantic_holdout/manifest.json` | `statebus/benchmark/samples/semantic_holdout/` |
-| Logit Gate | 12 个 case，各执行 `off` 与 `retry_once` | `statebus/benchmark/samples/logit_retry_challenge/manifest.json` | 同目录的 `gold.json` |
-| Prefix | 4 个交替 pair，40 个请求 | `statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/manifest.json` | 同目录的 Nova/Orion 报告 |
-| 显式 KV 探针 | 2k、4k、6k 三个 case | `statebus/benchmark/samples/engine_local_kv_continuation/manifest.json` | 同目录的报告与 `compiled_parents/` |
-| 显式 KV 主链 | 10 个 4k 任务，各执行两条路径 | `statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json` | 该目录与 `engine_local_kv_continuation/` 的编译 parent |
+| E2 Operating | 10 轮连续链 | `src/statebus/benchmark/samples/continuous_task_families/formal_operating_metrics/manifest.json` | `datasets/operating_metrics/` 与 manifest 同目录的 drift fixture |
+| E2 Financial | 10 轮连续链 | `src/statebus/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json` | `src/statebus/benchmark/samples/continuous_task_families/cross_period_financial/` |
+| E5 五类能力 | 25 个独立 case | `src/statebus/benchmark/task_registry.py` | `src/statebus/benchmark/samples/formal_financial_family/` 与 `tasks/formal/*/samples/` |
+| E4 Embedding holdout | 4 个独立 case | `src/statebus/benchmark/samples/semantic_holdout/manifest.json` | `src/statebus/benchmark/samples/semantic_holdout/` |
+| Logit Gate | 12 个 case，各执行 `off` 与 `retry_once` | `src/statebus/benchmark/samples/logit_retry_challenge/manifest.json` | 同目录的 `gold.json` |
+| Prefix | 4 个交替 pair，40 个请求 | `src/statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/manifest.json` | 同目录的 Nova/Orion 报告 |
+| 显式 KV 探针 | 2k、4k、6k 三个 case | `src/statebus/benchmark/samples/engine_local_kv_continuation/manifest.json` | 同目录的报告与 `compiled_parents/` |
+| 显式 KV 主链 | 10 个 4k 任务，各执行两条路径 | `src/statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json` | 该目录与 `engine_local_kv_continuation/` 的编译 parent |
 
 45 个正式任务实例为 E2 的 20 个连续任务与 E5 的 25 个独立 case。E1 取 E2
 两条链的前五轮做四路径匹配消融；Embedding、Logit、Prefix 和显式 KV 另设专项机制任务。
@@ -52,7 +52,7 @@ flowchart TB
 | `kv_prefix_reuse/` | Nova/Orion 两份离线运营报告 | revenue、margin、expense、churn、delivery | Prefix 调度与布局 |
 | `engine_local_kv_continuation/` | 两份运营报告与 2k/4k/6k 编译 parent | 跨季度指标与跨公司对比 | 显式 KV 探针与 10 任务主链 |
 
-`OfflineFinancialReportCorpus` 定义在 `statebus/retrieval/corpus.py`。跨期 Markdown 与该 corpus
+`OfflineFinancialReportCorpus` 定义在 `src/statebus/retrieval/corpus.py`。跨期 Markdown 与该 corpus
 是两个独立输入对象；即使局部数值相同，任务仍按各自 source locator、文档 hash 和 task ID
 进行验证。
 
@@ -104,12 +104,12 @@ R1-R5 构成 `causal_core`，用于 E1 四路径匹配消融；R1-R10 构成 `lo
 
 ## 4. E5：五类 25 个独立任务
 
-E5 注册入口为 `statebus/benchmark/task_registry.py`。每个 sample 独立执行，Gold 不依赖其他
+E5 注册入口为 `src/statebus/benchmark/task_registry.py`。每个 sample 独立执行，Gold 不依赖其他
 case 的运行结果。
 
 ### 4.1 财报指标抽取，8 个
 
-任务位于 `statebus/benchmark/samples/formal_financial_family/`，数据来自
+任务位于 `src/statebus/benchmark/samples/formal_financial_family/`，数据来自
 `OfflineFinancialReportCorpus`。
 
 | task ID | 查询 | Gold |
@@ -182,7 +182,7 @@ quartile 与 `1.5 x IQR`。
 
 ### 5.2 Logit Retry Gate
 
-任务定义位于 `statebus/benchmark/samples/logit_retry_challenge/manifest.json`，Gold 位于同目录
+任务定义位于 `src/statebus/benchmark/samples/logit_retry_challenge/manifest.json`，Gold 位于同目录
 的 `gold.json`。每个任务分别执行 `off` 与 `retry_once`。
 
 | 分组 | task ID | 首次任务面 | 合同展开后的目标 |
@@ -202,7 +202,7 @@ quartile 与 `1.5 x IQR`。
 
 ## 6. Prefix 任务
 
-Prefix 数据位于 `statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/`：
+Prefix 数据位于 `src/statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/`：
 
 | 文件 | 内容 |
 |:--|:--|
@@ -219,7 +219,7 @@ Summarizer、Verifier 五类请求，并分别运行 Shared 与 Independent，�
 
 ### 7.1 2k、4k、6k 机制探针
 
-入口：`statebus/benchmark/samples/engine_local_kv_continuation/manifest.json`。
+入口：`src/statebus/benchmark/samples/engine_local_kv_continuation/manifest.json`。
 
 | case ID | Parent | 输入 | Gold |
 |:--|--:|:--|:--|
@@ -233,7 +233,7 @@ Summarizer、Verifier 五类请求，并分别运行 Shared 与 Independent，�
 ### 7.2 10 个 4k 完整主链任务
 
 正式 KV 结果采用
-`statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json`。10 个任务
+`src/statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json`。10 个任务
 全部固定 4,096-token parent；先执行 10 个 `full_replay`，再执行 10 个 `continuation`。
 
 | 轮次 / task ID | 公司与指标 | 2026Q1 / Q2 / Q3 Gold |
@@ -297,13 +297,13 @@ PY
 
 ```bash
 python -m json.tool \
-  statebus/benchmark/samples/continuous_task_families/formal_operating_metrics/manifest.json \
+  src/statebus/benchmark/samples/continuous_task_families/formal_operating_metrics/manifest.json \
   >/dev/null
 python -m json.tool \
-  statebus/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json \
+  src/statebus/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json \
   >/dev/null
 python -m json.tool \
-  statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json \
+  src/statebus/benchmark/samples/engine_local_kv_mainline_10round/suite_manifest.json \
   >/dev/null
 ```
 
@@ -312,7 +312,7 @@ python -m json.tool \
 ```bash
 python -m pytest -q \
   tests/test_adaptive_formal_compare.py \
-  tests/test_logit_retry_challenge.py \
-  tests/test_prefix_render_identity.py \
-  tests/test_engine_local_kv_mainline_suite.py
+  tests/benchmarks/mechanisms/test_logit_retry_challenge.py \
+  tests/unit/mechanisms/test_prefix_render_identity.py \
+  tests/benchmarks/mechanisms/test_engine_local_kv_mainline_suite.py
 ```

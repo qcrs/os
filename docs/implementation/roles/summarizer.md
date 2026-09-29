@@ -33,7 +33,7 @@ block。共同前缀取 Executor 与 Summarizer 可见证据的交集，Executor
 角色后缀中。
 
 显式 KV 模式下，adapter 先用服务 tokenizer 重建完整 Summarizer Prompt，并逐 Token 核对
-前 4,096 个 Token 与 Executor 捕获父序列的一致性。通过后向 `/statebus/kv/continue` 发送
+前 4,096 个 Token 与 Executor 捕获父序列的一致性。通过后向 `/src/statebus/kv/continue` 发送
 handle 与 Summarizer 后缀；CodeAct 的 verified Artifact 仍在后缀中进入模型。
 
 ```mermaid
@@ -58,4 +58,4 @@ handle 在 Consumer `finally` 中 release，过期或 identity/compatibility 不
 | 权威校验 | `ClaimSetValidator`、summary artifact 写入、Runtime memory commit decision；KV 模式另核对 token identity 与 forward proof |
 | 上游职责 | 工具选择、证据补充和执行产物修改由对应上游步骤完成 |
 
-主要调度逻辑位于 [adaptive_dispatcher.py](../../../statebus/runtime/adaptive_dispatcher.py)，Claim 校验位于 [claims.py](../../../statebus/runtime/claims.py)，记忆提交由 [adaptive_mainline.py](../../../statebus/runtime/adaptive_mainline.py) 收口。模型调用包装见 [role_client.py](../../../statebus/integrations/vllm_kv/role_client.py)；跨任务写回与重放流程见[记忆提交与分级重放](../memory/commit-and-replay.md)。
+主要调度逻辑位于 [adaptive_dispatcher.py](../../../src/statebus/runtime/adaptive_dispatcher.py)，Claim 校验位于 [claims.py](../../../src/statebus/runtime/claims.py)，记忆提交由 [adaptive_mainline.py](../../../src/statebus/runtime/adaptive_mainline.py) 收口。模型调用包装见 [role_client.py](../../../src/statebus/integrations/vllm_kv/role_client.py)；跨任务写回与重放流程见[记忆提交与分级重放](../memory/commit-and-replay.md)。

@@ -30,15 +30,15 @@ Frozen closure:
 - `docs/mrr/batch3/StateBus-MRR-Batch3-State-Artifact-Truth-Deep-Design.md`
 
 Current production:
-- `statebus/memory/models.py`
-- `statebus/memory/store.py`
-- `statebus/runtime/adaptive_mainline.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/runtime/replay.py`
-- `statebus/runtime/driver.py`
-- `statebus/runtime/ledger.py`
-- `statebus/contracts/artifact.py`
+- `src/statebus/memory/models.py`
+- `src/statebus/memory/store.py`
+- `src/statebus/runtime/adaptive_mainline.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/runtime/replay.py`
+- `src/statebus/runtime/driver.py`
+- `src/statebus/runtime/ledger.py`
+- `src/statebus/contracts/artifact.py`
 
 Competition/reference:
 - `docs/reference/题目.md`
@@ -297,7 +297,7 @@ and current Attempt result admission remains in the path.
 
 ## 9. Separate strict/history replay surface
 
-`statebus/runtime/replay.py` has a separate history-replay subsystem based on:
+`src/statebus/runtime/replay.py` has a separate history-replay subsystem based on:
 - persisted MemoryCommit
 - historical ExecutionArtifactRef
 - ReplayLedgerEntry

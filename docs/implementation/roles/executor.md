@@ -37,7 +37,7 @@ Python 候选经过 AST 与 policy 检查，再由隔离执行器运行；DSL �
 
 `RolePathRunner` 在调用模型前编译最终 prompt。启用 shared prefix alignment 时，它把 Executor 与 Summarizer 共同获权的 evidence 放在 token position 0；请求仍是完整 prompt，是否命中由同一 vLLM 的 APC 决定。
 
-显式 KV 模式在普通 role client 外增加 `EngineLocalKVRoleClient`。Executor 调用改走私有 `/statebus/kv/produce`：服务按真实 tokenizer 把 prompt 切成 block-aligned parent 与 Executor suffix，`continuation` lane 捕获 parent KV，`full_replay` lane 只生成对照输出。上层仍收到普通 `LLMResult`。
+显式 KV 模式在普通 role client 外增加 `EngineLocalKVRoleClient`。Executor 调用改走私有 `/src/statebus/kv/produce`：服务按真实 tokenizer 把 prompt 切成 block-aligned parent 与 Executor suffix，`continuation` lane 捕获 parent KV，`full_replay` lane 只生成对照输出。上层仍收到普通 `LLMResult`。
 
 ```mermaid
 sequenceDiagram
@@ -66,4 +66,4 @@ CodeAct 阶段暂存，CodeAct 输出通过 verified `ExecutionArtifactRef` 进�
 | Runtime 物化 | `LogitStateRef`/GateReceipt、candidate 到 verified 的 `ExecutionArtifactRef`、执行记录与 validator receipt；可选 KV handle 由 Worker-local registry 管理 |
 | 后续职责 | 结论组织与记忆提交由 Summarizer 和 Runtime 完成 |
 
-调度与产物注册位于 [adaptive_dispatcher.py](../../../statebus/runtime/adaptive_dispatcher.py)；CodeAct 主体位于 [llm_codeact.py](../../../statebus/runtime/llm_codeact.py)，DSL 位于 [transform_dsl.py](../../../statebus/runtime/transform_dsl.py)。更完整的执行链见[Logit Retry Gate](../runtime/logit-retry-gate.md)、[Engine-Local Prefix Reuse](../runtime/engine-local-prefix-reuse.md)、[显式 KV Continuation](../runtime/engine-local-kv-continuation.md)、[受限 Python CodeAct](../execution/bounded-python-codeact.md)、[Transform DSL](../execution/transform-dsl.md)和[产物质量门](../execution/artifact-and-quality-gate.md)。
+调度与产物注册位于 [adaptive_dispatcher.py](../../../src/statebus/runtime/adaptive_dispatcher.py)；CodeAct 主体位于 [llm_codeact.py](../../../src/statebus/runtime/llm_codeact.py)，DSL 位于 [transform_dsl.py](../../../src/statebus/runtime/transform_dsl.py)。更完整的执行链见[Logit Retry Gate](../runtime/logit-retry-gate.md)、[Engine-Local Prefix Reuse](../runtime/engine-local-prefix-reuse.md)、[显式 KV Continuation](../runtime/engine-local-kv-continuation.md)、[受限 Python CodeAct](../execution/bounded-python-codeact.md)、[Transform DSL](../execution/transform-dsl.md)和[产物质量门](../execution/artifact-and-quality-gate.md)。

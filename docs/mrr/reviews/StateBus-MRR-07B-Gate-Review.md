@@ -42,15 +42,15 @@ pin in the Store.
 | # | Review item | Result | Source basis |
 |---|---|---|---|
 | 1 | Identity, authority, and lifetime are separate | PASS | `SemanticStateRef`, `StateAccessGrant`, and `StatePin` / `StateLifetimeRecord` remain distinct contracts. |
-| 2 | `StatePin` is lifetime-only | PASS | `statebus/state/store.py:191`; the pin contains consumer and grant witness metadata but no State payload or resolution authority. |
-| 3 | New pin requires an active authorized consumer | PASS | `statebus/runtime/adaptive_runtime.py:244`, `:352`, and `:377`; active Attempt and READ grant validation precede Store pin recording. |
-| 4 | Owner release is logical | PASS | `statebus/state/store.py:425`; release marks `owner_released` and delegates physical action to the reclaim predicate. |
+| 2 | `StatePin` is lifetime-only | PASS | `src/statebus/state/store.py:191`; the pin contains consumer and grant witness metadata but no State payload or resolution authority. |
+| 3 | New pin requires an active authorized consumer | PASS | `src/statebus/runtime/adaptive_runtime.py:244`, `:352`, and `:377`; active Attempt and READ grant validation precede Store pin recording. |
+| 4 | Owner release is logical | PASS | `src/statebus/state/store.py:425`; release marks `owner_released` and delegates physical action to the reclaim predicate. |
 | 5 | Owner release is idempotent | PASS | Repeated release returns no state change; recorded by `idempotent_release.txt`. |
-| 6 | Unpin is idempotent | PASS | `statebus/state/store.py:377`; released pins are retained as witnesses and repeated unpin returns false without another reclaim. |
+| 6 | Unpin is idempotent | PASS | `src/statebus/state/store.py:377`; released pins are retained as witnesses and repeated unpin returns false without another reclaim. |
 | 7 | A live pin prevents reclaim | PASS | `pin_release_trace.txt` records owner release with one live pin while SharedMemory remains reopenable. |
-| 8 | Reclaim requires owner release and zero pins | PASS | `statebus/state/store.py:449`; both predicates are checked before backend close/unlink and materialization removal. |
+| 8 | Reclaim requires owner release and zero pins | PASS | `src/statebus/state/store.py:449`; both predicates are checked before backend close/unlink and materialization removal. |
 | 9 | Multiple consumers are isolated correctly | PASS | `test_attempt_settlement_cleans_own_pin_and_preserves_other_consumer` retains consumer B after consumer A settles. |
-| 10 | Attempt settlement cleans only its own pins | PASS | `statebus/runtime/adaptive_runtime.py:1540` and `statebus/state/store.py:399` use exact session, step, and Attempt scope. |
+| 10 | Attempt settlement cleans only its own pins | PASS | `src/statebus/runtime/adaptive_runtime.py:1540` and `src/statebus/state/store.py:399` use exact session, step, and Attempt scope. |
 | 11 | Producer settlement preserves publication | PASS | Attempt settlement unpins that Attempt but does not release the Runtime session's publication ownership. |
 | 12 | `StateAccessGrant` remains the root READ witness | PASS | `RuntimeStateAccessAuthority.acquire_pin` validates the grant before pin creation; dispatcher and local Runtime reads use that path. |
 | 13 | No OS-lifetime shortcut controls normal reclaim | PASS | Normal reclaim is contract-driven; PID/process exit is not used as the lifetime predicate. |

@@ -66,16 +66,16 @@ statebus.runtime.adaptive_runtime.AdaptiveRuntimeEngine.run
 ## Files to read
 
 ```text
-statebus/contracts/identity.py
-statebus/contracts/provider_binding.py
-statebus/contracts/adaptive.py
-statebus/control/messages.py
-statebus/control/statebus_control.proto
-statebus/control/schema.py
-statebus/control/transport.py
-statebus/control/subprocess_worker.py
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_dispatcher.py
+src/statebus/contracts/identity.py
+src/statebus/contracts/provider_binding.py
+src/statebus/contracts/adaptive.py
+src/statebus/control/messages.py
+src/statebus/control/statebus_control.proto
+src/statebus/control/schema.py
+src/statebus/control/transport.py
+src/statebus/control/subprocess_worker.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_dispatcher.py
 ```
 
 ## Expected production files changed
@@ -83,12 +83,12 @@ statebus/runtime/adaptive_dispatcher.py
 Target <= 6:
 
 ```text
-statebus/control/messages.py
-statebus/control/statebus_control.proto
-statebus/control/schema.py
-statebus/control/subprocess_worker.py
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/adaptive_runtime.py   # only if identity handoff is required
+src/statebus/control/messages.py
+src/statebus/control/statebus_control.proto
+src/statebus/control/schema.py
+src/statebus/control/subprocess_worker.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/adaptive_runtime.py   # only if identity handoff is required
 ```
 
 Do not modify `transport.py` unless the existing encoder/text adapter cannot preserve the expanded header without change.

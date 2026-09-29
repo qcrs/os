@@ -61,11 +61,11 @@ statebus.control.admission.ControlResponseAdmissionReceipt
 ## Files to read
 
 ```text
-statebus/runtime/session.py
-statebus/runtime/supervisor.py
-statebus/runtime/adaptive_runtime.py
-statebus/control/transport.py
-statebus/control/admission.py
+src/statebus/runtime/session.py
+src/statebus/runtime/supervisor.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/control/transport.py
+src/statebus/control/admission.py
 tests created in 05A/05B/06A
 ```
 
@@ -74,13 +74,13 @@ tests created in 05A/05B/06A
 Target <= 4:
 
 ```text
-statebus/runtime/session.py
-statebus/runtime/supervisor.py
-statebus/runtime/adaptive_runtime.py
-statebus/control/transport.py
+src/statebus/runtime/session.py
+src/statebus/runtime/supervisor.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/control/transport.py
 ```
 
-If a tiny admission extension is required, `statebus/control/admission.py` may be the fifth.
+If a tiny admission extension is required, `src/statebus/control/admission.py` may be the fifth.
 
 ## Contracts added/changed
 

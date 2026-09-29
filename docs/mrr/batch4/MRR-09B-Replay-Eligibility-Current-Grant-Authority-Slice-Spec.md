@@ -165,12 +165,12 @@ legacy compatibility projection only
 ## Likely production files
 
 ```text
-statebus/contracts/adaptive.py
-statebus/contracts/*memory*
-statebus/memory/store.py
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/replay_eligibility.py  # optional
+src/statebus/contracts/adaptive.py
+src/statebus/contracts/*memory*
+src/statebus/memory/store.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/replay_eligibility.py  # optional
 ```
 
 ## Non-goals

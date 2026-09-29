@@ -32,7 +32,7 @@ from statebus.utils import stable_json_dumps
 
 
 def _default_dev_family_dir() -> Path:
-    return Path("statebus/benchmark/samples/fixed_answer_family")
+    return Path("src/statebus/benchmark/samples/fixed_answer_family")
 
 
 def _default_workspace_root() -> Path:
@@ -182,7 +182,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 "gate": "object_parity_gate",
                 "passed": bool(fairness_manifest.get("same_task_family")) and bool(fairness_manifest.get("same_tier")),
                 "contract_ref": "docs/planning/statebus_4_role_comparator_contract_20260620.md:705-720",
-                "code_ref": "statebus/benchmark/comparator_runner.py:89-96",
+                "code_ref": "src/statebus/benchmark/comparator_runner.py:89-96",
                 "details": {
                     "same_task_family": fairness_manifest.get("same_task_family"),
                     "same_tier": fairness_manifest.get("same_tier"),
@@ -192,7 +192,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 "gate": "role_graph_gate",
                 "passed": bool(fairness_manifest.get("same_role_graph")) and statebus_role_count == 4 and external_role_count == 4,
                 "contract_ref": "docs/planning/statebus_4_role_comparator_contract_20260620.md:705-720",
-                "code_ref": "statebus/benchmark/comparator_runner.py:90-103",
+                "code_ref": "src/statebus/benchmark/comparator_runner.py:90-103",
                 "details": {
                     "same_role_graph": fairness_manifest.get("same_role_graph"),
                     "statebus_role_count": statebus_role_count,
@@ -205,7 +205,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                     fairness_manifest.get("same_quality_floor_contract")
                 ),
                 "contract_ref": "docs/planning/statebus_4_role_comparator_contract_20260620.md:716-730",
-                "code_ref": "statebus/benchmark/comparator_runner.py:91-94",
+                "code_ref": "src/statebus/benchmark/comparator_runner.py:91-94",
                 "details": {
                     "same_scoring_contract": fairness_manifest.get("same_scoring_contract"),
                     "same_quality_floor_contract": fairness_manifest.get("same_quality_floor_contract"),
@@ -217,7 +217,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                     fairness_manifest.get("external_uses_internal_helpers")
                 ),
                 "contract_ref": "docs/planning/statebus_4_role_comparator_contract_20260620.md:718-720",
-                "code_ref": "statebus/benchmark/comparator_runner.py:96-110",
+                "code_ref": "src/statebus/benchmark/comparator_runner.py:96-110",
                 "details": {
                     "no_external_contamination": fairness_manifest.get("no_external_contamination"),
                     "external_uses_internal_helpers": fairness_manifest.get("external_uses_internal_helpers"),
@@ -229,8 +229,8 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 if not external_per_case_gate_reported
                 else bool(fairness_manifest.get("external_fairness_gate_coverage"))
                 and bool(fairness_manifest.get("no_external_fairness_gate_failures")),
-                "contract_ref": "statebus/benchmark/external_text_baseline.py",
-                "code_ref": "statebus/benchmark/comparator_runner.py:94-169",
+                "contract_ref": "src/statebus/benchmark/external_text_baseline.py",
+                "code_ref": "src/statebus/benchmark/comparator_runner.py:94-169",
                 "details": {
                     "external_fairness_gate_coverage": fairness_manifest.get("external_fairness_gate_coverage"),
                     "no_external_fairness_gate_failures": fairness_manifest.get("no_external_fairness_gate_failures"),
@@ -246,7 +246,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 "gate": "role_metric_presence_gate",
                 "passed": bool(fairness_manifest.get("role_metric_presence_gate")),
                 "contract_ref": "docs/planning/statebus_4_role_comparator_contract_20260620.md:724-730",
-                "code_ref": "statebus/benchmark/comparator_runner.py:110-127",
+                "code_ref": "src/statebus/benchmark/comparator_runner.py:110-127",
                 "details": {
                     "role_metric_presence_gate": fairness_manifest.get("role_metric_presence_gate"),
                 },
@@ -255,7 +255,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 "gate": "repeat_policy_gate",
                 "passed": bool(fairness_manifest.get("same_history_policy")),
                 "contract_ref": "docs/planning/statebus_4_role_comparator_contract_20260620.md:717-720",
-                "code_ref": "statebus/benchmark/comparator_runner.py:104-127",
+                "code_ref": "src/statebus/benchmark/comparator_runner.py:104-127",
                 "details": {
                     "same_history_policy": fairness_manifest.get("same_history_policy"),
                     "statebus_mode": fairness_manifest.get("statebus_mode"),
@@ -265,7 +265,7 @@ def _build_fairness_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]
                 "gate": "formal_eligibility_gate",
                 "passed": bool(fairness_manifest.get("external_formal_eligible")),
                 "contract_ref": "docs/planning/statebus_4_role_comparator_contract_20260620.md:698-704",
-                "code_ref": "statebus/benchmark/external_text_baseline.py:151-170",
+                "code_ref": "src/statebus/benchmark/external_text_baseline.py:151-170",
                 "details": {
                     "external_formal_eligible": fairness_manifest.get("external_formal_eligible"),
                     "claim_restriction": fairness_manifest.get("claim_restriction"),
@@ -532,9 +532,9 @@ def _build_text_lane_diagnostics(
             "docs/planning/statebus_clean_room_rebuild_plan_20260625.md:121-134",
             "docs/planning/semantic_provenance_and_hydration_contract.md:260-345",
             "docs/planning/statebus_4_role_comparator_contract_20260620.md:705-720",
-            "statebus/benchmark/external_text_baseline.py:26-34",
-            "statebus/benchmark/external_text_baseline.py:214-354",
-            "statebus/runtime/smoke.py:1493-1566",
+            "src/statebus/benchmark/external_text_baseline.py:26-34",
+            "src/statebus/benchmark/external_text_baseline.py:214-354",
+            "src/statebus/runtime/smoke.py:1493-1566",
         ],
     }
 
@@ -936,7 +936,7 @@ def _build_runtime_diagnostics(suite_payload: dict[str, Any]) -> dict[str, Any]:
             "docs/planning/runtime_state_machine_contract.md:35-125",
             "docs/planning/telemetry_event_contract.md:22-134",
             "docs/planning/semantic_provenance_and_hydration_contract.md:260-345",
-            "statebus/runtime/smoke.py:1493-1605",
+            "src/statebus/runtime/smoke.py:1493-1605",
         ],
     }
 
@@ -1127,7 +1127,7 @@ def _build_internal_carrier_text_diagnostics(suite_payload: dict[str, Any]) -> d
         "authority_refs": [
             "docs/reference/题目.md",
             "docs/planning/semantic_provenance_and_hydration_contract.md:274-347",
-            "statebus/runtime/smoke.py:248-271",
+            "src/statebus/runtime/smoke.py:248-271",
         ],
     }
 

@@ -71,7 +71,7 @@ class LiveTaskDefinition:
 
 
 _ADAPTIVE_METRICS_DOCUMENT = (
-    "statebus/benchmark/samples/continuous_task_families/"
+    "src/statebus/benchmark/samples/continuous_task_families/"
     "adaptive_operating_metrics/adaptive_operating_metrics_2026.md"
 )
 
@@ -103,7 +103,7 @@ def _task_definition(name: str) -> LiveTaskDefinition:
                 "ratio, and percentage growth. A bounded Python comparison capability is authorized for this calculation; "
                 "select it when its explicit semantic contract is needed."
             ),
-            document_path="statebus/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+            document_path="src/statebus/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
             dataset_id="long_doc_table",
             metric="revenue",
             source_schema={"quarter": "string", "revenue_musd": "number"},
@@ -219,7 +219,7 @@ def _task_definition(name: str) -> LiveTaskDefinition:
                 "controller-defined z-score distance threshold. The bounded Python anomaly capability is authorized "
                 "because the result must include the independently verifiable baseline, threshold, and annotations."
             ),
-            document_path="statebus/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+            document_path="src/statebus/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
             dataset_id="long_doc_table",
             metric="on_time_delivery_pct",
             source_schema={"quarter": "string", "on_time_delivery_pct": "number"},

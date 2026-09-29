@@ -77,22 +77,22 @@ before calling legacy `RuntimeDriver.run()`.
 ## 4. Exact Source Files to Read
 
 ```text
-statebus/runtime/static_role_recipe.py       # created MRR-02
-statebus/runtime/adaptive_mainline.py
-statebus/runtime/adaptive_runtime.py
-statebus/runtime/adaptive_dispatcher.py
-statebus/runtime/driver.py
-statebus/runtime/smoke.py
+src/statebus/runtime/static_role_recipe.py       # created MRR-02
+src/statebus/runtime/adaptive_mainline.py
+src/statebus/runtime/adaptive_runtime.py
+src/statebus/runtime/adaptive_dispatcher.py
+src/statebus/runtime/driver.py
+src/statebus/runtime/smoke.py
 tests/test_adaptive_mainline_integration.py
 ```
 
 Read-only source references:
 
 ```text
-statebus/runtime/role_path.py
-statebus/retrieval/*
-statebus/memory/*
-statebus/state/*
+src/statebus/runtime/role_path.py
+src/statebus/retrieval/*
+src/statebus/memory/*
+src/statebus/state/*
 ```
 
 ---
@@ -102,9 +102,9 @@ statebus/state/*
 Primary production:
 
 ```text
-ADD    statebus/runtime/fixed_mainline.py
-MODIFY statebus/runtime/adaptive_mainline.py
-MODIFY statebus/runtime/driver.py
+ADD    src/statebus/runtime/fixed_mainline.py
+MODIFY src/statebus/runtime/adaptive_mainline.py
+MODIFY src/statebus/runtime/driver.py
 ```
 
 Prefer **no change** to `adaptive_dispatcher.py` because `builtin_handlers` already exists.
@@ -118,7 +118,7 @@ ADD tests/test_fixed_canonical_mainline.py
 Optional import export file:
 
 ```text
-MODIFY statebus/runtime/__init__.py
+MODIFY src/statebus/runtime/__init__.py
 ```
 
 ---

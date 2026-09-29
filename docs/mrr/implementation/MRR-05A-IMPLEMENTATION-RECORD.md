@@ -30,28 +30,28 @@ the control path and does not introduce a second authority graph.
 - `docs/mrr/batch2/StateBus-MRR-Batch2-Protocol-Attempt-Truth-Deep-Design.md`
 - `docs/mrr/batch2/StateBus-MRR-Batch2-Implementation-Plan.md`
 - `docs/mrr/batch2/MRR-05A-Invocation-Identity-Wire-Projection-Slice-Spec.md`
-- `statebus/contracts/identity.py`
-- `statebus/contracts/provider_binding.py`
-- `statebus/contracts/adaptive.py`
-- `statebus/control/messages.py`
-- `statebus/control/statebus_control.proto`
-- `statebus/control/schema.py`
-- `statebus/control/transport.py`
-- `statebus/control/subprocess_worker.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/contracts/identity.py`
+- `src/statebus/contracts/provider_binding.py`
+- `src/statebus/contracts/adaptive.py`
+- `src/statebus/control/messages.py`
+- `src/statebus/control/statebus_control.proto`
+- `src/statebus/control/schema.py`
+- `src/statebus/control/transport.py`
+- `src/statebus/control/subprocess_worker.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
 - Relevant existing adaptive, subprocess, and provider-binding tests.
 
 ## Files changed
 
 Production:
 
-- Modified `statebus/control/messages.py`.
-- Modified `statebus/control/statebus_control.proto`.
-- Modified `statebus/control/schema.py`.
-- Modified `statebus/control/subprocess_worker.py`.
-- Modified `statebus/runtime/adaptive_dispatcher.py`.
-- Modified `statebus/runtime/adaptive_runtime.py`.
+- Modified `src/statebus/control/messages.py`.
+- Modified `src/statebus/control/statebus_control.proto`.
+- Modified `src/statebus/control/schema.py`.
+- Modified `src/statebus/control/subprocess_worker.py`.
+- Modified `src/statebus/runtime/adaptive_dispatcher.py`.
+- Modified `src/statebus/runtime/adaptive_runtime.py`.
 
 Tests:
 
@@ -93,8 +93,8 @@ or authority migration was made.
 ## Tests executed
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   --basetemp=/tmp/mrr-05a-targeted \
   tests/test_invocation_wire_projection.py \
   tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state \

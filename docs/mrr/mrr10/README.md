@@ -51,8 +51,8 @@ Grant。
 ## 明确非目标
 
 ```text
-不修改 statebus/runtime/role_path.py
-不修改 statebus/runtime/smoke.py
+不修改 src/statebus/runtime/role_path.py
+不修改 src/statebus/runtime/smoke.py
 不修改 benchmark entry 或 comparator ownership
 不删除 run_smoke
 不新增 RoleRuntime / FixedRuntime / RolePathRuntime

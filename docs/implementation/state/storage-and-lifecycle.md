@@ -1,6 +1,6 @@
 # 分层存储与生命周期
 
-[`LayeredStoragePolicy`](../../../statebus/state/store.py) 根据 object kind 和运行 profile 选择物理后端。Ref 合同保持稳定，后端可以在 shared memory、memfd、mmap、CAS sidecar、inline 和 workspace 之间按能力与生命周期选择。
+[`LayeredStoragePolicy`](../../../src/statebus/state/store.py) 根据 object kind 和运行 profile 选择物理后端。Ref 合同保持稳定，后端可以在 shared memory、memfd、mmap、CAS sidecar、inline 和 workspace 之间按能力与生命周期选择。
 
 | object kind | 默认倾向 | 原因 |
 |:--|:--|:--|
@@ -11,7 +11,7 @@
 | `EXECUTION_ARTIFACT` | workspace root/CAS sidecar | attempt 隔离与 Validator 写入 |
 
 Prefix APC block 与显式 KV handle 由模型引擎侧管理：前者驻留在 vLLM cache，后者由
-`statebus/integrations/vllm_kv/registry.py` 管理 Worker host tensor。`LayeredStoragePolicy`
+`src/statebus/integrations/vllm_kv/registry.py` 管理 Worker host tensor。`LayeredStoragePolicy`
 继续处理表中的正式 object kind。
 
 ```mermaid

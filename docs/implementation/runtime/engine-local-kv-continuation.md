@@ -211,10 +211,10 @@ producer and consumer identity match
 
 | 接口 | 输入 | 输出 |
 |:--|:--|:--|
-| `GET /statebus/kv/health` | Bearer token | engine/model/tokenizer/layout signature、registry counters |
-| `POST /statebus/kv/produce` | parent IDs、Producer suffix、capture、TTL、sampling | Executor output、可选 handle、store telemetry |
-| `POST /statebus/kv/continue` | lane、suffix，以及 parent IDs 或 handle | SSE token events、final payload、forward proof |
-| `POST /statebus/kv/release` | handle ID | release status |
+| `GET /src/statebus/kv/health` | Bearer token | engine/model/tokenizer/layout signature、registry counters |
+| `POST /src/statebus/kv/produce` | parent IDs、Producer suffix、capture、TTL、sampling | Executor output、可选 handle、store telemetry |
+| `POST /src/statebus/kv/continue` | lane、suffix，以及 parent IDs 或 handle | SSE token events、final payload、forward proof |
+| `POST /src/statebus/kv/release` | handle ID | release status |
 
 Client 使用 loopback URL，并从权限为 `0600` 的文件读取 Token。Middleware 串行处理私有推理
 请求，核对 Bearer Token、模型、上下文预算、采样参数和兼容身份。该接口服务于同一主机、
@@ -278,7 +278,7 @@ flowchart LR
 原始汇总位于：
 
 ```text
-/home/qcrs/statebus/runs/engine_local_kv_mainline_10round/
+/home/qcrs/src/statebus/runs/engine_local_kv_mainline_10round/
   mainline-10round-grouped-20260730_085030/summary.json
 ```
 
@@ -332,15 +332,15 @@ continuation 的 fallback 为 0，capture、load、forward proof 与 release 均
 
 | 文件 | 职责 |
 |:--|:--|
-| `statebus/contracts/engine_local_kv.py` | handle、状态和前向证明合同 |
-| `statebus/integrations/vllm_kv/role_client.py` | 主链包装、Token 身份、路径和任务审计 |
-| `statebus/integrations/vllm_kv/middleware.py` | 私有接口、鉴权、串行请求和证明校验 |
-| `statebus/integrations/vllm_kv/worker_extension.py` | Worker RPC、兼容身份与生命周期 |
-| `statebus/integrations/vllm_kv/connector.py` | 调度器与 Worker 的保存/载入钩子 |
-| `statebus/integrations/vllm_kv/paged_cache.py` | 分页槽位提取与注入 |
-| `statebus/integrations/vllm_kv/registry.py` | 有界 one-shot registry、TTL 和容量 |
-| `statebus/integrations/vllm_kv/client.py` | loopback HTTP、SSE TTFT 和请求字节 |
-| `statebus/benchmark/engine_local_kv_experiment.py` | full replay / continuation A/B 与证明门 |
+| `src/statebus/contracts/engine_local_kv.py` | handle、状态和前向证明合同 |
+| `src/statebus/integrations/vllm_kv/role_client.py` | 主链包装、Token 身份、路径和任务审计 |
+| `src/statebus/integrations/vllm_kv/middleware.py` | 私有接口、鉴权、串行请求和证明校验 |
+| `src/statebus/integrations/vllm_kv/worker_extension.py` | Worker RPC、兼容身份与生命周期 |
+| `src/statebus/integrations/vllm_kv/connector.py` | 调度器与 Worker 的保存/载入钩子 |
+| `src/statebus/integrations/vllm_kv/paged_cache.py` | 分页槽位提取与注入 |
+| `src/statebus/integrations/vllm_kv/registry.py` | 有界 one-shot registry、TTL 和容量 |
+| `src/statebus/integrations/vllm_kv/client.py` | loopback HTTP、SSE TTFT 和请求字节 |
+| `src/statebus/benchmark/engine_local_kv_experiment.py` | full replay / continuation A/B 与证明门 |
 | `scripts/experiments/engine_local_kv/` | 服务、任务编译、单次与 10 任务运行入口 |
 
 专项测试位于 `tests/test_engine_local_kv_*.py`，覆盖 contract、registry、paged layout、middleware/client、role adapter、Worker proof、任务编译和 10 任务聚合。

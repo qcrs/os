@@ -2,7 +2,7 @@
 
 ## Source identity
 
-- Source checkout: `/home/qcrs/statebus/os`
+- Source checkout: `/home/qcrs/src/statebus/os`
 - Branch: `feat/mrr-02-plan-provenance`
 - Source SHA: `8b6646137fca4a4d79dfe3e67945122045c11d32`
 - Frozen MRR-02 audited base: `8bfc6464ec236c0e121911095fc283129b0e7696`
@@ -29,35 +29,35 @@ MRR source/specification material:
 
 MRR-02 source/test review:
 
-- `statebus/runtime/compiler.py`
-- `statebus/runtime/role_path.py`
-- `statebus/runtime/adaptive_plan_compiler.py`
-- `statebus/runtime/plan_policy.py`
-- `statebus/runtime/adaptive_mainline.py`
-- `statebus/runtime/domain_packs.py`
-- `statebus/runtime/driver.py`
-- `statebus/runtime/smoke.py`
-- `statebus/contracts/adaptive.py`
-- `statebus/contracts/__init__.py`
+- `src/statebus/runtime/compiler.py`
+- `src/statebus/runtime/role_path.py`
+- `src/statebus/runtime/adaptive_plan_compiler.py`
+- `src/statebus/runtime/plan_policy.py`
+- `src/statebus/runtime/adaptive_mainline.py`
+- `src/statebus/runtime/domain_packs.py`
+- `src/statebus/runtime/driver.py`
+- `src/statebus/runtime/smoke.py`
+- `src/statebus/contracts/adaptive.py`
+- `src/statebus/contracts/__init__.py`
 - `tests/test_adaptive_planner_policy.py`
 - `tests/test_adaptive_mainline_integration.py`
-- `statebus/contracts/identity.py`
-- `statebus/runtime/identity.py`
+- `src/statebus/contracts/identity.py`
+- `src/statebus/runtime/identity.py`
 
 ## Files changed
 
 MRR-02 production boundary:
 
-- Added `statebus/contracts/plan_provenance.py`.
-- Added `statebus/runtime/static_role_recipe.py`.
-- Modified `statebus/contracts/__init__.py` to export provenance contracts and
+- Added `src/statebus/contracts/plan_provenance.py`.
+- Added `src/statebus/runtime/static_role_recipe.py`.
+- Modified `src/statebus/contracts/__init__.py` to export provenance contracts and
   semantic hash helpers.
-- Modified `statebus/runtime/__init__.py` to export static recipe helpers.
-- Modified `statebus/runtime/adaptive_mainline.py` to retain source/effective
+- Modified `src/statebus/runtime/__init__.py` to export static recipe helpers.
+- Modified `src/statebus/runtime/adaptive_mainline.py` to retain source/effective
   proposal provenance, emit normalization receipts, classify semantic repair
   as replan-required, preserve explicit fallback provenance, and return an
   `ApprovedPlanBundle`.
-- Modified `statebus/runtime/plan_policy.py` to reuse the shared semantic and
+- Modified `src/statebus/runtime/plan_policy.py` to reuse the shared semantic and
   mechanical-equivalence predicates and derive minimum plan size from the
   Envelope's declared role cardinality instead of a global two-step topology.
 
@@ -127,27 +127,27 @@ deleted, or included in an MRR-02 commit.
 All commands used the current checkout's host environment:
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_plan_provenance.py tests/test_static_role_recipe.py \
   tests/test_adaptive_planner_policy.py \
   tests/test_adaptive_mainline_integration.py \
   -k 'not adaptive_product_retrieval_owns_cross_process_semantic_state'
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_adaptive_role_prompts.py tests/test_semantic_plan.py \
   tests/test_adaptive_smoke.py tests/test_adaptive_contracts.py
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_runtime_identity.py tests/test_adaptive_driver.py \
   tests/test_adaptive_mainline_integration.py \
   -k 'not adaptive_product_retrieval_owns_cross_process_semantic_state'
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_runtime_session_and_ledger.py tests/test_replay.py \
   tests/test_replay_gate.py tests/test_memory_runtime.py tests/test_memory_store.py
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m pytest -q \
   tests/test_plan_provenance.py tests/test_static_role_recipe.py \
   tests/test_adaptive_planner_policy.py tests/test_adaptive_role_prompts.py \
   tests/test_semantic_plan.py tests/test_adaptive_smoke.py \
@@ -157,7 +157,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m pytest -q 
   tests/test_replay_gate.py tests/test_memory_runtime.py tests/test_memory_store.py \
   -k 'not adaptive_product_retrieval_owns_cross_process_semantic_state'
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/statebus/os python -m compileall -q statebus tests
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/qcrs/src/statebus/os python -m compileall -q statebus tests
 git diff --check
 ```
 

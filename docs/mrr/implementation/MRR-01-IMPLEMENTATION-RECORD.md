@@ -2,7 +2,7 @@
 
 ## Source identity
 
-- Source checkout: `/home/qcrs/statebus/os`
+- Source checkout: `/home/qcrs/src/statebus/os`
 - Source SHA: `8bfc6464ec236c0e121911095fc283129b0e7696`
 - Branch: `master`
 - Date: `2026-09-04`
@@ -25,14 +25,14 @@ MRR source/specification material:
 
 Mandatory source/test review:
 
-- `statebus/runtime/session.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_mainline.py`
-- `statebus/runtime/driver.py`
-- `statebus/runtime/workspace.py`
-- `statebus/runtime/smoke.py`
-- `statebus/contracts/adaptive.py`
-- `statebus/contracts/__init__.py`
+- `src/statebus/runtime/session.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_mainline.py`
+- `src/statebus/runtime/driver.py`
+- `src/statebus/runtime/workspace.py`
+- `src/statebus/runtime/smoke.py`
+- `src/statebus/contracts/adaptive.py`
+- `src/statebus/contracts/__init__.py`
 - `tests/test_adaptive_driver.py`
 - `tests/test_adaptive_mainline_integration.py`
 
@@ -40,18 +40,18 @@ Mandatory source/test review:
 
 MRR-01 production boundary:
 
-- Added `statebus/contracts/identity.py`.
-- Added `statebus/runtime/identity.py`.
-- Modified `statebus/contracts/__init__.py` and `statebus/runtime/__init__.py`
+- Added `src/statebus/contracts/identity.py`.
+- Added `src/statebus/runtime/identity.py`.
+- Modified `src/statebus/contracts/__init__.py` and `src/statebus/runtime/__init__.py`
   to export the new contract/factory symbols.
-- Modified `statebus/runtime/adaptive_mainline.py` to resolve identity once at
+- Modified `src/statebus/runtime/adaptive_mainline.py` to resolve identity once at
   product assembly, validate envelope projections, retain the legacy workspace
   projection, pass identity to Runtime, and persist identity in the manifest.
-- Modified `statebus/runtime/adaptive_runtime.py` to use explicit session/run
+- Modified `src/statebus/runtime/adaptive_runtime.py` to use explicit session/run
   identity, create run-scoped attempt IDs on the canonical path, issue grants
   with the resolved identity, and retain legacy labels for compatibility
   callers.
-- Modified `statebus/runtime/driver.py` to resolve an optional identity for
+- Modified `src/statebus/runtime/driver.py` to resolve an optional identity for
   strict legacy input and return it without changing the old workspace layout.
 
 Tests and evidence:
@@ -122,11 +122,11 @@ All commands used:
 
 ```text
 source ./deploy/activate_statebus_host.sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q tests/test_runtime_identity.py
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q tests/test_adaptive_driver.py
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q tests/test_adaptive_mainline_integration.py -k 'not adaptive_product_retrieval_owns_cross_process_semantic_state'
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -q tests/test_runtime_session_and_ledger.py tests/test_replay.py tests/test_replay_gate.py tests/test_memory_runtime.py tests/test_memory_store.py
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m compileall -q statebus/contracts statebus/runtime tests/test_runtime_identity.py tests/test_adaptive_driver.py tests/test_adaptive_mainline_integration.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m pytest -q tests/test_runtime_identity.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m pytest -q tests/test_adaptive_driver.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m pytest -q tests/test_adaptive_mainline_integration.py -k 'not adaptive_product_retrieval_owns_cross_process_semantic_state'
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m pytest -q tests/test_runtime_session_and_ledger.py tests/test_replay.py tests/test_replay_gate.py tests/test_memory_runtime.py tests/test_memory_store.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -m compileall -q src/statebus/contracts src/statebus/runtime tests/test_runtime_identity.py tests/test_adaptive_driver.py tests/test_adaptive_mainline_integration.py
 git diff --check
 ```
 
@@ -183,7 +183,7 @@ The following are recorded as `PRE_EXISTING_FAILURE` and were not modified:
 - CodeAct/bwrap checks: the environment rejects the required
   `NETLINK_ROUTE` socket with `Operation not permitted`.
 - An initial full pytest collection encountered the historical
-  `/home/qcrs/statebus/runs/studio` read-only path; rerunning with a temporary
+  `/home/qcrs/src/statebus/runs/studio` read-only path; rerunning with a temporary
   Studio root exposed the same environment-level failures and was stopped.
 
 ## Evidence paths

@@ -1,0 +1,55 @@
+{
+  "files": {
+    "finance/dictionary_v1.md": "53da5ee54f4dc3f6752ac70dce12b57c38cf82c9eba638661e44dd33b374b8ab",
+    "finance/notes_2026-01.md": "49eada85eed5b68481d30049a7e6e3064ee60aaf8a523c946546ff5982c99742",
+    "finance/actual_2026-01.csv": "be3caacd91d8ae084234d3e62c304b8090b46221cdbf2ed2b149c087727c8740"
+  },
+  "history": {},
+  "artifacts": {
+    "source:source": {
+      "artifact_id": "source:source",
+      "task_id": "F01",
+      "step_id": "controller-source",
+      "artifact_type": "json",
+      "root_id": "/workspace/statebus/os/docs/reports/contest-model-assist/smoke-20260928_224029-3234416/standard-finance/slots/F01-apc/source",
+      "relpath": "source.json",
+      "blob_hash": "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac",
+      "size_bytes": 2113,
+      "produced_by": "released-input-binding",
+      "verification_state": "verified",
+      "replay_ready": false,
+      "workspace_relpath": "source.json",
+      "manifest_hash": "6fb76269ea8277f3ba6581bd7a23a21658be2d9e9c2d861bce3cfd24e1d8cd89",
+      "metadata": {
+        "session_id": "dsl-3e4971f664f2",
+        "attempt_id": "controller-source",
+        "grant_hash": "4fcfb87002cc50efb2805ce9ca214941917c8a04a92d17ddcf8166f83e3ee84a",
+        "source_files": {
+          "finance/dictionary_v1.md": "53da5ee54f4dc3f6752ac70dce12b57c38cf82c9eba638661e44dd33b374b8ab",
+          "finance/notes_2026-01.md": "49eada85eed5b68481d30049a7e6e3064ee60aaf8a523c946546ff5982c99742",
+          "finance/actual_2026-01.csv": "be3caacd91d8ae084234d3e62c304b8090b46221cdbf2ed2b149c087727c8740"
+        },
+        "artifact_verification_receipt_hash": "e9867aa76be4fb5aff58e1713a04bf68c448fa37ee8266819905ddc8f960c66d"
+      }
+    }
+  },
+  "verification_receipts": {
+    "source:source": {
+      "artifact_id": "source:source",
+      "runtime_task_id": "F01",
+      "run_id": "dsl-3e4971f664f2",
+      "session_id": "dsl-3e4971f664f2",
+      "producer_step_id": "controller-source",
+      "producer_attempt_id": "controller-source",
+      "execution_binding_hash": "4fcfb87002cc50efb2805ce9ca214941917c8a04a92d17ddcf8166f83e3ee84a",
+      "capability_grant_hash": "4fcfb87002cc50efb2805ce9ca214941917c8a04a92d17ddcf8166f83e3ee84a",
+      "candidate_blob_hash": "fa1a44d367265d13759cf81620c887ca07f658395e2eb72f7c7f88d04c15fbac",
+      "candidate_size_bytes": 2113,
+      "validator_ids": [],
+      "validator_report_hashes": [],
+      "decision": "VERIFIED",
+      "reason": "controller_bound_released_source",
+      "schema_version": "statebus.artifact_verification_receipt.v1"
+    }
+  }
+}

@@ -50,22 +50,22 @@ statebus.runtime.adaptive_dispatcher.AdaptiveCapabilityDispatcher._consume_retri
 ## Files to read
 
 ```text
-statebus/control/messages.py
-statebus/control/transport.py
-statebus/control/subprocess_worker.py
-statebus/runtime/adaptive_dispatcher.py
+src/statebus/control/messages.py
+src/statebus/control/transport.py
+src/statebus/control/subprocess_worker.py
+src/statebus/runtime/adaptive_dispatcher.py
 tests around control/subprocess/adaptive semantic state
 ```
 
 ## Expected production files changed
 
 ```text
-statebus/control/admission.py        # ADD
-statebus/control/transport.py        # EXTEND
-statebus/runtime/adaptive_dispatcher.py
+src/statebus/control/admission.py        # ADD
+src/statebus/control/transport.py        # EXTEND
+src/statebus/runtime/adaptive_dispatcher.py
 ```
 
-Optionally `statebus/control/__init__.py` for export only.
+Optionally `src/statebus/control/__init__.py` for export only.
 
 Avoid changes outside this set unless source proves necessary.
 

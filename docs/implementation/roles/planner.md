@@ -19,4 +19,4 @@ Planner 的主要输出是 `PlanProposal`。提案中的每个 `PlanStepProposal
 | 权威校验 | `PlanPolicyValidator`、计划规范化和批准计划 hash |
 | 后续职责 | 工具执行、产物物化与记忆提交由 Runtime 分派给对应组件 |
 
-主要实现位于 [role_path.py](../../../statebus/runtime/role_path.py)、[adaptive_mainline.py](../../../statebus/runtime/adaptive_mainline.py)、[adaptive_plan_compiler.py](../../../statebus/runtime/adaptive_plan_compiler.py) 与 [plan_policy.py](../../../statebus/runtime/plan_policy.py)。任务进入 Planner 之前的编译过程另见[任务编译](../runtime/task-compilation.md)，提案怎样变成能力授权另见[计划策略与能力授权](../runtime/plan-policy-and-capability.md)。
+主要实现位于 [role_path.py](../../../src/statebus/runtime/role_path.py)、[adaptive_mainline.py](../../../src/statebus/runtime/adaptive_mainline.py)、[adaptive_plan_compiler.py](../../../src/statebus/runtime/adaptive_plan_compiler.py) 与 [plan_policy.py](../../../src/statebus/runtime/plan_policy.py)。任务进入 Planner 之前的编译过程另见[任务编译](../runtime/task-compilation.md)，提案怎样变成能力授权另见[计划策略与能力授权](../runtime/plan-policy-and-capability.md)。

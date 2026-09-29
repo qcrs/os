@@ -1,13 +1,13 @@
 # FastAPI 与受控作业
 
-Studio 后端入口是 [`statebus/studio/app.py`](../../../statebus/studio/app.py)，服务默认监听 `127.0.0.1:8765`。[`scripts/run_statebus_studio.sh`](../../../scripts/run_statebus_studio.sh) 负责选择项目 Python：容器内先加载 `docker/activate_statebus_container.sh`，宿主机使用 `$HOME/statebus/conda-envs/statebus_host`，并显式设置项目 `PYTHONPATH`、Run/Model 目录和 Embedding device。脚本只复用现有模型服务，不负责重启 vLLM。
+Studio 后端入口是 [`src/statebus/studio/app.py`](../../../src/statebus/studio/app.py)，服务默认监听 `127.0.0.1:8765`。[`scripts/run_statebus_studio.sh`](../../../scripts/run_statebus_studio.sh) 负责选择项目 Python：容器内先加载 `docker/activate_statebus_container.sh`，宿主机使用 `$HOME/src/statebus/conda-envs/statebus_host`，并显式设置项目 `PYTHONPATH`、Run/Model 目录和 Embedding device。脚本只复用现有模型服务，不负责重启 vLLM。
 
 ```bash
 # 在仓库根目录执行
 bash scripts/run_statebus_studio.sh
 ```
 
-若 `studio-ui/dist` 已构建，FastAPI 同时提供静态前端；开发阶段也可以在 `studio-ui` 中启动 Vite，再通过 CORS 访问后端。
+若 `src/studio-ui/dist` 已构建，FastAPI 同时提供静态前端；开发阶段也可以在 `studio-ui` 中启动 Vite，再通过 CORS 访问后端。
 
 后端的主要接口如下：
 
@@ -26,7 +26,7 @@ bash scripts/run_statebus_studio.sh
 
 健康检查不只看 API 自身。角色 Worker probe 会从临时目录启动当前 Python 并导入 `statebus.integrations.llm` 与 `statebus.contracts`，用于暴露缺少项目 `PYTHONPATH` 的问题；Embedding probe 检查模型目录和指定 device；vLLM 通过既有 53334 health URL 检查。任何关键项未就绪，`POST /runs` 返回 503，而不是先创建一个必然失败的长任务。
 
-[`JobManager`](../../../statebus/studio/jobs.py) 使用一个 `asyncio.Queue` 和一个 Worker task，确保 GPU/模型型作业串行执行。创建 Run 时生成独立 run ID 和目录，写 `RUN_QUEUED` 事件并持久化 `studio_job.json`。Worker 从队列取出 ID 后，调用 [`build_command()`](../../../statebus/studio/recipes.py) 把 recipe 映射为固定 argv。
+[`JobManager`](../../../src/statebus/studio/jobs.py) 使用一个 `asyncio.Queue` 和一个 Worker task，确保 GPU/模型型作业串行执行。创建 Run 时生成独立 run ID 和目录，写 `RUN_QUEUED` 事件并持久化 `studio_job.json`。Worker 从队列取出 ID 后，调用 [`build_command()`](../../../src/statebus/studio/recipes.py) 把 recipe 映射为固定 argv。
 
 ```mermaid
 stateDiagram-v2

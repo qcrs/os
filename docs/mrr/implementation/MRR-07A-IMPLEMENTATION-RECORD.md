@@ -10,17 +10,17 @@ Canonical adaptive semantic State acquisition now requires a Runtime-derived
 
 Production:
 
-- `statebus/contracts/state_access.py`
-- `statebus/contracts/__init__.py`
-- `statebus/refs/models.py`
-- `statebus/state/store.py`
-- `statebus/state/__init__.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/control/statebus_control.proto`
-- `statebus/control/schema.py`
-- `statebus/control/messages.py`
-- `statebus/control/subprocess_worker.py`
+- `src/statebus/contracts/state_access.py`
+- `src/statebus/contracts/__init__.py`
+- `src/statebus/refs/models.py`
+- `src/statebus/state/store.py`
+- `src/statebus/state/__init__.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/control/statebus_control.proto`
+- `src/statebus/control/schema.py`
+- `src/statebus/control/messages.py`
+- `src/statebus/control/subprocess_worker.py`
 
 Tests:
 
@@ -94,9 +94,9 @@ semantic fence for late work.
 ## Tests actually run
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
 PYTHONDONTWRITEBYTECODE=1
-PYTHONPATH=/home/qcrs/statebus/os
+PYTHONPATH=/home/qcrs/src/statebus/os
 
 python -m pytest -q tests/test_mrr_07a_state_access_authority.py
 python -m pytest -q tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state

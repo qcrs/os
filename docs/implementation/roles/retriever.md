@@ -17,4 +17,4 @@ EvidencePack 经过 coverage 检查。证据不足时，Retriever 在既定预�
 | Runtime 物化 | `CanonicalEvidencePack`、`HydrateManifest`、`SemanticStateRef` |
 | 后续职责 | 执行产物与最终结论由 Executor、Validator 和 Summarizer 完成 |
 
-主要实现位于 [role_path.py](../../../statebus/runtime/role_path.py)、[retrieval_adapter.py](../../../statebus/runtime/retrieval_adapter.py)、[evidence_coverage.py](../../../statebus/runtime/evidence_coverage.py) 与 [statebus/retrieval](../../../statebus/retrieval/)。非文本语义状态和 Hydration 的细节分别见[稠密语义状态](../state/dense-semantic-state.md)与[Hydration 和证据](../state/hydration-and-evidence.md)。
+主要实现位于 [role_path.py](../../../src/statebus/runtime/role_path.py)、[retrieval_adapter.py](../../../src/statebus/runtime/retrieval_adapter.py)、[evidence_coverage.py](../../../src/statebus/runtime/evidence_coverage.py) 与 [src/statebus/retrieval](../../../src/statebus/retrieval/)。非文本语义状态和 Hydration 的细节分别见[稠密语义状态](../state/dense-semantic-state.md)与[Hydration 和证据](../state/hydration-and-evidence.md)。

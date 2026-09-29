@@ -202,7 +202,7 @@ cd "$OS_ROOT"
 # shellcheck disable=SC1091
 source "$OS_ROOT/deploy/activate_statebus_host.sh"
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH="$OS_ROOT"
+export PYTHONPATH="$OS_ROOT/src"
 
 record_stage() {
   local stage="$1" started="$2" ended="$3" duration="$4" rc="$5"

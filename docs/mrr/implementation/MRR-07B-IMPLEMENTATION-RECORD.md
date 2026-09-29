@@ -10,11 +10,11 @@ logical, safe, and idempotent operations.
 
 Production:
 
-- `statebus/state/store.py`
-- `statebus/state/semantic_state.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/runtime/adaptive_mainline.py`
+- `src/statebus/state/store.py`
+- `src/statebus/state/semantic_state.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/runtime/adaptive_mainline.py`
 
 Tests:
 
@@ -97,9 +97,9 @@ separate Runtime/session owner release.
 ## Tests actually run
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
 PYTHONDONTWRITEBYTECODE=1
-PYTHONPATH=/home/qcrs/statebus/os
+PYTHONPATH=/home/qcrs/src/statebus/os
 
 python -m pytest -q tests/test_mrr_07b_state_lifetime.py
 python -m pytest -q tests/test_adaptive_mainline_integration.py::test_adaptive_product_retrieval_owns_cross_process_semantic_state

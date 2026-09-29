@@ -21,7 +21,7 @@ _statebus_container_restore_shell_options() {
 _statebus_container_activate_main() {
   set -euo pipefail
 
-  PROJECT_ROOT="${PROJECT_ROOT:-/workspace/statebus/project}"
+  PROJECT_ROOT="${PROJECT_ROOT:-/workspace/statebus/os}"
   export STATEBUS_HOME="${STATEBUS_HOME:-/statebus}"
   export STATEBUS_ENV_PREFIX="${STATEBUS_ENV_PREFIX:-container-python}"
   export STATEBUS_PIP_INDEX_URL="${STATEBUS_PIP_INDEX_URL:-${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}}"
@@ -43,7 +43,7 @@ _statebus_container_activate_main() {
   export STATEBUS_LLM_CONFIG_FILE="${STATEBUS_LLM_CONFIG_FILE:-$PROJECT_ROOT/deploy/statebus_llm.local_vllm.example}"
   export STATEBUS_LLM_ENV_FILE="${STATEBUS_LLM_ENV_FILE:-$PROJECT_ROOT/deploy/statebus_llm.env.local}"
   export STATEBUS_EMBED_DEVICE="${STATEBUS_EMBED_DEVICE:-auto}"
-  export PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+  export PYTHONPATH="${PROJECT_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
   mkdir -p \
     "$PIP_CACHE_DIR" \

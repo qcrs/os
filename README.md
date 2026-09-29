@@ -234,7 +234,7 @@ STATEBUS_ENGINE_LOCAL_KV_MODE=off
 ## 项目目录
 
 ```text
-statebus/
+src/statebus/
   benchmark/              离线任务、正式任务族、runner 与指标聚合
   contracts/              Task、Plan、Evidence、Ref、Artifact 等数据合同
   control/                Typed Protobuf、UDS 和 Worker transport
@@ -252,18 +252,22 @@ docs/implementation/      当前源码对应的实现手册
 deploy/                   Host、API 和 vLLM 环境配置
 docker/                   openEuler 应用容器配置
 scripts/                  启动、诊断和实验入口
-studio-ui/                Studio 前端源码
+src/studio-ui/             Studio 前端源码
 ```
+
+源码现在位于 `src/`，重构分支的目录映射和迁移状态见
+[`docs/architecture/directory-map.md`](docs/architecture/directory-map.md)。第一阶段保留上面的
+旧路径，避免在没有完成导入和打包校验前破坏可运行环境；`src/` 目录先作为目标源码布局索引。
 
 ### 任务与数据位置
 
 | 内容 | 目录 |
 |:--|:--|
-| Operating / Financial 连续任务 | `statebus/benchmark/samples/continuous_task_families/` |
-| 五类 25 个正式 case | `statebus/benchmark/samples/formal_financial_family/`、`tasks/formal/` |
-| Embedding 与 Logit 专项任务 | `statebus/benchmark/samples/semantic_holdout/`、`statebus/benchmark/samples/logit_retry_challenge/` |
-| Prefix 任务 | `statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/` |
-| 显式 KV 任务 | `statebus/benchmark/samples/engine_local_kv_continuation/`、`statebus/benchmark/samples/engine_local_kv_mainline_10round/` |
+| Operating / Financial 连续任务 | `src/statebus/benchmark/samples/continuous_task_families/` |
+| 五类 25 个正式 case | `src/statebus/benchmark/samples/formal_financial_family/`、`tasks/formal/` |
+| Embedding 与 Logit 专项任务 | `src/statebus/benchmark/samples/semantic_holdout/`、`src/statebus/benchmark/samples/logit_retry_challenge/` |
+| Prefix 任务 | `src/statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/` |
+| 显式 KV 任务 | `src/statebus/benchmark/samples/engine_local_kv_continuation/`、`src/statebus/benchmark/samples/engine_local_kv_mainline_10round/` |
 | CSV 数据 | `datasets/operating_metrics/` |
 
 任务 ID、Gold 和 Validator 规则见[基准任务与数据集目录](docs/implementation/benchmark-task-and-dataset-catalog.md)。
@@ -276,6 +280,34 @@ studio-ui/                Studio 前端源码
 source deploy/activate_statebus_host.sh
 python -m pytest -q
 python -m statebus.runtime.smoke
+```
+
+### 重构后的稳定入口
+
+实验入口统一由 `tests/benchmarks/run_statebus.sh` 路由：
+
+```bash
+tests/benchmarks/run_statebus.sh smoke --dry-run
+tests/benchmarks/run_statebus.sh mainline-24 --dry-run
+tests/benchmarks/run_statebus.sh mainline-mechanisms --dry-run
+tests/benchmarks/run_statebus.sh apc --dry-run
+tests/benchmarks/run_statebus.sh kv --dry-run
+tests/benchmarks/run_statebus.sh logit --dry-run
+tests/benchmarks/run_statebus.sh utility --dry-run
+```
+
+`mainline-24` 是完整主链路（两个 12 轮 family），`mainline-mechanisms` 是主链机制消融，
+APC/KV/Logit 是专项机制验证，`utility` 是独立的 `longtext-demo-v3` 展示链。
+后三类结果不能写成 24 轮主链默认收益。证据索引见
+[`docs/experiments/evidence-index.md`](docs/experiments/evidence-index.md)。
+
+本地 Python 环境和 Docker 镜像构建入口见
+[`docs/implementation/environment.md`](docs/implementation/environment.md)：
+
+```bash
+deploy/install_statebus_host.sh
+deploy/install_vllm_env.sh
+deploy/build_statebus_image.sh --dry-run
 ```
 
 只验证 Docker 配置，不构建或启动容器：

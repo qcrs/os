@@ -11,9 +11,9 @@ state or outputs.
 
 Production:
 
-- `statebus/runtime/session.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/control/transport.py`
+- `src/statebus/runtime/session.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/control/transport.py`
 
 Tests:
 
@@ -67,9 +67,9 @@ receipt.
 All commands used:
 
 ```text
-source /home/qcrs/statebus/project/deploy/activate_statebus_host.sh
+source /home/qcrs/src/statebus/project/deploy/activate_statebus_host.sh
 PYTHONDONTWRITEBYTECODE=1
-PYTHONPATH=/home/qcrs/statebus/os
+PYTHONPATH=/home/qcrs/src/statebus/os
 ```
 
 Focused Slice tests:

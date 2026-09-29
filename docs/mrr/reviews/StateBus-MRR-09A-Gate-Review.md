@@ -63,20 +63,20 @@ commit authority after the producer Attempt has settled.
 The canonical production ordering is:
 
 ```text
-statebus/runtime/adaptive_mainline.py:395
+src/statebus/runtime/adaptive_mainline.py:395
 AdaptiveRuntimeEngine().run(runtime_request)
 
-statebus/runtime/adaptive_mainline.py:396-403
+src/statebus/runtime/adaptive_mainline.py:396-403
 _commit_verified_memory(...)
 ```
 
 `AdaptiveRuntimeEngine.run()` settles completed Attempts before returning its
 `AdaptiveRuntimeResult`. `RuntimeSessionManager.settle_attempt()` clears the
-per-step active Attempt pointer (`statebus/runtime/session.py:598-645`). The
+per-step active Attempt pointer (`src/statebus/runtime/session.py:598-645`). The
 returned runtime result is then passed to the static
 `AdaptiveMainlineRunner._commit_verified_memory()` seam.
 
-At `statebus/runtime/adaptive_mainline.py:739-801`, the Memory admission gate
+At `src/statebus/runtime/adaptive_mainline.py:739-801`, the Memory admission gate
 checks `runtime.completed`, the verified Artifact projection, and the exact
 `ArtifactVerificationReceipt`/Artifact identity and content bindings. It does
 not check any current `RuntimeTaskSession` active Attempt, an

@@ -1,6 +1,6 @@
 # Workspace、产物与质量门
 
-Executor 的输出不是 stdout 中的一段文本，而是 attempt workspace 中的受控文件。[`WorkspaceManager`](../../../statebus/runtime/workspace.py) 为 task/step 建立 inputs、outputs、logs、tmp、script 和 manifest 目录。输入由已授权 ArtifactRef 物化，并生成 `InputManifest`；输出由 `ArtifactOutputManifest` 记录 relpath、类型、大小和 SHA-256。
+Executor 的输出不是 stdout 中的一段文本，而是 attempt workspace 中的受控文件。[`WorkspaceManager`](../../../src/statebus/runtime/workspace.py) 为 task/step 建立 inputs、outputs、logs、tmp、script 和 manifest 目录。输入由已授权 ArtifactRef 物化，并生成 `InputManifest`；输出由 `ArtifactOutputManifest` 记录 relpath、类型、大小和 SHA-256。
 
 ```text
 workspace/<task or attempt>/
@@ -37,7 +37,7 @@ flowchart TD
 `ArtifactValidatorReport` 保存 validation scope、passed、fail reason、消费方、metrics 和 details；`InputValidatorReport` 记录要求与实际输入。报告 hash 会进入 settlement 和 MemoryCommit。Capability-specific validator 可以复算 IQR、跨期变化、聚合或字段约束，而不是只检查 JSON 可解析。
 
 Python CodeAct runner 在 policy、sandbox、output schema 和 capability quality 全部通过后生成
-verified Artifact；更外层的 [`RuntimeCommitGate`](../../../statebus/runtime/commit_gate.py) 结合
+verified Artifact；更外层的 [`RuntimeCommitGate`](../../../src/statebus/runtime/commit_gate.py) 结合
 input/artifact Validator、整体 QualityFloor 与 answer adopted 状态决定最终 settlement 和记忆提交。
 各层验证结果通过报告 hash 关联。
 

@@ -834,7 +834,7 @@ def main() -> None:
         required_outputs=("revenue_series",),
         arguments={
             "dataset_id": "long_doc_table",
-            "document_path": "statebus/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
+            "document_path": "src/statebus/benchmark/samples/continuous_task_families/long_doc_table/acme_ops_report_2026.md",
             "request_text": task_goal,
             "metric": "revenue",
         },

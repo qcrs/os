@@ -82,7 +82,7 @@ Batch 2 must extend these laws to the physical execution/result boundary.
 
 ### 3.1 Wire identity is incomplete
 
-Current `statebus/control/messages.py::ControlHeader` contains:
+Current `src/statebus/control/messages.py::ControlHeader` contains:
 
 ```text
 trace_id
@@ -108,7 +108,7 @@ ExecutionBindingReceipt identity/hash
 
 ### 3.2 Worker validation does not enforce Runtime authority
 
-`statebus/control/subprocess_worker.py` validates request shape and operation prerequisites. For the semantic-state operation it requires `capability_grant_hash` to be non-empty, but the worker does not prove:
+`src/statebus/control/subprocess_worker.py` validates request shape and operation prerequisites. For the semantic-state operation it requires `capability_grant_hash` to be non-empty, but the worker does not prove:
 
 ```text
 grant belongs to this session

@@ -37,7 +37,7 @@ are resolved and retested.
 
 The canonical adaptive consumer correctly requires a Runtime-created
 `ArtifactVerificationReceipt` in
-`statebus/runtime/adaptive_dispatcher.py:1612-1639`. The existing
+`src/statebus/runtime/adaptive_dispatcher.py:1612-1639`. The existing
 `test_runtime_owned_summarizer_validates_candidate_before_issuing_claimset_artifact`
 constructs an input with only the legacy `verification_state=VERIFIED` field
 and no receipt (`tests/test_adaptive_dispatcher.py:325-385`). The permitted
@@ -61,9 +61,9 @@ unresolved regression for the current test/API surface.
 ### 2. CodeAct quality-repair candidates cannot pass the verifier workspace gate
 
 The Runtime calls verification with the exact original Attempt workspace at
-`statebus/runtime/adaptive_runtime.py:1321-1333`. The verifier requires the
+`src/statebus/runtime/adaptive_runtime.py:1321-1333`. The verifier requires the
 candidate root to be inside that workspace at
-`statebus/runtime/artifact_verification.py:142-152`.
+`src/statebus/runtime/artifact_verification.py:142-152`.
 
 After a quality repair, `LlmCodeActRunner` materializes the repaired execution
 in a sibling directory:
@@ -73,7 +73,7 @@ attempt_workspace.parent /
   f"{attempt_workspace.name}-quality-repair-{len(repairs)}"
 ```
 
-(`statebus/runtime/llm_codeact.py:742-748`). The resulting candidate therefore
+(`src/statebus/runtime/llm_codeact.py:742-748`). The resulting candidate therefore
 has a root outside the verifier's exact Attempt workspace and is rejected with
 `artifact_candidate_path_outside_workspace`. The path is fail-closed rather
 than unsafe, but a supported CodeAct producer mode cannot promote a valid

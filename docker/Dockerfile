@@ -56,7 +56,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --index-url ${STATEBUS_DEFAULT_PIP_INDEX_URL} \
     pip setuptools wheel
 
-WORKDIR /workspace/statebus/project
+WORKDIR /workspace/statebus/os
 
 FROM base AS core-deps
 

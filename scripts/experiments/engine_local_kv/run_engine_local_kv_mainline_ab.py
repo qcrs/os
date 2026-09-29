@@ -22,7 +22,7 @@ from statebus.utils import sha256_digest
 
 DEFAULT_DOCUMENT = (
     REPO_ROOT
-    / "statebus/benchmark/samples/engine_local_kv_continuation/compiled_parents/kv-fin-4k-nova.txt"
+    / "src/statebus/benchmark/samples/engine_local_kv_continuation/compiled_parents/kv-fin-4k-nova.txt"
 )
 
 

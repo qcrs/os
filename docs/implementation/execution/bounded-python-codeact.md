@@ -1,6 +1,6 @@
 # 受限 Python CodeAct
 
-[`LlmCodeActRunner`](../../../statebus/runtime/llm_codeact.py) 处理模型生成的候选 Python。
+[`LlmCodeActRunner`](../../../src/statebus/runtime/llm_codeact.py) 处理模型生成的候选 Python。
 候选源码经过 CapabilityGrant、静态策略、bubblewrap readiness、隔离执行、输出 schema 和
 capability quality Validator 后形成 verified Artifact。LLM 提供适应性，Runtime 管理文件权限
 和可信状态。

@@ -1,6 +1,6 @@
 # Protobuf 与 UDS 控制协议
 
-正式控制消息定义在 [`messages.py`](../../../statebus/control/messages.py) 与 [`statebus_control.proto`](../../../statebus/control/statebus_control.proto)。消息共享 `ControlHeader`，具体 body 通过 Protobuf `oneof` 选择。Header 固定 trace、task、step、attempt、目标角色、timeout、event type 和 schema version，使每条线路事件都能回到具体执行尝试。
+正式控制消息定义在 [`messages.py`](../../../src/statebus/control/messages.py) 与 [`statebus_control.proto`](../../../src/statebus/control/statebus_control.proto)。消息共享 `ControlHeader`，具体 body 通过 Protobuf `oneof` 选择。Header 固定 trace、task、step、attempt、目标角色、timeout、event type 和 schema version，使每条线路事件都能回到具体执行尝试。
 
 | 消息 | 主要字段 | 语义 |
 |:--|:--|:--|
@@ -18,7 +18,7 @@
 
 Logit Gate 复用同一控制合同：`operation="logit_gate_v1"` 的请求只携带 `LogitStateRef` handle 和输入 manifest hash，独立 Worker 返回 consumed ref、producer/consumer PID、gate action/reason、selected/top-1 alias、margin、entropy 与 decision ID。Protobuf 能保存这些结构化字段，但最终是否执行、重查或 fail closed 仍由 Runtime 根据 Gate 模式和尝试次数决定。
 
-[`transport.py`](../../../statebus/control/transport.py) 使用 `AF_UNIX/SOCK_STREAM`。每个序列化 payload 前有 4 字节 big-endian 长度，接收端通过 `_recv_exact()` 读取完整帧。长度不一致、body 缺失或 schema 无法解析都会失败，不会把残帧当成合法消息。
+[`transport.py`](../../../src/statebus/control/transport.py) 使用 `AF_UNIX/SOCK_STREAM`。每个序列化 payload 前有 4 字节 big-endian 长度，接收端通过 `_recv_exact()` 读取完整帧。长度不一致、body 缺失或 schema 无法解析都会失败，不会把残帧当成合法消息。
 
 ```text
 wire frame
@@ -54,4 +54,4 @@ sequenceDiagram
 PID/encoder 回执和 Validator。控制面携带小型类型化字段，完整文档、矩阵和产物通过 Ref 进入
 数据面。
 
-协议测试可从 [`test_control_plane.py`](../../../tests/test_control_plane.py) 和 [`test_runtime_session_and_ledger.py`](../../../tests/test_runtime_session_and_ledger.py) 查找；若具体文件名发生变化，可在 `tests` 中检索 `ExecRequest` 与 `ControlEnvelope`。
+协议测试可从 [`test_control_plane.py`](../../../tests/unit/runtime/test_control_plane.py) 和 [`test_runtime_session_and_ledger.py`](../../../tests/unit/runtime/test_runtime_session_and_ledger.py) 查找；若具体文件名发生变化，可在 `tests` 中检索 `ExecRequest` 与 `ControlEnvelope`。

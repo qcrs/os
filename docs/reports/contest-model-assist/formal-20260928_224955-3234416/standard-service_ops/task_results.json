@@ -1,0 +1,480 @@
+[
+  {
+    "business_quality": true,
+    "codeact_fallback_attempted": false,
+    "codeact_fallback_enabled": false,
+    "codeact_python_attempts": 0,
+    "dsl_execute_attempts": 1,
+    "e2e_ms": 45663.462863,
+    "failure_codes": [],
+    "family": "service_ops",
+    "mechanism": {
+      "engine_local_kv": null,
+      "model_assist": [
+        {
+          "attempt": "adaptive-attempt-dsl-482d76574a0f-2",
+          "batch_index": null,
+          "call_index": 1,
+          "effective_mode": "apc_full_prompt",
+          "endpoint": "http://127.0.0.1:53334/v1",
+          "finish_reason": "stop",
+          "model": "qwen3-32b",
+          "observations": {
+            "apc": {
+              "available": false,
+              "delta_valid": false,
+              "metrics_available": false,
+              "prefix_identity": "a415fdb22599a6b2a03d352bc71b4a89515ddc5b3652590aac728d4be2a0dcb5",
+              "reason": "task_window_pending",
+              "requested": true,
+              "service_enabled": true,
+              "service_ready_attested": true,
+              "status": "unavailable"
+            },
+            "kv": {
+              "reason": "apc_service_with_shared_prefix",
+              "status": "unavailable"
+            },
+            "logit": {
+              "available": false,
+              "reason": "top_logprobs_missing",
+              "semantics": "unknown",
+              "source": "same_call_top_logprobs",
+              "status": "unavailable"
+            }
+          },
+          "prefix_identity": {
+            "eligible": true,
+            "layout_version": "statebus.shared_evidence_prefix.v2",
+            "prompt_sha256": "",
+            "role": "",
+            "role_suffix_sha256": "",
+            "text_bytes": 385,
+            "text_sha256": "a415fdb22599a6b2a03d352bc71b4a89515ddc5b3652590aac728d4be2a0dcb5",
+            "token_verified": false
+          },
+          "prefix_layout_version": "statebus.shared_evidence_prefix.v2",
+          "preflight_checked": true,
+          "profile": "apc",
+          "repair_stage": "initial",
+          "request_max_attempts": 1,
+          "requested_mode": "apc_full_prompt",
+          "role": "executor",
+          "route_reason": "apc_service_with_shared_prefix",
+          "run_id": "dsl-482d76574a0f",
+          "stage": "generate",
+          "step": "execute",
+          "task_id": "O01"
+        },
+        {
+          "attempt": "adaptive-attempt-dsl-482d76574a0f-3",
+          "batch_index": 0,
+          "call_index": 2,
+          "effective_mode": "apc_full_prompt",
+          "endpoint": "http://127.0.0.1:53334/v1",
+          "finish_reason": "stop",
+          "model": "qwen3-32b",
+          "observations": {
+            "apc": {
+              "available": false,
+              "delta_valid": false,
+              "metrics_available": false,
+              "prefix_identity": "a415fdb22599a6b2a03d352bc71b4a89515ddc5b3652590aac728d4be2a0dcb5",
+              "reason": "task_window_pending",
+              "requested": true,
+              "service_enabled": true,
+              "service_ready_attested": true,
+              "status": "unavailable"
+            },
+            "kv": {
+              "reason": "apc_service_with_shared_prefix",
+              "status": "unavailable"
+            },
+            "logit": {
+              "available": false,
+              "reason": "top_logprobs_missing",
+              "semantics": "unknown",
+              "source": "same_call_top_logprobs",
+              "status": "unavailable"
+            }
+          },
+          "prefix_identity": {
+            "eligible": true,
+            "layout_version": "statebus.shared_evidence_prefix.v2",
+            "prompt_sha256": "",
+            "role": "",
+            "role_suffix_sha256": "",
+            "text_bytes": 385,
+            "text_sha256": "a415fdb22599a6b2a03d352bc71b4a89515ddc5b3652590aac728d4be2a0dcb5",
+            "token_verified": false
+          },
+          "prefix_layout_version": "statebus.shared_evidence_prefix.v2",
+          "preflight_checked": true,
+          "profile": "apc",
+          "repair_stage": "",
+          "request_max_attempts": 1,
+          "requested_mode": "apc_full_prompt",
+          "role": "summarizer",
+          "route_reason": "apc_service_with_shared_prefix",
+          "run_id": "dsl-482d76574a0f",
+          "stage": "report",
+          "step": "summarize",
+          "task_id": "O01"
+        },
+        {
+          "after": {
+            "cache_epoch": "",
+            "counter_metric_names": [
+              "vllm:prefix_cache_hits_total",
+              "vllm:prefix_cache_queries_total"
+            ],
+            "counter_unit": "tokens",
+            "engine_instance_id": "",
+            "gauge_metric_names": [],
+            "has_query_hit_counters": true,
+            "hit_rate": 0.09247768805779856,
+            "hit_series": [
+              {
+                "counter_role": "cached_hit_tokens",
+                "labels": {
+                  "engine": "0",
+                  "model_name": "qwen3-32b"
+                },
+                "metric_name": "vllm:prefix_cache_hits_total",
+                "unit": "tokens",
+                "value": 1088.0
+              }
+            ],
+            "hits_total": 1088.0,
+            "metric_schema_error": "",
+            "metric_schema_valid": true,
+            "observation_kind": "query_hit_token_counters",
+            "queries_total": 11765.0,
+            "query_series": [
+              {
+                "counter_role": "queried_tokens",
+                "labels": {
+                  "engine": "0",
+                  "model_name": "qwen3-32b"
+                },
+                "metric_name": "vllm:prefix_cache_queries_total",
+                "unit": "tokens",
+                "value": 11765.0
+              }
+            ],
+            "raw_metric_names": [
+              "vllm:gpu_prefix_cache_hits_total",
+              "vllm:gpu_prefix_cache_queries_total",
+              "vllm:prefix_cache_hits_total",
+              "vllm:prefix_cache_queries_total"
+            ],
+            "request_success_total": 7.0,
+            "sampled_at_ns": 1790607174519226001,
+            "schema_version": "statebus.vllm_prefix_cache_metrics.v3",
+            "series_digest": "d6faa5210362c6890cbf587a4ccf43550b4dea3d0223080db29275716df18b55",
+            "service_lifetime_hit_rate": 0.09247768805779856
+          },
+          "apc_request_count": 2,
+          "before": {
+            "cache_epoch": "",
+            "counter_metric_names": [
+              "vllm:prefix_cache_hits_total",
+              "vllm:prefix_cache_queries_total"
+            ],
+            "counter_unit": "tokens",
+            "engine_instance_id": "",
+            "gauge_metric_names": [],
+            "has_query_hit_counters": true,
+            "hit_rate": 0.1060187741579238,
+            "hit_series": [
+              {
+                "counter_role": "cached_hit_tokens",
+                "labels": {
+                  "engine": "0",
+                  "model_name": "qwen3-32b"
+                },
+                "metric_name": "vllm:prefix_cache_hits_total",
+                "unit": "tokens",
+                "value": 960.0
+              }
+            ],
+            "hits_total": 960.0,
+            "metric_schema_error": "",
+            "metric_schema_valid": true,
+            "observation_kind": "query_hit_token_counters",
+            "queries_total": 9055.0,
+            "query_series": [
+              {
+                "counter_role": "queried_tokens",
+                "labels": {
+                  "engine": "0",
+                  "model_name": "qwen3-32b"
+                },
+                "metric_name": "vllm:prefix_cache_queries_total",
+                "unit": "tokens",
+                "value": 9055.0
+              }
+            ],
+            "raw_metric_names": [
+              "vllm:gpu_prefix_cache_hits_total",
+              "vllm:gpu_prefix_cache_queries_total",
+              "vllm:prefix_cache_hits_total",
+              "vllm:prefix_cache_queries_total"
+            ],
+            "request_success_total": 5.0,
+            "sampled_at_ns": 1790607128870776639,
+            "schema_version": "statebus.vllm_prefix_cache_metrics.v3",
+            "series_digest": "f33294c8288c41030674584d84e97eadd6533fc36dd8603486ac5624123dacfa",
+            "service_lifetime_hit_rate": 0.1060187741579238
+          },
+          "event": "apc_task_window",
+          "observation": {
+            "available": true,
+            "counter_unit": "tokens",
+            "delta_valid": true,
+            "exclusive_interval": true,
+            "hit_rate": 0.047232472324723246,
+            "hit_tokens": 128.0,
+            "metrics_available": true,
+            "pollution_detected": false,
+            "query_tokens": 2710.0,
+            "reason": "",
+            "requested": true,
+            "service_enabled": true,
+            "service_ready_attested": true,
+            "status": "available",
+            "window_scope": "task"
+          },
+          "observation_wait_ms": 10.282911,
+          "request_count": 2,
+          "retry_count": 0,
+          "scope": "task"
+        }
+      ]
+    },
+    "mechanism_gate_passed": true,
+    "metrics": {
+      "executor_request_count": 1,
+      "planner_request_count": 0,
+      "provider_completion_tokens": 563,
+      "provider_observed_request_count": 2,
+      "provider_observed_usage_partial": {
+        "completion_tokens": 563,
+        "prompt_tokens": 2710,
+        "total_tokens": 3273
+      },
+      "provider_prompt_tokens": 2710,
+      "provider_request_count": 2,
+      "provider_total_tokens": 3273,
+      "provider_unresolved_call_ids": [],
+      "provider_usage_missing_reason": null,
+      "retriever_request_count": 0,
+      "summarizer_request_count": 1
+    },
+    "phase": "standard",
+    "profile": "apc",
+    "quality": true,
+    "repair": 0,
+    "returncode": 0,
+    "scorer_errors": [],
+    "slot_root": "/workspace/statebus/os/docs/reports/contest-model-assist/formal-20260928_224955-3234416/standard-service_ops/slots/O01-apc",
+    "status": "success",
+    "task_id": "O01"
+  },
+  {
+    "business_quality": true,
+    "codeact_fallback_attempted": false,
+    "codeact_fallback_enabled": false,
+    "codeact_python_attempts": 0,
+    "dsl_execute_attempts": 1,
+    "e2e_ms": 26382.197223,
+    "failure_codes": [],
+    "family": "service_ops",
+    "mechanism": {
+      "engine_local_kv": null,
+      "model_assist": [
+        {
+          "attempt": "adaptive-attempt-dsl-d8f4425e948b-2",
+          "batch_index": null,
+          "call_index": 1,
+          "effective_mode": "ordinary",
+          "endpoint": "http://127.0.0.1:53334/v1",
+          "finish_reason": "stop",
+          "model": "qwen3-32b",
+          "observations": {
+            "apc": {
+              "available": false,
+              "delta_valid": false,
+              "metrics_available": false,
+              "reason": "not_observed",
+              "service_enabled": true,
+              "service_ready_attested": true,
+              "status": "unavailable"
+            },
+            "kv": {
+              "reason": "logit_observation_only",
+              "status": "unavailable"
+            },
+            "logit": {
+              "aggregated_entropy": 0.7823727893217257,
+              "available": true,
+              "confidence_proxy": 0.6699804246550052,
+              "decision_entropy": -1.0,
+              "entropy": 0.9886502927655841,
+              "peak_position": 151,
+              "semantics": "token_proxy",
+              "sequence_length": 174,
+              "source": "same_call_top_logprobs",
+              "status": "available",
+              "top_gap": 0.41287072673791136,
+              "varentropy": 0.010512986397834248
+            }
+          },
+          "prefix_layout_version": null,
+          "preflight_checked": true,
+          "profile": "logit",
+          "repair_stage": "initial",
+          "request_max_attempts": 1,
+          "requested_mode": "ordinary",
+          "role": "executor",
+          "route_reason": "logit_observation_only",
+          "run_id": "dsl-d8f4425e948b",
+          "stage": "generate",
+          "step": "execute",
+          "task_id": "O01"
+        },
+        {
+          "attempt": "adaptive-attempt-dsl-d8f4425e948b-3",
+          "batch_index": 0,
+          "call_index": 2,
+          "effective_mode": "ordinary",
+          "endpoint": "http://127.0.0.1:53334/v1",
+          "finish_reason": "stop",
+          "model": "qwen3-32b",
+          "observations": {
+            "apc": {
+              "available": false,
+              "delta_valid": false,
+              "metrics_available": false,
+              "reason": "not_observed",
+              "service_enabled": true,
+              "service_ready_attested": true,
+              "status": "unavailable"
+            },
+            "kv": {
+              "reason": "logit_observation_only",
+              "status": "unavailable"
+            },
+            "logit": {
+              "available": false,
+              "reason": "top_logprobs_missing",
+              "semantics": "unknown",
+              "source": "same_call_top_logprobs",
+              "status": "unavailable"
+            }
+          },
+          "prefix_layout_version": null,
+          "preflight_checked": true,
+          "profile": "logit",
+          "repair_stage": "",
+          "request_max_attempts": 1,
+          "requested_mode": "ordinary",
+          "role": "summarizer",
+          "route_reason": "logit_observation_only",
+          "run_id": "dsl-d8f4425e948b",
+          "stage": "report",
+          "step": "summarize",
+          "task_id": "O01"
+        }
+      ]
+    },
+    "mechanism_gate_passed": true,
+    "metrics": {
+      "executor_request_count": 1,
+      "planner_request_count": 0,
+      "provider_completion_tokens": 454,
+      "provider_observed_request_count": 2,
+      "provider_observed_usage_partial": {
+        "completion_tokens": 454,
+        "prompt_tokens": 2480,
+        "total_tokens": 2934
+      },
+      "provider_prompt_tokens": 2480,
+      "provider_request_count": 2,
+      "provider_total_tokens": 2934,
+      "provider_unresolved_call_ids": [],
+      "provider_usage_missing_reason": null,
+      "retriever_request_count": 0,
+      "summarizer_request_count": 1
+    },
+    "phase": "standard",
+    "profile": "logit",
+    "quality": true,
+    "repair": 0,
+    "returncode": 0,
+    "scorer_errors": [],
+    "slot_root": "/workspace/statebus/os/docs/reports/contest-model-assist/formal-20260928_224955-3234416/standard-service_ops/slots/O01-logit",
+    "status": "success",
+    "task_id": "O01"
+  },
+  {
+    "error": null,
+    "family": "finance",
+    "phase": "standard",
+    "profile": "logit",
+    "reason": "outside_requested_phase_family",
+    "slot_root": null,
+    "status": "not_started",
+    "task_id": "F01"
+  },
+  {
+    "error": null,
+    "family": "finance",
+    "phase": "standard",
+    "profile": "apc",
+    "reason": "outside_requested_phase_family",
+    "slot_root": null,
+    "status": "not_started",
+    "task_id": "F01"
+  },
+  {
+    "error": null,
+    "family": "finance",
+    "phase": "kv",
+    "profile": "kv_replay",
+    "reason": "outside_requested_phase_family",
+    "slot_root": null,
+    "status": "not_started",
+    "task_id": "F01"
+  },
+  {
+    "error": null,
+    "family": "finance",
+    "phase": "kv",
+    "profile": "kv_continuation",
+    "reason": "outside_requested_phase_family",
+    "slot_root": null,
+    "status": "not_started",
+    "task_id": "F01"
+  },
+  {
+    "error": null,
+    "family": "service_ops",
+    "phase": "kv",
+    "profile": "kv_continuation",
+    "reason": "outside_requested_phase_family",
+    "slot_root": null,
+    "status": "not_started",
+    "task_id": "O01"
+  },
+  {
+    "error": null,
+    "family": "service_ops",
+    "phase": "kv",
+    "profile": "kv_replay",
+    "reason": "outside_requested_phase_family",
+    "slot_root": null,
+    "status": "not_started",
+    "task_id": "O01"
+  }
+]

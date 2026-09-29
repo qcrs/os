@@ -24,7 +24,7 @@ from statebus.utils import sha256_digest, stable_json_dumps  # noqa: E402
 
 
 DEFAULT_EVIDENCE_FILE = Path(
-    "statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/"
+    "src/statebus/benchmark/samples/continuous_task_families/kv_prefix_reuse/"
     "orion_factory_ops_report_2026.md"
 )
 DEFAULT_ARTIFACT_ROOT = Path(

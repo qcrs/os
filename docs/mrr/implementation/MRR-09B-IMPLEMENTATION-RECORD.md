@@ -10,15 +10,15 @@ immutable `CapabilityGrant` used for dispatch.
 
 Production:
 
-- `statebus/contracts/adaptive.py`
-- `statebus/contracts/constants.py`
-- `statebus/contracts/__init__.py`
-- `statebus/memory/models.py`
-- `statebus/memory/__init__.py`
-- `statebus/memory/store.py`
-- `statebus/runtime/adaptive_runtime.py`
-- `statebus/runtime/adaptive_dispatcher.py`
-- `statebus/runtime/adaptive_mainline.py`
+- `src/statebus/contracts/adaptive.py`
+- `src/statebus/contracts/constants.py`
+- `src/statebus/contracts/__init__.py`
+- `src/statebus/memory/models.py`
+- `src/statebus/memory/__init__.py`
+- `src/statebus/memory/store.py`
+- `src/statebus/runtime/adaptive_runtime.py`
+- `src/statebus/runtime/adaptive_dispatcher.py`
+- `src/statebus/runtime/adaptive_mainline.py`
 
 Tests and evidence:
 

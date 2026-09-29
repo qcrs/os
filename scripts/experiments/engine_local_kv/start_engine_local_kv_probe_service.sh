@@ -50,7 +50,7 @@ combined_sha256() {
   sha256sum "$@" | awk '{print $1}' | sha256sum | awk '{print $1}'
 }
 
-export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 export CUDA_VISIBLE_DEVICES="$GPU_INDEX"
 export VLLM_USE_V1=1
 export VLLM_NO_USAGE_STATS=1

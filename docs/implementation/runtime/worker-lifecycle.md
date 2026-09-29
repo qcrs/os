@@ -1,6 +1,6 @@
 # Worker 生命周期与 attempt 隔离
 
-[`RuntimeSupervisor`](../../../statebus/runtime/supervisor.py) 将一个 step 的网络接收、实际运行
+[`RuntimeSupervisor`](../../../src/statebus/runtime/supervisor.py) 将一个 step 的网络接收、实际运行
 和业务终态拆开管理。`step_id` 表示批准计划中的逻辑步骤，`attempt_id` 表示这个步骤的一次
 具体执行。重试沿用 step ID，并创建新的 attempt、Grant 和 workspace。
 

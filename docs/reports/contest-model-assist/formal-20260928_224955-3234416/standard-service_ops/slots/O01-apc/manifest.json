@@ -1,0 +1,123 @@
+{
+  "contract": {
+    "task_id": "O01",
+    "family": "service_ops",
+    "method": "service_ops_simple_summary_v1",
+    "periods": [
+      "W01"
+    ],
+    "required_files": [
+      "dictionary_v1.md",
+      "events_W01.md",
+      "hourly_W01.csv"
+    ],
+    "release_files": [
+      "dictionary_v1.md",
+      "events_W01.md",
+      "hourly_W01.csv"
+    ],
+    "required_history": [],
+    "input_schemas": {
+      "source": {
+        "period": "string",
+        "site_id": "string",
+        "request_count": "number",
+        "failed_count": "number"
+      }
+    },
+    "output_schema": {
+      "period": "string",
+      "site_id": "string",
+      "request_count": "number",
+      "failed_count": "number"
+    },
+    "instructions": "Group source by period and site_id, summing request_count and failed_count. failed_count is FINAL failed requests, never diagnostic failed attempts. Return exactly output_schema, sorted ascending by period then site_id. No ratios, risk thresholds, ranking or causal inference.",
+    "output_contract_version": "mechanism_simple_v2.service_ops_simple_summary_v1",
+    "max_operations": 5,
+    "round": 1
+  },
+  "variant": "SB-FULL",
+  "mode": "live",
+  "task_profile": "mechanism_simple_v2",
+  "runtime_identity": {
+    "external_case_id": null,
+    "runtime_task_id": "O01",
+    "run_id": "dsl-482d76574a0f",
+    "session_id": "dsl-482d76574a0f",
+    "trace_id": "dsl-482d76574a0f",
+    "task_contract": {
+      "contract_kind": "canonical_task_spec",
+      "contract_hash": "af8f41c88d961ebbcd2c87b6aa4593255703d25f650d47a97499d06db67c0913",
+      "public_context_hash": "",
+      "input_asset_set_hash": "",
+      "legacy_canonical_task_spec_hash": "af8f41c88d961ebbcd2c87b6aa4593255703d25f650d47a97499d06db67c0913",
+      "schema_version": "statebus.task_contract_identity.v1"
+    },
+    "schema_version": "statebus.runtime_identity.v1"
+  },
+  "fixed_context_tokens": 8192,
+  "executor_max_tokens": 3072,
+  "summarizer_max_tokens": 1536,
+  "provider_timeout_s": 480.0,
+  "codeact_fallback_enabled": false,
+  "model_assist_profile": "apc",
+  "codeact_fallback_contract": "disabled",
+  "mechanism_configuration": {
+    "transport": "typed",
+    "memory": "off",
+    "semantic_state": "on",
+    "model_assist_profile": "apc",
+    "shared_public_context": "{\"context_version\":\"contest.dsl.model_assist_public.v1\",\"intent_op\":\"service_ops_simple_summary_v1\",\"output_contract_version\":\"mechanism_simple_v2.service_ops_simple_summary_v1\",\"required_outputs\":[\"period\",\"site_id\",\"request_count\",\"failed_count\"],\"task_family\":\"service_ops\",\"task_id\":\"O01\",\"visibility\":\"public task semantics only; no gold rows, raw tables, or unverified evidence\"}",
+    "model_assist_sidecar": "/workspace/statebus/os/docs/reports/contest-model-assist/formal-20260928_224955-3234416/standard-service_ops/slots/O01-apc/model-assist.jsonl"
+  },
+  "request_max_attempts": 1,
+  "dynamic_prompt_compression": false,
+  "handoff_tokenizer_path": "/data/models/Qwen3-32B",
+  "planner": "deterministic_public_graph",
+  "retriever": "registered_fanout",
+  "report_contract": "simple_fact_report_v1",
+  "provider": {
+    "backend": "openai_compatible",
+    "mode": "local_vllm",
+    "source": "contest-dsl-fixed-budget",
+    "planner_provider": "default",
+    "planner_model": "qwen3-32b",
+    "summarizer_provider": "default",
+    "summarizer_model": "qwen3-32b",
+    "roles": {
+      "planner": {
+        "provider": "default",
+        "model": "qwen3-32b",
+        "json_output": true
+      },
+      "retriever": {
+        "provider": "default",
+        "model": "qwen3-32b",
+        "json_output": true
+      },
+      "executor": {
+        "provider": "default",
+        "model": "qwen3-32b",
+        "json_output": true
+      },
+      "summarizer": {
+        "provider": "default",
+        "model": "qwen3-32b",
+        "json_output": true
+      }
+    },
+    "providers": {
+      "default": {
+        "kind": "openai_compatible",
+        "base_url": "http://127.0.0.1:53334/v1",
+        "request_max_attempts": 1
+      }
+    },
+    "model_assist_profile": "apc",
+    "model_assist_endpoint": "http://127.0.0.1:53334/v1",
+    "model_assist_kv_endpoint": null,
+    "model_assist_apc_metrics_url": "http://127.0.0.1:53334/metrics",
+    "model_assist_sidecar": "/workspace/statebus/os/docs/reports/contest-model-assist/formal-20260928_224955-3234416/standard-service_ops/slots/O01-apc/model-assist.jsonl",
+    "model_assist_shared_prefix": true
+  }
+}

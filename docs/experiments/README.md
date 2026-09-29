@@ -30,9 +30,9 @@ flowchart LR
 
 | 正式任务 | 数量 | 关系 | 任务入口 |
 |:--|--:|:--|:--|
-| E2 Operating | 10 | 一条连续链，后续轮次引用前序已验证对象 | `statebus/benchmark/samples/continuous_task_families/formal_operating_metrics/manifest.json` |
-| E2 Financial | 10 | 一条连续链，覆盖抽取、差值、字段别名和趋势汇总 | `statebus/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json` |
-| E5 五类能力 | 25 | 25 个独立 case，数量为 `8 + 5 + 5 + 4 + 3` | `statebus/benchmark/task_registry.py` 与 `tasks/formal/` |
+| E2 Operating | 10 | 一条连续链，后续轮次引用前序已验证对象 | `src/statebus/benchmark/samples/continuous_task_families/formal_operating_metrics/manifest.json` |
+| E2 Financial | 10 | 一条连续链，覆盖抽取、差值、字段别名和趋势汇总 | `src/statebus/benchmark/samples/continuous_task_families/formal_financial_reports/manifest.json` |
+| E5 五类能力 | 25 | 25 个独立 case，数量为 `8 + 5 + 5 + 4 + 3` | `src/statebus/benchmark/task_registry.py` 与 `tasks/formal/` |
 | 合计 | 45 | 20 个连续任务 + 25 个独立任务 | [任务与数据集目录](../implementation/benchmark-task-and-dataset-catalog.md) |
 
 E1 取 E2 两条链的前五轮，在 L0、L1、L2、L3 四条路径中重复计量，用于匹配消融。
@@ -443,15 +443,15 @@ flowchart LR
 
 | 实验 | 主记录 |
 |:--|:--|
-| E1 L0-L3 | `/home/qcrs/statebus/runs/contest_evidence_closure_20260720/e1_causal_serial_20260720_150801/summary.json` |
-| E2 连续任务 | `/home/qcrs/statebus/runs/contest_evidence_closure_20260720/e2_stress_serial_20260720_152924/summary.json` |
-| E3 记忆机制 | `/home/qcrs/statebus/runs/contest_evidence_closure_20260720/e3_adaptive_memory_final_20260720_160244/summary.json` |
-| E4 Embedding holdout | `/home/qcrs/statebus/runs/contest_evidence_closure_20260720/e4_semantic_holdout_final4_20260720_175430/summary.json` |
-| E5 自适应能力 | `/home/qcrs/statebus/runs/contest_evidence_closure_20260720/e5_adaptive_final_20260720_190107/summary.json` |
-| 记忆配对 | `/home/qcrs/statebus/runs/contest_evidence_closure_20260720/fresh-adaptive-memory-gpu0-20260723a/summary.json` |
-| Logit Gate | `/home/qcrs/statebus/runs/logit_retry_challenge_20260727_222823/summary.json` |
-| Prefix 40 请求 | `/home/qcrs/statebus/runs/targeted_prefix_alignment_repeats_json_contract_20260714/repeat_summary.json` |
-| 显式 KV 10 任务 | `/home/qcrs/statebus/runs/engine_local_kv_mainline_10round/mainline-10round-grouped-20260730_085030/summary.json` |
+| E1 L0-L3 | `/home/qcrs/src/statebus/runs/contest_evidence_closure_20260720/e1_causal_serial_20260720_150801/summary.json` |
+| E2 连续任务 | `/home/qcrs/src/statebus/runs/contest_evidence_closure_20260720/e2_stress_serial_20260720_152924/summary.json` |
+| E3 记忆机制 | `/home/qcrs/src/statebus/runs/contest_evidence_closure_20260720/e3_adaptive_memory_final_20260720_160244/summary.json` |
+| E4 Embedding holdout | `/home/qcrs/src/statebus/runs/contest_evidence_closure_20260720/e4_semantic_holdout_final4_20260720_175430/summary.json` |
+| E5 自适应能力 | `/home/qcrs/src/statebus/runs/contest_evidence_closure_20260720/e5_adaptive_final_20260720_190107/summary.json` |
+| 记忆配对 | `/home/qcrs/src/statebus/runs/contest_evidence_closure_20260720/fresh-adaptive-memory-gpu0-20260723a/summary.json` |
+| Logit Gate | `/home/qcrs/src/statebus/runs/logit_retry_challenge_20260727_222823/summary.json` |
+| Prefix 40 请求 | `/home/qcrs/src/statebus/runs/targeted_prefix_alignment_repeats_json_contract_20260714/repeat_summary.json` |
+| 显式 KV 10 任务 | `/home/qcrs/src/statebus/runs/engine_local_kv_mainline_10round/mainline-10round-grouped-20260730_085030/summary.json` |
 
 显式 KV 目录同时保存：
 
